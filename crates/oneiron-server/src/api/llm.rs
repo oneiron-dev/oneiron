@@ -38,43 +38,64 @@ fn failure(error: LlmError) -> Response {
 struct Reservation {
     guard: BudgetGuard,
     lease: BudgetLease,
+    started: bool,
 }
 impl Drop for Reservation {
     fn drop(&mut self) {
-        let _ = self.guard.abort(&self.lease);
+        if self.started {
+            let _ = self.guard.settle_reserved(&self.lease);
+        } else {
+            let _ = self.guard.abort(&self.lease);
+        }
     }
 }
 fn admit(
     server: &SyncServer,
     auth: &CoreAuth,
-    request: &LlmRequest,
-) -> Result<(Arc<dyn oneiron::LlmBackend>, Reservation), Response> {
+    request: &mut LlmRequest,
+) -> Result<(Arc<dyn oneiron::LlmBackend>, Reservation), Box<Response>> {
     if !auth.is_owner_grade() {
-        return Err(refusal(StatusCode::FORBIDDEN, "owner_required"));
+        return Err(Box::new(refusal(StatusCode::FORBIDDEN, "owner_required")));
     }
     let Some((backend, guard)) = &server.llm else {
-        return Err(refusal(StatusCode::SERVICE_UNAVAILABLE, "llm_unavailable"));
+        return Err(Box::new(refusal(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "llm_unavailable",
+        )));
     };
+    let row = server
+        .vault
+        .model_registry_row(&request.model)
+        .map_err(|_| {
+            Box::new(refusal(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "catalog_unavailable",
+            ))
+        })?
+        .ok_or_else(|| Box::new(refusal(StatusCode::BAD_REQUEST, "unknown_model")))?;
+    request.envelope.locality = row.catalog.locality;
     let admission = guard
         .admit_for_request(request)
-        .map_err(|e| failure(e.into()))?;
+        .map_err(|e| Box::new(failure(e.into())))?;
     Ok((
         backend.clone(),
         Reservation {
             guard: guard.clone(),
             lease: admission.lease,
+            started: false,
         },
     ))
 }
 async fn generate(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    Json(request): Json<LlmRequest>,
+    Json(mut request): Json<LlmRequest>,
 ) -> Response {
-    let (backend, reservation) = match admit(&server, &auth, &request) {
+    let (backend, mut reservation) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
+    reservation.started = true;
     match backend.generate(request, &reservation.lease).await {
         Ok(response) => {
             if let Err(e) = reservation
@@ -100,11 +121,11 @@ async fn send_error(
 async fn stream(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    Json(request): Json<LlmRequest>,
+    Json(mut request): Json<LlmRequest>,
 ) -> Response {
-    let (backend, reservation) = match admit(&server, &auth, &request) {
+    let (backend, mut reservation) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let (send, receive) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     tokio::spawn(async move {
@@ -115,6 +136,7 @@ async fn stream(
                 return;
             }
         };
+        reservation.started = true;
         loop {
             let item = tokio::select! { _ = send.closed() => return, item = source.next() => item };
             let Some(item) = item else {

@@ -1162,7 +1162,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/assembly.rs` | src | s | 1 struct · 7 fn | StreamAssembly | Shared typed stream assembly |
 | `src/llm/autocheck.rs` | src | m | 3 struct · 1 enum · 1 trait · 4 fn · 2 const · 5 crate-vis | AutoCheckCandidate, AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker, BoundedAutoChecker | Auto-check seam: candidate types, fail-closed verdicts, the bounded host wrapper, and the request contract |
 | `src/llm/backend.rs` | src | s | 2 struct · 1 trait · 3 fn · 3 type · 1 crate-vis | BudgetLease, LlmBackend, LlmStream | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
-| `src/llm/budget/guard.rs` | src | s | 1 struct · 11 fn · 2 crate-vis | BudgetGuard | Guard handle: admission, abort, reads, and settlement entry points |
+| `src/llm/budget/guard.rs` | src | s | 1 struct · 12 fn · 2 crate-vis | BudgetGuard | Guard handle: admission, abort, reads, and settlement entry points |
 | `src/llm/budget/ladders.rs` | src | s | 5 crate-vis | — | Threshold ladder emission for the budget meter |
 | `src/llm/budget/ledger.rs` | src | s | 10 crate-vis | — | Lease and tally bookkeeping: reservations, charging, and metering math |
 | `src/llm/budget/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | — |

@@ -80,10 +80,38 @@ fn request() -> LlmRequest {
         provider_options: BTreeMap::new(),
     }
 }
+fn seed_models(vault: &Vault) {
+    for name in ["model", "fail"] {
+        vault
+            .put_model_registry_row(&oneiron::llm::registry::ModelRegistryRow {
+                version: 1,
+                wire: oneiron::llm::registry::ModelWireFormat::OpenaiCompat,
+                catalog: LlmCatalogEntry {
+                    model: ModelId::new(format!("own/{name}@1")).unwrap(),
+                    display_name: name.into(),
+                    locality: ModelLocality::ThirdParty,
+                    context_window_tokens: 4096,
+                    max_output_tokens: Some(100),
+                    cost: Some(oneiron::llm::LlmCatalogCost {
+                        input_per_million: "1".into(),
+                        output_per_million: "1".into(),
+                        cache_read_per_million: None,
+                        cache_write_per_million: None,
+                    }),
+                    capabilities: vec![LlmCapability::Streaming],
+                    metadata: BTreeMap::new(),
+                },
+                scores: BTreeMap::new(),
+                fetched_at: BTreeMap::new(),
+            })
+            .unwrap();
+    }
+}
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn own_server_transport_reaches_authenticated_server_and_settles_local_budget() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    seed_models(&vault);
     let budget = BudgetGuard::with_reserve_units("host", 100, 10, BudgetExhaustionPolicy::Suspend);
     let server = SyncServer::new(
         vault,
@@ -123,7 +151,7 @@ async fn own_server_transport_reaches_authenticated_server_and_settles_local_bud
         assert!(matches!(runtime.block_on(scoped.generate(request(), &lease)), Err(LlmError::Fatal(FatalLlmError::Auth))));
         guard.abort(&lease).unwrap();
     }).await.unwrap();
-    assert_eq!(budget.read().used_units, 10);
+    assert_eq!(budget.read().used_units, 20);
     assert_eq!(budget.read().reserved_units, 0);
     serving.abort();
 }
@@ -134,6 +162,7 @@ async fn unconfigured_and_exhausted_llm_routes_fail_closed() {
     for configured in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+        seed_models(&vault);
         let mut server = SyncServer::new(
             vault,
             crate::config::SyncServerConfig {
@@ -145,11 +174,18 @@ async fn unconfigured_and_exhausted_llm_routes_fail_closed() {
         if configured {
             server = server.with_llm_backend(
                 Arc::new(Backend),
-                BudgetGuard::with_reserve_units("empty", 0, 10, BudgetExhaustionPolicy::Suspend),
+                BudgetGuard::with_reserve_units(
+                    "empty",
+                    0,
+                    10,
+                    BudgetExhaustionPolicy::ContinueOnLocal,
+                ),
             );
         }
         let router = crate::api::api_routes(Arc::new(server));
         for verb in ["generate", "stream"] {
+            let mut wire = request();
+            wire.envelope.locality = ModelLocality::OnDevice;
             let response = router
                 .clone()
                 .oneshot(
@@ -157,7 +193,7 @@ async fn unconfigured_and_exhausted_llm_routes_fail_closed() {
                         .header("authorization", "Bearer owner")
                         .header("content-type", "application/json")
                         .header("x-oneiron-budget-lease", "forged-remote-lease")
-                        .body(Body::from(serde_json::to_vec(&request()).unwrap()))
+                        .body(Body::from(serde_json::to_vec(&wire).unwrap()))
                         .unwrap(),
                 )
                 .await
@@ -171,5 +207,77 @@ async fn unconfigured_and_exhausted_llm_routes_fail_closed() {
                 }
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn cancelled_and_failed_streams_charge_reserved_estimate_without_terminal_usage() {
+    use tower::ServiceExt;
+    struct Partial(bool);
+    impl LlmBackend for Partial {
+        fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+            unreachable!()
+        }
+        fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+            let delta = futures_util::stream::iter(vec![Ok(LlmStreamEvent::TextDelta {
+                part_id: "t".into(),
+                text: "spent".into(),
+            })]);
+            if self.0 {
+                Ok(LlmStream::new(delta.chain(futures_util::stream::once(
+                    async { Err(RetryableLlmError::StreamCut.into()) },
+                ))))
+            } else {
+                Ok(LlmStream::new(delta.chain(futures_util::stream::pending())))
+            }
+        }
+    }
+    for fail in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+        seed_models(&vault);
+        let budget =
+            BudgetGuard::with_reserve_units("partial", 100, 10, BudgetExhaustionPolicy::Suspend);
+        let server = SyncServer::new(
+            vault,
+            crate::config::SyncServerConfig {
+                auth_secret: Some("owner".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .with_llm_backend(Arc::new(Partial(fail)), budget.clone());
+        let response = crate::api::api_routes(Arc::new(server))
+            .oneshot(
+                axum::http::Request::post("/v1/llm/stream")
+                    .header("authorization", "Bearer owner")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request()).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let mut body = response.into_body().into_data_stream();
+        let first = body.next().await.unwrap().unwrap();
+        assert!(matches!(
+            serde_json::from_slice::<LlmStreamEvent>(&first).unwrap(),
+            LlmStreamEvent::TextDelta { .. }
+        ));
+        if fail {
+            let error = body.next().await.unwrap().unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&error).unwrap();
+            assert!(value.pointer("/error/llm").is_some());
+            assert!(body.next().await.is_none());
+        }
+        drop(body);
+        // Task cancellation is cooperative; yield without timers until the lease closes.
+        for _ in 0..100 {
+            if budget.read().reserved_units == 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(budget.read().reserved_units, 0);
+        assert_eq!(budget.read().used_units, 10);
     }
 }

@@ -14830,7 +14830,7 @@
      "purpose": "Guard handle: admission, abort, reads, and settlement entry points",
      "surface": {
       "crate-vis": 2,
-      "fn": 11,
+      "fn": 12,
       "struct": 1
      }
     },
