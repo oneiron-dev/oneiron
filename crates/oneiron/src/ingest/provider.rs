@@ -65,10 +65,15 @@ impl IngestSource for ProviderSource {
                 .get("role")
                 .and_then(Value::as_str)
                 .ok_or_else(|| self.invalid("role"))?;
-            if !matches!(
-                role,
-                "system" | "user" | "assistant" | "model" | "tool" | "function"
-            ) {
+            let valid_role = match self.0 {
+                ProviderWire::Openai => matches!(
+                    role,
+                    "system" | "developer" | "user" | "assistant" | "tool" | "function"
+                ),
+                ProviderWire::Anthropic => matches!(role, "user" | "assistant"),
+                ProviderWire::Gemini => matches!(role, "user" | "model"),
+            };
+            if !valid_role {
                 return Err(self.invalid("role"));
             }
             let body = if matches!(self.0, ProviderWire::Gemini) {

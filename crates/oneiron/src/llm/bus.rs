@@ -132,12 +132,27 @@ impl LlmEventBus {
             match event {
                 Ok(event) => self.publish(event)?,
                 Err(error) => {
-                    self.abort(LlmUsage::zero())?;
+                    self.close_without_terminal();
                     return Err(error);
                 }
             }
         }
         Ok(())
+    }
+    fn close_without_terminal(&mut self) {
+        self.closed = true;
+        for weak in &self.subscribers {
+            if let Some(state) = weak.upgrade() {
+                let waker = {
+                    let mut state = state.lock().expect("subscriber lock");
+                    state.closed = true;
+                    state.waker.take()
+                };
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
+            }
+        }
     }
     fn observe(&mut self, event: &LlmStreamEvent) {
         match event {
@@ -215,18 +230,7 @@ impl Drop for LlmEventBus {
         if self.abort(LlmUsage::zero()).is_err() {
             // A sink failure must not strand subscribers after the producer dies.
             // EOF is not a successful Done and no uncommitted terminal is replayed.
-            for weak in &self.subscribers {
-                if let Some(state) = weak.upgrade() {
-                    let waker = {
-                        let mut state = state.lock().expect("subscriber lock");
-                        state.closed = true;
-                        state.waker.take()
-                    };
-                    if let Some(waker) = waker {
-                        waker.wake();
-                    }
-                }
-            }
+            self.close_without_terminal();
         }
     }
 }

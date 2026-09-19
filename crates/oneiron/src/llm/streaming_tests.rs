@@ -207,3 +207,51 @@ fn failed_sink_on_drop_closes_subscribers_without_false_done() {
         Poll::Ready(None)
     ));
 }
+
+#[test]
+fn source_failure_closes_subscribers_without_durable_cancellation() {
+    struct Source(std::collections::VecDeque<LlmResult<LlmStreamEvent>>);
+    impl Stream for Source {
+        type Item = LlmResult<LlmStreamEvent>;
+        fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Poll::Ready(self.0.pop_front())
+        }
+    }
+    for failure in [None, Some(LlmError::from(FatalLlmError::Auth))] {
+        let ledger = Arc::new(Mutex::new(Vec::new()));
+        let mut bus = LlmEventBus::new(Box::new(Sink(ledger.clone())));
+        let mut subscriber = bus.subscribe();
+        let event = LlmStreamEvent::TextStart {
+            part_id: "partial".into(),
+        };
+        let mut events = std::collections::VecDeque::from([Ok(event.clone())]);
+        if let Some(error) = failure.clone() {
+            events.push_back(Err(error));
+        }
+        let source = LlmStream::new(Source(events));
+        {
+            let mut drive = std::pin::pin!(bus.drive(source));
+            let Poll::Ready(Err(error)) =
+                drive.as_mut().poll(&mut Context::from_waker(Waker::noop()))
+            else {
+                panic!("source failure must reach driver");
+            };
+            assert_eq!(
+                error,
+                failure.unwrap_or_else(|| RetryableLlmError::StreamCut.into())
+            );
+        }
+        let mut late = bus.subscribe();
+        // An explicit abort after a failure must not rewrite it as cancellation.
+        bus.abort(LlmUsage::zero()).unwrap();
+        drop(bus);
+        for sub in [&mut subscriber, &mut late] {
+            assert_eq!(drain(sub), vec![event.clone()]);
+            assert!(matches!(
+                Pin::new(sub).poll_next(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(None)
+            ));
+        }
+        assert!(ledger.lock().unwrap().is_empty());
+    }
+}

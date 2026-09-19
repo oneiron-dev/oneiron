@@ -87,8 +87,7 @@ impl OwnServerTransport for Transport {
         Ok(LlmStream::new(Sequence(events.into())))
     }
 }
-#[test]
-fn generate_stream_and_failures_use_registry_and_settle_admitted_usage() {
+fn fixture() -> (tempfile::TempDir, Vault, LlmRequest) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
     let model = ModelId::new("own/model@1").unwrap();
@@ -132,6 +131,12 @@ fn generate_stream_and_failures_use_registry_and_settle_admitted_usage() {
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
     };
+    (dir, vault, request)
+}
+
+#[test]
+fn generate_stream_and_failures_use_registry_and_settle_admitted_usage() {
+    let (_dir, vault, request) = fixture();
     let backend = OwnServerBackend::from_registry(&vault, Transport { failure: false }).unwrap();
     let guard = BudgetGuard::with_reserve_units("test", 100, 10, BudgetExhaustionPolicy::Suspend);
     let lease = guard.admit_for_request(&request).unwrap().lease;
@@ -175,4 +180,143 @@ fn generate_stream_and_failures_use_registry_and_settle_admitted_usage() {
         oneiron_remote::llm::classify_status(401, &json!({})),
         LlmError::Fatal(_)
     ));
+}
+
+#[test]
+fn remote_terminal_variants_are_validated_for_generate_and_stream() {
+    struct Returned(LlmResponse);
+    impl OwnServerTransport for Returned {
+        fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+            Box::pin(async { Ok(self.0.clone()) })
+        }
+        fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+            Ok(LlmStream::new(Sequence(
+                vec![Ok(LlmStreamEvent::Done {
+                    message: self.0.message.clone(),
+                    usage: self.0.usage.clone(),
+                    finish_reason: self.0.finish_reason.clone(),
+                })]
+                .into(),
+            )))
+        }
+    }
+    let (_dir, vault, request) = fixture();
+    let guard =
+        BudgetGuard::with_reserve_units("terminal", 100, 10, BudgetExhaustionPolicy::Suspend);
+    let lease = guard.admit_for_request(&request).unwrap().lease;
+    let mut cases = Vec::new();
+    for part in [
+        ContentPart::ToolResult {
+            call_id: "".into(),
+            output: json!({}),
+            is_error: false,
+        },
+        ContentPart::ToolResult {
+            call_id: "valid-tool-id".into(),
+            output: json!({}),
+            is_error: false,
+        },
+        ContentPart::Image {
+            media_type: " ".into(),
+            image: ImageContent::Url {
+                url: "https://example.invalid/a.png".into(),
+            },
+        },
+        ContentPart::Image {
+            media_type: "image/png".into(),
+            image: ImageContent::Url { url: " ".into() },
+        },
+        ContentPart::Image {
+            media_type: "image/png".into(),
+            image: ImageContent::Base64 { data: "".into() },
+        },
+        ContentPart::ToolCall {
+            call_id: " ".into(),
+            name: "tool".into(),
+            input: json!({}),
+        },
+        ContentPart::ToolCall {
+            call_id: "id".into(),
+            name: " ".into(),
+            input: json!({}),
+        },
+        ContentPart::ToolCall {
+            call_id: "id".into(),
+            name: "tool".into(),
+            input: json!([]),
+        },
+    ] {
+        let mut response = response();
+        response.message.content = vec![part];
+        cases.push((response, Some(FatalLlmError::InvalidRequest)));
+    }
+    let mut wrong_role = response();
+    wrong_role.message.role = LlmMessageRole::User;
+    cases.push((wrong_role, Some(FatalLlmError::InvalidRequest)));
+    let mut empty = response();
+    empty.message.content = vec![ContentPart::Reasoning {
+        text: " \n"
+        .into(),
+        signature: None,
+    }];
+    cases.push((empty, Some(FatalLlmError::EmptyResponse)));
+    for part in [
+        ContentPart::Reasoning {
+            text: "reason".into(),
+            signature: None,
+        },
+        ContentPart::Image {
+            media_type: "image/png".into(),
+            image: ImageContent::Base64 {
+                data: "YWJj".into(),
+            },
+        },
+        ContentPart::Image {
+            media_type: "image/png".into(),
+            image: ImageContent::Url {
+                url: "https://example.invalid/a.png".into(),
+            },
+        },
+        ContentPart::ToolCall {
+            call_id: "id".into(),
+            name: "tool".into(),
+            input: json!({}),
+        },
+    ] {
+        let mut response = response();
+        response.message.content = vec![part];
+        cases.push((response, None));
+    }
+    let mut cancelled = response();
+    cancelled.message.content.clear();
+    cancelled.finish_reason = FinishReason::Cancelled;
+    cases.push((cancelled, None));
+    for (response, error) in cases {
+        let backend = OwnServerBackend::from_registry(&vault, Returned(response.clone())).unwrap();
+        let generated = ready(backend.generate(request.clone(), &lease));
+        let mut stream = backend.stream(request.clone(), &lease).unwrap();
+        let mut cx = Context::from_waker(Waker::noop());
+        let Poll::Ready(Some(streamed)) = Pin::new(&mut stream).poll_next(&mut cx) else {
+            panic!("expected terminal result");
+        };
+        if let Some(error) = error {
+            assert_eq!(generated, Err(LlmError::Fatal(error.clone())));
+            assert_eq!(streamed, Err(LlmError::Fatal(error)));
+        } else {
+            assert_eq!(generated, Ok(response.clone()));
+            assert_eq!(
+                streamed,
+                Ok(LlmStreamEvent::Done {
+                    message: response.message,
+                    usage: response.usage,
+                    finish_reason: response.finish_reason
+                })
+            );
+        }
+        assert!(matches!(
+            Pin::new(&mut stream).poll_next(&mut cx),
+            Poll::Ready(None)
+        ));
+    }
+    guard.abort(&lease).unwrap();
 }

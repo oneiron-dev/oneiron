@@ -12,5 +12,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/lib.rs` | src | s | 1 struct · 1 fn · 1 re-export | OwnServerBackend | Own-server LlmBackend |
-| `src/tests.rs` | test | s | — | — | — |
+| `src/tests.rs` | test | m | — | — | — |
 | `tests/remote_transport.rs` | test | m | — | — | Own-server conformance through the shipped HTTP transport, not a trait-only fake |

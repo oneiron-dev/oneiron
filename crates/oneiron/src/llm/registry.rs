@@ -124,8 +124,11 @@ impl CatalogSeed {
         let mut ids = std::collections::BTreeSet::new();
         for row in &seed.rows {
             row.validate()?;
-            if !ids.insert(&row.catalog.model) || !row.scores.is_empty() {
-                return Err(invalid("duplicate seed model or seeded benchmark scores"));
+            if !ids.insert(&row.catalog.model)
+                || !row.scores.is_empty()
+                || !row.fetched_at.is_empty()
+            {
+                return Err(invalid("duplicate seed model or seeded benchmark metadata"));
             }
         }
         Ok(seed)

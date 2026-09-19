@@ -175,3 +175,37 @@ It passed **56 tests**, exit 0. `cargo test -p oneiron-server --lib api::llm::te
 Formatting applied with `cargo fmt -p oneiron -p oneiron-server` (exit 0), then the final source compiled and passed the focused tests. Code-map pin **CODEMAP-OK** (2534 files); structural ratchet **RATCHET-OK** (2/98/91/33); root-surface **ROOT-SURFACE-OK** (701); `git diff --check` exit 0.
 
 Source hashes and exact command logs/exit receipts are retained in `tickets/W7-C08/fix-review-receipts/`. No interrupted or partial run is counted as a passing command. This is scoped ticket validation, not the full workspace gate.
+
+## Latest bot recovery on `8504e489`
+
+Before editing, refreshed all paginated REST issue comments, reviews and inline comments,
+plus GraphQL review threads. Intake: 15 issue comments, 6 reviews (including an untouched
+owner-pending review), and 40 complete inline threads. The six new Codex findings are
+F31–F36 below. The original 24 groups and subsequent F25–F30 retain their individual
+fix/dismissal decisions above. Raw bodies, IDs, timestamps, exact head, internal roots,
+and source hashes are preserved in `tickets/W7-C08/bot-recovery-receipts/`.
+
+The original root continuation supplied actual DEFECTS verdicts; both later internal
+recheck transcripts end with LANDABLE. Their evidence predates this final six-finding
+repair and is not represented as review of the new bytes. O01/O02 remain rejected as
+blocking by the original root, not promoted from child previews. No fresh fanout was
+started. The prior standard factory run finished with exit 0 and 8,876 tests; interrupted
+postbot builds are not counted. A new standard nine-crate rerun is required below.
+
+- **F31**, inline **4053121156**: Fixed: compile the requested schema before any native dispatch; validate native output locally without adding shim prompts or corrective retries. Invalid output settles actual usage and is not memoized.
+- **F32**, inline **4053121160**: Fixed: generate uses cancellable async HTTP in the existing transport-owned worker; dropping the future cancels both the pending headers and active body read. The non-streaming total timeout remains 120 seconds.
+- **F33**, inline **4053121161**: Fixed: catalog seeds reject both scores and fetched_at metadata before opening the insertion transaction. A poisoned row cannot block subsequent score snapshots.
+- **F34**, inline **4053121164**: Fixed: source errors and synthesized premature-EOF StreamCut close current and late subscribers without publishing or persisting Done(Cancelled). Explicit host cancellation retains the existing terminal behavior.
+- **F35**, inline **4053121168**: Fixed: own-server generate and streamed Done validate tool call IDs/names/input, image media type and URL/base64 payload, empty text/reasoning, and assistant-role compatibility. ToolResult is not assistant output.
+- **F36**, inline **4053121172**: Fixed: provider ingest checks provider-specific roles; only Gemini model is normalized to assistant. OpenAI developer and legacy function roles remain supported; Anthropic system text stays in its top-level field.
+
+Codex is completed, not quota-blocked or pending. Qodo now marks its valid original
+items resolved and repeats only F05 (test-local imports disprove it). CodeRabbit’s
+original 14 findings remain accounted for; its latest automatic review is disabled.
+Cursor’s explicit usage-limit notices are provider failures, not pending reviews.
+CodeRabbit docstring coverage and risk labels are informational under `REVIEW.md`,
+not new correctness findings. C03/C04 cross-ticket comments are not C08 validation.
+
+Canon clarification: native structured output bypasses the corrective *shim*, not the
+local schema-validation boundary. Stream failure is not caller cancellation. Catalog
+seeds carry no fetched score metadata. No docs-repository edit was made.

@@ -188,3 +188,24 @@ fn newer_multi_benchmark_snapshot_uses_prior_watermark_and_replay_is_atomic() ->
     assert_eq!(vault.model_score_diffs(&model)?.len(), 4);
     Ok(())
 }
+
+#[test]
+fn seed_rejects_score_watermarks_without_inserting_any_rows() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let mut poisoned = row("poisoned");
+    poisoned.fetched_at.insert("bench".into(), u64::MAX);
+    let seed = CatalogSeed {
+        version: 1,
+        rows: vec![row("valid"), poisoned],
+    };
+    assert!(matches!(
+        CatalogSeed::from_json(&serde_json::to_vec(&seed).unwrap()),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(matches!(
+        vault.seed_model_catalog(&seed),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(vault.model_registry_rows()?.is_empty());
+    Ok(())
+}

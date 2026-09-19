@@ -56,9 +56,6 @@ pub(super) async fn generate(
     let ResponseFormat::Json { schema } = &request.envelope.response_format else {
         return Ok(super::execute::generate_with_retry(backend, request, lease).await?);
     };
-    if backend.supports(&request.model, LlmCapability::JsonResponse) {
-        return Ok(super::execute::generate_with_retry(backend, request, lease).await?);
-    }
     // Validate the schema itself before contacting the backend. Remote refs are disabled.
     let validator =
         jsonschema::validator_for(schema).map_err(|error| DurableStepError::SchemaValidation {
@@ -66,25 +63,29 @@ pub(super) async fn generate(
             errors: vec![error.to_string()],
         })?;
     let mut wire = request.clone();
-    wire.envelope.response_format = ResponseFormat::Text;
-    // Machine-readable schema data, not a hard-coded persona or prompt policy.
-    wire.messages.insert(
-        0,
-        LlmMessage {
-            role: LlmMessageRole::System,
-            content: vec![ContentPart::Text {
+    let native = backend.supports(&request.model, LlmCapability::JsonResponse);
+    if !native {
+        wire.envelope.response_format = ResponseFormat::Text;
+        // Machine-readable schema data, not a hard-coded persona or prompt policy.
+        wire.messages.insert(
+            0,
+            LlmMessage {
+                role: LlmMessageRole::System,
+                content: vec![ContentPart::Text {
                 text: serde_json::json!({"response_format":{"type":"json_schema","schema":schema}})
                     .to_string(),
             }],
-        },
-    );
+            },
+        );
+    }
+    let max_attempts = if native { 1 } else { 3 };
     let mut spend = SchemaSpend {
         guard,
         lease,
         usage: LlmUsage::zero(),
         armed: true,
     };
-    for attempt in 1..=3 {
+    for attempt in 1..=max_attempts {
         let mut response = match super::execute::generate_with_retry(backend, &wire, lease).await {
             Ok(response) => response,
             Err(source) => {
@@ -117,9 +118,9 @@ pub(super) async fn generate(
             spend.armed = false;
             return Ok(response);
         }
-        if attempt == 3 {
+        if attempt == max_attempts {
             return Err(DurableStepError::SchemaValidation {
-                attempts: 3,
+                attempts: attempt,
                 errors,
             });
         }

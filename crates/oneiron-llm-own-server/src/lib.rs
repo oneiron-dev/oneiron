@@ -63,17 +63,28 @@ fn validate_terminal(
     if message.role != oneiron::LlmMessageRole::Assistant {
         return Err(FatalLlmError::InvalidRequest.into());
     }
-    if *reason != oneiron::FinishReason::Cancelled && (message.content.is_empty() || message.content.iter().all(|p| matches!(p, oneiron::ContentPart::Text {text} | oneiron::ContentPart::Reasoning {text,..} if text.is_empty()))) {
+    if *reason != oneiron::FinishReason::Cancelled && (message.content.is_empty() || message.content.iter().all(|p| matches!(p, oneiron::ContentPart::Text {text} | oneiron::ContentPart::Reasoning {text,..} if text.trim().is_empty()))) {
         return Err(FatalLlmError::EmptyResponse.into());
     }
     for part in &message.content {
-        if let oneiron::ContentPart::ToolCall {
-            call_id,
-            name,
-            input,
-        } = part
-            && (call_id.is_empty() || name.is_empty() || !input.is_object())
-        {
+        let invalid = match part {
+            oneiron::ContentPart::Text { .. } | oneiron::ContentPart::Reasoning { .. } => false,
+            oneiron::ContentPart::ToolCall {
+                call_id,
+                name,
+                input,
+            } => call_id.trim().is_empty() || name.trim().is_empty() || !input.is_object(),
+            // Tool results are history from a tool, never an assistant generation.
+            oneiron::ContentPart::ToolResult { .. } => true,
+            oneiron::ContentPart::Image { media_type, image } => {
+                media_type.trim().is_empty()
+                    || match image {
+                        oneiron::ImageContent::Url { url } => url.trim().is_empty(),
+                        oneiron::ImageContent::Base64 { data } => data.trim().is_empty(),
+                    }
+            }
+        };
+        if invalid {
             return Err(FatalLlmError::InvalidRequest.into());
         }
     }

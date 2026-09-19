@@ -273,49 +273,64 @@ fn truncated_ndjson_stream_never_becomes_successful_done() {
 }
 
 #[test]
-fn dropping_stalled_stream_closes_the_connection() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let client = RemoteLlmClient::connect(
-        &format!("http://{}", listener.local_addr().unwrap()),
-        "fixture",
-    )
-    .unwrap();
-    let (started, ready) = std::sync::mpsc::channel();
-    let peer = thread::spawn(move || {
-        let (mut socket, _) = listener.accept().unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut reader = BufReader::new(&mut socket);
-        let mut length = 0;
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            if line == "\r\n" {
-                break;
+fn dropping_stalled_requests_closes_the_connection() {
+    for (streaming, send_headers) in [(true, true), (false, true), (false, false)] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = RemoteLlmClient::connect(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "fixture",
+        )
+        .unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let peer = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(&mut socket);
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((key, value)) = line.split_once(':')
+                    && key.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse().unwrap();
+                }
             }
-            if let Some((key, value)) = line.split_once(':')
-                && key.eq_ignore_ascii_case("content-length")
-            {
-                length = value.trim().parse().unwrap();
+            reader.read_exact(&mut vec![0; length]).unwrap();
+            if send_headers {
+                write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: 999999\r\n\r\n").unwrap();
+                socket.flush().unwrap();
             }
+            started.send(()).unwrap();
+            let mut byte = [0];
+            match socket.read(&mut byte) {
+                Ok(0) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+                outcome => panic!("cancel must close peer socket, got {outcome:?}"),
+            }
+        });
+        let guard =
+            BudgetGuard::with_reserve_units("cancel", 100, 10, BudgetExhaustionPolicy::Suspend);
+        let lease = guard.admit_for_request(&request()).unwrap().lease;
+        let stream = streaming.then(|| client.stream(request(), &lease).unwrap());
+        let mut generate = (!streaming).then(|| client.generate(request(), &lease));
+        if let Some(future) = generate.as_mut() {
+            assert!(
+                future
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
         }
-        reader.read_exact(&mut vec![0; length]).unwrap();
-        write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: 999999\r\n\r\n").unwrap();
-        socket.flush().unwrap();
-        started.send(()).unwrap();
-        let mut byte = [0];
-        match socket.read(&mut byte) {
-            Ok(0) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
-            outcome => panic!("cancel must close peer socket, got {outcome:?}"),
-        }
-    });
-    let guard = BudgetGuard::with_reserve_units("cancel", 100, 10, BudgetExhaustionPolicy::Suspend);
-    let lease = guard.admit_for_request(&request()).unwrap().lease;
-    let stream = client.stream(request(), &lease).unwrap();
-    ready.recv_timeout(Duration::from_secs(5)).unwrap();
-    drop(stream);
-    peer.join().unwrap();
-    guard.abort(&lease).unwrap();
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        drop(stream);
+        drop(generate);
+        peer.join().unwrap();
+        guard.abort(&lease).unwrap();
+    }
 }

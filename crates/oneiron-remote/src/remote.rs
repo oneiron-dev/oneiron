@@ -175,11 +175,11 @@ impl RemoteClient {
         })
     }
 
-    pub(crate) fn llm_post(
+    pub(crate) async fn llm_post(
         &self,
         request: &oneiron::LlmRequest,
         lease: &oneiron::BudgetLease,
-    ) -> Result<reqwest::blocking::Response, oneiron::LlmError> {
+    ) -> Result<reqwest::Response, oneiron::LlmError> {
         let path = "v1/llm/generate";
         let url = self
             .base_url
@@ -187,14 +187,16 @@ impl RemoteClient {
             .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
         let bytes =
             serialize_request(request).map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
-        self.agent
+        self.stream_agent
             .post(url)
+            .timeout(REQUEST_TIMEOUT)
             .header(AUTHORIZATION, self.authorization.clone())
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .header("x-oneiron-budget-lease", lease.id())
             .body(bytes)
             .send()
+            .await
             .map_err(|e| {
                 if e.is_timeout() {
                     oneiron::RetryableLlmError::Timeout.into()

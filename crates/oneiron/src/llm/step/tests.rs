@@ -2719,3 +2719,55 @@ fn malformed_structured_fallback_is_rejected_before_memoization() -> Result<()> 
     assert_eq!(backend.calls(), 2);
     Ok(())
 }
+
+#[test]
+fn native_schema_validation_refuses_invalid_requests_and_unvalidated_terminals() -> Result<()> {
+    struct Native(ScriptedBackend);
+    impl LlmBackend for Native {
+        fn supports(&self, _: &ModelId, capability: LlmCapability) -> bool {
+            capability == LlmCapability::JsonResponse
+        }
+        fn generate<'a>(
+            &'a self,
+            request: LlmRequest,
+            lease: &'a BudgetLease,
+        ) -> LlmGenerateFuture<'a> {
+            self.0.generate(request, lease)
+        }
+        fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+            unreachable!()
+        }
+    }
+    for (schema, output, attempts) in [
+        (json!({"type":"not-a-type"}), "{}", 0),
+        (
+            json!({"$ref":"https://example.invalid/schema.json"}),
+            "{}",
+            0,
+        ),
+        (json!({"type":"object"}), "[]", 1),
+        (json!({"type":"object"}), "not json", 1),
+    ] {
+        let (_dir, vault) = open_vault();
+        let fixture = step_fixture(&vault, 10)?;
+        let ctx = ctx(&vault, &fixture, 10_000);
+        let guard = guard_with_limit(10_000);
+        let mut request = request_fixture();
+        request.envelope.response_format = ResponseFormat::Json { schema };
+        let hash = request.canonical_hash().unwrap();
+        let backend = Native(ScriptedBackend::new(vec![Ok(response_fixture(output))]));
+        assert!(matches!(
+            block_on(call_as_step(&ctx, &backend, &guard, request)),
+            Err(DurableStepError::SchemaValidation { attempts: actual, .. }) if actual == attempts
+        ));
+        assert_eq!(backend.0.calls(), attempts as usize);
+        assert_eq!(guard.read().used_units, u64::from(attempts) * 150);
+        assert_eq!(guard.read().reserved_units, 0);
+        assert!(step_index_lookup(&vault, fixture.attempt_id, &hash)?.is_none());
+        assert_eq!(
+            claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
+            0
+        );
+    }
+    Ok(())
+}

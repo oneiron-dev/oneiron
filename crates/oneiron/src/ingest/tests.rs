@@ -858,3 +858,46 @@ fn provider_ingest_rejects_malformed_blocks_and_empty_system() {
         ));
     }
 }
+
+#[test]
+fn provider_ingest_accepts_only_its_protocol_roles() {
+    for source in ["openai-compat", "anthropic-messages", "gemini"] {
+        for role in [
+            "system",
+            "developer",
+            "user",
+            "assistant",
+            "model",
+            "tool",
+            "function",
+            "unknown",
+        ] {
+            let valid = match source {
+                "openai-compat" => matches!(
+                    role,
+                    "system" | "developer" | "user" | "assistant" | "tool" | "function"
+                ),
+                "anthropic-messages" => matches!(role, "user" | "assistant"),
+                "gemini" => matches!(role, "user" | "model"),
+                _ => unreachable!(),
+            };
+            let doc = if source == "gemini" {
+                serde_json::json!({"contents":[{"role":role,"parts":[{"text":"hello"}]}]})
+            } else {
+                serde_json::json!({"messages":[{"role":role,"content":"hello"}]})
+            };
+            let result = INGEST_SOURCE_REGISTRY.normalize(source, &doc.to_string());
+            if valid {
+                let record = &result.unwrap().records[0];
+                assert_eq!(
+                    record.speaker.as_deref(),
+                    Some(if role == "model" { "assistant" } else { role })
+                );
+            } else {
+                assert!(
+                    matches!(result, Err(IngestError::InvalidDocumentField { path, .. }) if path == "role")
+                );
+            }
+        }
+    }
+}
