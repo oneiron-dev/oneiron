@@ -23766,13 +23766,13 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/tests/support.rs",
      "purpose": "Shared fixtures, oracles and low-level read helpers for the vault tests",
      "surface": {
-      "crate-vis": 84
+      "crate-vis": 82
      }
     },
     {
