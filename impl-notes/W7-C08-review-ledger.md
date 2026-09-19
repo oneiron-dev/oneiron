@@ -369,3 +369,36 @@ Final validation also caught and repaired one deterministic rustfmt line join pl
 All Cargo commands used factory host/ticket locks with three compiler jobs and three test threads. Full command, output, hash and exit receipts are retained under `validation-standard.*`, `post-standard-followup/`, `final-checks/`, and `lint-checks/`. Failed fmt/Clippy receipts remain recorded; the final commands supersede them. Two earlier interrupted starts are excluded entirely, including the corrected first durable start that omitted host-routing settings. No partial run is counted as a pass. This is changed-crate and focused featureless validation, **not a claim that the nine-stage workspace verification script ran**.
 
 Final read-only GitHub intake: 16 issue comments, 22 reviews, 96 inline comments, 40 complete threads; published head remains `8504e489`. No new inline finding. C03 comment `5741434829` updated its own test evidence, which is not used for C08. CodeRabbit withdrawal `4053384666` closes F18. All original 40 findings have replies; no additional review/draft mutation, push, merge, or close was performed.
+
+
+## Post-publication refresh during merge-test recovery
+
+Complete read-only intake at published head `d7a435af`: **16 issue comments,
+25 reviews, 110 inline comments, 54 threads**. All thread and nested-comment
+pages are complete. No pending review/draft was published, changed or deleted.
+The original internal review dispositions above remain preserved; they do not
+cover this newer 14-comment intake. Deduplication yields the groups below.
+
+| Group | Inline comment IDs | Current disposition |
+| --- | --- | --- |
+| F37 | 4053640019 | **Dismissed**: Pre-release-only legacy BYOA payload compatibility. This build writes and reads user_login; REVIEW.md excludes migration/default work for never-shipped formats. |
+| F38 | 4053663354 | **Pending**: Validate streamed own-server events and their sequence before publication. |
+| F39 | 4053663356 | **Pending**: Preserve Gemini interleaved content-part ordering. |
+| F40 | 4053663362, 4053664836 | **Pending**: Enforce provider-specific ingest block and auxiliary-field grammars. |
+| F41 | 4053663367 | **Pending**: Preserve typed generate errors over own-server HTTP. |
+| F42 | 4053663374 | **Pending**: Bind or refuse a model when a resident route narrows locality. |
+| F43 | 4053663380 | **Pending**: Re-admit paid schema correction attempts under the budget cap. |
+| F44 | 4053663384, 4053664847 | **Pending**: Apply declared purpose locality defaults; duplicate reports. |
+| F45 | 4053664831 | **Pending**: Settle the reservation when successful terminal usage is unavailable. |
+| F46 | 4053664842 | **Prepared, not applied**: Reject ToolResult in assistant fallback terminal content. |
+| F47 | 4053664851 | **Prepared, not applied**: Drop whitespace-only voice chunks, including timer and Done flushes. |
+| F48 | 4053664852 | **Pending**: Avoid partially committed multi-source score refreshes. |
+
+The queued nine-crate validation remains owned by
+`w7-c08-after-merge-tests-20260919.service`, with a separate pidfd-based
+completion event waiter. Its source tree stays unchanged while that command
+is pending. Proposed source patches are held outside the worktree and are not
+claimed as implemented or validated. New results and final GitHub explanations
+must distinguish this baseline run from later repair tests. Raw refreshed
+feedback and review context are retained under
+`tickets/W7-C08/fix-tests-after-merge-receipts/pr-refresh/`.
