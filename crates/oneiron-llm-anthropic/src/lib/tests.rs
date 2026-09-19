@@ -336,19 +336,70 @@ fn thinking_text_and_tool_blocks_keep_ids_signatures_and_executable_input() {
     assert_eq!(call_id, "call");
     assert_eq!(name, "double");
     assert_eq!(input["n"].as_i64().unwrap() * 2, 8);
-    let tool_events: Vec<_> = events
-        .iter()
-        .filter(|e| {
-            matches!(
-                e,
-                LlmStreamEvent::ToolCallStart { .. }
-                    | LlmStreamEvent::ToolCallDelta { .. }
-                    | LlmStreamEvent::ToolCallEnd { .. }
-            )
-        })
-        .collect();
-    assert_eq!(tool_events.len(), 4);
-    assert!(
-        matches!(tool_events[3], LlmStreamEvent::ToolCallEnd { part_id, input, .. } if part_id == "block-2" && input == &json!({"n":4}))
+    assert_eq!(message.content.len(), 3);
+    assert_eq!(
+        message.content[1],
+        ContentPart::Text {
+            text: "hello".into()
+        }
     );
+    assert_eq!(
+        &events[3..events.len() - 1],
+        &[
+            LlmStreamEvent::TextStart {
+                part_id: "block-1".into()
+            },
+            LlmStreamEvent::TextDelta {
+                part_id: "block-1".into(),
+                text: "hello".into()
+            },
+            LlmStreamEvent::TextEnd {
+                part_id: "block-1".into()
+            },
+            LlmStreamEvent::ToolCallStart {
+                part_id: "block-2".into(),
+                call_id: "call".into(),
+                name: "double".into()
+            },
+            LlmStreamEvent::ToolCallDelta {
+                part_id: "block-2".into(),
+                input_fragment: "{\"n\":".into()
+            },
+            LlmStreamEvent::ToolCallDelta {
+                part_id: "block-2".into(),
+                input_fragment: "4}".into()
+            },
+            LlmStreamEvent::ToolCallEnd {
+                part_id: "block-2".into(),
+                call_id: "call".into(),
+                name: "double".into(),
+                input: json!({"n":4})
+            },
+        ]
+    );
+}
+
+#[test]
+fn tool_json_is_validated_at_block_stop_and_cancel_discards_incomplete_input() {
+    for fragment in ["{", "[]"] {
+        let mut stream = AnthropicMessagesStreamAccumulator::new();
+        stream.push_event(json!({"type":"content_block_start","index":4,"content_block":{"type":"tool_use","id":"call","name":"double","input":{}}})).unwrap();
+        let delta = stream.push_event(json!({"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":fragment}})).unwrap();
+        assert_eq!(
+            delta,
+            vec![LlmStreamEvent::ToolCallDelta {
+                part_id: "block-4".into(),
+                input_fragment: fragment.into()
+            }]
+        );
+        let mut cancelled = stream.clone();
+        assert!(matches!(
+            stream.push_event(json!({"type":"content_block_stop","index":4})),
+            Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+        ));
+        let events = cancelled.abort_with_usage(LlmUsage::zero());
+        assert!(
+            matches!(events.as_slice(), [LlmStreamEvent::Done { message, finish_reason: FinishReason::Cancelled, .. }] if message.content.is_empty())
+        );
+    }
 }

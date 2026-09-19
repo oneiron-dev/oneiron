@@ -111,9 +111,18 @@ impl OpenAiCompatStreamAccumulator {
 
     pub fn finish_eof(&mut self) -> LlmResult<Vec<LlmStreamEvent>> {
         match self.pending_finish.take() {
-            Some(reason) => self
-                .assembly
-                .finish(self.usage.clone().unwrap_or_else(LlmUsage::zero), reason),
+            Some(reason) => {
+                for (index, header) in &self.tools {
+                    self.assembly.tool(
+                        &format!("tool-{index}"),
+                        &header.call_id,
+                        &header.name,
+                        "",
+                    )?;
+                }
+                self.assembly
+                    .finish(self.usage.clone().unwrap_or_else(LlmUsage::zero), reason)
+            }
             None => Ok(Vec::new()),
         }
     }
