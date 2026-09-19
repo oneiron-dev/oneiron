@@ -273,11 +273,40 @@ as `prior-standard-tests.log`. Earlier interrupted or failing sections are not
 counted as terminal passes. Existing scoped regression/lint results above are
 reused because production Rust bytes did not change in this pass.
 
-The changed server crate's standard `cargo test -p oneiron-server --no-fail-fast
--- --test-threads=3` run is pending under the existing factory build-host wrapper,
-with at most three Cargo jobs and a ticket-owned target. No duplicate build was
-started. Native rustfmt passed for the changed test file; final map/whitespace
-checks and terminal test results will be recorded before the final PR explanation.
+The changed server crate's standard command completed on source commit
+`54361d573b7f70b0e0a8aa681c954f9b92782ec8`:
+
+`cargo test -p oneiron-server --no-fail-fast -- --test-threads=3`
+
+**889 passed, zero failed, five ignored, zero filtered out**, across seven
+reported targets. The new
+`mcp::qualification::tests::write_probes_refuse_request_ids_as_idempotency_keys`
+test passed. Server library, binary and integration targets compiled. No Rust
+bytes changed after this test-source commit. Existing unchanged production lint
+and six-crate test evidence are retained, not replaced by a claimed workspace gate.
+
+The first process-bound command disappeared at the seat handoff before acquiring
+a build slot; its admission-only log is not test evidence. Local and MacBook
+checks found no remaining C01 build before replacement. The replacement oneshot
+`w7-c01-bots-server-54361d57.service` finished at 14:18:26Z with
+`ActiveState=active`, `SubState=exited`, `MainPID=0`, `Result=success`, and
+`ExecMainStatus=0`. These terminal fields and the complete test log are preserved.
+
+Actual host correction: the durable service invoked the wrapper but omitted
+`W7_CARGO_WORK` / `W7_CARGO_HOSTS`, so its documented fallback ran on Arch in this
+worktree's own `target/`, with `CARGO_BUILD_JOBS=3` and three test threads. This
+was a routing error, not an intentional host override or evidence of scheduler
+admission. No competing C01 build was present. The passing result is preserved
+with the actual host; no redundant replacement build was started. Future durable
+starts must retain those non-secret routing settings and use `--no-block`.
+
+Native rustfmt on the changed test, `scripts/codemap/check.sh` (2,558 files;
+16 current artifacts) and `git diff --check` passed. The final complete GitHub
+refresh contains 12 issue comments, 25 reviews (including the 23 reply reviews),
+46 inline comments/replies and 23 complete threads, at the same published head.
+No new or changed external finding was present; the additions are the recorded
+inline responses. This completes this repair/reply pass, not publication,
+merge approval or a new internal-review verdict on unpublished commits.
 
 Codex is completed, not quota-failed or pending. Qodo is completed. CodeRabbit
 explicitly skipped the 235-file PR because its limit is 150, Cursor reported an
