@@ -5,7 +5,11 @@ use crate::{VadAnnotation, VadAnnotationSource, VaultConfig};
 #[test]
 fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let config = VaultConfig {
+        map_size: 64 * 1024 * 1024,
+        ..VaultConfig::default()
+    };
+    let vault = Vault::open(dir.path(), config.clone())?;
     let subject = EntityId::now();
     let time = TimeRange { start: 10, end: 10 };
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, time, 10, b"subject")?;
@@ -106,7 +110,7 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
     // Reference strings survive credential nulling without a generic binary exemption.
     let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
     let target_dir = tempfile::tempdir()?;
-    let target = Vault::open(target_dir.path(), VaultConfig::default())?;
+    let target = Vault::open(target_dir.path(), config.clone())?;
     target.import_whole_vault_json(export.bytes())?;
     let restored = target.get_claim(&id)?.unwrap();
     assert_eq!(
@@ -159,7 +163,7 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
         StateIndex::default()
     );
     drop(vault);
-    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    let reopened = Vault::open(dir.path(), config)?;
     assert_eq!(
         reopened.state_index_at(&subject, 16)?.claim,
         Some(repaired.to_hex())

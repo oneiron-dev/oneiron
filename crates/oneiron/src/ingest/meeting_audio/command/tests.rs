@@ -133,6 +133,18 @@ fn runtime_profile_reaches_the_real_bridge_without_loading_models() {
     let capabilities = host.inspect_capabilities().unwrap();
     assert_eq!(capabilities.runtime_profile_sha256, Some(digest));
     assert!(capabilities.runtime_helper_sha256.is_some());
+    assert!(
+        capabilities
+            .runtime_components_sha256
+            .contains_key("meeting_audio_process.py")
+    );
+    assert!(
+        capabilities
+            .runtime_components_sha256
+            .contains_key("meeting_audio_ctc.py")
+    );
+    assert!(capabilities.alignment_languages.is_empty());
+    assert!(capabilities.transcribe_pack_languages.is_empty());
     assert!(!capabilities.artifact_capable);
     assert!(!capabilities.e1_e3_evidence);
     assert!(

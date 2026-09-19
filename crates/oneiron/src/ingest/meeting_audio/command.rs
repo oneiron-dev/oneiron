@@ -59,6 +59,15 @@ pub struct NativeAudioCapabilities {
     pub runtime_profile_sha256: Option<String>,
     #[serde(default)]
     pub runtime_helper_sha256: Option<String>,
+    /// Hashes of every local Python runtime component used by this bridge.
+    #[serde(default)]
+    pub runtime_components_sha256: std::collections::BTreeMap<String, String>,
+    /// Languages with a configured timing port, including timing-only routes.
+    #[serde(default)]
+    pub alignment_languages: Vec<String>,
+    /// Languages shared by this ASR backend and its configured timing ports.
+    #[serde(default)]
+    pub transcribe_pack_languages: Vec<String>,
 }
 impl NativeAudioCapabilities {
     fn require_artifact(&self) -> AudioResult<()> {
