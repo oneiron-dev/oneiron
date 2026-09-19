@@ -494,3 +494,38 @@ fn non_empty_query_trims_and_filters_blank_values() {
         Some("recent decisions")
     );
 }
+
+#[test]
+fn search_summary_and_full_project_the_revision_that_produced_the_hit() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+    let id = oneiron::EntityId::now();
+    for name in ["searchanchor original", "unmatched replacement"] {
+        let body = rmp_serde::to_vec_named(&serde_json::json!({"name": name})).unwrap();
+        vault
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_EVENT,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .text(&id, &[("name", name)])
+            .commit()
+            .unwrap();
+    }
+    let scoped = vault
+        .scoped_read(oneiron::claim::ScopedReadActorKey::new("test-reader").expect("actor key"));
+    let hits = scoped
+        .query()
+        .search_text("searchanchor", 10)
+        .run()
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    for view in [View::Summary, View::Full] {
+        let response = search_response(&scoped, hits.clone(), view, 10).unwrap();
+        assert_eq!(response.len(), 1);
+        assert_eq!(response[0]["label"], "searchanchor original");
+    }
+}

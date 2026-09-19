@@ -50,6 +50,43 @@ fn recall_items_and_document_chat_keep_the_indexed_revision() {
             .to_string()
             .contains("revisionanchor original evidence")
     );
+    let facet = EntityId::from_bytes([0x6C; 16]).unwrap();
+    let facet_body = rmp_serde::to_vec_named(&serde_json::json!({"name": "facet"})).unwrap();
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            crate::TimeRange {
+                start: 1400,
+                end: 1400,
+            },
+            1400,
+            &facet_body,
+        )
+        .unwrap();
+    let scoped_pack = facade
+        .recall(
+            "revisionanchor",
+            Effort::Light,
+            &RecallScope {
+                facet: Some(facet.to_hex()),
+                ..Default::default()
+            },
+            10,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(scoped_pack.items.len(), 1);
+    assert_eq!(scoped_pack.items[0].short_id, reference);
+    assert_eq!(
+        scoped_pack.items[0].value_text,
+        "revisionanchor original evidence"
+    );
+    assert_eq!(
+        scoped_pack.items[0].facet.as_deref(),
+        Some(facet.to_hex().as_str())
+    );
     let view = facade.hydrate(std::slice::from_ref(&reference)).unwrap();
     assert_eq!(view[0].short_ref.as_deref(), Some(reference.as_str()));
     let response = facade
