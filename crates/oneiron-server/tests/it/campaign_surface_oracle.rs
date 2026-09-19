@@ -63,7 +63,13 @@ fn seeded_id(counter: u128) -> EntityId {
 fn oracle_vault() -> (tempfile::TempDir, Arc<Vault>, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), test_vault_config()).unwrap();
-    let pack = register_crm_pack(&vault, CAMPAIGN_TYPE_BYTE, SAVED_QUERY_TYPE_BYTE, oneiron::registry::TypeByteFamily::Productivity).unwrap();
+    let pack = register_crm_pack(
+        &vault,
+        CAMPAIGN_TYPE_BYTE,
+        SAVED_QUERY_TYPE_BYTE,
+        oneiron::registry::TypeByteFamily::Productivity,
+    )
+    .unwrap();
     assert_eq!(pack.campaign.pack, CRM_PACK_ID);
     assert_eq!(pack.saved_query.pack, CRM_PACK_ID);
     let principal = seeded_id(0x01);

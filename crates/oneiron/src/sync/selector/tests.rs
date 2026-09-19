@@ -4758,20 +4758,32 @@ fn selector_roundtrips_every_classification_family_and_rejects_retired_schema() 
 #[test]
 fn explicit_crm_pack_registration_exports_by_family_after_reopen() {
     use crate::registry::{
-        TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START,
-        TypeByteFamily, TypeByteZone, entity_type_registry_entry,
+        TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TypeByteFamily,
+        TypeByteZone, entity_type_registry_entry,
     };
     let member = entity_id(0xD1);
     let (dir, vault, grant_id) = test_vault_with_grant(member);
-    let slots: Vec<_> =
-        (TYPE_BYTE_ZONE_COMPILED_PRODUCT_START..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
-            .filter(|byte| entity_type_registry_entry(*byte).is_none())
-            .take(3)
-            .collect();
-    let pack = crate::campaign::register_crm_pack(&vault, slots[0], slots[1], crate::registry::TypeByteFamily::Productivity).unwrap();
+    let slots: Vec<_> = (TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
+        ..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
+        .filter(|byte| entity_type_registry_entry(*byte).is_none())
+        .take(3)
+        .collect();
+    let pack = crate::campaign::register_crm_pack(
+        &vault,
+        slots[0],
+        slots[1],
+        crate::registry::TypeByteFamily::Productivity,
+    )
+    .unwrap();
     // Whole-pack retry preserves the same declared family and assigned slots.
     assert_eq!(
-        crate::campaign::register_crm_pack(&vault, slots[0], slots[1], crate::registry::TypeByteFamily::Productivity).unwrap(),
+        crate::campaign::register_crm_pack(
+            &vault,
+            slots[0],
+            slots[1],
+            crate::registry::TypeByteFamily::Productivity
+        )
+        .unwrap(),
         pack
     );
     vault
@@ -4779,7 +4791,9 @@ fn explicit_crm_pack_registration_exports_by_family_after_reopen() {
         .unwrap();
     let ids = [entity_id(0xD2), entity_id(0xD3), entity_id(0xD4)];
     for (id, kind) in ids.iter().zip(&slots) {
-        vault.put_entity(id, *kind, TimeRange { start: 1, end: 1 }, 1, b"record").unwrap();
+        vault
+            .put_entity(id, *kind, TimeRange { start: 1, end: 1 }, 1, b"record")
+            .unwrap();
     }
     drop(vault);
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
@@ -4789,20 +4803,26 @@ fn explicit_crm_pack_registration_exports_by_family_after_reopen() {
         insert_blob(&doc, *id, &vault.get_raw(id).unwrap().unwrap());
     }
     doc.commit();
-    for bands in [vec![], vec![SelectorRange::Family(TypeByteFamily::Productivity)]] {
+    for bands in [
+        vec![],
+        vec![SelectorRange::Family(TypeByteFamily::Productivity)],
+    ] {
         let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], bands);
-        let filtered = filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &selector)
-            .unwrap();
+        let filtered =
+            filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &selector).unwrap();
         let exported = import_ids(&filtered.export(ExportMode::all_updates()).unwrap());
         assert!(exported.contains(&ids[0]));
         assert!(exported.contains(&ids[1]));
         assert!(!exported.contains(&ids[2]));
     }
     let other_family = SyncSelector::new(
-        grant_id, member, SyncSelectorWorld::All, vec![],
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![],
         vec![SelectorRange::Family(TypeByteFamily::Documents)],
     );
-    let filtered = filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &other_family)
-        .unwrap();
+    let filtered =
+        filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &other_family).unwrap();
     assert!(import_ids(&filtered.export(ExportMode::all_updates()).unwrap()).is_empty());
 }

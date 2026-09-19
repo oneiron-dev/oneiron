@@ -21865,7 +21865,7 @@
      "path": "src/store/structural_kind_registry/registry.rs",
      "purpose": "Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -23718,7 +23718,7 @@
      "purpose": "Vault actor binding, structural kinds and code-memory attachment",
      "surface": {
       "crate-vis": 1,
-      "fn": 21,
+      "fn": 22,
       "struct": 1
      }
     },

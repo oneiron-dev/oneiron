@@ -195,9 +195,9 @@ fn vet_pack_slot(vault: &Vault, type_byte: u8, prefix: &str, family: TypeByteFam
         ));
     }
     match vault.structural_kind_registration(type_byte) {
-        Some(existing) if !slot_matches(&existing, type_byte, prefix, family) => Err(Error::Registry(
-            RegistryError::StructuralKindTypeByteCollision(type_byte),
-        )),
+        Some(existing) if !slot_matches(&existing, type_byte, prefix, family) => Err(
+            Error::Registry(RegistryError::StructuralKindTypeByteCollision(type_byte)),
+        ),
         _ => Ok(()),
     }
 }
@@ -216,7 +216,12 @@ fn register_pack_slot(
     }
 }
 
-fn slot_matches(existing: &StructuralKindRegistration, type_byte: u8, prefix: &str, family: TypeByteFamily) -> bool {
+fn slot_matches(
+    existing: &StructuralKindRegistration,
+    type_byte: u8,
+    prefix: &str,
+    family: TypeByteFamily,
+) -> bool {
     existing.type_byte == type_byte
         && existing.short_id_prefix == prefix
         && existing.zone == TypeByteZone::CompiledProduct
