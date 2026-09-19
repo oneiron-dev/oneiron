@@ -961,7 +961,7 @@ fn spawn_ctl_fixture() -> CtlFixture {
     let run = sockets_dir(dir.path());
     let vault = open_vault(&run.join("data"));
     let args = parse_serve(&managed_argv(&run));
-    let managed = ManagedArgs::from_serve_args(&args).unwrap();
+    let managed = ManagedArgs::from_serve_args(&args).unwrap().unwrap();
     let config = managed.serve_config(&args).sync_server_config();
     let server = Arc::new(SyncServer::new(Arc::clone(&vault), config).unwrap());
     let creds = credentials(0x11, 0x22);

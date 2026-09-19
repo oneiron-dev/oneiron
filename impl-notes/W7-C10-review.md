@@ -441,3 +441,8 @@ No production authentication behavior or test assertion changed.
 The successor reruns only the HTTP regression before required full lanes. The nine
 unchanged passing cases retain their proof. Full R9 lanes were unrun; neither the
 HTTP repair nor the overall gate is claimed green yet.
+
+R10 stopped at fixture compilation before running the HTTP case: the managed
+argument parser returns `Result<Option<ManagedArgs>>`. The fixture now unwraps
+the selected managed mode as the neighboring fixtures do. R9's nine runtime
+passes are retained; this changes no production code or assertion.
