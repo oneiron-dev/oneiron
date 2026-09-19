@@ -4241,3 +4241,4 @@ fn retrieval_quality_old_empty_context_defaults_to_passthrough() {
 }
 
 mod criticality;
+mod source_ranking;

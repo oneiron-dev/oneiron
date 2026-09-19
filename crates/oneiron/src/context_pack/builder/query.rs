@@ -22,6 +22,7 @@ pub struct ContextPackBuilder<'a> {
     pub(super) vault: &'a Vault,
     pub(super) hydrate: bool,
     pub(super) criticality: Option<bool>,
+    pub(super) source_ranking: super::super::source_ranking::SourceRankingPolicy,
     pub(super) include_edges: bool,
     pub(in crate::context_pack) edge_hop: u32,
     pub(in crate::context_pack) selected_edge_budget: usize,
@@ -57,12 +58,23 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Overrides provenance ranking with explicit PACK data. This never changes
+    /// the D19 gate, world/facet scope, supersession law, or token budgets.
+    pub fn source_ranking(
+        mut self,
+        policy: super::super::source_ranking::SourceRankingPolicy,
+    ) -> Self {
+        self.source_ranking = policy;
+        self
+    }
+
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
             pipeline: vault.query().telemetry_action(RetrievalAction::ContextPack),
             vault,
             hydrate: true,
             criticality: None,
+            source_ranking: Default::default(),
             include_edges: false,
             edge_hop: 0,
             selected_edge_budget: DEFAULT_MAX_NEIGHBORS,

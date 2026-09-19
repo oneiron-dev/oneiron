@@ -363,6 +363,12 @@ impl<'a> ContextPackBuilder<'a> {
             if let Some(ctx) = clamp {
                 validate_pack_disclosure(&self.vault.store, &rtxn, ctx, &results, &neighbors)?;
             }
+            super::super::source_ranking::apply(
+                &mut results,
+                &mut neighbors,
+                &claim_bodies,
+                &self.source_ranking,
+            )?;
             resolve_edge_short_ids(&mut results, &mut neighbors);
 
             let pack_is_empty = results.is_empty() && neighbors.is_empty();
