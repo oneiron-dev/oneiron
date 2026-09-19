@@ -35,7 +35,8 @@
     "check:sdk-major": "bun run scripts/assert-sdk-major.mjs",
     "test": "bun test",
     "prepack": "bun run build && bun run test && bun run check:snippets && bun run check:sdk-major",
-    "pack:dry-run": "bun pm pack --dry-run"
+    "pack:dry-run": "bun pm pack --dry-run",
+    "check:retrieval-types": "bunx --bun tsc --project tsconfig.retrieval-types.json"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",

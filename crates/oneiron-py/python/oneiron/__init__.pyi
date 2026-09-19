@@ -86,6 +86,7 @@ class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
 
 class RetrievalMeta(TypedDict):
+    partial: bool
     sparse: bool | None
     total_candidates: int
     claims_returned: int

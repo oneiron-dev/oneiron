@@ -144,6 +144,7 @@ export type ScopeHonesty = {
 
 /** Retrieval accounting. */
 export type RetrievalMeta = {
+  partial: boolean
   sparse?: boolean
   totalCandidates: number
   claimsReturned: number
