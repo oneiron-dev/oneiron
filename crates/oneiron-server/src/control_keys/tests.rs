@@ -68,3 +68,45 @@ async fn unique_digest_no_plaintext_per_call_scope_stamp_rotate_revoke_and_floor
     ));
     Ok(())
 }
+
+#[test]
+fn public_record_lookup_refuses_key_and_timestamp_corruption() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::server())?);
+    let keys = ControlKeys::new(vault.clone(), Zeroizing::new(vec![7; 32]))?;
+    let row = keys.insert(
+        b"lookup-control-key-secret-long-enough",
+        BTreeSet::from(["control:read".to_owned()]),
+        10,
+        Some(100),
+    )?;
+    let key = format!("{PREFIX}{}", row.digest);
+    assert_eq!(keys.record(&row.digest)?, Some(row.clone()));
+    let mut wrong_digest = row.clone();
+    let replacement = if row.digest.starts_with('0') {
+        "1"
+    } else {
+        "0"
+    };
+    wrong_digest.digest.replace_range(..1, replacement);
+    let mut expired_before_creation = row.clone();
+    expired_before_creation.expires_at = 9;
+    let mut used_before_creation = row.clone();
+    used_before_creation.last_used_at = Some(9);
+    let mut used_after_expiry = row.clone();
+    used_after_expiry.last_used_at = Some(100);
+    for corrupt in [
+        wrong_digest,
+        expired_before_creation,
+        used_before_creation,
+        used_after_expiry,
+    ] {
+        let bytes = encode(&corrupt)?;
+        vault.sync_state_put(&key, &bytes)?;
+        assert!(matches!(keys.record(&row.digest), Err(KeyError::Corrupt)));
+        assert_eq!(vault.sync_state_get(&key)?, Some(bytes));
+    }
+    vault.sync_state_delete(&key)?;
+    assert_eq!(keys.record(&row.digest)?, None);
+    Ok(())
+}

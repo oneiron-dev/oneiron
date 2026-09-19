@@ -205,9 +205,14 @@ impl ControlKeys {
         if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(KeyError::Invalid);
         }
+        let key = format!("{PREFIX}{digest}");
         self.vault
-            .sync_state_get(&format!("{PREFIX}{digest}"))?
-            .map(|raw| decode(&raw))
+            .sync_state_get(&key)?
+            .map(|raw| {
+                let row = decode(&raw)?;
+                validate_lookup(&row, &key)?;
+                Ok(row)
+            })
             .transpose()
     }
 }
