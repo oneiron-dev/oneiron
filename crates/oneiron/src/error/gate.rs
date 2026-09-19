@@ -57,6 +57,10 @@ pub enum GateDenialReason {
     PendingCriticalityFloor,
     PendingPolicyManifestAuthority,
     PendingExternalEffectAuthority,
+    /// The configured automatic checker held the write for review.
+    PendingChecker,
+    /// The configured automatic checker could not provide a verdict.
+    PendingCheckerUnavailable,
     /// GATE-12: the Dreamer's claim value was empty-after-trim or opened with
     /// narration instead of a value.
     DenyDreamerPrecommitDegenerateOutput,
@@ -94,6 +98,8 @@ impl GateDenialReason {
             Self::PendingCriticalityFloor => "gate.pending.criticality_floor",
             Self::PendingPolicyManifestAuthority => "gate.pending.policy_manifest_authority",
             Self::PendingExternalEffectAuthority => "gate.pending.external_effect_authority",
+            Self::PendingChecker => "gate.pending.checker",
+            Self::PendingCheckerUnavailable => "gate.pending.checker.unavailable",
             Self::DenyDreamerPrecommitDegenerateOutput => {
                 "gate.deny.dreamer_precommit.degenerate_output"
             }
@@ -123,6 +129,8 @@ impl GateDenialReason {
             "gate.pending.criticality_floor" => Some(Self::PendingCriticalityFloor),
             "gate.pending.policy_manifest_authority" => Some(Self::PendingPolicyManifestAuthority),
             "gate.pending.external_effect_authority" => Some(Self::PendingExternalEffectAuthority),
+            "gate.pending.checker" => Some(Self::PendingChecker),
+            "gate.pending.checker.unavailable" => Some(Self::PendingCheckerUnavailable),
             "gate.deny.dreamer_precommit.degenerate_output" => {
                 Some(Self::DenyDreamerPrecommitDegenerateOutput)
             }
@@ -155,7 +163,9 @@ impl GateDenialReason {
             | Self::PendingSourceTrust
             | Self::PendingCriticalityFloor
             | Self::PendingPolicyManifestAuthority
-            | Self::PendingExternalEffectAuthority => GateDenialOutcome::Pending,
+            | Self::PendingExternalEffectAuthority
+            | Self::PendingChecker
+            | Self::PendingCheckerUnavailable => GateDenialOutcome::Pending,
         }
     }
 }

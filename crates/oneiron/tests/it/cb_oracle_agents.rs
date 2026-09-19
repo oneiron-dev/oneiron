@@ -1357,11 +1357,10 @@ mod cb_a {
         }
     }
 
-    /// ONE-1710 · 08b r15: NO approval queues — digest only; wrong-note
-    /// protection is supersession + conflict.open + read-time confidence
-    /// weighting; one-write correctable.
+    /// Peer storage still needs no approval. Attributed contradiction closure
+    /// uses the W7 deferred gate, then the owner confirms the correction.
     #[test]
-    fn no_approval_queues_digest_and_supersession_only() {
+    fn peer_storage_is_unqueued_and_attributed_correction_is_confirmed() {
         let surfaces = arm_trust_surfaces();
         assert_eq!(surfaces.approval_queue_entries, 0);
         assert_eq!(surfaces.human_digest_entries, 1);
@@ -1663,10 +1662,14 @@ mod peer_fixture {
                 "peer consolidation must not be rejected: {:?}",
                 outcome.rejected
             );
-            assert!(
-                outcome.pended.is_empty(),
-                "ONE-1710: there is no approval lane to pend into"
-            );
+            if supersedes.is_some() {
+                // W7 contradiction closure holds attributed revisions until
+                // owner confirmation; peer storage itself needs no review.
+                assert!(outcome.landed.is_empty());
+                assert_eq!(outcome.pended, vec![candidate.claim_id]);
+            } else {
+                assert!(outcome.pended.is_empty(), "new peer facts need no approval");
+            }
             (outcome, candidate)
         }
 
@@ -1782,13 +1785,28 @@ mod peer_fixture {
             value: &str,
             confidence: f32,
         ) -> usize {
-            let (outcome, _) = self.consolidate_peer_answer(answer, value, confidence, Some(wrong));
+            let (outcome, candidate) =
+                self.consolidate_peer_answer(answer, value, confidence, Some(wrong));
+            assert_eq!(self.claim(wrong).lifecycle, ClaimLifecycleStatus::Active);
+            assert_eq!(
+                self.claim(candidate.claim_id).approval,
+                ClaimApprovalStatus::Proposed
+            );
+            assert_eq!(self.pending_gate_consents(), 1);
+            let proposed = self
+                .vault
+                .get(&candidate.claim_id)
+                .unwrap()
+                .expect("proposal bytes");
+            self.vault
+                .approve_inbox_member_with_edit(&candidate.claim_id, &proposed)
+                .expect("owner confirms attributed correction");
             assert_eq!(
                 self.claim(wrong).lifecycle,
                 ClaimLifecycleStatus::Superseded,
                 "the wrong note is superseded, never deleted"
             );
-            outcome.landed.len()
+            outcome.pended.len()
         }
 
         /// Attempts the SAME tool_output-lineage → generated restamp through

@@ -1052,15 +1052,15 @@ fn scoped_receipts_include_prefilter_exclusions_and_refresh_point_authority() ->
 fn graph_read_receipts_clamp_nonclaim_types_and_include_unnarrowed_reads() -> Result<()> {
     use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
     let (_tmp, vault) = temp_vault();
-    let source = test_id(0xE1);
-    let target = test_id(0xE2);
+    let source = test_id(0x71);
+    let target = test_id(0x72);
     vault.put_entity(&source, ENTITY_TYPE_TURN, test_time(1), 1, b"source")?;
     vault.put_entity(&target, ENTITY_TYPE_ASSET, test_time(1), 1, b"target")?;
     vault.put_edge(&source, EdgeKind::Supports, &target, 0.7)?;
     let install = |types: &[u8]| {
         put_policy_manifest_bytes(
             &vault,
-            test_id(0xE3),
+            test_id(0x73),
             &encode_policy_manifest(vec![core_read_scoped_grant_entry(
                 "graph-reader",
                 Value::Map(vec![(
