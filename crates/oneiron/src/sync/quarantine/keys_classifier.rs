@@ -142,6 +142,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::EntityTypeImmutable
         | ErrorKind::InvalidTimeRange
         | ErrorKind::InvalidClaimBody
+        | ErrorKind::InvalidConversationDag
         | ErrorKind::InvalidPsychProfileBody
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidAgentDefBody

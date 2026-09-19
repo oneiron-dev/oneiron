@@ -3,6 +3,7 @@
 //! The orchestrator below pins the pass order (snapshot markers, entities,
 //! edges, tombstones, settle); the three passes live in the child modules.
 
+mod calendar;
 mod edge_pass;
 mod entity_pass;
 mod tombstone_pass;
@@ -230,5 +231,6 @@ pub fn forward_rematerialize(
     }
 
     crate::recovery::materialize_window_documents(vault, doc, &documents)?;
+    calendar::reconcile(&ctx)?;
     Ok(ledger.count)
 }

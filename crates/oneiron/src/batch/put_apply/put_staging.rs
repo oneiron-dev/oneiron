@@ -52,7 +52,6 @@ pub(in crate::batch) fn stage_entity_body_row(
     payload.extend_from_slice(&learned_at.to_be_bytes());
     payload.extend_from_slice(data);
     store.entities().put(wtxn, id.as_bytes(), &payload)?;
-    crate::ports::record_source_frontiers_in_txn(store, wtxn, id, data)?;
     Ok(())
 }
 

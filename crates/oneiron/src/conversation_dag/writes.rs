@@ -24,7 +24,7 @@ pub(super) fn value(created_at: u64) -> EdgeValueFields {
     }
 }
 
-fn stamp_body(body: &[u8], actor: crate::WriteActor) -> Result<Vec<u8>> {
+fn stamp_body(body: &[u8], actor: crate::WriteActor, session: Option<EntityId>) -> Result<Vec<u8>> {
     let mut input = body;
     let decoded = rmpv::decode::read_value(&mut input)
         .map_err(|_| invalid("record body must be MessagePack"))?;
@@ -44,7 +44,7 @@ fn stamp_body(body: &[u8], actor: crate::WriteActor) -> Result<Vec<u8>> {
         }
         if matches!(
             key,
-            "actor" | "actor_class" | "reply_to" | "addr" | "summary"
+            "actor" | "actor_class" | "reply_to" | "addr" | "summary" | "dag_session_ref"
         ) {
             return Err(invalid("record body contains door-owned fields"));
         }
@@ -57,6 +57,12 @@ fn stamp_body(body: &[u8], actor: crate::WriteActor) -> Result<Vec<u8>> {
         Value::from("actor_class"),
         Value::from(actor.actor_class() as u8),
     ));
+    if let Some(session) = session {
+        entries.push((
+            Value::from("dag_session_ref"),
+            Value::from(session.to_hex()),
+        ));
+    }
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
         .map_err(|_| invalid("record encode failed"))?;
@@ -142,7 +148,7 @@ pub(crate) fn append_in_txn(
             return Err(invalid("nonempty conversation requires a Parent"));
         }
     }
-    let mut body = stamp_body(&input.body, input.actor)?;
+    let mut body = stamp_body(&input.body, input.actor, input.session)?;
     if let Some((asking, summary)) = reply {
         require_member(&vault.store, txn, &input.conversation, &asking)?;
         let asking_body = require_type(&vault.store, txn, &asking, ENTITY_TYPE_TURN)?;

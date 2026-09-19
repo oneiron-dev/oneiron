@@ -60,6 +60,9 @@ pub(in crate::batch) fn apply_put(
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    if entity_type == crate::registry::ENTITY_TYPE_TURN {
+        crate::conversation_dag::validate_session_carrier(store, wtxn, id, data, replicated)?;
+    }
     if entity_type == crate::registry::ENTITY_TYPE_EVENT {
         crate::calendar::origin::validate_event_write(store, wtxn, id, data, replicated)?;
     }
@@ -686,6 +689,9 @@ pub(in crate::batch) fn apply_put(
         },
     )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
+    if entity_type == crate::registry::ENTITY_TYPE_TURN {
+        crate::conversation_dag::stage_session_carrier(store, wtxn, id, data)?;
+    }
     if let Some(record) = new_skill_record.as_ref() {
         super::put_staging::stage_skill_index_rows(
             store,

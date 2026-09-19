@@ -464,3 +464,54 @@ fn branch_scope_with_forks_includes_siblings_but_not_retained_sub_sessions() {
     );
     assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
 }
+
+#[test]
+fn migration_rejects_disconnected_received_roots_without_adopting_the_forest() {
+    let (_dir, vault, conv, _actor) = fixture();
+    let first = EntityId::now();
+    let branch = EntityId::now();
+    let separate = EntityId::now();
+    vault
+        .batch()
+        .put(&first, ENTITY_TYPE_TURN, time(1), 1, &body("root"))
+        .put(&branch, ENTITY_TYPE_TURN, time(2), 2, &body("child"))
+        .put(
+            &separate,
+            ENTITY_TYPE_TURN,
+            time(3),
+            3,
+            &body("disconnected"),
+        )
+        .edge_checked(&first, &conv, 1.0)
+        .edge_checked(&branch, &conv, 1.0)
+        .edge_checked(&separate, &conv, 1.0)
+        .edge_with_value_fields(&branch, EdgeKind::Parent, &first, super::writes::value(2))
+        .commit()
+        .unwrap();
+    assert_eq!(
+        vault.migrate_conversation_dag(&conv).unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    // Fixing the supplied topology must still allow adoption: the failed
+    // transaction may not leave HEAD, canonical marks or a migration marker.
+    vault
+        .batch()
+        .edge_with_value_fields(
+            &separate,
+            EdgeKind::Parent,
+            &branch,
+            super::writes::value(3),
+        )
+        .commit()
+        .unwrap();
+    assert!(vault.migrate_conversation_dag(&conv).unwrap());
+    assert_eq!(
+        vault
+            .resolve_scope(&scope(conv, ScopePath::Canonical, true))
+            .unwrap()
+            .records,
+        [first, branch, separate]
+    );
+}
+
+mod replay;

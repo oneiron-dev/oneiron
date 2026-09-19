@@ -187,3 +187,27 @@ fn claims_lmdb_and_memory() -> Result<()> {
     claims(&vault)?;
     claims(&memory)
 }
+
+fn opaque_frontiers<P: Backend>(ports: &P) -> Result<()> {
+    let mut txn = ports.write()?;
+    for (n, entity_type) in [(80, ENTITY_TYPE_PERSON), (81, ENTITY_TYPE_ASSET)] {
+        let entity = id(n);
+        for value in [
+            Value::from("consumer-owned"),
+            Value::Array(vec![Value::Map(vec![])]),
+        ] {
+            let body = map(&[("sourceFrontiers", value)]);
+            let expected = row(entity_type, &body);
+            ports.port_entity_put(&mut txn, &entity, &expected)?;
+            assert_eq!(ports.port_entity_get(&txn, &entity)?, Some(expected));
+        }
+    }
+    ports.commit(txn)
+}
+
+#[test]
+fn opaque_source_frontiers_roundtrip_on_both_backends() -> Result<()> {
+    let (_temp, vault, memory, _clock) = fixtures();
+    opaque_frontiers(&vault)?;
+    opaque_frontiers(&memory)
+}

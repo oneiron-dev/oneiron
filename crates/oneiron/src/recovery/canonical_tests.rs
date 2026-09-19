@@ -403,13 +403,13 @@ fn note_window(vault: &Vault, entities: &[EntityId]) -> Result<LoroDoc> {
     let window = LoroDoc::new();
     let txn = vault.store.env.read_txn()?;
     for entity in entities {
-        canonical::insert(
-            &window,
-            "entities",
-            &entity.to_hex(),
-            &vault.get_raw(entity)?.unwrap(),
-        )?;
-        if vault.get_entity_type(entity)? != Some(crate::registry::ENTITY_TYPE_NOTE) {
+        let raw = vault.store.entities.get(&txn, entity.as_bytes())?.unwrap();
+        canonical::insert(&window, "entities", &entity.to_hex(), &raw)?;
+        if crate::batch::EntityMetadataHeader::parse(&raw)
+            .unwrap()
+            .entity_type
+            != crate::registry::ENTITY_TYPE_NOTE
+        {
             continue;
         }
         for row in vault.store.edges_out.prefix_iter(&txn, entity.as_bytes())? {

@@ -4031,7 +4031,7 @@
      "path": "src/calendar/origin.rs",
      "purpose": "Calendar EVENT origin union: atomic recorded provenance and source invalidation",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 5,
       "struct": 1
      }
@@ -9003,6 +9003,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/conversation_dag/membership.rs",
+     "purpose": "Replicated TURN session membership: body carrier and local index reconstruction",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/conversation_dag/migration.rs",
      "purpose": "Idempotent lazy and maintenance migration of legacy conversation turns",
      "surface": {
@@ -9017,7 +9027,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 1,
       "re-export": 2
      }
@@ -9072,6 +9082,14 @@
      "notable": [],
      "path": "src/conversation_dag/tests/mod.rs",
      "purpose": "Observable DAG invariants, legacy adoption and rejection atomicity",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/conversation_dag/tests/replay.rs",
+     "purpose": "Observable session-carrier replay without exporting local membership indexes",
      "surface": {}
     },
     {
@@ -18472,7 +18490,7 @@
      "path": "src/ports/integrity.rs",
      "purpose": "Source-prefix dependency index and deletion invalidation in the caller's transaction",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 10
      }
     },
     {
@@ -19479,7 +19497,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/recovery/canonical_tests.rs",
@@ -19495,11 +19513,31 @@
       "CanonicalHeadMove"
      ],
      "path": "src/recovery/document.rs",
-     "purpose": "Canonical entity-local documents and their bound head-move receipts",
+     "purpose": "Canonical entity-local documents and their bound workflows",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/document/materialize.rs",
+     "purpose": "Scoped NOTE replacement and immutable-workflow preflight in one transaction",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/document/workflow.rs",
+     "purpose": "Durable NOTE workflow capture and reference validation without CRDT op IDs",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -23294,6 +23332,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/window/forward/calendar.rs",
+     "purpose": "Deferred calendar-origin binding after entity/claim/edge replay settles",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/window/forward/edge_pass.rs",
      "purpose": "Edge pass of forward rematerialization: materialize window edge rows into LMDB",
      "surface": {
@@ -26047,7 +26095,7 @@
      "purpose": "Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead…"
     },
     "conversation_dag": {
-     "files": 12,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26579,7 +26627,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 10,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -26810,7 +26858,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 69,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26945,8 +26993,8 @@
    },
    "over_bar": 1,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1551,
-   "test_files": 548
+   "source_files": 1555,
+   "test_files": 549
   },
   "oneiron-android": {
    "files": [

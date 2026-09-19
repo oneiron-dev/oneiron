@@ -187,3 +187,39 @@ Fresh changed-source test and lint results will be appended only after the
 commands finish. The installed Cargo dispatcher, normal ticket/host guards,
 action-scoped `W7_CARGO_EXCLUDE_MACBOOK=1`, two compiler jobs and four runtime
 threads remain in use. No factory state, host guard or launcher was changed.
+
+
+### Codex completed review 5258308609 (published head 4993356c)
+
+Collected all REST pages and 21 GraphQL threads, including full nested comments.
+The existing Codex job completed at 2026-09-19T23:23:41Z; it was not restarted.
+All eight findings were read and assessed before this follow-up edit round:
+
+| Inline ID | Distinct finding / assessment |
+|---|---|
+| 4055199497 | Valid refinement of Q4: first-arriving bodies may defer the claim match, but end-of-forward replay must quarantine missing/conflicting origins. Initial put-order tolerance is not permanent validity. |
+| 4055199499 | Valid: an already-DAG forest currently passes the visited-count cycle check. Require one trunk root, preserving the legacy unparented-turn chaining behavior. |
+| 4055199503 | Valid: unconditional sourceFrontiers decoding at shared body staging incorrectly reserves a field in opaque PERSON/ASSET bodies. Restrict decoding to the owning typed schema. |
+| 4055199511 | Duplicate of Q10/4055145001 with the starvation consequence. Already fixed by identified per-stream outcomes in 35bd84ed; the loop processes every due stream, including those after a refusal. |
+| 4055199518 | Valid: normal reverse rematerialization lacks document carriers. Repair normal export/replay, including later edits, without bypassing egress or deletion. |
+| 4055199529 | Valid: append session membership only reaches vault_meta. Carry validated membership in replicated record state and rebuild the two local indexes. |
+| 4055199534 | Valid recovery companion to Q5/Q6: Reject deletes its fork doc but validation requires every receipt fork. The same recovery repair must represent rejected decisions without requiring deleted text. |
+| 4055199539 | Valid: per-NOTE text sidecars are not covered by active-store hard purge. Repair local/replay/headerless deletion and prevent stale replay resurrection. |
+
+Qodo's latest edited summary 5746023377 reorders findings and marks the four
+skipped Q2/Q7/Q8/Q11 findings dismissed. Ledger Q numbers retain their original
+review numbering; inline IDs remain the stable join key. Blank review shells
+for replies carry no additional defects. No earlier source finding is removed.
+
+
+The read-only replay assessment confirmed all four mechanisms. Two proposed
+remedies were not adopted: inferring a dependency schema from a coincidental
+field shape still violates the opaque-body boundary, so the unowned decoder
+was removed; accepting forests with a new orphan-root sidecar would change the
+single-root DAG contract, so malformed received forests are refused atomically.
+The original review/session roots were preserved throughout; that custody rule
+was not a requirement to accept disconnected graph roots.
+
+Thread follow-ups `4055197859`, `4055197868`, `4055197876`, `4055198000` are Qodo's
+explicit dismissals of `4055144978`, `4055144967`, `4055144971`, `4055145005`
+respectively. They were read, not treated as unexamined duplicate thread IDs.

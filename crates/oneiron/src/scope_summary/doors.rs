@@ -193,10 +193,13 @@ impl Vault {
             let mut body = Vec::new();
             rmpv::encode::write_value(
                 &mut body,
-                &Value::Map(vec![(
-                    Value::from("actor"),
-                    Value::from(actor.entity_ref().to_hex()),
-                )]),
+                &Value::Map(vec![
+                    (
+                        Value::from("actor"),
+                        Value::from(actor.entity_ref().to_hex()),
+                    ),
+                    (Value::from("dag_spawning_turn"), Value::from(turn.to_hex())),
+                ]),
             )
             .map_err(|_| invalid("session encode failed"))?;
             self.batch_in()

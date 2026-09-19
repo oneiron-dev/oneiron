@@ -314,6 +314,9 @@ impl Vault {
         if self.get_entity_type_in_txn(&txn, &event)? != Some(ENTITY_TYPE_EVENT) {
             return Err(Error::EntityNotFound);
         }
+        if !replay_origin_bound(&self.store, &txn, event)? {
+            return Err(invalid("calendar origin claim has not been reconciled"));
+        }
         Ok(live_origin(&self.store, &txn, event)?.unwrap_or(CalendarOrigin::Dreamer))
     }
 }
@@ -458,6 +461,32 @@ pub(crate) fn validate_event_write(
     }
     Ok(())
 }
+/// A typed body may arrive before its claim, but cannot be read as a legacy
+/// Dreamer or invalidated as derived state while that binding is incomplete.
+pub(crate) fn replay_origin_bound(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    event: EntityId,
+) -> Result<bool> {
+    let Some(row) = store.port_entity_record(txn, &event)? else {
+        return Ok(true);
+    };
+    if row.entity_type != ENTITY_TYPE_EVENT {
+        return Ok(true);
+    }
+    let Ok(Value::Map(fields)) = rmpv::decode::read_value(&mut row.body.as_slice()) else {
+        return Ok(true);
+    };
+    let Some((_, value)) = fields.iter().find(|(k, _)| k.as_str() == Some("origin")) else {
+        return Ok(true);
+    };
+    let origin = value
+        .as_str()
+        .and_then(CalendarOrigin::parse)
+        .ok_or(invalid("unknown calendar origin"))?;
+    Ok(live_origin(store, txn, event)? == Some(origin))
+}
+
 /// Native calendar entries are authored state, not derived artifacts. Provenance
 /// links do not let a source deletion remove them from reads or search.
 pub(crate) fn survives_source_deletion(
@@ -465,7 +494,8 @@ pub(crate) fn survives_source_deletion(
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> Result<bool> {
-    Ok(live_origin(store, txn, event)? == Some(CalendarOrigin::Native))
+    Ok(!replay_origin_bound(store, txn, event)?
+        || live_origin(store, txn, event)? == Some(CalendarOrigin::Native))
 }
 
 fn invalid_key(event: EntityId) -> Vec<u8> {
@@ -493,6 +523,7 @@ pub(crate) fn invalidate_dependents(
             continue;
         };
         if EntityMetadataHeader::parse(&raw).is_some_and(|h| h.entity_type == ENTITY_TYPE_EVENT)
+            && replay_origin_bound(&vault.store, txn, event)?
             && live_origin(&vault.store, txn, event)?.unwrap_or(CalendarOrigin::Dreamer)
                 == CalendarOrigin::Dreamer
         {
@@ -509,11 +540,12 @@ pub(crate) fn invalidate_dependents(
 }
 pub(in crate::calendar) fn invalidated(vault: &Vault, event: EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&txn, &invalid_key(event))?
-        .is_some())
+    Ok(!replay_origin_bound(&vault.store, &txn, event)?
+        || vault
+            .store
+            .vault_meta
+            .get(&txn, &invalid_key(event))?
+            .is_some())
 }
 
 #[cfg(test)]

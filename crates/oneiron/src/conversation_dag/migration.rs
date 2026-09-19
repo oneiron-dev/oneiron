@@ -37,6 +37,11 @@ pub(super) fn migrate_in_txn(
         true,
         MAX_ANCESTOR_DEPTH,
     )?;
+    // Restore every carrier before classifying any parent, independent of
+    // peer key order. Failure rolls back both membership indexes and adoption.
+    for id in &candidates {
+        super::membership::restore(vault, txn, *id)?;
+    }
     let mut turns = Vec::new();
     let mut already_dag = false;
     for id in candidates {
@@ -90,6 +95,11 @@ pub(super) fn migrate_in_txn(
             } else {
                 ready.push_back(*id);
             }
+        }
+        if ready.len() != 1 {
+            return Err(graph::invalid(
+                "received DAG requires exactly one trunk root",
+            ));
         }
         let mut visited = 0;
         while let Some(id) = ready.pop_front() {

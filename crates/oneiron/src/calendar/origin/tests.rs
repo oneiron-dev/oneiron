@@ -328,3 +328,80 @@ fn known_calendar_bodies_reject_malformed_originless_and_conflicting_replays() {
         .unwrap();
     assert_eq!(vault.get(&opaque).unwrap().unwrap(), b"opaque event");
 }
+
+#[cfg(feature = "sync")]
+#[test]
+fn replay_reconciles_late_origin_claims_without_defaulting_to_dreamer() {
+    use crate::sync::{bridge::Materializer, loro_support::map_insert_bytes, types::WindowKey};
+    let (_dir, source, actor) = fixture();
+    let event = source
+        .create_native_calendar_event(&input(), time(), actor)
+        .unwrap();
+    let doc = loro::LoroDoc::new();
+    let entities = doc.get_map("entities");
+    map_insert_bytes(
+        &entities,
+        &event.to_hex(),
+        &source.get_raw_unsealed(&event).unwrap().unwrap(),
+    )
+    .unwrap();
+    doc.commit();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    let window = WindowKey::try_new("1970-01").unwrap();
+    let materializer = Materializer::new();
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &window).unwrap();
+    assert_eq!(
+        peer.calendar_event_origin(event).unwrap_err().kind(),
+        crate::ErrorKind::InvalidClaimBody
+    );
+    assert!(
+        crate::sync::quarantine::pending_remat_entities(&peer, window.as_str())
+            .unwrap()
+            .contains(&event.to_hex())
+    );
+    // An unbound typed EVENT is not treated as a derived Dreamer by deletion.
+    let origin_guard = peer.store.env.read_txn().unwrap();
+    assert!(survives_source_deletion(&peer.store, &origin_guard, event).unwrap());
+    drop(origin_guard);
+    map_insert_bytes(
+        &entities,
+        &actor.entity_ref().to_hex(),
+        &source
+            .get_raw_unsealed(&actor.entity_ref())
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    for claim in source.claims_for_subject(&event).unwrap() {
+        map_insert_bytes(
+            &entities,
+            &claim.to_hex(),
+            &source.get_raw_unsealed(&claim).unwrap().unwrap(),
+        )
+        .unwrap();
+        for edge in source.edges_out(&claim).unwrap() {
+            let key = crate::sync::bridge::format_edge_key(&claim, edge.kind, &edge.target);
+            let value = crate::sync::bridge::encode_edge_value_for_crdt(
+                edge.kind,
+                edge.weight,
+                edge.created_at,
+                edge.vad,
+                edge.provenance,
+            )
+            .unwrap();
+            map_insert_bytes(&doc.get_map("edges"), &key, &value).unwrap();
+        }
+    }
+    doc.commit();
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &window).unwrap();
+    assert_eq!(
+        peer.calendar_event_origin(event).unwrap(),
+        CalendarOrigin::Native
+    );
+    assert!(
+        !crate::sync::quarantine::pending_remat_entities(&peer, window.as_str())
+            .unwrap()
+            .contains(&event.to_hex())
+    );
+}

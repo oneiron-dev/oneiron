@@ -7,7 +7,10 @@
 mod admission;
 mod graph;
 pub(crate) use admission::validate_local_membership;
+mod membership;
 mod migration;
+pub(crate) use membership::{stage_session_carrier, validate_session_carrier};
+
 mod policy;
 mod reply;
 mod scopes;
