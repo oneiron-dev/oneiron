@@ -14,6 +14,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "examples/meeting_audio_native_probe.rs",
+     "purpose": "Manual native-port proof",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "examples/provision_imessage_identity.rs",
      "purpose": "Operator door that provisions the ACTIVE, agent-bound `imessage_self_host_bridge` receiving identity a…",
      "surface": {}
@@ -118,7 +126,7 @@
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…",
      "surface": {
       "crate-vis": 5,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -140,10 +148,39 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionDistillDrain"
+     ],
+     "path": "src/actor_claims/runner.rs",
+     "purpose": "Bounded CHAT-lane draining of durable session-end distill jobs",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/actor_claims/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/actor_claims/tests/pack_load.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/actor_claims/tests/runner.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -202,7 +239,7 @@
      "path": "src/affect/consolidation.rs",
      "purpose": "Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6
      }
     },
@@ -233,9 +270,33 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 3,
-      "mod": 1,
+      "mod": 2,
       "re-export": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModeGateInputs",
+      "StateIndex",
+      "StateIndexEvidence"
+     ],
+     "path": "src/affect/state_index.rs",
+     "purpose": "Provenance-carrying composite state for mode selection, never a diagnostic label",
+     "surface": {
+      "const": 3,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/affect/state_index/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -320,8 +381,29 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
+      "mod": 1,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/portable.rs",
+     "purpose": "Canonical, inert AGENT_PACK facets derived from real definitions and selected rows",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/portable_binding.rs",
+     "purpose": "Frozen source tree identity at genuine local birth",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -357,6 +439,28 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "WorkflowDefinition"
+     ],
+     "path": "src/agent_def/workflow.rs",
+     "purpose": "Saved ordered agent compositions",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/agent_def/workflow/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/attenuation.rs",
      "purpose": "Live-ceiling attenuation and deterministic attenuated-fork registration",
@@ -382,7 +486,7 @@
      "path": "src/agent_dispatch/context.rs",
      "purpose": "Spawn-context resolution, sibling-lineage admission, ancestor projection fold",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -394,7 +498,7 @@
      "path": "src/agent_dispatch/dispatch.rs",
      "purpose": "Core dispatch admission: dispatchability, depth bound, enqueue, dedupe",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 5,
       "struct": 1
      }
@@ -424,8 +528,32 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "re-export": 3
+      "re-export": 6
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ResidentAgentSpec",
+      "ResidentGoalRecord",
+      "ResidentWakeMode"
+     ],
+     "path": "src/agent_dispatch/resident.rs",
+     "purpose": "Persistent resident bindings",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/agent_dispatch/resident_tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -436,7 +564,15 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/agent_dispatch/tests/widen.rs",
+     "purpose": "Propose-widen is inert until an authenticated holder of the board above acts",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentDispatchInput",
@@ -458,9 +594,88 @@
       "const": 7,
       "crate-vis": 12,
       "enum": 5,
-      "fn": 5,
+      "fn": 6,
       "struct": 7
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/widen.rs",
+     "purpose": "Fail-closed propose-widen and owner-authenticated, TASK-bound board approval",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContextWidenProposal"
+     ],
+     "path": "src/agent_dispatch/widen_record.rs",
+     "purpose": "Exact, durable widen intents",
+     "surface": {
+      "crate-vis": 20,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/workflow.rs",
+     "purpose": "Atomic saved-workflow admission",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/workflow_host.rs",
+     "purpose": "Typed headless host door for running the one ready workflow leaf",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/workflow_pump.rs",
+     "purpose": "Ordered workflow host pump",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkflowDispatchStatus",
+      "WorkflowProgress",
+      "WorkflowStepResult"
+     ],
+     "path": "src/agent_dispatch/workflow_record.rs",
+     "purpose": "Durable, inert workflow admission and result provenance",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/agent_dispatch/workflow_tests.rs",
+     "purpose": "Headless saved-workflow execution and authority regressions",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -481,10 +696,28 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_inbox_lens/inbound.rs",
+     "purpose": "Identity-stamped conversation and membership projections; no writes or index repairs",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/agent_inbox_lens/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/agent_inbox_lens/tests/inbound.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -728,12 +961,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AnnotationCollaborationState",
+      "AnnotationConversationNode"
+     ],
+     "path": "src/anchored_annotation/conversation.rs",
+     "purpose": "Composition with existing conversation MESSAGE nodes",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/anchored_annotation/mod.rs",
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
      "surface": {
       "crate-vis": 1,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -966,7 +1214,7 @@
      "path": "src/attempt_queue/engine/mutate.rs",
      "purpose": "Retry/intervene/manifest append plus lease-cleanup mutation doors",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -977,8 +1225,18 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/engine/workflow.rs",
+     "purpose": "Transactional point-claim and retry lineage reads for ordered host composition",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -1833,8 +2091,16 @@
      "path": "src/batch/claim_materialization.rs",
      "purpose": "Exact-operation envelope handoff",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/batch/claim_materialization/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -1886,6 +2152,112 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/batch/export/bundle_tests.rs",
+     "purpose": "Source-folder exports and ordinary admission, with no replay/activation bypass",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentBundleOmission",
+      "BundleOmissionReason",
+      "ExportAgentBundle",
+      "ExportBundleOmission",
+      "ExportFileTree",
+      "ExportImportOmission",
+      "ExportImportRefusal",
+      "ExportSkillBundle",
+      "ExportSourceBoundary",
+      "ExportSourceFile",
+      "ImportOmissionReason",
+      "ImportRefusalReason"
+     ],
+     "path": "src/batch/export/bundle_types.rs",
+     "purpose": "Portable source files and typed bundle facets",
+     "surface": {
+      "enum": 6,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/bundle_validation.rs",
+     "purpose": "Validate source identities, facet/body agreement and explicit archive-only omissions",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/document_import.rs",
+     "purpose": "Validating JSON import through ordinary admission doors, never sync replay",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/document_snapshot.rs",
+     "purpose": "Snapshot enumeration for whole-vault export",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/batch/export/document_tests.rs",
+     "purpose": "Observable whole-vault export/import contracts",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExportAdapterDescriptor",
+      "ExportDerivationEnvelope",
+      "ExportEdge",
+      "ExportEntity",
+      "ExportLedger",
+      "ExportSourceVault",
+      "WholeVaultDocument",
+      "WholeVaultDocumentManifest",
+      "WholeVaultExport",
+      "WholeVaultImportReceipt"
+     ],
+     "path": "src/batch/export/document_types.rs",
+     "purpose": "Versioned six-part whole-vault interchange document",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 4,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/document_validation.rs",
+     "purpose": "Import-time validation of the serializer's full document, not its claims",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -1947,7 +2319,7 @@
      "purpose": "Whole-vault export manifest artifact types and stanza impls",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 35,
       "struct": 6
      }
@@ -2001,7 +2373,8 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 5
+      "crate-vis": 1,
+      "re-export": 7
      }
     },
     {
@@ -5101,7 +5474,40 @@
      "path": "src/channel_identity_autonomy/mod.rs",
      "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation",
      "surface": {
-      "re-export": 1
+      "crate-vis": 1,
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FrozenSpacePosting"
+     ],
+     "path": "src/channel_identity_autonomy/posting_dispatch.rs",
+     "purpose": "Space presentation frozen on the normal outbound gate/ledger/transport path",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GroupPostingPreset",
+      "SpacePostingMode",
+      "SpacePostingPlan",
+      "SpacePostingReceipt"
+     ],
+     "path": "src/channel_identity_autonomy/space_posting.rs",
+     "purpose": "Owner-set per-space presentation",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -5109,6 +5515,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/channel_identity_autonomy/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/channel_identity_autonomy/tests/space_posting.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -5609,6 +6023,7 @@
      "purpose": "Read-side memory decay: the pure aging-class `access_factor` contract",
      "surface": {
       "const": 4,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -5725,7 +6140,7 @@
      "path": "src/claim/scope.rs",
      "purpose": "The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -6084,6 +6499,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/coordination_codec.rs",
+     "purpose": "Replay encoding for the typed coordination calls",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/coordination.rs",
+     "purpose": "Code-mode composition: host-bound agents.spawn / tasks.ask / tasks.wait",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/dispatcher/emission.rs",
      "purpose": "Code-emission admission and the deterministic admission record the free lane cites",
      "surface": {
@@ -6250,6 +6686,8 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "SelfAgentSpawnCall",
+      "SelfAgentSpawnResult",
       "SelfAskHumanCall",
       "SelfCall",
       "SelfContextCall",
@@ -6276,9 +6714,9 @@
      "path": "src/code_run/types.rs",
      "purpose": "—",
      "surface": {
-      "enum": 4,
+      "enum": 5,
       "fn": 16,
-      "struct": 17,
+      "struct": 18,
       "trait": 1
      }
     },
@@ -6930,7 +7368,7 @@
      "path": "src/comm/mod.rs",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "re-export": 4
      }
     },
@@ -6962,7 +7400,7 @@
      "path": "src/comm/projector.rs",
      "purpose": "Ordered idempotent projector pass and the record verbs that feed it",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -7775,6 +8213,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/ask_holders.rs",
+     "purpose": "Scope ask recipients resolved from live, owner-stamped action grants",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -7822,7 +8270,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 16,
       "struct": 2
      }
@@ -9098,8 +9546,71 @@
       "const": 5,
       "enum": 3,
       "fn": 22,
+      "mod": 1,
+      "re-export": 1,
       "struct": 9
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MergedFinding"
+     ],
+     "path": "src/critic/findings.rs",
+     "purpose": "Deterministic duplicate consolidation; calibration never counts repeated critic output twice",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CriticReviewInput",
+      "ReviewArtifactKind",
+      "ReviewHost",
+      "ReviewRequest",
+      "ReviewResult"
+     ],
+     "path": "src/critic/review.rs",
+     "purpose": "Artifact-independent review fan-out and the persisted calibration feedback loop",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/critic/review/outcomes.rs",
+     "purpose": "Anchored outcomes, Beta updates and repeat-finding reads",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/critic/review/persistence.rs",
+     "purpose": "Transactional review bundles",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/critic/review/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -10031,7 +10542,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 13,
       "struct": 1
      }
@@ -10686,7 +11197,29 @@
      "path": "src/edit_distance/miner/emission.rs",
      "purpose": "ED-04 preference-claim and skill-edit emission",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/miner/feedback.rs",
+     "purpose": "Immutable, owner-bound decisions used by the preference miner",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/miner/influence.rs",
+     "purpose": "Principal and decay checks at the miner/optimizer's actual read boundary",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -10697,7 +11230,7 @@
      "purpose": "ED-04 substitution-cluster mining pass",
      "surface": {
       "crate-vis": 2,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -10707,7 +11240,8 @@
      "path": "src/edit_distance/miner/mod.rs",
      "purpose": "ED-04 (ONE-1760, ARCH-0056 §4): the recurring-substitution miner — the Dreamer session-end pass that turns a…",
      "surface": {
-      "re-export": 4
+      "crate-vis": 3,
+      "re-export": 7
      }
     },
     {
@@ -10744,12 +11278,53 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/miner/stored_fields.rs",
+     "purpose": "Explicit bounded field codecs for the miner's private JSON ledger",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompilationTarget"
+     ],
+     "path": "src/edit_distance/miner/target.rs",
+     "purpose": "Host-classified compilation proposals",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/miner/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_distance/miner/tests/preference_learning.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/miner/win.rs",
+     "purpose": "Repeated untouched approvals compile into reviewable affirmative evidence",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -12997,6 +13572,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/hub_read.rs",
+     "purpose": "Fixed network-read profile for a private disposable hub object store",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "GitOid",
       "GitRefExpectation",
@@ -13020,7 +13605,7 @@
      "path": "src/git_wire/mod.rs",
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 10
      }
     },
@@ -13847,7 +14432,7 @@
      "purpose": "Write-side inbox bulk bundle consent, approve-with-edit, and bundle-reopen doors",
      "surface": {
       "crate-vis": 1,
-      "fn": 8
+      "fn": 10
      }
     },
     {
@@ -13868,6 +14453,7 @@
      "path": "src/ingest/admission.rs",
      "purpose": "Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging",
      "surface": {
+      "crate-vis": 1,
       "fn": 6,
       "struct": 2
      }
@@ -13900,10 +14486,209 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ingest/meeting_audio/alignment.rs",
+     "purpose": "Exclusive full-file speaker alignment and label-preserving turn assembly",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorizedMeetingImport",
+      "ProducedMeetingTranscript"
+     ],
+     "path": "src/ingest/meeting_audio/artifact.rs",
+     "purpose": "Immutable producer artifact and one approval for the complete import batch",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/cleanup.rs",
+     "purpose": "Conservative fix-don't-invent cleanup with no lexical or speaker edits",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CommandAudioConfig",
+      "CommandMeetingAudioHost"
+     ],
+     "path": "src/ingest/meeting_audio/command.rs",
+     "purpose": "Optional process adapter for an explicitly configured native meeting-audio host",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/command/process.rs",
+     "purpose": "Bounded native-host process lifetime and output",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/command/tests.rs",
+     "purpose": "Framing/refusal tests only",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AudioError"
+     ],
+     "path": "src/ingest/meeting_audio/error.rs",
+     "purpose": "Typed producer refusals; these pre-ingest errors do not alter the vault ABI",
+     "surface": {
+      "enum": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/mod.rs",
+     "purpose": "Boundary-preserving batch meeting-audio producer for the existing ingest adapter",
+     "surface": {
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/packing.rs",
+     "purpose": "Silence removal with source-clock maps and boundary-only 90–120 second packs",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/producer.rs",
+     "purpose": "File → VAD → routed packs → one full-file diarization → cleanup → native artifact",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/provenance.rs",
+     "purpose": "Input-bound inference receipts; validation is not a claim of measured quality",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/tests/algorithms.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/tests/producer.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/meeting_audio/tests/support.rs",
+     "purpose": "Synthetic callback fixtures only: no decoder or model runs in these tests",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AsrOutput",
+      "AsrPackRequest",
+      "AsrRole",
+      "AsrRoute",
+      "AsrWord",
+      "AudioFile",
+      "BatchAsrRequest",
+      "BatchDefault",
+      "BulkImportAuthorizer",
+      "BulkImportBinding",
+      "BulkImportReceipt",
+      "CleanupOutput",
+      "CleanupRequest",
+      "GlobalDiarization",
+      "InferenceExecution",
+      "InferenceProvenance",
+      "MeetingAudioHost",
+      "Pcm16",
+      "ProcessingTier",
+      "ProducerOptions",
+      "SourceSpan",
+      "SpeakerTrack",
+      "SpeechPack",
+      "SpeechSpan",
+      "TranscriptTurn",
+      "TranscriptWord",
+      "VadOutput"
+     ],
+     "path": "src/ingest/meeting_audio/types.rs",
+     "purpose": "Typed host ports for file decoding, inference, routing and explicit import consent",
+     "surface": {
+      "enum": 4,
+      "fn": 2,
+      "struct": 21,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ingest/mod.rs",
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
-      "mod": 1,
+      "crate-vis": 1,
+      "mod": 2,
       "re-export": 6
      }
     },
@@ -14978,7 +15763,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 10
      }
     },
@@ -15066,7 +15851,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -15080,7 +15865,7 @@
      "purpose": "Peer-result delegation (ONE-1700): local TASK-to-trap bindings and peer signal reconcile",
      "surface": {
       "crate-vis": 4,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -15113,13 +15898,21 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/step/tests/ask_wait.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/trap.rs",
      "purpose": "Unified dreamer.trap record lifecycle: open/wait/signal/consume and supersession-chain transitions",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 6
      }
     },
@@ -15289,6 +16082,20 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MemoryAuthoringAction"
+     ],
+     "path": "src/memory/authorship.rs",
+     "purpose": "Actor-bound authorship checks",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -15375,6 +16182,23 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ClaimConflictBundle",
+      "ClaimConflictMember",
+      "ClaimConflictQuestion",
+      "ClaimConflictReceipt"
+     ],
+     "path": "src/memory/claim_conflict.rs",
+     "purpose": "Content-bound conflict questions and owner/delegated-admin rulings",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ClaimInput",
       "CommitReceipt",
       "DeleteReceipt",
@@ -15388,7 +16212,7 @@
       "const": 1,
       "crate-vis": 5,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 5
      }
     },
@@ -15446,9 +16270,9 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 1,
-      "re-export": 12
+      "re-export": 15
      }
     },
     {
@@ -15583,6 +16407,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SkillAuthoringReceipt"
+     ],
+     "path": "src/memory/skill_authoring.rs",
+     "purpose": "Authored skill saves and forks over the existing skill lifecycle gate",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/memory/structural/affiliated.rs",
      "purpose": "Attributed takes, companion records, and imported-claim admission verbs",
@@ -15699,6 +16536,14 @@
      "surface": {
       "crate-vis": 23
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/self_grant.rs",
+     "purpose": "Self-Grant and private admin-ruling falsification tests",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -16748,6 +17593,14 @@
      "notable": [],
      "path": "src/outbound/tests/sender_selection/replay.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/outbound/tests/space_posting.rs",
+     "purpose": "Owner presentation must ride the ordinary gate, frozen payload and recovery",
      "surface": {}
     },
     {
@@ -18561,7 +19414,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContextReceiptFields"
@@ -18570,7 +19423,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 1
      }
     },
@@ -18631,7 +19484,7 @@
      "path": "src/receipt/ledgers.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 3
      }
     },
@@ -18642,7 +19495,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 8
      }
     },
@@ -18772,7 +19625,7 @@
      "path": "src/registry/type_bytes.rs",
      "purpose": "Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant",
      "surface": {
-      "const": 42
+      "const": 44
      }
     },
     {
@@ -19793,6 +20646,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/serialize/credential_nulling.rs",
+     "purpose": "Unconditional credential removal before any context/export format writer",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExportBody",
+      "ExportValue"
+     ],
+     "path": "src/serialize/export_value.rs",
+     "purpose": "Credential-safe, type-preserving MessagePack values for whole-vault JSON",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/serialize/field_profile_table.rs",
      "purpose": "Static entity-type x [`FieldProfile`] to allowed-field-slice table",
      "surface": {
@@ -19846,8 +20723,8 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 1
+      "crate-vis": 5,
+      "re-export": 2
      }
     },
     {
@@ -19873,6 +20750,16 @@
      "purpose": "Pack preparation: entity selection, field projection, value normalization, and the per-format split of a…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/source_tree.rs",
+     "purpose": "Credential-nulled, exact source files",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -19911,6 +20798,26 @@
      "purpose": "Cross-cutting types shared by every `serialize` submodule",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/vault_bundles.rs",
+     "purpose": "Build portable facets after every native body has passed credential nulling",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/vault_document.rs",
+     "purpose": "Whole-vault export uses the ContextPack format writers without retrieval projection, timestamp…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -20191,7 +21098,7 @@
      "path": "src/skill/doors.rs",
      "purpose": "Typed Vault doors for SKILL records",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 5
      }
     },
@@ -20232,7 +21139,20 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LoadedSkillPack"
+     ],
+     "path": "src/skill/pack_load.rs",
+     "purpose": "Attempt-bound pack reads stamp their actual revision in the same transaction",
+     "surface": {
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -20317,7 +21237,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -20327,7 +21247,24 @@
      "path": "src/skill_attribution/projector.rs",
      "purpose": "Evidence door and ordered idempotent projection from evidence to judgments and edit proposals",
      "surface": {
+      "crate-vis": 1,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttributionSweepReport",
+      "ReceiptAttributionFacts",
+      "ReceiptAttributionSource"
+     ],
+     "path": "src/skill_attribution/sweep.rs",
+     "purpose": "TASK-lane receipt pump: capture once, route, then resume both idempotent projections",
+     "surface": {
+      "fn": 2,
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -20335,6 +21272,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/skill_attribution/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_attribution/tests/sweep.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -20362,7 +21307,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill_convert/door.rs",
-     "purpose": "The convert door itself: fence-checked selection in, mechanical hash dedup, and one record landed in one…",
+     "purpose": "The convert door itself: fence-checked selection in, mechanical hash dedup, and one record and its exact…",
      "surface": {
       "crate-vis": 1,
       "fn": 1
@@ -20463,6 +21408,66 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HubAdmissionDisposition",
+      "HubAdmissionReceipt"
+     ],
+     "path": "src/skill_hub/admission.rs",
+     "purpose": "Consent-bound held-out admission, using the existing host scorer and lifecycle write door",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/admission_guard.rs",
+     "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/admission_tests.rs",
+     "purpose": "The externally observable consent, raw-door, held-out, dedup, and shared-merge laws",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HubActivationAsk",
+      "HubAskSurface"
+     ],
+     "path": "src/skill_hub/admission_view.rs",
+     "purpose": "Engine-computed install asks: trust changes presentation, never authorization",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/archive.rs",
+     "purpose": "Offline archive import is another Candidate birth, never an activation ticket",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -20476,6 +21481,77 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/folder.rs",
+     "purpose": "Strict portable SKILL.md frontmatter subset used by real hub transports",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/fork_source.rs",
+     "purpose": "A fork copies real files and edits source identity before hashing the new tree",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GitEndpointSkillHubAdapter"
+     ],
+     "path": "src/skill_hub/git_fetch.rs",
+     "purpose": "Generic pinned Git subtree reads",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/git_process.rs",
+     "purpose": "Private disposable object store; all Git processes use the GitWire boundary",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HttpEndpointSkillHubAdapter"
+     ],
+     "path": "src/skill_hub/http_fetch.rs",
+     "purpose": "Generic bounded static HTTP index",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HubImportReceipt"
+     ],
+     "path": "src/skill_hub/import_receipt.rs",
+     "purpose": "Source receipts and admitted-publisher ingress beside content dedup, never in place of it",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -20496,8 +21572,8 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 6
+      "crate-vis": 7,
+      "re-export": 15
      }
     },
     {
@@ -20507,14 +21583,41 @@
       "HubFile",
       "HubIndexEntry",
       "HubPackage",
-      "SkillCapabilitySurface"
+      "SkillCapabilitySurface",
+      "SkillPackageFormat"
      ],
      "path": "src/skill_hub/package.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 6,
+      "enum": 1,
       "fn": 8,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/package_codec.rs",
+     "purpose": "Bounded, typed package persistence",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ForeignSkillPublisher"
+     ],
+     "path": "src/skill_hub/publisher.rs",
+     "purpose": "A publisher is a foreign actor with an owner-minted, revocable offer-only grant",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -20542,6 +21645,48 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SharedSkillDelta",
+      "SharedSkillLane"
+     ],
+     "path": "src/skill_hub/shared_delta.rs",
+     "purpose": "Submitted-byte federation merge-back and company PR staging",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SharedSkillMergeAsk",
+      "SharedSkillMergeDisposition",
+      "SharedSkillMergeReceipt",
+      "UsefulUpstreamJudge"
+     ],
+     "path": "src/skill_hub/shared_gate.rs",
+     "purpose": "Useful-upstream and held-out merge gate for submitted shared-skill deltas",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/source_birth_tests.rs",
+     "purpose": "New births retain exact source and cannot acquire archive authority from a format tag",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/skill_hub/support.rs",
      "purpose": "—",
@@ -20555,6 +21700,24 @@
      "notable": [],
      "path": "src/skill_hub/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/tests/support.rs",
+     "purpose": "Imported Active fixtures traverse the same consent and held-out doors as a host",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/transport_tests.rs",
+     "purpose": "Real Git repositories and loopback static HTTP fixtures; no mocked adapter calls",
      "surface": {}
     },
     {
@@ -20589,9 +21752,9 @@
      "purpose": "The author seam and the dev-partitioned evidence brief handed across it",
      "surface": {
       "const": 3,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 1,
       "trait": 1
      }
@@ -20698,7 +21861,7 @@
      "surface": {
       "const": 8,
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -20722,6 +21885,7 @@
      "path": "src/skill_optimize/selection.rs",
      "purpose": "Which skill the job may work on: the tier-filtered, dev-partitioned ranking and the reading behind it",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -21577,6 +22741,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CcAgentIntakeOutcome"
+     ],
+     "path": "src/surface_event/cc_intake.rs",
+     "purpose": "Atomic named-address CC intake: passport, membership event, then durable coordination handoff",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -21595,7 +22772,7 @@
      "purpose": "Durable admission txn, attempt payload codec, dispatch handoff, and status reads",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 4,
       "fn": 9,
       "struct": 5,
@@ -21635,7 +22812,7 @@
      "path": "src/surface_event/mod.rs",
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)",
      "surface": {
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -21643,6 +22820,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/surface_event/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/surface_event/tests/cc_intake.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -22494,6 +23679,47 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_facade.rs",
+     "purpose": "Async scope-authority asks over existing consult TASKs",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_record.rs",
+     "purpose": "Protected replicated ask facts",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AskAuthorityScope",
+      "TaskAskAnswer",
+      "TaskAskHandle",
+      "TaskAskHoldReason",
+      "TaskAskReceipt",
+      "TaskAskSpec",
+      "TaskAskStatus",
+      "TaskAskTarget",
+      "TaskAskWait"
+     ],
+     "path": "src/task_verb/ask_types.rs",
+     "purpose": "Addressable scope asks: immutable membership, durable handles, and first-answer projection",
+     "surface": {
+      "enum": 4,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -22574,7 +23800,7 @@
      "path": "src/task_verb/create_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -22653,7 +23879,7 @@
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
       "crate-vis": 2,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -22731,6 +23957,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/task_verb/tests/addressable_consults.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/task_verb/tests/authority_asks.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -22744,6 +23986,14 @@
      "notable": [],
      "path": "src/task_verb/tests/cancel.rs",
      "purpose": "Task verb tests: Cancel ladder, spawn and agent-dispatch cancel, sibling cancel, force hard-cancel and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/task_verb/tests/code_lead.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -23160,6 +24410,7 @@
      "path": "src/thread_passport/vault_doors.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "fn": 6
      }
     },
@@ -24764,35 +26015,35 @@
      "purpose": "AccessGrant control-plane record substrate"
     },
     "actor_claims": {
-     "files": 7,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…"
     },
     "affect": {
-     "files": 7,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
     "agent_def": {
-     "files": 7,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 9,
-     "impl_vault": false,
+     "files": 19,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate"
     },
     "agent_inbox_lens": {
-     "files": 2,
+     "files": 4,
      "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "file+dir",
@@ -24813,7 +26064,7 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -24827,7 +26078,7 @@
      "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots"
     },
     "attempt_queue": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -24848,7 +26099,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 59,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -24918,7 +26169,7 @@
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)"
     },
     "channel_identity_autonomy": {
-     "files": 7,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -24995,7 +26246,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 29,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25093,7 +26344,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25156,7 +26407,7 @@
      "purpose": "ARCH-0068 RC4 — the credential door (CSTDY-02)"
     },
     "critic": {
-     "files": 2,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -25254,7 +26505,7 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 59,
+     "files": 65,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -25359,7 +26610,7 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25429,7 +26680,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 8,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25478,7 +26729,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25499,7 +26750,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 49,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25527,7 +26778,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25744,7 +26995,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 13,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25779,14 +27030,14 @@
      "purpose": "Revocable brief read grants"
     },
     "skill": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 7,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25800,7 +27051,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 9,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25856,7 +27107,7 @@
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)"
     },
     "surface_event": {
-     "files": 4,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -25884,7 +27135,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 30,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26005,8 +27256,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1487,
-   "test_files": 532
+   "source_files": 1563,
+   "test_files": 563
   },
   "oneiron-bench": {
    "files": [
