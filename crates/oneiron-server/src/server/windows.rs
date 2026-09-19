@@ -123,6 +123,21 @@ pub(super) fn spawn_local_change_producer(
     let Ok(runtime) = tokio::runtime::Handle::try_current() else {
         return;
     };
+    let mut documents = reassert_manager.documents().subscribe();
+    let document_tx = broadcast_tx.clone();
+    runtime.spawn(async move {
+        loop {
+            match documents.recv().await {
+                Ok(frame) => {
+                    let _ = document_tx.send(BroadcastPayload::Frame(0, frame));
+                }
+                Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    let _ = document_tx.send(BroadcastPayload::Resync { missed });
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
     let (updates_tx, mut updates_rx) = tokio::sync::mpsc::unbounded_channel();
     reassert_manager.outbound().attach(updates_tx);
 
@@ -151,3 +166,6 @@ pub(super) fn spawn_local_change_producer(
         }
     });
 }
+
+#[cfg(test)]
+mod tests;
