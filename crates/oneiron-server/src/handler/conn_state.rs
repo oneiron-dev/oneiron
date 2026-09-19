@@ -17,6 +17,7 @@ pub(super) struct ConnState {
     federation_quota: FederationConnectionQuota,
     rate_limiter: MessageRateLimiter,
     pub(super) window_sync_mode: WindowSyncMode,
+    pub(super) lfs_owner_mode: bool,
     pub(super) protocol_version: u8,
     /// App-tier authority is established only by a successful in-band bind.
     pub(super) bound_auth: Option<CoreAuth>,
@@ -33,6 +34,7 @@ impl ConnState {
             federation_quota: FederationConnectionQuota::new(federation_quota),
             rate_limiter: MessageRateLimiter::new(max_messages_per_sec),
             window_sync_mode: WindowSyncMode::Unbound,
+            lfs_owner_mode: false,
             protocol_version,
             bound_auth: None,
         }
@@ -73,20 +75,27 @@ impl ConnState {
         &mut self,
         mode: WindowSyncMode,
     ) -> Result<(), ProtocolError> {
+        if mode == WindowSyncMode::Selector && self.lfs_owner_mode {
+            return Err(ProtocolError::InvalidPayload(
+                "owner chunk connection cannot become selector-scoped",
+            ));
+        }
         if mode == WindowSyncMode::Unbound {
             return Ok(());
         }
         match mode {
             WindowSyncMode::Selector
                 if self.protocol_version != protocol::PROTOCOL_VERSION
-                    && self.protocol_version != protocol::LEGACY_SELECTOR_PROTOCOL_VERSION =>
+                    && self.protocol_version != protocol::LEGACY_SELECTOR_PROTOCOL_VERSION
+                    && self.protocol_version != protocol::APP_TIER_PROTOCOL_VERSION_VERSION =>
             {
                 return Err(ProtocolError::InvalidPayload(
                     "selector sync requires the current selector protocol",
                 ));
             }
             WindowSyncMode::FullWindow
-                if self.protocol_version != protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION =>
+                if self.protocol_version != protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
+                    && self.protocol_version != protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION =>
             {
                 return Err(ProtocolError::InvalidPayload(
                     "full-window sync requires the current full-window protocol",

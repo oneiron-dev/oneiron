@@ -43,6 +43,10 @@ use loro::{CommitOptions, ExportMode, LoroDoc, VersionVector};
 /// refuses any base edge naming a live overlay member, so `edges_out` over
 /// base rows cannot produce one.
 pub(super) fn window_packing_excludes_entity(vault: &Vault, id: &EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, id)? {
+        return Ok(true);
+    }
     vault.store.off_record_sessions.contains_entity(id)
 }
 
@@ -89,7 +93,10 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
     let mut malformed_key_carriers: Vec<String> = Vec::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
-        if !is_secret_custody_record(blob) {
+        let lfs_chunk = EntityId::from_hex(raw_key)
+            .ok()
+            .is_some_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob));
+        if !is_secret_custody_record(blob) && !lfs_chunk {
             return;
         }
         match EntityId::from_hex(raw_key) {

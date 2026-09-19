@@ -267,6 +267,6 @@ fn map_selector_filter_err(e: oneiron::Error) -> ProtocolError {
     }
 }
 
-pub(super) fn selector_grant_scope() -> oneiron::FederationGrantScope {
+pub(crate) fn selector_grant_scope() -> oneiron::FederationGrantScope {
     oneiron::FederationGrantScope::vault(SERVER_SELECTOR_VAULT_ID)
 }

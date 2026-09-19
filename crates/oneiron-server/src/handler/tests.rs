@@ -2417,7 +2417,15 @@ fn protocol_hello_validation_literals() {
     );
     assert_eq!(
         validate_protocol_hello(&[3, 8]),
+        Ok(protocol::APP_TIER_PROTOCOL_VERSION_VERSION)
+    );
+    assert_eq!(
+        validate_protocol_hello(&[3, 9]),
         Ok(protocol::PROTOCOL_VERSION)
+    );
+    assert_eq!(
+        validate_protocol_hello(&[3, 10]),
+        Ok(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
     );
 
     let cases: &[(&str, &[u8])] = &[
@@ -2426,7 +2434,7 @@ fn protocol_hello_validation_literals() {
         ("old_selector_v3_peer", &[3, 3]),
         ("old_full_window_v4_peer", &[3, 4]),
         ("old_selector_v5_peer", &[3, 5]),
-        ("future_version", &[3, 9]),
+        ("future_version", &[3, 11]),
         ("zero_version", &[3, 0]),
         ("wrong_tag", &[2, 7]),
         ("empty", &[]),

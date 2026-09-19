@@ -15,14 +15,6 @@ use serde::Serialize;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-/// The largest LFS object body this origin accepts, per route.
-///
-/// A named constant rather than configuration on purpose: axum's default body
-/// limit is 2 MiB, which would cap LFS uploads far below anything LFS is FOR,
-/// and a silent cap is worse than a stated one. 16 MiB is the v1 default;
-/// moving it wants a product reason, not a deployment knob.
-pub(crate) const LFS_MAX_OBJECT_BYTES: usize = 16 * 1024 * 1024;
-
 /// The media type a downloaded object body carries. LFS bytes are opaque: this
 /// origin never guesses a content type for content it stores as a digest.
 pub(super) const LFS_OBJECT_MEDIA_TYPE: &str = "application/octet-stream";

@@ -35,6 +35,15 @@ impl SyncClient {
         let mut responses = Vec::new();
 
         match tag {
+            transport::TAG_LFS_CHUNK_SYNC => {
+                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
+                    return Err(TransportError::FrameTooLarge {
+                        size: payload.len(),
+                        max: MAX_DECODED_PAYLOAD_BYTES,
+                    });
+                }
+                responses.extend(self.handle_lfs_chunk_reply(payload)?);
+            }
             TAG_SYNC_UPDATE => {
                 // Root doc update/snapshot from server — cap before import so a
                 // hostile/buggy server cannot force an unbounded allocation.

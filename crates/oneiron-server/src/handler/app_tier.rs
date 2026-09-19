@@ -21,6 +21,9 @@ pub(super) async fn handle_sync_message(
     conn_state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
     match msg {
+        SyncMessage::LfsChunks(payload) => {
+            super::lfs_chunks::handle(server, payload, direct_tx, conn_state).await
+        }
         SyncMessage::Rpc(payload) => {
             handle_app_message(server, conn_state, protocol::TAG_RPC, &payload, direct_tx)
         }
