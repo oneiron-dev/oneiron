@@ -2,6 +2,7 @@
 mod curator;
 mod evaluation;
 mod proposals;
+pub mod representation;
 #[cfg(test)]
 mod tests;
 use super::{
@@ -60,6 +61,9 @@ pub(crate) fn execute(
         }
         HARNESS_FACET => {
             evaluation::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
+        representation::REPRESENTATION_FACET => {
+            representation::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         _ => return Err(invalid()),
     }
