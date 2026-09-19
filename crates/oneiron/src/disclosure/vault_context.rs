@@ -1,9 +1,11 @@
 //! vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block.
 
+use crate::ports::EntityStoreRead;
 use heed::RoTxn;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+use sha2::Sha256;
 
 use crate::Vault;
 use crate::affect::Vad;
@@ -103,8 +105,8 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .entities
-            .get(&wtxn, contact_id.as_bytes())?
+            .port_entity_record(&wtxn, &contact_id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -150,7 +152,7 @@ impl Vault {
     /// owner-visible `disclosure.tier` claim, one wtxn.
     pub fn set_disclosure_tier_a(&self, id: &EntityId, marked_at: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_none() {
+        if self.store.port_entity_record(&wtxn, &id)?.is_none() {
             return Err(Error::EntityNotFound);
         }
         self.store.vault_meta.put(
@@ -183,14 +185,18 @@ impl Vault {
     /// the engine-internal door below.
     pub fn clear_disclosure_tier_a(&self, id: &EntityId, cleared_at: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_none() {
+        if self.store.port_entity_record(&wtxn, &id)?.is_none() {
             return Err(Error::EntityNotFound);
         }
         self.store
             .vault_meta
             .delete(&mut wtxn, &disclosure_tier_a_meta_key(id))?;
         let claim_id = disclosure_tier_claim_id(id)?;
-        if let Some(raw) = self.store.entities.get(&wtxn, claim_id.as_bytes())? {
+        if let Some(raw) = self
+            .store
+            .port_entity_record(&wtxn, &claim_id)?
+            .map(|row| row.encode())
+        {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type == ENTITY_TYPE_CLAIM
@@ -309,7 +315,7 @@ impl DisclosureContext {
     pub fn resolve(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
         let mode = DisclosureMode::from_set(&set);
         let scope = if mode == DisclosureMode::AbsenceClamp && set.has_non_owner() {
-            let now = crate::unix_seconds_now();
+            let now = vault.store.clock.now_recorded_at();
             let mut folded: Option<DisclosureScope> = None;
             for entry in set.non_owner() {
                 let entry_scope = match entry.contact_ref() {

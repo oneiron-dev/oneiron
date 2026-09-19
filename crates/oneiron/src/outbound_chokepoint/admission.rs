@@ -242,6 +242,7 @@ fn charge_once(
     budget_class: BudgetClass,
     now_ms: u64,
 ) -> Result<(BudgetChargeMarker, Option<EffectorBudgetCharge>, bool), IntentLedgerError> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let Some(target) = governance.budget_target_mut() else {
         return Ok((
             BudgetChargeMarker {
@@ -258,7 +259,7 @@ fn charge_once(
     // Budget windows are enforcement state, so they advance on the engine's
     // trusted clock rather than a caller-supplied occurrence timestamp. This
     // also keeps the post-charge echo aligned with `effector_budget_read`.
-    let budget_now = crate::unix_seconds_now();
+    let budget_now = mutation_recorded_at;
     let outcome = connector_key::charge_effector_budgets(
         &vault.store,
         wtxn,

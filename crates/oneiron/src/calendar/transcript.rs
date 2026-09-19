@@ -230,7 +230,7 @@ fn persist_turns(
     turns: &[ParsedTranscriptTurn],
     arrived_at_ms: u64,
 ) -> crate::Result<Vec<crate::EntityId>> {
-    let conversation_ref = crate::EntityId::now();
+    let conversation_ref = vault.store.clock.entity_id()?;
     vault
         .batch_in()
         .put(
@@ -246,7 +246,7 @@ fn persist_turns(
         .apply(wtxn)?;
     let mut ids = Vec::with_capacity(turns.len());
     for turn in turns {
-        let id = crate::EntityId::now();
+        let id = vault.store.clock.entity_id()?;
         // GATE-10 keys carry the ROLE, never the display name: the shared
         // turn-body decoder is first-wins across the `speaker|spkr` alias set,
         // so a human label parked in `speaker` would decode as the turn's role

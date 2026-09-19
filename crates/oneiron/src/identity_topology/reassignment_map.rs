@@ -2,6 +2,7 @@
 //! canonical wire codec, and the per-claim `vault_meta` rows the split and
 //! facet apply doors record it as.
 
+use crate::ports::EdgeStoreRead;
 use std::collections::BTreeSet;
 
 use rmpv::Value;
@@ -419,11 +420,7 @@ fn resolve_reassignment_in_txn(
             continue;
         }
         if store
-            .edges_out
-            .get(
-                rtxn,
-                &Store::encode_edge_key(&claim, EdgeKind::ClaimOf, origin),
-            )?
+            .port_edge_get(rtxn, &claim, EdgeKind::ClaimOf, origin)?
             .is_none()
         {
             continue;

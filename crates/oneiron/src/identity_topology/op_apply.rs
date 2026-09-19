@@ -207,7 +207,7 @@ impl Vault {
         // Minted in the arm rather than at the write chokepoint: the
         // reassignment index files each row under the event that stated it,
         // so the event's identity has to exist before its effects do.
-        let event_id = EntityId::now();
+        let event_id = self.store.clock.entity_id()?;
         match op {
             IdentityTopologyOp::Merge(merge) => {
                 let action = StoredIdentityOpAction::Merge {
@@ -376,7 +376,7 @@ impl Vault {
         let mut minted = Vec::with_capacity(facet.facets.len());
         let mut ops = Vec::with_capacity(facet.facets.len() * 2);
         for spec in &facet.facets {
-            let id = EntityId::now();
+            let id = self.store.clock.entity_id()?;
             minted.push(id);
             ops.push(BatchOp::Put {
                 id,
@@ -466,6 +466,23 @@ impl Vault {
             true,
         )?;
         if write.is_effective() {
+            if let StoredIdentityOpAction::Merge { sources, survivor } = &record.action {
+                let input = encode_identity_topology_event_body(&record)?;
+                for entity in sources.iter().chain(std::iter::once(survivor)) {
+                    crate::ports::audit_mutation_in_txn(
+                        &self.store,
+                        wtxn,
+                        crate::ports::MutationAudit {
+                            entity: *entity,
+                            op: crate::ports::ChangeOp::Merge,
+                            actor_principal: write.actor.map(WriteActor::entity_ref),
+                            occurred_at: now,
+                            input: &input,
+                            reason: Some("identity merge"),
+                        },
+                    )?;
+                }
+            }
             // ONE-1744 redirect maintenance, AFTER the edges land: the
             // projection derives each row from the post-op shell edges (plus
             // the ledger for the zero-head arm), so running it before

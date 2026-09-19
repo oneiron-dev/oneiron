@@ -297,10 +297,7 @@ impl Vault {
             // the usable graph. Validate without healing in this SAME write
             // snapshot before dropping anything: lazy rebuild must be able
             // to recover every source row, not just the healed subset.
-            for entry in self.store.vectors.iter(&*wtxn)? {
-                let (id_bytes, vector_bytes) = entry?;
-                crate::maintain::validate_rebuild_vector(self, &id_bytes, &vector_bytes)?;
-            }
+            crate::ports::RetrievalIndexMaintenance::port_retrieval_validate_rebuild(self, &*wtxn)?;
             let ppr = crate::ppr::drop_rebuildable_ppr_cache(&self.store, wtxn)?;
             let hnsw = crate::hnsw::drop_rebuildable_hnsw(&self.store, wtxn)?;
             Ok(ppr.merged(hnsw))

@@ -2,9 +2,11 @@
 //! set from the ledger fold — the store-level reconcile passes and the vault
 //! wrappers the sync-ingest and post-eviction doors call them through.
 
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
 
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, apply_ops};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -142,8 +144,8 @@ fn reconcile_shell_edges_for_sources_in_txn(
                 if *desired_kind != kind {
                     continue;
                 }
-                if store.entities.get(&*wtxn, entity.as_bytes())?.is_none()
-                    || store.entities.get(&*wtxn, target.as_bytes())?.is_none()
+                if store.port_entity_record(&*wtxn, &entity)?.is_none()
+                    || store.port_entity_record(&*wtxn, &target)?.is_none()
                 {
                     continue;
                 }
@@ -155,16 +157,17 @@ fn reconcile_shell_edges_for_sources_in_txn(
                     crate::affect::Vad::NEUTRAL,
                     None,
                 )?;
-                let out_key = Store::encode_edge_key(entity, kind, target);
-                let in_key = Store::encode_edge_key(target, kind, entity);
+
+                let expected = crate::edge::decode_edge_value_for_kind(kind, &canonical)?;
                 let out_matches = store
-                    .edges_out
-                    .get(&*wtxn, &out_key)?
-                    .is_some_and(|value| value == canonical.as_slice());
-                let in_matches = store
-                    .edges_in
-                    .get(&*wtxn, &in_key)?
-                    .is_some_and(|value| value == canonical.as_slice());
+                    .port_edge_get(&*wtxn, entity, kind, target)?
+                    .is_some_and(|edge| {
+                        edge.weight == expected.weight
+                            && edge.created_at == expected.created_at
+                            && edge.vad == expected.vad
+                            && edge.provenance == expected.provenance
+                    });
+                let in_matches = store.port_edge_consistent(&*wtxn, entity, kind, target)?;
                 if out_matches && in_matches {
                     continue;
                 }
@@ -242,14 +245,14 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<BTreeSet<EntityId>>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+
+    if raw.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         return Ok(None);
     }
-    let record = decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+    let record = decode_identity_topology_event_body(&raw.body)
         .map_err(|_| Error::CorruptedIndex("identity topology event body"))?;
     let action = match &record.action {
         StoredIdentityOpAction::Undo { target } => {

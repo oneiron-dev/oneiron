@@ -7,6 +7,8 @@ use crate::claim::{
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::memory::MemoryResult;
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_TURN};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -128,17 +130,16 @@ pub(crate) fn live_origin(
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> Result<Option<CalendarOrigin>> {
-    let prefix = crate::vault::edge_kind_prefix(&event, EdgeKind::ClaimOf);
     let mut chosen = None;
-    for entry in store.edges_in.prefix_iter(txn, &prefix)? {
-        let (key, _) = entry?;
-        let id = EntityId::from_bytes(
-            key.get(17..33)
-                .ok_or(invalid("calendar claim edge"))?
-                .try_into()
-                .map_err(|_| invalid("calendar claim edge"))?,
-        )?;
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    for entry in store.port_edges(
+        txn,
+        &event,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::ClaimOf),
+        None,
+    )? {
+        let id = entry?.target;
+        let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
             continue;
         };
         let Some(bytes) = raw
@@ -178,8 +179,8 @@ impl Vault {
         if occurred.start > occurred.end {
             return Err(invalid("calendar time is reversed").into());
         }
-        let event = EntityId::now();
-        let at = crate::unix_seconds_now();
+        let event = self.store.clock.entity_id()?;
+        let at = self.store.clock.now_recorded_at();
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_verified_actor_write_txn(|txn| {
                 self.stage_calendar_event(txn, input, occurred, actor, event, at)?;
@@ -231,7 +232,7 @@ impl Vault {
                 Value::from(actor.entity_ref().to_hex()),
             ),
         ]));
-        self.put_reserved_claim_in_txn(txn, &EntityId::now(), &claim, occurred, at)?;
+        self.put_reserved_claim_in_txn(txn, &self.store.clock.entity_id()?, &claim, occurred, at)?;
         self.batch_in()
             .put(&event, ENTITY_TYPE_EVENT, occurred, at, &body)
             .apply(txn)?;
@@ -353,14 +354,32 @@ pub(crate) fn validate_event_write(
             ));
         }
     } else if !replicated {
-        if ["evidenceTurnIds", "sourceFrontiers", "rrule", "calendarName", "importSource", "externalId"]
-            .iter().any(|field| get(field).is_some()) {
+        if [
+            "evidenceTurnIds",
+            "sourceFrontiers",
+            "rrule",
+            "calendarName",
+            "importSource",
+            "externalId",
+        ]
+        .iter()
+        .any(|field| get(field).is_some())
+        {
             return Err(invalid("calendar EVENT fields require origin"));
         }
-        let prefix = crate::vault::edge_kind_prefix(&event, EdgeKind::ClaimOf);
-        for entry in store.edges_in.prefix_iter(txn, &prefix)? {
-            let (key, _) = entry?;
-            let Some(raw) = store.entities.get(txn, &key[17..])? else {
+
+        for entry in store.port_edges(
+            txn,
+            &event,
+            crate::ports::EdgeDirection::In,
+            Some(EdgeKind::ClaimOf),
+            None,
+        )? {
+            let peer = entry?.target;
+            let Some(raw) = store
+                .port_entity_record(txn, &peer)?
+                .map(|row| row.encode())
+            else {
                 continue;
             };
             let Some(bytes) = raw
@@ -388,17 +407,20 @@ pub(crate) fn invalidate_dependents(
     txn: &mut heed::RwTxn<'_>,
     source: &EntityId,
 ) -> Result<()> {
-    let prefix = crate::vault::edge_kind_prefix(source, EdgeKind::DerivedFrom);
     let mut dependents = Vec::new();
-    for entry in vault.store.edges_in.prefix_iter(txn, &prefix)? {
-        let (key, _) = entry?;
-        let event = EntityId::from_bytes(
-            key.get(17..33)
-                .ok_or(invalid("calendar dependency edge"))?
-                .try_into()
-                .map_err(|_| invalid("calendar dependency edge"))?,
-        )?;
-        let Some(raw) = vault.store.entities.get(txn, event.as_bytes())? else {
+    for entry in vault.store.port_edges(
+        txn,
+        source,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::DerivedFrom),
+        None,
+    )? {
+        let event = entry?.target;
+        let Some(raw) = vault
+            .store
+            .port_entity_record(txn, &event)?
+            .map(|row| row.encode())
+        else {
             continue;
         };
         if EntityMetadataHeader::parse(&raw).is_some_and(|h| h.entity_type == ENTITY_TYPE_EVENT)

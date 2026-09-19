@@ -271,6 +271,7 @@ impl<T: ManifestDbs> super::EdgeStoreRead for T {
         after: Option<EntityId>,
     ) -> Result<PortRows<'a, crate::edge::EdgeInfo>> {
         use std::ops::Bound;
+        let center = *center;
         let mut prefix = center.as_bytes().to_vec();
         if let Some(kind) = kind {
             prefix.push(kind as u8);
@@ -303,9 +304,13 @@ impl<T: ManifestDbs> super::EdgeStoreRead for T {
                     row.as_ref()
                         .map_or(true, |(key, _)| key.starts_with(&prefix))
                 })
-                .map(|row| {
+                .map(move |row| {
                     let (key, value) = row?;
-                    Ok(crate::edge::parse_strict_edge_record(&key, &value)?.into_edge_info())
+                    let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
+                    if edge.source != center || kind.is_some_and(|kind| kind != edge.kind) {
+                        return Err(Error::CorruptedIndex("centered edge stream"));
+                    }
+                    Ok(edge.into_edge_info())
                 }),
             ));
         }

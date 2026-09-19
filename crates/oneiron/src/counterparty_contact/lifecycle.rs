@@ -14,10 +14,11 @@ use super::types::{
     CounterpartyContactRecord, CounterpartyOptOut, CounterpartyOptOutReason, KEY_SCHEMA_VERSION,
 };
 use crate::Vault;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, apply_ops};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RecordError, Result};
+use crate::ports::EntityStoreRead;
 use crate::temporal::TimeRange;
 use rmpv::Value;
 
@@ -46,14 +47,12 @@ pub(crate) fn supersede_family_owned_claim_in_txn(
     }
     let raw = vault
         .store
-        .entities
-        .get(&*wtxn, old_id.as_bytes())?
+        .port_entity_record(&*wtxn, &old_id)?
         .ok_or(Error::EntityNotFound)?;
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-        return Err(Error::InvalidEntityType(header.entity_type));
+    if raw.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return Err(Error::InvalidEntityType(raw.entity_type));
     }
-    let mut body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    let mut body = crate::claim::decode_claim_body(&raw.body, true)?;
     if body.lifecycle != ClaimLifecycleStatus::Active {
         return Err(Error::InvalidClaimBody(
             "family-owned supersession target is not active",
@@ -72,10 +71,10 @@ pub(crate) fn supersede_family_owned_claim_in_txn(
                 id: *old_id,
                 entity_type: crate::registry::ENTITY_TYPE_CLAIM,
                 occurred: TimeRange {
-                    start: header.occurred_start,
-                    end: now.max(header.occurred_start),
+                    start: raw.occurred.start,
+                    end: now.max(raw.occurred.start),
                 },
-                learned_at: header.learned_at,
+                learned_at: raw.learned_at,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: true,
@@ -335,7 +334,7 @@ pub fn rematerialize_contact_cache(
     contact_id: &EntityId,
 ) -> Result<CounterpartyContactRecord> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let now = crate::unix_seconds_now();
+    let now = vault.store.clock.now_recorded_at();
     rematerialize_contact_cache_in_txn(vault, &mut wtxn, contact_id, now)?;
     let record = read_counterparty_contact_in_txn(&vault.store, &wtxn, contact_id)?
         .ok_or(Error::EntityNotFound)?;
@@ -365,14 +364,6 @@ pub fn drop_contact_cache_row(vault: &Vault, contact_id: &EntityId) -> Result<()
     let Some(record) = read_counterparty_contact_in_txn(&vault.store, &wtxn, contact_id)? else {
         return Ok(());
     };
-    let header = {
-        let raw = vault
-            .store
-            .entities
-            .get(&wtxn, contact_id.as_bytes())?
-            .ok_or(Error::CorruptedIndex("counterparty contact entity row"))?;
-        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?
-    };
     let index_key = counterparty_contact_index_key_for_record(&record)?;
     vault.store.vault_meta.delete(&mut wtxn, &index_key)?;
     if let Some(channel_class) = counterparty_contact_channel_class(&vault.store, &wtxn, &record)? {
@@ -384,21 +375,7 @@ pub fn drop_contact_cache_row(vault: &Vault, contact_id: &EntityId) -> Result<()
             *contact_id,
         )?;
     }
-    crate::batch::delete_entity_index_rows(
-        &vault.store,
-        &mut wtxn,
-        contact_id,
-        header.entity_type,
-        TimeRange {
-            start: header.occurred_start,
-            end: header.occurred_end,
-        },
-        header.learned_at,
-    )?;
-    vault
-        .store
-        .entities
-        .delete(&mut wtxn, contact_id.as_bytes())?;
+    crate::ports::EntityStore::port_entity_delete(vault, &mut wtxn, contact_id)?;
     wtxn.commit()?;
     Ok(())
 }

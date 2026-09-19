@@ -2,6 +2,8 @@
 use super::graph::{MIGRATED, invalid, key};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use crate::store::Store;
 use crate::{
     EntityId,
@@ -39,8 +41,8 @@ pub(crate) fn validate_local_membership(
     }
     let is_kind = |id: &EntityId, kind| -> Result<bool> {
         Ok(store
-            .entities
-            .get(txn, id.as_bytes())?
+            .port_entity_record(txn, &id)?
+            .map(|row| row.encode())
             .is_some_and(|raw| raw.first() == Some(&kind)))
     };
     if !is_kind(&record, ENTITY_TYPE_TURN)? || !is_kind(&conversation, ENTITY_TYPE_CONVERSATION)? {
@@ -54,8 +56,7 @@ pub(crate) fn validate_local_membership(
         return Err(Error::CorruptedIndex("conversation migration marker"));
     }
     if store
-        .edges_out
-        .get(txn, &Store::encode_edge_key(&record, kind, &conversation))?
+        .port_edge_get(txn, &record, kind, &conversation)?
         .is_some()
     {
         return Ok(());

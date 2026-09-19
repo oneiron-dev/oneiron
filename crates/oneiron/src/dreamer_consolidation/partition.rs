@@ -1,3 +1,4 @@
+use crate::ports::EdgeStoreRead;
 use std::collections::BTreeMap;
 
 use rmpv::Value;
@@ -415,17 +416,19 @@ pub(crate) fn read_partition_turns_in_txn(
                 "dreamer planned turn is not admissible",
             ));
         }
-        let prefix = crate::vault::edge_kind_prefix(turn_id, crate::edge::EdgeKind::ChildOf);
+
         let conversation = vault
             .store
-            .edges_out
-            .prefix_iter(txn, &prefix)?
+            .port_edges(
+                txn,
+                turn_id,
+                crate::ports::EdgeDirection::Out,
+                Some(crate::edge::EdgeKind::ChildOf),
+                None,
+            )?
             .next()
             .transpose()?
-            .map(|(key, _)| {
-                crate::edge::parse_strict_edge_record_key(&key).map(|(_, _, target)| target)
-            })
-            .transpose()?;
+            .map(|edge| edge.target);
         turns.push(WorkingSetTurn {
             turn_id: *turn_id,
             role,

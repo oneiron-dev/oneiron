@@ -144,7 +144,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        let now = crate::unix_seconds_now();
+        let now = self.store.clock.now_recorded_at();
         let states =
             load_budget_row_states(&self.store, &rtxn, &key_id, &record, None, false, now)?;
         Ok(Some(budget_read_from_states(&key_id, &record, &states)))
@@ -171,7 +171,7 @@ impl Vault {
             effect_channel,
             count,
             telemetry,
-            crate::unix_seconds_now(),
+            self.store.clock.now_recorded_at(),
         )
     }
 
@@ -312,7 +312,7 @@ impl Vault {
             id,
             effect_channel,
             logical_send_ref,
-            crate::unix_seconds_now(),
+            self.store.clock.now_recorded_at(),
         )
     }
 
@@ -489,7 +489,7 @@ impl Vault {
         if minor_units == 0 {
             return Err(invalid_body("settle amount must be at least 1"));
         }
-        let settled_at = crate::unix_seconds_now();
+        let settled_at = self.store.clock.now_recorded_at();
 
         let mut wtxn = self.store.env.write_txn()?;
         let record =

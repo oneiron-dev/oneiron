@@ -2,12 +2,13 @@
 
 use super::super::*;
 use super::decode_witness_turn_speaker;
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 
 use std::collections::HashSet;
 
 use rmpv::Value;
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError};
@@ -24,11 +25,15 @@ pub(crate) fn sole_edge_target(
     kind: EdgeKind,
     label: &'static str,
 ) -> MemoryResult<Option<EntityId>> {
-    let prefix = crate::vault::edge_kind_prefix(source, kind);
     let mut target = None;
-    for row in dbs.edges_out().prefix_iter(txn, &prefix)? {
-        let (key, _) = row?;
-        let (_, _, candidate) = crate::edge::parse_strict_edge_record_key(&key)?;
+    for row in dbs.port_edges(
+        txn,
+        source,
+        crate::ports::EdgeDirection::Out,
+        Some(kind),
+        None,
+    )? {
+        let candidate = row?.target;
         if target.replace(candidate).is_some() {
             return Err(MemoryError::bad_request(format!(
                 "an existing witnessed {label} has more than one {kind:?} parent"
@@ -48,16 +53,16 @@ pub(super) fn validate_existing_witness_turn(
     conversation_id: &EntityId,
     incoming_speaker: Option<&str>,
 ) -> MemoryResult<bool> {
-    let Some(raw) = dbs.entities().get(txn, turn_id.as_bytes())? else {
+    let Some(raw) = dbs.port_entity_record(txn, &turn_id)? else {
         return Ok(false);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_TURN {
+
+    if raw.entity_type != ENTITY_TYPE_TURN {
         return Err(MemoryError::bad_request(
             "the witnessed turn ref resolves to a non-TURN entity",
         ));
     }
-    let stored_speaker = decode_witness_turn_speaker(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    let stored_speaker = decode_witness_turn_speaker(&raw.body)?;
     if incoming_speaker.is_some_and(|incoming| incoming != stored_speaker) {
         return Err(MemoryError::bad_request(
             "the witnessed turn already belongs to another speaker",
@@ -89,16 +94,16 @@ pub(super) fn validate_existing_witness_message(
     author: WitnessAuthor,
     actor: &EntityId,
 ) -> MemoryResult<bool> {
-    let Some(raw) = dbs.entities().get(txn, message_id.as_bytes())? else {
+    let Some(raw) = dbs.port_entity_record(txn, &message_id)? else {
         return Ok(false);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_MESSAGE {
+
+    if raw.entity_type != ENTITY_TYPE_MESSAGE {
         return Err(MemoryError::bad_request(
             "the witnessed message id resolves to a non-MESSAGE entity",
         ));
     }
-    if &raw[ENTITY_METADATA_HEADER_LEN..] != body {
+    if &raw.body != body {
         return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
             "an existing MESSAGE id is bound to its original canonical body",
         ))
@@ -154,11 +159,15 @@ pub(super) fn validate_existing_witness_message_orders(
         occupied[word] |= 1_u64 << (message.order % 64);
     }
 
-    let prefix = crate::vault::edge_kind_prefix(turn_id, EdgeKind::PartOf);
-    for row in dbs.edges_in().prefix_iter(txn, &prefix)? {
-        let (key, value) = row?;
-        let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
-        if edge.source != *turn_id || edge.kind != EdgeKind::PartOf {
+    for row in dbs.port_edges(
+        txn,
+        turn_id,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::PartOf),
+        None,
+    )? {
+        let edge = row?;
+        if edge.kind != EdgeKind::PartOf {
             return Err(Error::CorruptedIndex("witness turn message edge").into());
         }
         let message_id = edge.target;
@@ -168,15 +177,12 @@ pub(super) fn validate_existing_witness_message_orders(
             continue;
         }
         let raw = dbs
-            .entities()
-            .get(txn, message_id.as_bytes())?
+            .port_entity_record(txn, &message_id)?
             .ok_or(Error::CorruptedIndex("witness message edge target"))?;
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("witness message header"))?;
-        if header.entity_type != ENTITY_TYPE_MESSAGE {
+        if raw.entity_type != ENTITY_TYPE_MESSAGE {
             return Err(Error::CorruptedIndex("witness turn message type").into());
         }
-        let order = canonical_witness_message_order(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let order = canonical_witness_message_order(&raw.body)?;
         let word = (order / 64) as usize;
         let mask = 1_u64 << (order % 64);
         if occupied[word] & mask != 0 {

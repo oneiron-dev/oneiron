@@ -1,7 +1,7 @@
 //! Bounded rotating scans. Cursor progress co-commits with the cleanup decision.
 
 use super::*;
-use std::ops::Bound;
+use crate::ports::EntityStoreRead;
 
 const CURSOR_PREFIX: &[u8] = b"vault_cleanup.scan.v1:";
 
@@ -26,36 +26,18 @@ pub(super) fn scan_in_txn(
             .get(txn, &cursor_key)?
             .map(|raw| decode_id_bytes(&raw))
             .transpose()?;
-        let start = after.map_or_else(
-            || vec![type_byte],
-            |id| crate::store::Store::encode_type_key(type_byte, &id).to_vec(),
-        );
-        let lower: Bound<&[u8]> = if after.is_some() {
-            Bound::Excluded(&start)
-        } else {
-            Bound::Included(&start)
-        };
-        let upper: Bound<&[u8]> = Bound::Unbounded;
         let mut last = None;
         let mut exhausted = true;
         for (examined, row) in vault
             .store
-            .type_index
-            .range(txn, &(lower, upper))?
+            .port_entity_ids_by_type(txn, type_byte, after)?
             .enumerate()
         {
-            let (key, _) = row?;
-            if key.first() != Some(&type_byte) {
-                break;
-            }
             if examined == limit {
                 exhausted = false;
                 break;
             }
-            let id = decode_id_bytes(
-                key.get(1..)
-                    .ok_or(Error::CorruptedIndex("cleanup type key"))?,
-            )?;
+            let id = row?;
             last = Some(id);
             if let Some(kind) = zero_live_members_in_txn(vault, txn, &id)? {
                 candidates.push(CleanupCandidate { entity: id, kind });

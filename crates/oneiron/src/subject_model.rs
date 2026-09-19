@@ -235,7 +235,7 @@ fn write_actor_subject_anchor(
         subject_ref,
         subject_kind,
     } = anchor;
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     let mut body = ClaimBody::new(
         PREDICATE_ACTOR_SUBJECT_REF,
         ClaimSubject::Entity(actor_ref),
@@ -344,7 +344,7 @@ pub fn set_person_substrate(
     writer: WriteActor,
     at: u64,
 ) -> Result<EntityId> {
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     let mut body = ClaimBody::new(
         PREDICATE_PERSON_SUBSTRATE,
         ClaimSubject::Entity(person_ref),
@@ -488,7 +488,7 @@ fn ensure_fact_in_txn(
             ))
         };
     }
-    write_head_in_txn(vault, txn, &EntityId::now(), &body, at)
+    write_head_in_txn(vault, txn, &vault.store.clock.entity_id()?, &body, at)
 }
 
 fn subject_fact(

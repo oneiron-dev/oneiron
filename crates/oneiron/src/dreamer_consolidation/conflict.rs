@@ -94,9 +94,14 @@ pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFac
 /// The extractor supplies the question key as scoped data. Do not guess it
 /// from answer prose: reversal of an answer must stay in the same set.
 pub(super) fn topic_key(scope: Option<&Value>) -> Result<Option<Vec<u8>>> {
-    let Some(Value::Map(fields)) = scope else { return Ok(None); };
-    fields.iter().find_map(|(key,value)| (key.as_str() == Some("topic_key")).then_some(value))
-        .map(canonical_value_bytes).transpose()
+    let Some(Value::Map(fields)) = scope else {
+        return Ok(None);
+    };
+    fields
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some("topic_key")).then_some(value))
+        .map(canonical_value_bytes)
+        .transpose()
 }
 
 fn candidate_probe_actor() -> EntityId {
@@ -356,14 +361,18 @@ pub fn detect_conflicts(
     for (identity, members) in groups {
         let mut priors = Vec::new();
         for prior in prior_heads {
-            if claim_consolidatable(&prior.body) && prior_matches_identity(&prior.body, &identity)? {
+            if claim_consolidatable(&prior.body) && prior_matches_identity(&prior.body, &identity)?
+            {
                 priors.push(prior);
             }
         }
         priors.sort_by_key(|prior| prior.claim_id);
         priors.dedup_by_key(|prior| prior.claim_id);
-        let mut values: BTreeSet<Vec<u8>> = members.iter().map(|(_,bytes)| bytes.clone()).collect();
-        for prior in &priors { values.insert(canonical_value_bytes(&prior.body.value)?); }
+        let mut values: BTreeSet<Vec<u8>> =
+            members.iter().map(|(_, bytes)| bytes.clone()).collect();
+        for prior in &priors {
+            values.insert(canonical_value_bytes(&prior.body.value)?);
+        }
         if values.len() > 1 {
             conflicts.push(ConflictSet {
                 identity,
@@ -393,14 +402,23 @@ pub fn conflict_open_marker_id(
         attempt_id,
         conflict.identity.subject,
         crate::claim::PREDICATE_CONFLICT_OPEN,
-        &Value::Array(vec![Value::from(conflict.identity.predicate.as_str()), conflict.identity.topic.as_ref().map_or(Value::Nil, |key| Value::Binary(key.clone()))]),
+        &Value::Array(vec![
+            Value::from(conflict.identity.predicate.as_str()),
+            conflict
+                .identity
+                .topic
+                .as_ref()
+                .map_or(Value::Nil, |key| Value::Binary(key.clone())),
+        ]),
         conflict.identity.world,
         conflict.identity.facet,
     )
 }
 
 fn prior_matches_identity(body: &ClaimBody, identity: &ConflictIdentity) -> Result<bool> {
-    let ClaimSubject::Entity(subject) = body.subject else { return Ok(false); };
+    let ClaimSubject::Entity(subject) = body.subject else {
+        return Ok(false);
+    };
     Ok(subject == identity.subject
         && body.predicate == identity.predicate
         && body.world == identity.world

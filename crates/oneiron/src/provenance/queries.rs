@@ -10,8 +10,10 @@ use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::vault::{MAX_EDGE_QUERY_RESULTS, edge_kind_prefix, parse_edge_record};
+use crate::vault::MAX_EDGE_QUERY_RESULTS;
 
 impl Vault {
     /// The write-verb validity guard for a REPLACEMENT-style
@@ -72,8 +74,8 @@ impl Vault {
     ) -> Result<StoredProvenanceClaim> {
         let raw = self
             .store
-            .entities
-            .get(txn, claim_id.as_bytes())?
+            .port_entity_record(txn, &claim_id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -156,18 +158,31 @@ impl Vault {
         exclude: Option<&EntityId>,
         lifecycles: &[ClaimLifecycleStatus],
     ) -> Result<Vec<StoredProvenanceClaim>> {
-        let prefix = edge_kind_prefix(&subject.source, EdgeKind::ClaimOf);
         let mut matched = Vec::new();
-        for (scanned, entry) in self.store.edges_in.prefix_iter(txn, &prefix)?.enumerate() {
+        for (scanned, entry) in self
+            .store
+            .port_edges(
+                txn,
+                &subject.source,
+                crate::ports::EdgeDirection::In,
+                Some(EdgeKind::ClaimOf),
+                None,
+            )?
+            .enumerate()
+        {
             if scanned >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("live provenance claims"));
             }
-            let (key, value) = entry?;
-            let claim_id = parse_edge_record(&key, &value)?.target;
+            let edge_row = entry?;
+            let claim_id = edge_row.target;
             if exclude == Some(&claim_id) {
                 continue;
             }
-            let Some(raw) = self.store.entities.get(txn, claim_id.as_bytes())? else {
+            let Some(raw) = self
+                .store
+                .port_entity_record(txn, &claim_id)?
+                .map(|row| row.encode())
+            else {
                 return Err(Error::CorruptedIndex("claim_of edge without claim entity"));
             };
             let header =

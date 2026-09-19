@@ -3,6 +3,7 @@
 //! Duplicate ids, missing or deleted payloads, impossible time ordering,
 //! disclosure gating (OF-365), and claim/edge reference consistency.
 
+use crate::ports::EntityStoreRead;
 use std::collections::{HashMap, HashSet};
 
 use heed::RoTxn;
@@ -40,7 +41,7 @@ pub(super) fn disclosure_admits_candidate(
     id: &EntityId,
     claim_bodies: &HashMap<EntityId, ClaimBody>,
 ) -> Result<bool> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &id)?.map(|row| row.encode()) else {
         return Ok(false);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -65,7 +66,7 @@ pub(super) fn disclosure_admits_target(
     if ctx.mode() == DisclosureMode::OwnerAlone {
         return Ok(true);
     }
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &id)?.map(|row| row.encode()) else {
         return Ok(false);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -170,7 +171,7 @@ pub(super) fn validate_pack_entity_reference(
     quarantine_index: &PackQuarantineIndex,
 ) -> Result<()> {
     validate_pack_payload_reference(store, rtxn, id, quarantine_index)?;
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &id)?.map(|row| row.encode()) else {
         return Err(context_pack_validation_error(
             *id,
             PACK_VALIDATION_MISSING_PAYLOAD,
@@ -207,11 +208,8 @@ fn validate_pack_payload_reference(
     id: &EntityId,
     quarantine_index: &PackQuarantineIndex,
 ) -> Result<()> {
-    if store
-        .sync_state
-        .get(rtxn, &crate::deletion::local_hard_delete_key(id))?
-        .is_some()
-    {
+    let visibility = crate::ports::TombstoneStoreRead::port_deletion_state(store, rtxn, id)?;
+    if visibility.deleted || visibility.stale {
         return Err(context_pack_validation_error(
             *id,
             PACK_VALIDATION_DELETED_PAYLOAD,
@@ -224,7 +222,7 @@ fn validate_pack_payload_reference(
         ));
     }
 
-    if store.entities.get(rtxn, id.as_bytes())?.is_none() {
+    if store.port_entity_record(rtxn, &id)?.is_none() {
         return Err(context_pack_validation_error(
             *id,
             PACK_VALIDATION_MISSING_PAYLOAD,

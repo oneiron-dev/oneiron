@@ -5,6 +5,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::skill::SkillRecord;
 use crate::temporal::TimeRange;
 
@@ -61,8 +62,8 @@ pub(super) fn active_claims_in_txn(
         }
         let raw = vault
             .store
-            .entities
-            .get(rtxn, id.as_bytes())?
+            .port_entity_record(rtxn, &id)?
+            .map(|row| row.encode())
             .ok_or(Error::CorruptedIndex("claim_of edge"))?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

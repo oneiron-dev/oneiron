@@ -1,5 +1,6 @@
 //! Cross-vault same_as links and per-pact share consent (FED-07).
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::affect::Vad;
@@ -97,7 +98,7 @@ pub fn put_coreference_link(
         return Err(Error::EntityNotFound);
     }
 
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     let body = coreference_claim_body(
         crate::claim::PREDICATE_COREFERENCE_STATUS,
         local_person,
@@ -150,7 +151,7 @@ pub fn coreference_share_consent(
     let (source, target) = coreference_link_orientation(vault, local_person, other_person)?
         .ok_or(Error::EdgeNotFound)?;
 
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     let body = coreference_claim_body(
         crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT,
         source,
@@ -282,12 +283,9 @@ fn require_coreference_actor(vault: &Vault, actor: &WriteActor) -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
     let raw = vault
         .store
-        .entities
-        .get(&rtxn, actor.entity_ref().as_bytes())?
+        .port_entity_record(&rtxn, &actor.entity_ref())?
         .ok_or(Error::EntityNotFound)?;
-    let header = crate::batch::EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("entity header"))?;
-    crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
+    crate::provenance::validate_actor_class(raw.entity_type, actor.actor_class())
 }
 
 fn coreference_claim_body(

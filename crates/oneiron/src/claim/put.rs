@@ -54,7 +54,7 @@ impl Vault {
         // Canonical consolidation opens its own writer only after durable
         // approval. Errors remain errors, without rolling back Approved.
         for claim_id in approved {
-            self.consolidate_claim_vad_now(&claim_id, crate::unix_seconds_now())?;
+            self.consolidate_claim_vad_now(&claim_id, self.store.clock.now_recorded_at())?;
         }
         Ok(())
     }

@@ -1,6 +1,7 @@
 //! Booking facts on the EVENT: the four exact claims, their writes and
 //! supersessions, the family validator, and the claim-class descriptor rows.
 
+use crate::ports::EntityStoreRead;
 use serde::{Deserialize, Serialize};
 
 use super::BookingFacts;
@@ -130,7 +131,11 @@ pub(super) fn put_claim(
     value: rmpv::Value,
     now_utc: u64,
 ) -> Result<EntityId, BookingError> {
-    let id = EntityId::now();
+    let id = vault
+        .store
+        .clock
+        .entity_id()
+        .map_err(|error| engine_failure("booking id allocation", error))?;
     let mut body = ClaimBody::new(
         predicate,
         ClaimSubject::Entity(*subject),
@@ -243,8 +248,8 @@ fn occurrence_in(
 ) -> Result<TimeRange, BookingError> {
     let raw = vault
         .store
-        .entities
-        .get(rtxn, event_ref.as_bytes())
+        .port_entity_record(rtxn, &event_ref)
+        .map(|row| row.map(|row| row.encode()))
         .map_err(|error| engine_failure("booking event header read", error))?
         .ok_or_else(|| refused("booking EVENT no longer exists"))?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)

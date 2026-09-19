@@ -292,6 +292,7 @@ fn smart_http_noop_door_hook_stamps_without_a_credential() {
     let repo = unpinned_repo_ref(Path::new("/tmp/demo.git"));
     let stamp = NoopDoorHook
         .admit_receive_pack(
+            crate::EntityId::now(),
             None,
             "principal:tester",
             &repo,
@@ -321,6 +322,7 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
     let actor = EntityId::now();
     let stamp = NoopDoorHook
         .admit_receive_pack(
+            crate::EntityId::now(),
             None,
             &actor.to_hex(),
             &unpinned_repo_ref(&root),
@@ -417,6 +419,7 @@ fn smart_http_landed_door_hook_refuses_an_unauthorized_slip() {
     let credential = DoorCredential::verified("slip-1", "principal:tester", 1, 10_000);
     let refused = DoorHook::admit_receive_pack(
         &door,
+        crate::EntityId::now(),
         Some(&credential),
         "principal:tester",
         &repo,
@@ -477,6 +480,7 @@ fn smart_http_narrowed_dial_shuts_the_push_door_with_no_slip_presented() {
     assert!(
         DoorHook::admit_receive_pack(
             &CredentialDoorService::new(Arc::clone(&vault)),
+            crate::EntityId::now(),
             None,
             "principal:tester",
             &unpinned_repo_ref(repo_dir),

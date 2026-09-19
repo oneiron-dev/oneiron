@@ -1,6 +1,7 @@
 //! Admission, its pinned keys, and the record-shape questions both doors ask.
 
 use super::*;
+use crate::ports::EntityStoreRead;
 
 /// `vault_meta` key prefix of the durable optimizer-BIRTH marker: this prefix ‖
 /// the entity id, exactly the [`admission_ticket_key`] key pattern.
@@ -157,7 +158,8 @@ fn admission_refusal_in_txn(
 ) -> Result<Option<HeldOutVerdict>> {
     // Every arm answers with the SAME acceptance, restated: the pair, the
     // basis and the bindings travel; only the disposition changes.
-    let refused = |disposition| Some(accepted.refused_at_admission(disposition, at));
+    let refusal_id = vault.store.clock.entity_id()?;
+    let refused = |disposition| Some(accepted.refused_at_admission(refusal_id, disposition, at));
     // Purged, replaced by another kind, or simply unreadable: the revision this
     // acceptance was scored against is not there to be superseded, and that is
     // a durable answer carrying the acceptance's real numbers — not a bare exit
@@ -209,14 +211,15 @@ fn admission_refusal_in_txn(
     };
     let mut missing = Vec::new();
     for source in cited {
-        if vault.store.entities.get(wtxn, source.as_bytes())?.is_none() {
+        if vault.store.port_entity_record(wtxn, &source)?.is_none() {
             missing.push(source);
         }
     }
     if missing.is_empty() {
         return Ok(None);
     }
-    let mut verdict = accepted.refused_at_admission(SkillEditDisposition::RefusedSourceLoss, at);
+    let mut verdict =
+        accepted.refused_at_admission(refusal_id, SkillEditDisposition::RefusedSourceLoss, at);
     verdict.missing_sources = missing;
     Ok(Some(verdict))
 }

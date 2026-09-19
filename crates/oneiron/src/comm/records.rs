@@ -1,5 +1,6 @@
 //! COMM_RECORD event/gate/receipt storage, MessagePack codec and shared value helpers.
 
+use crate::ports::EntityStoreRead;
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -11,12 +12,11 @@ use super::claims::{
 use super::consent::{MAX_SEND_REF_BYTES, OPT_OUT_CLEAR_REASON};
 use super::note_comm_record_family_scan;
 use crate::Vault;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, apply_ops};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 use crate::temporal::TimeRange;
-use crate::vault::entity_id_from_type_index_key;
 
 const COMM_RECORD_KEYS: [&str; 15] = [
     "schema_version",
@@ -465,16 +465,14 @@ pub(super) fn read_comm_record_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> CommResult<Option<CommRecord>> {
-    let Some(raw) = vault.store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = vault.store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
-    if header.entity_type != ENTITY_TYPE_COMM_RECORD {
+
+    if raw.entity_type != ENTITY_TYPE_COMM_RECORD {
         return Ok(None);
     }
-    Ok(decode_comm_record(&raw[ENTITY_METADATA_HEADER_LEN..]).ok())
+    Ok(decode_comm_record(&raw.body).ok())
 }
 
 pub(super) fn comm_records_in_txn(
@@ -485,11 +483,9 @@ pub(super) fn comm_records_in_txn(
     let mut records = Vec::new();
     for entry in vault
         .store
-        .type_index
-        .prefix_iter(rtxn, &[ENTITY_TYPE_COMM_RECORD])?
+        .port_entity_ids_by_type(rtxn, ENTITY_TYPE_COMM_RECORD, None)?
     {
-        let (key, _) = entry?;
-        let id = entity_id_from_type_index_key(&key)?;
+        let id = entry?;
         let Some(record) = read_comm_record_in_txn(vault, rtxn, id)? else {
             continue;
         };
@@ -504,6 +500,7 @@ pub(super) fn put_comm_record_in_txn(
     id: EntityId,
     record: &CommRecord,
 ) -> CommResult<()> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let occurred_at = record.occurred_at();
     apply_ops(
         &vault.store,
@@ -517,7 +514,7 @@ pub(super) fn put_comm_record_in_txn(
                 start: occurred_at,
                 end: occurred_at,
             },
-            learned_at: crate::unix_seconds_now(),
+            learned_at: mutation_recorded_at,
             data: encode_comm_record(record)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,

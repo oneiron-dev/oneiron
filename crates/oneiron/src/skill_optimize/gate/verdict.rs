@@ -236,9 +236,14 @@ impl HeldOutVerdict {
     /// keeps everything the acceptance established: the real score pair, the
     /// evidence basis, both body digests, the pair of entities and the cycle.
     /// Only the answer changes, and the row names the acceptance it answers.
-    pub(super) fn refused_at_admission(&self, disposition: SkillEditDisposition, at: u64) -> Self {
+    pub(super) fn refused_at_admission(
+        &self,
+        id: EntityId,
+        disposition: SkillEditDisposition,
+        at: u64,
+    ) -> Self {
         Self {
-            id: EntityId::now(),
+            id,
             disposition,
             accepted: disposition.admits(),
             accepted_verdict: Some(self.id),

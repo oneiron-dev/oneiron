@@ -21,6 +21,7 @@ use crate::ingest::{
     ICS_FEED_SOURCE_ID, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
 };
 use crate::ports::EntityStore;
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -151,7 +152,7 @@ impl PollAdmission<'_> {
             screen_then_claim(self.safeguard_enabled, self.screener, &body, |request| {
                 let token = verdict_token(&request.verdict);
                 let actor = ensure_ics_import_actor(self.vault, self.now)?;
-                let id = EntityId::now();
+                let id = self.vault.store.clock.entity_id()?;
                 let input = crate::calendar::origin::CalendarEventInput {
                     origin: Some(CalendarOrigin::Imported),
                     name: event_name(event).to_owned(),
@@ -522,7 +523,7 @@ pub(in crate::calendar) fn admit_calendar_import_claim(
     recorded_at: u64,
 ) -> crate::Result<EntityId> {
     let actor = ensure_ics_import_actor(vault, recorded_at)?;
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     let admission = ImportedEvidenceAdmission::proposed(
         ICS_FEED_SOURCE_ID,
         claim_id,
@@ -581,11 +582,9 @@ fn list_event_ids(vault: &Vault) -> Result<Vec<EntityId>, CalendarError> {
     let mut ids = Vec::new();
     for entry in vault
         .store
-        .type_index
-        .prefix_iter(&rtxn, &[ENTITY_TYPE_EVENT])?
+        .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_EVENT, None)?
     {
-        let (key, _) = entry?;
-        ids.push(crate::vault::entity_id_from_type_index_key(&key)?);
+        ids.push(entry?);
     }
     Ok(ids)
 }

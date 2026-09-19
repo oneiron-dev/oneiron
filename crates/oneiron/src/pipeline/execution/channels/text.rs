@@ -162,27 +162,22 @@ impl PipelineBuilder<'_> {
                 .map_or(query.as_str(), |expansion| {
                     expansion.grounded_query.as_str()
                 });
-            let search = if self.candidate_filter.is_some() {
-                crate::bm25::search_text_filtered_with_recency
-            } else {
-                crate::bm25::search_text_scoped_with_recency
-            };
-            let mut text_results = search(
-                &self.vault.store,
-                rtxn,
-                &self.vault.analyzer,
-                inputs.bm25_config,
-                text_query,
-                if self.candidate_filter.is_some() {
-                    *limit
-                } else {
-                    text_channel_limit
-                },
-                crate::bm25::Bm25SearchOptions {
-                    recency: None,
-                    exact_posting_matches_scope: &mut exact_posting_matches_scope,
-                },
-            )?;
+            let mut text_results =
+                crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
+                    self.vault,
+                    rtxn,
+                    crate::ports::TextQuery {
+                        query: text_query,
+                        limit: if self.candidate_filter.is_some() {
+                            *limit
+                        } else {
+                            text_channel_limit
+                        },
+                        rank: inputs.bm25_config,
+                        filter_all: self.candidate_filter.is_some(),
+                        matches_scope: &mut exact_posting_matches_scope,
+                    },
+                )?;
             diagnostics.succeeded.push(RetrievalSignal::Text);
             if self.candidate_filter.is_none()
                 && text_channel_limit > *limit
@@ -242,18 +237,18 @@ impl PipelineBuilder<'_> {
                         &mut retry_prefix_probe_claim_gate,
                     )
                 };
-                let mut results = crate::bm25::search_text_scoped_with_recency(
-                    &self.vault.store,
-                    rtxn,
-                    &self.vault.analyzer,
-                    inputs.bm25_config,
-                    query,
-                    retry_text_channel_limit,
-                    crate::bm25::Bm25SearchOptions {
-                        recency: None,
-                        exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
-                    },
-                )?;
+                let mut results =
+                    crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
+                        self.vault,
+                        rtxn,
+                        crate::ports::TextQuery {
+                            query,
+                            limit: retry_text_channel_limit,
+                            rank: inputs.bm25_config,
+                            filter_all: false,
+                            matches_scope: &mut retry_exact_posting_matches_scope,
+                        },
+                    )?;
                 if retry_text_channel_limit > *limit && inputs.text_scope_widening_active {
                     let scoped_result_limit = if inputs.recency.is_some() {
                         limit.saturating_mul(PER_SCAN_CAP_FACTOR)

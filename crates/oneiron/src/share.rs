@@ -1,9 +1,12 @@
 //! Revocable brief read grants. Documents and rendered content stay outside the vault.
 
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
+use sha2::Digest;
 use std::collections::BTreeSet;
 
 use rmpv::Value;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::Vault;
 use crate::access_grant::{
@@ -225,7 +228,10 @@ pub(crate) fn check_generic_grant_write(
             "shared briefs require the share door",
         )));
     }
-    if let Some(raw) = vault.store.entities.get(txn, id.as_bytes())?
+    if let Some(raw) = vault
+        .store
+        .port_entity_record(txn, &id)?
+        .map(|row| row.encode())
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_ACCESS_GRANT)
     {
@@ -324,7 +330,7 @@ fn read_admitted_share_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<(Share, ShareAdmission)>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
         return Ok(None);
     };
     if EntityMetadataHeader::parse(&raw)
@@ -376,11 +382,9 @@ pub(crate) fn read_share_in_txn(
 
 fn verify_share_actor(store: &Store, txn: &heed::RoTxn<'_>, actor: &WriteActor) -> Result<()> {
     let raw = store
-        .entities
-        .get(txn, actor.entity_ref().as_bytes())?
+        .port_entity_record(txn, &actor.entity_ref())?
         .ok_or(Error::EntityNotFound)?;
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("share actor"))?;
-    crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
+    crate::provenance::validate_actor_class(raw.entity_type, actor.actor_class())
 }
 
 // PERSON admits both human and agent. Only a live, verified authority binding
@@ -390,12 +394,10 @@ fn share_viewer_actor_in_txn(
     txn: &heed::RoTxn<'_>,
     viewer: &EntityId,
 ) -> Result<Option<ScopedReadActorKey>> {
-    let Some(raw) = vault.store.entities.get(txn, viewer.as_bytes())? else {
+    let Some(raw) = vault.store.port_entity_record(txn, &viewer)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
+
     let classes = [
         EdgeActorClass::Human,
         EdgeActorClass::Agent,
@@ -403,7 +405,7 @@ fn share_viewer_actor_in_txn(
     ];
     if !classes
         .iter()
-        .any(|class| crate::provenance::validate_actor_class(header.entity_type, *class).is_ok())
+        .any(|class| crate::provenance::validate_actor_class(raw.entity_type, *class).is_ok())
     {
         return Ok(None);
     }
@@ -416,7 +418,7 @@ fn share_viewer_actor_in_txn(
         if !crate::authority::actor_binding_is_active(&fold, viewer, class.gate_actor_class()) {
             continue;
         }
-        if crate::provenance::validate_actor_class(header.entity_type, class).is_err()
+        if crate::provenance::validate_actor_class(raw.entity_type, class).is_err()
             || actor_class.replace(class).is_some()
         {
             return Ok(None);
@@ -448,11 +450,7 @@ impl Vault {
             return Err(invalid_grant());
         }
         let mut txn = self.store.env.write_txn()?;
-        if self
-            .store
-            .entities
-            .get(&txn, share_id.as_bytes())?
-            .is_some()
+        if self.store.port_entity_record(&txn, &share_id)?.is_some()
             || self
                 .store
                 .vault_meta
@@ -578,7 +576,11 @@ impl Vault {
             if !seen.insert(*id) {
                 continue;
             }
-            let Some(raw) = self.store.entities.get(&txn, id.as_bytes())? else {
+            let Some(raw) = self
+                .store
+                .port_entity_record(&txn, &id)?
+                .map(|row| row.encode())
+            else {
                 continue;
             };
             if EntityMetadataHeader::parse(&raw)
@@ -638,14 +640,19 @@ fn share_claim_facets(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<Option<Vec<EntityId>>> {
-    let prefix = [id.as_bytes().as_slice(), &[EdgeKind::FacetOf as u8]].concat();
     let mut facets = Vec::new();
-    for entry in store.edges_out.prefix_iter(txn, &prefix)? {
+    for entry in store.port_edges(
+        txn,
+        id,
+        crate::ports::EdgeDirection::Out,
+        Some(EdgeKind::FacetOf),
+        None,
+    )? {
         if facets.len() >= crate::vault::MAX_EDGE_QUERY_RESULTS {
             return Err(Error::IndexOverflow("share claim facets"));
         }
-        let (key, value) = entry?;
-        facets.push(crate::vault::parse_edge_record(&key, &value)?.target);
+        let edge_row = entry?;
+        facets.push(edge_row.target);
     }
     // Match the existing read lane's edge-first, scope-map fallback convention.
     if facets.is_empty()

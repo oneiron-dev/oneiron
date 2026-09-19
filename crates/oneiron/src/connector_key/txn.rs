@@ -1,10 +1,10 @@
+use crate::ports::EntityStoreRead;
+use sha2::Digest;
 use std::io::Cursor;
 
 use rmpv::Value;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
-use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
@@ -206,14 +206,14 @@ pub(super) fn read_connector_key_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<ConnectorKeyRecord>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, &id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_CONNECTOR_KEY {
-        return Err(Error::InvalidEntityType(header.entity_type));
+
+    if raw.entity_type != ENTITY_TYPE_CONNECTOR_KEY {
+        return Err(Error::InvalidEntityType(raw.entity_type));
     }
-    decode_connector_key_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    decode_connector_key_body(&raw.body).map(Some)
 }
 
 /// Resolves the connector key governing one effect: within a `(connector,
@@ -278,23 +278,7 @@ pub(crate) fn rewrite_connector_key_in_txn(
     id: &EntityId,
     record: &ConnectorKeyRecord,
 ) -> Result<()> {
-    let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
-        return Err(Error::EntityNotFound);
-    };
-    let header = EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("connector key entity header"))?;
-    if header.entity_type != ENTITY_TYPE_CONNECTOR_KEY {
-        return Err(Error::CorruptedIndex("connector key entity type"));
-    }
-    let body = encode_connector_key_body(record)?;
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-    payload.push(ENTITY_TYPE_CONNECTOR_KEY);
-    payload.extend_from_slice(&header.occurred_start.to_be_bytes());
-    payload.extend_from_slice(&header.occurred_end.to_be_bytes());
-    payload.extend_from_slice(&header.learned_at.to_be_bytes());
-    payload.extend_from_slice(&body);
-    store.entities.put(wtxn, id.as_bytes(), &payload)?;
-    Ok(())
+    crate::ports::EntityStoreMaintenance::port_connector_key_rewrite(store, wtxn, id, record)
 }
 
 /// The receipt-free terminal-revocation core, extracted so the two doors that
@@ -372,7 +356,7 @@ pub(super) fn append_connector_key_op_record(
         wtxn,
         &GateDecisionRecord {
             version: 0,
-            decision_id: GateDecisionId::now(),
+            decision_id: GateDecisionId::from_bytes(store.clock.ulid()?),
             created_at: at,
             outcome: "allow".to_owned(),
             reason_codes: vec![op_reason.to_owned()],

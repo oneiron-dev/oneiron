@@ -243,7 +243,7 @@ pub(super) fn ppr_query_in_txn_with_identity(
         ),
         policy.community_identity,
     );
-    let now = crate::unix_seconds_now();
+    let now = store.clock().now_recorded_at();
     let current_graph_version = read_graph_version(store, txn)?;
     let cache_context = PprCacheReadContext {
         store,

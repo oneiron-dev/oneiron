@@ -179,12 +179,17 @@ impl ConsolidationExecutor<'_> {
             }
             let mut scope = Vec::new();
             if let Some(facet) = partition.facet_ref {
-                scope.push((Value::from(TURN_BODY_FACET_REF_KEY), Value::Binary(facet.as_bytes().to_vec())));
+                scope.push((
+                    Value::from(TURN_BODY_FACET_REF_KEY),
+                    Value::Binary(facet.as_bytes().to_vec()),
+                ));
             }
             if let Some(topic) = item.get("topic_key").filter(|v| !v.is_null()) {
-                scope.push((Value::from("topic_key"),json_to_rmpv(topic)));
+                scope.push((Value::from("topic_key"), json_to_rmpv(topic)));
             }
-            if !scope.is_empty() { candidate = candidate.with_scope(Value::Map(scope)); }
+            if !scope.is_empty() {
+                candidate = candidate.with_scope(Value::Map(scope));
+            }
             candidates.push(PromotionCandidate {
                 claim_id,
                 candidate,
@@ -309,7 +314,12 @@ impl ConsolidationExecutor<'_> {
                 .iter()
                 .map(|index| &candidates[*index])
                 .collect();
-            let request = self.merge_request(&conflict.identity, &members, &prior_heads, &conflict.prior_heads)?;
+            let request = self.merge_request(
+                &conflict.identity,
+                &members,
+                &prior_heads,
+                &conflict.prior_heads,
+            )?;
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
                 attempt_id: step_identity.0,
@@ -359,7 +369,13 @@ impl ConsolidationExecutor<'_> {
                 MergeResolution::Escalate => {
                     dropped.extend(conflict.candidate_indexes.iter().copied());
                     escalated.push(contradiction_gap(conflict, &members, ctx.now_ms));
-                    merged.push(super::persistence::open_marker(conflict, &members, &prior_heads, step_identity.0, ctx.now_ms)?);
+                    merged.push(super::persistence::open_marker(
+                        conflict,
+                        &members,
+                        &prior_heads,
+                        step_identity.0,
+                        ctx.now_ms,
+                    )?);
                 }
             }
         }
@@ -395,8 +411,15 @@ impl ConsolidationExecutor<'_> {
                 serde_json::to_string(&rmpv_to_json(&facts.value)).unwrap_or_default()
             ));
         }
-        for prior in prior_heads.iter().filter(|p| prior_ids.contains(&p.claim_id)) {
-            lines.push_str(&format!("- prior {}: {}\n", prior.claim_id.to_hex(), serde_json::to_string(&rmpv_to_json(&prior.body.value)).unwrap_or_default()));
+        for prior in prior_heads
+            .iter()
+            .filter(|p| prior_ids.contains(&p.claim_id))
+        {
+            lines.push_str(&format!(
+                "- prior {}: {}\n",
+                prior.claim_id.to_hex(),
+                serde_json::to_string(&rmpv_to_json(&prior.body.value)).unwrap_or_default()
+            ));
         }
         let system = "Conflicting values were extracted for one claim identity. Respond \
              with JSON: {\"resolution\": \"merge\"|\"accumulate\"|\"escalate\", \
@@ -497,9 +520,21 @@ fn merged_candidate(
         meet = source_meet(meet, member.evidence_meet);
         confidence = confidence.max(0.5);
     }
-    for prior in priors.iter().filter(|p| conflict.prior_heads.contains(&p.claim_id)) {
-        meet = source_meet(meet, crate::claim::claim_evidence_taint(&prior.body).or(prior.body.source).unwrap_or(ClaimSource::Generated));
-        if crate::claim::claim_evidence_admissible(&prior.body) && !evidence.contains(&prior.claim_id) { evidence.push(prior.claim_id); }
+    for prior in priors
+        .iter()
+        .filter(|p| conflict.prior_heads.contains(&p.claim_id))
+    {
+        meet = source_meet(
+            meet,
+            crate::claim::claim_evidence_taint(&prior.body)
+                .or(prior.body.source)
+                .unwrap_or(ClaimSource::Generated),
+        );
+        if crate::claim::claim_evidence_admissible(&prior.body)
+            && !evidence.contains(&prior.claim_id)
+        {
+            evidence.push(prior.claim_id);
+        }
     }
     let claim_id = deterministic_claim_id(
         attempt_id,

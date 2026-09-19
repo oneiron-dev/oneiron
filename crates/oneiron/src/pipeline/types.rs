@@ -34,8 +34,6 @@ use super::support::read_entity_metadata;
 pub(crate) const DEFAULT_RESULT_LIMIT: usize = 20;
 pub(super) const DEFAULT_SIGMA_SECS: u64 = 86_400;
 pub(super) const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
-pub(super) const TEMPORAL_KEY_LEN: usize = 24;
-pub(super) const LONG_INTERVAL_VALUE_LEN: usize = 8;
 pub(super) const TEMPORAL_FLOOR: f64 = 0.05;
 
 /// A scored entity result.

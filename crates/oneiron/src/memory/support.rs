@@ -8,7 +8,7 @@ use super::*;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::parse_short_id_value;
+
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::companion::companion_value_to_json;
 use crate::edge::EdgeActorClass;
@@ -351,11 +351,14 @@ pub(super) fn requested_approval(
     }
 }
 
-pub(super) fn id_from_optional_hex(id: Option<&str>) -> MemoryResult<EntityId> {
+pub(super) fn id_from_optional_hex(
+    vault: &crate::Vault,
+    id: Option<&str>,
+) -> MemoryResult<EntityId> {
     match id {
         Some(hex) => EntityId::from_hex(hex)
             .map_err(|_| MemoryError::bad_request(format!("invalid entity id {hex:?}"))),
-        None => Ok(EntityId::now()),
+        None => Ok(vault.store.clock.entity_id()?),
     }
 }
 
@@ -496,16 +499,10 @@ impl Memory<'_> {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> MemoryResult<Option<String>> {
-        let Some(raw) = self
-            .vault
-            .store
-            .short_ids_reverse
-            .get(rtxn, id.as_bytes())?
-        else {
-            return Ok(None);
-        };
-        let (short_id, content_hash) = parse_short_id_value(&raw)?;
-        Ok(Some(format!("{short_id}:{content_hash:02x}")))
+        Ok(
+            crate::ports::ShortIdStoreRead::port_short_id_reference(&self.vault.store, rtxn, id)?
+                .map(|(name, hash)| format!("{name}:{hash:02x}")),
+        )
     }
 
     pub(super) fn short_ref_or_hex(&self, id: &EntityId) -> MemoryResult<String> {

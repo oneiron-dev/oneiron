@@ -56,7 +56,7 @@ pub fn resolve_native_human_route(
     let Some(party_key) = comm_party_key(vault, person_ref)? else {
         return Err(HumanTaskError::NotNativelyReachable);
     };
-    let vetoed = vetoed_channel_classes(vault, person_ref, crate::unix_seconds_now())?;
+    let vetoed = vetoed_channel_classes(vault, person_ref, vault.store.clock.now_recorded_at())?;
 
     for channel_identity_ref in vault.entities_by_type(ENTITY_TYPE_CHANNEL_IDENTITY)? {
         let Some(identity) = vault.get_channel_identity(&channel_identity_ref)? else {

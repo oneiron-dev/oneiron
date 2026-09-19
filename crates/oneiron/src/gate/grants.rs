@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::claim::{ClaimBody, ScopedReadActorKey};
@@ -14,7 +15,7 @@ use super::constants::{
     EXTERNAL_EFFECT_WILDCARD, SCOPED_READ_EFFECTOR_CORE_READ, SCOPED_READ_EFFECTOR_ONEIRON_READ,
 };
 use super::input::{ExternalEffectGateContext, ExternalEffectPolicyRisk, GateActor};
-use super::resolution::{PolicyManifestResolution, type_index_entity_id};
+use super::resolution::PolicyManifestResolution;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PolicyScopedGrant {
@@ -314,15 +315,9 @@ pub(crate) fn companion_profile_access_grant(
     person_ref: &EntityId,
     persona_ref: &EntityId,
 ) -> Result<Option<EntityId>> {
-    for index_entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_ACCESS_GRANT])?
-    {
-        let (key, _) = index_entry?;
-        let Some(id) = type_index_entity_id(&key, ENTITY_TYPE_ACCESS_GRANT) else {
-            return Err(Error::CorruptedIndex("access grant type index key"));
-        };
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_ACCESS_GRANT, None)? {
+        let id = index_entry?;
+        let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
             return Err(Error::CorruptedIndex("access grant entity row"));
         };
         let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {

@@ -1,6 +1,7 @@
 use super::*;
 use crate::claim::validate_predicate;
 use crate::error::ErrorKind;
+use crate::store::Store;
 use core::assert_matches;
 
 use crate::error::ClaimError;

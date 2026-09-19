@@ -17,6 +17,7 @@ use crate::code_artifact::{CodeArtifactBody, decode_code_artifact_body};
 use crate::code_symbol::{CodeSymbolSource, derive_code_symbol_graph_from_sources};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, CodeError, Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
 use crate::secret_snapshot::{SnapshotCustodyReport, custody_key, encode_report};
 use crate::store::Store;
@@ -352,7 +353,11 @@ impl Vault {
     ) -> Result<()> {
         let encoded = encode_codebase_snapshot(filtered_snapshot)?;
         let custody_report = encode_report(&custody_report)?;
-        let Some(raw) = self.store.entities.get(wtxn, code_artifact_id.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(wtxn, &code_artifact_id)?
+            .map(|row| row.encode())
+        else {
             return Err(Error::EntityNotFound);
         };
         let header =
@@ -682,7 +687,7 @@ fn codebase_ids_by_index_prefix(
                 .map_err(|_| Error::CorruptedIndex("codebase index key"))?,
         )
         .map_err(|_| Error::CorruptedIndex("codebase index key"))?;
-        let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = store.port_entity_record(rtxn, &id)?.map(|row| row.encode()) else {
             continue;
         };
         let header =

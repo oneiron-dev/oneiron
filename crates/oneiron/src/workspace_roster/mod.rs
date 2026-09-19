@@ -85,7 +85,7 @@ use crate::subject_model::actor_subject_anchor;
 #[cfg(test)]
 use crate::subject_model::{PersonSubstrate, person_substrate};
 use crate::temporal::TimeRange;
-use crate::vault::entity_id_from_type_index_key;
+
 use crate::write_envelope::WriteActor;
 
 mod codec;

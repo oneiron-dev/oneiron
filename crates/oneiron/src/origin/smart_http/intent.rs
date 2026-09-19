@@ -127,15 +127,17 @@ impl Vault {
             refs: door
                 .ref_updates
                 .iter()
-                .map(|update| ReceivePackIntentRef {
-                    name: update.name.clone(),
-                    old_oid: update.old_oid.as_ref().map(|oid| oid.as_str().to_owned()),
-                    new_oid: update.new_oid.as_ref().map(|oid| oid.as_str().to_owned()),
-                    outcome_id: EntityId::now().to_hex(),
-                    observed: false,
-                    status: ReceivePackRefStatus::Pending,
+                .map(|update| {
+                    Ok(ReceivePackIntentRef {
+                        name: update.name.clone(),
+                        old_oid: update.old_oid.as_ref().map(|oid| oid.as_str().to_owned()),
+                        new_oid: update.new_oid.as_ref().map(|oid| oid.as_str().to_owned()),
+                        outcome_id: self.store.clock.entity_id()?.to_hex(),
+                        observed: false,
+                        status: ReceivePackRefStatus::Pending,
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>>>()?,
             pointers: door
                 .lfs_pointers
                 .iter()

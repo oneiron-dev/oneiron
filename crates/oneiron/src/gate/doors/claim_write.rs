@@ -147,6 +147,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     operation_effect_body: bool,
     breaker_accounting: GateBreakerAccounting,
 ) -> Result<()> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let ClaimGateWrite {
         body,
         envelope,
@@ -363,8 +364,8 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         }
 
         let binding = GateConsentBinding::for_claim(body, policy)?;
-        let decision_id = GateDecisionId::now();
-        let created_at = crate::unix_seconds_now();
+        let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
+        let created_at = mutation_recorded_at;
 
         let breaker = breaker_staging::OriginalBreakerEvent {
             accounting: breaker_accounting,

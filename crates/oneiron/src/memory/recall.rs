@@ -4,6 +4,7 @@
 
 use super::structural::*;
 use super::*;
+use crate::ports::EntityStoreRead;
 
 use std::collections::BTreeSet;
 
@@ -188,7 +189,7 @@ impl Memory<'_> {
                       txn: &heed::RoTxn<'_>,
                       id: &EntityId|
          -> crate::Result<bool> {
-            let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
                 return Ok(false);
             };
             let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {

@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
 
 use rmpv::Value;
@@ -81,7 +82,11 @@ impl Vault {
             let entity =
                 crate::entity_id::parse_entity_id(&key[prefix.len()..], "skill content hash index")
                     .map_err(|_| Error::CorruptedIndex("skill content hash index"))?;
-            let Some(raw) = self.store.entities.get(rtxn, entity.as_bytes())? else {
+            let Some(raw) = self
+                .store
+                .port_entity_record(rtxn, &entity)?
+                .map(|row| row.encode())
+            else {
                 continue;
             };
             let header =
@@ -114,19 +119,17 @@ impl Vault {
     ) -> Result<Option<T>> {
         for (scanned, entry) in self
             .store
-            .type_index
-            .prefix_iter(rtxn, &[ENTITY_TYPE_SKILL])?
+            .port_entity_ids_by_type(rtxn, ENTITY_TYPE_SKILL, None)?
             .enumerate()
         {
             if scanned >= MAX_HUB_SKILL_SCAN_ENTRIES {
                 return Err(Error::IndexOverflow("skill_entity_for_content_hash"));
             }
-            let (key, _) = entry?;
-            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let id = entry?;
             let raw = self
                 .store
-                .entities
-                .get(rtxn, id.as_bytes())?
+                .port_entity_record(rtxn, &id)?
+                .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("skill type index"))?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -209,7 +212,7 @@ impl Vault {
         let replacement_id = if let Some(replacement_id) = replacement_id {
             replacement_id
         } else {
-            let replacement_id = EntityId::now();
+            let replacement_id = self.store.clock.entity_id()?;
             let mut body = ClaimBody::new(
                 PREDICATE_SKILL_HUB_PROVENANCE,
                 ClaimSubject::Entity(*entity),
@@ -259,7 +262,7 @@ impl Vault {
             prior_rows.push((id, occurred_start));
         }
 
-        let replacement_id = EntityId::now();
+        let replacement_id = self.store.clock.entity_id()?;
         let mut body = ClaimBody::new(
             PREDICATE_SKILL_HUB_PROVENANCE,
             ClaimSubject::Entity(*entity),
@@ -299,7 +302,11 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         entity: &EntityId,
     ) -> Result<()> {
-        let Some(raw) = self.store.entities.get(&*wtxn, entity.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(&*wtxn, &entity)?
+            .map(|row| row.encode())
+        else {
             return Ok(());
         };
         let header =
@@ -348,12 +355,9 @@ impl Vault {
             if body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active {
                 let raw = self
                     .store
-                    .entities
-                    .get(rtxn, id.as_bytes())?
+                    .port_entity_record(rtxn, &id)?
                     .ok_or(Error::CorruptedIndex("claim_of edge"))?;
-                let header = EntityMetadataHeader::parse(&raw)
-                    .ok_or(Error::CorruptedIndex("entity header"))?;
-                rows.push((id, body, header.occurred_start));
+                rows.push((id, body, raw.occurred.start));
             }
         }
         Ok(rows)
@@ -472,12 +476,11 @@ pub(crate) fn backfill_content_hash_index_if_needed(vault: &Vault) -> Result<()>
     // before any vault_meta write, matching the proven pre-ONE-1741 pattern.
     let mut wtxn = store.env.write_txn()?;
     let mut holders = Vec::<(SkillContentHash, EntityId)>::new();
-    for entry in store.type_index.prefix_iter(&wtxn, &[ENTITY_TYPE_SKILL])? {
-        let (key, _) = entry?;
-        let entity = crate::vault::entity_id_from_type_index_key(&key)?;
+    for entry in store.port_entity_ids_by_type(&wtxn, ENTITY_TYPE_SKILL, None)? {
+        let entity = entry?;
         let raw = store
-            .entities
-            .get(&wtxn, entity.as_bytes())?
+            .port_entity_record(&wtxn, &entity)?
+            .map(|row| row.encode())
             .ok_or(Error::CorruptedIndex("skill type index"))?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

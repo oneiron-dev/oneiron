@@ -19,8 +19,8 @@ use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
 use super::paths::{
-    DOOR_WINDOW_TIMEOUT, SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, now_secs,
-    origin_door_root, origin_repo_dir, origin_serving_root, serve_failed,
+    DOOR_WINDOW_TIMEOUT, SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root,
+    origin_repo_dir, origin_serving_root, serve_failed,
 };
 use super::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
@@ -229,12 +229,19 @@ pub(super) fn stamp_admission(
         .ok_or_else(|| serve_failed("receive-pack requires a registered principal"))?;
     let repo = unpinned_repo_ref(repo_dir);
     let peer_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    let now = now_secs();
+    let now = vault.now_recorded_at();
+    let operation_id = vault.new_entity_id()?;
     let stamp = match seam {
-        DoorSeam::Noop => {
-            NoopDoorHook.admit_receive_pack(None, principal_ref, &repo, peer_addr, now)?
-        }
+        DoorSeam::Noop => NoopDoorHook.admit_receive_pack(
+            operation_id,
+            None,
+            principal_ref,
+            &repo,
+            peer_addr,
+            now,
+        )?,
         DoorSeam::Landed => CredentialDoorService::new(Arc::clone(vault)).admit_receive_pack(
+            operation_id,
             None,
             principal_ref,
             &repo,

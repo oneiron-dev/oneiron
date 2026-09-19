@@ -1,5 +1,6 @@
 //! Scoped-read authorization, the atomic autonomy apply, action-grant mint, verify, mode set/resolve, live-state resolution and bound/action validation.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
@@ -38,7 +39,11 @@ impl Vault {
         candidate: &MailboxReadCandidate,
     ) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&txn, grant_ref.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(&txn, &grant_ref)?
+            .map(|row| row.encode())
+        else {
             return Ok(false);
         };
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid_autonomy)?;
@@ -57,7 +62,7 @@ impl Vault {
         if identity_ref != candidate.identity_ref
             || grant.principal_ref != *actor_ref
             || grant.status != AccessGrantStatus::Active
-            || grant.created_at > crate::unix_seconds_now()
+            || grant.created_at > self.store.clock.now_recorded_at()
             || self.autonomy_identity_actor(&txn, identity_ref)? != *actor_ref
         {
             return Ok(false);
@@ -67,7 +72,7 @@ impl Vault {
             &key(PREDICATE_MAILBOX_READ_ENVELOPE, &envelope_ref.to_hex()),
         )?;
         let envelope = read_from(&value)?;
-        if at > crate::unix_seconds_now()
+        if at > self.store.clock.now_recorded_at()
             || envelope.identity_ref != identity_ref
             || address(PREDICATE_MAILBOX_READ_ENVELOPE, &value)? != envelope_ref
         {
@@ -106,7 +111,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
     ) -> Result<ChannelIdentityAutonomyState> {
         self.autonomy_owner(owner)?;
-        let now = crate::unix_seconds_now();
+        let now = self.store.clock.now_recorded_at();
         let mut txn = self.store.env.write_txn()?;
         let identity = desired.read_envelope.identity_ref;
         if self.autonomy_identity_actor(&txn, identity)? != desired.actor_ref {
@@ -136,7 +141,11 @@ impl Vault {
             created_at: now,
             revoked_at: None,
         };
-        if let Some(raw) = self.store.entities.get(&txn, read_grant_ref.as_bytes())? {
+        if let Some(raw) = self
+            .store
+            .port_entity_record(&txn, &read_grant_ref)?
+            .map(|row| row.encode())
+        {
             let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid_autonomy)?;
             if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {
                 return Err(invalid_autonomy());
@@ -177,12 +186,7 @@ impl Vault {
                 let bound = action_bound(desired.actor_ref, envelope_ref, envelope, verb)?;
                 let receipt = self.create_standing_grant_in_txn(&mut txn, owner, bound.clone())?;
                 let grant_ref = address("action_grant", &Value::from(bound.digest().to_hex()))?;
-                if self
-                    .store
-                    .entities
-                    .get(&txn, grant_ref.as_bytes())?
-                    .is_some()
-                {
+                if self.store.port_entity_record(&txn, &grant_ref)?.is_some() {
                     return Err(invalid_autonomy());
                 }
                 let grant = StandingOutboundGrant {
@@ -239,7 +243,7 @@ impl Vault {
         if !matches!(verb_class, "mail.draft" | "mail.send") {
             return Err(invalid_autonomy());
         }
-        let now = crate::unix_seconds_now();
+        let now = self.store.clock.now_recorded_at();
         let mut txn = self.store.env.write_txn()?;
         let (writer, at, _) = self.autonomy_row(
             &txn,
@@ -296,7 +300,7 @@ impl Vault {
     ) -> Result<ChannelIdentityAutonomyState> {
         self.autonomy_owner(owner)?;
         let txn = self.store.env.read_txn()?;
-        self.verify_autonomy_in_txn(&txn, desired, owner, crate::unix_seconds_now())
+        self.verify_autonomy_in_txn(&txn, desired, owner, self.store.clock.now_recorded_at())
     }
 
     fn verify_autonomy_in_txn(
@@ -338,10 +342,10 @@ impl Vault {
     ) -> Result<EntityId> {
         self.autonomy_owner(owner)?;
         let mut txn = self.store.env.write_txn()?;
-        if learned_at > crate::unix_seconds_now() {
+        if learned_at > self.store.clock.now_recorded_at() {
             return Err(invalid_autonomy());
         }
-        self.autonomy_state(&txn, mode.clone(), crate::unix_seconds_now())?;
+        self.autonomy_state(&txn, mode.clone(), self.store.clock.now_recorded_at())?;
         let key = mode_key(mode.identity_ref, mode.relationship_context);
         let value = mode_value(&mode);
         if self.store.vault_meta.get(&txn, &key)?.is_some() {
@@ -370,7 +374,7 @@ impl Vault {
             &txn,
             *identity_ref,
             *context,
-            at.min(crate::unix_seconds_now()),
+            at.min(self.store.clock.now_recorded_at()),
         )
     }
 
@@ -400,8 +404,8 @@ impl Vault {
         let reference = mode.read_grant_ref.ok_or_else(invalid_autonomy)?;
         let raw = self
             .store
-            .entities
-            .get(txn, reference.as_bytes())?
+            .port_entity_record(txn, &reference)?
+            .map(|row| row.encode())
             .ok_or_else(invalid_autonomy)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid_autonomy)?;
         if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {

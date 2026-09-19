@@ -241,7 +241,8 @@ impl Vault {
     ) -> Result<PreparedRepoMutationAction> {
         let (fork_hash, snapshot_bytes) = capture_repo_snapshot(repo_root)?;
         let pre_action_snapshot = decode_snapshot(&snapshot_bytes)?;
-        let execution = match prepare_repo_mutation_execution(repo_root, request) {
+        let execution = match prepare_repo_mutation_execution(&self.store.clock, repo_root, request)
+        {
             Ok(execution) => execution,
             Err(error) => {
                 self.record_failed_repo_mutation_preparation(
@@ -372,6 +373,7 @@ impl Vault {
 }
 
 fn prepare_repo_mutation_execution(
+    clock: &crate::ports::StoreClock,
     repo_root: &Path,
     request: &RepoMutationRequest,
 ) -> Result<PreparedRepoMutationExecution> {
@@ -417,7 +419,7 @@ fn prepare_repo_mutation_execution(
         }
     };
     let recovery = PreparedConflictResolution {
-        resolution_claim_id: EntityId::now(),
+        resolution_claim_id: clock.entity_id()?,
         branch_subject,
         open_conflict_claim_id,
         branch_name: branch_name.to_owned(),

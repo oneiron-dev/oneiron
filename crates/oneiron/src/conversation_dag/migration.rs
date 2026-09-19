@@ -6,6 +6,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
@@ -61,8 +62,8 @@ pub(super) fn migrate_in_txn(
         already_dag |= graph::parent(&vault.store, txn, &id)?.is_some();
         let raw = vault
             .store
-            .entities
-            .get(txn, id.as_bytes())?
+            .port_entity_record(txn, &id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let metadata =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

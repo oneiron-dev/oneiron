@@ -294,14 +294,14 @@ pub(super) fn stamp_secret_lease_in_txn(
         None => now.saturating_add(ttl_secs),
     };
     let lease = SecretLease {
-        lease_id: EntityId::now(),
+        lease_id: vault.store.clock.entity_id()?,
         secret_ref: secret_ref.to_owned(),
         binding_effector: effector.to_owned(),
         tier: CustodyTier::T1Leased,
         granted_at: now,
         expires_at,
         status: SecretLeaseStatus::Active,
-        materialization_receipt: EntityId::now(),
+        materialization_receipt: vault.store.clock.entity_id()?,
         value_generation: rec.rotation_generation,
     };
     let receipt = SecretMaterializationReceipt {

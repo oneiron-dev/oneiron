@@ -55,7 +55,7 @@ pub fn open_trap(
     step_hash: [u8; 32],
     note: &str,
 ) -> Result<TrapRef> {
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     let value = encode_trap_claim_value(&EncodedTrapClaim {
         kind,
         attempt_id: ctx.attempt_id,
@@ -458,7 +458,7 @@ fn append_trap_transition_in_txn(
         }
     };
 
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     let value = encode_trap_claim_value(&EncodedTrapClaim {
         kind: head.kind,
         attempt_id: head.attempt_id,

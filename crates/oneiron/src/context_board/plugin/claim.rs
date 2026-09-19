@@ -379,7 +379,7 @@ pub fn propose_plugin_section_install_with_evidence(
         package_pin,
     };
 
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     let mut candidate = ClaimCandidate::new(
         PREDICATE_PLUGIN_SECTION_INSTALL,
         ClaimSubject::Entity(target.claim_subject()),

@@ -99,10 +99,16 @@ impl NoteDocument {
             .map(|p| p.current.pos)
             .map_err(|_| invalid("unresolvable cursor"))
     }
-    pub(crate) fn born(note: EntityId, text: &str, actor: EntityId, at: u64) -> Result<Self> {
+    pub(crate) fn born(
+        note: EntityId,
+        head: EntityId,
+        text: &str,
+        actor: EntityId,
+        at: u64,
+    ) -> Result<Self> {
         let this = Self {
             note,
-            head: EntityId::now(),
+            head,
             doc: LoroDoc::new(),
         };
         let meta = this.doc.get_map("meta");
@@ -117,7 +123,13 @@ impl NoteDocument {
         stamp(&this.doc, actor, at, "birth");
         Ok(this)
     }
-    pub(super) fn apply(&self, edit: &NoteEdit, actor: EntityId, at: u64) -> Result<Option<Self>> {
+    pub(super) fn apply(
+        &self,
+        clock: &crate::ports::StoreClock,
+        edit: &NoteEdit,
+        actor: EntityId,
+        at: u64,
+    ) -> Result<Option<Self>> {
         let text = self.doc.get_text(TEXT);
         match edit {
             NoteEdit::ReplaceSpan {
@@ -177,7 +189,9 @@ impl NoteDocument {
                     )
                     .is_err()
                 {
-                    return self.rewrite(replacement, actor, at).map(Some);
+                    return self
+                        .rewrite(clock.entity_id()?, replacement, actor, at)
+                        .map(Some);
                 }
                 stamp(&candidate, actor, at, "edit");
                 self.doc
@@ -185,12 +199,14 @@ impl NoteDocument {
                     .map_err(|_| invalid("diff import"))?;
                 return Ok(None);
             }
-            NoteEdit::Rewrite { text } => return self.rewrite(text, actor, at).map(Some),
+            NoteEdit::Rewrite { text } => {
+                return self.rewrite(clock.entity_id()?, text, actor, at).map(Some);
+            }
         }
         stamp(&self.doc, actor, at, "edit");
         Ok(None)
     }
-    fn rewrite(&self, text: &str, actor: EntityId, at: u64) -> Result<Self> {
+    fn rewrite(&self, head: EntityId, text: &str, actor: EntityId, at: u64) -> Result<Self> {
         let fork = self
             .doc
             .fork_at(&self.doc.state_frontiers())
@@ -205,7 +221,7 @@ impl NoteDocument {
         stamp(&fork, actor, at, "rewrite");
         Ok(Self {
             note: self.note,
-            head: EntityId::now(),
+            head,
             doc: fork,
         })
     }

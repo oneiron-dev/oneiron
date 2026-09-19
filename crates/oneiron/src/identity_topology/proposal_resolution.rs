@@ -376,7 +376,7 @@ impl Vault {
         let ramp_scope = crate::consent_graduation::RampScope::from(&scope);
         let event = self.write_identity_event_in_txn(
             wtxn,
-            EntityId::now(),
+            self.store.clock.entity_id()?,
             write,
             now,
             StoredIdentityOpAction::ProposalResolution {

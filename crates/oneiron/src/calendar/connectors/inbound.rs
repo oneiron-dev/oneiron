@@ -254,7 +254,7 @@ fn apply_inbound_event(
             (event_ref, false)
         }
         None => {
-            let event_ref = EntityId::now();
+            let event_ref = vault.store.clock.entity_id()?;
             vault.put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, now, &event_body)?;
             index_passport_uid(vault, &parsed.uid, &event_ref)?;
             (event_ref, true)

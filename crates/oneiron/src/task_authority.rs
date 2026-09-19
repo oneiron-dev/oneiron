@@ -21,6 +21,7 @@
 //! its own ownership. The replication/replay door admits role 6 exactly like
 //! any other TASK row — a peer's facts are already facts.
 
+use crate::ports::EdgeStoreRead;
 use std::sync::atomic::Ordering;
 
 use rmpv::Value;
@@ -34,7 +35,7 @@ use crate::error::{Error, RecordError, Result};
 use crate::habit::{TaskRole, task_role_from_body_bytes};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::temporal::TimeRange;
-use crate::vault::{MAX_EDGE_QUERY_RESULTS, edge_kind_prefix, parse_edge_record};
+use crate::vault::MAX_EDGE_QUERY_RESULTS;
 
 /// Strict body schema for authority facts. Version 1 is the only shape ever
 /// written; a row naming any other version is refused rather than guessed at.
@@ -180,7 +181,7 @@ pub(crate) fn put_task_authority_fact_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     fact: TaskAuthorityFact,
 ) -> Result<EntityId> {
-    let fact_ref = EntityId::now();
+    let fact_ref = vault.store.clock.entity_id()?;
     let occurred = TimeRange {
         start: fact.occurred_at,
         end: fact.occurred_at,
@@ -381,14 +382,23 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         task_ref: EntityId,
     ) -> Result<TaskAuthorityFacts> {
-        let prefix = edge_kind_prefix(&task_ref, EdgeKind::ScopedTo);
         let mut facts = TaskAuthorityFacts::default();
-        for (scanned, entry) in self.store.edges_in.prefix_iter(rtxn, &prefix)?.enumerate() {
+        for (scanned, entry) in self
+            .store
+            .port_edges(
+                rtxn,
+                &task_ref,
+                crate::ports::EdgeDirection::In,
+                Some(EdgeKind::ScopedTo),
+                None,
+            )?
+            .enumerate()
+        {
             if scanned >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("task authority facts"));
             }
-            let (key, value) = entry?;
-            let fact_ref = parse_edge_record(&key, &value)?.target;
+            let edge_row = entry?;
+            let fact_ref = edge_row.target;
             let Some(raw) = self.get_raw_in(rtxn, &fact_ref)? else {
                 continue;
             };

@@ -1,6 +1,7 @@
 //! ChannelIdentity transition admission, custody re-proof, and uniqueness scan.
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::ports::EntityStoreRead;
 
 use crate::entity_id::EntityId;
 
@@ -9,8 +10,6 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 
 use crate::store::Store;
-
-use crate::vault::entity_id_from_type_index_key;
 
 use super::binding::ChannelIdentityBinding;
 
@@ -122,8 +121,8 @@ pub(crate) fn admit_channel_identity_transition_in_txn(
     next.validate()?;
     if let Some(facet_ref) = next.binding.facet_ref() {
         let facet_type = store
-            .entities
-            .get(txn, facet_ref.as_bytes())?
+            .port_entity_record(txn, &facet_ref)?
+            .map(|row| row.encode())
             .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
         if facet_type != Some(crate::registry::ENTITY_TYPE_FACET) {
             return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
@@ -186,18 +185,14 @@ fn channel_identity_assignment_conflict_in_txn(
         return Ok(false);
     }
     let key = identity.assignment_key();
-    for entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
-    {
-        let (index_key, _) = entry?;
-        let existing_id = entity_id_from_type_index_key(&index_key)?;
+    for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
+        let existing_id = entry?;
         if existing_id == *id {
             continue;
         }
         let raw = store
-            .entities
-            .get(txn, existing_id.as_bytes())?
+            .port_entity_record(txn, &existing_id)?
+            .map(|row| row.encode())
             .ok_or(Error::CorruptedIndex("type index row without entity"))?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

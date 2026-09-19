@@ -168,7 +168,7 @@ pub fn run_skill_optimize(
     // A proposal whose cycle cannot be PROVEN at this moment is not born at
     // all — a private label is exactly the free budget the cap exists to deny.
     let drafted_in = proven_cycle(vault, attempt)?;
-    let proposal_id = EntityId::now();
+    let proposal_id = vault.store.clock.entity_id()?;
     vault.with_write_txn(|wtxn| {
         // Resolved at the WRITE door, not carried from the ranking: the
         // author ran outside this transaction, so the target may have been

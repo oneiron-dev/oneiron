@@ -20,9 +20,10 @@ use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, ap
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, RegistryError, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::{EntityClassification, TypeByteZone, entity_type_registry_entry};
 use crate::temporal::TimeRange;
-use crate::vault::entity_id_from_type_index_key;
+
 use rmpv::Value;
 
 impl Vault {
@@ -75,7 +76,7 @@ impl Vault {
         let record = record.created_at(learned_at)?;
         let data = encode_companion_record_body(&record)?;
         let key = record.key();
-        if self.store.entities.get(&*wtxn, id.as_bytes())?.is_some()
+        if self.store.port_entity_record(&*wtxn, &id)?.is_some()
             || companion_record_any_id_for_key_in_txn(&self.store, &*wtxn, &key)?.is_some()
         {
             return Err(Error::Record(RecordError::CompanionRecordAlreadyExists));
@@ -133,7 +134,11 @@ impl Vault {
     /// Reads and decodes one companion register record by entity id.
     pub fn get_companion_record(&self, id: &EntityId) -> Result<Option<CompanionRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(&rtxn, &id)?
+            .map(|row| row.encode())
+        else {
             return Ok(None);
         };
         let header =
@@ -284,11 +289,7 @@ impl Vault {
         revived_seed.lifecycle_events = retired.lifecycle_events;
         let revived = revived_seed.revived_at(revived_at)?;
         let key = revived.key();
-        if self
-            .store
-            .entities
-            .get(&wtxn, revived_id.as_bytes())?
-            .is_some()
+        if self.store.port_entity_record(&wtxn, &revived_id)?.is_some()
             || companion_record_id_for_key_in_txn(&self.store, &wtxn, &key)?.is_some()
         {
             return Err(Error::Record(RecordError::CompanionRecordAlreadyExists));
@@ -312,14 +313,16 @@ impl Vault {
     pub fn companion_register(&self) -> Result<CompanionRegister> {
         let rtxn = self.store.env.read_txn()?;
         let mut register = CompanionRegister::new();
-        for index_entry in self
-            .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_COMPANION_REGISTER])?
+        for index_entry in
+            self.store
+                .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_COMPANION_REGISTER, None)?
         {
-            let (type_key, _) = index_entry?;
-            let id = entity_id_from_type_index_key(&type_key)?;
-            let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            let id = index_entry?;
+            let Some(raw) = self
+                .store
+                .port_entity_record(&rtxn, &id)?
+                .map(|row| row.encode())
+            else {
                 return Err(Error::CorruptedIndex("companion register type index"));
             };
             let header =
@@ -392,8 +395,8 @@ impl Vault {
     ) -> Result<CompanionRecord> {
         let raw = self
             .store
-            .entities
-            .get(txn, id.as_bytes())?
+            .port_entity_record(txn, &id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

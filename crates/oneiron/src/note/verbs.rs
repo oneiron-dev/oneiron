@@ -5,6 +5,7 @@ use super::{NoteBody, NoteEdit, NoteEditOutcome, encode_note_body};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::memory::MemoryResult;
+use crate::ports::EdgeStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_NOTE};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -19,8 +20,8 @@ impl Vault {
         actor: WriteActor,
     ) -> MemoryResult<EntityId> {
         let kind = self.note_kind(kind)?;
-        let id = EntityId::now();
-        let at = crate::unix_seconds_now();
+        let id = self.store.clock.entity_id()?;
+        let at = self.store.clock.now_recorded_at();
         let body = encode_note_body(&NoteBody {
             document_head: None,
             kind,
@@ -29,7 +30,13 @@ impl Vault {
         })?;
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_verified_actor_write_txn(|txn| {
-                let doc = NoteDocument::born(id, markdown, actor.entity_ref(), at)?;
+                let doc = NoteDocument::born(
+                    id,
+                    self.store.clock.entity_id()?,
+                    markdown,
+                    actor.entity_ref(),
+                    at,
+                )?;
                 self.batch_in()
                     .put_authored_note(
                         &id,
@@ -65,12 +72,13 @@ impl Vault {
                     }
                     None => NoteDocument::born(
                         note,
+                        self.store.clock.entity_id()?,
                         &body.markdown,
                         body.author_ref,
                         header.learned_at,
                     )?,
                 };
-                let at = crate::unix_seconds_now();
+                let at = self.store.clock.now_recorded_at();
                 if !super::proposals::grant_allows(self, txn, note, actor)? {
                     let candidate = NoteDocument {
                         note,
@@ -80,10 +88,11 @@ impl Vault {
                             .fork_at(&doc.doc.state_frontiers())
                             .map_err(|_| invalid("fork frontier"))?,
                     };
-                    let replacement = candidate.apply(edit, actor.entity_ref(), at)?;
+                    let replacement =
+                        candidate.apply(&self.store.clock, edit, actor.entity_ref(), at)?;
                     let rewrite = replacement.is_some();
                     let mut fork = replacement.unwrap_or(candidate);
-                    fork.head = EntityId::now();
+                    fork.head = self.store.clock.entity_id()?;
                     store_doc(self, txn, &doc, true)?;
                     store_doc(self, txn, &fork, false)?;
                     super::proposals::remember_fork(
@@ -96,7 +105,7 @@ impl Vault {
                     )?;
                     return Ok(NoteEditOutcome::ProposedFork { fork: fork.head });
                 }
-                if let Some(fork) = doc.apply(edit, actor.entity_ref(), at)? {
+                if let Some(fork) = doc.apply(&self.store.clock, edit, actor.entity_ref(), at)? {
                     // Birth, when needed, persists without any rewrite operations.
                     store_doc(self, txn, &doc, true)?;
                     store_doc(self, txn, &fork, false)?;
@@ -129,16 +138,15 @@ impl Vault {
             .with_verified_actor_write_txn(|txn| {
                 let header = live_header(self, txn, source)?;
                 let (text_source, citation) = if header.entity_type == ENTITY_TYPE_ASSET {
-                    let prefix = crate::vault::edge_kind_prefix(&source, EdgeKind::DerivedFrom);
                     let mut newest = None;
-                    for entry in self.store.edges_in.prefix_iter(txn, &prefix)? {
-                        let (key, _) = entry?;
-                        let id = EntityId::from_bytes(
-                            key.get(17..33)
-                                .ok_or(invalid("asset text edge"))?
-                                .try_into()
-                                .map_err(|_| invalid("asset text edge"))?,
-                        )?;
+                    for entry in self.store.port_edges(
+                        txn,
+                        &source,
+                        crate::ports::EdgeDirection::In,
+                        Some(EdgeKind::DerivedFrom),
+                        None,
+                    )? {
+                        let id = entry?.target;
                         if self.archive_tombstone_in_txn(txn, &id)?.is_some() {
                             continue;
                         }
@@ -195,6 +203,7 @@ fn create_from_text_in_txn(
     kind: super::NoteKind,
     actor: WriteActor,
 ) -> crate::error::Result<EntityId> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     let header = live_header(vault, txn, source)?;
     let text = if header.entity_type == ENTITY_TYPE_NOTE {
         match load_doc(vault, txn, source)? {
@@ -210,8 +219,8 @@ fn create_from_text_in_txn(
     } else {
         return Err(invalid("source has no supported text representation"));
     };
-    let id = EntityId::now();
-    let at = crate::unix_seconds_now();
+    let id = vault.store.clock.entity_id()?;
+    let at = mutation_recorded_at;
     let body = encode_note_body(&NoteBody {
         document_head: None,
         kind,

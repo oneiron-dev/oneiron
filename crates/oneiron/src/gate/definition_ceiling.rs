@@ -2,6 +2,7 @@ use crate::agent_def::decode_agent_definition;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
@@ -68,7 +69,10 @@ fn agent_bearing_for_entity(
     txn: &heed::RoTxn<'_>,
     entity_ref: EntityId,
 ) -> AgentBearing {
-    let raw = match store.entities.get(txn, entity_ref.as_bytes()) {
+    let raw = match store
+        .port_entity_record(txn, &entity_ref)
+        .map(|row| row.map(|row| row.encode()))
+    {
         Ok(Some(raw)) => raw,
         Ok(None) => return AgentBearing::Absent,
         Err(error) => {
@@ -124,7 +128,10 @@ fn parent_row_ceiling(
     txn: &heed::RoTxn<'_>,
     parent_id: &EntityId,
 ) -> PolicyApprovalCeiling {
-    let raw = match store.entities.get(txn, parent_id.as_bytes()) {
+    let raw = match store
+        .port_entity_record(txn, &parent_id)
+        .map(|row| row.map(|row| row.encode()))
+    {
         Ok(Some(raw)) => raw,
         Ok(None) => {
             tracing::warn!(

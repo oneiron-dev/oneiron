@@ -1,10 +1,10 @@
 //! Store-level (pre-vault) readers for the type-76 entity kind: the helpers the
 //! batch write/materialize path and the fold projection share.
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, is_structural_kind};
 use crate::store::Store;
 
@@ -27,11 +27,11 @@ pub(super) fn identity_topology_entity_type_for_store_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<u8>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    Ok(Some(header.entity_type))
+
+    Ok(Some(raw.entity_type))
 }
 
 pub(super) fn identity_topology_event_for_store_in_txn(
@@ -39,14 +39,14 @@ pub(super) fn identity_topology_event_for_store_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<StoredIdentityOpEvent>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
-        return Err(Error::InvalidEntityType(header.entity_type));
+
+    if raw.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        return Err(Error::InvalidEntityType(raw.entity_type));
     }
-    decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+    decode_identity_topology_event_body(&raw.body)
         .map(Some)
         .map_err(|_| Error::CorruptedIndex("identity topology event body"))
 }
@@ -56,12 +56,8 @@ pub(super) fn identity_topology_events_for_store_in_txn(
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<Vec<IdentityTopologyEvent>> {
     let mut events = Vec::new();
-    for entry in store
-        .type_index
-        .prefix_iter(rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
-    {
-        let (key, _) = entry?;
-        let event_id = crate::vault::entity_id_from_type_index_key(&key)?;
+    for entry in store.port_entity_ids_by_type(rtxn, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, None)? {
+        let event_id = entry?;
         let record = identity_topology_event_for_store_in_txn(store, rtxn, &event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;
         events.push(IdentityTopologyEvent {

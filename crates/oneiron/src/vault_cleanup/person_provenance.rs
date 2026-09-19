@@ -11,6 +11,7 @@ use crate::Vault;
 use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 
@@ -58,7 +59,7 @@ impl Vault {
             return Ok(false);
         }
         let key = prefixed_key(EXTRACTION_PERSON_PREFIX, id);
-        if self.store.entities.get(wtxn, id.as_bytes())?.is_some()
+        if self.store.port_entity_record(wtxn, &id)?.is_some()
             || self.store.vault_meta.get(wtxn, &key)?.is_some()
             || self.local_hard_delete_marker_exists_in_txn(wtxn, id)?
             || self
@@ -72,8 +73,8 @@ impl Vault {
             .apply(wtxn)?;
         let raw = self
             .store
-            .entities
-            .get(wtxn, id.as_bytes())?
+            .port_entity_record(wtxn, &id)?
+            .map(|row| row.encode())
             .ok_or(Error::CorruptedIndex("extraction person mint"))?;
         let mut evidence = blake3::hash(&raw).as_bytes().to_vec();
         evidence.extend_from_slice(source.as_str().as_bytes());
@@ -112,7 +113,11 @@ pub(super) fn is_extraction_minted_person_in_txn(
     if !source.is_some_and(claim_source_is_machine_minted) {
         return Ok(false);
     }
-    let Some(raw) = vault.store.entities.get(rtxn, person.as_bytes())? else {
+    let Some(raw) = vault
+        .store
+        .port_entity_record(rtxn, &person)?
+        .map(|row| row.encode())
+    else {
         return Ok(false);
     };
     Ok(evidence[..REVISION_HASH_LEN] == blake3::hash(&raw).as_bytes()[..])

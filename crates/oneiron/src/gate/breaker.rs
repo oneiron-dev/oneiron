@@ -477,7 +477,7 @@ pub(super) fn apply_gate_breaker_in_txn(
         ))?;
         let mut record = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: GateDecisionId::now(),
+            decision_id: GateDecisionId::from_bytes(store.clock.ulid()?),
             created_at: now,
             outcome: GATE_BREAKER_OUTCOME_TRIPPED.to_owned(),
             reason_codes: vec![GATE_BREAKER_REASON_TRIPPED.to_owned()],

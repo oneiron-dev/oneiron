@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use std::collections::{HashMap, HashSet};
 
 use heed::RoTxn;
@@ -120,7 +121,11 @@ pub(super) fn blended_retrieval_scores(
             input.recency = 2.0_f64.powf(-age_secs / seconds_per_half_life) as f32;
         }
 
-        if needs_claim_body && let Some(raw) = store.entities.get(rtxn, input.id.as_bytes())? {
+        if needs_claim_body
+            && let Some(raw) = store
+                .port_entity_record(rtxn, &input.id)?
+                .map(|row| row.encode())
+        {
             if config.salience
                 && let Some(salience) = fusion::decode_msgpack_float(&raw, crate::claim::KEY_SAL)
             {

@@ -50,7 +50,7 @@ fn mint_in_txn(
 ) -> Result<EntityId> {
     actor_in_txn(&vault.store, txn, actor)?;
     let resolved = resolve_in_txn(vault, txn, scope)?;
-    let id = EntityId::now();
+    let id = vault.store.clock.entity_id()?;
     let body = ScopeSummaryBody {
         v: 1,
         scope: scope.clone(),
@@ -126,7 +126,7 @@ fn land_in_txn(
             .map(|id| Value::from(id.to_hex()))
             .collect(),
     ));
-    let claim = EntityId::now();
+    let claim = vault.store.clock.entity_id()?;
     vault
         .batch_in()
         .claim_candidate(
@@ -185,11 +185,11 @@ impl Vault {
     /// Mints an independent retained SESSION. It never takes the global
     /// open-session pointer or aliases an existing sitting.
     pub fn spawn_sub_session(&self, turn: &EntityId, actor: WriteActor) -> Result<EntityId> {
-        let now = crate::unix_seconds_now();
+        let now = self.store.clock.now_recorded_at();
         self.with_write_txn(|txn| {
             actor_in_txn(&self.store, txn, actor)?;
             conversation_of(&self.store, txn, turn)?;
-            let id = EntityId::now();
+            let id = self.store.clock.entity_id()?;
             let mut body = Vec::new();
             rmpv::encode::write_value(
                 &mut body,
@@ -263,7 +263,14 @@ impl Vault {
         actor: WriteActor,
     ) -> Result<EntityId> {
         self.with_write_txn(|txn| {
-            mint_in_txn(self, txn, scope, text, actor, crate::unix_seconds_now())
+            mint_in_txn(
+                self,
+                txn,
+                scope,
+                text,
+                actor,
+                self.store.clock.now_recorded_at(),
+            )
         })
     }
 
@@ -281,7 +288,7 @@ impl Vault {
             return Err(invalid("as_record requires land_on"));
         }
         self.with_write_txn(|txn| {
-            let now = crate::unix_seconds_now();
+            let now = self.store.clock.now_recorded_at();
             let summary = mint_in_txn(self, txn, scope, text, actor, now)?;
             let landed = land_on
                 .map(|turn| land_in_txn(self, txn, &summary, &turn, actor, as_record, now))
@@ -307,7 +314,7 @@ impl Vault {
                 turn,
                 actor,
                 as_record,
-                crate::unix_seconds_now(),
+                self.store.clock.now_recorded_at(),
             )
         })
     }

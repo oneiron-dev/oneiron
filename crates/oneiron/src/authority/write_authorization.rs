@@ -4,6 +4,7 @@ use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::write_envelope::WriteActor;
 
 use super::{AuthorityFold, actor_binding_is_active};
@@ -20,8 +21,8 @@ impl Vault {
     ) -> Result<AuthorityFold> {
         let raw = self
             .store
-            .entities
-            .get(txn, writer.entity_ref().as_bytes())?
+            .port_entity_record(txn, &writer.entity_ref())?
+            .map(|row| row.encode())
             .ok_or(Error::InvalidClaimBody(
                 "writer must name a live authority-bearing entity",
             ))?;

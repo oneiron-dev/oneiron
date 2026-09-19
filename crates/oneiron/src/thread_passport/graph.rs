@@ -3,9 +3,10 @@
 use super::*;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::edge::EdgeKind;
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
-use crate::vault::{edge_kind_prefix, entity_id_from_type_index_key, parse_edge_record};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PassportRow {
@@ -37,17 +38,19 @@ impl PassportRow {
 /// ClaimOf for this family, including raw batch writes and sync materialization.
 fn thread_claims(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Vec<(EntityId, ClaimBody)>> {
     let mut rows = BTreeMap::new();
-    for entry in store
-        .type_index
-        .prefix_iter(rtxn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
-    {
-        let (key, _) = entry?;
-        let owner = entity_id_from_type_index_key(&key)?;
-        let prefix = edge_kind_prefix(&owner, EdgeKind::ClaimOf);
-        for entry in store.edges_in.prefix_iter(rtxn, &prefix)? {
-            let (key, value) = entry?;
-            let id = parse_edge_record(&key, &value)?.target;
-            let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    for entry in store.port_entity_ids_by_type(rtxn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
+        let owner = entry?;
+
+        for entry in store.port_edges(
+            rtxn,
+            &owner,
+            crate::ports::EdgeDirection::In,
+            Some(EdgeKind::ClaimOf),
+            None,
+        )? {
+            let edge_row = entry?;
+            let id = edge_row.target;
+            let Some(raw) = store.port_entity_record(rtxn, &id)?.map(|row| row.encode()) else {
                 continue;
             };
             let header =

@@ -3,10 +3,10 @@
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
+use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::overlay_db::OverlayDb;
-use crate::{Vault, unix_seconds_now};
 
 pub mod model_versioning;
 
@@ -436,7 +436,7 @@ impl Vault {
             let sequence = next_customization_event_sequence(&self.store.vault_meta, wtxn)?;
             let event = CustomizationSettingsChangeEvent::new(
                 sequence,
-                unix_seconds_now(),
+                self.store.clock.now_recorded_at(),
                 previous,
                 value,
             );

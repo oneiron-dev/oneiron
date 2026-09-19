@@ -140,7 +140,7 @@ impl Vault {
         // `learned_at` (and a matching future `valid_from`) walks straight
         // back into the same interval. The rule is about what this family can
         // honour, so it holds against every clock the caller supplies.
-        let now = crate::unix_seconds_now();
+        let now = self.store.clock.now_recorded_at();
         if occurred.start > now || learned_at > now {
             return Err(Error::InvalidClaimBody(
                 "expression preference cannot be written with a future occurred_at",

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::error::{GateError, RecordError};
+use crate::ports::EntityStoreRead;
 
 // ---------------------------------------------------------------------------
 // Roster reads
@@ -666,14 +667,14 @@ pub(super) fn read_federation_grant_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<FederationGrant>> {
-    let Some(raw) = vault.store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = vault.store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
-        return Err(Error::InvalidEntityType(header.entity_type));
+
+    if raw.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
+        return Err(Error::InvalidEntityType(raw.entity_type));
     }
-    decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    decode_federation_grant_body(&raw.body).map(Some)
 }
 
 pub(super) fn encode_value(value: &Value) -> Result<Vec<u8>> {

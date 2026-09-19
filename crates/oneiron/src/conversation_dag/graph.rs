@@ -1,8 +1,9 @@
 //! Strict transactional graph reads and shared guards.
 
-use crate::edge::{EdgeKind, parse_strict_edge_record};
+use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, RegistryError, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -74,21 +75,21 @@ pub(crate) fn edge_ids(
     incoming: bool,
     cap: usize,
 ) -> Result<Vec<EntityId>> {
-    let mut prefix = id.as_bytes().to_vec();
-    prefix.push(kind as u8);
-    let db = if incoming {
-        &store.edges_in
+    let direction = if incoming {
+        EdgeDirection::In
     } else {
-        &store.edges_out
+        EdgeDirection::Out
     };
     let mut ids = Vec::new();
-    for (n, entry) in db.prefix_iter(txn, &prefix)?.enumerate() {
+    for (n, entry) in store
+        .port_edges(txn, id, direction, Some(kind), None)?
+        .enumerate()
+    {
         if n >= cap {
             return Err(Error::IndexOverflow("conversation_dag_walk"));
         }
-        let (key, value) = entry?;
-        let edge = parse_strict_edge_record(&key, &value)?;
-        if edge.source != *id || edge.kind != kind {
+        let edge = entry?;
+        if edge.kind != kind {
             return Err(Error::CorruptedIndex("conversation DAG edge"));
         }
         ids.push(edge.target);

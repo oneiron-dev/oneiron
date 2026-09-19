@@ -118,7 +118,7 @@ pub fn run_substitution_miner(vault: &Vault, run: &MinerRun) -> Result<Vec<Mined
         return Ok(Vec::new());
     }
 
-    let now = crate::unix_seconds_now();
+    let now = vault.store.clock.now_recorded_at();
     let k = miner_k(vault)?;
     let clusters = clusters_from(vault, &judgments)?;
     let mut outcomes = Vec::with_capacity(clusters.len());

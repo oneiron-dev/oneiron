@@ -13,6 +13,7 @@ use crate::gate::{
     self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
     GateProvenanceHandles,
 };
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::store::{ChannelIdentityLifecycleReceiptId, ChannelIdentityLifecycleReceiptRecord};
 
@@ -537,7 +538,7 @@ impl Vault {
         identity: &ChannelIdentity,
     ) -> Result<()> {
         let data = encode_channel_identity_body(identity)?;
-        if self.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
+        if self.store.port_entity_record(&*wtxn, &id)?.is_some() {
             return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
         }
         admit_channel_identity_transition_in_txn(
@@ -576,8 +577,8 @@ impl Vault {
     ) -> Result<ChannelIdentity> {
         let raw = self
             .store
-            .entities
-            .get(txn, id.as_bytes())?
+            .port_entity_record(txn, &id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -595,7 +596,7 @@ impl Vault {
     ) -> Result<ChannelIdentityLifecycleReceiptRecord> {
         let receipt = ChannelIdentityLifecycleReceiptRecord {
             version: 0,
-            receipt_id: ChannelIdentityLifecycleReceiptId::now(),
+            receipt_id: ChannelIdentityLifecycleReceiptId::from_bytes(self.store.clock.ulid()?),
             created_at,
             identity_id: *input.identity_id.as_bytes(),
             actor_class: input.actor.actor_class,

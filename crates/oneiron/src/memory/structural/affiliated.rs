@@ -5,7 +5,7 @@ use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
 };
 use crate::edge::EdgeKind;
-use crate::entity_id::EntityId;
+
 use crate::error::ErrorKind;
 use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
@@ -63,8 +63,8 @@ impl Memory<'_> {
             author_ref: self.actor,
             markdown: markdown.into(),
         })?;
-        let note_id = EntityId::now();
-        let at = crate::unix_seconds_now();
+        let note_id = self.vault.store.clock.entity_id()?;
+        let at = self.vault.store.clock.now_recorded_at();
         let occurred = TimeRange { start: at, end: at };
         let (target_id, link, target_must_be_claim) = match target {
             TakeTarget::Subject(id) => (id, EdgeKind::About, false),
@@ -98,6 +98,7 @@ impl Memory<'_> {
             let birth = crate::note::decode_note_body(&body)?;
             let doc = crate::note::documents::NoteDocument::born(
                 note_id,
+                self.vault.store.clock.entity_id()?,
                 &birth.markdown,
                 self.actor,
                 at,
@@ -114,7 +115,7 @@ impl Memory<'_> {
         &self,
         input: &CompanionRecordInput,
     ) -> MemoryResult<EntityRefReceipt> {
-        let id = id_from_optional_hex(input.id.as_deref())?;
+        let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         self.refuse_hard_deleted_id(&id)?;
         let owner = self.resolve_ref(&input.owner_ref)?;
         let persona = self.resolve_ref(&input.persona_ref)?;
@@ -172,7 +173,7 @@ impl Memory<'_> {
                 &["Register the source in the ingest source registry first."],
             ));
         };
-        let id = id_from_optional_hex(input.id.as_deref())?;
+        let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         self.refuse_hard_deleted_id(&id)?;
         let subject = self.resolve_ref(&input.subject_ref)?;
         if self.vault.get_entity_type(&subject)?.is_none() {

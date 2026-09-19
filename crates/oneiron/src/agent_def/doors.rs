@@ -9,6 +9,7 @@ use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::temporal::TimeRange;
 
@@ -97,8 +98,8 @@ impl Vault {
     ) -> Result<AgentDefinition> {
         let raw = self
             .store
-            .entities
-            .get(txn, id.as_bytes())?
+            .port_entity_record(txn, &id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

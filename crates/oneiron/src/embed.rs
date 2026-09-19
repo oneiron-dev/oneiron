@@ -1,9 +1,10 @@
+use crate::ports::EntityStoreRead;
 use std::borrow::Cow;
 
 use crate::entity_id::EntityId;
+use crate::error::Result;
 #[cfg(feature = "sync")]
 use crate::error::StoreError;
-use crate::error::{Error, Result};
 
 /// Highest priority: a pending claim surfaced in user-visible retrieval.
 pub const EMBED_PRIORITY_SURFACED_HOT: u8 = 0;
@@ -548,18 +549,10 @@ pub(crate) fn remark_all_claims_pending_in_txn(
     priority: u8,
 ) -> Result<usize> {
     let mut claims = Vec::new();
-    for row in vault.store.entities.iter(wtxn)? {
-        let (key, raw) = row?;
-        let header = crate::batch::EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            let id = EntityId::from_bytes(
-                key.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("entity id"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("entity id"))?;
-            claims.push((id, raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec()));
+    for row in vault.store.port_entity_records(wtxn)? {
+        let (id, row) = row?;
+        if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            claims.push((id, row.body));
         }
     }
     for (id, body) in &claims {
@@ -633,17 +626,16 @@ fn pending_input_in_txn(
     let Some(token) = vault.store.pending_embedding_token_in_txn(wtxn, id)? else {
         return Ok(None);
     };
-    let Some(raw) = vault.store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(raw) = vault.store.port_entity_record(wtxn, &id)? else {
         return Ok(None);
     };
-    let header = crate::batch::EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("entity header"))?;
-    let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+
+    let body = &raw.body;
     // RT-05 (ONE-1687): the epoch-summary keyframe is embeddable alongside
     // CLAIM, and what the embedder (and egress gate) receives is its TEXT: the
     // record's framing keys carry no retrievable meaning. The pending-embedding
     // token still commits to the whole record, so a re-mint invalidates it.
-    let payload = match header.entity_type {
+    let payload = match raw.entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => PendingEmbeddingPayload::ClaimBody(body.to_vec()),
         crate::registry::ENTITY_TYPE_SUMMARY => {
             // An ordinary witness SUMMARY shares the type byte and is not an

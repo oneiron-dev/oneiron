@@ -18,7 +18,7 @@ pub(super) fn record_event_outcome_in_txn(
     body.source = Some(source);
     body.valid_from = Some(value.recorded_at);
 
-    let new_id = EntityId::now();
+    let new_id = vault.store.clock.entity_id()?;
     let occurred = TimeRange {
         start: value.recorded_at,
         end: value.recorded_at,

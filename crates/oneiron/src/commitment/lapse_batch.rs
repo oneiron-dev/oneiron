@@ -4,6 +4,7 @@ use crate::batch::{ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops_wi
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 
@@ -39,8 +40,8 @@ pub(crate) fn pending_commitment_lapses_in_txn(
     let mut pending = Vec::with_capacity(ids.len());
     for id in ids {
         let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+            .port_entity_record(txn, &id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

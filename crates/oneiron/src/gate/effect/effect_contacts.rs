@@ -114,7 +114,7 @@ fn counterparty_send_override_in_txn(
         &party,
         channel_class,
         send_ref,
-        crate::unix_seconds_now(),
+        store.clock.now_recorded_at(),
     ))
 }
 

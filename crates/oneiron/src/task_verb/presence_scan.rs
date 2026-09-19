@@ -19,7 +19,6 @@ use crate::habit::TaskRole;
 use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
-use crate::unix_seconds_now;
 
 use super::consult_result::CancelTargetState;
 use super::follow_up::peer_handle_in;
@@ -275,7 +274,7 @@ pub(super) fn task_presence_with_limits(
     // Read-time clock: a consult past its deadline surfaces as expired from the
     // persisted deadline alone, so the failed row is never hidden behind
     // outbound (or reconciliation) availability.
-    let now = unix_seconds_now();
+    let now = vault.store.clock.now_recorded_at();
     let mut intents = Vec::new();
     for page in &scan.pages {
         // ONE render-state/hydration transaction per page, replacing the two
@@ -406,7 +405,14 @@ pub(super) fn task_presence_for_id(
     let Ok(acked) = task_is_acked(vault, task_ref) else {
         return Ok(None);
     };
-    match task_intent_presence(vault, task_ref, &task_hex, jobs, acked, unix_seconds_now()) {
+    match task_intent_presence(
+        vault,
+        task_ref,
+        &task_hex,
+        jobs,
+        acked,
+        vault.store.clock.now_recorded_at(),
+    ) {
         Ok(found) => Ok(found),
         // A malformed body degrades to "not board-visible" here exactly as it
         // does in the board scan, so both doors agree on a poisoned row.

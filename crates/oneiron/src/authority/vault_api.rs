@@ -3,6 +3,7 @@
 //! The engine-authored put/get doors for signed entries plus the
 //! readonly/backfilling fold entry points.
 
+use crate::ports::EntityStoreRead;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
@@ -14,8 +15,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::temporal::TimeRange;
-use crate::unix_seconds_now;
-use crate::vault::entity_id_from_type_index_key;
 
 use super::*;
 
@@ -121,7 +120,11 @@ impl Vault {
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.
     pub fn get_authority_log_entry(&self, id: &EntityId) -> Result<Option<AuthorityLogEntry>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(&rtxn, &id)?
+            .map(|row| row.encode())
+        else {
             return Ok(None);
         };
         let header =
@@ -161,25 +164,26 @@ impl Vault {
                 .get(wtxn, floor_key)?
                 .and_then(|raw| decode_authority_first_seen_secs(&raw))
                 .unwrap_or(0);
-            let observed_floor =
-                authority_observation_secs(&self.store, previous_floor, unix_seconds_now());
+            let observed_floor = authority_observation_secs(
+                &self.store,
+                previous_floor,
+                self.store.clock.now_recorded_at(),
+            );
             if observed_floor != previous_floor {
                 let encoded = encode_authority_first_seen_secs(observed_floor);
                 self.store.sync_state.put(wtxn, floor_key, &encoded)?;
             }
 
             let mut missing_sidecars = Vec::new();
-            for entry in self
-                .store
-                .type_index
-                .prefix_iter(wtxn, &[ENTITY_TYPE_AUTHORITY_LOG])?
+            for entry in
+                self.store
+                    .port_entity_ids_by_type(wtxn, ENTITY_TYPE_AUTHORITY_LOG, None)?
             {
-                let (key, _) = entry?;
-                let id = entity_id_from_type_index_key(&key)?;
+                let id = entry?;
                 let raw = self
                     .store
-                    .entities
-                    .get(wtxn, id.as_bytes())?
+                    .port_entity_record(wtxn, &id)?
+                    .map(|row| row.encode())
                     .ok_or(Error::CorruptedIndex("type index row without entity"))?;
                 let header = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("entity header"))?;
@@ -253,15 +257,13 @@ impl Vault {
             .unwrap_or(0);
         for entry in self
             .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_AUTHORITY_LOG])?
+            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_AUTHORITY_LOG, None)?
         {
-            let (key, _) = entry?;
-            let id = entity_id_from_type_index_key(&key)?;
+            let id = entry?;
             let raw = self
                 .store
-                .entities
-                .get(&rtxn, id.as_bytes())?
+                .port_entity_record(&rtxn, &id)?
+                .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("type index row without entity"))?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -290,8 +292,11 @@ impl Vault {
                 .get(wtxn, authority_first_seen_clock_sync_key())?
                 .and_then(|raw| decode_authority_first_seen_secs(&raw))
                 .unwrap_or(previous_floor);
-            let now_secs =
-                authority_observation_secs(&self.store, previous_floor, unix_seconds_now());
+            let now_secs = authority_observation_secs(
+                &self.store,
+                previous_floor,
+                self.store.clock.now_recorded_at(),
+            );
             if now_secs != previous_floor {
                 let encoded = encode_authority_first_seen_secs(now_secs);
                 self.store
@@ -358,18 +363,20 @@ impl Vault {
             .sync_state
             .get(txn, authority_first_seen_backfill_sync_key())?
             .is_some();
-        let now_secs = authority_observation_secs(&self.store, persisted_floor, unix_seconds_now());
+        let now_secs = authority_observation_secs(
+            &self.store,
+            persisted_floor,
+            self.store.clock.now_recorded_at(),
+        );
         for row in self
             .store
-            .type_index
-            .prefix_iter(txn, &[ENTITY_TYPE_AUTHORITY_LOG])?
+            .port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)?
         {
-            let (key, _) = row?;
-            let id = entity_id_from_type_index_key(&key)?;
+            let id = row?;
             let raw = self
                 .store
-                .entities
-                .get(txn, id.as_bytes())?
+                .port_entity_record(txn, &id)?
+                .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("type index row without entity"))?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

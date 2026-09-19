@@ -2,6 +2,7 @@
 use crate::EntityId;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::Result;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 use heed::RoTxn;
@@ -19,7 +20,7 @@ pub(super) fn candidate_matches_criticality(
     if entity_type != ENTITY_TYPE_CLAIM {
         return Ok(true);
     }
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
         return Ok(false);
     };
     let Some(body) = raw

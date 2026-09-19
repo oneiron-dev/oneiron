@@ -171,12 +171,11 @@ use self::lifecycle::{
 pub(crate) use imported::ImportedEdgeProvenance;
 
 use crate::Vault;
-use crate::batch::EntityMetadataHeader;
+
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::Store;
-use crate::vault::parse_edge_record;
+
 use rmpv::Value;
 
 #[cfg(test)]

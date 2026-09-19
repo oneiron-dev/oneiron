@@ -232,7 +232,7 @@ pub fn apply_magistrate_verdict(
     verdict: &MagistrateVerdict,
 ) -> Result<MagistrateReceipt> {
     let receipt = MagistrateReceipt {
-        receipt_ref: EntityId::now(),
+        receipt_ref: vault.store.clock.entity_id()?,
         task_ref: case.task_ref,
         verdict: *verdict,
         decisive_layer: magistrate_decision_layer(case, *verdict),
@@ -314,7 +314,7 @@ fn apply_magistrate_selection_in_txn(
     vault
         .batch_in()
         .conflict_open_claim(
-            &EntityId::now(),
+            &vault.store.clock.entity_id()?,
             case.contested_state_ref,
             magistrate_conflict_value(case, selected, &competing),
             1.0,
@@ -418,7 +418,7 @@ pub fn record_magistrate_overturn(
     vault: &Vault,
     record: &MagistrateOverturnRecord,
 ) -> Result<EntityId> {
-    let overturn_ref = EntityId::now();
+    let overturn_ref = vault.store.clock.entity_id()?;
     let body = canonical_bytes(&magistrate_overturn_value(record));
     let occurred = TimeRange {
         start: record.occurred_at,

@@ -170,7 +170,7 @@ pub(crate) fn append_in_txn(
         rmpv::encode::write_value(&mut body, &Value::Map(entries))
             .map_err(|_| invalid("record encode failed"))?;
     }
-    let id = EntityId::now();
+    let id = vault.store.clock.entity_id()?;
     super::policy::check_append_policy(vault, txn, &id, input, &body)?;
     let fields: Vec<_> = input
         .text

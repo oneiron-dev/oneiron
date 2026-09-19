@@ -1,11 +1,13 @@
 use super::criticality::candidate_matches_criticality;
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use heed::RoTxn;
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::claim_surfaceable;
 use crate::codebase::codebase_candidate_matches_scope_key;
-use crate::edge::{EDGE_KEY_LEN, EdgeKind};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::edge::EdgeKind;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_RELATIONSHIP};
 use crate::store::Store;
@@ -84,8 +86,8 @@ pub(super) fn claim_status_gate_allows(
     // Claims gate on their own appr/life/stale like any other claim instead
     // of failing the decode.
     let decision = store
-        .entities
-        .get(rtxn, id.as_bytes())?
+        .port_entity_record(rtxn, &id)?
+        .map(|row| row.encode())
         .and_then(|raw| {
             raw.get(ENTITY_METADATA_HEADER_LEN..)
                 .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
@@ -220,18 +222,17 @@ fn claim_facet_scope(
     claim_id: &EntityId,
     active_facet: &EntityId,
 ) -> Result<ClaimFacetScope> {
-    let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
-    prefix[..ENTITY_ID_LEN].copy_from_slice(claim_id.as_bytes());
-    prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
-
     let mut any_facet_edge = false;
-    for row in store.edges_out.prefix_iter(rtxn, prefix.as_slice())? {
-        let (key, _value) = row?;
-        if key.len() != EDGE_KEY_LEN {
-            return Err(Error::CorruptedIndex("edge record"));
-        }
+    for row in store.port_edges(
+        rtxn,
+        claim_id,
+        crate::ports::EdgeDirection::Out,
+        Some(EdgeKind::FacetOf),
+        None,
+    )? {
+        let edge = row?;
         any_facet_edge = true;
-        if &key[ENTITY_ID_LEN + 1..] == active_facet.as_bytes() {
+        if edge.target == *active_facet {
             return Ok(ClaimFacetScope::ActiveFacet);
         }
     }
@@ -323,16 +324,14 @@ pub(super) fn apply_relationship_filter(
 }
 
 fn claim_rel(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
-    if header.entity_type != ENTITY_TYPE_CLAIM {
+
+    if raw.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(None);
     }
-    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    let body = crate::claim::decode_claim_body(&raw.body, true)?;
     Ok(body.rel)
 }
 
@@ -432,16 +431,14 @@ fn drop_stale_federated_claims(
 /// through the pinned claim validator (the world key was structurally
 /// validated to 16 bytes at write time).
 fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
-    if header.entity_type != ENTITY_TYPE_CLAIM {
+
+    if raw.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(None);
     }
-    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    let body = crate::claim::decode_claim_body(&raw.body, true)?;
     Ok(body.world)
 }
 

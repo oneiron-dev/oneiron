@@ -1,11 +1,11 @@
 //! Vault CRUD for symbol manifests and the blame / definition / reference / PPR reads over them.
 
+use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::code_artifact::decode_code_artifact_body;
 use crate::codebase::RepoRef;
 use crate::edge::EdgeKind;
@@ -410,11 +410,11 @@ pub(super) fn delete_code_symbol_manifest_in_txn(
 }
 
 fn entity_type_in_txn(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    Ok(Some(header.entity_type))
+
+    Ok(Some(raw.entity_type))
 }
 
 fn validate_code_artifact_target(
@@ -423,16 +423,16 @@ fn validate_code_artifact_target(
     code_artifact_id: &EntityId,
     repo_ref: &RepoRef,
 ) -> Result<()> {
-    let Some(raw) = store.entities.get(rtxn, code_artifact_id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &code_artifact_id)? else {
         return Err(Error::EntityNotFound);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
+
+    if raw.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
         return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "symbol manifest target is not a CODE_ARTIFACT",
         )));
     }
-    let artifact = decode_code_artifact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    let artifact = decode_code_artifact_body(&raw.body)?;
     let artifact_repo_ref = RepoRef::parse(&artifact.repo_ref).map_err(|_| {
         Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "CODE artifact repo_ref must be a valid v1 repo_ref",
@@ -451,11 +451,11 @@ fn validate_code_artifact_entity_exists(
     rtxn: &RoTxn<'_>,
     code_artifact_id: &EntityId,
 ) -> Result<()> {
-    let Some(raw) = store.entities.get(rtxn, code_artifact_id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &code_artifact_id)? else {
         return Err(Error::EntityNotFound);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
+
+    if raw.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
         return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "symbol manifest target is not a CODE_ARTIFACT",
         )));

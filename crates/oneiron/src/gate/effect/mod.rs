@@ -92,6 +92,7 @@ pub(crate) fn evaluate_external_effect_policy(
     policy: &PolicyManifestResolution,
     required_grant_id: Option<EntityId>,
 ) -> Result<ExternalEffectGovernance> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let (mut hydrated_effect, counterparty_send_override) =
         hydrate_external_effect_contact(store, &*wtxn, effect)?;
     hydrated_effect.standing_grant_ref = None;
@@ -188,8 +189,8 @@ pub(crate) fn evaluate_external_effect_policy(
     }
     let mut decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
-    let decision_id = GateDecisionId::now();
-    let created_at = crate::unix_seconds_now();
+    let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
+    let created_at = mutation_recorded_at;
     let grant_ref = input
         .external_effect
         .as_ref()
@@ -485,12 +486,13 @@ fn charge_admitted_external_effect(
     governance: &mut ExternalEffectGovernance,
     send_like: bool,
 ) -> Result<(Option<EffectorBudgetCharge>, bool)> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let Some(target) = governance.budget_target_mut() else {
         return Ok((None, false));
     };
     // Budget windows advance on the engine's trusted clock, not a caller
     // timestamp, so the debit and any receipt echo share the same window.
-    let budget_now = crate::unix_seconds_now();
+    let budget_now = mutation_recorded_at;
     let outcome = connector_key::charge_effector_budgets(
         store,
         wtxn,

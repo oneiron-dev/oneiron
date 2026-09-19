@@ -54,7 +54,7 @@ impl PipelineBuilder<'_> {
             crate::config::validate_ppr_community(&self.vault.config.ppr_community)?;
         }
         let started = Instant::now();
-        let started_at = crate::unix_seconds_now();
+        let started_at = self.vault.store.clock.now_recorded_at();
         let temporal_now = self.temporal_now.unwrap_or(started_at);
         let occurred_range = self.resolved_occurred_range(temporal_now)?;
         let telemetry_action = self.telemetry_action;
@@ -330,7 +330,7 @@ impl PipelineBuilder<'_> {
             telemetry_signals.retain(|signal| *signal != RetrievalSignal::Ppr);
         }
         let retrieval_quality = classify_retrieval_quality(&diagnostics);
-        let run_id = RetrievalRunId::now();
+        let run_id = RetrievalRunId::from_bytes(self.vault.store.clock.ulid()?);
         let run_record = RetrievalRunRecord::new(
             run_id,
             telemetry_action,

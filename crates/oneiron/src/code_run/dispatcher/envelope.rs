@@ -1,5 +1,6 @@
 //! Write-envelope construction, gate bodies and the write-gate checks every memory verb clears.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 use xxhash_rust::xxh3::xxh3_128;
 
@@ -183,12 +184,9 @@ fn validate_write_actor_binding(vault: &Vault, envelope: &WriteEnvelope) -> Resu
     let rtxn = vault.store.env.read_txn()?;
     let actor_raw = vault
         .store
-        .entities
-        .get(&rtxn, actor.entity_ref().as_bytes())?
+        .port_entity_record(&rtxn, &actor.entity_ref())?
         .ok_or(Error::EntityNotFound)?;
-    let actor_header = crate::batch::EntityMetadataHeader::parse(&actor_raw)
-        .ok_or(Error::CorruptedIndex("entity header"))?;
-    crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())
+    crate::provenance::validate_actor_class(actor_raw.entity_type, actor.actor_class())
 }
 
 pub(in crate::code_run) fn edge_operation_gate_id(

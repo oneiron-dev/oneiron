@@ -7,6 +7,7 @@
 //! recorded".
 
 use super::*;
+use crate::batch::EntityMetadataHeader;
 
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};

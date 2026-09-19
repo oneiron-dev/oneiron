@@ -1,10 +1,10 @@
 //! Sidecar row access, the one deletion routine, enrollment laws, and match/clustering/invite-elimination admission.
 
+use crate::ports::EntityStoreRead;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use heed::{RoTxn, RwTxn};
 
-use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_RELATIONSHIP};
@@ -182,11 +182,11 @@ pub(super) fn delete_voice_biometrics_in_txn(
 }
 
 fn entity_type_in_txn(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    Ok(Some(header.entity_type))
+
+    Ok(Some(raw.entity_type))
 }
 
 /// Law 9: a retention link must name an EXISTING RELATIONSHIP entity.

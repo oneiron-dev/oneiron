@@ -311,7 +311,7 @@ impl<'a> MaintenanceBuilder<'a> {
         if self.do_cleanup_attempt_queue {
             let (warnings, cleanup) = attempt_lease::sweep_attempt_leases(
                 self.vault,
-                crate::unix_seconds_now(),
+                self.vault.store.clock.now_recorded_at(),
                 self.attempt_queue_lease_timeout_secs,
             )?;
             report.attempt_queue_lease_warnings = warnings;

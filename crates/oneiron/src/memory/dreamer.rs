@@ -95,7 +95,9 @@ impl Memory<'_> {
                         parent_attempt: None,
                         dedupe_key: input.dedupe_key.clone(),
                         run_id: input.run_id.clone(),
-                        now: input.now.unwrap_or_else(crate::unix_seconds_now),
+                        now: input
+                            .now
+                            .unwrap_or_else(|| self.vault.store.clock.now_recorded_at()),
                     },
                 )
                 .map_err(MemoryError::from)

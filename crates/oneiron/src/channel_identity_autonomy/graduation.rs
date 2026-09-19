@@ -71,7 +71,7 @@ impl Vault {
     ) -> Result<EntityId> {
         let scope = scope_value(&evidence.scope)?;
         token(&evidence.receipt_ref)?;
-        if evidence.occurred_at > crate::unix_seconds_now() {
+        if evidence.occurred_at > self.store.clock.now_recorded_at() {
             return Err(invalid_autonomy());
         }
         let (task_ref, outcome, distance) = self.validate_graduation_review(&evidence)?;
@@ -180,7 +180,7 @@ impl Vault {
             &address("scope", &scope_value(scope)?)?.to_hex(),
         );
         let txn = self.store.env.read_txn()?;
-        let now = now.min(crate::unix_seconds_now());
+        let now = now.min(self.store.clock.now_recorded_at());
         let mode =
             self.autonomy_mode_in_txn(&txn, scope.identity_ref, scope.relationship_context, now)?;
         if !matches!(

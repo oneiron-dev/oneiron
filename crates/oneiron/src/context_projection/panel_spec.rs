@@ -110,7 +110,7 @@ pub fn persist_lead_panel_spec(
 ) -> Result<ConsultPayloadRef> {
     validate_lead_panel_spec(spec)?;
     let body = encode_lead_panel_spec(spec)?;
-    let spec_ref = EntityId::now();
+    let spec_ref = vault.store.clock.entity_id()?;
     vault.put_entity(
         &spec_ref,
         ENTITY_TYPE_TURN,

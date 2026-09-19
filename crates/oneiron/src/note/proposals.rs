@@ -162,7 +162,7 @@ impl Vault {
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_verified_actor_write_txn(|txn| {
                 let mut bundle = NoteReviewBundle {
-                    id: EntityId::now(),
+                    id: self.store.clock.entity_id()?,
                     waiting: Vec::new(),
                     landed: Vec::new(),
                     explainer: explainer.to_owned(),
@@ -233,13 +233,16 @@ impl Vault {
                     doc: fork_doc,
                 };
                 let mut rewrite = matches!(edit, super::NoteEdit::Rewrite { .. });
-                if let Some(replacement) =
-                    fork.apply(edit, actor.entity_ref(), crate::unix_seconds_now())?
-                {
+                if let Some(replacement) = fork.apply(
+                    &self.store.clock,
+                    edit,
+                    actor.entity_ref(),
+                    self.store.clock.now_recorded_at(),
+                )? {
                     rewrite = true;
                     fork = replacement;
                 }
-                fork.head = EntityId::now();
+                fork.head = self.store.clock.entity_id()?;
                 store_doc(self, txn, &fork, false)?;
                 remember_fork(self, txn, &parent, &fork, actor.entity_ref(), rewrite)?;
                 Ok(fork.head)
@@ -253,6 +256,7 @@ fn land(
     verdict: NoteVerdict,
     actor: WriteActor,
 ) -> Result<NoteLandingReceipt> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     if fork.decided {
         return Err(invalid("fork already decided"));
     }
@@ -288,14 +292,14 @@ fn land(
     fork.decided = true;
     put(vault, txn, &fork_key(fork.fork), fork)?;
     let receipt = NoteLandingReceipt {
-        id: EntityId::now(),
+        id: vault.store.clock.entity_id()?,
         note: fork.note,
         fork: fork.fork,
         previous_head: current.head,
         head,
         verdict,
         actor: actor.entity_ref(),
-        at: crate::unix_seconds_now(),
+        at: mutation_recorded_at,
     };
     put(
         vault,

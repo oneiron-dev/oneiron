@@ -21,14 +21,13 @@ use crate::receipt::{
 };
 use rmpv::Value;
 use std::collections::BTreeMap;
-use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
 // Row codecs
 // ---------------------------------------------------------------------------
 
-pub(super) fn fresh_row_id() -> Result<EntityId> {
-    EntityId::from_bytes(Uuid::now_v7().into_bytes())
+pub(super) fn fresh_row_id(vault: &Vault) -> Result<EntityId> {
+    vault.store.clock.entity_id()
 }
 
 pub(super) fn proposal_key(id: &EntityId) -> Vec<u8> {

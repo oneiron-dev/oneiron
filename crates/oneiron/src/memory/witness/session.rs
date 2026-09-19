@@ -131,7 +131,10 @@ impl Memory<'_> {
         let learned_at = turn.occurred_at;
         let overlay = session.overlay();
         let conversation_id = session.overlay_conversation_shell()?;
-        let turn_id = host_turn_ref.unwrap_or_else(EntityId::now);
+        let turn_id = match host_turn_ref {
+            Some(id) => id,
+            None => self.vault.store.clock.entity_id()?,
+        };
         let container_body = encode_rmpv(&Value::Map(Vec::new()))?;
 
         // ONE-1767's mint contract binds this door exactly as it binds the
@@ -199,7 +202,7 @@ impl Memory<'_> {
         // `body`, so authorizing this vector authorizes exactly what lands.
         let mut staged = Vec::with_capacity(turn.messages.len());
         for message in &turn.messages {
-            let id = id_from_optional_hex(message.id.as_deref())?;
+            let id = id_from_optional_hex(self.vault, message.id.as_deref())?;
             let envelope = witness_message_envelope(message);
             let body = envelope.encode_body()?;
             message_ids.push(id);
@@ -235,7 +238,7 @@ impl Memory<'_> {
 
         let summary_id = match summary {
             Some(text) => {
-                let id = EntityId::now();
+                let id = self.vault.store.clock.entity_id()?;
                 let body = encode_rmpv(&Value::Map(vec![(
                     Value::from("content"),
                     Value::from(text),

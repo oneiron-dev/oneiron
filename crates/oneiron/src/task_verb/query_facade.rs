@@ -22,7 +22,7 @@ use crate::gate::{
 use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::run_tree::RunTreeStatus;
 use crate::temporal::TimeRange;
-use crate::unix_seconds_now;
+
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
 use super::consts::{
@@ -101,7 +101,7 @@ impl Memory<'_> {
         // The acknowledgement is a FACT about a real failed row, stamped with
         // who acknowledged it and when, and it commits inside the verified
         // actor's write transaction like every other engine-authored fact.
-        let now = unix_seconds_now();
+        let now = self.vault().store.clock.now_recorded_at();
         self.with_verified_actor_write_txn(|wtxn| {
             ack_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)
                 .map_err(MemoryError::from)
@@ -170,7 +170,7 @@ impl Memory<'_> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let state = cancel_target_state(self.vault(), self.actor(), target)?;
         let verb = task_verb_contract(TasksVerb::Cancel);
-        let now = unix_seconds_now();
+        let now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
 
         // Not the owner, or not an owner-addressable TASK target: nothing hard
@@ -321,7 +321,7 @@ impl Memory<'_> {
         state: CancelTargetState,
     ) -> MemoryResult<TaskCancelReceipt> {
         let verb = task_verb_contract(TasksVerb::Cancel);
-        let now = unix_seconds_now();
+        let now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
         if !state.owned || mode.ceiling() == PolicyApprovalCeiling::Proposed {
             let (proposal_ref, gate_decision_ref) = self.persist_task_proposal(
@@ -586,7 +586,7 @@ impl Memory<'_> {
         now: u64,
         provenance: Value,
     ) -> MemoryResult<(EntityId, Option<String>)> {
-        let proposal_ref = EntityId::now();
+        let proposal_ref = self.vault().store.clock.entity_id()?;
         let candidate = ClaimCandidate::new(
             predicate.to_owned(),
             ClaimSubject::Entity(subject),

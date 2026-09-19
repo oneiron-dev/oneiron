@@ -1,9 +1,9 @@
 //! Vault floor resolution plus the shared strict POLICY_MANIFEST walk.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
@@ -92,18 +92,6 @@ fn floor_walk_refusal(err: PolicyManifestWalkError) -> Error {
     }
 }
 
-/// Extracts the trailing [`EntityId`] from a type-index key. Returns `None`
-/// when the key does not carry a well-formed id for `entity_type` — the shape
-/// check the strict walk turns into a refusal. ([`crate::gate`] keeps its own
-/// copy for the diagnostics-collecting resolver it owns; that helper is
-/// private to its module.)
-fn type_index_entity_id(key: &[u8], entity_type: u8) -> Option<EntityId> {
-    if key.len() != ENTITY_ID_LEN + 1 || key[0] != entity_type {
-        return None;
-    }
-    EntityId::from_bytes(key[1..].try_into().ok()?).ok()
-}
-
 /// Reads ONE policy-manifest body as the CANONICAL single MessagePack value
 /// the manifest contract defines — exactly one value, covering exactly the
 /// whole body, the same shape [`crate::gate`]'s canonical decoder requires of
@@ -166,20 +154,24 @@ pub(crate) fn policy_manifest_bodies_strict(
 ) -> std::result::Result<Vec<Vec<(Value, Value)>>, PolicyManifestWalkError> {
     let mut bodies = Vec::new();
     for index_entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_POLICY_MANIFEST])
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)
         .map_err(PolicyManifestWalkError::Storage)?
     {
-        let (key, _) = index_entry.map_err(PolicyManifestWalkError::Storage)?;
-        let Some(id) = type_index_entity_id(&key, ENTITY_TYPE_POLICY_MANIFEST) else {
-            return Err(PolicyManifestWalkError::IndexPlane(
-                "policy-manifest type-index key is unusable",
-            ));
-        };
+        let id = index_entry.map_err(|error| match error {
+            Error::CorruptedIndex(_) => {
+                PolicyManifestWalkError::IndexPlane("policy-manifest type-index key is unusable")
+            }
+            other => PolicyManifestWalkError::Storage(other),
+        })?;
         let Some(raw) = store
-            .entities
-            .get(txn, id.as_bytes())
-            .map_err(PolicyManifestWalkError::Storage)?
+            .port_entity_record(txn, &id)
+            .map(|row| row.map(|row| row.encode()))
+            .map_err(|error| match error {
+                Error::CorruptedIndex(_) => PolicyManifestWalkError::IndexPlane(
+                    "policy-manifest entity metadata header is invalid",
+                ),
+                other => PolicyManifestWalkError::Storage(other),
+            })?
         else {
             return Err(PolicyManifestWalkError::IndexPlane(
                 "policy-manifest index entry has no entity row",

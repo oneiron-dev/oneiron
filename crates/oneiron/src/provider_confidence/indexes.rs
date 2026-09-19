@@ -2,11 +2,13 @@
 //!
 //! The parent module documents cache validation and the cross-actor staleness bound.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+use sha2::Sha256;
 
 use crate::Vault;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, unit_interval_f32};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
@@ -170,18 +172,14 @@ fn validated_prior_head_owner_in_txn(
     head: &EntityId,
     provider: &str,
 ) -> Result<Option<(EntityId, EntityId)>> {
-    let Some(raw) = vault.store.entities.get(rtxn, head.as_bytes())? else {
+    let Some(raw) = vault.store.port_entity_record(rtxn, &head)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
-    if header.entity_type != ENTITY_TYPE_CLAIM {
+
+    if raw.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(None);
     }
-    let Ok(body) =
-        crate::claim::decode_claim_body(raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or(&[]), true)
-    else {
+    let Ok(body) = crate::claim::decode_claim_body(raw.body.get(0..).unwrap_or(&[]), true) else {
         return Ok(None);
     };
     if !is_actor_confidence_prior_claim_predicate(&body.predicate)
@@ -246,20 +244,14 @@ fn actor_provider_key_matches_in_txn(
     id: &EntityId,
     provider: &str,
 ) -> Result<bool> {
-    let Some(raw) = vault.store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = vault.store.port_entity_record(rtxn, &id)? else {
         return Ok(false);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(false);
-    };
-    if header.entity_type != ENTITY_TYPE_PERSON {
+
+    if raw.entity_type != ENTITY_TYPE_PERSON {
         return Ok(false);
     }
-    Ok(
-        provider_key_from_actor_body(raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or(&[]))
-            .as_deref()
-            == Some(provider),
-    )
+    Ok(provider_key_from_actor_body(raw.body.get(0..).unwrap_or(&[])).as_deref() == Some(provider))
 }
 
 struct ProviderActors {
@@ -284,11 +276,9 @@ fn provider_actors_for_key_in_txn(
     let mut shells = Vec::new();
     for entry in vault
         .store
-        .type_index
-        .prefix_iter(rtxn, &[ENTITY_TYPE_PERSON])?
+        .port_entity_ids_by_type(rtxn, ENTITY_TYPE_PERSON, None)?
     {
-        let (key, _) = entry?;
-        let id = crate::vault::entity_id_from_type_index_key(&key)?;
+        let id = entry?;
         if !actor_provider_key_matches_in_txn(vault, rtxn, &id, provider)? {
             continue;
         }
@@ -399,6 +389,7 @@ pub(super) fn resolve_or_create_provider_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     provider: &str,
 ) -> Result<EntityId> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     // Writes cannot use the read-side staleness bound. Even a valid cached
     // actor must not hide a stranded prior on another matching shell. Check
     // provider-wide truth before resolving, repairing indexes, or minting.
@@ -408,7 +399,7 @@ pub(super) fn resolve_or_create_provider_actor_in_txn(
     }
 
     let index_key = provider_actor_index_key(provider);
-    let id = EntityId::now();
+    let id = vault.store.clock.entity_id()?;
     let body = encode_value(&Value::Map(vec![(
         Value::from(PROVIDER_ACTOR_BODY_KEY),
         Value::from(provider),
@@ -422,7 +413,7 @@ pub(super) fn resolve_or_create_provider_actor_in_txn(
             id,
             entity_type: ENTITY_TYPE_PERSON,
             occurred: TimeRange { start: 0, end: 0 },
-            learned_at: crate::unix_seconds_now(),
+            learned_at: mutation_recorded_at,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,

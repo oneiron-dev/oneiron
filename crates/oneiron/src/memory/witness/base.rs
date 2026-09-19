@@ -9,6 +9,7 @@ use super::validation::{
     validate_existing_witness_turn,
 };
 use super::{distinct_message_orders, witness_message_envelope};
+use crate::ports::EntityStoreRead;
 
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
@@ -138,7 +139,7 @@ impl Memory<'_> {
         }
         let (turn_id, turn_is_new) = match &turn.turn_ref {
             Some(reference) => self.resolve_or_new_container(reference, ENTITY_TYPE_TURN)?,
-            None => (EntityId::now(), true),
+            None => (self.vault.store.clock.entity_id()?, true),
         };
 
         // The turn-level grouping fact, derived BEFORE the transaction: a
@@ -152,7 +153,7 @@ impl Memory<'_> {
         let mut envelopes = Vec::with_capacity(turn.messages.len());
         let mut bodies = Vec::with_capacity(turn.messages.len());
         for message in &turn.messages {
-            message_ids.push(id_from_optional_hex(message.id.as_deref())?);
+            message_ids.push(id_from_optional_hex(self.vault, message.id.as_deref())?);
             let envelope = witness_message_envelope(message);
             bodies.push(envelope.encode_body()?);
             envelopes.push(envelope);
@@ -207,8 +208,8 @@ impl Memory<'_> {
             let existing_turn_raw = self
                 .vault
                 .store
-                .entities
-                .get(&*wtxn, turn_id.as_bytes())?
+                .port_entity_record(&*wtxn, &turn_id)?
+                .map(|row| row.encode())
                 .map(|raw| raw.to_vec());
             let existing_turn = match existing_turn_raw {
                 // Absent and expected absent: the pre-transaction answer holds.

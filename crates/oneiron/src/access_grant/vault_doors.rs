@@ -4,9 +4,9 @@ use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::temporal::TimeRange;
-use crate::vault::entity_id_from_type_index_key;
 
 use super::codec::{decode_access_grant_body, encode_access_grant_body, invalid_grant};
 use super::record::{AccessGrant, AccessGrantScope, CalendarAccessGrantRow};
@@ -22,7 +22,10 @@ impl Vault {
         if matches!(grant.scope, AccessGrantScope::ChannelIdentity { .. }) {
             return Err(invalid_grant());
         }
-        if let Some(raw) = self.store.entities.get(txn, id.as_bytes())?
+        if let Some(raw) = self
+            .store
+            .port_entity_record(txn, &id)?
+            .map(|row| row.encode())
             && EntityMetadataHeader::parse(&raw)
                 .is_some_and(|h| h.entity_type == ENTITY_TYPE_ACCESS_GRANT)
             && matches!(
@@ -56,7 +59,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         self.check_channel_identity_access_write(&wtxn, id, grant)?;
         crate::share::check_generic_grant_write(self, &wtxn, id, grant)?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+        if self.store.port_entity_record(&wtxn, &id)?.is_some() {
             return Err(Error::Record(RecordError::AccessGrantAlreadyExists));
         }
         self.apply_access_grant_body(&mut wtxn, id, grant.created_at, data)?;
@@ -84,8 +87,8 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .entities
-            .get(&wtxn, id.as_bytes())?
+            .port_entity_record(&wtxn, &id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -105,7 +108,11 @@ impl Vault {
     /// Reads and decodes an AccessGrant record.
     pub fn get_access_grant(&self, id: &EntityId) -> Result<Option<AccessGrant>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(&rtxn, &id)?
+            .map(|row| row.encode())
+        else {
             return Ok(None);
         };
         let header =
@@ -126,20 +133,17 @@ impl Vault {
         let mut rows = Vec::new();
         for entry in self
             .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_ACCESS_GRANT])?
+            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_ACCESS_GRANT, None)?
         {
-            let (key, _) = entry?;
-            let grant_ref = entity_id_from_type_index_key(&key)?;
-            let Some(raw) = self.store.entities.get(&rtxn, grant_ref.as_bytes())? else {
+            let grant_ref = entry?;
+            let Some(raw) = self.store.port_entity_record(&rtxn, &grant_ref)? else {
                 return Err(Error::CorruptedIndex("access grant entity row"));
             };
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("access grant entity header"))?;
-            if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
+
+            if raw.entity_type != ENTITY_TYPE_ACCESS_GRANT {
                 return Err(Error::CorruptedIndex("access grant entity type"));
             }
-            let grant = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let grant = decode_access_grant_body(&raw.body)?;
             if grant.scope.calendar_rung(calendar_ref).is_some() {
                 rows.push(CalendarAccessGrantRow { grant_ref, grant });
             }

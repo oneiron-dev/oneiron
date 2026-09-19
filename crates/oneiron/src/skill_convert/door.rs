@@ -5,7 +5,7 @@ use rmpv::Value;
 
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::entity_id::EntityId;
+
 use crate::error::{Error, Result};
 use crate::skill::{
     SkillContentHash, SkillDependency, SkillLifecycle, SkillRecord, canonical_skill_tree_hash,
@@ -141,7 +141,7 @@ pub fn convert_messages_to_skill(
                 provenance(&brief.said, rationale, None),
             ),
         };
-        let id = EntityId::now();
+        let id = vault.store.clock.entity_id()?;
         vault.put_skill_record_in_txn(wtxn, &id, &record, occurred, learned_at)?;
         Ok(match merge_target {
             Some(existing) => ConvertOutcome::MergeProposed {

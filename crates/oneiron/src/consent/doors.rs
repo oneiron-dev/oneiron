@@ -1,6 +1,7 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 
 use super::bound::{ActorBound, GrantBound};
@@ -170,12 +171,11 @@ impl Vault {
 
     fn is_store_truth_human_actor(&self, actor: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, actor.as_bytes())? else {
+        let Some(raw) = self.store.port_entity_record(&rtxn, &actor)? else {
             return Ok(false);
         };
-        let header = crate::batch::EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        Ok(header.entity_type == crate::registry::ENTITY_TYPE_PERSON)
+
+        Ok(raw.entity_type == crate::registry::ENTITY_TYPE_PERSON)
     }
 
     /// Approves exactly one pending operation, identified by its exact
@@ -201,7 +201,7 @@ impl Vault {
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
         let mut wtxn = self.store.env.write_txn()?;
-        let decision_id = GateDecisionId::now();
+        let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
         self.claim_approve_once_in_txn(&mut wtxn, &effect_digest, decision_id)?;
         let receipt = ConsentReceipt::Approved {
             decision_id,
@@ -262,6 +262,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         bound: GrantBound,
     ) -> Result<ConsentReceipt> {
+        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         if bound_catastrophe_class(&bound).is_some() {
             return Err(Error::Gate(GateError::ConsentCatastropheNotRememberable(
                 "the catastrophe floor is non-rememberable; no standing grant may cover it",
@@ -272,10 +273,10 @@ impl Vault {
             grant: grant.clone(),
             status: ConsentGrantStatus::Active,
             owner_stamp: owner.stamp(),
-            created_at: crate::unix_seconds_now(),
+            created_at: mutation_recorded_at,
         };
         let receipt = ConsentReceipt::Approved {
-            decision_id: GateDecisionId::now(),
+            decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
             grant: ConsentGrant::Standing(grant),
         };
 
@@ -297,7 +298,7 @@ impl Vault {
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
         let receipt = ConsentReceipt::Denied {
-            decision_id: GateDecisionId::now(),
+            decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
             effect_digest,
         };
         let mut wtxn = self.store.env.write_txn()?;
@@ -324,7 +325,7 @@ impl Vault {
         let data = encode_consent_grant_row(&row)?;
         self.store.vault_meta.put(&mut wtxn, &key, &data)?;
         let receipt = ConsentReceipt::Revoked {
-            decision_id: GateDecisionId::now(),
+            decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
             grant_ref: grant_ref.to_owned(),
         };
         self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
@@ -352,7 +353,7 @@ impl Vault {
             return Err(Error::Gate(GateError::ConsentGrantRevoked));
         }
         let receipt = ConsentReceipt::Used {
-            decision_id: GateDecisionId::now(),
+            decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
             grant_ref: grant_ref.to_owned(),
             effect_digest,
         };
@@ -493,10 +494,11 @@ impl Vault {
         stamp: &ConsentOwnerStamp,
         receipt: &ConsentReceipt,
     ) -> Result<()> {
+        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         let record = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
             decision_id: receipt.decision_id(),
-            created_at: crate::unix_seconds_now(),
+            created_at: mutation_recorded_at,
             outcome: receipt.gate_outcome().to_owned(),
             reason_codes: vec![receipt.reason_code().to_owned()],
             receipt_reasons: Vec::new(),

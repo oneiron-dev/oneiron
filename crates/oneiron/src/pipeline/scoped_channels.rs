@@ -46,9 +46,8 @@ impl PipelineBuilder<'_> {
             requested,
             codebase_scope_active || corpus_scope_active,
         )?;
-        let mut scores = crate::hnsw::hnsw_search(
-            &self.vault.store,
-            &self.vault.config,
+        let mut scores = crate::ports::RetrievalIndex::port_retrieval_vector_search_quality(
+            self.vault,
             rtxn,
             query,
             channel_limit,

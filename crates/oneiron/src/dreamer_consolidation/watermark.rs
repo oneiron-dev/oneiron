@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -392,28 +393,6 @@ struct AdmissibleTurnRow {
     role: DreamerTurnRole,
 }
 
-/// The 24-byte `learned_at` temporal-index key: `learned_at_be || entity_id`.
-fn temporal_turn_key(learned_at: u64, turn_id: &EntityId) -> [u8; 24] {
-    let mut key = [0_u8; 24];
-    key[..8].copy_from_slice(&learned_at.to_be_bytes());
-    key[8..].copy_from_slice(turn_id.as_bytes());
-    key
-}
-
-/// The EXCLUSIVE lower key a resumed round seeks past. `Some(id)` is the exact
-/// consumed key; `None` is the end-of-second sentinel, whose `0xff` id tail
-/// puts every key at that second behind the cursor.
-fn watermark_lower_key(watermark: &ConsolidationWatermark) -> [u8; 24] {
-    match watermark.last_turn_id {
-        Some(turn_id) => temporal_turn_key(watermark.last_learned_at, &turn_id),
-        None => {
-            let mut key = [u8::MAX; 24];
-            key[..8].copy_from_slice(&watermark.last_learned_at.to_be_bytes());
-            key
-        }
-    }
-}
-
 /// The round BOUND is the only scope-keyed part of selection: a Meso round is
 /// capped at [`DEFAULT_MESO_ROUND_TURN_CAP`] admissible TURNs on top of the
 /// caller's own limit; Micro and Macro keep the requested limit.
@@ -447,52 +426,39 @@ fn enumerate_admissible_turns(
     upper_inclusive_second: Option<u64>,
     limit: usize,
 ) -> Result<Vec<AdmissibleTurnRow>> {
-    let lower = watermark_lower_key(watermark);
-    let upper = upper_inclusive_second.map(|second| {
-        let mut key = [u8::MAX; 24];
-        key[..8].copy_from_slice(&second.to_be_bytes());
-        key
-    });
-    let lower_bound = if watermark.before_first {
-        std::ops::Bound::Unbounded
-    } else {
-        std::ops::Bound::Excluded(&lower[..])
+    let query = crate::ports::TimelineQuery {
+        start: if !watermark.before_first && watermark.last_turn_id.is_none() {
+            std::ops::Bound::Excluded(watermark.last_learned_at)
+        } else {
+            std::ops::Bound::Unbounded
+        },
+        end: upper_inclusive_second.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included),
+        after: if watermark.before_first {
+            None
+        } else {
+            watermark.last_turn_id.map(|id| crate::ports::EntityTime {
+                timestamp: watermark.last_learned_at,
+                id,
+            })
+        },
+        ..Default::default()
     };
-    let range: (std::ops::Bound<&[u8]>, std::ops::Bound<&[u8]>) = match upper.as_ref() {
-        Some(upper) => (lower_bound, std::ops::Bound::Included(&upper[..])),
-        None => (lower_bound, std::ops::Bound::Unbounded),
-    };
-
     let mut admissible = Vec::new();
-    for entry in vault.store.temporal_learned.range(txn, &range)? {
+    for entry in vault.store.port_entity_timeline(txn, query)? {
         if admissible.len() >= limit {
             break;
         }
-        let (key, _) = entry?;
-        if key.len() != 24 {
+        let time = entry?;
+        let learned_at = time.timestamp;
+        let turn_id = time.id;
+        let Some(raw) = vault.store.port_entity_record(txn, &turn_id)? else {
+            continue;
+        };
+
+        if raw.entity_type != ENTITY_TYPE_TURN {
             continue;
         }
-        let learned_at = u64::from_be_bytes(
-            key[..8]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
-        );
-        let Ok(id_bytes) = <[u8; 16]>::try_from(&key[8..24]) else {
-            continue;
-        };
-        let Ok(turn_id) = EntityId::from_bytes(id_bytes) else {
-            continue;
-        };
-        let Some(raw) = vault.store.entities.get(txn, turn_id.as_bytes())? else {
-            continue;
-        };
-        let Some(header) = EntityMetadataHeader::parse(&raw) else {
-            continue;
-        };
-        if header.entity_type != ENTITY_TYPE_TURN {
-            continue;
-        }
-        let body = decode_turn_body(&raw[ENTITY_METADATA_HEADER_LEN..]);
+        let body = decode_turn_body(&raw.body);
         let role = dreamer_turn_role(
             body.speaker.as_deref(),
             &vault.config.assistant_display_names,

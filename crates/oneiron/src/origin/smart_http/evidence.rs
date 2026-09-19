@@ -1,6 +1,7 @@
 //! Receive-pack wire types and the admission/outcome evidence claims: producer
 //! receipts plus the source/attribution validation `publication.rs` calls.
 
+use crate::ports::EntityStoreRead;
 use std::path::{Path, PathBuf};
 
 use super::door::{DoorAdmissionStamp, DoorSeam};
@@ -240,7 +241,7 @@ impl Vault {
         let encoded = encode_claim_body(body)?;
         let key = receive_pack_evidence_key(id);
         self.with_write_txn(|wtxn| {
-            if self.store.entities.get(wtxn, id.as_bytes())?.is_some()
+            if self.store.port_entity_record(wtxn, &id)?.is_some()
                 || self.store.vault_meta.get(wtxn, &key)?.is_some()
             {
                 return Err(receive_pack_provenance_refused(
@@ -336,7 +337,13 @@ impl Vault {
         outcome: &ReceivePackOutcome,
         status: u16,
     ) -> Result<ReceivePackAttribution> {
-        self.record_receive_pack_outcome_at(stamp, door, outcome, status, EntityId::now())
+        self.record_receive_pack_outcome_at(
+            stamp,
+            door,
+            outcome,
+            status,
+            self.store.clock.entity_id()?,
+        )
     }
 
     pub(super) fn record_receive_pack_outcome_at(
