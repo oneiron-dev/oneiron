@@ -955,10 +955,15 @@ fn eval_help_flags_print_usage_and_succeed() {
 /// The stored analyzer identity, read back through the engine's own doctor
 /// seam on the existing-only door — the one door that never rewrites it. The
 /// bench still decodes no vault byte of its own.
+///
+/// The observation door must stay `open_existing`. The create-capable door
+/// rewrites the analyzer manifest on an empty text index, which is exactly the
+/// state the caller below sets up, so observing through it would restamp the
+/// correct identity on both reads and report equality no matter what the
+/// command under test did. Its one caller is excluded on hosts without the
+/// descriptor-bound existing-only door, so this never substitutes that door.
 fn stored_analyzer_manifest_hash(path: &Path, config: &VaultConfig) -> Option<String> {
-    // Inspect our trusted fixture with its creation contract, on every host.
-    // The command under test still exclusively uses the fail-closed existing door.
-    let vault = open_vault_with(path, config.clone());
+    let vault = Vault::open_existing(path, config.clone()).expect("existing vault reopens");
     vault.doctor().expect("doctor").analyzer_manifest_hash
 }
 
