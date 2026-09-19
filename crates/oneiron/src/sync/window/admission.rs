@@ -32,7 +32,7 @@ pub fn validate_window_update_locality(doc: &LoroDoc, update: &[u8]) -> Result<(
         let imported = candidate.import(update).map_err(decode_error)?;
         if imported.pending.is_some() {
             return Err(Error::InvalidConfig(
-                "window update has unresolved dependencies",
+                "window update has unresolved dependencies".into(),
             ));
         }
         candidate
@@ -48,7 +48,7 @@ pub fn validate_window_update_locality(doc: &LoroDoc, update: &[u8]) -> Result<(
         });
         if diagnostic {
             return Err(Error::InvalidConfig(
-                "diagnostic observations are local-only",
+                "diagnostic observations are local-only".into(),
             ));
         }
     }
@@ -72,7 +72,9 @@ pub fn validate_window_update_locality(doc: &LoroDoc, update: &[u8]) -> Result<(
         .flat_map(|change| &change.ops)
         .try_fold(0_usize, |total, op| total.checked_add(op.content.op_len()));
     if expected.is_none() || expected != inspected {
-        return Err(Error::InvalidConfig("window update history is unavailable"));
+        return Err(Error::InvalidConfig(
+            "window update history is unavailable".into(),
+        ));
     }
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         if op.container == entities
@@ -83,7 +85,7 @@ pub fn validate_window_update_locality(doc: &LoroDoc, update: &[u8]) -> Result<(
             && is_diagnostic(&blob)
         {
             return Err(Error::InvalidConfig(
-                "diagnostic observations are local-only",
+                "diagnostic observations are local-only".into(),
             ));
         }
     }
