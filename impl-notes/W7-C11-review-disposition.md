@@ -97,3 +97,93 @@ external review surface or posting target exists; no unrelated GitHub post was
 made. Provider quota was not an issue. Android NDK/API36.1 and earlier native
 proofs remain separately scoped. No full workspace verify.sh or new Android/Node
 runtime result is claimed.
+
+
+## PR #944 bot repair — active on reviewed head 4993356c
+
+The earlier no-PR lookups above are historical. The actual review target now is
+`oneiron-dev/oneiron#944`, branch `w7/W7-C11`, published head
+`4993356c3369a565761c1538abb502161a546d66`. This section supersedes only the old
+no-posting-target statements, not the retained findings or validation receipts.
+
+Before edits, all current issue comments, PR reviews, inline comments, and
+GraphQL review threads were fetched with pagination. Every thread's nested
+comment page reported `hasNextPage=false`. Source bodies were read in full;
+file inventories and summaries were not treated as defect reviews. The original
+Opus/Grok roots and completed subreviews were recovered, including the late
+`review-grok-2` ports subreview that was absent from the old summary.
+
+### Current external ledger
+
+Qodo top-level `5746023377` and review `5258245264` duplicate the following
+inline findings; each row retains both the numbered finding and inline ID.
+
+| Source | Disposition and reason |
+|---|---|
+| Q1 / 4055144975 | Fix: non-owner-grade scoped credentials need both matching principal and actor class. Explicit owner/dev authority remains separate from delegated capability. |
+| Q2 / 4055144978 | Skip: intentional adopted-DAG boundary. Authorless ChildOf-only writes must refuse atomically; `/records` supplies actor, parent and advance semantics. Existing engine regression pins this refusal. No invented actor or permission bypass. |
+| Q3 / 4055144984 | Fix the real calendar-specific bypass: malformed, non-map, trailing, or origin-stripped writes cannot replace an EVENT with a live calendar origin. Generic opaque non-calendar EVENTs remain legal; the suggested global EVENT schema would break that distinct engine use. |
+| Q4 / 4055144989 | Fix: replay may precede an origin claim, but cannot contradict a live origin or remove it from the body. The same rule runs at the shared local/replay put door. |
+| Q5 / 4055144992 | Valid: canonical recovery must retain pending NOTE review state, not only orphan fork text. Non-lossy repair in progress; not a completed validation claim. |
+| Q6 / 4055144998 | Valid: remove stale NOTE sidecars only inside the admitted recovery scope so recapture can converge. Repair in progress. |
+| Q7 / 4055144967 | Skip: MessageStreamError is a composite API wrapper for Error and MemoryError, not an Error domain leaf. Actual typed stream refusals already belong to error::RecordError. No new root export or loss of facade admission detail. |
+| Q8 / 4055144971 | Skip: upstream Sudachi lint style, not new first-party suppressions. Preserve the audited snapshot except the documented Android portability changes. REVIEW.md makes comment/style findings informational. |
+| Q9 / 4055144995 | Fix: bound the entire retained witness template and appended content by one byte budget. A bounded serialization counter avoids allocating a second payload. Final witness-policy validation remains authoritative. |
+| Q10 / 4055145001 | Fix: return one identified result per due stream, including both successful durable receipts and refusals. Refused buffers remain active; a later failure cannot hide earlier completions. |
+| Q11 / 4055145005 | Skip: the private Memory conformance adapter has no migration marker, append permit or DAG-adoption API. The alleged migrated state is not representable through its supported ports. Production LMDB admission and the adopted-DAG rejection test remain unchanged. |
+| Cursor 4055141305, review 5258241187 | Skip the stated reopen defect: Store construction restores ID_FLOOR before publishing StoreCore. First handoff's ulid is already above the persisted floor; the later txn call persists the new allocation. |
+| Cursor 4055141315, review 5258241187 | Skip: pinned NDK27.2.12479018 on ARM macOS uses darwin-x86_64 host tools. Retained native compilation used that exact directory successfully. Duplicates the completed internal Android subreview. |
+
+Service/non-finding comments are retained too: owner request `5745993580`;
+CodeRabbit `5745993884` and `5745995645` (542-file limit, unavailable, not pending);
+Greptile `5745993938` (automatic review disabled); Cursor summary `5745994484`;
+Qodo busy marker `5745994303` and descriptive summary `5746002512` (superseded by
+its complete review). Codex `5745994125` still reports its existing exact-head
+review running at the current collection checkpoint; no replacement request was
+created and no clean Codex verdict is claimed.
+
+### Internal sources retained and reassessed
+
+- S1 / F-OPUS-1 and S13-1..9: invalid omission claims based on a partial diff.
+  The per-feature source citations above remain correct; every named feature
+  and all 24 implementation-note entries exist in the committed tree.
+- S2 / F-GROK-1..7: already fixed by `7d430f6f` (claim callers use ports).
+- S2/S3 / F-GROK-8: already fixed by `b3a4678b` (atomic imported origin and drift).
+- S4/S6/S7/S8: preserved subreview conclusions; no additional blocking finding.
+- S5 draft: seventh `opinion/take` descriptor is intentional data; the raw NOTE
+  guard rejecting before the kind guard does not admit an unknown kind.
+- S9 / C11-OO-01 / F1: invalid glob visibility/compile allegation; F5 already fixed
+  by `01ddd11f`/`e4634cdf`; F2/F3/F4 are nonblocking docs/naming; F6 asks for extra
+  negative-path tests without a broken guard; F7 permits the behavioral pin.
+- S10 / C11-OO-02: stream clock sites already fixed by `5c00dadf`; regeneration
+  completion is a host-projector port, not a promised autonomous worker.
+- S11 is the per-step evidence index. S12 is the historical pre-publication
+  no-PR lookup, superseded by this PR's actual surfaces.
+- S14 = `review-grok-2.jsonl` and its eight completed subreviews. Notes, calendar,
+  recovery, DAG, pack/conflict, Android and streaming reported no additional
+  defect. The ports child `sub-79f7032a`, step23, did report a real remaining
+  engine-owned mint: `open_interview` persisted a detached wall-clock artifact
+  ID. Fix: supply an ID from `vault.new_entity_id` through a narrow constructor;
+  keep the detached public proposal API independent of a vault. Strengthen its
+  existing end-to-end test with the injected deterministic ID source.
+- C11-FR-01/02: earlier secret temporary-path and benchmark platform fixtures are
+  fixed by `415632c6`/`da7c04c5`. C11-OO-03/04/05/06 are closed/superseded stored-
+  read, runtime, Android and snapshot reports. Original roots are not discarded.
+- C11-HR-01: authorized host-routing remedy, not a source defect; C11-HR-02:
+  Linux NAPI dev-only dynamic symbols fixed by `cf9a9a46`.
+- C11-CG-01/02: offline Sudachi resolution and parity-fixture clock drift fixed by
+  `c71d87f8`/`d583201f`; existing focused and full evidence retained.
+
+### Validation boundary
+
+The latest pre-repair mandatory factory run actually completed: 9,155 passed,
+zero failed/filtered, 21 pre-existing ignored across the six touched packages.
+The log was re-counted, all saved source hashes matched, and the diff from tested
+`cb39cbb0` to published `4993356c` contains notes only. This is valid baseline
+and unchanged-crate evidence, NOT a pass for the new Rust changes above. The
+prior review-chain deletion-race failure remains recorded separately.
+
+Fresh changed-source test and lint results will be appended only after the
+commands finish. The installed Cargo dispatcher, normal ticket/host guards,
+action-scoped `W7_CARGO_EXCLUDE_MACBOOK=1`, two compiler jobs and four runtime
+threads remain in use. No factory state, host guard or launcher was changed.

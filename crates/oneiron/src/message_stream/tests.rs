@@ -224,3 +224,90 @@ fn agent_chat_override_survives_reopen_is_isolated_and_only_changes_future_strea
         .unwrap();
     assert_eq!(after_reopen.mode(), MessageWriteMode::Atomic);
 }
+
+#[test]
+fn stream_limit_covers_metadata_type_and_content_together() {
+    let (_dir, vault, actor) = fixture();
+    let id = EntityId::now();
+    for metadata in [true, false] {
+        let mut turn = template();
+        if metadata {
+            turn.messages[0].metadata =
+                Some(serde_json::json!({"large": "x".repeat(MAX_STREAM_BYTES)}));
+        } else {
+            turn.messages[0].message_type = "x".repeat(MAX_STREAM_BYTES);
+        }
+        assert!(matches!(
+            vault.begin_message_stream(id, turn, actor, None),
+            Err(MessageStreamError::Engine(Error::Record(
+                RecordError::StreamLimit { .. }
+            )))
+        ));
+    }
+    // A refused begin consumes no active slot, and the same id remains usable.
+    let mut turn = template();
+    turn.turn_ref = Some(EntityId::now().to_hex());
+    turn.messages[0].id = Some(id.to_hex());
+    turn.messages[0].metadata = Some(serde_json::json!({"note": "retained"}));
+    let overhead = serde_json::to_vec(&turn).unwrap().len();
+    let handle = vault
+        .begin_message_stream(id, turn, actor, Some(streamed()))
+        .unwrap();
+    let content = "x".repeat(MAX_STREAM_BYTES - overhead);
+    vault.append_to_stream(&handle, &content).unwrap();
+    assert!(matches!(
+        vault.append_to_stream(&handle, "x"),
+        Err(Error::Record(RecordError::StreamLimit { .. }))
+    ));
+    assert_eq!(vault.flush_stream(&handle).unwrap().unwrap().text, content);
+    assert!(vault.get(&id).unwrap().is_none());
+}
+
+#[test]
+fn idle_sweep_returns_successes_and_refusals_without_losing_receipts() {
+    let (_dir, vault, actor) = fixture();
+    let good_id = crate::test_util::entity(1);
+    let bad_id = crate::test_util::entity(2);
+    let good = vault
+        .begin_message_stream(good_id, template(), actor, Some(streamed()))
+        .unwrap();
+    let mut denied = template();
+    denied.messages[0].author = WitnessAuthor::System;
+    let bad = vault
+        .begin_message_stream(bad_id, denied, actor, Some(streamed()))
+        .unwrap();
+    vault.append_to_stream(&good, "complete").unwrap();
+    vault.append_to_stream(&bad, "retry me").unwrap();
+    // Age only this vault's fixtures, without a sleep or process-global clock.
+    for state in vault.message_streams.lock().unwrap().values_mut() {
+        state.last_op = Instant::now() - state.idle_timeout;
+    }
+    let outcomes = vault.finalize_idle_message_streams().unwrap();
+    assert_eq!(outcomes.len(), 2);
+    let good_outcome = outcomes
+        .iter()
+        .find(|o| o.handle.message == good_id)
+        .unwrap();
+    let receipt = good_outcome.result.as_ref().unwrap();
+    assert_eq!(receipt.finality(), MessageFinality::Partial);
+    assert_eq!(
+        vault.message_finality_receipt(good_id).unwrap().as_ref(),
+        Some(receipt)
+    );
+    assert_eq!(text(&vault, good_id), "complete");
+    let bad_outcome = outcomes
+        .iter()
+        .find(|o| o.handle.message == bad_id)
+        .unwrap();
+    assert!(matches!(
+        bad_outcome.result,
+        Err(MessageStreamError::Admission(_))
+    ));
+    assert!(vault.message_finality_receipt(bad_id).unwrap().is_none());
+    assert!(vault.get(&bad_id).unwrap().is_none());
+    assert_eq!(vault.flush_stream(&bad).unwrap().unwrap().text, "retry me");
+    let retried = vault.finalize_idle_message_streams().unwrap();
+    assert_eq!(retried.len(), 1);
+    assert_eq!(retried[0].handle.message, bad_id);
+    assert!(retried[0].result.is_err());
+}

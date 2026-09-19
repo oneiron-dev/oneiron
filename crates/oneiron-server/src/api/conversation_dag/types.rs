@@ -35,9 +35,11 @@ impl DagActor {
             DagActorClass::System => (EdgeActorClass::System, "system"),
         };
         // A delegated credential cannot overwrite the identity bound in its slip.
-        if auth
-            .principal_ref()
-            .is_some_and(|bound| bound != id.to_hex())
+        if (!auth.is_owner_grade()
+            && (auth.principal_ref().is_none() || auth.actor_class().is_none()))
+            || auth
+                .principal_ref()
+                .is_some_and(|bound| bound != id.to_hex())
             || auth.actor_class().is_some_and(|bound| bound != name)
         {
             return Err(ApiError::forbidden_scope("actor_binding"));

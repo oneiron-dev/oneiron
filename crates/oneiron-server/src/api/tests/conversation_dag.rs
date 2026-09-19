@@ -309,3 +309,60 @@ fn dag_routes_are_registered_in_openapi() {
         assert!(doc["paths"][path][method].is_object(), "{method} {path}");
     }
 }
+
+#[tokio::test]
+async fn dag_writes_require_complete_matching_identity_on_scoped_credentials() {
+    let (_dir, server, actor) = setup();
+    let conv = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let records = format!(
+        "/v1/core/conversations/{}/records",
+        conv["id"].as_str().unwrap()
+    );
+    let principal = actor["entity_ref"].as_str().unwrap();
+    let other = EntityId::now().to_hex();
+    for claims in [
+        "scope=core:write".to_owned(),
+        format!("scope=core:write;principal_ref={principal}"),
+        "scope=core:write;actor_class=human".to_owned(),
+        format!("scope=core:write;principal_ref={other};actor_class=human"),
+        format!("scope=core:write;principal_ref={principal};actor_class=agent"),
+    ] {
+        let token = crate::auth::mint_core_token_v2("unused-in-dev", &claims);
+        let mut request = json_request(
+            "POST",
+            &records,
+            json!({"advance": true, "body": {"txt": "refused"}, "actor": actor}),
+        );
+        request
+            .headers_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let (status, error) = route_json(server.clone(), request).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{claims}: {error:?}");
+        assert_error_envelope(&error, "FORBIDDEN");
+    }
+    let token = crate::auth::mint_core_token_v2(
+        "unused-in-dev",
+        &format!("scope=core:write;principal_ref={principal};actor_class=human"),
+    );
+    let mut request = json_request(
+        "POST",
+        &records,
+        json!({"advance": true, "body": {"txt": "bound"}, "actor": actor}),
+    );
+    request
+        .headers_mut()
+        .insert("authorization", format!("Bearer {token}").parse().unwrap());
+    let (status, body) = route_json(server.clone(), request).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(
+        get(
+            &server,
+            &format!(
+                "/v1/core/conversations/{}/dag",
+                conv["id"].as_str().unwrap()
+            )
+        )
+        .await["main_line"],
+        json!([body["id"]])
+    );
+}

@@ -111,6 +111,16 @@ impl ProposalTextArtifact {
         actor: &WriteActor,
         source_turn_ref: Option<EntityId>,
     ) -> Result<Self> {
+        Self::open_with_ref(ProposalArtifactRef::mint(), initial, actor, source_turn_ref)
+    }
+
+    /// Store-owned callers supply an identity from their vault's injected source.
+    pub(super) fn open_with_ref(
+        artifact_ref: ProposalArtifactRef,
+        initial: &str,
+        actor: &WriteActor,
+        source_turn_ref: Option<EntityId>,
+    ) -> Result<Self> {
         let doc = LoroDoc::new();
         // Change timestamps are OFF by default and are runtime config, not
         // serialized — so this is re-applied on every reopen too. Attribution
@@ -118,7 +128,6 @@ impl ProposalTextArtifact {
         // timestamps every change would resolve at epoch 0.
         doc.set_record_timestamp(true);
 
-        let artifact_ref = ProposalArtifactRef::mint();
         let meta = doc.get_map(META_CONTAINER);
         map_insert_bytes(
             &meta,

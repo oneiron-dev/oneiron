@@ -327,9 +327,16 @@ pub(crate) fn validate_event_write(
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
+    let existing_origin = live_origin(store, txn, event)?;
     let mut reader = data;
     let Ok(Value::Map(fields)) = rmpv::decode::read_value(&mut reader) else {
-        return Ok(());
+        // EVENT is also a generic opaque entity. Once it is a calendar EVENT,
+        // however, neither a local write nor replay may erase its schema.
+        return if existing_origin.is_some() {
+            Err(invalid("calendar EVENT body must be a MessagePack map"))
+        } else {
+            Ok(())
+        };
     };
     let get = |name: &str| {
         fields
@@ -343,6 +350,26 @@ pub(crate) fn validate_event_write(
                 .ok_or(invalid("unknown calendar origin"))
         })
         .transpose()?;
+    let has_calendar_fields = [
+        "evidenceTurnIds",
+        "sourceFrontiers",
+        "rrule",
+        "calendarName",
+        "importSource",
+        "externalId",
+    ]
+    .iter()
+    .any(|field| get(field).is_some());
+    if (existing_origin.is_some() || body_origin.is_some() || has_calendar_fields)
+        && !reader.is_empty()
+    {
+        return Err(invalid("calendar EVENT body has trailing bytes"));
+    }
+    if existing_origin.is_some() && body_origin.is_none() {
+        return Err(invalid(
+            "calendar EVENT requires matching live calendar.origin",
+        ));
+    }
     if let Some(origin) = body_origin {
         if (origin == CalendarOrigin::Native
             && (get("evidenceTurnIds").is_some() || get("sourceFrontiers").is_some()))
@@ -390,26 +417,16 @@ pub(crate) fn validate_event_write(
             external_id: optional("externalId")?,
         }
         .validate()?;
-        if !replicated && live_origin(store, txn, event)? != Some(origin) {
+        if existing_origin.is_some_and(|live| live != origin)
+            || (!replicated && existing_origin.is_none())
+        {
             return Err(invalid(
                 "calendar EVENT requires matching live calendar.origin",
             ));
         }
+    } else if has_calendar_fields {
+        return Err(invalid("calendar EVENT fields require origin"));
     } else if !replicated {
-        if [
-            "evidenceTurnIds",
-            "sourceFrontiers",
-            "rrule",
-            "calendarName",
-            "importSource",
-            "externalId",
-        ]
-        .iter()
-        .any(|field| get(field).is_some())
-        {
-            return Err(invalid("calendar EVENT fields require origin"));
-        }
-
         for entry in store.port_edges(
             txn,
             &event,

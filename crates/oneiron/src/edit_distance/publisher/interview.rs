@@ -160,7 +160,12 @@ pub fn open_interview(
     actor: &WriteActor,
     draft: &str,
 ) -> PublisherResult<(InterviewSession, ProposalTextArtifact)> {
-    let digest = ProposalTextArtifact::open(draft, actor, Some(*topic))?;
+    let digest = ProposalTextArtifact::open_with_ref(
+        crate::edit_distance::ProposalArtifactRef::new(vault.new_entity_id()?),
+        draft,
+        actor,
+        Some(*topic),
+    )?;
     // Without the binding ED-00 refuses the stamp and every later edit
     // attributes to the device peer instead of the human doing the reviewing.
     super::register_peer_actor(vault, digest.peer_id(), actor)?;

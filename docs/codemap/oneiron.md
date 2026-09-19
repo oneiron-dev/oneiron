@@ -343,7 +343,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/invite/tests/mod.rs` | test | m | — | — | — |
 | `src/calendar/mod.rs` | src | m | 1 enum · 17 mod · 15 re-export · 9 crate-vis | CalendarError | Calendar module home (CAL-00) |
 | `src/calendar/origin.rs` | src | m | 1 struct · 5 fn · 8 crate-vis | CalendarEventInput | Calendar EVENT origin union: atomic recorded provenance and source invalidation |
-| `src/calendar/origin/tests.rs` | test | s | — | — | — |
+| `src/calendar/origin/tests.rs` | test | m | — | — | — |
 | `src/calendar/outcome.rs` | src | m | 6 struct · 5 enum · 17 fn · 3 const · 1 crate-vis | CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue +3 | CAL-07 event outcome: evidence ladder, outcome head, post-end check-in |
 | `src/calendar/outcome/conditional.rs` | src | s | 2 crate-vis | — | — |
 | `src/calendar/passport.rs` | src | m | 1 enum · 7 fn · 1 const · 4 crate-vis | PassportDecision | UID-first passport index and feed diff (CAL-02, ONE-1784) |
@@ -863,7 +863,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_distance/miner/tests.rs` | test | L | — | — | — |
 | `src/edit_distance/myers.rs` | src | m | 1 struct · 2 fn · 1 const | LineDiff | ED-02 (ARCH-0056 §3, ruling r2 — ONE-1758): the reconstructed lane's measuring instrument, a two-pass line… |
 | `src/edit_distance/myers/tests.rs` | test | s | — | — | — |
-| `src/edit_distance/proposal_text.rs` | src | m | 1 struct · 8 fn | ProposalTextArtifact | ED-00: a proposal artifact's body lives in a `LoroText` container for its proposal→outcome window, and every… |
+| `src/edit_distance/proposal_text.rs` | src | m | 1 struct · 8 fn · 1 crate-vis | ProposalTextArtifact | ED-00: a proposal artifact's body lives in a `LoroText` container for its proposal→outcome window, and every… |
 | `src/edit_distance/proposal_text/tests.rs` | test | m | — | — | — |
 | `src/edit_distance/publisher/dial.rs` | src | s | 3 fn · 3 const | — | Publisher share dial: explicit, install-profile, and compiled-default resolution |
 | `src/edit_distance/publisher/interview.rs` | src | s | 1 struct · 1 enum · 6 fn · 1 const | InterviewSession, InterviewState | Agent-conducted interview digests on ED-00/ED-01's doors |
@@ -1274,11 +1274,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/session.rs` | src | m | 1 fn · 1 crate-vis | — | Off-record session witness route: overlay journal staging, shell reservation, post-flip base arm |
 | `src/memory/witness/types.rs` | src | s | 3 struct · 1 enum · 2 fn | WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn | Witness DTOs: author enum, message/turn inputs, turn receipt |
 | `src/memory/witness/validation.rs` | src | s | 5 crate-vis | — | Idempotency validators: turn/message existence, parent/actor binding, order collision axes |
-| `src/message_stream/mod.rs` | src | s | 1 enum · 7 fn · 1 type · 1 re-export · 2 crate-vis | MessageStreamError | Memory-only MESSAGE streaming with atomic witnessed finality receipts |
+| `src/message_stream/mod.rs` | src | m | 1 enum · 7 fn · 1 type · 1 re-export · 2 crate-vis | MessageStreamError | Memory-only MESSAGE streaming with atomic witnessed finality receipts |
 | `src/message_stream/policy.rs` | src | s | 3 fn · 1 crate-vis | — | Actor-bound streaming policy persistence; overrides affect only future begins |
 | `src/message_stream/receipts.rs` | src | s | 1 fn · 1 crate-vis | — | Finality sidecars written inside the witness transaction |
-| `src/message_stream/tests.rs` | test | s | — | — | Caller-visible streaming laws; partial text never reaches storage |
-| `src/message_stream/types.rs` | src | s | 4 struct · 5 enum · 9 fn | MessageFinality, MessageFinalityReceipt, MessageStreamFrame, MessageStreamHandle, MessageStreamPolicy, MessageWriteMode, StreamCadence, StreamCancelReason +1 | Stream policy, ephemeral frames and durable finality receipts |
+| `src/message_stream/tests.rs` | test | m | — | — | Caller-visible streaming laws; partial text never reaches storage |
+| `src/message_stream/types.rs` | src | s | 5 struct · 5 enum · 9 fn | IdleMessageStreamOutcome, MessageFinality, MessageFinalityReceipt, MessageStreamFrame, MessageStreamHandle, MessageStreamPolicy, MessageWriteMode, StreamCadence +2 | Stream policy, ephemeral frames and durable finality receipts |
 | `src/note.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 3 re-export · 3 crate-vis | NoteBody, TakeTarget | Governed NOTE cores, PACK kind descriptors, and per-note editable documents |
 | `src/note/document_tests.rs` | test | m | — | — | NOTE caller-observable storage, cursor, fork and bridge laws |
 | `src/note/documents.rs` | src | m | 3 struct · 2 enum · 6 fn · 12 crate-vis | NoteAnchor, NoteDocument, NoteEdit, NoteEditOutcome, NoteVersion | Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites |

@@ -4037,7 +4037,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/calendar/origin/tests.rs",
@@ -11007,6 +11007,7 @@
      "path": "src/edit_distance/proposal_text.rs",
      "purpose": "ED-00: a proposal artifact's body lives in a `LoroText` container for its proposal→outcome window, and every…",
      "surface": {
+      "crate-vis": 1,
       "fn": 8,
       "struct": 1
      }
@@ -16106,7 +16107,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MessageStreamError"
@@ -16144,7 +16145,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/message_stream/tests.rs",
@@ -16155,6 +16156,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "IdleMessageStreamOutcome",
       "MessageFinality",
       "MessageFinalityReceipt",
       "MessageStreamFrame",
@@ -16170,7 +16172,7 @@
      "surface": {
       "enum": 5,
       "fn": 9,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -26425,7 +26427,7 @@
     "message_stream": {
      "files": 5,
      "impl_vault": true,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Memory-only MESSAGE streaming with atomic witnessed finality receipts"
     },

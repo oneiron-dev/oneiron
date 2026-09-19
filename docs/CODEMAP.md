@@ -141,7 +141,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `m8_forward_oracle` | dir | 6 | m | — | M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets |
 | `maintain` | dir | 7 | m | — | — |
 | `memory` | dir | 50 | m | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
-| `message_stream` | dir | 5 | s | yes | Memory-only MESSAGE streaming with atomic witnessed finality receipts |
+| `message_stream` | dir | 5 | m | yes | Memory-only MESSAGE streaming with atomic witnessed finality receipts |
 | `note` | file+dir | 7 | m | yes | Governed NOTE cores, PACK kind descriptors, and per-note editable documents |
 | `off_record` | dir | 11 | m | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `origin` | dir | 33 | m | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |

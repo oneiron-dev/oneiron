@@ -29,10 +29,39 @@ pub(crate) struct StreamState {
     handle: MessageStreamHandle,
     actor: WriteActor,
     turn: WitnessTurn,
+    serialized_bytes: usize,
     last_op: Instant,
     last_flush: Instant,
     idle_timeout: Duration,
 }
+fn stream_limit() -> Error {
+    Error::Record(RecordError::StreamLimit {
+        resource: "buffered bytes",
+        limit: MAX_STREAM_BYTES,
+    })
+}
+
+/// Count the complete JSON representation without retaining a second copy.
+/// Stop at the cap, including escaped strings and metadata keys/values.
+fn serialized_size(value: &(impl serde::Serialize + ?Sized)) -> Result<usize> {
+    struct Budget(usize);
+    impl std::io::Write for Budget {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            if self.0 > MAX_STREAM_BYTES {
+                return Err(std::io::Error::other("stream byte limit"));
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut budget = Budget(0);
+    serde_json::to_writer(&mut budget, value).map_err(|_| stream_limit())?;
+    Ok(budget.0)
+}
+
 fn inactive(id: EntityId) -> Error {
     Error::Record(RecordError::StreamNotActive { message: id })
 }
@@ -88,6 +117,7 @@ impl Vault {
         if turn.turn_ref.is_none() {
             turn.turn_ref = Some(self.new_entity_id()?.to_hex());
         }
+        let serialized_bytes = serialized_size(&turn)?;
         let policy = self.message_stream_policy()?;
         let mode = mode
             .or_else(|| {
@@ -136,6 +166,7 @@ impl Vault {
                 handle: handle.clone(),
                 actor,
                 turn,
+                serialized_bytes,
                 last_op: Instant::now(),
                 last_flush: Instant::now(),
                 idle_timeout: Duration::from_millis(policy.idle_timeout_ms),
@@ -152,14 +183,15 @@ impl Vault {
     ) -> Result<Option<MessageStreamFrame>> {
         let mut streams = self.message_streams.lock().map_err(|_| locked())?;
         let state = state(&mut streams, handle)?;
-        let text = &mut state.turn.messages[0].content;
-        if text.len().saturating_add(delta.len()) > MAX_STREAM_BYTES {
-            return Err(Error::Record(RecordError::StreamLimit {
-                resource: "text bytes",
-                limit: MAX_STREAM_BYTES,
-            }));
+        // Each delta is a JSON string; its surrounding quotes already exist
+        // in the empty template's content field.
+        let bytes = serialized_size(delta)?.saturating_sub(2);
+        let total = state.serialized_bytes.saturating_add(bytes);
+        if total > MAX_STREAM_BYTES {
+            return Err(stream_limit());
         }
-        text.push_str(delta);
+        state.turn.messages[0].content.push_str(delta);
+        state.serialized_bytes = total;
         state.last_op = Instant::now();
         let flush = match state.handle.mode {
             MessageWriteMode::Atomic => false,
@@ -261,25 +293,29 @@ impl Vault {
         result
     }
     /// Host-driven idle sweep. No process-global timer or background thread.
+    /// Every due stream has an outcome, including refusals. Successful receipts
+    /// remain visible when another stream fails; refused buffers stay retryable.
     pub fn finalize_idle_message_streams(
         &self,
-    ) -> MessageStreamResult<Vec<MessageFinalityReceipt>> {
+    ) -> MessageStreamResult<Vec<IdleMessageStreamOutcome>> {
         let mut streams = self.message_streams.lock().map_err(|_| locked())?;
         let due: Vec<_> = streams
             .values()
             .filter(|s| s.last_op.elapsed() >= s.idle_timeout)
             .map(|s| s.handle.clone())
             .collect();
-        let mut receipts = Vec::new();
-        for handle in due {
-            receipts.push(self.finish_locked(
-                &mut streams,
-                &handle,
-                MessageFinality::Partial,
-                None,
-                Some("idle_timeout".into()),
-            )?);
-        }
-        Ok(receipts)
+        Ok(due
+            .into_iter()
+            .map(|handle| {
+                let result = self.finish_locked(
+                    &mut streams,
+                    &handle,
+                    MessageFinality::Partial,
+                    None,
+                    Some("idle_timeout".into()),
+                );
+                IdleMessageStreamOutcome { handle, result }
+            })
+            .collect())
     }
 }

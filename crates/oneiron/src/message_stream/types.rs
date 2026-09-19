@@ -115,3 +115,10 @@ impl MessageFinalityReceipt {
         &self.text_blake3
     }
 }
+
+/// The finalization result for one due stream. A failure keeps its buffer active.
+#[derive(Debug)]
+pub struct IdleMessageStreamOutcome {
+    pub handle: MessageStreamHandle,
+    pub result: super::MessageStreamResult<MessageFinalityReceipt>,
+}

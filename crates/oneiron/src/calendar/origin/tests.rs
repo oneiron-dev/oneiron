@@ -262,3 +262,69 @@ fn calendar_fields_without_origin_refuse_and_conflicting_origins_fail_closed() {
         Err(Error::InvalidClaimBody(_))
     ));
 }
+
+#[test]
+fn known_calendar_bodies_reject_malformed_originless_and_conflicting_replays() {
+    let (_dir, vault, actor) = fixture();
+    let event = vault
+        .create_native_calendar_event(&input(), time(), actor)
+        .unwrap();
+    let original = vault.get(&event).unwrap().unwrap();
+    let mut trailing = original.clone();
+    trailing.push(0xc0);
+    let imported = CalendarEventInput {
+        origin: Some(CalendarOrigin::Imported),
+        import_source: Some("feed".into()),
+        external_id: Some("uid".into()),
+        ..input()
+    }
+    .encode()
+    .unwrap();
+    let originless = encode(&Value::Map(vec![(
+        Value::from("name"),
+        Value::from("erased"),
+    )]))
+    .unwrap();
+    for body in [vec![0x81], vec![0xc0], trailing, imported, originless] {
+        for replay in [false, true] {
+            let result = if replay {
+                vault
+                    .batch()
+                    .put_replicated(&event, ENTITY_TYPE_EVENT, time(), 2, &body)
+                    .commit()
+            } else {
+                vault.put_entity(&event, ENTITY_TYPE_EVENT, time(), 2, &body)
+            };
+            assert!(
+                matches!(result, Err(Error::InvalidClaimBody(_))),
+                "{replay}: {result:?}"
+            );
+            assert_eq!(vault.get(&event).unwrap().unwrap(), original);
+            assert_eq!(
+                vault.calendar_event_origin(event).unwrap(),
+                CalendarOrigin::Native
+            );
+        }
+    }
+    // Replay can arrive before its origin claim, and matching replays stay legal.
+    let incoming = EntityId::now();
+    vault
+        .batch()
+        .put_replicated(&incoming, ENTITY_TYPE_EVENT, time(), 2, &original)
+        .commit()
+        .unwrap();
+    vault
+        .batch()
+        .put_replicated(&event, ENTITY_TYPE_EVENT, time(), 2, &original)
+        .commit()
+        .unwrap();
+    assert_eq!(vault.get(&incoming).unwrap().unwrap(), original);
+    assert_eq!(vault.get(&event).unwrap().unwrap(), original);
+    // EVENT also represents non-calendar opaque records; this rule must not
+    // accidentally impose the calendar union on those unrelated records.
+    let opaque = EntityId::now();
+    vault
+        .put_entity(&opaque, ENTITY_TYPE_EVENT, time(), 2, b"opaque event")
+        .unwrap();
+    assert_eq!(vault.get(&opaque).unwrap().unwrap(), b"opaque event");
+}
