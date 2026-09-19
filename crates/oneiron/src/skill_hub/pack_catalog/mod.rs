@@ -23,3 +23,14 @@ mod tests;
 fn invalid(reason: &'static str) -> crate::error::Error {
     crate::error::Error::InvalidConfig(format!("pack source: {reason}"))
 }
+
+mod admission;
+mod admission_types;
+mod bundled_skills;
+mod schema;
+pub use admission_types::{
+    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackQualification, PackQualifier,
+    PackRuntimeRecipe,
+};
+#[cfg(test)]
+mod admission_tests;
