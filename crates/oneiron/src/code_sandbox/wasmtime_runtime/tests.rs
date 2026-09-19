@@ -6,19 +6,105 @@ use crate::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault, WriteActor,
 };
 
-// A bounded ABI test component. This is NOT a QuickJS implementation.
-// It forwards the run input to exactly one linked function and returns a
-// constant step result. Both lowering and lifting execute through Wasmtime.
-fn fixture(import: &str) -> String {
-    let result = r#"{"done":true,"observation":"called"}"#;
-    let escaped = result
-        .as_bytes()
-        .iter()
-        .map(|b| format!("\\{b:02x}"))
-        .collect::<String>();
+const CLAIM_CALL: &str = "i32.const 0 i32.load i32.const 4 i32.load
+    i32.const 8 i32.load i32.const 12 i32.load
+    i32.const 16 i32.load i32.const 20 i32.load
+    i32.const 24 i32.load i32.const 28 i32.load
+    i32.const 0 f32.const 0 i32.const 0 i64.const 0 i64.const 0
+    i32.const 0 i64.const 0 i32.const 512 call $trap";
+
+// Typed ABI fixture only, NOT a JavaScript interpreter. The complete record
+// shape and run-step export match the C13 WIT, not the retired string-run ABI.
+fn fixture(import: &str, input: &serde_json::Value, forged: bool) -> String {
+    let output = r#"{"done":true,"observation":"called"}"#;
+    let mut data = Vec::new();
+    let mut init = String::new();
+    let mut next = 128usize;
+    for (slot, value) in [
+        input
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_owned(),
+        input
+            .get("predicate")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_owned(),
+        serde_json::to_string(&input["subject"]).unwrap(),
+        serde_json::to_string(&input["value"]).unwrap(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        data.push(format!(
+            r#"(data (i32.const {next}) "{}")"#,
+            escaped(&value)
+        ));
+        init.push_str(&format!(
+            "i32.const {} i32.const {next} i32.store\ni32.const {} i32.const {} i32.store\n",
+            slot * 8,
+            slot * 8 + 4,
+            value.len()
+        ));
+        next += value.len() + 1;
+    }
+    data.push(format!(r#"(data (i32.const 2048) "{}")"#, escaped(output)));
+    let extra = if forged {
+        "(field \"approval\" string)"
+    } else {
+        ""
+    };
+    let types = format!(
+        r#"
+      (type $time-shape (record (field "start" u64) (field "end" u64)))
+      (import "time-range" (type $time (eq $time-shape)))
+      (type $claim-shape (record (field "id" string) (field "predicate" string)
+        (field "subject" string) (field "value" string) (field "confidence" (option f32))
+        (field "occurred" (option $time)) (field "learned-at" (option u64)) {extra}))
+      (import "claim-input" (type $claim (eq $claim-shape)))
+      (type $claim-output-shape (record (field "id" string)))
+      (import "claim-output" (type $claim-output (eq $claim-output-shape)))
+      (type $file-shape (record (field "path" string) (field "bytes" (list u8))))
+      (import "file-proposal" (type $file (eq $file-shape)))
+      (type $proposal-shape (variant (case "file-write" $file) (case "claim-candidate" $claim)))
+      (import "proposal-delta" (type $proposal (eq $proposal-shape)))
+      (type $step-shape (record (field "result-json" string) (field "proposals" (list $proposal))))
+      (import "step-result" (type $step (eq $step-shape)))
+      (type $reply (result $step (error string)))"#
+    );
+    let (declaration, lower, core_import, call) = if import == "memory-put-claim" {
+        // The canonical claim flattens to 15 arguments plus its return pointer.
+        // Adding a forged field exceeds MAX_FLAT_PARAMS and uses an input pointer.
+        let (parameters, invoke) = if forged {
+            ("i32 i32", "i32.const 0 i32.const 512 call $trap")
+        } else {
+            (
+                "i32 i32 i32 i32 i32 i32 i32 i32 i32 f32 i32 i64 i64 i32 i64 i32",
+                CLAIM_CALL,
+            )
+        };
+        let invoke = match input["confidence"].as_f64() {
+            Some(confidence) => invoke.replace(
+                "i32.const 0 f32.const 0",
+                &format!("i32.const 1 f32.const {confidence}"),
+            ),
+            None => invoke.to_owned(),
+        };
+        (format!(r#"(import "{import}" (func $trap (param "input" $claim) (result (result $claim-output (error string)))))"#),
+         r#"(core func $trap (canon lower (func $trap) (memory (core memory $mem "memory")) (realloc (core func $mem "realloc"))))"#.to_owned(),
+         format!(r#"(import "host" "trap" (func $trap (param {parameters})))"#),
+         format!("{init} {invoke} i32.const 512 i32.load8_u if unreachable end"))
+    } else {
+        (
+            format!(r#"(import "{import}" (func $trap (result u64)))"#),
+            "(core func $trap (canon lower (func $trap)))".into(),
+            r#"(import "host" "trap" (func $trap (result i64)))"#.into(),
+            "call $trap drop".into(),
+        )
+    };
     format!(
-        r#"(component
-      (import "{import}" (func $trap (param "input" string) (result string)))
+        r#"(component {types} {declaration}
       (core module $mem
         (memory (export "memory") 2)
         (global $next (mut i32) (i32.const 4096))
@@ -26,34 +112,48 @@ fn fixture(import: &str) -> String {
           (local $ptr i32)
           global.get $next local.tee $ptr local.get 3 i32.add
           i32.const 7 i32.add i32.const -8 i32.and global.set $next local.get $ptr)
-        (data (i32.const 64) "{escaped}"))
+        {data})
       (core instance $mem (instantiate $mem))
-      (core func $trap (canon lower (func $trap)
-        (memory (core memory $mem "memory")) (realloc (core func $mem "realloc"))))
+      {lower}
       (core module $main
         (import "mem" "memory" (memory 2))
-        (import "host" "trap" (func $trap (param i32 i32 i32)))
-        (func (export "run") (param i32 i32) (result i32)
-          local.get 0 local.get 1 i32.const 0 call $trap
-          i32.const 16 i32.const 64 i32.store
-          i32.const 20 i32.const {length} i32.store
-          i32.const 16))
+        {core_import}
+        (func (export "run-step") (param i32 i32) (result i32)
+          {call}
+          i32.const 1024 i32.const 0 i32.store
+          i32.const 1028 i32.const 2048 i32.store
+          i32.const 1032 i32.const {length} i32.store
+          i32.const 1036 i32.const 0 i32.store
+          i32.const 1040 i32.const 0 i32.store
+          i32.const 1024))
       (core instance $host (export "trap" (func $trap)))
       (core instance $main (instantiate $main (with "mem" (instance $mem)) (with "host" (instance $host))))
-      (func (export "run") (param "script" string) (result string)
-        (canon lift (core func $main "run") (memory (core memory $mem "memory")) (realloc (core func $mem "realloc")))))"#,
-        length = result.len()
+      (func (export "run-step") (param "source" string) (result $reply)
+        (canon lift (core func $main "run-step") (memory (core memory $mem "memory")) (realloc (core func $mem "realloc")))))"#,
+        data = data.join("\n"),
+        length = output.len()
     )
 }
 
-fn runtime(import: &str) -> WasmtimeComponentRuntime {
-    let component = fixture(import);
+fn escaped(value: &str) -> String {
+    value
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("\\{byte:02x}"))
+        .collect()
+}
+
+fn runtime_with(import: &str, input: &serde_json::Value, forged: bool) -> WasmtimeComponentRuntime {
+    let component = fixture(import, input, forged);
     WasmtimeComponentRuntime::from_component(
         component.as_bytes(),
         *blake3::hash(component.as_bytes()).as_bytes(),
         ComponentBudget::default(),
     )
-    .expect("fixture component")
+    .expect("typed fixture component")
+}
+fn runtime(import: &str) -> WasmtimeComponentRuntime {
+    runtime_with(import, &serde_json::Value::Null, false)
 }
 
 fn step(script: &str, tier: SandboxGuestTier) -> JsCodeModeStep<'_> {
@@ -107,13 +207,18 @@ fn component_write_enters_real_dispatcher_and_gate() -> Result<()> {
     let input = serde_json::json!({"id":claim.to_hex(),"subject":subject.to_hex(),
         "predicate":"profile.favorite_drink","value":"sencha","confidence":0.9})
     .to_string();
-    let outcome = runtime("memory-put-claim")
-        .run_step(step(&input, SandboxGuestTier::FirstPartyDreamer), &mut host)?;
+    let outcome = runtime_with(
+        "memory-put-claim",
+        &serde_json::from_str(&input).unwrap(),
+        false,
+    )
+    .run_step(step(&input, SandboxGuestTier::FirstPartyDreamer), &mut host)?;
     assert!(outcome.done);
     let stored = vault
         .get_claim(&claim)?
         .expect("claim committed through trap");
     assert_eq!(stored.source, Some(ClaimSource::Generated));
+    assert_eq!(stored.confidence, 0.9);
     assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
     let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
     assert!(
@@ -128,12 +233,16 @@ fn component_write_enters_real_dispatcher_and_gate() -> Result<()> {
         "source":"human","approval":"confirmed"})
     .to_string();
     assert!(
-        runtime("memory-put-claim")
-            .run_step(
-                step(&forged, SandboxGuestTier::FirstPartyDreamer),
-                &mut host
-            )
-            .is_err()
+        runtime_with(
+            "memory-put-claim",
+            &serde_json::from_str(&forged).unwrap(),
+            true
+        )
+        .run_step(
+            step(&forged, SandboxGuestTier::FirstPartyDreamer),
+            &mut host
+        )
+        .is_err()
     );
     assert!(
         vault
@@ -177,7 +286,7 @@ fn restricted_tiers_reject_write_at_component_link_time() {
 
 #[test]
 fn component_pin_and_resource_limits_fail_closed() {
-    let component = fixture("clock-now-unix-ms");
+    let component = fixture("clock-now-unix-ms", &serde_json::Value::Null, false);
     assert!(
         WasmtimeComponentRuntime::from_component(
             component.as_bytes(),
@@ -192,6 +301,61 @@ fn component_pin_and_resource_limits_fail_closed() {
         runtime
             .run_step(
                 step("{}", SandboxGuestTier::FirstPartyDreamer),
+                &mut NoEffects
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn invalid_typed_arguments_still_consume_host_call_budget() {
+    struct NoCalls;
+    impl JsCodeModeHost for NoCalls {
+        fn dispatch_self(&mut self, _: SelfCall) -> Result<SelfDispatchResponse> {
+            panic!("invalid subject must not reach the engine host")
+        }
+    }
+    // Empty/null fixture fields cannot become a valid typed claim. The guest
+    // ignores the first typed error, then repeats the invalid invocation.
+    let component = fixture("memory-put-claim", &serde_json::Value::Null, false)
+        .replace("i32.const 512 i32.load8_u if unreachable end", "")
+        .replace(CLAIM_CALL, &format!("{CLAIM_CALL} {CLAIM_CALL}"));
+    let mut runtime = WasmtimeComponentRuntime::from_component(
+        component.as_bytes(),
+        *blake3::hash(component.as_bytes()).as_bytes(),
+        ComponentBudget {
+            host_calls: 1,
+            ..ComponentBudget::default()
+        },
+    )
+    .expect("typed component");
+    assert!(
+        runtime
+            .run_step(step("", SandboxGuestTier::FirstPartyDreamer), &mut NoCalls)
+            .is_err()
+    );
+}
+
+#[test]
+fn non_finite_typed_claim_confidence_refuses_before_dispatch() {
+    let input = serde_json::json!({
+        "id": "11111111111111111111111111111111",
+        "subject": "22222222222222222222222222222222",
+        "predicate": "profile.favorite_drink",
+        "value": "sencha"
+    });
+    let component = fixture("memory-put-claim", &input, false)
+        .replace("i32.const 0 f32.const 0", "i32.const 1 f32.const nan");
+    let mut runtime = WasmtimeComponentRuntime::from_component(
+        component.as_bytes(),
+        *blake3::hash(component.as_bytes()).as_bytes(),
+        ComponentBudget::default(),
+    )
+    .expect("typed component");
+    assert!(
+        runtime
+            .run_step(
+                step("", SandboxGuestTier::FirstPartyDreamer),
                 &mut NoEffects
             )
             .is_err()

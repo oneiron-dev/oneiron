@@ -1,8 +1,10 @@
 # Host-configured Firecracker guest ABI v1
 
 This is a real jailer launch path. It is not proof that a guest image boots.
-The repository does not include Firecracker, jailer, a guest kernel/rootfs,
-or a QuickJS component. No dependency is installed by this backend.
+The repository includes the `oneiron-guest` PID-1 source, an artifact build recipe
+at `scripts/microvm/`, and a typed conformance component generator. It does not
+include Firecracker/jailer binaries, prebuilt kernel/rootfs images, or a QuickJS
+interpreter. No dependency is installed by this backend or recipe.
 
 ## External artifacts and host configuration
 
@@ -18,7 +20,8 @@ The host must provide:
   mount OverlayFS with a tmpfs upper/work pair at `/mnt/workspace`, constrain
   unprivileged component execution (including the supplied guest pids ceiling),
   collect only regular files from that overlay, and report failures as nonzero.
-- A component implementing `wasmtime_runtime/guest.wit`. A QuickJS-class
+- A component implementing `crates/oneiron/wit/code-run.wit` and its typed
+  `run-step(source) -> result<step-result,string>` export. A QuickJS-class
   interpreter is required to execute JavaScript. ABI test fixtures are NOT JS.
 
 `ONEIRON_MICROVM_CONFIG` names JSON matching `FirecrackerHostConfig`.
@@ -38,7 +41,9 @@ The guest connects AF_VSOCK to host CID 2, port 52. Firecracker forwards this to
 then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
 
 1. Guest: `{"type":"hello","version":1}`.
-2. Host: `start` with version, vm_id, tier, pids, component_bytes.
+2. Host: `start` with version, vm_id, tier, pids, component_bytes, and source (at most 1 MiB).
+   `GuestImage::with_source` supplies source; an empty string selects an embedded
+   conformance entry program.
 3. Host: ordered `component` frames (offset, byte array), then `file` frames
    (virtual workspace path, byte array), then `{"type":"ready"}`.
 4. Guest: any bounded sequence of:
@@ -65,7 +70,9 @@ Socket-pair tests prove protocol framing, credential refusal before resolution,
 secret-free receipts and proposal-only output. They do not boot a VM.
 The ignored `firecracker_real_boot_returns_only_proposals` test requires the
 host profile plus `ONEIRON_MICROVM_TEST_KERNEL`, `_ROOTFS`, `_COMPONENT` paths.
-Its conformance guest must produce a file proposal. Run it explicitly on a
+Its conformance guest must resolve the prescribed credential on the host and
+produce a file proposal. `oneiron-guest --write-conformance NEW.wasm` builds
+that typed ABI fixture. It is not JavaScript. Run it explicitly on a
 provisioned host. A real QuickJS script and real Firecracker boot remain unrun
 when these externally built artifacts are absent.
 
@@ -77,3 +84,30 @@ pinned guest to call read-only `metadata` with `conformance-handle` at
 The fixture records credential resolution and transport on the host. The guest
 receives only an acceptance receipt, never the credential. A guest that omits
 the credential call does not satisfy the boot acceptance test.
+
+
+## First-party ABI convergence
+
+The shared WIT and generated SDK are byte-identical to C13 boundary commit
+`681957d045b59b4a3d5ae1c09875025f48fcba98`. The former string `run` ABI is removed.
+The in-process engine adapter keeps its pin, resource ceilings, replay clock/RNG,
+and per-operation gate bridge. It links only the tier's selected typed imports.
+First-party returned proposals are refused; writes must use their typed host traps.
+
+`step-result.result-json` in the first-party adapter is the strict JSON object
+`{"done":true,"observation":"text","outputs":[]}`. `done` and `observation` are required; outputs default empty. Output entries contain `path` under `/mnt/outputs` and
+byte-array `bytes`. This envelope is an engine result, not arbitrary JavaScript
+return-value coercion. A QuickJS guest must produce this envelope. In contrast,
+the foreign agent only checks that result-json is valid bounded JSON; its mutations
+are explicitly carried by file-write proposals, not that result text.
+`claim-input.subject` is a JSON-encoded entity hex string; `value` and credential
+`args` are JSON documents, and search results are individually JSON-encoded.
+Unknown/invalid authority fields do not exist in the typed claim record. Denied
+calls return typed errors. The canonical WIT has no budget-envelope field in its
+result records: the engine still enforces and records budget decisions, but this
+ABI cannot expose the existing JSON budget extension to a guest. That is an
+explicit shared-boundary limitation, not a locally invented alternate WIT.
+
+The agent currently refuses claim-candidate proposals and deletions. Neither is
+silently discarded or applied. All file proposals are validated before scratch
+application. Host intake lowers changed whole files into exact-base file edits.

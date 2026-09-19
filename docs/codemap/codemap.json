@@ -6756,7 +6756,7 @@
      "path": "src/code_sandbox/firecracker/protocol.rs",
      "purpose": "Bounded guest-agent framing; no host filesystem or credential capabilities",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -6847,7 +6847,7 @@
      "path": "src/code_sandbox/microvm/handle.rs",
      "purpose": "The VM value objects: guest image, running handle, exit and execution budget",
      "surface": {
-      "fn": 10,
+      "fn": 11,
       "struct": 4
      }
     },
@@ -6948,11 +6948,12 @@
      "surface": {
       "const": 1,
       "fn": 2,
+      "mod": 1,
       "struct": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/code_sandbox/wasmtime_runtime/tests.rs",
@@ -6960,11 +6961,21 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/typed.rs",
+     "purpose": "Canonical typed WIT imports over the bounded engine-host channel",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_sandbox/wasmtime_runtime/wire.rs",
-     "purpose": "Strict JSON payloads carried by separately linked WIT functions",
+     "purpose": "Internal bounded JSON bridge between typed WIT and the borrowed engine host",
      "surface": {
       "crate-vis": 3
      }
@@ -25445,6 +25456,14 @@
      "path": "tests/voice_segment_sync.rs",
      "purpose": "The recorder's engine contract (VOX-08)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "wit/generated/imports.rs",
+     "purpose": "—",
+     "surface": {}
     }
    ],
    "modules": {
@@ -25701,7 +25720,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26725,7 +26744,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1533,
+   "source_files": 1535,
    "test_files": 541
   },
   "oneiron-bench": {
@@ -27990,6 +28009,148 @@
    "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
    "source_files": 8,
    "test_files": 1
+  },
+  "oneiron-guest": {
+   "files": [
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/boot.rs",
+     "purpose": "Linux-only PID-1 setup, isolated execution, and final-delivery custody",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conformance.rs",
+     "purpose": "Typed Component Model fixture",
+     "surface": {
+      "const": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/filesystem.rs",
+     "purpose": "Descriptor-relative workspace access",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Error"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Linux microVM guest agent and an unprivileged protocol conformance adapter",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "mod": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/main.rs",
+     "purpose": "Guest PID-1 entry point and explicitly named, unprivileged local test tools",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/protocol.rs",
+     "purpose": "Strict, bounded host/guest JSON framing and admission state machine",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime.rs",
+     "purpose": "Canonical typed Component Model execution with four read-only imports",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/cli.rs",
+     "purpose": "Native CLI artifact generation and pinning, not microVM boot evidence",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "boot": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Linux-only PID-1 setup, isolated execution, and final-delivery custody"
+    },
+    "conformance": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Typed Component Model fixture"
+    },
+    "filesystem": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Descriptor-relative workspace access"
+    },
+    "protocol": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Strict, bounded host/guest JSON framing and admission state machine"
+    },
+    "runtime": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Canonical typed Component Model execution with four read-only imports"
+    },
+    "tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "—"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Linux microVM guest agent and an unprivileged protocol conformance adapter",
+   "source_files": 7,
+   "test_files": 2
   },
   "oneiron-llm-anthropic": {
    "files": [

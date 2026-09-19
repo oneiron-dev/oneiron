@@ -1,4 +1,4 @@
-//! Strict JSON payloads carried by separately linked WIT functions.
+//! Internal bounded JSON bridge between typed WIT and the borrowed engine host.
 
 use super::{Bridge, failure};
 use crate::code_run::{
@@ -12,25 +12,6 @@ use crate::engine_executor::{JsCodeModeOutput, JsCodeModeStepOutcome, SelfDispat
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Result, TimeRange};
 use serde::Deserialize;
 use serde_json::{Value, json};
-
-pub(super) fn component_import_name(name: &str) -> Result<&'static str> {
-    Ok(match name {
-        "sandbox.fs.read_file" => "fs-read-file",
-        "sandbox.credential.call" => "credential-call",
-        "oneiron.clock.now_unix_ms" => "clock-now-unix-ms",
-        "oneiron.random.bytes" => "random-bytes",
-        "self.memory.search" => "memory-search",
-        "self.memory.put_claim" => "memory-put-claim",
-        "self.memory.supersede_claim" => "memory-supersede-claim",
-        "self.memory.put_edge" => "memory-put-edge",
-        "self.ask_human" => "ask-human",
-        "self.askHuman" => "ask-human-camel",
-        "self.speak" => "speak",
-        "self.think" => "think",
-        "self.express" => "express",
-        _ => return Err(failure("unknown component host import")),
-    })
-}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -306,7 +287,7 @@ pub(super) fn decode_output(output: &str, limit: usize) -> Result<JsCodeModeStep
     })
 }
 
-fn edge_kind(name: &str) -> Result<EdgeKind> {
+pub(super) fn edge_kind(name: &str) -> Result<EdgeKind> {
     Ok(match name {
         "authored_by" => EdgeKind::AuthoredBy,
         "scoped_to" => EdgeKind::ScopedTo,

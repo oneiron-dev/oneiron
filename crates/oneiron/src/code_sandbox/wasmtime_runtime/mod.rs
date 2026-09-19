@@ -1,13 +1,19 @@
 //! Pinned, in-process Component Model execution for host-trusted code.
 //!
-//! The host supplies a QuickJS component implementing `guest.wit`, not guest
+//! The host supplies a QuickJS component implementing the canonical `wit/code-run.wit`, not guest
 //! machine code. `from_component` also accepts a compatible bounded component
 //! (for example an ABI conformance fixture); it makes no QuickJS provenance
 //! claim. No WASI, environment, filesystem or network imports are linked.
 
 #[cfg(test)]
 mod tests;
+mod typed;
 mod wire;
+
+/// Types generated from the canonical guest/SDK WIT.
+pub mod bindings {
+    wasmtime::component::bindgen!({ path: "wit", world: "guest" });
+}
 
 use super::{SandboxBoundaryAdapter, SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
@@ -20,7 +26,7 @@ use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 
 /// Component ABI shipped for hosts building the plain-JS interpreter artifact.
-pub const GUEST_WIT: &str = include_str!("guest.wit");
+pub const GUEST_WIT: &str = include_str!("../../../wit/code-run.wit");
 
 /// Per-step ceilings. Zero ceilings are never interpreted as unlimited.
 #[derive(Debug, Clone, Copy)]
@@ -72,7 +78,8 @@ impl WasmtimeComponentRuntime {
         config
             .wasm_component_model(true)
             .consume_fuel(true)
-            .epoch_interruption(true);
+            .epoch_interruption(true)
+            .max_wasm_stack(512 * 1024);
         let engine = Engine::new(&config).map_err(|_| failure("engine creation failed"))?;
         let component = Component::new(&engine, bytes).map_err(|_| failure("invalid component"))?;
         Ok(Self {
@@ -174,19 +181,27 @@ fn execute_component(
         return Err(failure("component deadline exceeded before execution"));
     }
     let mut linker = Linker::new(engine);
-    link_imports(&mut linker, boundary)?;
+    typed::link_imports(&mut linker, boundary)?;
     let instance = linker
         .instantiate(&mut store, component)
         .map_err(|_| failure("component imports or instantiation refused"))?;
     let run = instance
-        .get_typed_func::<(String,), (String,)>(&mut store, "run")
-        .map_err(|_| failure("component run ABI mismatch"))?;
+        .get_typed_func::<(String,), (std::result::Result<bindings::StepResult, String>,)>(
+            &mut store, "run-step",
+        )
+        .map_err(|_| failure("component run-step ABI mismatch"))?;
     let (output,) = run
         .call(&mut store, (script.to_owned(),))
         .map_err(|_| failure("component execution trapped"))?;
     run.post_return(&mut store)
         .map_err(|_| failure("component post-return trapped"))?;
-    wire::decode_output(&output, budget.message_bytes)
+    let output = output.map_err(|_| failure("guest reported step failure"))?;
+    // This runtime is the first-party lane. Proposal-only execution belongs to
+    // the microVM guest; never silently turn a returned proposal into a write.
+    if !output.proposals.is_empty() {
+        return Err(failure("in-process tier does not admit proposal deltas"));
+    }
+    wire::decode_output(&output.result_json, budget.message_bytes)
 }
 
 fn drive_host(
@@ -246,43 +261,6 @@ enum HostEvent {
         reply: mpsc::SyncSender<Result<String>>,
     },
     Finished(Result<JsCodeModeStepOutcome>),
-}
-
-fn link_imports(linker: &mut Linker<State>, contract: SandboxBoundaryContract) -> Result<()> {
-    for import in contract.linked_imports() {
-        if contract.tier().requires_zero_write_imports() && import.class().is_write() {
-            return Err(failure("write import in restricted tier"));
-        }
-        let name = wire::component_import_name(import.name())?;
-        linker
-            .root()
-            .func_wrap(name, move |mut context, (input,): (String,)| {
-                let state = context.data_mut();
-                if input.len() > state.message_bytes || state.remaining_calls == 0 {
-                    return Err(wasmtime::Error::msg("host call budget exceeded"));
-                }
-                state.remaining_calls -= 1;
-                let (reply, response) = mpsc::sync_channel(1);
-                state
-                    .events
-                    .send(HostEvent::Call {
-                        name: import.name(),
-                        input,
-                        reply,
-                    })
-                    .map_err(|_| wasmtime::Error::msg("host bridge stopped"))?;
-                let output = response
-                    .recv()
-                    .map_err(|_| wasmtime::Error::msg("host bridge stopped"))?
-                    .map_err(|_| wasmtime::Error::msg("host call refused"))?;
-                if output.len() > state.message_bytes {
-                    return Err(wasmtime::Error::msg("host response budget exceeded"));
-                }
-                Ok((output,))
-            })
-            .map_err(|_| failure("component import linking failed"))?;
-    }
-    Ok(())
 }
 
 fn failure(detail: &'static str) -> Error {

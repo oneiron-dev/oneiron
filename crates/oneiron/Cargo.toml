@@ -59,7 +59,7 @@ icu_properties = { version = "2.2", default-features = false, features = ["compi
 unicode-script = "0.5"
 unicode-segmentation = "1"
 loro = "1.10"
-wasmtime = { version = "38", optional = true, default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
+wasmtime = { version = "=38.0.4", optional = true, default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
 tokio = { version = "1", features = ["net", "sync", "time", "rt", "macros"], optional = true }
 tokio-tungstenite = { version = "0.26", optional = true }
 futures-util = { version = "0.3", optional = true }
@@ -157,7 +157,7 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [features]
-sandbox-wasmtime = ["dep:wasmtime"]
+code-sandbox-wasmtime = ["dep:wasmtime"]
 image-station-ocr = ["dep:ocrs", "dep:rten"]
 artifact-publish-verb = []
 # CODE-01 (ONE-1429): the isolating microVM backend for foreign/ingested guest

@@ -96,6 +96,9 @@ fn socket_protocol_denies_off_list_before_resolution_and_returns_proposals_not_w
     let result = std::thread::scope(|scope| {
         scope.spawn(move || {
             send(&mut guest,json!({"type":"hello","version":1}));
+            let start = receive(&mut guest);
+            assert_eq!(start["type"], "start");
+            assert_eq!(start["source"], "fixture source");
             loop { if receive(&mut guest)["type"]=="ready" {break;} }
             send(&mut guest,json!({"type":"credential_read","handle":"handle","operation":"metadata","scheme":"https","host":"evil.test"}));
             assert_eq!(receive(&mut guest),json!({"type":"receipt","accepted":false}));
@@ -108,7 +111,10 @@ fn socket_protocol_denies_off_list_before_resolution_and_returns_proposals_not_w
         exchange(
             host,
             &vm,
-            b"bounded-component-input",
+            GuestProgram {
+                component: b"bounded-component-input",
+                source: "fixture source",
+            },
             ExecutionBudget::new(3, 128, 32),
             Instant::now() + Duration::from_secs(3),
             &proxy,

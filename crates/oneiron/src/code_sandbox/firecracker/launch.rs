@@ -70,7 +70,18 @@ pub(super) fn run(
                 .accept()
                 .map_err(|_| refused("guest connection failed"))?;
             let component = config::read_regular_bounded(&staged.component, 64 * 1024 * 1024)?;
-            protocol::exchange(stream, vm, &component, budget, deadline, proxy, transport)
+            protocol::exchange(
+                stream,
+                vm,
+                protocol::GuestProgram {
+                    component: &component,
+                    source: &image.source,
+                },
+                budget,
+                deadline,
+                proxy,
+                transport,
+            )
         })();
         let _ = finish.send(());
         result

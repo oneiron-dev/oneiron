@@ -18,6 +18,8 @@ pub struct GuestImage {
     pub kernel: PathBuf,
     pub rootfs: PathBuf,
     pub component: PathBuf,
+    /// Untrusted source passed to the canonical typed run-step export.
+    pub source: String,
 }
 
 impl GuestImage {
@@ -31,7 +33,16 @@ impl GuestImage {
             kernel: kernel.into(),
             rootfs: rootfs.into(),
             component: component.into(),
+            source: String::new(),
         }
+    }
+
+    /// Select source for a reusable interpreter component. Empty source is
+    /// valid for a component with its own embedded entry program.
+    #[must_use]
+    pub fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = source.into();
+        self
     }
 
     /// Checks that every image artifact is present before a guest is booted.
@@ -41,6 +52,12 @@ impl GuestImage {
     /// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when an artifact is missing. The
     /// message names the artifact class, never the host path.
     pub fn ensure_present(&self, backend: &'static str) -> Result<()> {
+        if self.source.len() > 1024 * 1024 {
+            return Err(backend_error(
+                backend,
+                "guest source exceeds message budget",
+            ));
+        }
         for (class, path) in [
             ("kernel", &self.kernel),
             ("rootfs", &self.rootfs),

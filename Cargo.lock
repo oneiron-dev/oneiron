@@ -6305,6 +6305,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-guest"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "wasmtime",
+ "wat",
+]
+
+[[package]]
 name = "oneiron-llm-anthropic"
 version = "0.1.0"
 dependencies = [

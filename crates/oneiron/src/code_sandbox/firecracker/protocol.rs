@@ -56,6 +56,7 @@ enum HostFrame<'a> {
         tier: &'a str,
         pids: u32,
         component_bytes: usize,
+        source: &'a str,
     },
     Component {
         offset: usize,
@@ -71,15 +72,24 @@ enum HostFrame<'a> {
     },
 }
 
+pub(super) struct GuestProgram<'a> {
+    pub component: &'a [u8],
+    pub source: &'a str,
+}
+
 pub(super) fn exchange(
     mut stream: UnixStream,
     vm: &MicroVmHandle,
-    component: &[u8],
+    program: GuestProgram<'_>,
     budget: ExecutionBudget,
     deadline: Instant,
     proxy: &CredentialEgressProxy,
     transport: Option<&dyn CredentialReadTransport>,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
+    let GuestProgram { component, source } = program;
+    if source.len() > MAX_FILE {
+        return Err(refused("guest source exceeds message budget"));
+    }
     if !matches!(
         read_frame(&mut stream, deadline)?,
         GuestFrame::Hello { version: 1 }
@@ -94,6 +104,7 @@ pub(super) fn exchange(
             tier: vm.tier().as_str(),
             pids: budget.pids,
             component_bytes: component.len(),
+            source,
         },
         deadline,
     )?;

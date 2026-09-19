@@ -15,7 +15,7 @@ mod paths;
 mod proposal;
 
 /// Host-pinned Component Model runtime for first-party code.
-#[cfg(feature = "sandbox-wasmtime")]
+#[cfg(feature = "code-sandbox-wasmtime")]
 pub mod wasmtime_runtime;
 
 /// Firecracker-backed microVM lane (Linux; feature-gated).
