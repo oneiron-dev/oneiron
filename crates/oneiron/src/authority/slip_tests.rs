@@ -354,9 +354,27 @@ fn named_record_meets_and_empty_channel_meets_never_restore_generic_reads() {
     let mut ba = root.clone();
     ba.attenuate(b).unwrap();
     ba.attenuate(a).unwrap();
-    let denied = verify(&vault, &issuer, &ab).unwrap();
-    assert_eq!(denied, verify(&vault, &issuer, &ba).unwrap());
-    assert!(!denied.allows_verb("read"));
+    for slip in [&ab, &ba] {
+        assert!(!verify(&vault, &issuer, slip).unwrap().allows_verb("read"));
+    }
+    // Effective TTL is time-relative. Compare complete verifier results at the
+    // same instant, including a second rollover and the last live second.
+    let fold = vault.authority_fold().unwrap();
+    for now in [
+        root.claims.issued_at,
+        root.claims.issued_at + 1,
+        root.claims.expires_at - 1,
+    ] {
+        let verify_at = |slip: &CapabilitySlip| {
+            let proof = issuer.binding_proof(slip, b"request-1").unwrap();
+            slip.verify(SECRET, &fold, now, b"request-1", &proof)
+                .unwrap()
+        };
+        let denied = verify_at(&ab);
+        assert_eq!(denied, verify_at(&ba));
+        assert_eq!(denied.claims().ttl_secs, root.claims.expires_at - now);
+        assert!(!denied.allows_verb("read"));
+    }
     let mut empty = root.clone();
     empty
         .attenuate(SlipCaveat {
