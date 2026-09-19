@@ -307,6 +307,18 @@ impl Vault {
     /// No current-state fallback is permitted, including a missing document.
     pub fn reconstruct_board(&self, turn: &EntityId) -> Result<ReconstructedBoard> {
         let txn = self.store.env.read_txn()?;
+        let turn_raw = crate::vault::entity_revision::read_entity_revision_in_txn(
+            self,
+            &txn,
+            turn,
+            ReadMode::Live,
+        )?
+        .ok_or(BoardHistoryError::UnknownTurn(*turn))?;
+        let turn_header =
+            EntityMetadataHeader::parse(&turn_raw).ok_or(Error::CorruptedIndex("turn header"))?;
+        if turn_header.entity_type != crate::registry::ENTITY_TYPE_TURN {
+            return Err(BoardHistoryError::UnknownTurn(*turn));
+        }
         let bytes = self
             .store
             .vault_meta

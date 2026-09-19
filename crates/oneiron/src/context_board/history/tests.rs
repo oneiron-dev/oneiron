@@ -318,3 +318,45 @@ fn board_claim_frontier_is_authenticated_without_rewriting_unchanged_families() 
         ));
     }
 }
+
+#[test]
+fn deleted_turns_cannot_reconstruct_shared_board_history() {
+    for reason in [
+        crate::DeleteReason::UserHardDelete,
+        crate::DeleteReason::UserDelete,
+    ] {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let owner = put(&vault, ENTITY_TYPE_PERSON, "owner");
+        let document = put(&vault, ENTITY_TYPE_ASSET_TEXT, "pinned body");
+        let first = put(&vault, ENTITY_TYPE_TURN, "removed turn");
+        let sibling = put(&vault, ENTITY_TYPE_TURN, "retained turn");
+        let selection = BoardSelection {
+            pinned: BTreeSet::from([document]),
+            ..Default::default()
+        };
+        for (turn, at) in [(first, 1), (sibling, 2)] {
+            vault
+                .record_board_turn(
+                    &BoardTurn {
+                        turn,
+                        owner,
+                        at,
+                        selection: selection.clone(),
+                    },
+                    at,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            vault.reconstruct_board(&first).unwrap().selection,
+            selection
+        );
+        let retained = vault.reconstruct_board(&sibling).unwrap();
+        vault.delete_entity_with_reason(&first, reason).unwrap();
+        assert!(
+            matches!(vault.reconstruct_board(&first), Err(BoardHistoryError::UnknownTurn(id)) if id == first)
+        );
+        assert_eq!(vault.reconstruct_board(&sibling).unwrap(), retained);
+    }
+}
