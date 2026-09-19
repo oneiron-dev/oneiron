@@ -393,7 +393,7 @@ impl Vault {
         crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
     }
 
-    fn turn_vad_annotation_in_txn(
+    pub(super) fn turn_vad_annotation_in_txn(
         &self,
         txn: &heed::RwTxn<'_>,
         turn_id: &EntityId,
