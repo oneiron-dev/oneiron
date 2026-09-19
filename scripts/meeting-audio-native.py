@@ -129,6 +129,9 @@ class NativeHost:
             "missing": ["forced_word_alignment", "community1_exclusive_full_file",
                         "cleanup_model"],
             "e1_e3_evidence": False,
+            "python_executable": sys.executable,
+            "python_version": sys.version.split()[0],
+            "script_sha256": sha256(Path(__file__).read_bytes()),
         }
 
     def decode(self, body):
@@ -258,10 +261,11 @@ class NativeHost:
         if operation == "transcribe_text":
             return self.transcribe_text(body, options)
         if operation == "transcribe_pack":
-            partial_asr, _ = self.transcribe_text(body, options)
+            self.validate_asr_options(options)
+            # This bridge cannot align words. Refuse before loading weights or
+            # spending inference; transcribe_text remains an explicit probe.
             raise Refusal("ForcedAlignmentUnavailable", {
                 "requires": "installed forced-word aligner and its local weights",
-                "partial_asr": partial_asr,
                 "artifact": None,
             })
         if options:
@@ -330,7 +334,7 @@ def self_test():
         else:
             raise AssertionError(code)
     host = NativeHost(Path("."), Path("/missing"), Path("/missing"))
-    for operation, code in [("transcribe_pack", "AsrModelUnavailable"),
+    for operation, code in [("transcribe_pack", "ForcedAlignmentUnavailable"),
                             ("community1_exclusive_full_file", "Community1Unavailable"),
                             ("cleanup_turns", "CleanupBackendUnavailable")]:
         header["operation"] = operation
@@ -341,6 +345,9 @@ def self_test():
         result = json.loads(output.getvalue())
         assert result["error"]["code"] == code and result["body_bytes"] == 0
         assert result["request_id"] == "self-test" and not result["ok"]
+    capabilities = host.capabilities()
+    assert not capabilities["artifact_capable"] and not capabilities["e1_e3_evidence"]
+    assert capabilities["script_sha256"] == sha256(Path(__file__).read_bytes())
     options = {"model_id": ASR_MODEL, "glossary": ["notebook"], "language_hint": "English"}
     assert host.validate_asr_options(options) == (["notebook"], "English")
     for bad_options in [dict(options, previous_transcript="old words"),
@@ -352,7 +359,7 @@ def self_test():
             assert error.code == "InvalidAsrOptions"
         else:
             raise AssertionError("invalid ASR options accepted")
-    print("native-host protocol self-test: 11 cases passed (no models invoked)")
+    print("native-host protocol self-test: protocol and capability checks passed (no models invoked)")
 
 
 def main():

@@ -27,6 +27,7 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
     host: &mut H,
 ) -> AudioResult<ProducedMeetingTranscript> {
     validate_options(file, options)?;
+    host.preflight_artifact()?;
     let audio = host.decode(file)?;
     let duration_ms = audio.duration_ms()?;
     if duration_ms == 0 {

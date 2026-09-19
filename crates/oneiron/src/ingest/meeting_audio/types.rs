@@ -211,6 +211,11 @@ pub struct CleanupOutput {
 /// model dependencies or product prompt content. Method names pin the model
 /// families at the inference boundary. The host still records exact versions.
 pub trait MeetingAudioHost {
+    /// Optional fail-fast host readiness check. It grants neither inference
+    /// consent nor model-selection authority; every port still validates output.
+    fn preflight_artifact(&mut self) -> AudioResult<()> {
+        Ok(())
+    }
     fn decode(&mut self, file: &AudioFile<'_>) -> AudioResult<Pcm16>;
     fn silero_vad(&mut self, audio: &Pcm16, sha256: &str) -> AudioResult<VadOutput>;
     fn route_batch_asr(&mut self, request: BatchAsrRequest<'_>) -> AudioResult<AsrRoute>;

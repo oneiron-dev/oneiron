@@ -40,6 +40,42 @@ pub struct CommandAudioConfig {
     pub stage_timeout: std::time::Duration,
 }
 
+/// Capability data reported by a configured bridge. This is not qualification
+/// or an authorization to run a model or change the ASR role's default.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeAudioCapabilities {
+    pub packages: std::collections::BTreeMap<String, Option<String>>,
+    pub asr_model_id: String,
+    pub asr_snapshot: String,
+    pub operations: Vec<String>,
+    pub artifact_capable: bool,
+    pub missing: Vec<String>,
+    pub e1_e3_evidence: bool,
+    pub python_executable: String,
+    pub python_version: String,
+    pub script_sha256: String,
+}
+impl NativeAudioCapabilities {
+    fn require_artifact(&self) -> AudioResult<()> {
+        if !self.artifact_capable
+            || !self.missing.is_empty()
+            || [
+                "decode",
+                "silero_vad",
+                "transcribe_pack",
+                "community1_exclusive_full_file",
+                "cleanup_turns",
+            ]
+            .iter()
+            .any(|required| !self.operations.iter().any(|op| op == required))
+        {
+            return Err(host_error("capabilities", "ArtifactBackendUnavailable"));
+        }
+        Ok(())
+    }
+}
+
 /// Concrete [`MeetingAudioHost`] bridge. Spawns one isolated native call per
 /// port; it cannot carry transcript history between ASR requests. Reuse of model
 /// weights in a persistent process is a later host optimization, not a promise.
@@ -66,6 +102,22 @@ impl CommandMeetingAudioHost {
             return Err(AudioError::InvalidOptions);
         }
         Ok(Self { config, route })
+    }
+
+    /// Inspect only the native bridge. No audio or weights are sent to it.
+    pub fn inspect_capabilities(&self) -> AudioResult<NativeAudioCapabilities> {
+        let reply = self.call("capabilities", &[], json!({}))?;
+        let capabilities: NativeAudioCapabilities = serde_json::from_value(reply.result)
+            .map_err(|_| host_error("capabilities", "InvalidCapabilities"))?;
+        let script = std::fs::read(&self.config.bridge)
+            .map_err(|_| host_error("capabilities", "BridgeReadFailed"))?;
+        if capabilities.script_sha256 != sha256(&script)
+            || capabilities.asr_model_id != self.route.model_id
+            || Path::new(&capabilities.asr_snapshot) != self.config.model_snapshot
+        {
+            return Err(host_error("capabilities", "CapabilityBindingMismatch"));
+        }
+        Ok(capabilities)
     }
 
     fn call(&self, stage: &str, body: &[u8], options: Value) -> AudioResult<Reply> {
@@ -134,6 +186,9 @@ impl CommandMeetingAudioHost {
 }
 
 impl MeetingAudioHost for CommandMeetingAudioHost {
+    fn preflight_artifact(&mut self) -> AudioResult<()> {
+        self.inspect_capabilities()?.require_artifact()
+    }
     fn decode(&mut self, file: &AudioFile<'_>) -> AudioResult<Pcm16> {
         let output = self.call("decode", file.bytes, json!({}))?;
         if output.result["sample_rate"] != 16000

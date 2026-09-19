@@ -62,3 +62,17 @@ fn oversized_or_unframed_headers_refuse() {
             Err(AudioError::Host { code, .. }) if code == "InvalidResponse"));
     }
 }
+
+#[test]
+fn native_capability_data_cannot_claim_readiness_with_a_missing_artifact_port() {
+    let mut data = json!({"packages":{},"asr_model_id":"fixture","asr_snapshot":"/fixture","operations":["decode","silero_vad","transcribe_pack","community1_exclusive_full_file","cleanup_turns"],"artifact_capable":true,"missing":[],"e1_e3_evidence":false,"python_executable":"/fixture/python","python_version":"fixture","script_sha256":"a".repeat(64)});
+    let ready: NativeAudioCapabilities = serde_json::from_value(data.clone()).unwrap();
+    assert!(ready.require_artifact().is_ok());
+    data["operations"] = json!(["decode", "silero_vad", "transcribe_text"]);
+    let incomplete: NativeAudioCapabilities = serde_json::from_value(data.clone()).unwrap();
+    assert!(
+        matches!(incomplete.require_artifact(),Err(AudioError::Host {stage,code}) if stage=="capabilities" && code=="ArtifactBackendUnavailable")
+    );
+    data["untrusted_authority_override"] = json!(true);
+    assert!(serde_json::from_value::<NativeAudioCapabilities>(data).is_err());
+}
