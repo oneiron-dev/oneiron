@@ -118,6 +118,7 @@ pub(in crate::sync) fn clear_remat_marker_in_txn(
 /// True when an `rm:` marker is present without replay/quarantine
 /// provenance. Terminal quarantine must treat this as delete-safety/unknown
 /// provenance and leave it pending until the entity's tombstone goal holds.
+#[cfg(debug_assertions)]
 pub(in crate::sync) fn unproven_remat_marker_exists_in_txn(
     vault: &Vault,
     wtxn: &heed::RwTxn<'_>,

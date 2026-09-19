@@ -69,9 +69,11 @@ pub(in crate::sync) use self::reassert_drain::{
     enqueue_tombstone_reassert_marker, enqueue_tombstone_reassert_marker_in_txn,
 };
 pub(crate) use self::remat_markers::pending_remat_entities;
+#[cfg(debug_assertions)]
+pub(in crate::sync) use self::remat_markers::unproven_remat_marker_exists_in_txn;
 pub(in crate::sync) use self::remat_markers::{
     clear_remat_marker_in_txn, clear_replay_remat_marker_in_txn, set_remat_marker_in_txn,
-    set_replay_remat_marker, set_replay_remat_marker_in_txn, unproven_remat_marker_exists_in_txn,
+    set_replay_remat_marker, set_replay_remat_marker_in_txn,
 };
 // QUARANTINE_PREFIX, QUARANTINE_BATCH_DROPS_KEY and reassert_marker_key keep
 // their definitions in the children but take no seam re-export: nothing
