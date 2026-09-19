@@ -52,6 +52,9 @@ async fn ws_upgrade_handler(
 ) -> Result<impl IntoResponse, StatusCode> {
     let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let vault_binding = server
+        .require_vault_binding(&headers)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
     let session_jti = auth.jti().map(str::to_owned);
 
     let conn_id = server.alloc_conn_id();
@@ -67,7 +70,9 @@ async fn ws_upgrade_handler(
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
-        .on_upgrade(move |socket| handle_connection(socket, server, conn_id, session_jti)))
+        .on_upgrade(move |socket| {
+            handle_connection(socket, server, conn_id, session_jti, vault_binding)
+        }))
 }
 
 /// Whether this socket's credential has since been revoked.
@@ -117,6 +122,7 @@ async fn handle_connection(
     server: Arc<SyncServer>,
     conn_id: u32,
     session_jti: Option<String>,
+    vault_binding: Option<crate::server::vault_binding::VaultBinding>,
 ) {
     // Every frame this connection ever writes goes through here, and each one
     // re-consults the revocation registry first. The hello close below is the
@@ -128,6 +134,8 @@ async fn handle_connection(
         session_jti.clone(),
         conn_id,
     );
+
+    transport.vault_binding = vault_binding.map(|binding| (Arc::clone(server.vault()), binding));
 
     // Phase 0: protocol-version hello (ONE-1127). The client's FIRST frame
     // must be a supported protocol hello. Malformed frames or unsupported

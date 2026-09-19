@@ -434,8 +434,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         &credentials,
     )?);
 
+    let mut server_config = config.sync_server_config();
+    server_config.lease_vault_id = super::vault_gates::managed_lease_scope(&vault)?;
     let sync_server = Arc::new(
-        SyncServer::new(Arc::clone(&vault), config.sync_server_config())
+        SyncServer::new(Arc::clone(&vault), server_config)
             .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?,
     );
 

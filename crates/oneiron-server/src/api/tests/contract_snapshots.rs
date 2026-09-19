@@ -781,9 +781,8 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "/v1/companion/register/records/{record_id}/end-relationship",
         "/api/lease/revoke",
         "/api/health",
-        "/v1/consumer/usage",
-        "/v1/consumer/usage/details",
-        "/v1/consumer/top-up",
+        "/v1/usage/events",
+        "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",
     ] {
         assert!(paths.contains_key(path), "missing path {path}");
     }
@@ -888,9 +887,8 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         ("/api/entity/{id}", "get"),
         ("/api/edges/{id}", "get"),
         ("/api/lease/revoke", "post"),
-        ("/v1/consumer/usage", "get"),
-        ("/v1/consumer/usage/details", "get"),
-        ("/v1/consumer/top-up", "post"),
+        ("/v1/usage/events", "post"),
+        ("/v1/usage/owners/{owner}/vaults/{vault_id}/rollup", "get"),
         ("/v1/core/batch", "post"),
         ("/v1/core/query", "post"),
         ("/v1/core/context-pack", "post"),

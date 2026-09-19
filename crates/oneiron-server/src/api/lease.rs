@@ -111,3 +111,74 @@ pub(crate) async fn lease_revoke(
         }
     }
 }
+
+/// Fresh-key proof for initial registration or owner-authorized rotation.
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct LeaseRegisterRequest {
+    client_id: u64,
+    pubkey: String,
+    proof: String,
+    old_client_id: Option<u64>,
+}
+#[derive(Serialize, ToSchema)]
+pub(crate) struct LeaseRegisterResponse {
+    vault_id: u64,
+    granted: bool,
+    expires_at: u64,
+}
+#[utoipa::path(post, path = "/api/lease/register", request_body = LeaseRegisterRequest,
+    responses((status = 200, body = LeaseRegisterResponse), (status = 401, body = ApiError)))]
+pub(crate) async fn lease_register(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    Json(req): Json<LeaseRegisterRequest>,
+) -> Result<Json<LeaseRegisterResponse>, ApiError> {
+    lease_intake(&headers, &server, req, false).await
+}
+#[utoipa::path(post, path = "/api/lease/rotate", request_body = LeaseRegisterRequest,
+    responses((status = 200, body = LeaseRegisterResponse), (status = 401, body = ApiError)))]
+pub(crate) async fn lease_rotate(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    Json(req): Json<LeaseRegisterRequest>,
+) -> Result<Json<LeaseRegisterResponse>, ApiError> {
+    lease_intake(&headers, &server, req, true).await
+}
+async fn lease_intake(
+    headers: &HeaderMap,
+    server: &SyncServer,
+    req: LeaseRegisterRequest,
+    rotate: bool,
+) -> Result<Json<LeaseRegisterResponse>, ApiError> {
+    // Owner recovery is independent of the old device's lease (which may be lost).
+    check_api_auth(headers, server)?;
+    let key =
+        crate::server::vault_binding::decode_hex(&req.pubkey).ok_or_else(ApiError::unauthorized)?;
+    let proof =
+        crate::server::vault_binding::decode_hex(&req.proof).ok_or_else(ApiError::unauthorized)?;
+    let decision = if rotate {
+        server
+            .rotate_lease(
+                req.old_client_id.ok_or_else(ApiError::unauthorized)?,
+                req.client_id,
+                &key,
+                &proof,
+            )
+            .await
+    } else {
+        server.register_lease(req.client_id, &key, &proof).await
+    }
+    .map_err(|_| ApiError::internal_server_error("lease registration failed"))?;
+    if let Some(update) = decision.root_update {
+        let _ = crate::broadcast::broadcast(
+            &server.broadcast_tx,
+            0,
+            crate::protocol::encode_root_update(&update),
+        );
+    }
+    Ok(Json(LeaseRegisterResponse {
+        vault_id: server.config.lease_vault_id,
+        granted: decision.granted,
+        expires_at: decision.expires_at,
+    }))
+}

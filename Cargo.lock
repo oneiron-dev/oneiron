@@ -6216,6 +6216,7 @@ dependencies = [
  "futures-util",
  "half",
  "jsonwebtoken",
+ "libc",
  "loro",
  "oneiron",
  "oneiron-vault-contract",

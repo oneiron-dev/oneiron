@@ -48,8 +48,6 @@ pub(crate) const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "companion:register:write",
     "usage:read",
     "usage:write",
-    "consumer:usage:read",
-    "consumer:top-up:write",
     "sync:connect",
 ];
 
@@ -87,9 +85,6 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "lease.revoke",
     "usage.event",
     "usage.rollup",
-    "consumer.usage",
-    "consumer.usage.details",
-    "consumer.top_up",
 ];
 
 pub(crate) const CAPABILITY_MODES: &[&str] = &["flash", "thinking", "pro", "ultra"];

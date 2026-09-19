@@ -1,607 +1,228 @@
 use super::*;
-use std::sync::Mutex as StdMutex;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct CapturedTelemetry {
-    kind: &'static str,
-    name: String,
-    fields: BTreeMap<String, String>,
-}
-
-#[derive(Clone, Default)]
-struct TelemetryCapture {
-    records: Arc<StdMutex<Vec<CapturedTelemetry>>>,
-}
-
-impl TelemetryCapture {
-    fn records(&self) -> Vec<CapturedTelemetry> {
-        self.records.lock().unwrap().clone()
-    }
-
-    fn text_dump(&self) -> String {
-        format!("{:?}", self.records())
-    }
-}
-
-impl tracing::Subscriber for TelemetryCapture {
-    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
-        true
-    }
-
-    fn new_span(&self, attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        let mut fields = BTreeMap::new();
-        attrs.record(&mut TelemetryVisitor(&mut fields));
-        self.records.lock().unwrap().push(CapturedTelemetry {
-            kind: "span",
-            name: attrs.metadata().name().to_owned(),
-            fields,
-        });
-        tracing::span::Id::from_u64(1)
-    }
-
-    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
-
-    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
-
-    fn event(&self, event: &tracing::Event<'_>) {
-        let mut fields = BTreeMap::new();
-        event.record(&mut TelemetryVisitor(&mut fields));
-        self.records.lock().unwrap().push(CapturedTelemetry {
-            kind: "event",
-            name: event.metadata().name().to_owned(),
-            fields,
-        });
-    }
-
-    fn enter(&self, _span: &tracing::span::Id) {}
-
-    fn exit(&self, _span: &tracing::span::Id) {}
-}
-
-struct TelemetryVisitor<'a>(&'a mut BTreeMap<String, String>);
-
-impl tracing::field::Visit for TelemetryVisitor<'_> {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
-        self.0.insert(field.name().to_owned(), format!("{value:?}"));
-    }
-}
-
-fn test_ledger() -> (tempfile::TempDir, UsageLedger) {
+use std::sync::Arc;
+fn ledger() -> (tempfile::TempDir, UsageLedger) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
     (dir, UsageLedger::new(vault))
 }
-
-fn cloud_event(idempotency_key: &str) -> UsageEvent {
+fn event(id: &str, currency: &str) -> UsageEvent {
     UsageEvent {
-        tenant_id: "tenant-a".to_owned(),
-        vault_id: "vault-a".to_owned(),
-        idempotency_key: idempotency_key.to_owned(),
-        source: Some(UsageMode::OneironCloud),
+        owner: "owner-a".into(),
+        vault_id: "vault-a".into(),
+        idempotency_key: id.into(),
+        source: None,
         event_type: UsageEventType::Inference,
-        role: Some("orchestrator".to_owned()),
-        occurred_at: Some(1_782_357_635),
-        agent_id: Some("agent-a".to_owned()),
-        model: Some("model-a".to_owned()),
-        service: Some("inference".to_owned()),
+        role: None,
+        occurred_at: Some(100),
+        agent_id: Some("agent".into()),
+        model: Some("model".into()),
+        service: None,
         token_counts: UsageTokenCounts {
             input_tokens: 1_000,
-            output_tokens: 500,
-            cache_read_tokens: 2_000,
-            cache_write_tokens: 1_000,
+            ..Default::default()
         },
         cost_rates: UsageCostRates {
-            input_token_usd_per_million: 2.0,
-            output_token_usd_per_million: 4.0,
-            cache_read_token_usd_per_million: 0.5,
-            cache_write_token_usd_per_million: 1.0,
+            currency: currency.into(),
+            price_table_snapshot: "provider-2026-09".into(),
+            input_per_million: 2_000_000_000,
+            output_per_million: 0,
+            cache_read_per_million: 0,
+            cache_write_per_million: 0,
         },
-        service_cost_usd: 0.044,
-        service_costs: Vec::new(),
+        service_amount: 44_000_000,
     }
 }
-
-fn max_top_up_idempotency_key_len(tenant_id: &str) -> usize {
-    (MAX_SYNC_STATE_KEY_LEN - CONSUMER_TOP_UP_PREFIX.len() - 1 - key_part_len(tenant_id)) / 2
+#[test]
+fn stamped_money_roundtrips_and_rollups_do_not_mix_currencies_or_vaults() {
+    let (_dir, ledger) = ledger();
+    for currency in ["USD", "JPY"] {
+        let e = event(currency, currency);
+        let first = ledger
+            .record_event(e.clone(), UsageMode::OneironCloud)
+            .unwrap();
+        assert_eq!(first.cost.amount, 46_000_000);
+        let replay = ledger.record_event(e, UsageMode::OneironCloud).unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.cost, first.cost);
+    }
+    let mut e = event("other", "USD");
+    e.vault_id = "vault-b".into();
+    ledger.record_event(e, UsageMode::OneironCloud).unwrap();
+    let a = ledger.vault_rollup("owner-a", "vault-a").unwrap().unwrap();
+    let b = ledger.vault_rollup("owner-a", "vault-b").unwrap().unwrap();
+    assert_eq!(a.counters.event_count, 2);
+    assert_eq!(b.counters.event_count, 1);
+    assert_eq!(a.counters.amounts_by_currency["USD"], 46_000_000);
+    assert_eq!(a.counters.amounts_by_currency["JPY"], 46_000_000);
+    assert!(ledger.vault_rollup("owner-b", "vault-a").unwrap().is_none());
 }
-
-fn tenant_id_over_tenant_rollup_key_limit() -> String {
-    let tenant_id = "t".repeat((MAX_SYNC_STATE_KEY_LEN - USAGE_TENANT_ROLLUP_PREFIX.len()) / 2 + 1);
-    assert!(tenant_id.len() <= MAX_DIMENSION_LEN);
-    assert!(consumer_allowance_key_len(&tenant_id) <= MAX_SYNC_STATE_KEY_LEN);
-    assert!(tenant_rollup_key_len(&tenant_id) > MAX_SYNC_STATE_KEY_LEN);
-    tenant_id
-}
-
-fn vault_id_over_vault_rollup_key_limit(tenant_id: &str) -> String {
-    let vault_id = "v".repeat(
-        (MAX_SYNC_STATE_KEY_LEN - USAGE_VAULT_ROLLUP_PREFIX.len() - 1 - key_part_len(tenant_id))
-            / 2
-            + 1,
-    );
-    assert!(vault_id.len() <= MAX_DIMENSION_LEN);
-    assert!(vault_rollup_key_len(tenant_id, &vault_id) > MAX_SYNC_STATE_KEY_LEN);
-    vault_id
-}
-
-fn assert_storage_key_invalid_field(error: UsageError, expected_field: &'static str) {
+#[test]
+fn unmetered_modes_conflicts_overflow_and_invalid_keys() {
+    let (_dir, ledger) = ledger();
+    for mode in [UsageMode::Local, UsageMode::Byo] {
+        assert!(
+            !ledger
+                .record_event(event("one", "USD"), mode)
+                .unwrap()
+                .recorded
+        );
+    }
+    let mut e = event("one", "USD");
+    ledger
+        .record_event(e.clone(), UsageMode::OneironCloud)
+        .unwrap();
+    e.service_amount += 1;
     assert!(matches!(
-        error,
-        UsageError::InvalidField {
-            field,
-            message: "produces a storage key that is too long"
-        } if field == expected_field
+        ledger.record_event(e, UsageMode::OneironCloud),
+        Err(UsageError::IdempotencyConflict)
+    ));
+    let mut e = event("two", "USD");
+    e.service_amount = u64::MAX;
+    assert!(matches!(
+        ledger.record_event(e, UsageMode::OneironCloud),
+        Err(UsageError::Overflow)
+    ));
+    let mut e = event("three", "USD");
+    e.owner = "x".repeat(256);
+    assert!(matches!(
+        ledger.record_event(e, UsageMode::OneironCloud),
+        Err(UsageError::InvalidField { .. })
     ));
 }
-
-fn captured_usage_event(records: &[CapturedTelemetry]) -> &CapturedTelemetry {
-    records
-        .iter()
-        .find(|record| {
-            record.kind == "event"
-                && record
-                    .fields
-                    .get("message")
-                    .is_some_and(|message| message.contains("usage telemetry recorded"))
-        })
-        .expect("usage telemetry event")
-}
-
-fn captured_token_span<'a>(
-    records: &'a [CapturedTelemetry],
-    token_type: &str,
-) -> &'a CapturedTelemetry {
-    records
-        .iter()
-        .find(|record| {
-            record.kind == "span"
-                && record.name == "usage_token_type"
-                && record
-                    .fields
-                    .get("token_type")
-                    .is_some_and(|value| value == token_type)
-        })
-        .unwrap_or_else(|| panic!("usage token span {token_type}: {records:?}"))
-}
-
-fn assert_neutral_warning_telemetry(event: &CapturedTelemetry) {
-    assert_eq!(event.fields["allowance_warning_level"], "none");
-    assert_eq!(event.fields["allowance_warning_triggered"], "false");
+#[test]
+fn cached_yen_limit_converts_once_and_uses_budget_guard_ladder() {
+    let (_dir, ledger) = ledger();
+    let original = Money {
+        amount: 15_000,
+        currency: "JPY".into(),
+        price_table_snapshot: "limit".into(),
+    };
+    let rate = ExchangeRate {
+        from_currency: "JPY".into(),
+        to_currency: "USD".into(),
+        numerator: 1,
+        denominator: 150,
+        observed_at: 99,
+    };
+    let limit = ledger
+        .cache_budget_limit("owner-a", "vault-a", original, rate, 100)
+        .unwrap();
+    assert_eq!(limit.converted.amount, 100);
     assert_eq!(
-        event.fields["allowance_warning_threshold_ratio"],
-        ALLOWANCE_NOTICE_THRESHOLD_RATIO.to_string()
-    );
-    assert_eq!(event.fields["allowance_warning_used_ratio"], "0.0");
-}
-
-fn corrupt_consumer_allowance(ledger: &UsageLedger, tenant_id: &str) {
-    ledger
-        .vault
-        .sync_state_put(&consumer_allowance_key(tenant_id), b"not-msgpack")
-        .expect("corrupt allowance row");
-}
-
-#[test]
-fn cost_calculator_includes_token_cache_and_service_costs() {
-    let cost = cloud_event("cost-key").cost_input().calculate().unwrap();
-
-    assert_eq!(cost.token_cost_usd, 0.004);
-    assert_eq!(cost.cache_cost_usd, 0.002);
-    assert_eq!(cost.service_cost_usd, 0.044);
-    assert_eq!(cost.cost_usd, 0.05);
-    assert_eq!(cost.credit_units, cost.cost_usd / CREDIT_UNIT_USD);
-}
-
-#[test]
-fn record_event_emits_usage_telemetry_fields_and_token_spans() {
-    let (_dir, ledger) = test_ledger();
-    ledger
-        .top_up(
-            ConsumerTopUpRequest {
-                tenant_id: "tenant-a".to_owned(),
-                idempotency_key: "telemetry-top-up".to_owned(),
-                credit_units: 5.0,
-            },
-            UsageMode::OneironCloud,
-        )
-        .expect("top-up should create exhausted allowance warning");
-    let capture = TelemetryCapture::default();
-
-    tracing::subscriber::with_default(capture.clone(), || {
         ledger
-            .record_event(cloud_event("telemetry-fields"), UsageMode::OneironCloud)
-            .expect("usage event should record");
-    });
-    let records = capture.records();
-    let event = captured_usage_event(&records);
-    let prompt_span = captured_token_span(&records, "prompt");
-    let completion_span = captured_token_span(&records, "completion");
-    let cache_read_span = captured_token_span(&records, "cache_read");
-    let cache_write_span = captured_token_span(&records, "cache_write");
-
-    assert_eq!(event.fields["tenant_id"], "tenant-a");
-    assert_eq!(event.fields["account_id"], "tenant-a");
-    assert_eq!(event.fields["vault_id"], "vault-a");
-    assert_eq!(event.fields["role"], "orchestrator");
-    assert_eq!(event.fields["agent_id"], "agent-a");
-    assert_eq!(event.fields["model"], "model-a");
-    assert_eq!(event.fields["service"], "inference");
-    assert_eq!(event.fields["provider_mode"], "oneiron_cloud");
-    assert_eq!(event.fields["event_type"], "inference");
-    assert_eq!(event.fields["prompt_tokens"], "1000");
-    assert_eq!(event.fields["completion_tokens"], "500");
-    assert_eq!(event.fields["cache_read_tokens"], "2000");
-    assert_eq!(event.fields["cache_write_tokens"], "1000");
-    assert_eq!(event.fields["cost_usd"], "0.05");
-    assert_eq!(event.fields["credit_units"], "5.0");
-    assert_eq!(event.fields["allowance_warning_level"], "exhausted");
-    assert_eq!(event.fields["allowance_warning_triggered"], "true");
-    assert_eq!(event.fields["recorded"], "true");
-    assert_eq!(event.fields["replayed"], "false");
-    assert_eq!(event.fields["debited"], "true");
-    assert_eq!(prompt_span.fields["tokens"], "1000");
-    assert_eq!(completion_span.fields["tokens"], "500");
-    assert_eq!(cache_read_span.fields["tokens"], "2000");
-    assert_eq!(cache_write_span.fields["tokens"], "1000");
-}
-
-#[test]
-fn record_event_telemetry_does_not_log_payload_or_idempotency_text() {
-    let (_dir, ledger) = test_ledger();
-    let secret = "secret-prompt-payload-should-not-log";
-    let mut event = cloud_event(secret);
-    event.service_costs = vec![UsageServiceCost {
-        service: secret.to_owned(),
-        cost_usd: 0.001,
-    }];
-    let capture = TelemetryCapture::default();
-
-    tracing::subscriber::with_default(capture.clone(), || {
-        ledger
-            .record_event(event, UsageMode::OneironCloud)
-            .expect("usage event should record");
-    });
-
-    assert!(!capture.text_dump().contains(secret));
-}
-
-#[test]
-fn record_event_uses_neutral_warning_when_allowance_lookup_fails_after_recording() {
-    let (_dir, ledger) = test_ledger();
-    corrupt_consumer_allowance(&ledger, "tenant-a");
-    let capture = TelemetryCapture::default();
-
-    let result = tracing::subscriber::with_default(capture.clone(), || {
-        ledger.record_event(
-            cloud_event("corrupt-allowance-record"),
-            UsageMode::OneironCloud,
-        )
-    })
-    .expect("usage event should record despite warning lookup failure");
-    let records = capture.records();
-    let event = captured_usage_event(&records);
-    let rollup = ledger
-        .tenant_rollup("tenant-a")
-        .expect("tenant rollup read after recorded usage")
-        .expect("tenant rollup persisted");
-
-    assert!(result.recorded);
-    assert!(!result.replayed);
-    assert_eq!(rollup.counters.event_count, 1);
-    assert_eq!(event.fields["recorded"], "true");
-    assert_eq!(event.fields["replayed"], "false");
-    assert_neutral_warning_telemetry(event);
-}
-
-#[test]
-fn record_event_uses_neutral_warning_when_allowance_lookup_fails_after_replay() {
-    let (_dir, ledger) = test_ledger();
-    ledger
-        .record_event(
-            cloud_event("corrupt-allowance-replay"),
-            UsageMode::OneironCloud,
-        )
-        .expect("initial usage event should record");
-    corrupt_consumer_allowance(&ledger, "tenant-a");
-    let capture = TelemetryCapture::default();
-
-    let result = tracing::subscriber::with_default(capture.clone(), || {
-        ledger.record_event(
-            cloud_event("corrupt-allowance-replay"),
-            UsageMode::OneironCloud,
-        )
-    })
-    .expect("usage replay should succeed despite warning lookup failure");
-    let records = capture.records();
-    let event = captured_usage_event(&records);
-
-    assert!(!result.recorded);
-    assert!(result.replayed);
-    assert_eq!(event.fields["recorded"], "false");
-    assert_eq!(event.fields["replayed"], "true");
-    assert_neutral_warning_telemetry(event);
-}
-
-#[test]
-fn allowance_warning_exhausts_zero_allowance_without_usage() {
-    let warning = ConsumerAllowanceWarning::for_usage(0.0, 0.0);
-
-    assert_eq!(warning.level, ConsumerAllowanceWarningLevel::Exhausted);
-    assert!(warning.triggered);
-    assert_eq!(warning.threshold_ratio, 1.0);
-    assert_eq!(warning.used_ratio, None);
-}
-
-#[test]
-fn allowance_warning_uses_raw_ratio_for_thresholds() {
-    let warning = ConsumerAllowanceWarning::for_usage(0.7999999999996, 1.0);
-
-    assert_eq!(warning.level, ConsumerAllowanceWarningLevel::None);
-    assert!(!warning.triggered);
-    assert_eq!(warning.threshold_ratio, ALLOWANCE_NOTICE_THRESHOLD_RATIO);
-    assert_eq!(warning.used_ratio, Some(0.8));
-}
-
-#[test]
-fn consumer_usage_rejects_overlong_tenant_rollup_key() {
-    let (_dir, ledger) = test_ledger();
-    let tenant_id = tenant_id_over_tenant_rollup_key_limit();
-
-    let err = ledger
-        .consumer_usage(&tenant_id, None, UsageMode::OneironCloud)
-        .expect_err("overlong tenant rollup key should validate before storage");
-
-    assert_storage_key_invalid_field(err, "tenantId");
-}
-
-#[test]
-fn consumer_usage_details_rejects_overlong_vault_rollup_key() {
-    let (_dir, ledger) = test_ledger();
-    let tenant_id = "tenant-a";
-    let vault_id = vault_id_over_vault_rollup_key_limit(tenant_id);
-
-    let err = ledger
-        .consumer_usage_details(tenant_id, Some(&vault_id), UsageMode::OneironCloud)
-        .expect_err("overlong vault rollup key should validate before storage");
-
-    assert_storage_key_invalid_field(err, "vaultId");
-}
-
-#[test]
-fn top_up_accepts_idempotency_key_at_encoded_storage_limit() {
-    let (_dir, ledger) = test_ledger();
-    let tenant_id = "tenant-a";
-    let idempotency_key = "k".repeat(max_top_up_idempotency_key_len(tenant_id));
-    assert_eq!(
-        consumer_top_up_key_len(tenant_id, &idempotency_key),
-        MAX_SYNC_STATE_KEY_LEN
+            .cached_budget_limit("owner-a", "vault-a")
+            .unwrap()
+            .unwrap(),
+        limit
     );
-
-    let result = ledger
-        .top_up(
-            ConsumerTopUpRequest {
-                tenant_id: tenant_id.to_owned(),
-                idempotency_key: idempotency_key.clone(),
-                credit_units: 1.0,
-            },
-            UsageMode::OneironCloud,
-        )
-        .expect("top-up at encoded key limit should record");
-
-    assert!(result.recorded);
-    assert!(!result.replayed);
-    assert_eq!(result.top_up.idempotency_key, idempotency_key);
-    assert_eq!(result.usage.allowance.allowance_credit_units, 1.0);
-}
-
-#[test]
-fn top_up_rejects_idempotency_key_over_encoded_storage_limit() {
-    let (_dir, ledger) = test_ledger();
-    let tenant_id = "tenant-a";
-    let idempotency_key = "k".repeat(max_top_up_idempotency_key_len(tenant_id) + 1);
+    let guard = limit.guard("vault-budget");
+    let mut thresholds = Vec::new();
+    let mut leases = Vec::new();
+    for _ in 0..100 {
+        let a = guard.admit().unwrap();
+        thresholds.extend(a.ladder_events.into_iter().map(|e| e.threshold));
+        leases.push(a.lease);
+    }
     assert_eq!(
-        consumer_top_up_key_len(tenant_id, &idempotency_key),
-        MAX_SYNC_STATE_KEY_LEN + 2
+        thresholds,
+        vec![
+            oneiron::llm::BudgetThreshold::Silent50,
+            oneiron::llm::BudgetThreshold::Plan80,
+            oneiron::llm::BudgetThreshold::Land95
+        ]
     );
-
-    let err = ledger
-        .top_up(
-            ConsumerTopUpRequest {
-                tenant_id: tenant_id.to_owned(),
-                idempotency_key,
-                credit_units: 1.0,
-            },
-            UsageMode::OneironCloud,
-        )
-        .expect_err("oversized encoded top-up key should validate before storage");
-    let usage = ledger
-        .consumer_usage(tenant_id, None, UsageMode::OneironCloud)
-        .expect("usage after rejected top-up");
-
     assert!(matches!(
-        err,
-        UsageError::InvalidField {
-            field: "idempotencyKey",
-            ..
-        }
+        guard.admit(),
+        Err(oneiron::llm::BudgetDenied::Exhausted)
     ));
-    assert_eq!(usage.allowance.allowance_credit_units, 0.0);
 }
 
 #[test]
-fn top_up_rejects_overlong_response_rollup_key_before_recording() {
-    let (_dir, ledger) = test_ledger();
-    let tenant_id = tenant_id_over_tenant_rollup_key_limit();
-    let idempotency_key = "k";
-    assert!(consumer_top_up_key_len(&tenant_id, idempotency_key) <= MAX_SYNC_STATE_KEY_LEN);
-
-    let err = ledger
-        .top_up(
-            ConsumerTopUpRequest {
-                tenant_id: tenant_id.clone(),
-                idempotency_key: idempotency_key.to_owned(),
-                credit_units: 1.0,
-            },
-            UsageMode::OneironCloud,
-        )
-        .expect_err("overlong response rollup key should validate before write transaction");
-    let allowance = ledger
-        .consumer_allowance(&tenant_id)
-        .expect("allowance should remain readable");
-    let top_up_key = consumer_top_up_key(&tenant_id, idempotency_key);
-
-    assert_storage_key_invalid_field(err, "tenantId");
-    assert_eq!(allowance.credit_units, 0.0);
-    assert!(ledger.vault.sync_state_get(&top_up_key).unwrap().is_none());
-}
-
-#[test]
-fn top_up_rejects_amount_that_does_not_increase_normalized_allowance() {
-    let (_dir, ledger) = test_ledger();
-    let tenant_id = "tenant-a";
-    let first = ledger
-        .top_up(
-            ConsumerTopUpRequest {
-                tenant_id: tenant_id.to_owned(),
-                idempotency_key: "large-top-up".to_owned(),
-                credit_units: 1.0e296,
-            },
-            UsageMode::OneironCloud,
-        )
-        .expect("large finite top-up should record");
-
-    let err = ledger
-        .top_up(
-            ConsumerTopUpRequest {
-                tenant_id: tenant_id.to_owned(),
-                idempotency_key: "precision-lost-top-up".to_owned(),
-                credit_units: 1.0,
-            },
-            UsageMode::OneironCloud,
-        )
-        .expect_err("top-up must increase normalized allowance");
-    let allowance = ledger
-        .consumer_allowance(tenant_id)
-        .expect("allowance should remain readable");
-    let top_up_key = consumer_top_up_key(tenant_id, "precision-lost-top-up");
-
-    assert!(matches!(
-        err,
-        UsageError::InvalidField {
-            field: "creditUnits",
-            message: "must increase allowance balance"
-        }
-    ));
-    assert_eq!(
-        allowance.credit_units,
-        first.usage.allowance.allowance_credit_units
-    );
-    assert!(ledger.vault.sync_state_get(&top_up_key).unwrap().is_none());
-}
-
-#[test]
-fn local_and_byo_server_modes_return_no_debit() {
-    let (_dir, ledger) = test_ledger();
-
-    let local_result = ledger
-        .record_event(cloud_event("local-key"), UsageMode::Local)
-        .expect("local usage");
-    let byo_result = ledger
-        .record_event(cloud_event("byo-key"), UsageMode::Byo)
-        .expect("byo usage");
-
-    assert_eq!(local_result.source, UsageMode::Local);
-    assert_eq!(byo_result.source, UsageMode::Byo);
-    assert!(local_result.debit.is_none());
-    assert!(byo_result.debit.is_none());
-    assert!(ledger.tenant_rollup("tenant-a").unwrap().is_none());
-}
-
-#[test]
-fn oneiron_cloud_ignores_request_source_for_debit_decisions() {
-    let (_dir, ledger) = test_ledger();
-    let mut event = cloud_event("source-override-key");
-    event.source = Some(UsageMode::Local);
-
-    let result = ledger
-        .record_event(event, UsageMode::OneironCloud)
-        .expect("cloud usage with request source override");
-    let rollup = ledger
-        .tenant_rollup("tenant-a")
-        .unwrap()
-        .expect("tenant rollup");
-
-    assert!(result.recorded);
-    assert_eq!(result.source, UsageMode::OneironCloud);
-    assert!(result.debit.is_some());
-    assert_eq!(rollup.counters.event_count, 1);
-}
-
-#[test]
-fn oneiron_cloud_records_idempotent_debit_once() {
-    let (_dir, ledger) = test_ledger();
-    let first = ledger
-        .record_event(cloud_event("same-key"), UsageMode::OneironCloud)
-        .expect("first usage event");
-    let second = ledger
-        .record_event(cloud_event("same-key"), UsageMode::OneironCloud)
-        .expect("replayed usage event");
-    let rollup = ledger
-        .tenant_rollup("tenant-a")
-        .unwrap()
-        .expect("tenant rollup");
-
-    assert!(first.recorded);
-    assert!(!first.replayed);
-    assert!(!second.recorded);
-    assert!(second.replayed);
-    assert_eq!(rollup.counters.event_count, 1);
-    assert_eq!(rollup.counters.cost_usd, 0.05);
-    assert_eq!(rollup.counters.credit_units, 5.0);
-}
-
-#[test]
-fn record_event_rolls_back_rollups_when_batch_write_fails() {
-    let (_dir, ledger) = test_ledger();
-    let mut event = cloud_event("x");
-    event.tenant_id = "t".repeat(123);
-    event.vault_id = "v".repeat(123);
-
-    let err = ledger
-        .record_event(event.clone(), UsageMode::OneironCloud)
-        .expect_err("oversized vault rollup key should fail");
-
-    assert!(
-        matches!(err, UsageError::Storage(_)),
-        "expected storage error, got {err:?}"
-    );
-    assert!(ledger.tenant_rollup(&event.tenant_id).unwrap().is_none());
-}
-
-#[test]
-fn rollups_include_agent_model_and_service_breakdowns() {
-    let (_dir, ledger) = test_ledger();
-    let mut second = cloud_event("second-key");
-    second.agent_id = Some("agent-b".to_owned());
-    second.model = Some("model-b".to_owned());
-    second.service = Some("embedding".to_owned());
-
+fn restore_retains_money_facts_rebuilds_rollups_and_resets_host_budget() {
+    let (dir, ledger) = ledger();
+    let first = event("one", "USD");
+    let second = event("two", "JPY");
     ledger
-        .record_event(cloud_event("first-key"), UsageMode::OneironCloud)
-        .expect("first usage event");
+        .record_event(first.clone(), UsageMode::OneironCloud)
+        .unwrap();
     ledger
         .record_event(second, UsageMode::OneironCloud)
-        .expect("second usage event");
-    let vault_rollup = ledger
-        .vault_rollup("tenant-a", "vault-a")
-        .unwrap()
-        .expect("vault rollup");
-
-    assert_eq!(vault_rollup.counters.event_count, 2);
-    assert_eq!(vault_rollup.agents["agent-a"].event_count, 1);
-    assert_eq!(vault_rollup.agents["agent-b"].event_count, 1);
-    assert_eq!(vault_rollup.models["model-a"].cost_usd, 0.05);
-    assert_eq!(vault_rollup.models["model-b"].cost_usd, 0.05);
-    assert_eq!(vault_rollup.services["inference"].credit_units, 5.0);
-    assert_eq!(vault_rollup.services["embedding"].credit_units, 5.0);
+        .unwrap();
+    let before = ledger.vault_rollup("owner-a", "vault-a").unwrap();
+    ledger
+        .cache_budget_limit(
+            "owner-a",
+            "vault-a",
+            Money {
+                amount: 15000,
+                currency: "JPY".into(),
+                price_table_snapshot: "limit".into(),
+            },
+            ExchangeRate {
+                from_currency: "JPY".into(),
+                to_currency: "USD".into(),
+                numerator: 1,
+                denominator: 150,
+                observed_at: 90,
+            },
+            100,
+        )
+        .unwrap();
+    let snapshot = dir.path().join("checkpoint");
+    ledger.vault.snapshot_checkpoint(&snapshot, 200).unwrap();
+    let (restored, _) = oneiron::Vault::restore_checkpoint(
+        &snapshot,
+        &dir.path().join("restored"),
+        oneiron::VaultConfig::device(),
+        oneiron::recovery::checkpoint::RestoreReason::Restore,
+        300,
+    )
+    .unwrap();
+    let restored = UsageLedger::new(Arc::new(restored));
+    assert!(
+        restored
+            .cached_budget_limit("owner-a", "vault-a")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        restored
+            .vault
+            .sync_state_get(&super::keys::vault_rollup_key("owner-a", "vault-a"))
+            .unwrap()
+            .is_none()
+    );
+    // A retry after restore rebuilds the view without counting the event twice.
+    let replay = restored
+        .record_event(first, UsageMode::OneironCloud)
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.vault_rollup, before);
+    assert_eq!(restored.vault_rollup("owner-a", "vault-a").unwrap(), before);
+    restored
+        .record_event(event("three", "USD"), UsageMode::OneironCloud)
+        .unwrap();
+    assert_eq!(
+        restored
+            .vault_rollup("owner-a", "vault-a")
+            .unwrap()
+            .unwrap()
+            .counters
+            .event_count,
+        3
+    );
+    // The read door also rebuilds a missing derived view, without a new meter.
+    restored
+        .vault
+        .sync_state_delete(&super::keys::vault_rollup_key("owner-a", "vault-a"))
+        .unwrap();
+    assert_eq!(
+        restored
+            .vault_rollup("owner-a", "vault-a")
+            .unwrap()
+            .unwrap()
+            .counters
+            .event_count,
+        3
+    );
 }

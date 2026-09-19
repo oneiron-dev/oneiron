@@ -805,7 +805,10 @@ fn checker_preflight_rejection_discards_earlier_allows_and_all_batch_writes() ->
         .expect("actual held candidate receipt");
     assert_eq!(rejection.outcome, "pending");
     assert_eq!(rejection.reason_codes, ["gate.pending.checker"]);
-    assert_eq!(rejection.receipt_reasons, [HOLD_RECEIPT_REASON]);
+    assert_eq!(
+        checker_reasons(&rejection.receipt_reasons),
+        [HOLD_RECEIPT_REASON]
+    );
     Ok(())
 }
 
@@ -1014,7 +1017,10 @@ fn restricted_lineage_consults_checker_once_and_preserves_declared_source() -> R
             records[0].reason_codes,
             [pending_reason.unwrap_or("gate.allow")]
         );
-        assert_eq!(records[0].receipt_reasons, receipt_reasons);
+        assert_eq!(
+            checker_reasons(&records[0].receipt_reasons),
+            receipt_reasons
+        );
     }
     Ok(())
 }
@@ -1128,7 +1134,7 @@ fn restricted_lineage_without_matching_permit_never_consults_checker() -> Result
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].outcome, "pending");
         assert_eq!(records[0].reason_codes, ["gate.pending.source_trust"]);
-        assert!(records[0].receipt_reasons.is_empty());
+        assert!(checker_reasons(&records[0].receipt_reasons).is_empty());
     }
     Ok(())
 }
@@ -1181,7 +1187,10 @@ fn lineage_checker_exclusions_keep_ordinary_allow() -> Result<()> {
         assert_eq!(records.len(), 1, "{label}");
         assert_eq!(records[0].outcome, "allow", "{label}");
         assert_eq!(records[0].reason_codes, ["gate.allow"], "{label}");
-        assert!(records[0].receipt_reasons.is_empty(), "{label}");
+        assert!(
+            checker_reasons(&records[0].receipt_reasons).is_empty(),
+            "{label}"
+        );
     }
     Ok(())
 }
@@ -1252,4 +1261,13 @@ fn non_dreamer_paths_pass_none() -> Result<()> {
     );
     assert_eq!(unreachable.calls(), 0);
     Ok(())
+}
+
+// Tripwire observations share the receipt but do not describe checker outcomes.
+fn checker_reasons(reasons: &[String]) -> Vec<String> {
+    reasons
+        .iter()
+        .filter(|reason| !reason.starts_with("tripwire_normal_"))
+        .cloned()
+        .collect()
 }

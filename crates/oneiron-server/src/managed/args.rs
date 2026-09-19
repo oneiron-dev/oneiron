@@ -65,7 +65,7 @@ pub enum ManagedError {
     CredentialsRejected { reason: String },
 
     #[error(
-        "refusing to open vault {vault:?} in managed mode: vault_meta carries no `{marker}` marker, and the hardened real-tenant preconditions are absent (managed mode would need an fscrypt policy on the data directory AND a dedicated per-vault UID owning it, neither of which this build can probe). Contract v1 serves synthetic canary vaults only; this refusal is the real-tenant tripwire."
+        "refusing to open vault {vault:?} in managed mode: vault_meta carries no `{marker}` marker, and the hardened real-tenant preconditions are absent (managed mode requires a probed fscrypt policy AND a dedicated non-root UID owning the data directory). Without both, only explicitly marked synthetic canaries are admitted; this refusal is the real-tenant tripwire."
     )]
     ManagedRealTenantRefused { vault: String, marker: &'static str },
 

@@ -29,6 +29,7 @@
 //! refusal is the tripwire that keeps the gap visible.
 
 mod args;
+mod isolation;
 mod ledger;
 mod listener;
 mod state_serve;
