@@ -170,6 +170,7 @@ pub mod blob_artifact;
 pub mod build_cache;
 pub mod checkout;
 pub mod code_artifact;
+pub mod code_document;
 pub mod code_memory;
 pub mod code_revision;
 pub mod code_symbol;
