@@ -29,8 +29,8 @@
 //! vault DEK plane** — the same at-rest protection every entity body gets.
 //! The custody discipline is about planes, not a second encryption layer:
 //! the value NEVER leaves this body into claims (secrets are never claims),
-//! never into the CRDT plane (the interim ONE-1865 guard seals the type byte
-//! from the sync selector), never into export, receipts, or logs. `Debug`
+//! into same-vault sync only for portable credentials without the device-only dial;
+//! never into cross-vault export, receipts, or logs. `Debug`
 //! for the record redacts the value; `SecretCustodyMetadata` has no value
 //! field by construction.
 //!
@@ -56,6 +56,7 @@
 mod codec;
 mod doors;
 mod floor;
+mod replication;
 mod types;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
@@ -70,7 +71,7 @@ mod floor_keys {
     pub(super) const ENV_BINDINGS: &str = "secret.custody.env_bindings";
 }
 
-pub(crate) use self::codec::reject_secret_custody_byte;
+pub(crate) use self::codec::{custody_sync_allowed, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
 pub(crate) use self::doors::{
     SecretCustodyAdmission, put_secret_custody_in_txn, read_secret_custody_admission_in_txn,
@@ -83,6 +84,9 @@ pub(crate) use self::doors::{
 pub(crate) use self::doors::decode_secret_custody_admission_body;
 pub(crate) use self::floor::{
     PolicyManifestWalkError, policy_manifest_bodies_strict, policy_manifest_body_map,
+};
+pub(crate) use self::replication::{
+    plan_replicated_name_index, stage_replicated_name_index, validate_replicated_custody_put,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
