@@ -93,6 +93,7 @@ fn generate_and_stream_conform_with_lease_and_catalog_only_vendor_swap() {
                 fetched_at: BTreeMap::new(),
             })
             .unwrap();
+        let row = vault.model_registry_row(&model).unwrap().unwrap();
         let backend = GeminiBackend::from_registry(&vault, Transport).unwrap();
         let request = LlmRequest {
             model,
@@ -119,19 +120,39 @@ fn generate_and_stream_conform_with_lease_and_catalog_only_vendor_swap() {
             provider_options: BTreeMap::new(),
         };
         let guard = BudgetGuard::with_reserve_units("g", 100, 10, BudgetExhaustionPolicy::Suspend);
+        // Removing a capability in catalog data refuses before the transport runs.
+        let mut restricted = row.clone();
+        restricted.catalog.capabilities.clear();
+        vault.put_model_registry_row(&restricted).unwrap();
+        let denied = GeminiBackend::from_registry(&vault, Transport).unwrap();
+        let lease = guard.admit_for_request(&request).unwrap().lease;
+        assert!(matches!(
+            ready(denied.generate(request.clone(), &lease)),
+            Err(LlmError::Fatal(FatalLlmError::Unsupported(_)))
+        ));
+        assert!(matches!(
+            denied.stream(request.clone(), &lease),
+            Err(LlmError::Fatal(FatalLlmError::Unsupported(_)))
+        ));
+        guard.abort(&lease).unwrap();
+        vault.put_model_registry_row(&row).unwrap();
         let lease = guard.admit_for_request(&request).unwrap().lease;
         let generated = ready(backend.generate(request.clone(), &lease)).unwrap();
         assert_eq!(generated.message.content.len(), 3);
         guard.settle_per_call(&lease, &generated.usage).unwrap();
         assert_eq!(guard.read().used_units, 6);
         let lease = guard.admit_for_request(&request).unwrap().lease;
-        let mut stream = backend.stream(request, &lease).unwrap();
+        let ledger = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut bus = oneiron::llm::LlmEventBus::new(Box::new(Ledger(ledger.clone())));
+        let mut subscriber = bus.subscribe();
+        ready(bus.drive(backend.stream(request.clone(), &lease).unwrap())).unwrap();
         let mut events = Vec::new();
-        while let Poll::Ready(Some(e)) =
-            Pin::new(&mut stream).poll_next(&mut Context::from_waker(Waker::noop()))
+        while let Poll::Ready(Some(event)) =
+            Pin::new(&mut subscriber).poll_next(&mut Context::from_waker(Waker::noop()))
         {
-            events.push(e.unwrap());
+            events.push(event);
         }
+        assert_eq!(*ledger.lock().unwrap(), vec![generated.clone()]);
         assert!(matches!(
             events.first(),
             Some(LlmStreamEvent::ReasoningStart { .. })
@@ -152,6 +173,35 @@ fn generate_and_stream_conform_with_lease_and_catalog_only_vendor_swap() {
         assert_eq!(message, &generated.message);
         guard.settle_per_call(&lease, usage).unwrap();
         assert_eq!(guard.read().reserved_units, 0);
+        for status in [401, 402, 429] {
+            let failed = GeminiBackend::from_registry(&vault, StatusTransport(status)).unwrap();
+            let lease = guard.admit_for_request(&request).unwrap().lease;
+            let generated = ready(failed.generate(request.clone(), &lease)).unwrap_err();
+            let mut cut = failed.stream(request.clone(), &lease).unwrap();
+            let Poll::Ready(Some(Err(streamed))) =
+                Pin::new(&mut cut).poll_next(&mut Context::from_waker(Waker::noop()))
+            else {
+                panic!("missing typed stream error")
+            };
+            for error in [generated, streamed] {
+                match status {
+                    401 => assert!(matches!(error, LlmError::Fatal(FatalLlmError::Auth))),
+                    402 => assert!(matches!(error, LlmError::BudgetDenied(_))),
+                    429 => assert!(matches!(
+                        error,
+                        LlmError::Retryable(RetryableLlmError::RateLimited { .. })
+                    )),
+                    _ => unreachable!(),
+                }
+            }
+            assert!(matches!(
+                Pin::new(&mut cut).poll_next(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(None)
+            ));
+            drop(cut);
+            guard.abort(&lease).unwrap();
+            assert_eq!(guard.read().reserved_units, 0);
+        }
     }
     assert!(matches!(
         classify_status(429, &json!({})),
@@ -176,4 +226,37 @@ fn empty_and_blocked_outputs_fail_typed_instead_of_done() {
         GeminiAccumulator::default().push(json!({"promptFeedback":{"blockReason":"SAFETY"}})),
         Err(LlmError::Fatal(FatalLlmError::ContentFiltered))
     ));
+}
+
+struct StatusTransport(u16);
+impl GeminiTransport for StatusTransport {
+    fn execute<'a>(&'a self, _: GeminiHttpRequest, _: &'a BudgetLease) -> GeminiFuture<'a> {
+        Box::pin(async move {
+            Ok(GeminiHttpResponse {
+                status: self.0,
+                body: json!({}),
+            })
+        })
+    }
+    fn stream<'a>(
+        &'a self,
+        _: GeminiHttpRequest,
+        _: &'a BudgetLease,
+    ) -> LlmResult<GeminiProviderStream<'a>> {
+        Ok(Box::pin(Sequence(
+            vec![Ok(GeminiFrame::Status(GeminiHttpResponse {
+                status: self.0,
+                body: json!({}),
+            }))]
+            .into(),
+        )))
+    }
+}
+
+struct Ledger(std::sync::Arc<std::sync::Mutex<Vec<LlmResponse>>>);
+impl oneiron::llm::TerminalSink for Ledger {
+    fn record(&mut self, response: &LlmResponse) -> LlmResult<()> {
+        self.0.lock().unwrap().push(response.clone());
+        Ok(())
+    }
 }
