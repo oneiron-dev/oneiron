@@ -132,7 +132,7 @@ fn vault_graph_atoms_reject_duplicate_nodes_and_dangling_edges() {
     let node = serde_json::json!({"id":"one","label":"one"});
     assert!(
         serde_json::from_value::<NeighborhoodGraphAtom>(serde_json::json!({
-            "nodes":[node.clone(),node.clone()],"edges":[]
+            "nodes":[node,node],"edges":[]
         }))
         .is_err()
     );

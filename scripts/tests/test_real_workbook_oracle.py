@@ -51,6 +51,39 @@ class RealWorkbookPreflight(unittest.TestCase):
             self.assertIsNone(formula.find("s:v", ns))
             self.assertIsNone(formula.get("t"))
 
+    def test_fresh_comparison_rejects_partial_or_changed_truth_and_counts_refusals(self):
+        import json
+        from compare_real_workbooks import compare, digest
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            excel, engine = base / "excel", base / "engine"
+            excel.mkdir(); engine.mkdir()
+            key = "a" * 64
+            manifest = base / "manifest.jsonl"
+            manifest.write_text(json.dumps(dict(sha256=key, path="source.xlsx")) + "\n")
+            for folder in [excel, engine]:
+                (folder / "identity.json").write_text(json.dumps(dict(manifest_sha256=digest(manifest))))
+                (folder / "rows.jsonl").write_text("")
+            (excel / "custody.json").write_text(json.dumps(dict(lock_retained=False)))
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                compare(manifest, excel, engine)
+            truth_file = excel / (key + ".xlsx")
+            with zipfile.ZipFile(truth_file, "w") as archive:
+                archive.writestr("xl/workbook.xml", '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" r:id="rId1"/></sheets></workbook>')
+                archive.writestr("xl/_rels/workbook.xml.rels", '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>')
+                archive.writestr("xl/worksheets/sheet1.xml", '<worksheet><sheetData><row><c r="A1"><f>1+1</f><v>2</v></c></row></sheetData></worksheet>')
+            row = dict(sha256=key, path="source.xlsx", status="completed", calculation="calculate full rebuild", final_workbooks=0, output_sha256=digest(truth_file))
+            (excel / "rows.jsonl").write_text(json.dumps(row) + "\n")
+            (engine / "rows.jsonl").write_text(json.dumps(dict(sha256=key, path="source.xlsx", recalc=dict(ok=False))) + "\n")
+            summary, rows = compare(manifest, excel, engine)
+            self.assertEqual(summary["formula_cells"], 1)
+            self.assertEqual(summary["mismatches"], 1)
+            self.assertEqual(summary["matching_workbooks"], 0)
+            self.assertEqual(rows[0]["metrics"]["missing"], 1)
+            truth_file.write_bytes(b"changed")
+            with self.assertRaisesRegex(ValueError, "hash changed"):
+                compare(manifest, excel, engine)
+
     def test_missing_invalid_and_entity_declared_input_refuse(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "missing.xlsx"

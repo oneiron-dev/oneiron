@@ -85,7 +85,7 @@ fn select_insert(
         match apply_text_op(document, &op, revision, id) {
             Ok(_) => return (Some(op), attempts),
             Err(error) => {
-                attempts.push(json!({"paragraph": paragraph, "error": error_value(&error)}))
+                attempts.push(json!({"paragraph": paragraph, "error": error_value(&error)}));
             }
         }
     }

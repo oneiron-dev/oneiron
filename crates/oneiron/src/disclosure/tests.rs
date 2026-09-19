@@ -991,7 +991,7 @@ fn assembled_scope_union_keeps_public_floor_separate_from_private_axes() -> Resu
         worlds: ScopeIdAxis::Some(vec![test_id(0x62)]),
         facets: ScopeIdAxis::Some(vec![test_id(0x63)]),
         projects: ScopeIdAxis::Some(vec![test_id(0x64)]),
-        ..allowed.clone()
+        ..allowed
     };
     let private_outside = test_id(0x41);
     put_positioned_claim(&vault, private_outside, &outside, None, false)?;
@@ -1318,9 +1318,13 @@ fn transcript_messages_inherit_their_live_turn_position() -> Result<()> {
     let room = test_id(0x66);
     let turn = test_id(0x67);
     let message = test_id(0x68);
-    for (id, kind) in [(actor, crate::registry::ENTITY_TYPE_PERSON)] {
-        vault.put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, &[0x80])?;
-    }
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &[0x80],
+    )?;
     vault
         .memory(actor, crate::EdgeActorClass::Human)
         .witness(&crate::WitnessTurn {
