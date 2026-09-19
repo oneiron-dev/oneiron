@@ -277,3 +277,34 @@ The full script and narrow sync suite remain unrun because the focused stage
 failed. The complete PR refresh before this fixture repair found no new completed
 Codex finding at 6adcf847; the automatic review was still running. The public type
 finding 4054244660 is resolved with unchanged-byte TypeScript/Python proof.
+
+
+## Codex reviews 5257427262 / 5257577053 — follow-up at 978c05ff
+
+The complete PR939 corpus was refreshed before these edits: 15 issue comments,
+62 reviews, 95 inline comments, and complete GraphQL thread/comment pagination.
+Codex completed review 5257577053 at 978c05ff; Qodo reported zero active findings;
+CodeRabbit remained disabled/skipped, not approved. All earlier internal, Qodo,
+Codex and subreview receipts/dispositions remain retained. The seven findings
+below are valid; none is skipped. Raw IDs and head-bound receipts are under the
+ticket's `review-recovery/` directory.
+
+| Inline ID | Repair and regression |
+| --- | --- |
+| 4054512606 | Session world narrowing reads the revision captured with each hit, not the mutable live world. Missing pins fail closed. The helper now requires the revision map explicitly. A world move remains in the indexed world until idle publication. Current actor/status admission remains live. |
+| 4054512607 | Pack vectors are included only when the selected body pin equals the current indexed pin in the same transaction. Old pins retain old bodies but do not borrow a newer vector; unpublished Live bodies do not borrow the old vector. Unversioned rows retain existing behavior. |
+| 4054512612 | The failure ladder persists the complete authentic healer case in the same transaction as its lease-fenced failure. Both Reserved and agent-definition dispatch verify that case, failed parent, task, scope and run before dedupe/enqueue/oversight. Public DTOs and deterministic correlation refs confer no authority. Fabricated queued/leased/manually failed parents and altered scope/evidence are refused. |
+| 4054641521 | Managed argv-only admission explicitly refuses both failure-signal environment variables, including false/empty values. Isolated child-process fixtures assert the typed environment error without process-wide test mutation. |
+| 4054641524 | Board reconstruction checks for a live TURN in its existing read transaction. Deleted, archived and wrong-type anchors cannot unlock retained documents. Hard/soft deletion tests retain a sibling turn to prove shared board history is not destroyed. |
+| 4054641525 | Every decoded auth.bind attempt records exactly once. Successful binds use the authenticated principal; rejected/missing/rebound tokens use unauthenticated. Receipt maps contain only the fixed verb and actor, never token/params. |
+| 4054641527 | Public control-key record lookup now runs the same key-binding and timestamp validator as credential consumers. Corrupt digest/time fixtures return typed Corrupt without mutating the stored row. |
+
+At 978c05ff, guarded r4 passed code-map, fmt, workspace Clippy, featureless
+Clippy, server-production Clippy and strict workspace rustdoc. Full nextest
+failed: 748 passed, one failed out of 749/9459 run, 21 skipped, 8710 unrun.
+The stale-vector-token fixture passed a seconds-rounded timestamp to the
+millisecond idle door. It now uses an explicitly elapsed idle instant; all
+vector/token/publication assertions remain. This is a fixture-clock repair,
+not an assertion inversion. Featureless runtime, doctests and narrow sync did
+not run after that failure. These seven repairs and the clock fix await the
+successor guarded run; no full-gate pass is claimed.
