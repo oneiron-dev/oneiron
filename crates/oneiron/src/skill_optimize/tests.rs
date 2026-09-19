@@ -1773,22 +1773,45 @@ fn a_skill_with_no_reserved_evidence_is_never_drafted_for_and_never_closed() -> 
 
 /// Credits contributing wins until one lands on the RESERVED side, and returns
 /// it — the cheapest way to move the held-out set without touching the dev one.
+/// Builds a valid pack receipt, then chooses a fresh fixture id in the requested
+/// partition before inserting it through the existing receipt-fixture door.
+/// A finite number of random draws cannot guarantee a held-out receipt: forty
+/// independent misses still occur about once in 7,500 calls.
+fn stamped_receipt_in_partition(
+    vault: &Vault,
+    skill: &EntityId,
+    skill_id: &str,
+    reserved: bool,
+    at: u64,
+) -> String {
+    let template_id = stamped_receipt(vault, skill_id, at);
+    let mut receipt = crate::receipt::attempt_pack_receipt(vault, &template_id)
+        .expect("read pack receipt")
+        .expect("stamped pack receipt");
+    let receipt_id = (0..=u64::MAX)
+        .map(|nonce| format!("attempt:{at:016x}{nonce:016x}"))
+        .find(|id| {
+            receipt_is_held_out(skill, id) == reserved
+                && crate::receipt::attempt_pack_receipt(vault, id)
+                    .expect("check fixture receipt")
+                    .is_none()
+        })
+        .expect("fixture id space contains a fresh receipt in each partition");
+    receipt.receipt_id.clone_from(&receipt_id);
+    crate::receipt::overwrite_attempt_pack_receipt_for_test(vault, &receipt)
+        .expect("seed partitioned pack receipt");
+    receipt_id
+}
+
 fn reserve_one_more_held_out_receipt(
     vault: &Vault,
     skill: &EntityId,
     skill_id: &str,
     at: u64,
 ) -> String {
-    for index in 0..40 {
-        let now = at + index * 10;
-        let receipt = stamped_receipt(vault, skill_id, now);
-        if !receipt_is_held_out(skill, &receipt) {
-            continue;
-        }
-        record_skill_contributing_win(vault, skill, &receipt, now + 5).expect("credit win");
-        return receipt;
-    }
-    panic!("one receipt in five is reserved, so forty draws is not a near miss");
+    let receipt = stamped_receipt_in_partition(vault, skill, skill_id, true, at);
+    record_skill_contributing_win(vault, skill, &receipt, at + 5).expect("credit win");
+    receipt
 }
 
 fn provenance_entry(record: &SkillRecord, key: &str) -> Option<String> {
@@ -2701,7 +2724,12 @@ fn selection_and_the_brief_are_derived_from_the_dev_partition_only() -> Result<(
 
     // LEAKAGE NEGATIVE: a new RESERVED outcome moves nothing the selector or
     // the author can see.
-    reserve_one_more_held_out_receipt(&vault, &skill, "oneiron.skill.losing", 5_000);
+    let first = reserve_one_more_held_out_receipt(&vault, &skill, "oneiron.skill.losing", 5_000);
+    let second = reserve_one_more_held_out_receipt(&vault, &skill, "oneiron.skill.losing", 5_000);
+    let extended_reserve = held_out_receipts(&vault, &skill)?;
+    assert_ne!(first, second);
+    assert!(extended_reserve.contains(&first) && extended_reserve.contains(&second));
+    assert_eq!(extended_reserve.len(), reserved.len() + 2);
     let unmoved = optimize_candidates(&vault)?
         .into_iter()
         .next()
@@ -3820,24 +3848,17 @@ fn discovery_proposal_receipt(
 ) -> String {
     let actor = EntityId::now();
     put_actor(vault, &actor);
-    for index in 0..40u64 {
-        let now = at + index * 10;
-        let receipt = stamped_receipt(vault, skill_id, now);
-        if receipt_is_held_out(skill, &receipt) != reserved {
-            continue;
-        }
-        record_attribution_evidence(
-            vault,
-            &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, now + 5)
-                .with_skill(*skill)
-                .with_routing_facts(true, false),
-        )
-        .expect("record evidence");
-        let cursor = read_attribution_cursor(vault).expect("cursor");
-        run_attribution_projector(vault, cursor).expect("attribution pass");
-        return receipt;
-    }
-    panic!("forty draws cover both sides of a one-in-five split");
+    let receipt = stamped_receipt_in_partition(vault, skill, skill_id, reserved, at);
+    record_attribution_evidence(
+        vault,
+        &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, at + 5)
+            .with_skill(*skill)
+            .with_routing_facts(true, false),
+    )
+    .expect("record evidence");
+    let cursor = read_attribution_cursor(vault).expect("cursor");
+    run_attribution_projector(vault, cursor).expect("attribution pass");
+    receipt
 }
 
 /// M-8: every receipt-bearing payload the author is handed is dev-side, not
