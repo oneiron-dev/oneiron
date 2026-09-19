@@ -213,6 +213,13 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_codemap.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_verify.py' -v
 
+      - name: Test stored Office goldens and corpus receipts (offline)
+        if: ${{ !cancelled() }}
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_office*.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_excel*.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_real_workbook*.py' -v
+
       # Keep dependency artifacts when workspace cleanup is enough to meet
       # the unchanged cap. Runs after a failure too; never changes the verdict.
       - name: Cap the build cache

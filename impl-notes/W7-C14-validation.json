@@ -345,5 +345,61 @@
     "status": "passed",
     "log": "target/w7-checks/excel-resume-v2-tests.log",
     "current_corpus_status": "SpreadsheetBench supervised run active; FUSE waits without a second Excel session."
-  }
+  },
+  "offline_office_ci_commands": [
+    {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/tests",
+        "-p",
+        "test_office*.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "Ran 11 tests in 1.346s",
+        "OK"
+      ]
+    },
+    {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/tests",
+        "-p",
+        "test_excel*.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "Ran 9 tests in 0.263s",
+        "OK"
+      ]
+    },
+    {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/tests",
+        "-p",
+        "test_real_workbook*.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "Ran 6 tests in 0.353s",
+        "OK"
+      ]
+    }
+  ]
 }

@@ -20,7 +20,8 @@
     "scanned": 5464,
     "unique": 5455,
     "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
-    "measurement": "pending"
+    "measurement": "pending",
+    "manifest": "spreadsheetbench-manifest.jsonl.gz"
   },
   "fuse": {
     "doi": "10.5281/zenodo.581678",

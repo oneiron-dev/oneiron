@@ -22,3 +22,10 @@ The formula adapter remains explicit opt-in; the compatibility score alone
 must not be called the complete two-corpus default-selection decision.
 
 The unchanged upstream cache-only executable completed 5,455 workbooks. Of 1,225,018 scored formula cells, 49,073 matched their saved caches. This is a diagnostic, not fresh Excel truth or a release threshold. 3,163 workbook recalculations refused explicitly; the largest class is upstream ZIP-local-extra metadata support (2,152). The original cell-count denominator includes refused files rather than hiding them.
+
+Complete stored measurement receipts are checked offline by
+`scripts/tests/test_real_workbook_receipts.py`: the compressed manifests pin the
+exact cohorts, and compressed rows must reproduce the published classification
+and diagnostic arithmetic. CI runs these checks together with the stored Office
+goldens. No app is launched by those tests, and no diagnostic is promoted to
+fresh Excel truth.
