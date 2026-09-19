@@ -399,6 +399,16 @@ pub(crate) fn validate_event_write(
     }
     Ok(())
 }
+/// Native calendar entries are authored state, not derived artifacts. Provenance
+/// links do not let a source deletion remove them from reads or search.
+pub(crate) fn survives_source_deletion(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    event: EntityId,
+) -> Result<bool> {
+    Ok(live_origin(store, txn, event)? == Some(CalendarOrigin::Native))
+}
+
 fn invalid_key(event: EntityId) -> Vec<u8> {
     [b"calendar_invalid:v1:".as_slice(), event.as_bytes()].concat()
 }

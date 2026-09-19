@@ -119,6 +119,12 @@ pub(crate) fn invalidate_source_in_txn(
     let prefix = [DEP, document.as_bytes()].concat();
     let dependents = scan_dependents(store, txn, &prefix)?;
     for dependent in dependents {
+        if super::EntityStoreRead::port_entity_record(store, txn, &dependent)?
+            .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_EVENT)
+            && crate::calendar::origin::survives_source_deletion(store, txn, dependent)?
+        {
+            continue;
+        }
         mark_stale_in_txn(store, txn, &dependent)?;
         let payload = [document.as_bytes().as_slice(), dependent.as_bytes()].concat();
         crate::attempt_queue::AttemptQueue::from_store(store).port_job_enqueue(

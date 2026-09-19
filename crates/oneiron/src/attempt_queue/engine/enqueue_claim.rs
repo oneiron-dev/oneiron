@@ -264,11 +264,12 @@ impl<'a> AttemptQueue<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         kind: Option<&str>,
         input: ClaimAttempt,
+        cutoff: u64,
     ) -> Result<ClaimOutcome> {
         if let Some(kind) = kind {
             validate_kind(kind)?;
         }
-        self.claim_matching_in_txn(wtxn, input, kind)
+        self.claim_matching_in_txn(wtxn, input, kind, cutoff)
     }
 
     /// Repairs ready/dedupe rows while returning the oldest claimable attempt id of
@@ -277,10 +278,10 @@ impl<'a> AttemptQueue<'a> {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         kind: &str,
-        _now: u64,
+        now: u64,
     ) -> Result<Option<AttemptId>> {
         validate_kind(kind)?;
-        let now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
+        let now = now.min(crate::ports::recorded_at_in_txn(self.store, wtxn)?);
 
         let mut scan = ClaimKindReadScan::default();
         for row in self.store.attempt_ready.iter(&*wtxn)? {
@@ -366,6 +367,7 @@ impl<'a> AttemptQueue<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         input: ClaimAttempt,
         kind_filter: Option<&str>,
+        cutoff: u64,
     ) -> Result<ClaimOutcome> {
         validate_lease_owner(&input.lease_owner)?;
 
@@ -400,11 +402,11 @@ impl<'a> AttemptQueue<'a> {
             let record_ready_at = ready_at(&record);
             if record_ready_at != key_ready_at {
                 stale_ready_keys.push(key.to_vec());
-                if record_ready_at > input.now {
+                if record_ready_at > cutoff {
                     ready_replacements.push((ready_key(record_ready_at, id), id));
                     continue;
                 }
-            } else if record_ready_at > input.now {
+            } else if record_ready_at > cutoff {
                 continue;
             }
             if kind_filter.is_some_and(|kind| record.kind != kind) {

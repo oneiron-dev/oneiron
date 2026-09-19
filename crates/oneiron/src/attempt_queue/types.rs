@@ -450,6 +450,8 @@ pub enum EnqueueOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimAttempt {
     pub lease_owner: String,
+    /// Readiness horizon, capped by the injected clock. Lease timestamps are
+    /// recorded from that clock, never from this caller-provided bound.
     pub now: u64,
 }
 

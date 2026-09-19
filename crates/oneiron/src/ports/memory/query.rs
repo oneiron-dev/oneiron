@@ -1,6 +1,9 @@
 //! Memory implementation of the same lazy read contracts as LMDB.
 use super::*;
 impl EntityStoreRead for Memory {
+    fn port_entity_raw(&self, txn: &Snapshot, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        Ok(txn.entities.get(id).map(EntityRecord::encode))
+    }
     fn port_entity_records<'a>(
         &self,
         txn: &'a Snapshot,

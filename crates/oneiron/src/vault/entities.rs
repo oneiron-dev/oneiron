@@ -293,11 +293,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
-        Ok(self
-            .store
-            .port_entity_record(rtxn, &id)?
-            .map(|row| row.encode())
-            .map(|bytes| bytes.to_vec()))
+        self.store.port_entity_raw(rtxn, id)
     }
 
     /// Installs `legacy_id` as a one-hop alias for `target`'s current canonical

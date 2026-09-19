@@ -375,7 +375,11 @@ pub fn drop_contact_cache_row(vault: &Vault, contact_id: &EntityId) -> Result<()
             *contact_id,
         )?;
     }
-    crate::ports::EntityStore::port_entity_delete(vault, &mut wtxn, contact_id)?;
+    crate::ports::EntityStoreMaintenance::port_contact_cache_evict(
+        &vault.store,
+        &mut wtxn,
+        contact_id,
+    )?;
     wtxn.commit()?;
     Ok(())
 }

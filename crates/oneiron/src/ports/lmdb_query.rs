@@ -13,6 +13,12 @@ impl<T: ManifestDbs> Transactions for T {
     type Write<'a> = heed::RwTxn<'a>;
 }
 impl<T: ManifestDbs> EntityStoreRead for T {
+    fn port_entity_raw(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .entities()
+            .get(txn, id.as_bytes())?
+            .map(|bytes| bytes.to_vec()))
+    }
     fn port_entity_records<'a>(
         &self,
         txn: &'a RoTxn<'_>,
@@ -141,6 +147,9 @@ impl<T: ManifestDbs> EntityStoreRead for T {
     }
 }
 impl EntityStoreRead for Vault {
+    fn port_entity_raw(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        self.store.port_entity_raw(txn, id)
+    }
     fn port_entity_records<'a>(
         &self,
         txn: &'a RoTxn<'_>,

@@ -314,7 +314,10 @@ fn wake_pass_deadline_reads() {
 
 #[test]
 fn park_and_resume_roundtrip() -> Result<()> {
-    let (_dir, vault) = open_vault();
+    let store_clock = crate::ports::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let store = DreamerRunnerStore::new(&vault);
     let queued = enqueue_micro(&store, "parkable", 10)?;
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
@@ -325,7 +328,7 @@ fn park_and_resume_roundtrip() -> Result<()> {
         park_via_store_first: false,
     };
     let report = block_on_ready(driver.run_wake_pass(
-        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        run_input(DreamerConsolidationScope::Micro, node_id, { store_clock.set(20); 20 }),
         &mut parker,
         &WakeCancellation::new(),
     ))?;
@@ -367,7 +370,7 @@ fn park_and_resume_roundtrip() -> Result<()> {
         executed: 0,
     };
     let report = block_on_ready(driver.run_wake_pass(
-        run_input(DreamerConsolidationScope::Micro, node_id, 130),
+        run_input(DreamerConsolidationScope::Micro, node_id, { store_clock.set(130); 130 }),
         &mut completer,
         &WakeCancellation::new(),
     ))?;
@@ -655,7 +658,10 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
         }
     }
 
-    let (_dir, vault) = open_vault();
+    let store_clock = crate::ports::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let store = DreamerRunnerStore::new(&vault);
     let queued = enqueue_micro(&store, "wrapped", 10)?;
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
@@ -670,7 +676,7 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
         executed: 0,
     };
     let report = block_on_ready(driver.run_wake_pass(
-        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        run_input(DreamerConsolidationScope::Micro, node_id, { store_clock.set(20); 20 }),
         &mut exec,
         &WakeCancellation::new(),
     ))?;
@@ -711,7 +717,7 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
         clock: Arc::clone(&clock),
     };
     let report = block_on_ready(driver.run_wake_pass(
-        run_input(DreamerConsolidationScope::Micro, node_id, 30),
+        run_input(DreamerConsolidationScope::Micro, node_id, { store_clock.set(30); 30 }),
         &mut exec,
         &WakeCancellation::new(),
     ))
@@ -1247,7 +1253,10 @@ impl DreamerAttemptExecutor for LandingExecutor {
 /// never reported completed.
 #[test]
 fn a_cooperative_worker_lands_through_the_driver_and_is_not_reported_completed() -> Result<()> {
-    let (_dir, vault) = open_vault();
+    let store_clock = crate::ports::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let store = DreamerRunnerStore::new(&vault);
     enqueue_micro(&store, "landing-a", 10)?;
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
@@ -1261,7 +1270,7 @@ fn a_cooperative_worker_lands_through_the_driver_and_is_not_reported_completed()
         observed: None,
     };
     let report = block_on_ready(driver.run_wake_pass(
-        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        run_input(DreamerConsolidationScope::Micro, node_id, { store_clock.set(20); 20 }),
         &mut exec,
         &WakeCancellation::new(),
     ))?;

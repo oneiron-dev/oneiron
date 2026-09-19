@@ -346,7 +346,7 @@ fn interventions_and_manifest_rows_stay_separate_lanes() -> Result<()> {
 /// manifest, split by kind, in append order.
 #[test]
 fn completing_an_attempt_under_a_pack_stamps_its_terminal_receipt() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, _clock) = open_queue_at(10);
 
     let (receipt_id, receipt) = run_packed_attempt(&vault, complete_at_14)?;
     let receipt = receipt.expect("the terminal transition stamped a pack receipt");
@@ -474,11 +474,14 @@ fn legacy_backoff_row_decodes_and_keeps_its_readiness_instant() -> Result<()> {
 
 #[test]
 fn legacy_backoff_row_stays_claimable_at_its_original_instant() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(attempt) =
-        queue.enqueue(enqueue("claim_extraction", Some("turn:legacy-live"), 10))?
+        queue.enqueue(enqueue("claim_extraction", Some("turn:legacy-live"), {
+            clock.set(10);
+            10
+        }))?
     else {
         panic!("expected enqueue");
     };
@@ -512,13 +515,19 @@ fn legacy_backoff_row_stays_claimable_at_its_original_instant() -> Result<()> {
     assert_eq!(
         queue.claim(ClaimAttempt {
             lease_owner: "worker-a".to_owned(),
-            now: 99,
+            now: {
+                clock.set(99);
+                99
+            },
         })?,
         ClaimOutcome::Empty
     );
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
-        now: 100,
+        now: {
+            clock.set(100);
+            100
+        },
     })?
     else {
         panic!("legacy backoff row must claim at its own instant");

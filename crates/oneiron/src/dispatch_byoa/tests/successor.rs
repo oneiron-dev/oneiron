@@ -98,10 +98,14 @@ fn terminal_capture_commits_disposition_receipts_and_dedupe_release_together() {
         (false, ByoaTerminalDisposition::Abandoned),
         (true, ByoaTerminalDisposition::Abandoned),
     ] {
-        let (_dir, vault) = open_vault();
+        let store_clock = crate::ports::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
         let mut dispatcher = dispatcher(&vault);
         let attempt = claimed_with_manifest(&vault, &mut dispatcher, landing);
         let request = capture_request(&attempt, disposition);
+        store_clock.set(request.now);
         let first = dispatcher
             .capture_terminal_exhaust(request.clone())
             .expect("capture");

@@ -5,7 +5,7 @@ use super::{NoteBody, NoteEdit, NoteEditOutcome, encode_note_body};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::memory::MemoryResult;
-use crate::ports::EdgeStoreRead;
+use crate::ports::{EdgeStoreRead, EntityStore};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_NOTE};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -147,10 +147,9 @@ impl Vault {
                         None,
                     )? {
                         let id = entry?.target;
-                        if self.archive_tombstone_in_txn(txn, &id)?.is_some() {
+                        let Some(candidate) = self.port_entity_get(txn, &id)? else {
                             continue;
-                        }
-                        let candidate = live_header(self, txn, id)?;
+                        };
                         if candidate.entity_type == ENTITY_TYPE_ASSET_TEXT {
                             let value = (candidate.learned_at, id);
                             if newest.is_none_or(|previous| value > previous) {
@@ -187,13 +186,15 @@ fn live_header(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> crate::error::Result<EntityMetadataHeader> {
-    if vault.archive_tombstone_in_txn(txn, &id)?.is_some() {
-        return Err(invalid("source is archived"));
-    }
-    let raw = vault
-        .get_raw_in(txn, &id)?
-        .ok_or(invalid("source does not exist"))?;
-    EntityMetadataHeader::parse(&raw).ok_or(invalid("source header"))
+    let row = vault
+        .port_entity_get(txn, &id)?
+        .ok_or(invalid("source is not live"))?;
+    Ok(EntityMetadataHeader {
+        entity_type: row.entity_type,
+        occurred_start: row.occurred.start,
+        occurred_end: row.occurred.end,
+        learned_at: row.learned_at,
+    })
 }
 fn create_from_text_in_txn(
     vault: &Vault,

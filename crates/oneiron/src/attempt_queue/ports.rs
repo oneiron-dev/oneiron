@@ -32,8 +32,10 @@ impl JobQueue for AttemptQueue<'_> {
         kind: Option<&str>,
         mut input: ClaimAttempt,
     ) -> Result<ClaimOutcome> {
+        let cutoff = input.now;
         input.now = crate::ports::recorded_at_in_txn(self.store, txn)?;
-        self.claim_kind_storage_in_txn(txn, kind, input)
+        let cutoff = cutoff.min(input.now);
+        self.claim_kind_storage_in_txn(txn, kind, input, cutoff)
     }
     fn port_job_complete(
         &self,

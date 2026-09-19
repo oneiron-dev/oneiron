@@ -456,3 +456,41 @@ fn unknown_plugin_kind_is_refused_at_raw_local_and_replay_doors() {
     ));
     assert!(vault.get(&id).unwrap().is_none());
 }
+
+#[test]
+fn source_bridge_refuses_retained_stale_asset_text() {
+    let (_dir, vault, actor) = fixture();
+    let asset = EntityId::now();
+    let text = EntityId::now();
+    let occurred = TimeRange { start: 42, end: 42 };
+    vault
+        .put_entity(
+            &asset,
+            crate::registry::ENTITY_TYPE_ASSET,
+            occurred,
+            42,
+            b"bytes",
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &text,
+            ENTITY_TYPE_ASSET_TEXT,
+            occurred,
+            42,
+            b"derived words",
+        )
+        .unwrap();
+    vault
+        .put_edge(&text, EdgeKind::DerivedFrom, &asset, 1.0)
+        .unwrap();
+    vault.delete_entity(&asset).unwrap();
+    assert!(vault.get_raw(&text).unwrap().is_some());
+    assert!(vault.create_from_entity(text, "research", actor).is_err());
+    assert!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_NOTE)
+            .unwrap()
+            .is_empty()
+    );
+}

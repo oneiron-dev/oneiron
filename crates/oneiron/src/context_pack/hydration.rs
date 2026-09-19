@@ -41,8 +41,14 @@ pub(super) fn hydrate_entity(
     options: HydrateOptions<'_>,
     claims_suppressed: &mut usize,
 ) -> Result<Option<ContextEntity>> {
-    let Some(raw) =
-        crate::ports::EntityStore::port_entity_get(vault, rtxn, &id)?.map(|row| row.encode())
+    let Some(raw) = crate::ports::EntityStore::port_entity_get(vault, rtxn, &id)
+        .map_err(|error| match error {
+            Error::CorruptedIndex("entity header") => {
+                Error::CorruptedIndex("entity metadata header")
+            }
+            other => other,
+        })?
+        .map(|row| row.encode())
     else {
         return Ok(None);
     };
@@ -340,7 +346,10 @@ fn rmpv_to_json(value: &rmpv::Value) -> serde_json::Value {
 }
 
 fn read_short_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<(String, u8)>> {
-    crate::ports::ShortIdStoreRead::port_short_id_reference(store, rtxn, id)
+    match crate::ports::ShortIdStoreRead::port_short_id_reference(store, rtxn, id) {
+        Err(Error::CorruptedIndex(_)) => Ok(None),
+        result => result,
+    }
 }
 
 pub(super) fn read_vector(
@@ -348,5 +357,10 @@ pub(super) fn read_vector(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<Vec<f32>>> {
-    crate::ports::RetrievalIndex::port_retrieval_vector_get(vault, rtxn, id)
+    crate::ports::RetrievalIndex::port_retrieval_vector_get(vault, rtxn, id).map_err(|error| {
+        match error {
+            Error::CorruptedIndex(_) => Error::CorruptedIndex("entity vector"),
+            other => other,
+        }
+    })
 }

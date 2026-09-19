@@ -1130,7 +1130,7 @@
      "path": "src/attempt_queue/tests/support.rs",
      "purpose": "Shared fixtures, helpers, and telemetry captures for the attempt-queue tests",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -4031,7 +4031,7 @@
      "path": "src/calendar/origin.rs",
      "purpose": "Calendar EVENT origin union: atomic recorded provenance and source invalidation",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 5,
       "struct": 1
      }

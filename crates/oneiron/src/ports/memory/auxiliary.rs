@@ -441,22 +441,25 @@ impl JobQueue for Memory {
                 "lease owner must not be empty",
             )));
         }
+        let now = self.clock.now_recorded_at();
+        let cutoff = input.now.min(now);
         let candidate = txn
             .jobs
             .iter()
             .filter(|(_, r)| {
                 kind.is_none_or(|kind| r.kind == kind)
-                    && r.state == AttemptState::Queued
-                    && r.scheduled_at.unwrap_or(r.created_at) <= self.clock.now_recorded_at()
+                    && matches!(r.state, AttemptState::Queued | AttemptState::Scheduled)
+                    && r.scheduled_at.or(r.backoff_until).unwrap_or(0) <= cutoff
             })
-            .min_by_key(|(id, r)| (r.scheduled_at.unwrap_or(r.created_at), **id))
+            .min_by_key(|(id, r)| (r.scheduled_at.or(r.backoff_until).unwrap_or(0), **id))
             .map(|(id, _)| *id);
         let Some(id) = candidate else {
             return Ok(ClaimOutcome::Empty);
         };
-        let now = self.clock.now_recorded_at();
         let record = txn.jobs.get_mut(&id).ok_or(Error::EntityNotFound)?;
         record.state = AttemptState::Leased;
+        record.scheduled_at = None;
+        record.backoff_until = None;
         record.lease_owner = Some(input.lease_owner);
         record.attempt_count = record
             .attempt_count

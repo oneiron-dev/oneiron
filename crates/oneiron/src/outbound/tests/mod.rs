@@ -36,10 +36,29 @@ use crate::llm::{BudgetSignalDeliveryChannel, BudgetThreshold};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 
-fn temp_vault() -> (tempfile::TempDir, Vault) {
+struct TimedVault {
+    vault: Vault,
+    clock: std::sync::Arc<crate::ports::ManualClock>,
+}
+impl std::ops::Deref for TimedVault {
+    type Target = Vault;
+    fn deref(&self) -> &Vault { &self.vault }
+}
+impl TimedVault {
+    fn run_connector_task_executor<S: OutboundExecutionSink>(
+        &self, sink: &mut S, now: u64,
+    ) -> std::result::Result<usize, ConnectorTaskExecutorError> {
+        self.clock.set(now);
+        self.vault.run_connector_task_executor(sink, now)
+    }
+}
+fn temp_vault() -> (tempfile::TempDir, TimedVault) {
     let tmp = tempfile::tempdir().expect("temp dir");
-    let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
-    (tmp, vault)
+    let clock = crate::ports::ManualClock::new(0);
+    let mut config = VaultConfig::default();
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(tmp.path(), config).expect("open vault");
+    (tmp, TimedVault { vault, clock })
 }
 
 use crate::test_util::{entity, entity_record, put_policy_manifest_bytes};
@@ -786,7 +805,7 @@ fn receipt_field<'a>(receipt: &'a crate::receipt::ReceiptRecord, key: &str) -> O
 /// would fail closed for its own unrelated reason. No delivery-window claim is
 /// seeded, so the window admits and the Gate is the only thing holding the
 /// send.
-fn gate_pending_fixture(seed: u8) -> crate::Result<(tempfile::TempDir, Vault, EntityId)> {
+fn gate_pending_fixture(seed: u8) -> crate::Result<(tempfile::TempDir, TimedVault, EntityId)> {
     let (tmp, vault) = temp_vault();
     let actor = entity(seed);
     put_connector_task_actor(&vault, actor, ONE_1768_SCHEDULED_AT)?;
@@ -799,7 +818,7 @@ fn gate_pending_fixture(seed: u8) -> crate::Result<(tempfile::TempDir, Vault, En
 }
 
 /// One executor round that must park the send rather than deliver it.
-fn run_parked_round(vault: &Vault, sink: &mut RecordingExecutor, now: u64, round: usize) {
+fn run_parked_round(vault: &TimedVault, sink: &mut RecordingExecutor, now: u64, round: usize) {
     assert_eq!(
         vault.run_connector_task_executor(sink, now).unwrap(),
         0,

@@ -102,7 +102,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/tests/mod.rs` | test | s | — | — | — |
 | `src/attempt_queue/tests/retry_chains.rs` | test | m | — | — | Retry minting, retry_of lineage queryability, and bounded depth counting |
 | `src/attempt_queue/tests/scoped_settlement.rs` | test | s | — | — | ONE-1904 × ONE-1876: caller-owned settlement keeps actor-scoped index ownership |
-| `src/attempt_queue/tests/support.rs` | test | m | 22 crate-vis | — | Shared fixtures, helpers, and telemetry captures for the attempt-queue tests |
+| `src/attempt_queue/tests/support.rs` | test | m | 23 crate-vis | — | Shared fixtures, helpers, and telemetry captures for the attempt-queue tests |
 | `src/attempt_queue/types.rs` | src | m | 17 struct · 11 enum · 25 fn · 1 const · 11 crate-vis | AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueueCleanupReport, AttemptQueueRetryReason +20 | Durable wire, verb-input, and outcome types for the attempt queue |
 | `src/attempt_queue/validate/cancel_receipt_landing.rs` | src | m | 7 crate-vis | — | Cancel-receipt shape table, landing validators, and receipt/event append mutators |
 | `src/attempt_queue/validate/field_validators.rs` | src | m | 78 crate-vis | — | Length caps, error literals, and per-field validators plus lease/manifest mutators |
@@ -342,7 +342,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/invite/tests/faceted_sender.rs` | test | s | — | — | — |
 | `src/calendar/invite/tests/mod.rs` | test | m | — | — | — |
 | `src/calendar/mod.rs` | src | m | 1 enum · 17 mod · 15 re-export · 9 crate-vis | CalendarError | Calendar module home (CAL-00) |
-| `src/calendar/origin.rs` | src | m | 1 struct · 5 fn · 6 crate-vis | CalendarEventInput | Calendar EVENT origin union: atomic recorded provenance and source invalidation |
+| `src/calendar/origin.rs` | src | m | 1 struct · 5 fn · 7 crate-vis | CalendarEventInput | Calendar EVENT origin union: atomic recorded provenance and source invalidation |
 | `src/calendar/origin/tests.rs` | test | s | — | — | — |
 | `src/calendar/outcome.rs` | src | m | 6 struct · 5 enum · 17 fn · 3 const · 1 crate-vis | CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue +3 | CAL-07 event outcome: evidence ladder, outcome head, post-end check-in |
 | `src/calendar/outcome/conditional.rs` | src | s | 2 crate-vis | — | — |

@@ -484,7 +484,10 @@ fn snapshot_survives_definition_update() -> Result<()> {
 // recoverable and re-admission replays the frozen snapshot.
 #[test]
 fn dispatch_survives_checkpoint_resume() -> Result<()> {
-    let (dir, vault) = open_vault();
+    let clock = crate::ports::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let (dir, vault) = crate::test_util::open_test_vault_with(config.clone());
     // Loaded manifest (the B1 masking-AC callout): grant the system ceiling
     // and this Dreamer writer's Generated source so milestones land Approved.
     let dreamer_actor = test_id(0x2A);
@@ -546,7 +549,10 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
         let DreamerAdmissionOutcome::Admitted(admitted) =
             runner.admit_next(AdmitDreamerAttempt {
                 lease_owner: "agent-worker".to_owned(),
-                now: 20,
+                now: {
+                    clock.set(20);
+                    20
+                },
                 budget_id: "wake".to_owned(),
                 budget_total_units: 10,
                 reserve_units: 2,
@@ -617,7 +623,7 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
 
     // Drop and REOPEN the vault: milestone index and queue row are durable.
     drop(vault);
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("reopen vault");
+    let vault = Vault::open(dir.path(), config).expect("reopen vault");
     let runner = DreamerRunnerStore::new(&vault);
     let milestone = runner
         .latest_durable_milestone(attempt_id)?
@@ -628,7 +634,10 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     // Lease expiry → cleanup → the attempt is claimable again with the same
     // frozen snapshot.
     let report = AttemptQueue::new(&vault).cleanup_leases(CleanupAttemptLeases {
-        now: 100,
+        now: {
+            clock.set(100);
+            100
+        },
         lease_timeout_secs: 10,
     })?;
     assert_eq!(report.stale_requeued, 1);
@@ -642,7 +651,10 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     );
     let DreamerAdmissionOutcome::Admitted(second) = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "second-worker".to_owned(),
-        now: 110,
+        now: {
+            clock.set(110);
+            110
+        },
         budget_id: "wake".to_owned(),
         budget_total_units: 10,
         reserve_units: 2,

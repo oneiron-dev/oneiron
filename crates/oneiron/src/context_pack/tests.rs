@@ -2054,7 +2054,7 @@ fn pack_validation_rejects_impossible_time_ordering() -> Result<()> {
 }
 
 #[test]
-fn pack_validation_rejects_deleted_payload_reference() -> Result<()> {
+fn deleted_payload_is_excluded_before_pack_assembly() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::from_bytes([0x94; 16])?;
     put_claim_text_entity(
@@ -2074,13 +2074,12 @@ fn pack_validation_rejects_deleted_payload_reference() -> Result<()> {
         Ok(())
     })?;
 
-    let err = vault
+    let pack = vault
         .context_pack()
         .search_text("deletedreferenceneedle", 10)
-        .run()
-        .expect_err("deleted payload reference must fail pack validation");
-
-    assert_context_pack_validation(err, id, PACK_VALIDATION_DELETED_PAYLOAD);
+        .run()?;
+    assert!(pack.results.is_empty());
+    assert!(pack.neighbors.is_empty());
     Ok(())
 }
 

@@ -148,6 +148,10 @@ fn source_delete_invalidates_dreamer_but_not_native() {
         .unwrap()
         .is_some()
     );
+    // A provenance link must not turn authored calendar state into a derived row.
+    vault
+        .put_edge(&native, EdgeKind::DerivedFrom, &turn, 1.0)
+        .unwrap();
     vault.delete_entity(&turn).unwrap();
     assert!(
         read_event(

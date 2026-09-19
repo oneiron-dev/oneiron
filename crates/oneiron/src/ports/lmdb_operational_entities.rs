@@ -8,6 +8,26 @@ use crate::{
 };
 use heed::RwTxn;
 impl EntityStoreMaintenance for Store {
+    fn port_contact_cache_evict(&self, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+        let Some(row) = self.port_entity_record(txn, id)? else {
+            return Ok(());
+        };
+        if row.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
+            return Err(Error::CorruptedIndex("counterparty contact cache type"));
+        }
+        self.type_index
+            .delete(txn, &Store::encode_type_key(row.entity_type, id))?;
+        self.temporal_occurred_start
+            .delete(txn, &Store::encode_temporal_key(row.occurred.start, id))?;
+        self.temporal_occurred_end
+            .delete(txn, &Store::encode_temporal_key(row.occurred.end, id))?;
+        self.temporal_long_intervals
+            .delete(txn, &Store::encode_temporal_key(row.occurred.end, id))?;
+        self.temporal_learned
+            .delete(txn, &Store::encode_temporal_key(row.learned_at, id))?;
+        self.entities.delete(txn, id.as_bytes())?;
+        Ok(())
+    }
     fn port_connector_key_rewrite(
         &self,
         txn: &mut RwTxn<'_>,

@@ -5,6 +5,7 @@
 use super::Transactions;
 use crate::{EntityId, error::Result};
 pub(crate) trait EntityStoreMaintenance: Transactions {
+    fn port_contact_cache_evict(&self, txn: &mut Self::Write<'_>, id: &EntityId) -> Result<()>;
     fn port_connector_key_rewrite(
         &self,
         txn: &mut Self::Write<'_>,

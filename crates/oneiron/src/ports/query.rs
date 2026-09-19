@@ -9,6 +9,9 @@ pub type PortRows<'a, T> = Box<dyn Iterator<Item = Result<T>> + 'a>;
 /// Admission, history and repair need to distinguish a shell from an absent row.
 /// No deletion or stale filter is applied here; user-visible text uses EntityStore::get.
 pub trait EntityStoreRead: Transactions {
+    /// Unvalidated entity envelope for repair and corruption diagnostics only.
+    /// This is not a text hydration door; malformed bytes remain observable.
+    fn port_entity_raw(&self, txn: &Self::Read<'_>, id: &EntityId) -> Result<Option<Vec<u8>>>;
     fn port_entity_record(
         &self,
         txn: &Self::Read<'_>,
