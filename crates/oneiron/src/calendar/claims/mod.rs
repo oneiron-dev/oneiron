@@ -44,7 +44,8 @@ pub use self::values::{
 };
 
 pub(in crate::calendar) use self::codec::{
-    decode_attendee_value, decode_status_value, decode_time_kind_value, encode_event_outcome_value,
+    decode_attendee_value, decode_series_exception_value, decode_series_master_value,
+    decode_status_value, decode_time_kind_value, encode_event_outcome_value,
 };
 pub(crate) use self::codec::{
     decode_event_outcome_value, decode_passport_value, validate_calendar_claim_structure,
@@ -54,10 +55,7 @@ pub(crate) use self::codec::{
 // `tz`); the re-export exists in test builds so those paths keep resolving,
 // and is absent otherwise so the non-test build carries no unused import.
 #[cfg(test)]
-pub(in crate::calendar) use self::codec::{
-    decode_series_exception_value, decode_series_master_value, decode_successor_value,
-    decode_wall_time_value,
-};
+pub(in crate::calendar) use self::codec::{decode_successor_value, decode_wall_time_value};
 
 // The flat claims.rs module used to provide these names to the inline test
 // module through `use super::*`: its own private crate/std import header, and

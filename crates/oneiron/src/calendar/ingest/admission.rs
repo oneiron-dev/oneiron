@@ -1,13 +1,15 @@
 //! Diff-to-claim admission path and its test module.
 
+mod recurrence;
+#[cfg(test)]
 use super::poll::IcsFeedPollConfig;
 use super::{derive_entity_id, ingest};
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
-    CalendarStatus, CalendarStatusBasis, CalendarTimeKind, PREDICATE_CALENDAR_ORIGIN,
-    PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
-    decode_status_value, decode_time_kind_value,
+    CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
+    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND, decode_status_value,
+    decode_time_kind_value,
 };
 use crate::calendar::ics::ParsedVEvent;
 use crate::calendar::passport::{
@@ -38,7 +40,8 @@ pub(super) struct PollAdmission<'a> {
     pub(crate) vault: &'a Vault,
     pub(crate) screener: Option<&'a dyn CalendarBodyScreener>,
     pub(crate) safeguard_enabled: bool,
-    pub(crate) config: &'a IcsFeedPollConfig,
+    pub(crate) system: &'a str,
+    pub(crate) preserve_direction: bool,
     pub(crate) now: u64,
     pub(crate) blob_ref: &'a str,
     pub(crate) verdict_fold: VerdictFold,
@@ -57,9 +60,12 @@ impl PollAdmission<'_> {
     }
 
     fn apply_event(&mut self, event: &ParsedVEvent) -> Result<(), CalendarError> {
+        if let Some(original) = event.properties.recurrence_id_utc {
+            return self.apply_exception(event, original);
+        }
         let decision = classify_passport(
             self.vault,
-            &self.config.system,
+            self.system,
             &event.uid,
             event.sequence,
             event.content_hash,
@@ -70,11 +76,20 @@ impl PollAdmission<'_> {
                 index_passport_uid(self.vault, &event.uid, &event_ref)?;
                 self.admit_origin(event_ref, event)?;
                 self.admit_time_kind(event_ref, event)?;
+                self.admit_properties(event_ref, event)?;
                 self.admit_fresh_passport(event_ref, event)?;
+                if !event.cancelled {
+                    self.clear_absence_cancellation(event_ref)?;
+                }
                 self.apply_imported_cancel(event_ref, event)?;
             }
             PassportDecision::AttachToExisting { event_ref } => {
+                self.admit_time_kind(event_ref, event)?;
+                self.admit_properties(event_ref, event)?;
                 self.admit_fresh_passport(event_ref, event)?;
+                if !event.cancelled {
+                    self.clear_absence_cancellation(event_ref)?;
+                }
                 self.apply_imported_cancel(event_ref, event)?;
             }
             PassportDecision::SkipUnchanged { .. } => {}
@@ -84,9 +99,13 @@ impl PollAdmission<'_> {
                 // `calendar.time` re-mints when its value moved.
                 self.rewrite_event(event_ref, event)?;
                 self.admit_time_kind(event_ref, event)?;
-                let next = self.passport_value(event, CalendarPassportPresence::Live);
+                self.admit_properties(event_ref, event)?;
+                let next = self.passport_value(event_ref, event, CalendarPassportPresence::Live)?;
                 let body = screen_body(event);
                 self.admit_superseding_passport(event_ref, &next, &body)?;
+                if !event.cancelled {
+                    self.clear_absence_cancellation(event_ref)?;
+                }
                 self.apply_imported_cancel(event_ref, event)?;
             }
             PassportDecision::MarkSourceAbsent { .. } => {
@@ -105,21 +124,33 @@ impl PollAdmission<'_> {
         &mut self,
         feed: &super::ics::ParsedIcsFeed,
     ) -> Result<(), CalendarError> {
-        let present_uids: std::collections::BTreeSet<&str> =
-            feed.events.iter().map(|event| event.uid.as_str()).collect();
+        self.sweep_resource(feed, None)
+    }
+
+    fn sweep_resource(
+        &mut self,
+        feed: &super::ics::ParsedIcsFeed,
+        only_uid: Option<&str>,
+    ) -> Result<(), CalendarError> {
+        let present: std::collections::BTreeSet<_> = feed
+            .events
+            .iter()
+            .map(|event| (event.uid.as_str(), event.properties.recurrence_id_utc))
+            .collect();
         for event_ref in list_event_ids(self.vault)? {
             let passports = live_passports_for_event(self.vault, &event_ref)?;
-            if !passports
-                .iter()
-                .any(|(_, value)| value.system == self.config.system)
-            {
+            let instance = self.exception_start(event_ref)?;
+            if !passports.iter().any(|(_, value)| {
+                value.system == self.system && only_uid.is_none_or(|uid| value.uid == uid)
+            }) {
                 continue;
             }
             for (_, value) in &passports {
-                let reports = value.system == self.config.system
+                let reports = value.system == self.system
+                    && only_uid.is_none_or(|uid| value.uid == uid)
                     && value.direction.is_inbound_bearing()
                     && value.presence == CalendarPassportPresence::Live
-                    && !present_uids.contains(value.uid.as_str());
+                    && !present.contains(&(value.uid.as_str(), instance));
                 if !reports {
                     continue;
                 }
@@ -137,6 +168,9 @@ impl PollAdmission<'_> {
             }
             if all_live_inbound_passports_absent(self.vault, &event_ref)? {
                 self.admit_absence_cancellation(event_ref)?;
+                if instance.is_some() {
+                    self.retract_exception_mask(event_ref)?;
+                }
             }
         }
         Ok(())
@@ -206,11 +240,32 @@ impl PollAdmission<'_> {
     /// live claim when the value moved and skipping when the live claim
     /// already carries the exact value — the same one-live-claim discipline
     /// as [`Self::admit_status_if_changed`].
+    fn admit_properties(
+        &mut self,
+        event_ref: EntityId,
+        event: &ParsedVEvent,
+    ) -> Result<(), CalendarError> {
+        let body = screen_body(event);
+        let source_record_id = self.source_record_id(event);
+        super::property_claims::reconcile(
+            self.vault,
+            event_ref,
+            event,
+            self.now,
+            |predicate, value| {
+                self.admit_screened(event_ref, &body, &source_record_id, predicate, value)
+            },
+        )
+    }
+
     fn admit_time_kind(
         &mut self,
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<(), CalendarError> {
+        let Some(kind) = event.properties.time_kind else {
+            return Ok(());
+        };
         let mut prior_live: Option<EntityId> = None;
         for claim_id in self.vault.claims_for_subject(&event_ref)? {
             let Some(claim) = self.vault.get_claim(&claim_id)? else {
@@ -223,18 +278,13 @@ impl PollAdmission<'_> {
             }
             let current = decode_time_kind_value(&claim.value)
                 .map_err(|_| ingest("stored time claim did not decode"))?;
-            if current.kind == CalendarTimeKind::Absolute
-                && current.busy_transparency == event.busy_transparency
-            {
+            if current.kind == kind && current.busy_transparency == event.busy_transparency {
                 return Ok(());
             }
             prior_live = Some(claim_id);
         }
         let value = rmpv::Value::Map(vec![
-            (
-                rmpv::Value::from("kind"),
-                rmpv::Value::from(CalendarTimeKind::Absolute.as_str()),
-            ),
+            (rmpv::Value::from("kind"), rmpv::Value::from(kind.as_str())),
             (
                 rmpv::Value::from("busy_transparency"),
                 rmpv::Value::from(event.busy_transparency.as_str()),
@@ -288,7 +338,7 @@ impl PollAdmission<'_> {
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<(), CalendarError> {
-        let value = self.passport_value(event, CalendarPassportPresence::Live);
+        let value = self.passport_value(event_ref, event, CalendarPassportPresence::Live)?;
         let body = screen_body(event);
         let source_record_id = self.source_record_id(event);
         self.admit_screened(
@@ -425,18 +475,32 @@ impl PollAdmission<'_> {
 
     fn passport_value(
         &self,
+        event_ref: EntityId,
         event: &ParsedVEvent,
         presence: CalendarPassportPresence,
-    ) -> CalendarPassportValue {
-        CalendarPassportValue {
-            system: self.config.system.clone(),
+    ) -> Result<CalendarPassportValue, CalendarError> {
+        let direction = if self.preserve_direction {
+            crate::calendar::passport::live_passport_for(
+                self.vault,
+                &event_ref,
+                self.system,
+                &event.uid,
+            )?
+            .map_or(CalendarPassportDirection::Inbound, |(_, value)| {
+                value.direction
+            })
+        } else {
+            CalendarPassportDirection::Inbound
+        };
+        Ok(CalendarPassportValue {
+            system: self.system.to_owned(),
             uid: event.uid.clone(),
             last_sequence: event.sequence,
             content_hash: event.content_hash,
-            direction: CalendarPassportDirection::Inbound,
+            direction,
             last_seen_at: self.now,
             presence,
-        }
+        })
     }
 
     /// The provenance ref admitted claims carry: the archived feed version
@@ -445,6 +509,57 @@ impl PollAdmission<'_> {
     fn source_record_id(&self, event: &ParsedVEvent) -> String {
         format!("{}:{}", self.blob_ref, event.uid)
     }
+}
+
+/// Connector resources use the same gated importer, but retain their routing.
+pub(in crate::calendar) fn connector_event_ref(
+    vault: &Vault,
+    event: &ParsedVEvent,
+) -> Result<Option<EntityId>, CalendarError> {
+    let master = crate::calendar::passport::resolve_event_by_uid(vault, &event.uid)?;
+    match event.properties.recurrence_id_utc {
+        None => Ok(master),
+        Some(original) => Ok(Some(recurrence::exception_id(
+            master.ok_or_else(|| ingest("recurrence exception has no master"))?,
+            original,
+        )?)),
+    }
+}
+fn connector_admission<'a>(
+    vault: &'a Vault,
+    system: &'a str,
+    source: &'a str,
+    now: u64,
+) -> PollAdmission<'a> {
+    PollAdmission {
+        vault,
+        system,
+        preserve_direction: true,
+        screener: None,
+        safeguard_enabled: false,
+        now,
+        blob_ref: source,
+        verdict_fold: VerdictFold::default(),
+    }
+}
+pub(in crate::calendar) fn admit_connector_event(
+    vault: &Vault,
+    system: &str,
+    source: &str,
+    event: &ParsedVEvent,
+    now: u64,
+) -> Result<(), CalendarError> {
+    connector_admission(vault, system, source, now).apply_event(event)
+}
+pub(in crate::calendar) fn sweep_connector_resource(
+    vault: &Vault,
+    system: &str,
+    source: &str,
+    feed: &super::ics::ParsedIcsFeed,
+    uid: &str,
+    now: u64,
+) -> Result<(), CalendarError> {
+    connector_admission(vault, system, source, now).sweep_resource(feed, Some(uid))
 }
 
 /// The CAL-09 screen body for one VEVENT: its description plus any ATTACH
@@ -591,81 +706,4 @@ fn verdict_token(verdict: &super::safeguard::CalendarScreenVerdict) -> &'static 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::calendar::test_support::open_calendar_vault;
-
-    /// A one-body fetcher: every fetch returns a complete feed.
-    struct BodyFetcher {
-        body: Vec<u8>,
-    }
-
-    impl IcsFeedFetcher for BodyFetcher {
-        fn fetch(
-            &self,
-            _secret_ref: &str,
-            _if_none_match: Option<&str>,
-        ) -> Result<IcsFetchResponse, CalendarError> {
-            Ok(IcsFetchResponse::Complete {
-                etag: None,
-                body: self.body.clone(),
-            })
-        }
-    }
-
-    fn one_event_feed(dtstart: &str, dtend: &str) -> Vec<u8> {
-        format!(
-            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n\
-             BEGIN:VEVENT\r\nUID:uid-oc@x\r\nDTSTAMP:20260805T100000Z\r\n\
-             DTSTART:{dtstart}\r\nDTEND:{dtend}\r\nSEQUENCE:1\r\nSUMMARY:standup\r\n\
-             END:VEVENT\r\nEND:VCALENDAR\r\n"
-        )
-        .into_bytes()
-    }
-
-    fn test_config() -> IcsFeedPollConfig {
-        IcsFeedPollConfig {
-            secret_ref: "ics-feed:work".to_owned(),
-            system: "work".to_owned(),
-            cadence_min_seconds: 300,
-            cadence_max_seconds: 900,
-        }
-    }
-
-    /// VERDICT-FIX (semantic-update-not-applied): a same-SEQUENCE content
-    /// drift moves the EVENT's stored occurrence, not just the passport head.
-    /// The header read is crate-internal, so this half of the oracle lives
-    /// here; the name/transparency half lives in the adapter oracle.
-    #[test]
-    fn update_existing_rewrites_the_event_occurrence() {
-        let (_dir, vault) = open_calendar_vault();
-        let config = test_config();
-        let first = BodyFetcher {
-            body: one_event_feed("20260806T140000Z", "20260806T150000Z"),
-        };
-        run_ics_feed_poll(&vault, &first, &config, 1_800_000_000, 7).expect("create poll");
-        let event = crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x")
-            .expect("resolve")
-            .expect("event minted");
-        let before = vault
-            .read_entity_header(&event)
-            .expect("header")
-            .expect("event exists");
-        assert_eq!(before.occurred_start, 1_786_024_800);
-        assert_eq!(before.occurred_end, 1_786_028_400);
-
-        let drifted = BodyFetcher {
-            body: one_event_feed("20260807T090000Z", "20260807T093000Z"),
-        };
-        run_ics_feed_poll(&vault, &drifted, &config, 1_800_000_100, 7).expect("drift poll");
-        let after = vault
-            .read_entity_header(&event)
-            .expect("header")
-            .expect("event exists");
-        assert_eq!(
-            (after.occurred_start, after.occurred_end),
-            (1_786_093_200, 1_786_095_000),
-            "a drifted DTSTART/DTEND re-mints the EVENT occurrence"
-        );
-    }
-}
+mod tests;

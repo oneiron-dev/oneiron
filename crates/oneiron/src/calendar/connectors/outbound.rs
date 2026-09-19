@@ -183,6 +183,9 @@ pub fn write_calendar_event(
         return Err(ingest_error("write target is not an EVENT"));
     }
 
+    // A detached edit targets its full UID resource, never a standalone PUT
+    // that would replace the master and erase its siblings.
+    let event_ref = super::resource::master_for(vault, event_ref)?;
     let system = seat.config.system.as_str();
     let passports = live_passports_for_event(vault, &event_ref)?;
     let own = passports
@@ -263,18 +266,13 @@ pub fn write_calendar_event(
         }
     }
 
-    let sequence = match &own {
-        // A UID this seat already tracks: the mutation is an update, so the
-        // calendar contract requires the bump.
-        Some(value) => value.last_sequence.saturating_add(1),
-        // First write of this UID to this seat: carry the highest SEQUENCE any
-        // sibling source reported, so a two-provider EVENT stays ordered.
-        None => passports
-            .iter()
-            .filter(|(_, value)| value.uid == uid)
-            .map(|(_, value)| value.last_sequence)
-            .max()
-            .unwrap_or(0),
+    let floor = super::resource::sequence_floor(vault, event_ref, &uid)?;
+    let sequence = if own.is_some() {
+        floor
+            .checked_add(1)
+            .ok_or_else(|| ingest_error("calendar sequence overflow"))?
+    } else {
+        floor
     };
     let ics = render_owner_vevent(vault, &event_ref, &uid, sequence, now)?;
     let content_hash = ics_content_hash(&ics, &uid)?;
@@ -415,7 +413,7 @@ fn finish_remote_applied_write(
     seat: &CalendarConnectorSeatState,
     transport: &dyn CalendarRemoteTransport,
     event_ref: EntityId,
-    own: Option<&CalendarPassportValue>,
+    _own: Option<&CalendarPassportValue>,
     row: &mut CalendarWriteOutboxRow,
     receipt: RemoteWriteReceipt,
     now: u64,
@@ -443,42 +441,56 @@ fn finish_remote_applied_write(
         },
     )?;
 
-    // Direction is a routing fact: a seat that also reads this UID is two-way,
-    // a seat that only writes it is outbound. Neither is an approval gate.
-    let direction = if own.is_some_and(|value| value.direction.is_inbound_bearing()) {
-        CalendarPassportDirection::TwoWay
-    } else {
-        CalendarPassportDirection::Outbound
-    };
-    let next = CalendarPassportValue {
-        system: row.system.clone(),
-        uid: row.uid.clone(),
-        last_sequence: receipt.sequence,
-        content_hash: receipt.content_hash,
-        direction,
-        last_seen_at: now,
-        presence: CalendarPassportPresence::Live,
-    };
-    let current = live_passport_for(vault, &event_ref, &row.system, &row.uid)?;
-    let already_applied = current.as_ref().is_some_and(|(_, value)| {
-        value.last_sequence == next.last_sequence
-            && value.content_hash == next.content_hash
-            && value.direction == next.direction
-            && value.presence == next.presence
-    });
-    if !already_applied {
-        let source_record_id = write_source_record_id(transport.provider_key(), seat, &row.uid);
-        let new_id = admit_screened(
-            vault,
-            event_ref,
-            &CalendarInboundBody::default(),
-            &source_record_id,
-            PREDICATE_CALENDAR_PASSPORT,
-            encode_passport_value(&next),
-            now,
-        )?;
-        if current.is_some() {
-            supersede_calendar_passport(vault, event_ref, &row.system, &row.uid, &new_id, now)?;
+    let rendered = render_owner_vevent(vault, &event_ref, &row.uid, row.sequence, now)?;
+    if ics_content_hash(&rendered, &row.uid)? != row.content_hash {
+        return Err(ingest_error(
+            "local resource changed after remote write; reconcile before retry",
+        ));
+    }
+    let parsed = crate::calendar::ics::parse_ics_feed(&rendered)?;
+    let members = super::resource::members(vault, event_ref, &row.uid)?;
+    for (member, parsed) in members.into_iter().zip(parsed.events) {
+        // Direction is a routing fact: a seat that also reads this UID is two-way,
+        // a seat that only writes it is outbound. Neither is an approval gate.
+        let own = live_passport_for(vault, &member, &row.system, &row.uid)?;
+        let direction = if own
+            .as_ref()
+            .is_some_and(|(_, value)| value.direction.is_inbound_bearing())
+        {
+            CalendarPassportDirection::TwoWay
+        } else {
+            CalendarPassportDirection::Outbound
+        };
+        let next = CalendarPassportValue {
+            system: row.system.clone(),
+            uid: row.uid.clone(),
+            last_sequence: receipt.sequence,
+            content_hash: parsed.content_hash,
+            direction,
+            last_seen_at: now,
+            presence: CalendarPassportPresence::Live,
+        };
+        let current = live_passport_for(vault, &member, &row.system, &row.uid)?;
+        let already_applied = current.as_ref().is_some_and(|(_, value)| {
+            value.last_sequence == next.last_sequence
+                && value.content_hash == next.content_hash
+                && value.direction == next.direction
+                && value.presence == next.presence
+        });
+        if !already_applied {
+            let source_record_id = write_source_record_id(transport.provider_key(), seat, &row.uid);
+            let new_id = admit_screened(
+                vault,
+                member,
+                &CalendarInboundBody::default(),
+                &source_record_id,
+                PREDICATE_CALENDAR_PASSPORT,
+                encode_passport_value(&next),
+                now,
+            )?;
+            if current.is_some() {
+                supersede_calendar_passport(vault, member, &row.system, &row.uid, &new_id, now)?;
+            }
         }
     }
     index_passport_uid(vault, &row.uid, &event_ref)?;

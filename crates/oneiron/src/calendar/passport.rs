@@ -127,6 +127,7 @@ pub fn resolve_event_by_uid(vault: &Vault, uid: &str) -> Result<Option<EntityId>
         let id = EntityId::from_bytes(bytes)
             .map_err(|_| ingest("passport index row is not an entity id"))?;
         if vault.get_entity_type(&id)? == Some(ENTITY_TYPE_EVENT)
+            && !is_series_exception(vault, &id)?
             && live_passport_for_uid(vault, &id, uid)?.is_some()
         {
             return Ok(Some(id));
@@ -149,7 +150,8 @@ pub fn resolve_event_by_uid(vault: &Vault, uid: &str) -> Result<Option<EntityId>
     };
     let mut found: Option<EntityId> = None;
     for event_ref in event_ids {
-        if live_passport_for_uid(vault, &event_ref, uid)?.is_some()
+        if !is_series_exception(vault, &event_ref)?
+            && live_passport_for_uid(vault, &event_ref, uid)?.is_some()
             && found.is_none_or(|current| event_ref.as_bytes() < current.as_bytes())
         {
             // Lexicographically smallest id, so every node converges on the
@@ -184,6 +186,17 @@ pub fn classify_passport(
     let Some(event_ref) = resolve_event_by_uid(vault, uid)? else {
         return Ok(PassportDecision::CreateEvent);
     };
+    classify_event_passport(vault, event_ref, system, uid, sequence, content_hash)
+}
+
+pub(in crate::calendar) fn classify_event_passport(
+    vault: &Vault,
+    event_ref: EntityId,
+    system: &str,
+    uid: &str,
+    sequence: u32,
+    content_hash: [u8; 32],
+) -> Result<PassportDecision, CalendarError> {
     let Some((_, current)) = live_passport_for(vault, &event_ref, system, uid)? else {
         return Ok(PassportDecision::AttachToExisting { event_ref });
     };
@@ -502,4 +515,15 @@ mod tests {
             None
         );
     }
+}
+
+fn is_series_exception(vault: &Vault, event: &EntityId) -> Result<bool, CalendarError> {
+    for id in vault.claims_for_subject(event)? {
+        if vault.get_claim(&id)?.is_some_and(|body| {
+            body.predicate == super::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

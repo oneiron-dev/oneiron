@@ -44,8 +44,12 @@
 //!   [`IcsHttpTransport`]; the reqwest reservation lands with its owner.
 
 mod admission;
+pub(in crate::calendar) use admission::{
+    admit_connector_event, connector_event_ref, sweep_connector_resource,
+};
 mod fetch;
 mod poll;
+pub(in crate::calendar) mod property_claims;
 
 // Moved bodies still spell `super::ics`, `super::passport`, and
 // `super::safeguard` (their `super` used to be `calendar`); these aliases keep

@@ -1,5 +1,8 @@
 //! ICS feed parse half (CAL-02, ONE-1784): RFC 5545 bytes into calendar-owned rows.
 
+mod properties;
+pub use properties::ParsedCalendarProperties;
+
 use sha2::{Digest, Sha256};
 
 use crate::calendar::CalendarError;
@@ -15,6 +18,8 @@ use crate::calendar::claims::CalendarBusyTransparency;
 /// that skeleton, not an accidental widening of the parsed surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedVEvent {
+    /// Original calendar semantics, before UTC conversion.
+    pub properties: ParsedCalendarProperties,
     /// VEVENT `UID` — the cross-calendar identity the passport index keys on.
     pub uid: String,
     /// VEVENT `SEQUENCE`, defaulting to 0 when absent.
@@ -77,12 +82,13 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
             let event = parse_vevent(component)?;
             // A duplicated UID would attach two live passports for the same
             // (system, uid) — the one-live law fails closed at parse.
-            if !seen_uids.insert(event.uid.clone()) {
+            if !seen_uids.insert((event.uid.clone(), event.properties.recurrence_id_utc)) {
                 return Err(ics_parse("feed carries a duplicate VEVENT UID"));
             }
             events.push(event);
         }
     }
+    events.sort_by_key(|event| event.properties.recurrence_id_utc.is_some());
     Ok(ParsedIcsFeed { events })
 }
 
@@ -146,6 +152,7 @@ fn parse_vevent(
         .map(|prop| prop.val.clone().unescape_text().as_str().to_owned());
 
     Ok(ParsedVEvent {
+        properties: properties::parse(component)?,
         content_hash: canonical_vevent_hash(component),
         raw_component: render_raw_component(component),
         uid,
@@ -212,7 +219,7 @@ fn optional_datetime_prop(
         mi: fields.minute,
         s: fields.second,
     };
-    super::tz::wall_to_utc(&wall, tzid).map(Some)
+    super::tz::wall_to_utc(&wall, tzid.trim_matches('"')).map(Some)
 }
 
 /// The parsed scalar fields of one RFC 5545 date-time value.
@@ -282,6 +289,23 @@ fn parse_datetime_fields(value: &str) -> Result<DateTimeFields, CalendarError> {
 /// proleptic-Gregorian algorithm, pre-epoch instants excluded by the `u64`
 /// image.
 fn unix_seconds(fields: &DateTimeFields) -> Option<u64> {
+    let leap = fields.year % 4 == 0 && (fields.year % 100 != 0 || fields.year % 400 == 0);
+    let days = match fields.month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if fields.day == 0
+        || fields.day > days
+        || fields.hour > 23
+        || fields.minute > 59
+        || fields.second > 59
+    {
+        return None;
+    }
+
     let year = i64::from(fields.year);
     let month = i64::from(fields.month);
     let adjusted_year = if month <= 2 { year - 1 } else { year };
