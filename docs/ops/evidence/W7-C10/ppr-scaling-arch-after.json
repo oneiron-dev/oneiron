@@ -1044,5 +1044,9 @@
   ],
   "node_growth": 16.0,
   "residual_miss_cost_growth": 0.168074228494306,
-  "observed_sublinear": true
+  "observed_sublinear": false,
+  "review_correction": {
+    "previous_observed_sublinear": true,
+    "reason": "Non-monotonic samples do not establish scaling. Raw timings are unchanged."
+  }
 }

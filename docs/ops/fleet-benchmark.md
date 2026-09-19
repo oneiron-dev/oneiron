@@ -370,7 +370,9 @@ The later phases also show strong host variation:
 
 The final/lower-size cost ratio is 0.1681 despite 16x graph growth. That decrease
 does not establish better asymptotic behavior: it reflects uncontrolled timing
-variation. Use the separately published MacBook scaling run for the stated
+variation. Its `observed_sublinear` flag was corrected to `false` during review;
+the raw samples remain unchanged. Future receipts require nondecreasing,
+sublinear cost at every measured interval. Use the separately published MacBook scaling run for the stated
 observed sublinear result, and retain this unfavorable run as well.
 
 Final binary BLAKE3:
