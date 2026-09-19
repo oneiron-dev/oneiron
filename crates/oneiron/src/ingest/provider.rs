@@ -86,11 +86,34 @@ impl IngestSource for ProviderSource {
                 None => String::new(),
             };
             for key in ["reasoning_content", "tool_calls"] {
-                if let Some(value) = message.get(key) {
+                let Some(value) = message.get(key) else {
+                    continue;
+                };
+                if !matches!(self.0, ProviderWire::Openai) || role != "assistant" {
+                    return Err(self.invalid(key));
+                }
+                // Nullable optional fields do not supply otherwise-missing content.
+                if value.is_null() {
+                    continue;
+                }
+                let auxiliary = if key == "reasoning_content" {
+                    value.as_str().ok_or_else(|| self.invalid(key))?.to_owned()
+                } else {
+                    let calls = value.as_array().ok_or_else(|| self.invalid(key))?;
+                    if !calls.iter().all(valid_openai_tool_call) {
+                        return Err(self.invalid(key));
+                    }
+                    if calls.is_empty() {
+                        String::new()
+                    } else {
+                        value.to_string()
+                    }
+                };
+                if !auxiliary.is_empty() {
                     if !text.is_empty() {
                         text.push('\n');
                     }
-                    text.push_str(&value.to_string());
+                    text.push_str(&auxiliary);
                 }
             }
             if text.trim().is_empty() {
@@ -121,7 +144,7 @@ impl IngestSource for ProviderSource {
 }
 fn blocks_text(value: &Value, wire: ProviderWire) -> Option<String> {
     if let Some(text) = value.as_str() {
-        return Some(text.into());
+        return (!matches!(wire, ProviderWire::Gemini)).then(|| text.into());
     }
     let blocks = value.as_array()?;
     let mut text = Vec::new();
@@ -133,33 +156,46 @@ fn blocks_text(value: &Value, wire: ProviderWire) -> Option<String> {
             None => None,
             Some(value) => Some(value.as_str()?),
         };
-        let value = if kind == Some("text")
+        let value = if (kind == Some("text") && !matches!(wire, ProviderWire::Gemini))
             || (kind.is_none()
                 && matches!(wire, ProviderWire::Gemini)
                 && block.get("text").is_some())
         {
             block.get("text")?.as_str()?.to_owned()
-        } else if kind == Some("thinking") {
+        } else if kind == Some("thinking") && matches!(wire, ProviderWire::Anthropic) {
             block.get("thinking")?.as_str()?.to_owned()
-        } else if kind == Some("tool_use") {
-            block.get("id")?.as_str()?;
-            block.get("name")?.as_str()?;
+        } else if kind == Some("tool_use") && matches!(wire, ProviderWire::Anthropic) {
+            block.get("id")?.as_str().filter(|s| !s.trim().is_empty())?;
+            block
+                .get("name")?
+                .as_str()
+                .filter(|s| !s.trim().is_empty())?;
             block.get("input")?.as_object()?;
             block.to_string()
-        } else if kind == Some("tool_result") {
-            block.get("tool_use_id")?.as_str()?;
+        } else if kind == Some("tool_result") && matches!(wire, ProviderWire::Anthropic) {
+            block
+                .get("tool_use_id")?
+                .as_str()
+                .filter(|s| !s.trim().is_empty())?;
             blocks_text(block.get("content")?, wire)?;
             block.to_string()
-        } else if kind.is_none()
+        } else if matches!(wire, ProviderWire::Gemini)
+            && kind.is_none()
             && let Some(call) = block.get("functionCall")
         {
-            call.get("name")?.as_str()?;
+            call.get("name")?
+                .as_str()
+                .filter(|s| !s.trim().is_empty())?;
             call.get("args")?.as_object()?;
             block.to_string()
-        } else if kind.is_none()
+        } else if matches!(wire, ProviderWire::Gemini)
+            && kind.is_none()
             && let Some(result) = block.get("functionResponse")
         {
-            result.get("name")?.as_str()?;
+            result
+                .get("name")?
+                .as_str()
+                .filter(|s| !s.trim().is_empty())?;
             result.get("response")?.as_object()?;
             block.to_string()
         } else {
@@ -168,4 +204,20 @@ fn blocks_text(value: &Value, wire: ProviderWire) -> Option<String> {
         text.push(value);
     }
     Some(text.join("\n"))
+}
+
+fn valid_openai_tool_call(value: &Value) -> bool {
+    let nonempty = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.trim().is_empty())
+    };
+    value.get("type").and_then(Value::as_str) == Some("function")
+        && nonempty(value.get("id"))
+        && nonempty(value.pointer("/function/name"))
+        && value
+            .pointer("/function/arguments")
+            .and_then(Value::as_str)
+            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+            .is_some_and(|args| args.is_object())
 }

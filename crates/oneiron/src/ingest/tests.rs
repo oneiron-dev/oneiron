@@ -901,3 +901,92 @@ fn provider_ingest_accepts_only_its_protocol_roles() {
         }
     }
 }
+
+#[test]
+fn provider_ingest_enforces_block_grammars_and_auxiliary_fields() {
+    use serde_json::json;
+    let blocks = [
+        (json!({"type":"text","text":"hello"}), [true, true, false]),
+        (
+            json!({"type":"thinking","thinking":"plan"}),
+            [false, true, false],
+        ),
+        (
+            json!({"type":"tool_use","id":"c","name":"f","input":{}}),
+            [false, true, false],
+        ),
+        (
+            json!({"type":"tool_result","tool_use_id":"c","content":"result"}),
+            [false, true, false],
+        ),
+        (json!({"text":"hello"}), [false, false, true]),
+        (
+            json!({"functionCall":{"name":"f","args":{}}}),
+            [false, false, true],
+        ),
+        (
+            json!({"functionResponse":{"name":"f","response":{}}}),
+            [false, false, true],
+        ),
+    ];
+    for (index, source) in ["openai-compat", "anthropic-messages", "gemini"]
+        .into_iter()
+        .enumerate()
+    {
+        for (block, valid) in &blocks {
+            let doc = if source == "gemini" {
+                json!({"contents":[{"role":"model","parts":[block]}]})
+            } else {
+                json!({"messages":[{"role":"assistant","content":[block]}]})
+            };
+            assert_eq!(
+                INGEST_SOURCE_REGISTRY
+                    .normalize(source, &doc.to_string())
+                    .is_ok(),
+                valid[index]
+            );
+        }
+        for (key, value) in [
+            ("reasoning_content", json!("plan")),
+            (
+                "tool_calls",
+                json!([{"id":"c","type":"function","function":{"name":"f","arguments":"{}"}}]),
+            ),
+        ] {
+            let mut message =
+                json!({"role":if source == "gemini" { "model" } else { "assistant" }});
+            message[key] = value;
+            let doc = if source == "gemini" {
+                json!({"contents":[message]})
+            } else {
+                json!({"messages":[message]})
+            };
+            assert_eq!(
+                INGEST_SOURCE_REGISTRY
+                    .normalize(source, &doc.to_string())
+                    .is_ok(),
+                source == "openai-compat"
+            );
+        }
+    }
+    for (key, value) in [
+        ("reasoning_content", json!(42)),
+        ("tool_calls", json!(42)),
+        (
+            "tool_calls",
+            json!([{"id":"c","type":"function","function":{"name":"f","arguments":{}}}]),
+        ),
+        (
+            "tool_calls",
+            json!([{"id":"c","type":"function","function":{"name":"f","arguments":"[]"}}]),
+        ),
+    ] {
+        let mut message = json!({"role":"assistant"});
+        message[key] = value;
+        let result = INGEST_SOURCE_REGISTRY
+            .normalize("openai-compat", &json!({"messages":[message]}).to_string());
+        assert!(
+            matches!(result, Err(IngestError::InvalidDocumentField { path, .. }) if path == key)
+        );
+    }
+}
