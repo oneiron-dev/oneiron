@@ -69,7 +69,7 @@ impl<F: ScoreFetch> ScoreScraper<F> {
         {
             return Ok(Vec::new());
         }
-        let mut diffs = Vec::new();
+        let mut snapshots = Vec::new();
         for source in &self.config.sources {
             let document = self.fetcher.fetch(source)?;
             let rows = document
@@ -95,12 +95,13 @@ impl<F: ScoreFetch> ScoreScraper<F> {
                     score,
                 });
             }
-            diffs.extend(vault.apply_model_scores(&ScoreSnapshot {
+            snapshots.push(ScoreSnapshot {
                 source: source.id.clone(),
                 fetched_at: now,
                 observations,
-            })?);
+            });
         }
+        let diffs = vault.apply_model_score_snapshots(&snapshots)?;
         self.last_fetch = Some(now);
         Ok(diffs)
     }

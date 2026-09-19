@@ -209,3 +209,71 @@ fn seed_rejects_score_watermarks_without_inserting_any_rows() -> Result<()> {
     assert!(vault.model_registry_rows()?.is_empty());
     Ok(())
 }
+
+#[test]
+fn multi_source_refresh_is_atomic_on_parse_and_storage_refusals() -> Result<()> {
+    struct Fetch(std::collections::VecDeque<serde_json::Value>);
+    impl ScoreFetch for Fetch {
+        fn fetch(&mut self, _: &ScoreSourceConfig) -> Result<serde_json::Value> {
+            Ok(self.0.pop_front().expect("scheduled fetch"))
+        }
+    }
+    for storage_failure in [false, true] {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+        let registered = row("one");
+        vault.put_model_registry_row(&registered)?;
+        let model = registered.catalog.model.clone();
+        if storage_failure {
+            vault.apply_model_scores(&ScoreSnapshot {
+                source: "second".into(),
+                fetched_at: 200,
+                observations: vec![ScoreObservation {
+                    model: model.clone(),
+                    benchmark: "quality".into(),
+                    score: 30.0,
+                }],
+            })?;
+        }
+        let before = vault.model_registry_row(&model)?.unwrap();
+        let before_diffs = vault.model_score_diffs(&model)?;
+        let config = ScoreScraperConfig {
+            version: 1,
+            fetch_interval_secs: 60,
+            sources: ["first", "second"]
+                .into_iter()
+                .map(|id| ScoreSourceConfig {
+                    id: id.into(),
+                    url: "https://example.invalid/scores".into(),
+                    rows_pointer: "/data".into(),
+                    model_pointer: "/model".into(),
+                    score_pointer: "/score".into(),
+                    benchmark: "quality".into(),
+                    model_bindings: BTreeMap::from([("external".into(), model.clone())]),
+                })
+                .collect(),
+        };
+        let good = serde_json::json!({"data":[{"model":"external","score":50.0}]});
+        let bad = if storage_failure {
+            good.clone()
+        } else {
+            serde_json::json!({"data":{}})
+        };
+        let mut scraper = ScoreScraper::new(
+            config,
+            Fetch(vec![good.clone(), bad, good.clone(), good].into()),
+        )?;
+        assert!(matches!(
+            scraper.refresh(&vault, 100),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert_eq!(vault.model_registry_row(&model)?.unwrap(), before);
+        assert_eq!(vault.model_score_diffs(&model)?, before_diffs);
+        let retry_at = if storage_failure { 201 } else { 100 };
+        assert_eq!(scraper.refresh(&vault, retry_at)?.len(), 2);
+        assert!(scraper.refresh(&vault, retry_at)?.is_empty());
+        let after = vault.model_registry_row(&model)?.unwrap();
+        assert_eq!(after.scores["first"]["quality"], 50.0);
+        assert_eq!(after.scores["second"]["quality"], 50.0);
+    }
+    Ok(())
+}

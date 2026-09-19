@@ -197,78 +197,86 @@ impl Vault {
         Ok(())
     }
     pub fn apply_model_scores(&self, snapshot: &ScoreSnapshot) -> Result<Vec<ModelScoreDiff>> {
-        if snapshot.source.trim().is_empty() || snapshot.source.len() > 128 {
-            return Err(invalid("invalid benchmark source"));
-        }
-        let mut seen = std::collections::BTreeSet::new();
+        self.apply_model_score_snapshots(std::slice::from_ref(snapshot))
+    }
+    pub(super) fn apply_model_score_snapshots(
+        &self,
+        snapshots: &[ScoreSnapshot],
+    ) -> Result<Vec<ModelScoreDiff>> {
         let mut txn = self.store.env.write_txn()?;
         let mut diffs = Vec::new();
-        let mut prior_watermarks = BTreeMap::new();
-        for observation in &snapshot.observations {
-            if observation.benchmark.trim().is_empty()
-                || observation.benchmark.len() > 128
-                || !observation.score.is_finite()
-                || !seen.insert((&observation.model, &observation.benchmark))
-            {
-                return Err(invalid("invalid or duplicate benchmark observation"));
+        for snapshot in snapshots {
+            if snapshot.source.trim().is_empty() || snapshot.source.len() > 128 {
+                return Err(invalid("invalid benchmark source"));
             }
-            let key = row_key(&observation.model);
-            let bytes = self
-                .store
-                .vault_meta
-                .get(&txn, &key)?
-                .ok_or_else(|| invalid("score model is not registered"))?;
-            let mut row = decode(&bytes)?;
-            let prior_watermark = *prior_watermarks
-                .entry(observation.model.clone())
-                .or_insert_with(|| row.fetched_at.get(&snapshot.source).copied());
-            if prior_watermark.is_some_and(|at| at > snapshot.fetched_at) {
-                return Err(invalid("stale benchmark snapshot"));
-            }
-            let scores = row.scores.entry(snapshot.source.clone()).or_default();
-            let previous = scores.get(&observation.benchmark).copied();
-            if prior_watermark == Some(snapshot.fetched_at)
-                && previous.is_some_and(|score| score != observation.score)
-            {
-                return Err(invalid("conflicting equal-time benchmark snapshot"));
-            }
-            if previous == Some(observation.score) {
-                // Observation recency is independent of score changes. An
-                // identical newer snapshot still fences out older replays,
-                // but must not append a spurious change record.
+            let mut seen = std::collections::BTreeSet::new();
+            let mut prior_watermarks = BTreeMap::new();
+            for observation in &snapshot.observations {
+                if observation.benchmark.trim().is_empty()
+                    || observation.benchmark.len() > 128
+                    || !observation.score.is_finite()
+                    || !seen.insert((&observation.model, &observation.benchmark))
+                {
+                    return Err(invalid("invalid or duplicate benchmark observation"));
+                }
+                let key = row_key(&observation.model);
+                let bytes = self
+                    .store
+                    .vault_meta
+                    .get(&txn, &key)?
+                    .ok_or_else(|| invalid("score model is not registered"))?;
+                let mut row = decode(&bytes)?;
+                let prior_watermark = *prior_watermarks
+                    .entry(observation.model.clone())
+                    .or_insert_with(|| row.fetched_at.get(&snapshot.source).copied());
+                if prior_watermark.is_some_and(|at| at > snapshot.fetched_at) {
+                    return Err(invalid("stale benchmark snapshot"));
+                }
+                let scores = row.scores.entry(snapshot.source.clone()).or_default();
+                let previous = scores.get(&observation.benchmark).copied();
+                if prior_watermark == Some(snapshot.fetched_at)
+                    && previous.is_some_and(|score| score != observation.score)
+                {
+                    return Err(invalid("conflicting equal-time benchmark snapshot"));
+                }
+                if previous == Some(observation.score) {
+                    // Observation recency is independent of score changes. An
+                    // identical newer snapshot still fences out older replays,
+                    // but must not append a spurious change record.
+                    row.fetched_at
+                        .insert(snapshot.source.clone(), snapshot.fetched_at);
+                    self.store.vault_meta.put(&mut txn, &key, &encode(&row)?)?;
+                    continue;
+                }
+                scores.insert(observation.benchmark.clone(), observation.score);
                 row.fetched_at
                     .insert(snapshot.source.clone(), snapshot.fetched_at);
+                let diff = ModelScoreDiff {
+                    model: observation.model.clone(),
+                    source: snapshot.source.clone(),
+                    benchmark: observation.benchmark.clone(),
+                    previous,
+                    score: observation.score,
+                    fetched_at: snapshot.fetched_at,
+                };
+                let prefix = [DIFF_PREFIX, observation.model.as_str().as_bytes(), b"\0"].concat();
+                let mut prior: Vec<ModelScoreDiff> = self
+                    .store
+                    .vault_meta
+                    .get(&txn, &prefix)?
+                    .map(|b| serde_json::from_slice(&b).map_err(|e| invalid(e.to_string())))
+                    .transpose()?
+                    .unwrap_or_default();
+                prior.push(diff.clone());
+                if prior.len() > 64 {
+                    prior.remove(0);
+                }
+                self.store
+                    .vault_meta
+                    .put(&mut txn, &prefix, &encode(&prior)?)?;
                 self.store.vault_meta.put(&mut txn, &key, &encode(&row)?)?;
-                continue;
+                diffs.push(diff);
             }
-            scores.insert(observation.benchmark.clone(), observation.score);
-            row.fetched_at
-                .insert(snapshot.source.clone(), snapshot.fetched_at);
-            let diff = ModelScoreDiff {
-                model: observation.model.clone(),
-                source: snapshot.source.clone(),
-                benchmark: observation.benchmark.clone(),
-                previous,
-                score: observation.score,
-                fetched_at: snapshot.fetched_at,
-            };
-            let prefix = [DIFF_PREFIX, observation.model.as_str().as_bytes(), b"\0"].concat();
-            let mut prior: Vec<ModelScoreDiff> = self
-                .store
-                .vault_meta
-                .get(&txn, &prefix)?
-                .map(|b| serde_json::from_slice(&b).map_err(|e| invalid(e.to_string())))
-                .transpose()?
-                .unwrap_or_default();
-            prior.push(diff.clone());
-            if prior.len() > 64 {
-                prior.remove(0);
-            }
-            self.store
-                .vault_meta
-                .put(&mut txn, &prefix, &encode(&prior)?)?;
-            self.store.vault_meta.put(&mut txn, &key, &encode(&row)?)?;
-            diffs.push(diff);
         }
         txn.commit()?;
         Ok(diffs)
