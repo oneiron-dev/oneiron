@@ -190,8 +190,9 @@ impl Evidence {
         let previous_sha256 = self
             .audit
             .last()
-            .map(|row| Sha256::digest(serde_json::to_vec(row).unwrap()).into())
-            .unwrap_or([0; 32]);
+            .map_or([0; 32], |row| {
+                Sha256::digest(serde_json::to_vec(row).unwrap()).into()
+            });
         self.audit.push(EsignEventRow {
             sequence: self.audit.len() as u64,
             previous_sha256,

@@ -133,7 +133,7 @@ fn claims_enforce_required_fields_sequential_promotion_and_seal_only_terminals()
         &vault,
         id,
         EsignEvent::FieldSaved {
-            signature: signature.clone(),
+            signature,
         },
         5,
     )?;

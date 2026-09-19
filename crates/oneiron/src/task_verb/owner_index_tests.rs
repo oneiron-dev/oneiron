@@ -1,4 +1,5 @@
 use crate::edge::EdgeActorClass;
+use crate::saved_query::*;
 use crate::task_verb::{TaskAssignee, TaskCreateSpec};
 use crate::{EntityId, Result, Vault};
 use crate::{TimeRange, VaultConfig};
@@ -59,7 +60,6 @@ fn owners_share_exact_inbox_and_saved_query_membership_with_backfill() -> Result
     for (owner, expected) in owners.iter().zip(&tasks) {
         assert_eq!(vault.tasks_by_owner(*owner, None, 10)?, *expected);
     }
-    use crate::saved_query::*;
     let filter =
         parse_filter_ast(&serde_json::json!({"op": "task_owner", "owner": owners[0].to_hex()}))?;
     let definition = SavedQueryDefinition {
