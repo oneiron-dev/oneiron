@@ -297,18 +297,16 @@ impl NoteDocument {
         });
         if let Some((start, end)) = positions
             && let Some(end) = end.checked_add(1)
+            && start < end
+            && let Ok(quote) = self.doc.get_text(BODY).slice(start, end)
+            && blake3::hash(quote.as_bytes()).as_bytes() == &pin.quote_hash
         {
-            if start < end
-                && let Ok(quote) = self.doc.get_text(BODY).slice(start, end)
-                && blake3::hash(quote.as_bytes()).as_bytes() == &pin.quote_hash
-            {
-                return Ok(NoteSpanResolution::Mapped {
-                    start,
-                    end,
-                    claim: pin.claim,
-                    quote,
-                });
-            }
+            return Ok(NoteSpanResolution::Mapped {
+                start,
+                end,
+                claim: pin.claim,
+                quote,
+            });
         }
         Ok(NoteSpanResolution::Drifted {
             claim: pin.claim,
