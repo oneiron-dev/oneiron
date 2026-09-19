@@ -62,9 +62,6 @@ pub const DEEP_MAX_ROUNDS: usize = 2;
 /// Queries the engine will run per deep round, whatever the backend returns.
 pub const DEEP_QUERIES_PER_ROUND: usize = 4;
 
-/// One-hop graph expansion: the standard tier expands neighbors, not the
-/// whole reachable graph.
-
 /// Restart probability for the standard expansion, matching the landed
 /// scoped-walk entries (`code_memory`'s L2 pull uses the same value).
 const STANDARD_PPR_ALPHA: f32 = 0.15;

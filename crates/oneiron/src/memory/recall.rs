@@ -506,11 +506,10 @@ impl Memory<'_> {
                 let total = hits.len() as u64;
                 let mut items = Vec::new();
                 for hit in hits.into_iter().take(limit) {
-                    let mode = self
-                        .vault
-                        .indexed_revision(&hit.id)?
-                        .map(crate::vault::ReadMode::Pinned)
-                        .unwrap_or(crate::vault::ReadMode::Indexed);
+                    let mode = self.vault.indexed_revision(&hit.id)?.map_or(
+                        crate::vault::ReadMode::Indexed,
+                        crate::vault::ReadMode::Pinned,
+                    );
                     if let Some(item) = self.memory_item_for(&hit.id, Some(facet_id), mode)? {
                         items.push(item);
                     }

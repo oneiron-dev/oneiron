@@ -209,10 +209,9 @@ impl Vault {
         let Some(raw) = read_entity_revision_in_txn(self, &txn, id, ReadMode::Indexed)? else {
             return Ok(None);
         };
-        Ok(Some(
-            state(&self.store, &txn, id)?
-                .map(|value| value.indexed)
-                .unwrap_or_else(|| super::storage::reference(id, &raw)),
-        ))
+        Ok(Some(state(&self.store, &txn, id)?.map_or_else(
+            || super::storage::reference(id, &raw),
+            |value| value.indexed,
+        )))
     }
 }

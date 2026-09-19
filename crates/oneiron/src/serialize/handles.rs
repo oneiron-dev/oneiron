@@ -35,10 +35,7 @@ impl Handles {
             if entity.short_id.is_empty() {
                 continue;
             }
-            let name = names
-                .get(entity.id.as_bytes())
-                .map(String::as_str)
-                .unwrap_or("");
+            let name = names.get(entity.id.as_bytes()).map_or("", String::as_str);
             let handle = (entity.short_id.clone(), name.to_owned());
             aliases.insert(entity.id.to_hex(), handle.clone());
             if let Some(key) = entity

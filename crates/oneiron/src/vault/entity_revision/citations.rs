@@ -5,6 +5,7 @@ use super::{PinnedCitation, ReadMode, ResolvedCitation, RevisionRef};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, parse_short_id_value};
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
+use loro::ContainerTrait;
 use loro::cursor::{Cursor, Side};
 
 impl Vault {
@@ -206,13 +207,10 @@ fn resolve_reference(
 }
 
 fn cursor_quote(doc: &loro::LoroDoc, field: &str, start: &Cursor, end: &Cursor) -> Option<String> {
-    if doc.get_map("text_fields").get(field).is_none() {
-        return None;
-    }
+    doc.get_map("text_fields").get(field)?;
     let text = doc.get_text(format!("field:{field}"));
     // A hostile citation may carry a cursor for another field. The container
     // check binds the cursor span to the named text, not merely its offsets.
-    use loro::ContainerTrait;
     if start.container != text.id() || end.container != text.id() {
         return None;
     }

@@ -357,8 +357,7 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
         ReadMode::Live => unreachable!(),
         ReadMode::Indexed => current
             .as_ref()
-            .map(|s| s.indexed)
-            .unwrap_or_else(|| reference(id, &raw)),
+            .map_or_else(|| reference(id, &raw), |s| s.indexed),
         ReadMode::Pinned(revision) => revision,
     };
     if !current.as_ref().is_some_and(|value| value.has_doc) && reference(id, &raw) == target {

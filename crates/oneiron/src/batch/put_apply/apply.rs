@@ -486,19 +486,7 @@ pub(in crate::batch) fn apply_put(
     let mut optimizer_birth_marker = None;
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
-        if old_type == ENTITY_TYPE_SKILL {
-            let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
-            previous_skill_record = match crate::skill::decode_skill_record(prior_body) {
-                Ok(record) => Some(record),
-                Err(error)
-                    if error.kind() == ErrorKind::InvalidSkillBody
-                        && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
-                {
-                    None
-                }
-                Err(error) => return Err(error),
-            };
-        }
+        previous_skill_record = decode_previous_skill_record(old_type, &old_record)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.
@@ -765,4 +753,24 @@ pub(in crate::batch) fn apply_put(
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })
+}
+
+fn decode_previous_skill_record(
+    old_type: u8,
+    old_record: &[u8],
+) -> Result<Option<crate::skill::SkillRecord>> {
+    if old_type != ENTITY_TYPE_SKILL {
+        return Ok(None);
+    }
+    let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+    match crate::skill::decode_skill_record(prior_body) {
+        Ok(record) => Ok(Some(record)),
+        Err(error)
+            if error.kind() == ErrorKind::InvalidSkillBody
+                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }

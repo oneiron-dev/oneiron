@@ -103,16 +103,17 @@ impl Vault {
                     best = Some((similarity, item));
                 }
             }
-            let mut item = best
-                .map(|(_, item)| item)
-                .unwrap_or_else(|| FeedbackReviewItem {
+            let mut item = best.map_or_else(
+                || FeedbackReviewItem {
                     id,
                     category: bundle.category,
                     bundles: vec![],
                     received_at: now,
                     open: true,
                     centroid: vector.clone(),
-                });
+                },
+                |(_, item)| item,
+            );
             let n = item.bundles.len() as f32;
             item.centroid = item
                 .centroid
