@@ -49,6 +49,10 @@ fn scrub(key: &str, value: &mut Value) {
         "privatekey",
         "sshkey",
         "authorization",
+        "bearertoken",
+        "authtoken",
+        "apitoken",
+        "passphrase",
     ]
     .iter()
     .any(|needle| lower.contains(needle))

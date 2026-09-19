@@ -2669,6 +2669,10 @@ fn provider_read_formats_have_wire_envelopes_and_null_secrets_before_truncation(
             "privateKey",
             "ssh_key",
             "API-KEY",
+            "bearerToken",
+            "authToken",
+            "apiToken",
+            "passphrase",
         ] {
             fields.insert(key.into(), serde_json::json!("must-not-export"));
         }

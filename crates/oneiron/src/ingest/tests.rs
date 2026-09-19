@@ -831,6 +831,9 @@ fn provider_ingest_rejects_malformed_blocks_and_empty_system() {
             serde_json::json!({"type":"text"}),
             serde_json::json!({"text":42}),
             serde_json::json!({"unknown":"value"}),
+            serde_json::json!({"type":"bogus","text":"hello"}),
+            serde_json::json!({"type":"bogus","thinking":"hello"}),
+            serde_json::json!({"type":42,"text":"hello"}),
         ] {
             let doc = if source == "gemini" {
                 serde_json::json!({"contents":[{"role":"user","parts":[block]}]})
