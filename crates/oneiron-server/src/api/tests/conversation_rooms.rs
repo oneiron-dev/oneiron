@@ -163,3 +163,57 @@ async fn conversation_member_writes_require_scoped_actor_class() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(server.vault.members(room).unwrap(), vec![actor]);
 }
+
+#[tokio::test]
+async fn member_backed_create_preserves_timestamps_and_text_selection() {
+    let (_dir, server) = test_server();
+    let actor = server.vault.ensure_embedded_owner_actor().unwrap();
+    for (text, automatic, explicit) in [
+        (None, true, false),
+        (
+            Some(json!([{"field":"custom", "value":"explicitroom"}])),
+            false,
+            true,
+        ),
+        (Some(json!([])), false, false),
+    ] {
+        let mut request = json!({
+            "actor": actor,
+            "occurred_start": 100,
+            "occurred_end": 200,
+            "learned_at": 300,
+            "body": {"kind":"group", "member_ids":[actor], "title":"automaticroom", "topic":"contentroom"},
+        });
+        if let Some(text) = text {
+            request["text"] = text;
+        }
+        let (status, response) = route_json(
+            server.clone(),
+            json_request("POST", "/v1/core/conversations", request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{response}");
+        let id = oneiron::EntityId::from_hex(response["id"].as_str().unwrap()).unwrap();
+        let raw = server.vault.get_raw(&id).unwrap().unwrap();
+        assert_eq!(u64::from_be_bytes(raw[1..9].try_into().unwrap()), 100);
+        assert_eq!(u64::from_be_bytes(raw[9..17].try_into().unwrap()), 200);
+        assert_eq!(server.vault.get_learned_at(&id).unwrap(), 300);
+        assert!(
+            server
+                .vault
+                .entities_in_learned_range(300, 301)
+                .unwrap()
+                .contains(&id)
+        );
+        assert_eq!(server.vault.membership_ledger(id).unwrap()[0].at, 100);
+        assert_eq!(server.vault.members(id).unwrap(), vec![actor]);
+        for (query, expected) in [
+            ("automaticroom", automatic),
+            ("contentroom", automatic),
+            ("explicitroom", explicit),
+        ] {
+            let results = server.vault.query().search_text(query, 10).run().unwrap();
+            assert_eq!(results.iter().any(|hit| hit.id == id), expected, "{query}");
+        }
+    }
+}

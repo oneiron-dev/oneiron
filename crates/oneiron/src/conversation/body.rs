@@ -140,6 +140,27 @@ impl Vault {
         actor: WriteActor,
         at: u64,
     ) -> Result<()> {
+        self.create_conversation_with_text(
+            id,
+            body,
+            actor,
+            crate::TimeRange { start: at, end: at },
+            at,
+            &[],
+        )
+    }
+    /// Creates a room, membership ledger and text index in one transaction,
+    /// preserving the caller's occurrence interval and learned timestamp.
+    pub fn create_conversation_with_text(
+        &self,
+        id: EntityId,
+        body: &ConversationBody,
+        actor: WriteActor,
+        occurred: crate::TimeRange,
+        learned_at: u64,
+        text: &[(&str, &str)],
+    ) -> Result<()> {
+        let at = occurred.start;
         self.with_write_txn(|txn| {
             authorize(self, txn, actor)?;
             if self.store.entities.get(txn, id.as_bytes())?.is_some() {
@@ -161,15 +182,17 @@ impl Vault {
                     },
                 )?;
             }
-            self.batch_in()
-                .put(
-                    &id,
-                    ENTITY_TYPE_CONVERSATION,
-                    crate::TimeRange { start: at, end: at },
-                    at,
-                    &body.to_bytes()?,
-                )
-                .apply(txn)
+            let mut batch = self.batch_in().put(
+                &id,
+                ENTITY_TYPE_CONVERSATION,
+                occurred,
+                learned_at,
+                &body.to_bytes()?,
+            );
+            if !text.is_empty() {
+                batch = batch.text(&id, text);
+            }
+            batch.apply(txn)
         })
     }
     /// Filter the type-index page. The cursor is the last *scanned* id, not a

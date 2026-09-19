@@ -208,9 +208,21 @@ pub(crate) async fn create_core_conversation(
         let id = parse_optional_entity_id(req.id.as_deref(), "id")?;
         let timestamps =
             core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
+        let fields = super::core_text_fields(req.text.as_deref(), &req.body);
+        let fields: Vec<(&str, &str)> = fields
+            .iter()
+            .map(|(field, value)| (field.as_str(), value.as_str()))
+            .collect();
         server
             .vault
-            .create_conversation(id, &body, actor, timestamps.occurred.start)
+            .create_conversation_with_text(
+                id,
+                &body,
+                actor,
+                timestamps.occurred,
+                timestamps.learned_at,
+                &fields,
+            )
             .map_err(|e| core_engine_error("conversation create failed", e))?;
         let item = project_core_entity(&server.vault, &id, View::Full)?.0;
         return Ok(Json(CoreEntityWriteResponse {

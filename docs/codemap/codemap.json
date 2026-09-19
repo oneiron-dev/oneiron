@@ -8930,7 +8930,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -9006,7 +9006,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/conversation/tests.rs",
