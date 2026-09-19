@@ -11,6 +11,7 @@ mod execution;
 mod recovery;
 mod result_scrub;
 mod scope;
+pub mod tool_call;
 
 #[cfg(test)]
 mod tests;
