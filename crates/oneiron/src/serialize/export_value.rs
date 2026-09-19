@@ -49,6 +49,7 @@ pub enum ExportBody {
     MessagePack(ExportValue),
     Utf8(String),
     Pack(Box<super::ExportPackInstance>),
+    HubSource(Box<super::ExportHubSource>),
     Nulled,
 }
 
@@ -59,6 +60,17 @@ impl ExportBody {
                 Ok(value) => Self::Pack(Box::new(super::ExportPackInstance::from_envelope(value))),
                 Err(_) => Self::Nulled,
             };
+        }
+        if entity_type == crate::registry::ENTITY_TYPE_ASSET {
+            match crate::skill_hub::decode_source_carrier(bytes) {
+                Ok(Some(package)) => {
+                    return super::ExportHubSource::from_package(&package)
+                        .map(|source| Self::HubSource(Box::new(source)))
+                        .unwrap_or(Self::Nulled);
+                }
+                Err(_) => return Self::Nulled,
+                Ok(None) => {}
+            }
         }
         let mut cursor = Cursor::new(bytes);
         if let Ok(value) = rmpv::decode::read_value(&mut cursor)
@@ -86,6 +98,7 @@ impl ExportBody {
             }
             Self::Utf8(text) => Ok(text.as_bytes().to_vec()),
             Self::Pack(value) => value.envelope()?.to_bytes(),
+            Self::HubSource(value) => value.to_bytes(),
             Self::Nulled => Err(invalid(
                 "nulled opaque body needs its owning import adapter",
             )),
@@ -97,6 +110,12 @@ impl ExportBody {
     pub(crate) fn validate(&self, entity_type: u8) -> Result<()> {
         if matches!(self, Self::Nulled) {
             return Ok(());
+        }
+        if let Self::HubSource(value) = self {
+            if entity_type != crate::registry::ENTITY_TYPE_ASSET {
+                return Err(invalid("hub source attached to non-asset kind"));
+            }
+            return value.validate();
         }
         if let Self::Pack(value) = self {
             if crate::registry::zone_of(entity_type) != crate::registry::TypeByteZone::PackHandle {

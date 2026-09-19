@@ -47,3 +47,6 @@ pub(crate) use vault_bundles::populate_agent_bundles;
 
 mod pack_archive;
 pub use pack_archive::ExportPackInstance;
+
+mod hub_source_archive;
+pub use hub_source_archive::ExportHubSource;

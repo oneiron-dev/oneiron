@@ -83,7 +83,8 @@ impl WholeVaultDocument {
             if archive_only_reason(row).is_some() {
                 continue;
             }
-            let reason = if matches!(row.body, ExportBody::Nulled)
+            let reason = if matches!(&row.body,ExportBody::HubSource(source) if source.redacted())
+                || matches!(row.body, ExportBody::Nulled)
                 || matches!(&row.body, ExportBody::Pack(value) if matches!(value.payload, ExportBody::Nulled))
             {
                 Some(ImportRefusalReason::RedactedBody)

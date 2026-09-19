@@ -61,6 +61,7 @@ pub(in crate::batch) fn apply_put(
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
+    crate::skill_hub::validate_hub_source_carrier_put(store, wtxn, &id, entity_type, data)?;
     store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
     store.guard_pack_instance_identity_in_txn(wtxn, &id, entity_type, data)?;
     // Publication admission reuses the write-door decode and must precede

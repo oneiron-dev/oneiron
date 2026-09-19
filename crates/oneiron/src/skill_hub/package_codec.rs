@@ -13,6 +13,13 @@ pub(super) fn invalid(message: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidSkillBody(message))
 }
 const MAGIC: &[u8] = b"oneiron.hub-package.v1\0";
+
+/// Envelope pre-check for the immutable carrier guard. A `false` answer means
+/// the body is an ordinary asset, never a source candidate, so it must map to
+/// `None` at the guard instead of a decode error.
+pub(super) fn is_hub_package_envelope(bytes: &[u8]) -> bool {
+    bytes.starts_with(MAGIC)
+}
 const MAX_ENCODED: usize = MAX_HUB_PACKAGE_TOTAL_BYTES + 8 * 1024 * 1024;
 const MAX_RECORD: usize = 1024 * 1024;
 
@@ -214,17 +221,69 @@ impl Vault {
         package: &HubPackage,
     ) -> Result<()> {
         let record = self.read_skill_record_in_txn(txn, entity)?;
-        if record.content_hash != Some(package.content_hash()?)
+        let hash = package.content_hash()?;
+        if record.content_hash != Some(hash)
             || record.skill_id != package.record.skill_id
             || record.version != package.record.version
             || record.desc != package.record.desc
         {
             return Err(invalid("stored package differs from its native skill"));
         }
+        let encoded = encode_hub_package(package)?;
+        // Same-transaction ordinary ASSET carrier: the replicated custody row
+        // for this exact tree hash. The stamps are the skill's own header so
+        // the carrier reads as contemporaneous evidence, not new activity.
+        let raw = self
+            .store
+            .entities
+            .get(txn, entity.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("skill row header"))?;
+        let carrier = super::source_carrier::source_carrier_id(&hash)?;
+        self.batch_in()
+            .put(
+                &carrier,
+                crate::registry::ENTITY_TYPE_ASSET,
+                crate::temporal::TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &encode_hub_package(&super::source_carrier::canonical_source_package(package)?)?,
+            )
+            .apply(txn)?;
         self.store
             .vault_meta
-            .put(txn, &package_key(entity), &encode_hub_package(package)?)?;
+            .put(txn, &package_key(entity), &encoded)?;
         Ok(())
+    }
+    /// Recovers the exact package from its replicated carrier when the local
+    /// sidecar is absent after sync. Exact tree hash plus skill id, version
+    /// and description must match the stored record; anything else fails
+    /// closed instead of presenting near or foreign bytes as this skill.
+    pub(crate) fn hub_package_from_carrier_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        record: &crate::skill::SkillRecord,
+    ) -> Result<Option<HubPackage>> {
+        let Some(hash) = record.content_hash else {
+            return Ok(None);
+        };
+        let carrier = super::source_carrier::source_carrier_id(&hash)?;
+        let Some(package) =
+            super::source_carrier::read_source_carrier_in_txn(&self.store, txn, &carrier)?
+        else {
+            return Ok(None);
+        };
+        if package.content_hash()? != hash
+            || package.record.skill_id != record.skill_id
+            || package.record.version != record.version
+            || package.record.desc != record.desc
+        {
+            return Err(invalid("replicated source differs from its native skill"));
+        }
+        Ok(Some(package))
     }
     /// Instruction bytes for an admitted runtime load, never a standalone export door.
     pub(crate) fn runtime_skill_package_in_txn(
@@ -233,10 +292,10 @@ impl Vault {
         entity: &EntityId,
         record: &crate::skill::SkillRecord,
     ) -> Result<Option<HubPackage>> {
-        let Some(raw) = self.store.vault_meta.get(txn, &package_key(entity))? else {
-            return Ok(None);
+        let package = match self.store.vault_meta.get(txn, &package_key(entity))? {
+            Some(raw) => decode_hub_package(&raw)?,
+            None => return self.hub_package_from_carrier_in_txn(txn, record),
         };
-        let package = decode_hub_package(&raw)?;
         if record.content_hash != Some(package.content_hash()?)
             || record.skill_id != package.record.skill_id
             || record.version != package.record.version
@@ -252,7 +311,7 @@ impl Vault {
         entity: &EntityId,
         record: &crate::skill::SkillRecord,
     ) -> Result<String> {
-        let Some(raw) = self.store.vault_meta.get(txn, &package_key(entity))? else {
+        let Some(package) = self.runtime_skill_package_in_txn(txn, entity, record)? else {
             if record.source == crate::claim::ClaimSource::Imported || record.forked_from.is_some()
             {
                 return Err(invalid(
@@ -261,7 +320,6 @@ impl Vault {
             }
             return Ok(record.desc.clone());
         };
-        let package = decode_hub_package(&raw)?;
         if record.content_hash != Some(package.content_hash()?) {
             return Err(invalid("baseline package hash drift"));
         }
@@ -274,28 +332,34 @@ impl Vault {
             .map_err(|_| invalid("baseline instructions are not UTF-8"))
     }
     /// Internal snapshot access only. Callers must apply mandatory export nulling.
+    /// The local sidecar answers first; only when it is absent does the
+    /// replicated carrier answer, on exact hash plus record-metadata match.
     pub(crate) fn export_hub_package_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         entity: &EntityId,
     ) -> Result<Option<HubPackage>> {
-        self.store
-            .vault_meta
-            .get(txn, &package_key(entity))?
-            .map(|raw| decode_hub_package(&raw))
-            .transpose()
+        if let Some(raw) = self.store.vault_meta.get(txn, &package_key(entity))? {
+            return decode_hub_package(&raw).map(Some);
+        }
+        let Some(raw) = self.store.entities.get(txn, entity.as_bytes())? else {
+            return Ok(None);
+        };
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("skill row header"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_SKILL {
+            return Ok(None);
+        }
+        let record = decode_skill_record(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+        self.hub_package_from_carrier_in_txn(txn, &record)
     }
     pub(super) fn stored_hub_package_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         entity: &EntityId,
     ) -> Result<HubPackage> {
-        let raw = self
-            .store
-            .vault_meta
-            .get(txn, &package_key(entity))?
-            .ok_or_else(|| invalid("skill has no stored package"))?;
-        decode_hub_package(&raw)
+        self.export_hub_package_in_txn(txn, entity)?
+            .ok_or_else(|| invalid("skill has no stored package"))
     }
 }
 

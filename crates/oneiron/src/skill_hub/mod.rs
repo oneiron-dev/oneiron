@@ -123,3 +123,8 @@ pub(crate) mod test_support;
 mod source_birth_tests;
 
 pub mod pack_catalog;
+
+mod source_carrier;
+pub(crate) use source_carrier::{decode_source_carrier, validate_hub_source_carrier_put};
+#[cfg(test)]
+mod source_replication_tests;

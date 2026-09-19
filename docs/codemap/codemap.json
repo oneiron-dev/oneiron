@@ -20828,6 +20828,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExportHubSource"
+     ],
+     "path": "src/serialize/hub_source_archive.rs",
+     "purpose": "Credential-safe view of exact replicated skill source carriers",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -20865,7 +20878,7 @@
      "purpose": "Context-pack serialization",
      "surface": {
       "crate-vis": 5,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -21726,7 +21739,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 15
      }
@@ -21897,7 +21910,7 @@
      "path": "src/skill_hub/package_codec.rs",
      "purpose": "Bounded, typed package persistence",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 2
      }
     },
@@ -21977,6 +21990,24 @@
      "notable": [],
      "path": "src/skill_hub/source_birth_tests.rs",
      "purpose": "New births retain exact source and cannot acquire archive authority from a format tag",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/source_carrier.rs",
+     "purpose": "Content-addressed HubPackage custody over ordinary replicated ASSET rows",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/source_replication_tests.rs",
+     "purpose": "Replicated source custody: ordinary ASSET carriers replay in any order, export recovers the exact package…",
      "surface": {}
     },
     {
@@ -27318,7 +27349,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27374,7 +27405,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 39,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27579,8 +27610,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1585,
-   "test_files": 569
+   "source_files": 1587,
+   "test_files": 570
   },
   "oneiron-bench": {
    "files": [
