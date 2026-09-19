@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AgentSkillReference {
-    entity_id: String,
+    pub(super) entity_id: String,
     skill_id: String,
     version: String,
     content_hash: String,
