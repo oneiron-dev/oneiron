@@ -1071,7 +1071,16 @@ fn gate_receipt_keeps_original_predicate_after_claim_rewrite() -> Result<()> {
     );
     let mut rewritten = vault.get_claim(&id)?.expect("stored proposed claim");
     rewritten.predicate = "profile.alias".into();
-    vault.put_claim(&id, &rewritten, test_time(20), 20)?;
+    vault
+        .batch()
+        .claim_candidate(
+            &id,
+            claim_candidate_from_body(&rewritten),
+            &envelope,
+            test_time(20),
+            20,
+        )
+        .commit()?;
     assert_eq!(vault.get_claim(&id)?.unwrap().predicate, "profile.alias");
     let after = vault.receipts(query)?;
     let historical = after
