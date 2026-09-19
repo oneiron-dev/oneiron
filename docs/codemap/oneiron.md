@@ -190,7 +190,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/deindex.rs` | src | s | 5 crate-vis | — | — |
 | `src/batch/edge_apply.rs` | src | s | 8 crate-vis | — | — |
 | `src/batch/export/export_authority.rs` | src | m | 2 struct · 2 enum · 3 fn · 3 const · 6 crate-vis | ExportAuthorityManifest, VaultImportClassification, VaultImportMismatch, VaultImportReceipt | Export authority digests, import classification, and label validation |
-| `src/batch/export/export_companion.rs` | src | s | 2 struct · 9 fn · 1 const | CompanionExportLayer, CompanionExportRecord | Companion-layer export filtering |
+| `src/batch/export/export_companion.rs` | src | s | 2 struct · 10 fn · 1 const | CompanionExportLayer, CompanionExportRecord | Companion-layer export filtering |
 | `src/batch/export/export_egress.rs` | src | s | 13 fn | — | Whole-vault manifest egress doors and the Vault export surface |
 | `src/batch/export/export_manifest.rs` | src | m | 6 struct · 35 fn · 2 const · 1 crate-vis | ExportDataShapeManifest, ExportDbManifestEntry, ExportManifest, ExportManifestArtifact, ExportSecretsNulledManifest, ExportSerializerManifest | Whole-vault export manifest artifact types and stanza impls |
 | `src/batch/export/foreign_stage/export_foreign_receipt.rs` | src | m | 3 struct · 3 enum · 3 fn · 4 const · 7 crate-vis | ForeignVaultImportSource, StagedVaultImport, VaultImportConfirmation, VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus | Sync-gated import receipt codec, key consts, and status types |
@@ -431,13 +431,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity/actors.rs` | src | s | 2 struct · 2 fn | ChannelActorRegistration, RegisteredChannelActor | Channels are credential-bearing scoped actors, not identities borrowed from an agent |
 | `src/channel_identity/address.rs` | src | m | 4 struct · 16 fn | AssignmentAddress, AssignmentKey, ChannelKey, MailboxAddr | Identity-bearing address VALUES, and the canonical assignment key |
 | `src/channel_identity/auth_mode.rs` | src | s | 1 enum · 1 fn | ChannelAuthMode | Credential mechanism labels |
-| `src/channel_identity/binding.rs` | src | s | 2 enum · 9 fn · 1 crate-vis | ChannelIdentityBinding, ChannelIdentityFulfillment | ChannelIdentity binding and fulfillment values with scope strings |
+| `src/channel_identity/binding.rs` | src | s | 2 enum · 9 fn · 2 crate-vis | ChannelIdentityBinding, ChannelIdentityFulfillment | ChannelIdentity binding and fulfillment values with scope strings |
 | `src/channel_identity/codec.rs` | src | m | 3 fn · 18 crate-vis | — | Canonical MessagePack body and claim-structure codec for ChannelIdentity |
 | `src/channel_identity/custody.rs` | src | m | 2 struct · 1 enum · 12 fn · 1 crate-vis | DelegatedCustodyProof, DelegatedGrant, DelegatedGrantScope | Delegated-grant custody: the grant handle, the txn-bound proof, and the one verification door |
 | `src/channel_identity/keys.rs` | src | s | 19 const · 17 crate-vis | — | Pinned ChannelIdentity schema versions, body key sets, claim predicates, and byte bounds |
 | `src/channel_identity/lifecycle.rs` | src | s | 1 enum · 5 fn | ChannelIdentityState | ChannelIdentity lifecycle states and transition edge tables |
 | `src/channel_identity/mod.rs` | src | s | 11 re-export · 2 crate-vis | — | ChannelIdentity record substrate (OF-347 CID-1) |
-| `src/channel_identity/record.rs` | src | m | 1 struct · 9 fn · 1 crate-vis | ChannelIdentity | Vault-resident ChannelIdentity record with validators, transitions, and claims |
+| `src/channel_identity/record.rs` | src | m | 1 struct · 9 fn · 2 crate-vis | ChannelIdentity | Vault-resident ChannelIdentity record with validators, transitions, and claims |
 | `src/channel_identity/shape.rs` | src | s | 2 enum · 5 fn | ChannelIdentityShape, SelfHeldShape | ChannelIdentity addressability shapes with wire serde |
 | `src/channel_identity/tests.rs` | test | m | — | — | — |
 | `src/channel_identity/tests/actors.rs` | test | s | — | — | Channel actor, scoped key and provider prior compose in one registration |
@@ -1409,7 +1409,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/persona_snapshot/compile.rs` | src | m | 1 fn · 3 crate-vis | — | Tier-A clamp, row build, fingerprint, and Vault compile pass |
 | `src/persona_snapshot/export.rs` | src | m | 3 fn | — | Owner-consented export, MemoryPack-lite and markdown renders, export-record persistence |
 | `src/persona_snapshot/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A) |
-| `src/persona_snapshot/tests.rs` | test | m | — | — | — |
+| `src/persona_snapshot/tests.rs` | test | L | — | — | — |
 | `src/persona_snapshot/types.rs` | src | m | 9 struct · 1 enum · 3 fn · 10 const · 22 crate-vis | PersonaSnapshotAgentTake, PersonaSnapshotArtifact, PersonaSnapshotCompile, PersonaSnapshotCompileOptions, PersonaSnapshotCompileStamp, PersonaSnapshotExportConsent, PersonaSnapshotExportRecord, PersonaSnapshotRow +2 | Snapshot/export row, consent, and artifact domain types with pinned key and schema consts |
 | `src/pipeline/authority.rs` | src | s | 5 crate-vis | — | Enforcement of gate-resolved retrieval authority |
 | `src/pipeline/authority_corpus_tests.rs` | test | s | 1 crate-vis | — | Current-main corpus channels and ONE-1388 authority must narrow together |

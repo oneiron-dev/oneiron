@@ -2149,7 +2149,7 @@
      "purpose": "Companion-layer export filtering",
      "surface": {
       "const": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -5196,7 +5196,7 @@
      "path": "src/channel_identity/binding.rs",
      "purpose": "ChannelIdentity binding and fulfillment values with scope strings",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 9
      }
@@ -5273,7 +5273,7 @@
      "path": "src/channel_identity/record.rs",
      "purpose": "Vault-resident ChannelIdentity record with validators, transitions, and claims",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9,
       "struct": 1
      }
@@ -17710,7 +17710,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/persona_snapshot/tests.rs",

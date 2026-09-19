@@ -3,6 +3,7 @@ use crate::authority::{
     AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
     AuthorityTier, DeviceAuthority, ROLE_OWNER, authority_transcript,
 };
+use crate::channel_identity::{ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::CompanionProvenance;
 use crate::edge::EdgeActorClass;
@@ -88,7 +89,7 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
 }
 
 #[test]
-fn companion_export_checks_channel_ceiling_and_lifecycle() -> Result<()> {
+fn companion_export_checks_channel_ceiling_scope_and_lifecycle() -> Result<()> {
     let neutral = CompanionScope::neutral();
     let personal = CompanionScope::personal(entity(0x61));
     let shared = CompanionScope::shared_vault(7);
@@ -161,8 +162,8 @@ fn companion_export_checks_channel_ceiling_and_lifecycle() -> Result<()> {
         },
     );
 
-    assert_eq!(layer.len(), 2);
-    assert_eq!(layer.personas().len(), 2);
+    assert_eq!(layer.len(), 1);
+    assert_eq!(layer.personas().len(), 1);
     assert!(layer.relationships().is_empty());
     assert_eq!(layer.personas()[0].record(), &included);
     assert_eq!(
@@ -174,13 +175,87 @@ fn companion_export_checks_channel_ceiling_and_lifecycle() -> Result<()> {
         layer
             .personas()
             .iter()
-            .any(|item| item.record() == &shared_public)
+            .all(|item| item.record() != &shared_public)
     );
     assert!(
         layer
             .personas()
             .iter()
             .all(|item| item.record() != &private)
+    );
+    // Even the highest sensitivity ceiling does not grant a destination.
+    let portable = companion_export_layer(&records, &expressions, &crate::federation::Scope::top());
+    assert_eq!(portable.len(), 2);
+    assert!(portable.relationships().is_empty());
+    assert!(
+        portable
+            .personas()
+            .iter()
+            .all(|item| item.record() != &shared_public)
+    );
+
+    let mut identity = ChannelIdentity::own_app_home(entity(0xB6), 1);
+    let mut channel = crate::federation::Scope::top();
+    // Actor-bound and other-vault identities cannot carry shared-vault rows.
+    for binding in [identity.binding, ChannelIdentityBinding::vault(8)] {
+        identity.binding = binding;
+        let layer = companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
+        assert_eq!(layer.len(), 2);
+        assert!(layer.relationships().is_empty());
+        assert!(
+            layer
+                .personas()
+                .iter()
+                .all(|item| item.record() != &shared_public)
+        );
+    }
+    identity.binding = ChannelIdentityBinding::vault(7);
+    channel.sensitivity =
+        crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Public);
+    let public = companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
+    assert_eq!(public.len(), 2);
+    assert!(
+        public
+            .personas()
+            .iter()
+            .any(|item| item.record() == &shared_public)
+    );
+    assert!(public.relationships().is_empty());
+    channel.sensitivity =
+        crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Private);
+    let private_layer =
+        companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
+    assert_eq!(private_layer.len(), 3);
+    assert_eq!(private_layer.relationships()[0].record(), &shared_private);
+    assert_eq!(
+        private_layer.relationships()[0].expression(),
+        Some(CompanionExpression::Unrestricted)
+    );
+    channel.sensitivity = crate::federation::SensitivityCeiling::Bottom;
+    assert!(
+        companion_export_layer_for_channel(&records, &expressions, &channel, &identity).is_empty()
+    );
+    channel = crate::federation::Scope::top();
+    for state in [
+        ChannelIdentityState::Requested,
+        ChannelIdentityState::Released,
+        ChannelIdentityState::Tombstone,
+    ] {
+        identity.state = state;
+        assert!(
+            companion_export_layer_for_channel(&records, &expressions, &channel, &identity)
+                .is_empty()
+        );
+    }
+    identity.state = ChannelIdentityState::Active;
+    identity.shape = crate::channel_identity::ChannelIdentityShape::DelegatedGrant;
+    assert!(
+        companion_export_layer_for_channel(&records, &expressions, &channel, &identity).is_empty()
+    );
+    identity.shape = crate::channel_identity::ChannelIdentityShape::DedicatedHandle;
+    identity.binding = ChannelIdentityBinding::vault(0);
+    assert!(
+        companion_export_layer_for_channel(&records, &expressions, &channel, &identity).is_empty()
     );
     Ok(())
 }

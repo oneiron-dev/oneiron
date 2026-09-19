@@ -239,6 +239,18 @@ impl ChannelIdentity {
         !self.is_delegated() && matches!(self.state, ChannelIdentityState::Active)
     }
 
+    /// Shared-vault content stays on a live sending identity bound to that exact
+    /// vault. A matching sensitivity ceiling alone never supplies this binding.
+    pub(crate) fn permits_companion_export_scope(
+        &self,
+        scope: &crate::companion::CompanionScope,
+    ) -> bool {
+        if !self.may_send() || self.validate().is_err() {
+            return false;
+        }
+        self.binding.permits_companion_scope(scope)
+    }
+
     /// Validates CID-1 record invariants.
     pub fn validate(&self) -> Result<()> {
         if self.is_delegated() && self.auth_mode != ChannelAuthMode::OAuth {

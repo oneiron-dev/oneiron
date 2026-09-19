@@ -1,8 +1,9 @@
 //! Companion-layer export filtering.
+use crate::channel_identity::ChannelIdentity;
 use crate::claim::ClaimLifecycleStatus;
 use crate::companion::{
     CompanionExpression, CompanionExpressionRegister, CompanionRecord, CompanionRecordKey,
-    CompanionRecordKind, CompanionRegister,
+    CompanionRecordKind, CompanionRegister, CompanionScope,
 };
 
 pub const COMPANION_EXPORT_LAYER_VERSION: u16 = 1;
@@ -21,16 +22,38 @@ pub struct CompanionExportRecord {
     expression: Option<CompanionExpression>,
 }
 
+/// Portable export without a destination identity excludes shared-vault content.
 pub fn companion_export_layer(
     records: &CompanionRegister,
     expressions: &CompanionExpressionRegister,
     channel: &crate::federation::Scope,
 ) -> CompanionExportLayer {
+    export_layer(records, expressions, channel, None)
+}
+
+/// Filters an export for a channel identity's vault binding and sensitivity ceiling.
+/// This is a content filter, not an outbound authorization or effector-gate bypass.
+/// Invalid, inactive, and read-only identities yield an empty layer.
+pub fn companion_export_layer_for_channel(
+    records: &CompanionRegister,
+    expressions: &CompanionExpressionRegister,
+    channel: &crate::federation::Scope,
+    identity: &ChannelIdentity,
+) -> CompanionExportLayer {
+    export_layer(records, expressions, channel, Some(identity))
+}
+
+fn export_layer(
+    records: &CompanionRegister,
+    expressions: &CompanionExpressionRegister,
+    channel: &crate::federation::Scope,
+    identity: Option<&ChannelIdentity>,
+) -> CompanionExportLayer {
     let mut personas = Vec::new();
     let mut relationships = Vec::new();
 
     for (key, record) in records.iter() {
-        if !companion_record_exportable(record, channel.sensitivity) {
+        if !companion_record_exportable(record, channel.sensitivity, identity) {
             continue;
         }
 
@@ -56,8 +79,14 @@ pub fn companion_export_layer(
 fn companion_record_exportable(
     record: &CompanionRecord,
     ceiling: crate::federation::SensitivityCeiling,
+    identity: Option<&ChannelIdentity>,
 ) -> bool {
-    record.lifecycle == ClaimLifecycleStatus::Active && ceiling.permits(record.sensitivity)
+    record.lifecycle == ClaimLifecycleStatus::Active
+        && ceiling.permits(record.sensitivity)
+        && match identity {
+            Some(identity) => identity.permits_companion_export_scope(&record.scope),
+            None => !matches!(record.scope, CompanionScope::SharedVault { .. }),
+        }
 }
 
 impl CompanionExportLayer {

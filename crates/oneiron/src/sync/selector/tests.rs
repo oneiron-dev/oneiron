@@ -1302,14 +1302,12 @@ fn companion_register_api_selector_suppresses_local_only_records() {
         CompanionScope::shared_vault(7),
         crate::federation::Sensitivity::Private,
     );
-    // Shared-vault origin no longer gates sync export (ONE SCOPE R7+R16):
-    // only `sensitivity <= Sensitive` does. The other-vault case stays
-    // Restricted so the negative (withheld) is preserved fail-closed on the
-    // sensitivity door rather than silently becoming a positive.
+    // Same sensitivity as the admitted shared row: only the destination vault
+    // binding can distinguish these records, never the sensitivity ceiling.
     let other_body = companion_record_body_in_scope(
         other_persona,
         CompanionScope::shared_vault(8),
-        crate::federation::Sensitivity::Restricted,
+        crate::federation::Sensitivity::Private,
     );
     let retired_body = companion_record_body_in_scope_with_lifecycle(
         retired_persona,
@@ -1372,9 +1370,8 @@ fn companion_register_api_selector_suppresses_local_only_records() {
 
     // Unified Bottom: an empty facet vector requests NOTHING (the filter is
     // active with nothing named), so all five FACET rows must be selected for
-    // the sensitivity door — not the facet door — to decide. The two
-    // Restricted rows are still withheld by `companion_register_passes_selector`
-    // (`sensitivity <= Sensitive` only).
+    // the sensitivity and destination doors — not the facet door — to decide.
+    // Restricted content and content bound to another vault stay withheld.
     let selector = SyncSelector::new(
         grant_id,
         member,

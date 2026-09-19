@@ -592,9 +592,11 @@ fn companion_register_passes_selector(blob: &[u8], grant_scope: FederationGrantS
     ) {
         return false;
     }
-    let _ = grant_scope;
-    crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Sensitive)
-        .permits(record.sensitivity)
+    let FederationGrantScope::Vault { vault_id } = grant_scope;
+    crate::channel_identity::ChannelIdentityBinding::vault(vault_id)
+        .permits_companion_scope(&record.scope)
+        && crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Sensitive)
+            .permits(record.sensitivity)
 }
 
 fn world_passes(entity_type: u8, body: &[u8], world: SyncSelectorWorld) -> bool {
