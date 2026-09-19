@@ -47,6 +47,7 @@ mod readonly_fold;
 mod recovery_ceremony;
 mod slip;
 mod slip_pairing;
+mod slip_replay;
 mod slip_state;
 mod slip_vault;
 mod tier_floor;

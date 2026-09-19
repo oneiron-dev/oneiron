@@ -79,7 +79,9 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
     let (dir, vault) = open_vault();
     let actor = own_agent(&vault);
     let human = owner(&vault);
-    let input = plan(&vault, 26);
+    let mut input = plan(&vault, 26);
+    let approved_at = unix_seconds_now() - 120;
+    input.now = Some(approved_at);
     let facade = vault.memory(actor, EdgeActorClass::Agent);
     let paused = facade.fan_out_consults(&input).unwrap();
     let mut wrong = paused.meter.plan_digest;
@@ -141,6 +143,11 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
         )
         .expect("authenticated resume");
     assert_eq!(resumed.task_refs.len(), 26);
+    for task in &resumed.task_refs {
+        let body = task_verb_body(&vault, *task).unwrap().unwrap();
+        assert_eq!(body.created_at, approved_at);
+        assert_eq!(body.ttl.unwrap().deadline_at, input.deadline_at);
+    }
     assert!(resumed.paused.is_none());
     let repeated = facade
         .resume_fan_out_consults(
@@ -394,4 +401,53 @@ fn fanout_tunable_threshold_auto_history_and_human_authentication() {
         )
         .unwrap();
     assert_eq!(facade.fan_out_consults(&input).unwrap().task_refs.len(), 2);
+}
+
+#[test]
+fn fanout_corrupt_standing_policy_refuses_even_below_threshold() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let human = owner(&vault);
+    let input = plan(&vault, 1);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    facade
+        .set_consult_fanout_policy(
+            &human,
+            &ConsultFanOutPolicy {
+                approval_threshold: 0,
+                ..ConsultFanOutPolicy::default()
+            },
+        )
+        .unwrap();
+    let paused = facade.fan_out_consults(&input).unwrap();
+    facade
+        .resume_fan_out_consults(
+            paused.correlation_ref,
+            paused.meter.plan_digest,
+            ConsultFanOutChoice::ApproveAndRemember,
+            &human,
+        )
+        .unwrap();
+    facade
+        .set_consult_fanout_policy(&human, &ConsultFanOutPolicy::default())
+        .unwrap();
+    vault
+        .with_write_txn(|txn| {
+            let key = vault
+                .store
+                .vault_meta
+                .prefix_iter(txn, b"edit_distance/escalation_policy/v1\0")?
+                .next()
+                .expect("remembered policy")?
+                .0
+                .to_vec();
+            vault.store.vault_meta.put(txn, &key, b"corrupt policy")?;
+            Ok(())
+        })
+        .unwrap();
+    let error = facade
+        .fan_out_consults(&input)
+        .expect_err("corruption is not absence");
+    assert_eq!(error.code, crate::memory::MEMORY_CODE_INTERNAL);
+    assert_eq!(task_entity_census(&vault), 1);
 }

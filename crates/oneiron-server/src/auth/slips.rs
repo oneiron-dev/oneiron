@@ -100,7 +100,7 @@ impl CoreAuth {
             .authenticate_capability_slip(
                 &issuer,
                 &slip,
-                &proof.challenge()?,
+                proof.timestamp,
                 &proof.signature()?,
                 proof.nonce.as_bytes(),
             )

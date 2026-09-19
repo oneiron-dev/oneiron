@@ -25,7 +25,7 @@ pub(super) struct FrozenInput {
     pub(super) assignees: Vec<String>,
     pub(super) deadline_at: u64,
     label: Option<String>,
-    now: u64,
+    pub(super) now: u64,
 }
 
 impl FrozenInput {
@@ -46,7 +46,7 @@ impl FrozenInput {
         }
     }
 
-    pub(super) fn thaw(&self, vault: &Vault, now: u64) -> MemoryResult<ConsultFanOutSpec> {
+    pub(super) fn thaw(&self, vault: &Vault) -> MemoryResult<ConsultFanOutSpec> {
         Ok(ConsultFanOutSpec {
             question_ref: ConsultPayloadRef::parse(vault, &self.question)?,
             context_refs: self
@@ -61,7 +61,7 @@ impl FrozenInput {
                 .collect::<Result<Vec<_>>>()?,
             deadline_at: self.deadline_at,
             label: self.label.clone(),
-            now: Some(now),
+            now: Some(self.now),
         })
     }
 

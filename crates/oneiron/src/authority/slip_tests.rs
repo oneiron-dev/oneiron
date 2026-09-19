@@ -23,14 +23,15 @@ fn verify(
 }
 #[test]
 fn bootstrap_commits_genesis_and_slip_mint_and_reuses_one_root() {
-    let (_dir, vault, issuer, root) = fixture();
+    let (dir, vault, issuer, root) = fixture();
     let fold = vault.authority_fold().unwrap();
     assert!(verify(&vault, &issuer, &root).unwrap().allows_verb("read"));
-    assert_eq!(fold.valid_entries.len(), 2);
-    assert_eq!(fold.slips.mints.len(), 1);
     assert!(!fold.genesis_fragile);
     assert_eq!(vault.ensure_host_root_slip(&issuer).unwrap(), root);
-    assert_eq!(vault.authority_fold().unwrap().valid_entries.len(), 2);
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    assert_eq!(vault.ensure_host_root_slip(&issuer).unwrap(), root);
+    assert!(verify(&vault, &issuer, &root).unwrap().allows_verb("read"));
 }
 #[test]
 fn v2_roundtrip_tamper_and_missing_binding_deny() {
@@ -106,7 +107,6 @@ fn log_mint_requires_parent_narrowing_and_revoke_kills_subtree() {
     wide.parent_id = Some(child.claims.slip_id);
     wide.scope = Scope::top();
     assert!(vault.mint_capability_slip(&issuer, wide).is_err());
-    assert_eq!(vault.authority_fold().unwrap().slips.mints.len(), 2);
     vault
         .revoke_capability_slip(&issuer, root.claims.slip_id)
         .unwrap();
@@ -124,26 +124,27 @@ fn log_single_use_burn_is_atomic_and_survives_fresh_decode() {
     claims.expires_at = claims.issued_at + 60;
     claims.ttl_secs = 60;
     let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
-    let proof = issuer.binding_proof(&slip, b"one-shot").unwrap();
+    let nonce = b"11111111111111111111111111111111";
+    let timestamp = root.claims.issued_at;
+    let challenge =
+        super::super::slip_replay::request_challenge(timestamp, nonce, timestamp).unwrap();
+    let proof = issuer.binding_proof(&slip, &challenge).unwrap();
     assert!(
         vault
-            .authenticate_capability_slip(&issuer, &slip, b"one-shot", &proof, &[1; 16])
+            .authenticate_capability_slip(&issuer, &slip, timestamp, &proof, nonce)
             .is_ok()
     );
     let decoded = CapabilitySlip::from_token(&slip.to_token().unwrap()).unwrap();
+    let retry_nonce = b"22222222222222222222222222222222";
+    let retry_challenge =
+        super::super::slip_replay::request_challenge(timestamp, retry_nonce, timestamp).unwrap();
+    let retry_proof = issuer.binding_proof(&decoded, &retry_challenge).unwrap();
     assert!(
         vault
-            .authenticate_capability_slip(&issuer, &decoded, b"one-shot", &proof, &[2; 16])
+            .authenticate_capability_slip(&issuer, &decoded, timestamp, &retry_proof, retry_nonce)
             .is_err()
     );
-    assert!(
-        vault
-            .authority_fold()
-            .unwrap()
-            .slips
-            .consumed
-            .contains(&slip.claims.slip_id)
-    );
+    assert!(verify(&vault, &issuer, &decoded).is_err());
 }
 #[test]
 fn pairing_link_mints_once_and_requires_connection_private_key() {
@@ -186,7 +187,6 @@ fn pairing_link_mints_once_and_requires_connection_private_key() {
             )
             .is_err()
     );
-    assert_eq!(vault.authority_fold().unwrap().slips.mints.len(), 2);
 }
 #[test]
 fn one_1191_root_rotation_residue_cannot_mint_or_authorize() {
@@ -252,9 +252,13 @@ fn consuming_child_spends_single_use_ancestor_and_siblings() {
     let first = vault.mint_capability_slip(&issuer, child.clone()).unwrap();
     child.slip_id = [42; 32];
     let sibling = vault.mint_capability_slip(&issuer, child).unwrap();
-    let proof = issuer.binding_proof(&first, b"consume-child").unwrap();
+    let nonce = b"77777777777777777777777777777777";
+    let timestamp = first.claims.issued_at;
+    let challenge =
+        super::super::slip_replay::request_challenge(timestamp, nonce, timestamp).unwrap();
+    let proof = issuer.binding_proof(&first, &challenge).unwrap();
     vault
-        .authenticate_capability_slip(&issuer, &first, b"consume-child", &proof, &[7; 16])
+        .authenticate_capability_slip(&issuer, &first, timestamp, &proof, nonce)
         .unwrap();
     assert!(verify(&vault, &issuer, &parent).is_err());
     assert!(verify(&vault, &issuer, &sibling).is_err());
@@ -324,7 +328,8 @@ fn pending_device_enrollment_cannot_delay_a_slip_withdrawal() {
     vault
         .put_authority_log_entry(&enroll, at, at.start)
         .unwrap();
-    assert_eq!(vault.authority_fold().unwrap().pending_widens.len(), 1);
+    assert!(vault.ensure_host_root_slip(&device).is_err());
+    assert!(verify(&vault, &issuer, &root).is_ok());
     vault
         .revoke_capability_slip(&issuer, root.claims.slip_id)
         .unwrap();
@@ -435,4 +440,52 @@ fn named_record_meets_and_empty_channel_meets_never_restore_generic_reads() {
                 .allows_verb("read")
         );
     }
+}
+
+#[test]
+fn relay_refuses_host_root_bootstrap_without_writing_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = VaultConfig::default();
+    config.privacy.posture = crate::HostingPrivacyPosture::Relay;
+    let vault = Vault::open(dir.path(), config).unwrap();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    assert!(vault.ensure_host_root_slip(&issuer).is_err());
+    assert!(vault.verified_host_root_slip(&issuer).is_err());
+    assert!(vault.authority_fold().unwrap().vault_id.is_none());
+}
+
+#[test]
+fn request_timestamp_and_nonce_are_signed_and_replay_is_refused() {
+    let (_dir, vault, issuer, root) = fixture();
+    let nonce = b"33333333333333333333333333333333";
+    let timestamp = root.claims.issued_at;
+    let challenge =
+        super::super::slip_replay::request_challenge(timestamp, nonce, timestamp).unwrap();
+    let proof = issuer.binding_proof(&root, &challenge).unwrap();
+    assert!(
+        vault
+            .authenticate_capability_slip(&issuer, &root, timestamp + 1, &proof, nonce)
+            .is_err()
+    );
+    assert!(
+        vault
+            .authenticate_capability_slip(
+                &issuer,
+                &root,
+                timestamp,
+                &proof,
+                b"44444444444444444444444444444444"
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .authenticate_capability_slip(&issuer, &root, timestamp, &proof, nonce)
+            .is_ok()
+    );
+    assert!(
+        vault
+            .authenticate_capability_slip(&issuer, &root, timestamp, &proof, nonce)
+            .is_err()
+    );
 }

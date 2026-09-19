@@ -1,6 +1,6 @@
 //! Owner-only setup and the Console's closed organization action list.
 use crate::{
-    auth::{CoreAuth, CoreScope, require_owner_auth},
+    auth::{CoreAuth, CoreScope},
     error::{ApiError, EnvelopedApiError},
     server::SyncServer,
 };
@@ -38,7 +38,7 @@ pub(super) async fn configure(
     headers: HeaderMap,
     Json(policy): Json<OrgAdminPolicy>,
 ) -> Result<Json<serde_json::Value>, EnvelopedApiError> {
-    require_owner_auth(&headers, &server.config, server.vault().as_ref())?;
+    super::check_api_auth(&headers, &server)?;
     if policy.org_ref() != id(&org)? {
         return Err(ApiError::bad_request("setup organization mismatch", Some("org_ref")).into());
     }

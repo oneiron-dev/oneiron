@@ -151,9 +151,10 @@ impl Memory<'_> {
                     // This old primitive also offers an outbound verb intent.
                     // It has no count cap and MUST NOT widen the remembered cap.
                     drop(resume.grant_mint_intent);
-                    let input = run.input.thaw(self.vault(), now)?;
+                    let input = run.input.thaw(self.vault())?;
+                    let created_at = run.input.now;
                     let entries = self.validate_fanout(&input, correlation, now)?;
-                    self.mint_fanout_in(txn, &entries, &input, &mut run, now, now)?;
+                    self.mint_fanout_in(txn, &entries, &input, &mut run, created_at, now)?;
                 }
                 save_run(self.vault(), txn, &run)?;
                 run.receipt()

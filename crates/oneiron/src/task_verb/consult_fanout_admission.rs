@@ -99,7 +99,7 @@ impl Memory<'_> {
         };
         // Classifier IO never holds the writer. A concurrent standing-policy or
         // knob change invalidates the cached answer before minting.
-        let standing = standing_policy_for(self.vault(), &scope, EscalationTrigger::Budget).ok();
+        let standing = standing_policy_for(self.vault(), &scope, EscalationTrigger::Budget)?;
         let auto = LearningFanoutAutoDecider::new(
             self.vault(),
             FanoutAskContext {
@@ -124,8 +124,7 @@ impl Memory<'_> {
         self.with_verified_actor_write_txn(|txn| {
             self.require_fanout_ceiling(txn)?;
             if policy_in(self.vault(), txn)? != policy
-                || standing_policy_for(self.vault(), &scope, EscalationTrigger::Budget).ok()
-                    != standing
+                || standing_policy_for(self.vault(), &scope, EscalationTrigger::Budget)? != standing
             {
                 return Err(consult_refusal(
                     MEMORY_CODE_INVALID_STATE,

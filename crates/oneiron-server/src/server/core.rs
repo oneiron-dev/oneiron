@@ -111,7 +111,9 @@ impl SyncServer {
         // An empty configured secret mints nothing either: it carries no key
         // material, and every upgrade bearing it (or nothing) still 401s at
         // the auth door, so booting rootless here is fail-closed, not open.
-        if let Some(secret) = config.auth_secret.as_deref().filter(|s| !s.is_empty()) {
+        if vault.privacy_posture() != oneiron::HostingPrivacyPosture::Relay
+            && let Some(secret) = config.auth_secret.as_deref().filter(|s| !s.is_empty())
+        {
             let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
             vault.ensure_host_root_slip(&issuer)?;
         }

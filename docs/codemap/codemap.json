@@ -1541,6 +1541,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip_replay.rs",
+     "purpose": "Bounded, timestamp-bound replay windows for authenticated slip requests",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/slip_replay/tests.rs",
+     "purpose": "Replay-window boundaries, persistence, and fail-closed capacity",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "FoldedSlip",
       "SlipAuthorityState"
@@ -25415,7 +25433,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 58,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26586,8 +26604,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1521,
-   "test_files": 548
+   "source_files": 1522,
+   "test_files": 549
   },
   "oneiron-bench": {
    "files": [
@@ -30309,7 +30327,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/slips.rs",

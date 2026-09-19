@@ -23,16 +23,14 @@ pub(super) async fn create_link(
     Json(request): Json<CreateLink>,
 ) -> Result<Json<oneiron::authority::PairingLink>, ApiError> {
     super::check_api_auth(&headers, &server)?;
-    let issuer = issuer(&server)?;
-    let link = server
-        .vault()
-        .issue_pairing_link_for_principal(
-            &issuer,
+    let link = with_issuer(&server, |issuer| {
+        server.vault().issue_pairing_link_for_principal(
+            issuer,
             request.scope,
             request.lifetime_secs,
             request.principal,
         )
-        .map_err(|_| ApiError::unauthorized())?;
+    })?;
     Ok(Json(link))
 }
 #[derive(Deserialize)]
@@ -63,16 +61,15 @@ pub(super) async fn redeem(
     {
         return Err(ApiError::unauthorized());
     }
-    let slip = server
-        .vault()
-        .redeem_pairing_link(
-            &issuer(&server)?,
+    let slip = with_issuer(&server, |issuer| {
+        server.vault().redeem_pairing_link(
+            issuer,
             &request.ticket,
             &request.holder_ref,
             request.binding_key,
             &request.signature,
         )
-        .map_err(|_| ApiError::unauthorized())?;
+    })?;
     let token = slip.to_token().map_err(|_| ApiError::unauthorized())?;
     // The already redeemed/logged slip is the credential. MCP registration
     // only records its immutable adapter ceiling; it creates no authority.
@@ -124,13 +121,21 @@ async fn register_paired_mcp(
         .map_err(|_| ApiError::unauthorized())
 }
 
-fn issuer(server: &SyncServer) -> Result<HostSlipIssuer, ApiError> {
+fn with_issuer<T>(
+    server: &SyncServer,
+    operation: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
+) -> Result<T, ApiError> {
+    if let Some(issuer) = server.managed_issuer.as_ref() {
+        return operation(issuer).map_err(|_| ApiError::unauthorized());
+    }
     let secret = server
         .config
         .auth_secret
         .as_deref()
         .ok_or_else(ApiError::unauthorized)?;
-    HostSlipIssuer::from_secret(secret.as_bytes()).map_err(|_| ApiError::unauthorized())
+    let issuer =
+        HostSlipIssuer::from_secret(secret.as_bytes()).map_err(|_| ApiError::unauthorized())?;
+    operation(&issuer).map_err(|_| ApiError::unauthorized())
 }
 
 #[derive(Deserialize)]
@@ -144,9 +149,10 @@ pub(super) async fn revoke(
     Json(request): Json<RevokeSlip>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     super::check_api_auth(&headers, &server)?;
-    server
-        .vault()
-        .revoke_capability_slip(&issuer(&server)?, request.slip_id)
-        .map_err(|_| ApiError::unauthorized())?;
+    with_issuer(&server, |issuer| {
+        server
+            .vault()
+            .revoke_capability_slip(issuer, request.slip_id)
+    })?;
     Ok(Json(serde_json::json!({"revoked":true})))
 }

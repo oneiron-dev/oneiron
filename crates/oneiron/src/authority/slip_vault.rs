@@ -108,6 +108,9 @@ impl Vault {
     /// log. A rooted vault must already recognize this host. A rejected cached
     /// root is never silently replaced (revocation stays terminal).
     pub fn ensure_host_root_slip(&self, issuer: &HostSlipIssuer) -> Result<CapabilitySlip> {
+        if self.privacy_posture() == crate::HostingPrivacyPosture::Relay {
+            return Err(invalid_authority());
+        }
         let mut txn = self.store.env.write_txn()?;
         let cache_key = format!(
             "{ROOT_CACHE}:{}",
@@ -298,27 +301,25 @@ impl Vault {
         &self,
         issuer: &HostSlipIssuer,
         slip: &CapabilitySlip,
-        challenge: &[u8],
+        request_timestamp: u64,
         signature: &[u8],
         request_nonce: &[u8],
     ) -> Result<VerifiedSlip> {
-        if request_nonce.len() < 16 || request_nonce.len() > 128 {
-            return Err(invalid_authority());
-        }
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(&txn)?.secs();
-        let verified = slip.verify(issuer.secret(), &fold, now, challenge, signature)?;
-        let mut nonce_material = slip.claims.binding_key.to_vec();
-        nonce_material.extend_from_slice(request_nonce);
-        let key = format!(
-            "authority:slip-request:{}",
-            blake3::hash(&nonce_material).to_hex()
-        );
-        if self.store.sync_state.get(&txn, &key)?.is_some() {
-            return Err(invalid_authority());
-        }
+        let challenge =
+            super::slip_replay::request_challenge(request_timestamp, request_nonce, now)?;
+        let verified = slip.verify(issuer.secret(), &fold, now, &challenge, signature)?;
+        super::slip_replay::record_nonce(
+            self,
+            &mut txn,
+            &slip.claims.binding_key,
+            request_nonce,
+            request_timestamp,
+            now,
+        )?;
         if verified.claims().single_use {
             self.append_slip_op_in_txn(
                 &mut txn,
@@ -328,9 +329,6 @@ impl Vault {
                 },
             )?;
         }
-        self.store
-            .sync_state
-            .put(&mut txn, &key, &now.to_be_bytes())?;
         txn.commit()?;
         Ok(verified)
     }
