@@ -290,6 +290,7 @@ impl Vault {
             // Same pre-scrub capture every SoftErase door pays: the subject
             // EdgeRef is only readable while the body is.
             let captured = self.capture_provenance_delete_in_txn(&*wtxn, shell)?;
+            crate::note::erase_citations_in_txn(self, wtxn, shell)?;
             let (existed, shell_had_vector) = self.soft_erase_active_store_in_txn(wtxn, shell)?;
             had_vector |= shell_had_vector;
             // D16 in the SAME transaction as the scrub, exactly as the local
@@ -376,6 +377,7 @@ impl Vault {
         // CITED this id, not this id's own rows, and both acts belong to the
         // one transaction that destroys the evidence.
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
+        crate::note::erase_citations_in_txn(self, wtxn, id)?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -740,7 +742,8 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
-        if self.store.entities.get(txn, id.as_bytes())?.is_some()
+        if crate::note::citation_delete_scope_exists(&self.store, txn, id)?
+            || self.store.entities.get(txn, id.as_bytes())?.is_some()
             || self.store.vectors.get(txn, id.as_bytes())?.is_some()
             || self.store.text_forward.get(txn, id.as_bytes())?.is_some()
             || self.store.text_meta.get(txn, id.as_bytes())?.is_some()

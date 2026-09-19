@@ -220,7 +220,23 @@ fn validate_markdown(markdown: &str) -> Result<()> {
 #[cfg(test)]
 mod tests;
 
+mod citation_erase;
 mod delete;
+mod pin_index;
+pub(crate) use citation_erase::{
+    PENDING_CITATION_ERASE, ensure_citations_ready, erase_citations_in_txn,
+};
+pub(crate) use pin_index::citation_delete_scope_exists;
+#[cfg(feature = "sync")]
+pub(crate) use pin_index::{remove_citation_request, track_citation_request};
+#[cfg(feature = "sync")]
+mod citation_scrub;
+#[cfg(feature = "sync")]
+pub(crate) use citation_erase::validate_pins as validate_citation_dependencies;
+#[cfg(feature = "sync")]
+pub(crate) use citation_scrub::scrub_pending_citations;
+#[cfg(test)]
+mod erasure_tests;
 mod live_body;
 pub(crate) use live_body::live_body_in_txn;
 mod kind_contract;
@@ -232,14 +248,28 @@ pub use kind_contract::{
     BriefKindContract, NoteContextDefault, NoteExtractionDefault, NoteRetentionDefault,
 };
 #[cfg(feature = "sync")]
+mod birth;
+#[cfg(feature = "sync")]
 mod brief_view;
 #[cfg(feature = "sync")]
 mod document;
 #[cfg(feature = "sync")]
 mod document_store;
 #[cfg(feature = "sync")]
+pub(crate) use birth::document_birth_in_txn;
+#[cfg(feature = "sync")]
+mod operations;
+#[cfg(feature = "sync")]
+pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt};
+#[cfg(feature = "sync")]
+mod replica;
+#[cfg(feature = "sync")]
 pub use brief_view::{BriefCitationView, BriefView};
+#[cfg(feature = "sync")]
+pub(crate) use replica::{import_note_from_authority, validate_note_export};
 #[cfg(all(test, feature = "sync"))]
 mod document_tests;
+#[cfg(all(test, feature = "sync"))]
+mod sync_tests;
 #[cfg(feature = "sync")]
 pub use document::{NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution};

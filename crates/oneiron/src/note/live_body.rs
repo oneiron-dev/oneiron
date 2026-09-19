@@ -17,6 +17,7 @@ pub(crate) fn live_body_in_txn<'b>(
     if entity_type != crate::registry::ENTITY_TYPE_NOTE || body.is_empty() {
         return Ok(Cow::Borrowed(body));
     }
+    super::ensure_citations_ready(store, txn, *id)?;
     let note = super::decode_note_body(body)?;
     #[cfg(feature = "sync")]
     if let Some(snapshot) = store

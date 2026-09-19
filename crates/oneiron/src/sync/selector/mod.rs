@@ -8,9 +8,13 @@
 mod admission;
 mod authorize;
 mod codec;
+mod document_admission;
+pub(in crate::sync) use document_admission::admit_document_write_in_txn;
 #[cfg(feature = "sync")]
 mod edge;
+mod note_admission;
 mod scope;
+pub(crate) use note_admission::admit_note_in_txn;
 #[cfg(test)]
 mod tests;
 

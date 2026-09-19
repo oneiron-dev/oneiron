@@ -263,6 +263,7 @@ impl Vault {
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
             let scrub_is_the_linearization_point = !authority_settled;
+            crate::note::erase_citations_in_txn(self, &mut wtxn, id)?;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;

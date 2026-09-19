@@ -4723,3 +4723,152 @@ fn an_undecodable_coreference_claim_is_withheld_not_passed_through() {
         "an undecodable coreference-shaped claim leaked a foreign pact id"
     );
 }
+
+#[test]
+fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
+    use crate::sync::transport::document_sub_tags;
+    for active in [true, false] {
+        let member = entity_id(0x34);
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        let grant = FederationGrant::new(
+            test_selector_scope(),
+            member,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        );
+        vault
+            .batch()
+            .put_replicated(
+                &grant_id,
+                ENTITY_TYPE_FEDERATION_GRANT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &encode_federation_grant_body(&grant).unwrap(),
+            )
+            .commit()
+            .unwrap();
+        let id = entity_id(0x41);
+        let facet = entity_id(0x42);
+        vault
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_TURN,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"turn",
+            )
+            .unwrap();
+        vault
+            .put_entity(
+                &facet,
+                ENTITY_TYPE_FACET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"facet",
+            )
+            .unwrap();
+        vault.put_edge(&id, EdgeKind::FacetOf, &facet, 1.0).unwrap();
+        if active {
+            let mut ceiling = all_direction_scope();
+            ceiling.facets = FederationScopeFacets::Some(vec![facet]);
+            seed_scoped_pacts_for_grant(&vault, grant_id, &[ceiling]);
+        } else {
+            seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Disconnected);
+        }
+        let vault = Arc::new(vault);
+        let manager = Arc::new(WindowManager::new(
+            vault.clone(),
+            Arc::new(crate::sync::bridge::Materializer::new()),
+            "document pact",
+        ));
+        let doc = manager.documents().open(id).unwrap();
+        let remote = LoroDoc::new();
+        remote.get_text("body").insert(0, "admitted").unwrap();
+        remote.commit();
+        let update = remote.export(ExportMode::all_updates()).unwrap();
+        let selector = SyncSelector::new(
+            grant_id,
+            member,
+            SyncSelectorWorld::All,
+            vec![facet],
+            vec![crate::federation::selector_range_of(
+                crate::registry::ENTITY_TYPE_TURN,
+            )],
+        );
+        let result = doc.import_from_peer(
+            document_sub_tags::UPDATE,
+            &update,
+            test_selector_scope(),
+            &selector,
+        );
+        if active {
+            result.unwrap();
+            assert_eq!(doc.text().unwrap(), "admitted");
+            let mut wider = selector.clone();
+            wider.facets.push(entity_id(0x43));
+            let error = doc
+                .import_from_peer(
+                    document_sub_tags::UPDATE,
+                    &update,
+                    test_selector_scope(),
+                    &wider,
+                )
+                .unwrap_err();
+            assert_grant_scope_mismatch(&error, "peer document writer");
+        } else {
+            assert!(matches!(
+                result.unwrap_err(),
+                Error::Sync(SyncError::SyncProtocolError {
+                    context: SyncProtocolValidation::Selector {
+                        reason: SelectorError::GrantInactive
+                    },
+                })
+            ));
+            assert_eq!(doc.text().unwrap(), "");
+        }
+    }
+    // Expiry shares the exact txn-bound grant door with NOTE reads. Delegate
+    // roles never write, even before expiry; expired reads must also refuse.
+    let member = entity_id(0x34);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let grant = FederationGrant {
+        scope: test_selector_scope(),
+        member_ref: member,
+        role: FederationGrantRole::Delegate,
+        preset: FederationGrantPreset::Delegate,
+        expires_at: Some(1),
+        delegated_by: Some(entity_id(0x35)),
+    };
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let error = vault
+        .with_write_txn(|txn| {
+            super::document_admission::authorize_in_txn(
+                &vault,
+                txn,
+                test_selector_scope(),
+                &selector,
+                None,
+            )
+            .map(|_| ())
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::Sync(SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::Selector {
+                reason: SelectorError::GrantExpired
+            },
+        })
+    ));
+}

@@ -243,6 +243,17 @@ pub(in crate::batch) fn apply_put(
             }
         }
         decoded_claim_body = Some(body);
+    } else if entity_type == crate::registry::ENTITY_TYPE_NOTE {
+        // The ledger is immutable birth identity, never a second text plane.
+        // This shared guard covers replicated/window rematerialization too.
+        crate::note::decode_note_body(data)?;
+        if let Some(old) = store.entities.get(wtxn, id.as_bytes())? {
+            if old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data) {
+                return Err(Error::Record(RecordError::InvalidNoteBody(
+                    "NOTE birth body is immutable",
+                )));
+            }
+        }
     } else if entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
         // ONE-1686 (RT-04): the witness ENVELOPE law, at the one arm every
         // road to a MESSAGE body converges on — the witness door, promote

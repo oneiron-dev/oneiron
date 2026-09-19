@@ -80,6 +80,33 @@ impl SyncConnection {
                     }
                 }
 
+                frame = client.document_updates.recv() => {
+                    match frame {
+                        Ok(frame) => {
+                            let id = match transport::decode_document(&frame[1..]) {
+                                Ok(doc) => {
+                                    if client.vault.get_entity_type(&doc.entity).ok().flatten() == Some(crate::registry::ENTITY_TYPE_NOTE) {
+                                        if !matches!(doc.kind, transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::REQUEST) { continue; }
+                                        if !client.note_session_bound { continue; }
+                                    }
+                                    doc.entity
+                                },
+                                Err(error) => return LoopExit::Disconnected(error.to_string()),
+                            };
+                            match client.vault.sync_state_get(&format!("ds:e:{}", id.to_hex())) {
+                                Ok(Some(_)) => {
+                                    if let Err(error) = write.send(Message::Binary(frame.into())).await {
+                                        return LoopExit::Disconnected(error.to_string());
+                                    }
+                                }
+                                Ok(None) => {} // Offline editing before admission stays journaled.
+                                Err(error) => return LoopExit::Disconnected(error.to_string()),
+                            }
+                        }
+                        Err(_) => return LoopExit::Disconnected("document journal resync required".into()),
+                    }
+                }
+
                 // Local update from application
                 update = local_rx.recv() => {
                     match update {

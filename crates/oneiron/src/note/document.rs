@@ -51,15 +51,17 @@ pub enum NoteSpanResolution {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteDocumentView {
+    #[serde(with = "super::id_codec")]
     pub document: EntityId,
     pub frontier: Vec<u8>,
     pub markdown: String,
     pub pins: Vec<NotePin>,
+    pub authorship: Vec<super::NoteAuthorship>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NoteEditOutcome {
     Applied(NoteDocumentView),
     Proposed(CommitReceipt),
@@ -123,13 +125,46 @@ impl NoteDocument {
             .insert(0, body)
             .map_err(|_| invalid("NOTE birth insert"))?;
         stamp(&doc, actor);
-        Ok(Self { doc, id })
+        let born = Self { doc, id };
+        super::operations::record_authorship(
+            &born,
+            &super::NoteAuthorship {
+                operation: id,
+                actor: actor.entity_ref(),
+                // Birth ABI carries an author, not an authenticated actor class.
+                // Keep the seed identical on every replica; later admissions carry
+                // the credential's verified class in their own records.
+                actor_class: "ledger".to_owned(),
+                grant: None,
+                command_hash: *blake3::hash(body.as_bytes()).as_bytes(),
+            },
+        )?;
+        Ok(born)
     }
 
     pub(super) fn load(id: EntityId, bytes: &[u8]) -> Result<Self> {
         let doc = LoroDoc::new();
-        doc.import(bytes)
+        crate::sync::documents::storage::import_complete(&doc, bytes)
             .map_err(|_| invalid("invalid NOTE document snapshot"))?;
+        Self::from_loro(id, doc)
+    }
+
+    pub(super) fn from_loro(id: EntityId, doc: LoroDoc) -> Result<Self> {
+        let loro::LoroValue::Map(root) = doc.get_deep_value() else {
+            return Err(invalid("NOTE root map"));
+        };
+        if root
+            .keys()
+            .any(|name| !matches!(name.as_str(), "note" | "body" | "pins" | "authorship"))
+        {
+            return Err(invalid("unknown NOTE container"));
+        }
+        if doc.get_text(BODY).len_utf8() > MAX_NOTE_BYTES
+            || doc.get_map("pins").len() > 256
+            || doc.get_map("authorship").len() > 4096
+        {
+            return Err(invalid("NOTE document exceeds bounds"));
+        }
         let found = doc.get_map(META).get("id").and_then(|v| match v {
             loro::ValueOrContainer::Value(loro::LoroValue::String(value)) => {
                 Some(value.to_string())
@@ -154,6 +189,7 @@ impl NoteDocument {
             frontier: self.doc.oplog_frontiers().encode(),
             markdown: self.doc.get_text(BODY).to_string(),
             pins: self.pins()?,
+            authorship: super::operations::authorship(&self.doc)?,
         })
     }
 
@@ -311,6 +347,17 @@ impl NoteDocument {
         self.doc
             .import(&updates)
             .map_err(|_| invalid("NOTE operation merge"))?;
+        // The base guard is not enough when other concurrent batches already
+        // landed. Recheck the merged state before the caller persists it.
+        for pin in pins
+            .iter()
+            .chain(cited_by)
+            .filter(|pin| pin.document == self.id)
+        {
+            if !matches!(self.resolve(pin)?, NoteSpanResolution::Mapped { .. }) {
+                return Ok(false);
+            }
+        }
         Ok(true)
     }
 }

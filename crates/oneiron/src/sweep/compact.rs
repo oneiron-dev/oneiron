@@ -52,6 +52,31 @@ fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
             }
         }
     }
+    for prefix in ["d:e:", "u:e:", "qd:e:"] {
+        for row in vault.store.sync_state.prefix_iter(&rtxn, prefix)? {
+            let (key, _) = row?;
+            let rest = &key[prefix.len()..];
+            let hex = if prefix != "d:e:" {
+                match rest.rsplit_once(':') {
+                    Some((hex, seq)) if seq.len() == 8 && u32::from_str_radix(seq, 16).is_ok() => {
+                        hex
+                    }
+                    _ => {
+                        malformed = true;
+                        continue;
+                    }
+                }
+            } else {
+                rest
+            };
+            match EntityId::from_hex(hex) {
+                Ok(id) if id.to_hex() == hex => {
+                    labels.insert(format!("e:{hex}"));
+                }
+                _ => malformed = true,
+            }
+        }
+    }
     Ok((labels, malformed))
 }
 
@@ -64,6 +89,9 @@ pub(super) fn compact_all_windows(
 ) -> Result<WindowSweepState> {
     use crate::sync::types::{WindowKey, parse_window_key_str};
 
+    if let Err(err) = crate::note::scrub_pending_citations(vault) {
+        return Ok(WindowSweepState::Failed(format!("{:?}", err.kind())));
+    }
     let (labels, malformed) = persisted_window_labels(vault)?;
     let mut state = if malformed {
         WindowSweepState::Failed(format!("{:?}", crate::error::ErrorKind::InvalidKey))
@@ -72,6 +100,20 @@ pub(super) fn compact_all_windows(
     };
 
     for label in &labels {
+        if let Some(hex) = label.strip_prefix("e:") {
+            let id = EntityId::from_hex(hex)?;
+            match vault.compact_document_for_sweep(id, erased.contains(&id)) {
+                Ok(false) => {
+                    run.windows_deferred_live += 1;
+                    if matches!(state, WindowSweepState::AllCompacted) {
+                        state = WindowSweepState::Deferred;
+                    }
+                }
+                Err(err) => state = WindowSweepState::Failed(format!("{:?}", err.kind())),
+                Ok(true) => run.windows_compacted += 1,
+            }
+            continue;
+        }
         if parse_window_key_str(label).is_none() {
             // Engine-written labels always validate; a foreign/corrupt row
             // cannot be loaded or proven payload-free — fail closed.
@@ -147,7 +189,17 @@ pub(super) fn compact_all_windows(
         let mut iter = vault.store.sync_queue.prefix_iter(&rtxn, b"q:")?;
         iter.next().transpose()?.is_some()
     };
-    if !labels.is_empty() || malformed || queue_rows_exist {
+    let pending_citations = {
+        let txn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .vault_meta
+            .prefix_iter(&txn, crate::note::PENDING_CITATION_ERASE.as_bytes())?
+            .next()
+            .transpose()?
+            .is_some()
+    };
+    if !labels.is_empty() || malformed || queue_rows_exist || pending_citations {
         tracing::error!(
             windows = labels.len(),
             "sweep: CRDT carrier rows present but the engine was built without \

@@ -7,6 +7,8 @@
 
 mod codec;
 mod coreference;
+#[cfg(feature = "sync")]
+pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 mod grant;
 mod guest;
 mod pact_scope;

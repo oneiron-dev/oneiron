@@ -1,40 +1,47 @@
-//! Transactional erasure of NOTE document carriers and reverse-pin metadata.
+//! Transactional erasure of a NOTE's own carriers and outgoing pin indexes.
 
 use crate::store::Store;
 use crate::{EntityId, Result};
 
-// Byte-level cleanup also runs featureless against a sync-edited vault. No
-// decoder or full-vault scan is needed to find this document's own carriers.
+pub(super) fn delete_sync_prefix(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    prefix: &str,
+) -> Result<()> {
+    let keys = store
+        .sync_state
+        .prefix_iter(txn, prefix)?
+        .map(|row| row.map(|(key, _)| key.to_string()))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for key in keys {
+        store.sync_state.delete(txn, &key)?;
+    }
+    Ok(())
+}
+
+// Byte-level cleanup runs featureless too. Incoming source/claim dependencies
+// stay indexed until hard erasure scrubs their citing documents. Soft deletion
+// is ordinary drift and must not silently discard the saved quotes.
 pub(crate) fn delete_document_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
     let hex = id.to_hex();
-    store.sync_state.delete(txn, &format!("e:note:{hex}"))?;
-    let mut keys = Vec::new();
-    let source_prefix = format!("note.pin/source/{hex}:");
-    for row in store
-        .vault_meta
-        .prefix_iter(txn, source_prefix.as_bytes())?
-    {
-        let (key, _) = row?;
-        let suffix = std::str::from_utf8(&key[source_prefix.len()..])
-            .map_err(|_| crate::Error::CorruptedIndex("NOTE reverse pin key"))?;
-        let (citing, hash) = suffix
-            .split_once(':')
-            .ok_or(crate::Error::CorruptedIndex("NOTE reverse pin key"))?;
-        keys.push(format!("note.pin/citing/{citing}:{hex}:{hash}").into_bytes());
-        keys.push(key.to_vec());
+    for prefix in ["d:e:", "sv:e:", "ssv:e:", "m:u_seq:e:", "ds:e:"] {
+        store.sync_state.delete(txn, &format!("{prefix}{hex}"))?;
     }
-    for row in store
-        .vault_meta
-        .prefix_iter(txn, format!("note.pin/citing/{hex}:").as_bytes())?
-    {
-        let (key, source_key) = row?;
-        keys.push(source_key.to_vec());
-        keys.push(key.to_vec());
+    for prefix in ["u:e:", "qd:e:", "ad:e:", "qn:e:", "nr:e:", "nc:e:"] {
+        delete_sync_prefix(store, txn, &format!("{prefix}{hex}:"))?;
     }
+    super::pin_index::remove_citing(store, txn, *id)?;
+    super::pin_index::remove_citing_requests(store, txn, *id)?;
+    let prefix = super::citation_erase::pending_prefix(*id);
+    let keys = store
+        .vault_meta
+        .prefix_iter(txn, prefix.as_bytes())?
+        .map(|row| row.map(|(key, _)| key.to_vec()))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     for key in keys {
         store.vault_meta.delete(txn, &key)?;
     }
