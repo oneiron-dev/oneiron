@@ -57,7 +57,7 @@ deadline. This changes the profile budget, not host settings or storage durabili
 ### RC42 threshold comparison
 
 The current manifest defaults are 50,000,000 calls per verb and 1,000,000 per
-actor in a 60-second window. The measured aggregate witness and recall rates
+actor in a 60-second window. The measured MacBook aggregate witness and recall rates
 extrapolate to about 1,010 and 1,326 calls/minute respectively. The verb default
 is over 37,000 times the larger rate. Even the 18,725/s connection/auth-bind
 burst extrapolates to about 1.124 million/minute, over 44 times below that default.
@@ -274,3 +274,67 @@ this scaling result alone is not evidence of an overall speedup. Shared-host IO
 variation is visible between runs and remains part of the evidence.
 Raw [scaling receipt](evidence/W7-C10/ppr-scaling-macbook-before.json) and
 [terminal outcome](evidence/W7-C10/ppr-scaling-macbook-before-process.json).
+
+## Measured Arch fleet baseline (2026-09-19)
+
+Arch Linux kernel 7.0.11-arch1-1, Ryzen 7 8745HS, 16 logical CPUs.
+Optimized opt-3 binary, worktree filesystem, 20,000 authenticated actors,
+4 listeners, concurrency 64, 4 runtime threads, one write/recall round.
+The operation budget is 600 seconds; the workload was not reduced.
+
+| Phase | Completed | Throughput/s | p99 ms |
+|---|---:|---:|---:|
+| ppr_full | 100 | 19.110 | 533.454 |
+| ppr_prepare | 100 | 14.795 | 464.903 |
+| ppr_resume | 100 | 21.165 | 366.054 |
+| recall_0 | 20,000 | 17.840 | 22,543.896 |
+| socket_open | 20,000 | 8,753.748 | 12.374 |
+| socket_probe_after | 20,000 | 19,775.210 | 4.723 |
+| socket_probe_before | 20,000 | 44,424.149 | 1.761 |
+| write_0 | 20,000 | 41.716 | 9,310.103 |
+
+All 20,000 persisted messages and matching recalls passed, as did both socket
+probes. Connections were held for 1,602.789 seconds. The process completed exit 0
+in 1,626.372 seconds with 5,537,247,232 peak resident bytes. Scoped compilation
+and then a release build overlapped this run. It is a shared-host baseline,
+not an isolated maximum-throughput claim.
+
+The 100 exact cold/resume PPR pairs measured **1.1076x** incremental resume
+throughput. Including the prior depth-five preparation gives **0.4557x**: the
+optimization saves work only when that prior state already exists. Both figures
+are retained. This is a measured residual-resume gain, not proof of the later
+fresh-insert scan optimization.
+
+The [raw receipt](evidence/W7-C10/fleet-arch-before.json),
+[process outcome](evidence/W7-C10/fleet-arch-before-process.json) and
+[approved floor](evidence/W7-C10/fleet-arch-floor.json) are committed. The floor
+uses explicit 15% throughput-loss and 20% p99-growth regression budgets.
+
+Binary BLAKE3:
+`67f07c30805cff9c98ed4885003b6fb264108c2ec1c6279cef93f98882573be6`.
+This binary predates the telemetry-scalar repair and cache-insert optimization.
+The receipt’s revision/dirty fields describe its runtime checkout, not an
+inferred compilation revision. The artifact remains a baseline, not a claim
+that this was final-head performance. The prior binary copy has SHA-256
+`d958a55adc0e045df8f54283809b3ee4c2a0ea626e92056fab12f23fbbd7e591`.
+
+## Hot-path follow-up tickets
+
+`ONE-2402` is the implemented residual-resume work in this change. The Arch
+profile above demonstrates its incremental benefit with bit-identical results.
+The later fresh-key dependency-scan change is its measured-profile follow-up in
+this same PR; its new timing receipt is separate from the original resume gain.
+
+The following are local follow-up IDs, not claims that external tracker issues
+were created. They describe the next measurements/design work, not completed
+optimizations:
+
+- **ONE-2558/PERF-IO** — Attribute the durable write/recall tails and PPR commit
+  time on a quiet host. PPR cache flush and telemetry currently commit separately.
+  Any later batching must preserve best-effort telemetry isolation and atomic
+  cache/dependency writes. Do not disable durability to improve a benchmark.
+- **ONE-2558/PERF-PHASE** — Retain typed phase/actor context in a failed fleet
+  receipt. The first Arch timeout did not identify its phase, so its cause cannot
+  be assigned to retrieval, socket handling or storage from that receipt alone.
+
+No unmeasured throughput improvement is assigned to either follow-up.
