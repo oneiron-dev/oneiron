@@ -758,6 +758,7 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
     good.body = serde_json::json!({"txt":"needle healthy record"});
     vault.append_record(&good).unwrap();
     let mut hidden = Vec::new();
+    let mut missing = Vec::new();
     for missing_room in [true, false] {
         let broken_room = EntityId::now();
         vault
@@ -781,20 +782,24 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
                 .record_visible_to(child.id, actor.entity_ref())
                 .unwrap()
         );
-        // Model incomplete replay: retain ChildOf/Parent, remove its target row.
-        let missing = if missing_room { broken_room } else { parent.id };
-        vault
-            .with_write_txn(|txn| {
-                vault.store.entities.delete(txn, missing.as_bytes())?;
-                Ok(())
-            })
-            .unwrap();
+        missing.push(if missing_room { broken_room } else { parent.id });
         hidden.push(child.id);
     }
+    let subject = EntityId::now();
+    vault
+        .put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode(&serde_json::json!({})).unwrap(),
+        )
+        .unwrap();
+    missing.push(subject);
     let claim = EntityId::now();
     let mut body = crate::ClaimBody::new(
         "preference.food",
-        crate::ClaimSubject::Entity(EntityId::now()),
+        crate::ClaimSubject::Entity(subject),
         rmpv::Value::from("needle missing subject"),
         1.0,
         crate::ClaimApprovalStatus::Auto,
@@ -814,6 +819,22 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
         .commit()
         .unwrap();
     hidden.push(claim);
+    // Assemble while references are valid; the unscoped builder deliberately
+    // rejects missing payloads. Then prove the audience filter drops stale data.
+    let mut pack = vault
+        .context_pack()
+        .search_text("needle", 20)
+        .hydrate(true)
+        .run()
+        .unwrap();
+    vault
+        .with_write_txn(|txn| {
+            for id in &missing {
+                vault.store.entities.delete(txn, id.as_bytes())?;
+            }
+            Ok(())
+        })
+        .unwrap();
     let read = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap())
         .for_audience(&[actor.entity_ref()]);
@@ -828,12 +849,6 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
             .collect::<Vec<_>>(),
         vec![good.id],
     );
-    let mut pack = vault
-        .context_pack()
-        .search_text("needle", 20)
-        .hydrate(true)
-        .run()
-        .unwrap();
     read.filter_context_pack(&mut pack).unwrap();
     assert_eq!(
         pack.results.iter().map(|hit| hit.id).collect::<Vec<_>>(),
