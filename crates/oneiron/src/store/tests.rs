@@ -5306,7 +5306,7 @@ fn abi18_rekeys_persisted_sync_envelopes_before_replay_and_only_once() -> Result
         let dir = tempfile::tempdir()?;
         let rows: Vec<_> = legacy_rows()
             .into_iter()
-            .filter(|row| row.kind == "PERSON")
+            .filter(|row| matches!(row.kind, "PERSON" | "PLACE"))
             .collect();
         let row = &rows[0];
         let before = legacy_envelope(row);
