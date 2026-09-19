@@ -19,7 +19,7 @@ fn git(root: &Path, args: &[&str]) {
     assert!(status.success());
 }
 #[test]
-fn linked_views_share_blobs_server_and_build_results() {
+fn independent_views_share_blobs_server_and_build_results() {
     let temp = tempfile::tempdir().unwrap();
     let repo = temp.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
@@ -84,18 +84,6 @@ fn linked_views_share_blobs_server_and_build_results() {
         std::fs::read_dir(set.root.join("blobs")).unwrap().count(),
         1
     );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        assert_eq!(
-            std::fs::metadata(set.view_path(a.view_id).unwrap().join("src/main.rs"))
-                .unwrap()
-                .ino(),
-            std::fs::metadata(set.view_path(b.view_id).unwrap().join("src/main.rs"))
-                .unwrap()
-                .ino()
-        );
-    }
     let server = StdioLanguageServer::start(
         Path::new("python3"),
         &[concat!(
@@ -203,5 +191,77 @@ fn linked_views_share_blobs_server_and_build_results() {
     assert_eq!(
         std::fs::read(set.view_path(a.view_id).unwrap().join("target/program")).unwrap(),
         std::fs::read(set.view_path(b.view_id).unwrap().join("target/program")).unwrap()
+    );
+    // A tool that chmods and overwrites its own input must not corrupt another
+    // view or the canonical blob, and a build from that input must not hit cache.
+    let input = set.view_path(a.view_id).unwrap().join("src/main.rs");
+    let original_permissions = std::fs::metadata(repo.join("src/main.rs"))
+        .unwrap()
+        .permissions();
+    std::fs::set_permissions(&input, original_permissions.clone()).unwrap();
+    std::fs::write(&input, b"changed by tool").unwrap();
+    assert_eq!(
+        std::fs::read(set.view_path(b.view_id).unwrap().join("src/main.rs")).unwrap(),
+        std::fs::read(repo.join("src/main.rs")).unwrap()
+    );
+    let c = set.materialize(&mount, actor, &policy).unwrap();
+    assert_eq!(c.files, b.files);
+    assert!(
+        set.build(
+            a.view_id,
+            &cache,
+            CheckoutTaskClass::Build,
+            &action,
+            |_, _| panic!("changed input must refuse before cache lookup")
+        )
+        .is_err()
+    );
+    assert!(shared.restart_view(&set, a.view_id).is_err());
+
+    let mutating_action = BuildAction::new(
+        FrozenBuildCommand::new(
+            vec!["mutating-tool".into()],
+            BTreeMap::<String, String>::new(),
+        )
+        .unwrap(),
+        action.input_root.clone(),
+        BuildPlatform::new([("arch", std::env::consts::ARCH)]).unwrap(),
+        vec![],
+    )
+    .unwrap();
+    let result = set.build(
+        c.view_id,
+        &cache,
+        CheckoutTaskClass::Build,
+        &mutating_action,
+        |path, _| {
+            let input = path.join("src/main.rs");
+            std::fs::set_permissions(&input, original_permissions)?;
+            std::fs::write(&input, b"mutated during build")?;
+            Ok(ActionResult {
+                exit_code: 0,
+                outputs: BTreeMap::new(),
+                stdout_ref: None,
+                stderr_ref: None,
+                produced_at: 2,
+                producer_ref: c.view_id.to_hex(),
+            })
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(crate::build_cache::BuildCacheError::Store(
+            Error::CorruptedIndex(_)
+        ))
+    ));
+    assert!(
+        cache
+            .get(&mutating_action.action_key().unwrap())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        std::fs::read(set.view_path(b.view_id).unwrap().join("src/main.rs")).unwrap(),
+        std::fs::read(repo.join("src/main.rs")).unwrap()
     );
 }

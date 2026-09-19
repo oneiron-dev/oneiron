@@ -33,6 +33,10 @@ pub const GUEST_WIT: &str = include_str!("../../../wit/code-run.wit");
 pub struct ComponentBudget {
     pub fuel: u64,
     pub memory_bytes: usize,
+    /// Cutoff for guest execution and new host calls, not cancellation of host code.
+    /// An admitted synchronous host callback runs to completion. Its elapsed time
+    /// counts, so an overrun refuses further guest work once it returns. Hosts must
+    /// bound their own callbacks; this is not a hard end-to-end RPC timeout.
     pub wall_time: Duration,
     pub host_calls: u32,
     pub message_bytes: usize,

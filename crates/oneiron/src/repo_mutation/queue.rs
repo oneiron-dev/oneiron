@@ -15,7 +15,7 @@ use super::git::{
     validate_relative_repo_path, validate_worktree_path,
 };
 use super::oplog::{
-    REPO_MUTATION_OPLOG_SCHEMA_VERSION, StoredPreparedConflictResolution,
+    REPO_MUTATION_OPLOG_SCHEMA_VERSION, StoredPreparedCommit, StoredPreparedConflictResolution,
     StoredRepoMutationOplogEntry, decode_stored_oplog_entry, encode_oplog_entry,
     public_oplog_entry, repo_mutation_oplog_key, repo_mutation_repo_key_hash,
     repo_mutation_seq_key, repo_mutation_snapshot_key,
@@ -335,6 +335,16 @@ impl Vault {
                 finished_at_ms: None,
                 pre_action_fork_hash: fork_hash,
                 expected_post_action_fork_hash: Some(expected_post_action_fork_hash),
+                prepared_commit: match &execution {
+                    PreparedRepoMutationExecution::Direct => None,
+                    _ => {
+                        let commit = execution.commit_file()?;
+                        Some(StoredPreparedCommit {
+                            base_head: commit.base_head.clone(),
+                            new_head: commit.new_head.clone(),
+                        })
+                    }
+                },
                 prepared_conflict_resolution: match &execution {
                     PreparedRepoMutationExecution::ResolveConflictFile { recovery, .. } => {
                         Some(StoredPreparedConflictResolution::from(recovery))
@@ -390,6 +400,7 @@ impl Vault {
             pre_action_fork_hash: fork_hash,
             expected_post_action_fork_hash: None,
             prepared_conflict_resolution: None,
+            prepared_commit: None,
             status: RepoMutationStatus::Failed.as_str().to_owned(),
             failure: Some(truncate_failure(&error.to_string())),
         };
@@ -513,7 +524,7 @@ fn require_staged_objects_available(
     )))
 }
 
-fn expected_post_action_fork_hash(
+pub(super) fn expected_post_action_fork_hash(
     operation: &RepoMutationOperation,
     pre_action_snapshot: &StoredRepoSnapshot,
     pre_action_fork_hash: RepoForkHash,

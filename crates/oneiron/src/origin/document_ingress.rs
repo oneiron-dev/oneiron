@@ -139,10 +139,6 @@ impl Vault {
                 });
             }
         }
-        // Validate every exact base and persist this ref's operations together.
-        // A process death before the aggregate receipt is safe: each operation
-        // has its durable identity in this same document transaction.
-        self.apply_code_file_ingress_exact(&mut ingress)?;
         let encoded = rmp_serde::to_vec(&operations)
             .map_err(|_| Error::CorruptedIndex("push operations encode"))?;
         let receipt_key = [
@@ -156,9 +152,11 @@ impl Vault {
                 if old.as_ref() != encoded {
                     return Err(Error::ConcurrentWrite("push operation receipt changed"));
                 }
-            } else {
-                self.store.vault_meta.put(txn, &receipt_key, &encoded)?;
             }
+            // A conflicting aggregate must refuse before any document effect.
+            // Both receipt layers commit together or the entire ref aborts.
+            self.apply_code_file_ingress_exact_in_txn(txn, &mut ingress)?;
+            self.store.vault_meta.put(txn, &receipt_key, &encoded)?;
             Ok(())
         })
     }

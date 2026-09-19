@@ -2208,3 +2208,90 @@ fn blake3_snapshot_capture_keeps_sha256_history_recoverable() {
 
 #[path = "tests/reviewed_stack.rs"]
 mod reviewed_stack;
+
+#[test]
+fn standalone_reviewed_document_crash_resumes_exact_commit_once() {
+    use crate::critic::CritiqueVerdict;
+    let (dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let proposal = reviewed_proposal_fixture(&vault, &repo);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    let old_head = current_head_commit(repo.path()).unwrap();
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterDocumentBeforeAction));
+    assert!(vault.apply_repo_proposal(proposal.id).is_err());
+    assert_eq!(current_head_commit(repo.path()).unwrap(), old_head);
+    let edit = vault.code_file_edit_receipt(proposal.id).unwrap().unwrap();
+    let pending = vault
+        .repo_mutation_oplog(&repo_ref(&repo))
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(pending.status, RepoMutationStatus::Prepared);
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let outcomes = vault
+        .recover_prepared_repo_mutations(&repo_ref(&repo))
+        .unwrap();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].entry.seq, pending.seq);
+    assert_eq!(outcomes[0].entry.status, RepoMutationStatus::Applied);
+    assert_eq!(
+        outcomes[0].entry.expected_post_action_fork_hash,
+        pending.expected_post_action_fork_hash
+    );
+    assert_eq!(
+        std::fs::read(repo.path().join("README.md")).unwrap(),
+        proposal.content
+    );
+    assert_eq!(
+        vault.code_file_edit_receipt(proposal.id).unwrap().unwrap(),
+        edit
+    );
+    let head = current_head_commit(repo.path()).unwrap();
+    assert_ne!(head, old_head);
+    assert_eq!(
+        vault.apply_repo_proposal(proposal.id).unwrap().entry.seq,
+        pending.seq
+    );
+    assert_eq!(current_head_commit(repo.path()).unwrap(), head);
+}
+
+#[test]
+fn standalone_reviewed_document_recovery_refuses_diverged_repository() {
+    use crate::critic::CritiqueVerdict;
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let proposal = reviewed_proposal_fixture(&vault, &repo);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterDocumentBeforeAction));
+    assert!(vault.apply_repo_proposal(proposal.id).is_err());
+    let edit = vault.code_file_edit_receipt(proposal.id).unwrap().unwrap();
+    std::fs::write(repo.path().join("README.md"), b"unrelated work\n").unwrap();
+    let head = current_head_commit(repo.path()).unwrap();
+    assert!(matches!(
+        vault.recover_prepared_repo_mutations(&repo_ref(&repo)),
+        Err(Error::Code(CodeError::RepoMutationRecoveryDiverged { .. }))
+    ));
+    assert_eq!(
+        std::fs::read(repo.path().join("README.md")).unwrap(),
+        b"unrelated work\n"
+    );
+    assert_eq!(current_head_commit(repo.path()).unwrap(), head);
+    assert_eq!(
+        vault.code_file_edit_receipt(proposal.id).unwrap().unwrap(),
+        edit
+    );
+    assert_eq!(
+        vault
+            .repo_mutation_oplog(&repo_ref(&repo))
+            .unwrap()
+            .last()
+            .unwrap()
+            .status,
+        RepoMutationStatus::Prepared
+    );
+}

@@ -480,7 +480,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_document/codec.rs` | src | s | 10 crate-vis | — | Strict durable document rows and canonical operation folds |
 | `src/code_document/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | Base-mode live code files: actor-stamped Loro operations and verified tested frontiers |
 | `src/code_document/session.rs` | src | s | 1 struct · 7 fn | CodeDocumentSession | Private Loro forks and persistent cursor-anchored symbol spans |
-| `src/code_document/storage.rs` | src | m | 9 fn · 3 crate-vis | — | Atomic merge-before-persist of live file edits and immutable tested snapshots |
+| `src/code_document/storage.rs` | src | m | 9 fn · 4 crate-vis | — | Atomic merge-before-persist of live file edits and immutable tested snapshots |
 | `src/code_document/tests.rs` | test | m | — | — | — |
 | `src/code_document/types.rs` | src | s | 4 struct · 1 enum · 2 fn | CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeSpanAnchor, CodeSpanResolution | File edit verbs, cursor spans, operation receipts and tested frontiers |
 | `src/code_memory.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
@@ -1555,13 +1555,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/registry/zones.rs` | src | s | 2 enum · 1 fn · 9 const | EntityClassification, TypeByteZone | Type-byte zones: classification, zone map, and the `zone_of` table |
 | `src/repo_mutation/conflict.rs` | src | m | 2 fn · 4 crate-vis | — | — |
 | `src/repo_mutation/conflict_value.rs` | src | m | 3 const · 8 crate-vis | — | — |
-| `src/repo_mutation/document.rs` | src | s | 1 crate-vis | — | Review-approved repository file updates lower to idempotent document edits |
+| `src/repo_mutation/document.rs` | src | s | 2 crate-vis | — | Review-approved repository file updates lower to idempotent document edits |
 | `src/repo_mutation/git.rs` | src | s | 16 crate-vis | — | — |
 | `src/repo_mutation/mod.rs` | src | s | 2 mod · 4 re-export · 1 crate-vis | — | — |
 | `src/repo_mutation/mount.rs` | src | s | 1 struct · 1 enum · 4 fn | RepoMount, RepoMountRef | One immutable read path for committed head, recovery forks and codebase snapshots |
-| `src/repo_mutation/oplog.rs` | src | m | 3 fn · 1 const · 12 crate-vis | — | — |
-| `src/repo_mutation/proposal.rs` | src | m | 1 struct · 2 enum · 6 fn · 14 crate-vis | RepoProposal, RepoProposalOperation, RepoProposalStatus | Durable per-operation code proposals |
-| `src/repo_mutation/queue.rs` | src | m | 1 fn · 20 crate-vis | — | — |
+| `src/repo_mutation/oplog.rs` | src | m | 3 fn · 1 const · 13 crate-vis | — | — |
+| `src/repo_mutation/proposal.rs` | src | m | 1 struct · 2 enum · 6 fn · 15 crate-vis | RepoProposal, RepoProposalOperation, RepoProposalStatus | Durable per-operation code proposals |
+| `src/repo_mutation/queue.rs` | src | m | 1 fn · 21 crate-vis | — | — |
 | `src/repo_mutation/reviewed_stack.rs` | src | m | 4 crate-vis | — | Atomic critic admission and exact-prefix replay for a tested proposal stack |
 | `src/repo_mutation/snapshot.rs` | src | m | 8 crate-vis | — | — |
 | `src/repo_mutation/support.rs` | src | s | 7 crate-vis | — | — |

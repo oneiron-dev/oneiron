@@ -171,6 +171,7 @@ impl<L: LanguageServer> SharedLanguageServer<L> {
             .receipt(view)?
             .ok_or(Error::InvalidClaimBody("unknown view"))?;
         let root = set.view_path(view)?;
+        super::verify_view_inputs(&root, &receipt)?;
         let mut state = self
             .state
             .lock()

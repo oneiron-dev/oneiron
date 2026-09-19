@@ -113,7 +113,12 @@ impl<'a> CodeViewSet<'a> {
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::hard_link(&blob, &target)?;
+            // Same-user tools can chmod read-only files. Never share an inode
+            // with the canonical blob or another view. fs::copy may use CoW.
+            if target.try_exists()? {
+                return Err(Error::InvalidClaimBody("duplicate view path"));
+            }
+            std::fs::copy(&blob, &target)?;
             files.insert(file.path.clone(), file.content_hash);
         }
         let receipt = ViewReceipt {
@@ -168,8 +173,15 @@ impl<'a> CodeViewSet<'a> {
             ));
         }
         let path = self.view_path(id)?;
-        // The host command sees normal files. The result remains account-scoped.
-        let leg = cache.run_leg(class, action, |vault| execute(&path, vault))?;
+        // Tools are trusted host code, not sandboxed guests. Still reject
+        // accidental input mutation BEFORE a miss can enter the shared cache.
+        verify_view_inputs(&path, &receipt)?;
+        let leg = cache.run_leg(class, action, |vault| {
+            let result = execute(&path, vault)?;
+            verify_view_inputs(&path, &receipt)?;
+            Ok(result)
+        })?;
+        verify_view_inputs(&path, &receipt)?;
         // Materialize admitted account artifact versions for every view,
         // including a cache hit that never invoked the compiler.
         for (output, reference) in &leg.cached.result.outputs {
@@ -229,6 +241,30 @@ impl<'a> CodeViewSet<'a> {
         Ok(leg)
     }
 }
+fn verify_view_inputs(root: &Path, receipt: &ViewReceipt) -> Result<()> {
+    if !std::fs::symlink_metadata(root)?.is_dir() {
+        return Err(Error::CorruptedIndex("view root was replaced"));
+    }
+    for (path, expected) in &receipt.files {
+        relative(path)?;
+        let mut target = root.to_path_buf();
+        let parts: Vec<_> = path.split('/').collect();
+        for part in &parts[..parts.len() - 1] {
+            target.push(part);
+            if !std::fs::symlink_metadata(&target)?.is_dir() {
+                return Err(Error::CorruptedIndex("view input parent was replaced"));
+            }
+        }
+        target.push(parts[parts.len() - 1]);
+        if !std::fs::symlink_metadata(&target)?.is_file()
+            || blake3::hash(&std::fs::read(&target)?).as_bytes() != expected
+        {
+            return Err(Error::CorruptedIndex("view input was modified"));
+        }
+    }
+    Ok(())
+}
+
 fn receipt_key(id: EntityId) -> Vec<u8> {
     [b"code_view:receipt:v1:".as_slice(), id.as_bytes()].concat()
 }

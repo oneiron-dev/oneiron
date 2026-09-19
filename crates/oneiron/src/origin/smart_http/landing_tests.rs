@@ -669,3 +669,59 @@ fn concurrent_pushes_share_one_document_ingress_and_ref_cas_door() {
         }
     }
 }
+
+#[test]
+fn conflicting_push_receipt_refuses_before_document_ingress() {
+    let (_dir, vault) = temp_vault();
+    let (_repo, root, tip) = seeded_repo();
+    let outcome = landing_outcome(&root, &tip);
+    let attribution = fixture_attribution(&vault, &outcome);
+    let repo_ref = outcome.pinned_repo_ref().unwrap();
+    let wire = GitWire::new(&vault).unwrap();
+    let repo = wire.open_repo(repo_ref.clone(), &root).unwrap();
+    let ref_name = &outcome.ref_updates[0].name;
+    let scope = format!("origin:{}:{}", repo.identity().as_hex(), ref_name);
+    let session = EntityId::now();
+    let before = vault
+        .open_code_document(&scope, "README.md", "", session)
+        .unwrap();
+    let before_frontier = before.frontier().unwrap();
+    // Simulate a conflicting aggregate row from persisted state. The public
+    // observer still authenticates the real outcome; no malformed claim bypass.
+    let receipt_key = [
+        b"origin:code_operations:v1:".as_slice(),
+        attribution.provenance_claim_id.as_bytes(),
+        b":",
+        blake3::hash(ref_name.as_bytes()).as_bytes(),
+    ]
+    .concat();
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &receipt_key,
+                &rmp_serde::to_vec(
+                    &Vec::<crate::origin::document_ingress::ReceivedFileOperation>::new(),
+                )
+                .unwrap(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(matches!(
+        vault.apply_receive_pack_update_with_attribution(&repo_ref, &outcome, &attribution),
+        Err(crate::Error::ConcurrentWrite(_))
+    ));
+    let after = vault
+        .open_code_document(&scope, "README.md", "", session)
+        .unwrap();
+    assert_eq!(after.text(), "");
+    assert_eq!(after.frontier().unwrap(), before_frontier);
+    assert!(
+        vault
+            .received_code_operations(attribution.provenance_claim_id)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(vault.origin_publication_rows(None).unwrap().is_empty());
+}

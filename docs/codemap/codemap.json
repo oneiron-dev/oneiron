@@ -5924,7 +5924,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 9
      }
     },
@@ -19468,7 +19468,7 @@
      "path": "src/repo_mutation/document.rs",
      "purpose": "Review-approved repository file updates lower to idempotent document edits",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -19516,7 +19516,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 3
      }
     },
@@ -19531,7 +19531,7 @@
      "path": "src/repo_mutation/proposal.rs",
      "purpose": "Durable per-operation code proposals",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 6,
       "struct": 1
@@ -19544,7 +19544,7 @@
      "path": "src/repo_mutation/queue.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 1
      }
     },

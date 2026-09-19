@@ -507,6 +507,33 @@ pub(super) fn bind_prepared(
         .put(txn, &op_key(repo, seq), id.as_bytes())?;
     Ok(())
 }
+pub(super) fn for_operation(
+    vault: &Vault,
+    repo: &RepoRef,
+    seq: u64,
+) -> Result<Option<RepoProposal>> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(raw) = vault.store.vault_meta.get(&txn, &op_key(repo, seq))? else {
+        return Ok(None);
+    };
+    let id = EntityId::from_bytes(
+        raw.as_ref()
+            .try_into()
+            .map_err(|_| invalid("proposal operation index corrupt"))?,
+    )?;
+    let row = decode(
+        &vault
+            .store
+            .vault_meta
+            .get(&txn, &key(id))?
+            .ok_or(Error::EntityNotFound)?,
+    )?;
+    if row.id != id || row.operation_seq != Some(seq) || RepoRef::parse(&row.repo)? != *repo {
+        return Err(invalid("proposal operation binding differs"));
+    }
+    Ok(Some(row))
+}
+
 pub(super) fn finish(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
