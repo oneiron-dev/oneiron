@@ -301,3 +301,35 @@ repair later moves generate to cancellable async I/O while preserving its explic
 120-second total timeout. No bot acknowledgement is counted as validation of that
 new source. The 14 new empty review bodies are containers for these replies, not
 additional findings; their review IDs are retained in `dispositions.json`.
+
+### Standard terminal result and scoped environment retry
+
+The correctly routed standard command completed on Arch slot 2/2 at
+2026-09-19 14:00:48Z with Cargo exit 101: **8,880 passed, one failed, 21 ignored**.
+Every non-core-library target passed, including all changed provider/transport
+crate tests and doctests. The failed core test was
+`git_wire::tests::git_wire_reads_absence_positively_and_keeps_fatal_failures_typed`.
+All six new fix areas' regression tests passed within this completed command.
+This is a failed standard-command receipt, not a claimed exit-zero full run.
+
+The harness's `TMPDIR=target` override placed the temporary Git repository inside
+the Oneiron checkout. After the test deleted its `.git`, Git discovered the
+ancestor checkout instead of producing the fatal-not-a-repository response the
+fixture was testing. Restore the normal host temporary directory for this retry;
+no assertion, production source, fixture bytes, or behavior is weakened or changed.
+The existing canonical-temp-root secret fixtures already handle macOS aliases.
+
+The failed service is terminal (`MainPID=0`, `ExecMainStatus=1`). Its receipts are
+preserved. The sole successor is `w7-c08-bot-validation-followup.service`, with
+receipts under `bot-recovery-receipts/post-standard-followup/`. It reruns exactly
+the failed test with the same nine-package feature selection and no nested-TMPDIR
+config, then runs the previously unexecuted fmt, Clippy, featureless, code-map and
+diff checks. All 13 repaired Rust files match the original admission SHA-256 map.
+The other 8,880 passing outcomes are retained instead of rerunning unchanged tests.
+The new run must finish before any complete validation disposition is claimed.
+
+A fresh full GitHub intake before this environment repair retained all prior
+findings and root adjudications. CodeRabbit follow-up `4053384666` withdraws F18,
+confirms the upstream-provider distinction, and resolves the thread. It requires
+no source change. The corrected guideline interpretation is already recorded in
+this ledger; no external bot-learning record was deleted or modified.
