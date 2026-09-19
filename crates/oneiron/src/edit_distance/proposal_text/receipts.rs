@@ -25,7 +25,10 @@ impl ProposalTextArtifact {
         trigger: MadeByTrigger,
         process: MadeByProcess,
     ) -> Result<Self> {
-        if process.actor != actor.entity_ref() || process.class != MadeByClass::Concluded {
+        if process.actor != actor.entity_ref()
+            || process.class != MadeByClass::Concluded
+            || !process.is_valid()
+        {
             return Err(Error::InvalidConfig(
                 "generated birth process must name its writing actor".into(),
             ));
@@ -166,9 +169,8 @@ impl ProposalTextArtifact {
         });
         receipt.at = at;
         if receipt.process.actor != actor.entity_ref()
-            || receipt.process.identity.is_empty()
-            || receipt.process.version.is_empty()
-            || receipt.process.params_hash.is_empty()
+            || !receipt.process.is_valid()
+            || receipt.inputs.len() > 1024
         {
             return Err(Error::InvalidConfig("invalid text commit process".into()));
         }

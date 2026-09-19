@@ -248,6 +248,19 @@ pub(super) fn run_with_session(
     let mut manifest = parse_manifest_json(&std::fs::read_to_string(&plan.retrieval_manifest)?)?;
     resolve_manifest_paths(&mut manifest, &plan.retrieval_manifest);
     manifest.outputs = None;
+    let super::model::DatasetSource::Jsonl { path, arm_id, .. } = &manifest.dataset else {
+        return Err(refusal("measured answering requires run.jsonl corpus"));
+    };
+    // Check the complete selected dataset before any answerer or judge call.
+    for entry in super::load::read_run_jsonl_records(path)? {
+        if manifest.case_ids.contains(&entry.record.question_id)
+            && arm_id
+                .as_ref()
+                .is_none_or(|arm| arm == &entry.record.arm.id)
+        {
+            plan.judge.validate_dataset(&entry.record.dataset.id)?;
+        }
+    }
     if let Some(chroma) = &plan.chroma
         && !manifest
             .competitors
@@ -281,6 +294,7 @@ pub(super) fn run_with_session(
             .contract_records
             .get(id)
             .ok_or_else(|| refusal("measured answering requires run.jsonl corpus"))?;
+        plan.judge.validate_dataset(&record.dataset.id)?;
         offline_tokens += record
             .corpus
             .iter()

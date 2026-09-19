@@ -14,6 +14,7 @@ pub(in crate::calendar) fn reconcile<E: From<crate::Error>>(
     vault: &Vault,
     event_ref: EntityId,
     event: &ParsedVEvent,
+    source_prefix: &str,
     now: u64,
     mut admit: impl FnMut(&str, Value) -> Result<EntityId, E>,
 ) -> Result<(), E> {
@@ -23,6 +24,18 @@ pub(in crate::calendar) fn reconcile<E: From<crate::Error>>(
         if let Some(body) = vault.get_claim(&id)?
             && body.lifecycle == ClaimLifecycleStatus::Active
             && OWNED.contains(&body.predicate.as_str())
+            && body.source == Some(crate::claim::ClaimSource::Imported)
+            && body
+                .evidence
+                .as_ref()
+                .and_then(Value::as_map)
+                .and_then(|entries| {
+                    entries
+                        .iter()
+                        .find(|(key, _)| key.as_str() == Some("source_record_id"))
+                })
+                .and_then(|(_, value)| value.as_str())
+                .is_some_and(|source| source.starts_with(source_prefix))
         {
             live.push((id, body.predicate, body.value));
         }
@@ -91,4 +104,9 @@ fn values(event: &ParsedVEvent) -> Vec<(&'static str, Value)> {
         values.push((PREDICATE_CALENDAR_MEETING_LINK, Value::from(link.as_str())));
     }
     values
+}
+
+pub(super) fn source_prefix(system: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("calendar-source:{:x}:", Sha256::digest(system.as_bytes()))
 }

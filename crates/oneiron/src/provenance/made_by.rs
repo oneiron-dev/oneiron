@@ -75,6 +75,14 @@ pub struct MadeByProcess {
     pub params_hash: String,
 }
 
+impl MadeByProcess {
+    pub(crate) fn is_valid(&self) -> bool {
+        [&self.identity, &self.version, &self.params_hash]
+            .iter()
+            .all(|value| !value.is_empty() && value.len() <= 256)
+    }
+}
+
 /// The initiating task or ask, not a free-text label.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

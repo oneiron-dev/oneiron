@@ -247,11 +247,13 @@ impl PollAdmission<'_> {
         event: &ParsedVEvent,
     ) -> Result<(), CalendarError> {
         let body = screen_body(event);
-        let source_record_id = self.source_record_id(event);
+        let source_prefix = super::property_claims::source_prefix(self.system);
+        let source_record_id = format!("{source_prefix}{}", self.source_record_id(event));
         super::property_claims::reconcile(
             self.vault,
             event_ref,
             event,
+            &source_prefix,
             self.now,
             |predicate, value| {
                 self.admit_screened(event_ref, &body, &source_record_id, predicate, value)

@@ -87,8 +87,7 @@ fn freebusy_in(
         .iter()
         .filter_map(|row| row.facts.exception().cloned())
         .collect();
-    let withheld_exception =
-        read.has_withheld_exception()? || rows.iter().any(|row| row.facts.exception_withheld());
+    let withheld_exception = read.withheld_exception_series()?;
     let mut intervals = Vec::new();
     for row in rows {
         if !matches_selectors(row.facts.systems(), calendars)
@@ -98,7 +97,8 @@ fn freebusy_in(
         {
             continue;
         }
-        let occurrences = super::query::occurrences(&row, bounds, &exceptions, withheld_exception)?;
+        let occurrences =
+            super::query::occurrences(&row, bounds, &exceptions, &withheld_exception)?;
         for occurrence in occurrences {
             if let Some(clipped) = clip(occurrence, bounds) {
                 let (start_utc, end_utc) = half_open(clipped)?;

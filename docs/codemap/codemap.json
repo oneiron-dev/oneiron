@@ -1626,7 +1626,7 @@
      "purpose": "One-shot, one-way promotion from held-out KEEP to a sealed BEAM referee",
      "surface": {
       "crate-vis": 1,
-      "fn": 5,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -3965,7 +3965,7 @@
      "path": "src/calendar/ingest/property_claims.rs",
      "purpose": "Shared ICS-poll and connector property admission through their existing gates",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -18556,6 +18556,7 @@
      "path": "src/provenance/made_by.rs",
      "purpose": "Rule A provenance vocabulary shared by text commits and retrieval",
      "surface": {
+      "crate-vis": 1,
       "enum": 4,
       "fn": 2,
       "struct": 3
@@ -26512,7 +26513,7 @@
      "path": "src/beam/llm_judge.rs",
      "purpose": "The production model-scored BEAM door: pin validation, three votes, no reward feedback",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {

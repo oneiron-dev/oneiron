@@ -36,9 +36,12 @@ impl<'a> CalendarRead<'a> {
         }
     }
 
-    pub(in crate::calendar) fn has_withheld_exception(&self) -> Result<bool> {
+    pub(in crate::calendar) fn withheld_exception_series(
+        &self,
+    ) -> Result<std::collections::BTreeSet<(EntityId, String)>> {
+        let mut withheld = std::collections::BTreeSet::new();
         if matches!(self, Self::Vault(_)) {
-            return Ok(false);
+            return Ok(withheld);
         }
         let mut after = None;
         loop {
@@ -48,14 +51,19 @@ impl<'a> CalendarRead<'a> {
                 4096,
             )?;
             if ids.is_empty() {
-                return Ok(false);
+                return Ok(withheld);
             }
             for id in &ids {
                 if self.claim(id)?.is_none()
-                    && self.withheld_predicate(id)?.as_deref()
-                        == Some(crate::calendar::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION)
+                    && let Some(body) = self.vault().get_claim(id)?.filter(claim_surfaceable)
+                    && body.predicate
+                        == crate::calendar::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION
                 {
-                    return Ok(true);
+                    // Only the suppression key is used internally; no hidden
+                    // exception contents reach the actor's projection.
+                    let exception =
+                        crate::calendar::claims::decode_series_exception_value(&body.value)?;
+                    withheld.insert((exception.master_ref, exception.uid));
                 }
             }
             after = ids.last().copied();

@@ -2316,8 +2316,20 @@ fn sealed_beam_promotion_is_one_shot_and_never_enters_campaign_reward() -> Resul
         );
     }
     assert_eq!(default_strategy(&vault)?, None);
+    for invalid in [
+        "",
+        "product@garbage",
+        "referee@sha256:short",
+        "@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ] {
+        assert!(SealedRefereeMeasurement::from_referee_scores(0.6, 0.5, invalid).is_err());
+    }
     let failed = measure_once(&vault, &report, pin.clone(), || {
-        SealedRefereeMeasurement::from_referee_scores(0.4, 0.5, "CompanionMem@sealed-v1")
+        SealedRefereeMeasurement::from_referee_scores(
+            0.4,
+            0.5,
+            &format!("fixture/referee@sha256:{}", "a".repeat(64)),
+        )
     })?;
     assert!(!failed.became_default);
     assert_eq!(default_strategy(&vault)?, None);
@@ -2372,7 +2384,11 @@ fn sealed_beam_promotion_is_one_shot_and_never_enters_campaign_reward() -> Resul
         .clone();
     assert_ne!(winner, pin);
     let receipt = measure_once(&vault, &winning_report, winner.clone(), || {
-        SealedRefereeMeasurement::from_referee_scores(0.6, 0.5, "CompanionMem@sealed-v1")
+        SealedRefereeMeasurement::from_referee_scores(
+            0.6,
+            0.5,
+            &format!("fixture/referee@sha256:{}", "a".repeat(64)),
+        )
     })?;
     assert!(receipt.became_default);
     assert_eq!(default_strategy(&vault)?, Some(winner.clone()));

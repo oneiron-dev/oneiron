@@ -322,3 +322,71 @@ fn measured_chroma_and_deterministic_arms_keep_cards_citations_and_gold_isolatio
     assert!(wire["retrieval_cards"]["deterministic-context-pack"].is_object());
     assert!(wire["citations"]["appendix"].is_array());
 }
+
+#[test]
+fn measured_judge_must_match_the_loaded_dataset_before_model_calls() {
+    struct NoCalls;
+    impl LlmBackend for NoCalls {
+        fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+            panic!("mismatched benchmark must not invoke a model")
+        }
+        fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+            panic!("mismatched benchmark must not invoke a model")
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = shipped_plan();
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
+    manifest["dataset"]["path"] = serde_json::json!("run.jsonl");
+    plan.retrieval_manifest = dir.path().join("run.json");
+    std::fs::write(&plan.retrieval_manifest, manifest.to_string()).unwrap();
+    let mut record: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    for (dataset, benchmark, model) in [
+        (
+            "longmemeval-s",
+            JudgeBenchmark::Beam,
+            "openai/gpt-4.1-mini@2025-04-14",
+        ),
+        (
+            "beam-measure-conformance",
+            JudgeBenchmark::LongMemEvalS,
+            "openai/gpt-4o@2024-08-06",
+        ),
+    ] {
+        record["dataset"]["id"] = serde_json::json!(dataset);
+        std::fs::write(dir.path().join("run.jsonl"), record.to_string()).unwrap();
+        plan.judge.benchmark = benchmark;
+        plan.judge.model.model_id = model.parse().unwrap();
+        plan.judge.model.provider_model = format!(
+            "{}-{}",
+            plan.judge.model.model_id.name(),
+            plan.judge.model.model_id.revision()
+        );
+        plan.judge.card.judge_id = plan.judge.model.model_id.name().into();
+        plan.judge.card.version = plan.judge.model.model_id.revision().into();
+        let price = plan.host.prices.models.values().next().unwrap().clone();
+        plan.host
+            .prices
+            .models
+            .insert(plan.judge.model.model_id.clone(), price);
+        let models: Vec<_> = plan
+            .answerers
+            .iter()
+            .map(|arm| arm.model.clone())
+            .chain(std::iter::once(plan.judge.model.clone()))
+            .collect();
+        let session = ModelSession::with_backend(
+            Box::new(NoCalls),
+            plan.host.prices.clone(),
+            &models,
+            plan.host.token_budget,
+        )
+        .unwrap();
+        assert!(matches!(
+            run_with_session(&plan, &session),
+            Err(BeamError::JudgeCardInvalid { .. })
+        ));
+    }
+}

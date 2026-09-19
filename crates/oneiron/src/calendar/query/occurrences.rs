@@ -6,9 +6,9 @@ pub(in crate::calendar) fn occurrences(
     row: &CalendarEventRow,
     window: TimeRange,
     exceptions: &[CalendarSeriesExceptionValue],
-    withheld_exception: bool,
+    withheld: &std::collections::BTreeSet<(crate::EntityId, String)>,
 ) -> Result<Vec<TimeRange>> {
-    if row.facts.series_withheld() {
+    if row.facts.series_withheld() || row.facts.exception_withheld() {
         return Ok(Vec::new());
     }
     let Some(occurrence) = row.occurred else {
@@ -17,7 +17,12 @@ pub(in crate::calendar) fn occurrences(
     let Some(master) = row.facts.series() else {
         return Ok(vec![occurrence]);
     };
-    if withheld_exception {
+    if row
+        .facts
+        .uids()
+        .iter()
+        .any(|uid| withheld.contains(&(row.id, uid.clone())))
+    {
         return Ok(Vec::new());
     }
     let duration = occurrence.end.saturating_sub(occurrence.start);

@@ -171,7 +171,9 @@ impl<'a> DreamerWakeDriver<'a> {
                 "loaded authoring candidate does not match the promoted default".into(),
             ));
         }
-        crate::autoreason_campaign::beam_promotion::default_admission(self.vault, candidate.clone())
+        Ok(DreamerClaimAuthoringAdmission::Tournament(
+            candidate.clone(),
+        ))
     }
 
     /// Configures the wake-budget counter for legibility and the 80% wrap

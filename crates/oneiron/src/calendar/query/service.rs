@@ -101,7 +101,7 @@ fn search_events_in(
         .iter()
         .filter_map(|row| row.facts.exception().cloned())
         .collect();
-    let withheld = read.has_withheld_exception()?;
+    let withheld = read.withheld_exception_series()?;
     let mut matched = Vec::new();
     for row in rows {
         if !matches_selectors(row.facts.systems(), &req.calendars) {
@@ -115,7 +115,7 @@ fn search_events_in(
             continue;
         }
         if let Some(window) = range {
-            for at in super::occurrences::occurrences(&row, window, &exceptions, withheld)? {
+            for at in super::occurrences::occurrences(&row, window, &exceptions, &withheld)? {
                 if intersects(at, window) {
                     let mut occurrence = view.clone();
                     occurrence.start_utc = Some(at.start);

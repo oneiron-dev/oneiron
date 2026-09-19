@@ -27,6 +27,9 @@ impl crate::Vault {
                 return Ok(0);
             }
             let count = remark_claims_pending_in_txn(self, wtxn, EMBED_PRIORITY_BACKFILL, false)?;
+            // Featureless callers can mark pending rows but cannot populate
+            // the sync worker queue. Preserve the marker for the serving build.
+            #[cfg(feature = "sync")]
             self.store.hnsw_meta.delete(wtxn, COLD_ATTACH_PENDING_KEY)?;
             Ok(count)
         })
@@ -86,4 +89,51 @@ fn remark_claims_pending_in_txn(
         }
     }
     Ok(claims.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::{EntityId, TimeRange, Vault, VaultConfig};
+
+    #[test]
+    fn cold_attach_consumes_marker_only_when_queue_work_is_available() -> crate::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut config = VaultConfig::device();
+        config.dimensions = 4;
+        config.map_size = 64 * 1024 * 1024;
+        config.embedding_model = None;
+        let vault = Vault::open(dir.path(), config.clone())?;
+        let subject = EntityId::now();
+        vault.put_entity(
+            &subject,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&serde_json::json!({"name":"fixture"})).unwrap(),
+        )?;
+        let id = EntityId::now();
+        let body = ClaimBody::new(
+            "test.fact",
+            ClaimSubject::Entity(subject),
+            "a fact".into(),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        vault.put_claim(&id, &body, TimeRange { start: 1, end: 1 }, 1)?;
+        drop(vault);
+        config.embedding_model = Some("fixture/embedder@v1".into());
+        let vault = Vault::open(dir.path(), config.clone())?;
+        assert_eq!(vault.cold_attach_embedder()?, 1);
+        drop(vault);
+        let vault = Vault::open(dir.path(), config)?;
+        // A serving build queued the work. A featureless build must leave the
+        // one-time pass available so a later serving build can populate it.
+        assert_eq!(
+            vault.cold_attach_embedder()?,
+            if cfg!(feature = "sync") { 0 } else { 1 }
+        );
+        Ok(())
+    }
 }

@@ -29,6 +29,23 @@ pub(super) struct JudgeConfig {
     pub card: JudgeMetadata,
 }
 impl JudgeConfig {
+    pub(super) fn validate_dataset(&self, dataset: &str) -> BeamResult<()> {
+        let matches = match self.benchmark {
+            JudgeBenchmark::Beam => {
+                dataset == "beam" || dataset.starts_with("beam-") || dataset.starts_with("beam_")
+            }
+            JudgeBenchmark::LongMemEvalS => {
+                dataset == "longmemeval-s" || dataset.starts_with("longmemeval-s-")
+            }
+        };
+        if !matches {
+            return Err(BeamError::JudgeCardInvalid {
+                reason: "judge benchmark does not match the loaded dataset identity".into(),
+            });
+        }
+        Ok(())
+    }
+
     pub(super) fn validate(&self, runtime_answer_prompt: &str) -> BeamResult<()> {
         self.card
             .require_majority_vote_card(runtime_answer_prompt)?;

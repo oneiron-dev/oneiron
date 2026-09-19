@@ -32,7 +32,9 @@ struct EditTask {
     instruction: String,
     files: BTreeMap<String, String>,
     tests: String,
+    test_count: usize,
     contracts: String,
+    contract_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,8 +149,8 @@ fn evaluate(task: &EditTask, attempt: &EditAttempt) -> BeamResult<EditOracleResu
     std::fs::write(oracle.path().join("Cargo.toml"), ORACLE_MANIFEST)?;
     std::fs::write(oracle.path().join("tests/task.rs"), &task.tests)?;
     std::fs::write(oracle.path().join("tests/contract.rs"), &task.contracts)?;
-    let tests_pass = test_suite(oracle.path(), "task")?;
-    let contracts_pass = test_suite(oracle.path(), "contract")?;
+    let tests_pass = test_suite(oracle.path(), "task", task.test_count)?;
+    let contracts_pass = test_suite(oracle.path(), "contract", task.contract_count)?;
     Ok(EditOracleResult {
         arm: attempt.arm.clone(),
         task: task.id.clone(),
@@ -159,7 +161,7 @@ fn evaluate(task: &EditTask, attempt: &EditAttempt) -> BeamResult<EditOracleResu
     })
 }
 
-fn test_suite(root: &Path, test: &str) -> BeamResult<bool> {
+fn test_suite(root: &Path, test: &str, expected: usize) -> BeamResult<bool> {
     let output = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
         .args(["test", "--quiet", "--offline", "--test", test])
         .current_dir(root)
@@ -167,7 +169,16 @@ fn test_suite(root: &Path, test: &str) -> BeamResult<bool> {
         .env("CARGO_BUILD_JOBS", "1")
         .env("RUST_TEST_THREADS", "1")
         .output()?;
-    Ok(output.status.success())
+    let completed = format!(
+        "test result: ok. {expected} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;"
+    );
+    // libtest emits this only after returning from all sealed tests. A candidate
+    // calling exit(0) can exit successfully, but cannot complete the test suite.
+    Ok(expected > 0
+        && output.status.success()
+        && String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line.starts_with(&completed)))
 }
 
 #[cfg(test)]

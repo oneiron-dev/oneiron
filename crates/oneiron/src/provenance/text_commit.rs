@@ -45,16 +45,7 @@ impl RowProvenance {
             if receipt.document != document
                 || receipt.start < 0
                 || receipt.end <= receipt.start
-                || receipt.made_by.process.identity.is_empty()
-                || receipt.made_by.process.version.is_empty()
-                || receipt.made_by.process.params_hash.is_empty()
-                || [
-                    &receipt.made_by.process.identity,
-                    &receipt.made_by.process.version,
-                    &receipt.made_by.process.params_hash,
-                ]
-                .iter()
-                .any(|v| v.len() > 256)
+                || !receipt.made_by.process.is_valid()
                 || receipt.made_by.inputs.len() > 1024
                 || (receipt.made_by.trigger.is_some()
                     && (!commits.is_empty()

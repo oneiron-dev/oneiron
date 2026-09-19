@@ -140,22 +140,24 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        [sub, manifest_path]
-            if matches!(
-                sub.as_str(),
-                "run"
-                    | "edit-path"
-                    | "edit-path-pack"
-                    | "fixture-protocol"
-                    | "score-nuggets"
-                    | "tiers"
-                    | "judge"
-                    | "measure"
-                    | "infra"
-                    | "rung-fixture"
-            ) =>
+        [sub, rest @ ..]
+            if (sub == "rung-fixture" && rest.is_empty())
+                || (rest.len() == 1
+                    && matches!(
+                        sub.as_str(),
+                        "run"
+                            | "edit-path"
+                            | "edit-path-pack"
+                            | "fixture-protocol"
+                            | "score-nuggets"
+                            | "tiers"
+                            | "judge"
+                            | "measure"
+                            | "infra"
+                    )) =>
         {
-            match run_report(sub, Path::new(manifest_path)) {
+            let path = rest.first().map_or(Path::new(""), |path| Path::new(path));
+            match run_report(sub, path) {
                 Ok(report_json) => {
                     println!("{report_json}");
                     ExitCode::SUCCESS
@@ -346,9 +348,7 @@ pub(super) fn temporal_result_ids(
 
 fn run_report(sub: &str, path: &Path) -> BeamResult<String> {
     match sub {
-        "rung-fixture" => Ok(serde_json::to_string_pretty(&super::rung_fixture::run(
-            path,
-        )?)?),
+        "rung-fixture" => Ok(serde_json::to_string_pretty(&super::rung_fixture::run()?)?),
         "infra" => Ok(serde_json::to_string_pretty(&super::infra::run(path)?)?),
         "measure" => Ok(serde_json::to_string_pretty(&super::model_scaffold::run(
             path,

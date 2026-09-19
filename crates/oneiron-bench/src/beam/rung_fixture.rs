@@ -9,7 +9,7 @@ use oneiron::{
     TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use serde::Serialize;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 struct FixtureEmbedder {
     locality: EmbedderLocality,
     fail: bool,
@@ -79,7 +79,7 @@ fn put_claim(vault: &Vault, id: &EntityId, subject: EntityId, text: &str) -> one
         .commit()?;
     Ok(())
 }
-pub(super) fn run(_path: &Path) -> BeamResult<RungReport> {
+pub(super) fn run() -> BeamResult<RungReport> {
     let dir = tempfile::tempdir()?;
     let mut config = beam_vault_config();
     config.embedding_model = None;
@@ -173,8 +173,15 @@ pub(super) fn run(_path: &Path) -> BeamResult<RungReport> {
 mod tests {
     use super::*;
     #[test]
+    fn rung_fixture_command_needs_no_dummy_path() {
+        assert_eq!(
+            crate::beam::arms::run(&["rung-fixture".into()]),
+            std::process::ExitCode::SUCCESS
+        );
+    }
+    #[test]
     fn deterministic_arm_survives_cold_attach_remote_and_local_fallback() {
-        let report = run(Path::new("fixture")).unwrap();
+        let report = run().unwrap();
         assert_eq!(report.before.len(), 3);
         assert_eq!(report.before, report.local);
         assert_eq!(report.local, report.remote);

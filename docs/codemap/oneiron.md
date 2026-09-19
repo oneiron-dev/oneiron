@@ -144,7 +144,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/wire_encode.rs` | src | m | 9 crate-vis | — | `rmpv::Value` encoding for every authority type |
 | `src/authority/write_authorization.rs` | src | s | 2 crate-vis | — | Transaction-bound actor authorization for engine-owned write doors |
 | `src/autoreason_campaign.rs` | src | s | 1 enum · 1 type · 4 const · 1 mod · 4 re-export | CampaignError | Engine-side AR-3 autoreason campaign configuration and report join |
-| `src/autoreason_campaign/beam_promotion.rs` | src | s | 3 struct · 5 fn · 1 crate-vis | AuthoringStrategyPin, PromotionReceipt, SealedRefereeMeasurement | One-shot, one-way promotion from held-out KEEP to a sealed BEAM referee |
+| `src/autoreason_campaign/beam_promotion.rs` | src | s | 3 struct · 4 fn · 1 crate-vis | AuthoringStrategyPin, PromotionReceipt, SealedRefereeMeasurement | One-shot, one-way promotion from held-out KEEP to a sealed BEAM referee |
 | `src/autoreason_campaign/config.rs` | src | m | 8 struct · 4 enum · 5 fn · 2 crate-vis | CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignBudgetLine, CampaignConfig, CampaignCorpusFilter, CampaignCriticTier, CampaignDatasetRef +4 | — |
 | `src/autoreason_campaign/judge.rs` | src | s | 3 struct · 1 crate-vis | BlindCampaignJudgeInput, CampaignGoldAnchor, CampaignTasteJudgment | — |
 | `src/autoreason_campaign/report.rs` | src | m | 3 struct · 2 enum · 3 fn · 2 crate-vis | CampaignArmReport, CampaignCost, CampaignEvaluationSplit, CampaignSmokeOutcome, CampaignSplitReport | — |
@@ -337,7 +337,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/ingest/fetch.rs` | src | s | 3 struct · 1 enum · 2 trait · 1 fn · 1 crate-vis | CustodyDoorIcsFeedFetcher, IcsFeedFetcher, IcsFeedSource, IcsFetchResponse, IcsHttpResponse, IcsHttpTransport | Custody-door HTTP egress, raw archive, and registry normalize |
 | `src/calendar/ingest/mod.rs` | src | s | 3 re-export · 7 crate-vis | — | ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784) |
 | `src/calendar/ingest/poll.rs` | src | m | 4 struct · 1 enum · 7 fn · 1 const | IcsFeedCursorSnapshot, IcsFeedPauseException, IcsFeedPollConfig, IcsFeedPollPayload, IcsPollRunState | ICS feed poll queue, cursor store, and poll runner |
-| `src/calendar/ingest/property_claims.rs` | src | s | 1 crate-vis | — | Shared ICS-poll and connector property admission through their existing gates |
+| `src/calendar/ingest/property_claims.rs` | src | s | 2 crate-vis | — | Shared ICS-poll and connector property admission through their existing gates |
 | `src/calendar/invite/admission.rs` | src | s | 1 struct · 1 enum · 5 fn · 1 const · 3 crate-vis | CalendarInviteAdmission, CalendarInviteStateChange | UID-once/SEQUENCE admission and outbound passport state moves |
 | `src/calendar/invite/hygiene.rs` | src | m | 1 struct · 1 enum · 6 fn · 3 crate-vis | CalendarInviteConsentBasis, CalendarInviteHygieneContext | Vault-hydrated consent evidence and sending-identity reads |
 | `src/calendar/invite/mime.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | CalendarInviteMimePart | iMIP MIME rendering and blob reads |
@@ -1484,7 +1484,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/provenance/imported/tests.rs` | test | s | — | — | — |
 | `src/provenance/imported/tests/lifecycle.rs` | test | s | — | — | Imported lifecycle regression through the private canonical writer |
 | `src/provenance/lifecycle.rs` | src | m | 17 crate-vis | — | Claim lifecycle primitives: precedence, close/retract, stamps, and loading shapes |
-| `src/provenance/made_by.rs` | src | s | 3 struct · 4 enum · 2 fn | MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByPredicate, MadeByProcess, MadeByTrigger | Rule A provenance vocabulary shared by text commits and retrieval |
+| `src/provenance/made_by.rs` | src | s | 3 struct · 4 enum · 2 fn · 1 crate-vis | MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByPredicate, MadeByProcess, MadeByTrigger | Rule A provenance vocabulary shared by text commits and retrieval |
 | `src/provenance/mod.rs` | src | s | 2 mod · 3 re-export · 6 crate-vis | — | `edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15) |
 | `src/provenance/queries.rs` | src | s | 2 fn · 4 crate-vis | — | Vault read scans: named-target guards and live/retracted cohort queries |
 | `src/provenance/tests.rs` | test | L | — | — | — |

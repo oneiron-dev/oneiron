@@ -385,3 +385,63 @@ fn impossible_utc_civil_date_refuses_before_calendar_admission() {
             .is_empty()
     );
 }
+
+#[test]
+fn calendar_property_replacement_preserves_other_sources() {
+    use crate::calendar::claims::*;
+    let (_dir, vault) = open_calendar_vault();
+    let a = test_config();
+    let mut b = test_config();
+    b.system = "personal".into();
+    b.secret_ref = "ics-feed:personal".into();
+    let base = String::from_utf8(one_event_feed("20260806T140000Z", "20260806T150000Z")).unwrap();
+    let feed = |who: &str| {
+        BodyFetcher { body: base.replace("SUMMARY:standup", &format!(
+        "SUMMARY:standup\r\nATTENDEE:mailto:{who}@example.org\r\nURL:https://meet.example.org/shared"
+    )).into_bytes() }
+    };
+    run_ics_feed_poll(&vault, &feed("work"), &a, 1_800_000_000, 7).unwrap();
+    run_ics_feed_poll(&vault, &feed("personal"), &b, 1_800_000_100, 7).unwrap();
+    let event = crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x")
+        .unwrap()
+        .unwrap();
+    let live = || {
+        vault
+            .claims_for_subject(&event)
+            .unwrap()
+            .into_iter()
+            .filter_map(|id| vault.get_claim(&id).unwrap())
+            .filter(|body| body.lifecycle == ClaimLifecycleStatus::Active)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        live()
+            .iter()
+            .filter(|row| row.predicate == PREDICATE_CALENDAR_MEETING_LINK)
+            .count(),
+        2
+    );
+    run_ics_feed_poll(
+        &vault,
+        &BodyFetcher {
+            body: base.into_bytes(),
+        },
+        &a,
+        1_800_000_200,
+        7,
+    )
+    .unwrap();
+    let rows = live();
+    let attendees: Vec<_> = rows
+        .iter()
+        .filter(|row| row.predicate == PREDICATE_CALENDAR_ATTENDEE)
+        .map(|row| decode_attendee_value(&row.value).unwrap().who)
+        .collect();
+    assert_eq!(attendees, ["mailto:personal@example.org"]);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row.predicate == PREDICATE_CALENDAR_MEETING_LINK)
+            .count(),
+        1
+    );
+}

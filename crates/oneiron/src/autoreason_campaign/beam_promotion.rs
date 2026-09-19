@@ -3,7 +3,6 @@
 //! This module never contributes a scalar to campaign reward. Raw referee
 //! numbers are consumed here and are not exposed in campaign report types.
 use super::{CampaignComparisonReport, ExperimentVerdict};
-use crate::dreamer_runner::{DreamerClaimAuthoringAdmission, DreamerTournamentAdmission};
 use crate::{Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -81,11 +80,10 @@ impl SealedRefereeMeasurement {
             || !incumbent.is_finite()
             || !(0.0..=1.0).contains(&candidate)
             || !(0.0..=1.0).contains(&incumbent)
-            || !referee_pin.starts_with("CompanionMem@")
-            || referee_pin.trim_end_matches('@') == "CompanionMem"
+            || !valid_referee_pin(referee_pin)
         {
             return Err(invalid(
-                "sealed CompanionMem referee pin and valid scores required",
+                "content-pinned referee identity and valid scores required",
             ));
         }
         let digest = format!(
@@ -157,18 +155,6 @@ pub fn measure_once(
     })?;
     Ok(receipt)
 }
-/// Resolves the host's default while retaining all class, uncertainty and batch
-/// admission checks on the supplied tournament metadata.
-pub fn default_admission(
-    vault: &Vault,
-    tournament: DreamerTournamentAdmission,
-) -> Result<DreamerClaimAuthoringAdmission> {
-    Ok(if default_strategy(vault)?.is_some() {
-        DreamerClaimAuthoringAdmission::Tournament(tournament)
-    } else {
-        DreamerClaimAuthoringAdmission::SinglePass
-    })
-}
 pub fn default_strategy(vault: &Vault) -> Result<Option<AuthoringStrategyPin>> {
     let txn = vault.store.env.read_txn()?;
     let Some(bytes) = vault.store.vault_meta.get(&txn, DEFAULT_KEY)? else {
@@ -177,11 +163,29 @@ pub fn default_strategy(vault: &Vault) -> Result<Option<AuthoringStrategyPin>> {
     let receipt: PromotionReceipt =
         serde_json::from_slice(&bytes).map_err(|_| invalid("invalid default authoring receipt"))?;
     let key = receipt.strategy.key()?;
-    if !receipt.became_default || vault.store.vault_meta.get(&txn, &key)? != Some(bytes) {
+    if !receipt.became_default
+        || !valid_referee_pin(&receipt.referee_pin)
+        || vault.store.vault_meta.get(&txn, &key)? != Some(bytes)
+    {
         return Err(invalid("unreceipted authoring default"));
     }
     Ok(Some(receipt.strategy))
 }
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
+}
+
+fn valid_referee_pin(pin: &str) -> bool {
+    pin.split_once("@sha256:")
+        .is_some_and(|(identity, digest)| {
+            !identity.is_empty()
+                && identity.len() <= 256
+                && identity
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_/.:".contains(&b))
+                && digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
 }

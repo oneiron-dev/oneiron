@@ -401,6 +401,39 @@ fn generated_triggers_require_matching_entity_types_at_birth_and_import() {
         version: "v1".into(),
         params_hash: "fixture".into(),
     };
+    for field in 0..3 {
+        let mut invalid = process.clone();
+        match field {
+            0 => invalid.identity = "x".repeat(257),
+            1 => invalid.version = "x".repeat(257),
+            _ => invalid.params_hash = "x".repeat(257),
+        }
+        assert!(matches!(
+            ProposalTextArtifact::open_generated(
+                &vault,
+                "summary",
+                &actor,
+                ask,
+                MadeByTrigger::Ask(ask),
+                invalid,
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
+    }
+    let mut boundary = process.clone();
+    boundary.identity = "x".repeat(256);
+    boundary.version = "x".repeat(256);
+    boundary.params_hash = "x".repeat(256);
+    let boundary = ProposalTextArtifact::open_generated(
+        &vault,
+        "summary",
+        &actor,
+        ask,
+        MadeByTrigger::Ask(ask),
+        boundary,
+    )
+    .unwrap();
+    assert!(boundary.provenance(&vault).unwrap().is_some());
     let valid = ProposalTextArtifact::open_generated(
         &vault,
         "summary",
