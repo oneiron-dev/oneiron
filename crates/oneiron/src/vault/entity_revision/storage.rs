@@ -217,7 +217,7 @@ pub(crate) fn capture_entity_revision(
         return Ok(());
     }
     let next = reference(id, new_raw);
-    let now_ms = crate::unix_seconds_now().saturating_mul(1000);
+    let now_ms = unix_millis_at(std::time::SystemTime::now());
     let Some(mut current) = existing else {
         let mut current = RevisionState {
             live: next,
@@ -377,7 +377,7 @@ pub(crate) fn ensure_document(
     let mut current = state(&vault.store, txn, id)?.unwrap_or(RevisionState {
         live: reference(id, &raw),
         indexed: reference(id, &raw),
-        changed_at_ms: crate::unix_seconds_now().saturating_mul(1000),
+        changed_at_ms: unix_millis_at(std::time::SystemTime::now()),
         has_doc: false,
     });
     let doc = if current.has_doc {
@@ -443,3 +443,14 @@ impl Vault {
         Ok(revision)
     }
 }
+
+fn unix_millis_at(now: std::time::SystemTime) -> u64 {
+    now.duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests;

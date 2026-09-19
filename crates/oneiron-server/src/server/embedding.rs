@@ -161,14 +161,15 @@ impl SyncServer {
                         failing = false;
                         backoff = FIRST_BACKOFF;
                     }
+                    // Entity-local debounce, not global queue emptiness,
+                    // determines whether a staged revision can be published.
+                    let server = Arc::clone(self);
+                    let refreshed =
+                        tokio::task::spawn_blocking(move || server.refresh_indexed_idle()).await;
+                    if !matches!(refreshed, Ok(Ok(()))) {
+                        tracing::warn!("indexed revision idle refresh deferred");
+                    }
                     if report.leased == 0 {
-                        let server = Arc::clone(self);
-                        let refreshed =
-                            tokio::task::spawn_blocking(move || server.refresh_indexed_idle())
-                                .await;
-                        if !matches!(refreshed, Ok(Ok(()))) {
-                            tracing::warn!("indexed revision idle refresh deferred");
-                        }
                         tokio::time::sleep(idle).await;
                         continue;
                     }
@@ -271,7 +272,12 @@ impl SyncServer {
             provider: slot.ensure_ready()?,
         };
         self.vault().refresh_indexed_at_idle(
-            oneiron_vault_contract::now_ts().saturating_mul(1000),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
             &provider,
         )?;
         Ok(())
