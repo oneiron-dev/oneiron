@@ -99,3 +99,20 @@ face belongs). For Twitter/launch material: the temple diagram (pediment = produ
 subsystems, foundation = substrate), the Facade pattern drawn as a literal temple facade with
 one door, meet-the-pantheon agent cards, charts wearing a pediment. Same riso ink system,
 day/night plates. Generate per-piece when a post needs one — not a standing queue item.
+
+## Optional Recall scenes (09-19 autonomous app pass)
+
+Appearance offers **None** (default), **Tidal margin**, and **High weather**.
+Only the Recall pre-question door can use a scene. Its input, flock, line and
+sample prompts share an opaque sheet-colored reading well. Asking or choosing
+a sample removes the scene; clearing the question restores the chosen scene.
+The app's existing theme selects the authored day/night version. Results,
+other routes and the global desk plate are unchanged. A small Appearance
+thumbnail previews the selected scene without turning settings into a gallery.
+
+`scene-{tidal-margin,high-weather}-{day,night}.webp` are 1600×900 original
+AI-generated landscapes with irregular print grain, not canonical Bayer fields.
+No new generation or filters were used for placement. Rain garden is excluded.
+See `public/art/scene-provenance.md` for limits, source receipts and hashes.
+This is a reversible, opt-in iteration, not a new ratified UI or engine contract.
+The scene preference is local to this browser/app origin, not synced to a vault.
