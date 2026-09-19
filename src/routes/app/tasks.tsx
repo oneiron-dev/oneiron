@@ -214,7 +214,7 @@ const FIXTURES: Task[] = [
         The plan expires Sep 1. <Name who="eiri" /> sends to Mika through it.
       </>
     ),
-    doors: [{ label: 'settings', to: '/app/settings', tip: 'channels · LINE' }],
+    doors: [{ label: 'settings', to: '/settings/connectors', tip: 'channels · LINE' }],
   },
   {
     id: 't10',
@@ -294,7 +294,7 @@ const FIXTURES: Task[] = [
     doneAt: 'aug 14',
     doneTs: 0,
     why: 'A scoped, budgeted grant so Yurii can reach the Hokuei COO. It expires in 30 days.',
-    doors: [{ label: 'the grant', to: '/app/settings', tip: 'linkedin grant · scope, budget, expiry' }],
+    doors: [{ label: 'the grant', to: '/settings/grants', tip: 'linkedin grant · scope, budget, expiry' }],
   },
 ]
 
