@@ -468,6 +468,20 @@ jobs:
         with:
           clean: true
           fetch-depth: 0
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
+      - name: Restore shared compiler artifacts
+        uses: actions/cache@v4
+        with:
+          path: ~/ci/sccache
+          key: sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            sccache-0.15.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - name: Pinned mutant runner
         run: |
           cargo install --locked cargo-mutants@27.1.0 --root "$HOME/ci/tools"
@@ -482,6 +496,9 @@ jobs:
           else
             python3 scripts/audit/mutation.py --base "$AUDIT_BASE" --allow-no-changes
           fi
+      - name: Compiler cache statistics
+        if: always()
+        run: '"$HOME/ci/tools/bin/sccache" --show-stats'
       - name: Mutation evidence
         if: always()
         uses: actions/upload-artifact@v4
