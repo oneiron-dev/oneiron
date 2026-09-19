@@ -176,9 +176,13 @@ pub(super) fn handle_app_message_with_connection(
                     .ok_or(ProtocolError::RpcNoPrincipal)?,
             )
             .map_err(|_| ProtocolError::RpcNoPrincipal)?;
-            let auth =
-                CoreAuth::bind_transport_once(&token, &proof, &server.config, server.vault().as_ref())
-                    .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+            let auth = CoreAuth::bind_transport_once(
+                &token,
+                &proof,
+                &server.config,
+                server.vault().as_ref(),
+            )
+            .map_err(|_| ProtocolError::RpcNoPrincipal)?;
             auth.require_registered_principal()
                 .map_err(|_| ProtocolError::RpcNoPrincipal)?;
             state.bound_auth = Some(auth);

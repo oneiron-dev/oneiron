@@ -22,7 +22,7 @@ struct Fixture {
     task: tokio::task::JoinHandle<()>,
     url: String,
     _dir: tempfile::TempDir,
-    server:Arc<SyncServer>,
+    server: Arc<SyncServer>,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -45,37 +45,70 @@ async fn fixture() -> Fixture {
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}/ws", listener.local_addr().unwrap());
-    let app=build_app(server.clone());
+    let app = build_app(server.clone());
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
     Fixture {
         task,
         url,
-        _dir: dir,server,
+        _dir: dir,
+        server,
     }
 }
 
-struct Credential {slip:oneiron::authority::CapabilitySlip,holder:ed25519_dalek::SigningKey}
-fn credential(fixture:&Fixture)->Credential {
-    let vault=fixture.server.vault();
-    let principal=oneiron::EntityId::from_hex(PRINCIPAL).unwrap();
-    if vault.get_entity_type(&principal).unwrap().is_none() {vault.put_entity(&principal,oneiron::registry::ENTITY_TYPE_PERSON,oneiron::TimeRange{start:1,end:1},1,b"app principal").unwrap();}
-    let issuer=oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
-    let mut claims=vault.ensure_host_root_slip(&issuer).unwrap().claims;
-    claims.slip_id=*blake3::hash(oneiron::EntityId::now().as_bytes()).as_bytes();
-    claims.holder_ref=PRINCIPAL.into();claims.actor_class=Some("human".into());
-    claims.scope.verbs=oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from(["read".into()]));
-    let holder=ed25519_dalek::SigningKey::from_bytes(&[93;32]);
-    claims.binding_key=holder.verifying_key().to_bytes();
-    let slip=vault.mint_capability_slip(&issuer,claims).unwrap();
-    Credential{slip,holder}
+struct Credential {
+    slip: oneiron::authority::CapabilitySlip,
+    holder: ed25519_dalek::SigningKey,
 }
-fn now()->u64 {std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()}
-fn bind_payload(credential:&Credential,timestamp:u64)->Value {
+fn credential(fixture: &Fixture) -> Credential {
+    let vault = fixture.server.vault();
+    let principal = oneiron::EntityId::from_hex(PRINCIPAL).unwrap();
+    if vault.get_entity_type(&principal).unwrap().is_none() {
+        vault
+            .put_entity(
+                &principal,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"app principal",
+            )
+            .unwrap();
+    }
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let mut claims = vault.ensure_host_root_slip(&issuer).unwrap().claims;
+    claims.slip_id = *blake3::hash(oneiron::EntityId::now().as_bytes()).as_bytes();
+    claims.holder_ref = PRINCIPAL.into();
+    claims.actor_class = Some("human".into());
+    claims.scope.verbs =
+        oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from(["read".into()]));
+    let holder = ed25519_dalek::SigningKey::from_bytes(&[93; 32]);
+    claims.binding_key = holder.verifying_key().to_bytes();
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    Credential { slip, holder }
+}
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+fn bind_payload(credential: &Credential, timestamp: u64) -> Value {
     use ed25519_dalek::Signer;
-    let nonce=oneiron::EntityId::now().to_hex();let challenge=format!("oneiron-request:{timestamp}:{nonce}");
-    let signature:String=credential.holder.sign(&credential.slip.binding_transcript(challenge.as_bytes()).unwrap()).to_bytes().iter().map(|b|format!("{b:02x}")).collect();
+    let nonce = oneiron::EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature: String = credential
+        .holder
+        .sign(
+            &credential
+                .slip
+                .binding_transcript(challenge.as_bytes())
+                .unwrap(),
+        )
+        .to_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     json!({"token":credential.slip.to_token().unwrap(),"binding":{"timestamp":timestamp,"nonce":nonce,"signature":signature}})
 }
 
@@ -215,23 +248,51 @@ async fn rpc_and_sub_without_bind_close_4008() {
 #[tokio::test]
 async fn bind_requires_a_mac_verified_slip_then_returns_terminal_reply() {
     let fixture = fixture().await;
-    let valid=credential(&fixture);
-    let mut forged_json=serde_json::to_value(&valid.slip).unwrap();
-    forged_json["mac"][0]=json!(forged_json["mac"][0].as_u64().unwrap() ^ 1);
-    let forged:oneiron::authority::CapabilitySlip=serde_json::from_value(forged_json).unwrap();
-    let forged_credential=Credential{slip:forged,holder:valid.holder.clone()};
-    let forged_params=bind_payload(&forged_credential,now());
-    let wrong_holder=Credential{slip:valid.slip.clone(),holder:ed25519_dalek::SigningKey::from_bytes(&[94;32])};
-    let mut bad_frame=bind_payload(&valid,now());bad_frame["token"]=json!("v2.invalid.bad");
-    let mut unknown=bind_payload(&valid,now());unknown["unknown"]=json!("x");
-    let revoked=credential(&fixture);
-    fixture.server.vault().revoke_capability_slip(&oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap(),revoked.slip.claims.slip_id).unwrap();
-    for invalid in [forged_params,bind_payload(&wrong_holder,now()),bad_frame,unknown,bind_payload(&valid,now().saturating_sub(120)),json!({"token":valid.slip.to_token().unwrap()}),bind_payload(&revoked,now())] {
-        let mut socket=connect(&fixture,APP_TIER_PROTOCOL_VERSION_VERSION).await;
-        send(&mut socket,TAG_RPC,json!({"requestId":1,"method":"auth.bind","params":invalid})).await;
-        assert_eq!(close_code(&mut socket).await,4008);
+    let valid = credential(&fixture);
+    let mut forged_json = serde_json::to_value(&valid.slip).unwrap();
+    forged_json["mac"][0] = json!(forged_json["mac"][0].as_u64().unwrap() ^ 1);
+    let forged: oneiron::authority::CapabilitySlip = serde_json::from_value(forged_json).unwrap();
+    let forged_credential = Credential {
+        slip: forged,
+        holder: valid.holder.clone(),
+    };
+    let forged_params = bind_payload(&forged_credential, now());
+    let wrong_holder = Credential {
+        slip: valid.slip.clone(),
+        holder: ed25519_dalek::SigningKey::from_bytes(&[94; 32]),
+    };
+    let mut bad_frame = bind_payload(&valid, now());
+    bad_frame["token"] = json!("v2.invalid.bad");
+    let mut unknown = bind_payload(&valid, now());
+    unknown["unknown"] = json!("x");
+    let revoked = credential(&fixture);
+    fixture
+        .server
+        .vault()
+        .revoke_capability_slip(
+            &oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap(),
+            revoked.slip.claims.slip_id,
+        )
+        .unwrap();
+    for invalid in [
+        forged_params,
+        bind_payload(&wrong_holder, now()),
+        bad_frame,
+        unknown,
+        bind_payload(&valid, now().saturating_sub(120)),
+        json!({"token":valid.slip.to_token().unwrap()}),
+        bind_payload(&revoked, now()),
+    ] {
+        let mut socket = connect(&fixture, APP_TIER_PROTOCOL_VERSION_VERSION).await;
+        send(
+            &mut socket,
+            TAG_RPC,
+            json!({"requestId":1,"method":"auth.bind","params":invalid}),
+        )
+        .await;
+        assert_eq!(close_code(&mut socket).await, 4008);
     }
-    let once=bind_payload(&valid,now());
+    let once = bind_payload(&valid, now());
     let mut socket = connect(&fixture, APP_TIER_PROTOCOL_VERSION_VERSION).await;
     send(
         &mut socket,
@@ -243,20 +304,27 @@ async fn bind_requires_a_mac_verified_slip_then_returns_terminal_reply() {
         rpc_reply(&mut socket).await,
         json!({"requestId":5,"result":null,"last":true})
     );
-    let mut replay=connect(&fixture,APP_TIER_PROTOCOL_VERSION_VERSION).await;
-    send(&mut replay,TAG_RPC,json!({"requestId":6,"method":"auth.bind","params":once})).await;
-    assert_eq!(close_code(&mut replay).await,4008);
-
+    let mut replay = connect(&fixture, APP_TIER_PROTOCOL_VERSION_VERSION).await;
+    send(
+        &mut replay,
+        TAG_RPC,
+        json!({"requestId":6,"method":"auth.bind","params":once}),
+    )
+    .await;
+    assert_eq!(close_code(&mut replay).await, 4008);
 }
 
 #[tokio::test]
 async fn a_principal_slip_never_crosses_the_owner_upgrade_gate() {
     let fixture = fixture().await;
     let mut request = fixture.url.as_str().into_client_request().unwrap();
-    let credential=credential(&fixture);
-    let payload=bind_payload(&credential,now());
-    let slip=payload["token"].as_str().unwrap();
-    request.headers_mut().insert("x-oneiron-binding",payload["binding"].to_string().parse().unwrap());
+    let credential = credential(&fixture);
+    let payload = bind_payload(&credential, now());
+    let slip = payload["token"].as_str().unwrap();
+    request.headers_mut().insert(
+        "x-oneiron-binding",
+        payload["binding"].to_string().parse().unwrap(),
+    );
     request
         .headers_mut()
         .insert("authorization", format!("Bearer {slip}").parse().unwrap());

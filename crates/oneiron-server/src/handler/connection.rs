@@ -29,7 +29,10 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
     Router::new()
         .route("/ws", get(ws_upgrade_handler))
         .with_state(server.clone())
-        .layer(axum::middleware::from_fn_with_state(server, crate::auth::admit_http_binding))
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            crate::auth::admit_http_binding,
+        ))
 }
 
 /// Handles WebSocket upgrade requests.

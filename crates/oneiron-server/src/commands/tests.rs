@@ -322,23 +322,43 @@ fn auto_discovers_candidate_with_cjk_dict_marker() {
 /// tombstone. Revoking the named parent also kills its logged descendants.
 #[test]
 fn token_revoke_with_slip_id_revokes_subtree_and_preserves_sibling() {
-    let dir=tempfile::tempdir().unwrap();let path=dir.path().join("vault");
-    let mut cfg=oneiron::VaultConfig::server();cfg.dimensions=32;cfg.map_size=64*1024*1024;
-    let vault=oneiron::Vault::open(&path,cfg.clone()).unwrap();
-    let issuer=oneiron::authority::HostSlipIssuer::from_secret(b"cli-revoke").unwrap();
-    let root=vault.ensure_host_root_slip(&issuer).unwrap();
-    for (id,parent) in [([71;32],root.claims.slip_id),([72;32],root.claims.slip_id),([73;32],[71;32])] {
-        let mut claims=root.claims.clone();claims.slip_id=id;claims.parent_id=Some(parent);
-        vault.mint_capability_slip(&issuer,claims).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vault");
+    let mut cfg = oneiron::VaultConfig::server();
+    cfg.dimensions = 32;
+    cfg.map_size = 64 * 1024 * 1024;
+    let vault = oneiron::Vault::open(&path, cfg.clone()).unwrap();
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"cli-revoke").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    for (id, parent) in [
+        ([71; 32], root.claims.slip_id),
+        ([72; 32], root.claims.slip_id),
+        ([73; 32], [71; 32]),
+    ] {
+        let mut claims = root.claims.clone();
+        claims.slip_id = id;
+        claims.parent_id = Some(parent);
+        vault.mint_capability_slip(&issuer, claims).unwrap();
         assert!(vault.capability_slip_id_is_live(&id).unwrap());
     }
     drop(vault);
-    let id:String=[71u8;32].iter().map(|b|format!("{b:02x}")).collect();
-    token_revoke(TokenRevokeArgs{jti:id,serve:ServeArgs{vault_path:Some(path.clone()),dimensions:Some(32),map_size:Some(64*1024*1024),dict_search_paths:Some(Vec::new()),auth_secret:Some("cli-revoke".into()),..Default::default()}}).unwrap();
-    let vault=oneiron::Vault::open(path,cfg).unwrap();
-    assert!(!vault.capability_slip_id_is_live(&[71;32]).unwrap());
-    assert!(!vault.capability_slip_id_is_live(&[73;32]).unwrap());
-    assert!(vault.capability_slip_id_is_live(&[72;32]).unwrap());
+    let id: String = [71u8; 32].iter().map(|b| format!("{b:02x}")).collect();
+    token_revoke(TokenRevokeArgs {
+        jti: id,
+        serve: ServeArgs {
+            vault_path: Some(path.clone()),
+            dimensions: Some(32),
+            map_size: Some(64 * 1024 * 1024),
+            dict_search_paths: Some(Vec::new()),
+            auth_secret: Some("cli-revoke".into()),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let vault = oneiron::Vault::open(path, cfg).unwrap();
+    assert!(!vault.capability_slip_id_is_live(&[71; 32]).unwrap());
+    assert!(!vault.capability_slip_id_is_live(&[73; 32]).unwrap());
+    assert!(vault.capability_slip_id_is_live(&[72; 32]).unwrap());
 }
 
 /// A typo'd id would write a row no token can ever present, which would look

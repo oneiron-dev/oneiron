@@ -338,7 +338,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         )
         .merge(legacy_mutation_routes)
         .with_state(server.clone())
-        .layer(middleware::from_fn_with_state(server, crate::auth::admit_http_binding))
+        .layer(middleware::from_fn_with_state(
+            server,
+            crate::auth::admit_http_binding,
+        ))
 }
 
 /// Health check endpoint.

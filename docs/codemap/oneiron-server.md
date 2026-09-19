@@ -274,4 +274,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
 | `tests/managed_mode.rs` | test | XL | — | — | Managed serve mode: the engine as a supervised child process (ONE-1595) |
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
-| `tests/ws_app_tier.rs` | test | s | — | — | New app-tier socket tests |
+| `tests/ws_app_tier.rs` | test | m | — | — | New app-tier socket tests |

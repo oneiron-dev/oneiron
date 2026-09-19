@@ -267,10 +267,10 @@ async fn http_get_bytes(addr: SocketAddr, path: &str, secret: Option<&str>) -> V
     let secret_header = secret
         .map(|secret| format!("Authorization: Bearer {secret}\r\n"))
         .unwrap_or_default();
-    http_get_with_headers(addr,path,&secret_header).await
+    http_get_with_headers(addr, path, &secret_header).await
 }
-async fn http_get_with_headers(addr:SocketAddr,path:&str,secret_header:&str)->Vec<u8> {
-    let mut stream=tokio::net::TcpStream::connect(addr).await.unwrap();
+async fn http_get_with_headers(addr: SocketAddr, path: &str, secret_header: &str) -> Vec<u8> {
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let request =
         format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{secret_header}\r\n");
     stream.write_all(request.as_bytes()).await.unwrap();
@@ -567,19 +567,35 @@ async fn ws_upgrade_rejects_a_live_scoped_token_that_works_on_v1() {
     )
     .await;
 
-    let mut scoped=mint_identified_owner_token(&server,"scoped-ws-secret","scoped-upgrade");
-    let mut scope=oneiron::federation::Scope::top();
-    scope.verbs=oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from(["read".into(),"write".into()]));
-    scoped.slip.attenuate(oneiron::authority::SlipCaveat{scope:Some(scope),..Default::default()}).unwrap();
+    let mut scoped = mint_identified_owner_token(&server, "scoped-ws-secret", "scoped-upgrade");
+    let mut scope = oneiron::federation::Scope::top();
+    scope.verbs = oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        "read".into(),
+        "write".into(),
+    ]));
+    scoped
+        .slip
+        .attenuate(oneiron::authority::SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        })
+        .unwrap();
 
     // The credential is authentic and live: it is served on its own /v1 route.
-    let headers=format!("Authorization: Bearer {}\r\nx-oneiron-binding: {}\r\n",scoped.slip.to_token().unwrap(),binding_proof(&scoped));
-    let response=String::from_utf8(http_get_with_headers(addr,"/v1/core/outbound/capabilities",&headers).await).unwrap();
+    let headers = format!(
+        "Authorization: Bearer {}\r\nx-oneiron-binding: {}\r\n",
+        scoped.slip.to_token().unwrap(),
+        binding_proof(&scoped)
+    );
+    let response = String::from_utf8(
+        http_get_with_headers(addr, "/v1/core/outbound/capabilities", &headers).await,
+    )
+    .unwrap();
     assert_http_status(&response, 200);
 
     // Same credential at /ws: refused before the upgrade completes, so no
     // socket — and therefore no doc-mutating import — ever exists.
-    let err = connect_bound(addr, &scoped,true).await.unwrap_err();
+    let err = connect_bound(addr, &scoped, true).await.unwrap_err();
     assert_unauthorized(&err);
 
     // The owner-grade half: the same server admits a device credential and
@@ -613,7 +629,7 @@ fn mint_identified_owner_token(server: &SyncServer, secret: &str, jti: &str) -> 
         .unwrap();
     BoundCredential { slip, holder }
 }
-fn binding_proof(credential:&BoundCredential)->serde_json::Value {
+fn binding_proof(credential: &BoundCredential) -> serde_json::Value {
     use ed25519_dalek::Signer;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -640,7 +656,7 @@ async fn connect_bound(
     credential: &BoundCredential,
     hello: bool,
 ) -> Result<WsStream, tokio_tungstenite::tungstenite::Error> {
-    let proof=binding_proof(credential);
+    let proof = binding_proof(credential);
     let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
     request.headers_mut().insert(
         "authorization",
