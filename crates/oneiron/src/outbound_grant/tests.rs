@@ -36,6 +36,7 @@ fn standing_outbound_grant_codec_round_trips_active_grant() -> Result<()> {
 #[test]
 fn scoped_mcp_grant_codec_round_trips_all_payload_axes() -> Result<()> {
     let grant = StandingOutboundGrant {
+        authority_scope: crate::federation::scope_codec::effect_preset(),
         principal_ref: "owner".to_owned(),
         origin_component_id: "ask-mcp".to_owned(),
         origin_action_id: "grant-scoped-mcp".to_owned(),
@@ -210,6 +211,7 @@ fn contact_grant_decode_rejects_non_nil_scoped_mcp_field() -> Result<()> {
 #[test]
 fn scoped_mcp_grant_decode_rejects_every_non_nil_legacy_scope_field() -> Result<()> {
     let grant = StandingOutboundGrant {
+        authority_scope: crate::federation::scope_codec::effect_preset(),
         principal_ref: "owner".to_owned(),
         origin_component_id: "ask-mcp".to_owned(),
         origin_action_id: "grant-scoped-mcp".to_owned(),

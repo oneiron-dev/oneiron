@@ -1185,17 +1185,19 @@ fn bucket_hash_conformance() {
         predicate_root: "profile".to_owned(),
         world: None,
         facet: None,
+        relationship: None,
     };
     // Pinned known-answer vector for the domain-separated hash.
     assert_eq!(
         bytes_to_hex_lower(&key.bucket_hash()),
-        "c096c3dfc3c02e94daa1347a58a7686939930e2e113f4507992f2452ab29d0a7",
+        "d317aabf2d943d106457feac194b64d955b825777bce237ae930232d76b2be6b",
         "bucket hash known-answer vector"
     );
 
     // Identical content hashes identically regardless of construction path.
     let rebuilt = ConsolidationBucketKey {
         facet: None,
+        relationship: None,
         world: None,
         predicate_root: String::from("profile"),
         subject,
@@ -2421,4 +2423,33 @@ pub(crate) fn claim_predicates_in_store(vault: &Vault) -> Result<Vec<String>> {
         }
     }
     Ok(predicates)
+}
+
+#[test]
+fn nickname_relationships_form_distinct_buckets() {
+    let subject = EntityId::from_bytes([1; 16]).unwrap();
+    let candidates: Vec<_> = [2, 3]
+        .into_iter()
+        .map(|seed| PromotionCandidate {
+            claim_id: EntityId::now(),
+            candidate: ClaimCandidate::new(
+                "profile.nickname",
+                ClaimSubject::Entity(subject),
+                Value::from("Ada"),
+                1.0,
+            )
+            .with_relationship(EntityId::from_bytes([seed; 16]).unwrap()),
+            evidence_turn_refs: vec![],
+            provenance_chain: vec![],
+            supersedes: None,
+            evidence_meet: ClaimSource::Generated,
+            occurred: occurred(1),
+            learned_at: 1,
+        })
+        .collect();
+    let buckets = plan_candidate_buckets(&candidates).unwrap();
+    assert_eq!(buckets.len(), 2);
+    assert_ne!(buckets[0].key.bucket_hash(), buckets[1].key.bucket_hash());
+    assert_eq!(buckets[0].candidate_indexes.len(), 1);
+    assert_eq!(buckets[1].candidate_indexes.len(), 1);
 }

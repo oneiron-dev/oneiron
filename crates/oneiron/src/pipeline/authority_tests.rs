@@ -30,7 +30,14 @@ fn read_grant(actor_ref: &str, scope: Value) -> Value {
         ("actor_ref", Value::from(actor_ref)),
         ("effector", Value::from("core:read")),
         ("receipt_required", Value::Boolean(false)),
-        ("scope", scope),
+        (
+            "scope",
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .unwrap(),
+        ),
+        ("selectors", scope),
     ])
 }
 

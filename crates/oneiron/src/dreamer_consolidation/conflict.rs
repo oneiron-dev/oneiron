@@ -29,6 +29,7 @@ pub struct ConsolidationBucketKey {
     pub predicate_root: String,
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
+    pub relationship: Option<EntityId>,
 }
 
 impl ConsolidationBucketKey {
@@ -44,6 +45,7 @@ impl ConsolidationBucketKey {
         hasher.update(self.predicate_root.as_bytes());
         hash_optional_entity(&mut hasher, self.world.as_ref());
         hash_optional_entity(&mut hasher, self.facet.as_ref());
+        hash_optional_entity(&mut hasher, self.relationship.as_ref());
         *hasher.finalize().as_bytes()
     }
 }
@@ -63,6 +65,7 @@ pub(super) struct CandidateFacts {
     pub(super) value: Value,
     pub(super) world: Option<EntityId>,
     pub(super) facet: Option<EntityId>,
+    pub(super) relationship: Option<EntityId>,
 }
 
 pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFacts> {
@@ -86,6 +89,7 @@ pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFac
         value: body.value,
         world: body.world,
         facet: facet_from_scope(body.scope.as_ref()),
+        relationship: body.rel,
     })
 }
 
@@ -119,6 +123,7 @@ pub fn plan_candidate_buckets(
             predicate_root: predicate_root(&facts.predicate).to_owned(),
             world: facts.world,
             facet: facts.facet,
+            relationship: facts.relationship,
         };
         buckets.entry(key).or_default().push(index);
     }
@@ -302,6 +307,7 @@ pub struct ConflictIdentity {
     pub predicate: String,
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
+    pub relationship: Option<EntityId>,
 }
 
 /// One conflicting set: same full identity, non-equal canonical values.
@@ -330,6 +336,7 @@ pub fn detect_conflicts(
             predicate: facts.predicate,
             world: facts.world,
             facet: facts.facet,
+            relationship: facts.relationship,
         };
         groups
             .entry(identity)

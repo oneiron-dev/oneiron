@@ -67,6 +67,19 @@ pub(super) fn apply_claim_candidate(
         return Err(Error::EntityNotFound);
     }
 
+    if let Some(relationship) = candidate.relationship() {
+        let found = store
+            .entities
+            .get(wtxn, relationship.as_bytes())?
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
+        if found != Some(crate::registry::ENTITY_TYPE_RELATIONSHIP) {
+            return Err(crate::error::RegistryError::InvalidRelationship {
+                relationship,
+                found,
+            }
+            .into());
+        }
+    }
     let body = candidate.into_claim_body(envelope);
     let data = crate::claim::encode_claim_body(&body)?;
     let applied_put = apply_put(

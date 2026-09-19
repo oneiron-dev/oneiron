@@ -644,7 +644,7 @@ pub(super) fn ensure_companion_record(
             ),
         ]),
         provenance,
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         if let Some(raw) = vault
@@ -663,7 +663,7 @@ pub(super) fn ensure_companion_record(
                 || existing.subject != record.subject
                 || existing.value != record.value
                 || existing.lifecycle != record.lifecycle
-                || existing.export_classification != record.export_classification
+                || existing.sensitivity != record.sensitivity
             {
                 return Err(invalid(
                     "companion_record_ref is already bound to a different companion",

@@ -272,6 +272,9 @@ pub enum ErrorKind {
     VaultCleanupProposalNotFound,
     VaultCleanupWakeTriggerRejected,
     VaultRead,
+    CooperativeDeletionRequiresTerminalPact,
+    InvalidCooperativeDeletionRequest,
+    WriteConcurrentWithRevocation,
 }
 
 /// Crate error type.

@@ -12,6 +12,15 @@ mod register;
 mod store;
 mod vault;
 
+pub(crate) fn is_identity_facet_body(data: &[u8]) -> bool {
+    let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..]) else {
+        return false;
+    };
+    entries.iter().any(|(k, v)| {
+        k.as_str() == Some("kind") && matches!(v.as_str(), Some("persona" | "relationship"))
+    })
+}
+
 pub use self::codec::{
     companion_value_from_json, companion_value_to_json, decode_companion_record_body,
     encode_companion_record_body,
@@ -22,9 +31,8 @@ pub use self::keys::{
     COMPANION_TASK_PAYLOAD_SCHEMA_VERSION, ENTITY_TYPE_COMPANION_REGISTER,
 };
 pub use self::model::{
-    CompanionExportClassification, CompanionExpression, CompanionLifecycleEvent,
-    CompanionLifecycleEventKind, CompanionProvenance, CompanionRecord, CompanionRecordKey,
-    CompanionRecordKind, CompanionScope, CompanionSubject,
+    CompanionExpression, CompanionLifecycleEvent, CompanionLifecycleEventKind, CompanionProvenance,
+    CompanionRecord, CompanionRecordKey, CompanionRecordKind, CompanionScope, CompanionSubject,
 };
 pub use self::queue::{
     ClaimCompanionTask, ClaimCompanionTaskOutcome, CompanionQueue, CompanionTask,

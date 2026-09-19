@@ -14,6 +14,12 @@ use super::ErrorKind;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RecordError {
+    /// A courtesy request requires a disconnected or dissolved pact.
+    #[error("cooperative deletion request requires a disconnected or dissolved pact")]
+    CooperativeDeletionRequiresTerminalPact,
+    /// Malformed or unauthenticated courtesy request.
+    #[error("invalid cooperative deletion request")]
+    InvalidCooperativeDeletionRequest,
     /// AccessGrant creation attempted to reuse an existing entity id.
     #[error("access grant already exists")]
     AccessGrantAlreadyExists,
@@ -168,6 +174,10 @@ impl RecordError {
     #[must_use]
     pub(crate) fn kind(&self) -> ErrorKind {
         match self {
+            Self::CooperativeDeletionRequiresTerminalPact => {
+                ErrorKind::CooperativeDeletionRequiresTerminalPact
+            }
+            Self::InvalidCooperativeDeletionRequest => ErrorKind::InvalidCooperativeDeletionRequest,
             Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
             Self::OutboundGrantAlreadyExists => ErrorKind::OutboundGrantAlreadyExists,
             Self::ConnectorKeyAlreadyExists => ErrorKind::ConnectorKeyAlreadyExists,

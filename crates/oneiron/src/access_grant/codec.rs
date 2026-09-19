@@ -12,10 +12,10 @@ use super::record::{AccessGrant, AccessGrantCapability, AccessGrantScope, Access
 use crate::error::RecordError;
 
 /// Current AccessGrant body schema version.
-pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 2;
+pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 3;
 
 /// Pinned on-disk MessagePack key set for AccessGrant bodies.
-pub const ACCESS_GRANT_BODY_KEYS: [&str; 7] = [
+pub const ACCESS_GRANT_BODY_KEYS: [&str; 8] = [
     "schema_version",
     "principal_ref",
     "scope",
@@ -23,6 +23,7 @@ pub const ACCESS_GRANT_BODY_KEYS: [&str; 7] = [
     "status",
     "created_at",
     "revoked_at",
+    "authority_scope",
 ];
 
 pub(crate) const ACCESS_GRANT_FIELDS_MINIMAL: &[&str] = &["scope", "capability", "status"];
@@ -71,6 +72,10 @@ pub fn encode_access_grant_body(grant: &AccessGrant) -> Result<Vec<u8>> {
         ),
         (Value::from(KEY_SCOPE), encode_scope(&grant.scope)),
         (
+            "authority_scope".into(),
+            crate::federation::scope_codec::encode_scope_value(&grant.authority_scope)?,
+        ),
+        (
             Value::from(KEY_CAPABILITY),
             Value::from(grant.capability.as_str()),
         ),
@@ -108,10 +113,18 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
-    validate_keys(entries, &ACCESS_GRANT_BODY_KEYS)?;
+    let legacy = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() == Some(2);
+    validate_keys(
+        entries,
+        if legacy {
+            &ACCESS_GRANT_BODY_KEYS[..7]
+        } else {
+            &ACCESS_GRANT_BODY_KEYS
+        },
+    )?;
 
     let version = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64();
-    if version != Some(ACCESS_GRANT_SCHEMA_VERSION) {
+    if !legacy && version != Some(ACCESS_GRANT_SCHEMA_VERSION) {
         return Err(invalid_grant());
     }
 
@@ -136,6 +149,14 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
     };
 
     let grant = AccessGrant {
+        authority_scope: if legacy {
+            crate::federation::scope_codec::read_preset()
+        } else {
+            crate::federation::scope_codec::decode_scope_value(required_value(
+                entries,
+                "authority_scope",
+            )?)?
+        },
         principal_ref,
         scope,
         capability,

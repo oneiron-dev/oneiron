@@ -99,3 +99,7 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 #[cfg(test)]
 use std::time::Duration;
+
+pub use budget::{
+    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiSettlement, RsiSpendPurpose,
+};

@@ -149,7 +149,10 @@ fn install_self_memory_policy_trusting_source(
 ) -> Result<()> {
     clear_policy_manifests_for_test(vault)?;
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("code-run-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (

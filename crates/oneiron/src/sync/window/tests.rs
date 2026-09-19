@@ -4,8 +4,7 @@ use rmpv::Value;
 use crate::affect::Vad;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-    encode_companion_record_body,
+    CompanionProvenance, CompanionRecord, CompanionScope, encode_companion_record_body,
 };
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
@@ -181,7 +180,7 @@ fn commit_entity(window: &LoadedWindow, learned_at: u64, data: &[u8]) -> EntityI
 
 fn companion_record(
     persona_ref: EntityId,
-    export_classification: CompanionExportClassification,
+    sensitivity: crate::federation::Sensitivity,
 ) -> CompanionRecord {
     CompanionRecord::persona(
         CompanionScope::neutral(),
@@ -194,7 +193,7 @@ fn companion_record(
             ClaimApprovalStatus::Approved,
             Value::from("private provenance"),
         ),
-        export_classification,
+        sensitivity,
     )
 }
 
@@ -392,10 +391,12 @@ fn companion_register_api_reverse_remat_excludes_local_only_records() -> Result<
     let local_id = EntityId::from_bytes([0x31; 16]).unwrap();
     let portable_id = EntityId::from_bytes([0x32; 16]).unwrap();
     let external_local_id = EntityId::from_bytes([0x35; 16]).unwrap();
-    let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
-    let portable = companion_record(portable_id, CompanionExportClassification::Portable);
-    let external_local =
-        companion_record(external_local_id, CompanionExportClassification::LocalOnly);
+    let local = companion_record(local_id, crate::federation::Sensitivity::Restricted);
+    let portable = companion_record(portable_id, crate::federation::Sensitivity::Public);
+    let external_local = companion_record(
+        external_local_id,
+        crate::federation::Sensitivity::Restricted,
+    );
 
     vault.create_companion_record(&local_id, &local, learned_at)?;
     vault.create_companion_record(&portable_id, &portable, learned_at)?;
@@ -462,8 +463,8 @@ fn companion_register_api_forward_remat_excludes_local_only_records() -> Result<
     let learned_at = window_key.start_timestamp().unwrap() + 90;
     let local_id = EntityId::from_bytes([0x33; 16]).unwrap();
     let portable_id = EntityId::from_bytes([0x34; 16]).unwrap();
-    let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
-    let portable = companion_record(portable_id, CompanionExportClassification::Portable);
+    let local = companion_record(local_id, crate::federation::Sensitivity::Restricted);
+    let portable = companion_record(portable_id, crate::federation::Sensitivity::Public);
 
     let doc = create_window_doc("remote", &window_key);
     let entities = doc.get_map("entities");
@@ -529,8 +530,8 @@ fn companion_register_api_pending_mirror_replay_excludes_local_only_edges() -> R
     let learned_at = window_key.start_timestamp().unwrap() + 120;
     let local_id = EntityId::from_bytes([0x35; 16]).unwrap();
     let portable_id = EntityId::from_bytes([0x36; 16]).unwrap();
-    let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
-    let portable = companion_record(portable_id, CompanionExportClassification::Portable);
+    let local = companion_record(local_id, crate::federation::Sensitivity::Restricted);
+    let portable = companion_record(portable_id, crate::federation::Sensitivity::Public);
 
     vault.create_companion_record(&local_id, &local, learned_at)?;
     vault.create_companion_record(&portable_id, &portable, learned_at)?;
@@ -1932,6 +1933,7 @@ fn authority_genesis_fixture_for_window(seed: u8) -> crate::authority::Authority
                 roles: crate::authority::ROLE_OWNER,
             },
             genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: crate::authority::AuthorityTier::Software,
             pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },

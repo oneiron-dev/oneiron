@@ -581,7 +581,7 @@ fn seed_mailbox_bind_policy(vault: &Vault) -> Result<()> {
     // The legacy fixture removes the default policy. Without a persisted policy,
     // reopen reseeds one and invalidates the frontier hash on prior draft grants.
     let manifest = serde_json::json!({
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "pack_id": "roster-mailbox-test",
         "pack_version": "v1",
         "min_engine_version": env!("CARGO_PKG_VERSION"),
@@ -593,7 +593,7 @@ fn seed_mailbox_bind_policy(vault: &Vault) -> Result<()> {
         ],
         "scoped_grants": [{
             "actor_class": "human", "actor_ref": entity(MEMBER_PERSON).to_hex(),
-            "effector": "external:bind", "scope": {"channel": "email"}
+            "effector": "external:bind", "scope": crate::federation::scope_codec::effect_preset(), "selectors": {"channel": "email"}
         }]
     });
     let bytes = rmp_serde::to_vec_named(&manifest).expect("fixture policy");

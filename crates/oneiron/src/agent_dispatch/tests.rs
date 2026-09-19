@@ -104,7 +104,10 @@ fn put_policy_manifest_with_generated_actor(
     generated_actor: Option<EntityId>,
 ) -> Result<()> {
     let mut entries = vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("agent-dispatch-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (

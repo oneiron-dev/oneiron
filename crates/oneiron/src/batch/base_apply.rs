@@ -637,6 +637,13 @@ pub(super) fn apply_ops_with_origin(
         &evicted_shell_sources,
     )?;
 
+    crate::authority::check_materialized_claim_causality(
+        store,
+        wtxn,
+        config.privacy.posture,
+        &materialized_entity_ids,
+    )?;
+
     #[cfg(feature = "sync")]
     for (id, token) in &pending_embedding_tokens_written {
         if store.pending_embedding_token_in_txn(wtxn, id)?.as_deref() == Some(token.as_slice()) {

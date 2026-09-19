@@ -70,7 +70,7 @@ fn put_claim_with_value(
 
 fn encode_policy_manifest(scoped_grants: Vec<Value>) -> Vec<u8> {
     let value = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("graph-fs-test")),
         (Value::from("pack_version"), Value::from("1")),
         (Value::from("min_engine_version"), Value::from("0.0.0")),
@@ -90,6 +90,13 @@ fn core_read_world_grant(actor_ref: &str, world: EntityId) -> Value {
         (Value::from("effector"), Value::from("core:read")),
         (
             Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .expect("scope fixture"),
+        ),
+        (
+            Value::from("selectors"),
             Value::Map(vec![(
                 Value::from("world_ref"),
                 Value::from(world.to_hex()),

@@ -43,8 +43,25 @@ fn claim_body_keys_pin_d11_vocabulary() {
     assert_eq!(
         CLAIM_BODY_KEYS,
         [
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj",
-            "scope", "appr", "life", "stale", "sess",
+            "pred",
+            "val",
+            "conf",
+            "sal",
+            "evid",
+            "from",
+            "to",
+            "src",
+            "worldId",
+            "scopeRelationshipId",
+            "subj",
+            "scope",
+            "appr",
+            "life",
+            "stale",
+            "sess",
+            "scopeFacetId",
+            "scopeProjectId",
+            "scopeVersion",
         ]
     );
     // fusion.rs consumes the SAME constants — pinned to the short keys.

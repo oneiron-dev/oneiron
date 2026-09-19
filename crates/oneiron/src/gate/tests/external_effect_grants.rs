@@ -690,3 +690,26 @@ fn external_effect_holds_opted_out_counterparty_regardless_of_grant() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn record_bounded_effect_scope_does_not_become_an_unbounded_grant() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut bounded = crate::federation::scope_codec::effect_preset();
+    bounded.worlds = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        crate::federation::ScopeId(test_id(0xE8)),
+    ]));
+    let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+        "sender",
+        "external:send",
+        crate::federation::scope_codec::encode_scope_value(&bounded)?,
+        None,
+    )]);
+    put_policy_manifest_bytes(&vault, test_id(0xE9), &data)?;
+    let policy = resolve(&vault)?;
+    let effect = external_effect_gate_input("sender", "send", "line");
+    let (_, decision, _) = vault.with_write_txn(|txn| {
+        check_external_effect_policy_with_budget(&vault.store, txn, &effect, &policy, true)
+    })?;
+    assert_ne!(decision.outcome(), GateOutcome::Allow);
+    Ok(())
+}

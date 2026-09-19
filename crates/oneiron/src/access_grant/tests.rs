@@ -508,6 +508,7 @@ fn revoke_calendar_access_grant_admits_and_rewrites_one_record() {
 
 fn shared_brief_grant() -> AccessGrant {
     AccessGrant {
+        authority_scope: crate::federation::scope_codec::read_preset(),
         principal_ref: entity(0x51),
         scope: AccessGrantScope::SharedBrief {
             brief_ref: "brief:opaque".to_owned(),
@@ -667,6 +668,7 @@ fn schema_v2_carries_every_access_scope_and_rejects_other_versions() -> Result<(
     assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 2);
     for scope in scopes {
         let grant = AccessGrant {
+            authority_scope: crate::federation::scope_codec::read_preset(),
             principal_ref: entity(0x51),
             capability: scope.required_capability(),
             scope,

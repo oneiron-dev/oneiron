@@ -83,6 +83,7 @@ pub struct NapiClaimInput {
     pub source: String,
     /// Optional WORLD ref.
     pub world_ref: Option<String>,
+    pub relationship_ref: Option<String>,
     /// Optional scope map.
     pub scope: Option<serde_json::Value>,
     /// Validity window start (Unix seconds).

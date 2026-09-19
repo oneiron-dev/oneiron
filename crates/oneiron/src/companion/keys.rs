@@ -20,9 +20,7 @@ pub const COMPANION_REGISTER_SHORT_ID_PREFIX: &str = "cr";
 pub const COMPANION_REGISTER_PACK_ID: &str = "oneiron-companion-register";
 
 /// Current companion record body schema version.
-pub const COMPANION_RECORD_SCHEMA_VERSION: u64 = 2;
-
-pub(super) const COMPANION_RECORD_SCHEMA_VERSION_V1: u64 = 1;
+pub const COMPANION_RECORD_SCHEMA_VERSION: u64 = 3;
 
 /// Pinned on-disk MessagePack key set for companion record bodies.
 pub const COMPANION_RECORD_BODY_KEYS: [&str; 9] = [
@@ -33,7 +31,7 @@ pub const COMPANION_RECORD_BODY_KEYS: [&str; 9] = [
     "value",
     "provenance",
     "lifecycle",
-    "export",
+    "sensitivity",
     "lifecycle_events",
 ];
 
@@ -51,7 +49,7 @@ pub(super) const KEY_PROVENANCE: &str = COMPANION_RECORD_BODY_KEYS[5];
 
 pub(super) const KEY_LIFECYCLE: &str = COMPANION_RECORD_BODY_KEYS[6];
 
-pub(super) const KEY_EXPORT: &str = COMPANION_RECORD_BODY_KEYS[7];
+pub(super) const KEY_SENSITIVITY: &str = COMPANION_RECORD_BODY_KEYS[7];
 
 pub(super) const KEY_LIFECYCLE_EVENTS: &str = COMPANION_RECORD_BODY_KEYS[8];
 

@@ -143,9 +143,14 @@ pub(crate) fn admitted_peer_consent_roots_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>> {
+    admitted_peer_consent_roots_for_store_in_txn(&vault.store, txn)
+}
+pub(crate) fn admitted_peer_consent_roots_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>> {
     let mut by_peer: BTreeMap<String, Vec<AuthorityLogEntry>> = BTreeMap::new();
-    for row in vault
-        .store
+    for row in store
         .sync_state
         .prefix_iter(txn, PEER_AUTHORITY_KEY_PREFIX)?
     {

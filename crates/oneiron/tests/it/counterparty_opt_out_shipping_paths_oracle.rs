@@ -147,6 +147,7 @@ fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
 /// An ACTIVE sending identity on `channel`, bound to `actor`.
 fn put_channel_identity(vault: &Vault, seed: u8, channel: &str, address: &str, actor: EntityId) {
     let identity = ChannelIdentity {
+        auth_mode: oneiron::channel_identity::ChannelAuthMode::Local,
         channel: channel.to_owned(),
         address_or_handle: address.to_owned(),
         shape: ChannelIdentityShape::DedicatedAddress,

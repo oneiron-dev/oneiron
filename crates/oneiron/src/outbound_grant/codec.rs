@@ -15,12 +15,12 @@ use crate::error::{Error, RecordError, Result};
 use crate::outbound_consent::DataClass;
 
 /// Current StandingOutboundGrant body schema version.
-pub const OUTBOUND_GRANT_SCHEMA_VERSION: u64 = 2;
+pub const OUTBOUND_GRANT_SCHEMA_VERSION: u64 = 3;
 
 /// Pinned recursive MessagePack key vocabulary for StandingOutboundGrant
 /// bodies. Existing top-level positions remain stable; scoped-tool keys are
 /// appended and encoded inside the `scope` map.
-pub const OUTBOUND_GRANT_BODY_KEYS: [&str; 16] = [
+pub const OUTBOUND_GRANT_BODY_KEYS: [&str; 17] = [
     "schema_version",
     "principal_ref",
     "origin_component_id",
@@ -37,9 +37,10 @@ pub const OUTBOUND_GRANT_BODY_KEYS: [&str; 16] = [
     "tool",
     "data_class_ceiling",
     "endpoint_allowlist",
+    "authority_scope",
 ];
 
-const OUTBOUND_GRANT_TOP_LEVEL_KEYS: [&str; 12] = [
+const OUTBOUND_GRANT_TOP_LEVEL_KEYS: [&str; 13] = [
     OUTBOUND_GRANT_BODY_KEYS[0],
     OUTBOUND_GRANT_BODY_KEYS[1],
     OUTBOUND_GRANT_BODY_KEYS[2],
@@ -52,6 +53,7 @@ const OUTBOUND_GRANT_TOP_LEVEL_KEYS: [&str; 12] = [
     OUTBOUND_GRANT_BODY_KEYS[9],
     OUTBOUND_GRANT_BODY_KEYS[10],
     OUTBOUND_GRANT_BODY_KEYS[11],
+    OUTBOUND_GRANT_BODY_KEYS[16],
 ];
 
 pub(crate) const OUTBOUND_GRANT_FIELDS_MINIMAL: &[&str] = &["scope", "status", "last_used_at"];
@@ -116,6 +118,10 @@ pub fn encode_standing_outbound_grant_body(grant: &StandingOutboundGrant) -> Res
             option_string_value(grant.origin_receipt_ref.as_deref()),
         ),
         (Value::from(KEY_SCOPE), encode_scope(&grant.scope)),
+        (
+            "authority_scope".into(),
+            crate::federation::scope_codec::encode_scope_value(&grant.authority_scope)?,
+        ),
         (Value::from(KEY_STATUS), Value::from(grant.status.as_str())),
         (Value::from(KEY_CREATED_AT), Value::from(grant.created_at)),
         (
@@ -161,16 +167,32 @@ fn decode_standing_outbound_grant_value(value: &Value) -> Result<StandingOutboun
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
-    validate_keys(entries, &OUTBOUND_GRANT_TOP_LEVEL_KEYS)?;
+    let legacy = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() == Some(2);
+    validate_keys(
+        entries,
+        if legacy {
+            &OUTBOUND_GRANT_TOP_LEVEL_KEYS[..12]
+        } else {
+            &OUTBOUND_GRANT_TOP_LEVEL_KEYS
+        },
+    )?;
 
     let version = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64();
-    if version != Some(OUTBOUND_GRANT_SCHEMA_VERSION) {
+    if !legacy && version != Some(OUTBOUND_GRANT_SCHEMA_VERSION) {
         return Err(invalid_grant());
     }
 
     let revoked_at = decode_optional_u64(required_value(entries, KEY_REVOKED_AT)?)?;
     let last_used_at = decode_optional_u64(required_value(entries, KEY_LAST_USED_AT)?)?;
     let grant = StandingOutboundGrant {
+        authority_scope: if legacy {
+            crate::federation::scope_codec::effect_preset()
+        } else {
+            crate::federation::scope_codec::decode_scope_value(required_value(
+                entries,
+                "authority_scope",
+            )?)?
+        },
         principal_ref: decode_non_empty_string(required_value(entries, KEY_PRINCIPAL_REF)?)?,
         origin_component_id: decode_non_empty_string(required_value(
             entries,

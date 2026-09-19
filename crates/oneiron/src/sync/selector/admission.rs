@@ -371,7 +371,7 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
             let definition = crate::agent_def::decode_agent_definition(body)?;
             crate::agent_def::validate_reserved_logical_id(id, &definition)?;
         }
-        crate::companion::ENTITY_TYPE_COMPANION_REGISTER => {
+        crate::registry::ENTITY_TYPE_FACET if crate::companion::is_identity_facet_body(body) => {
             // Re-label only the variant whose staging classification is
             // TERMINAL; the verdict text and every other decoder error (already
             // non-terminal) pass through unchanged. See the note above.

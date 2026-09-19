@@ -1,8 +1,6 @@
 use super::*;
 use crate::claim::ClaimSource;
-use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-};
+use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::config::VaultConfig;
 use crate::deletion::DeleteReason;
 use crate::edge::EdgeActorClass;
@@ -81,7 +79,7 @@ fn put_relationship(vault: &Vault, source: EntityId, target: EntityId, role: &st
             ClaimApprovalStatus::Approved,
             Value::from("test"),
         ),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     vault.create_companion_record(&EntityId::now(), &record, 5)
 }

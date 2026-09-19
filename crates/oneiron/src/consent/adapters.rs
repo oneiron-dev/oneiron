@@ -32,6 +32,9 @@ use super::support::invalid_bound;
 /// which rereads grant status and current recipient/claim scope for each view.
 /// A static disclosure bound cannot enforce that live redaction boundary.
 pub fn disclosure_grant_from_access_grant(grant: &AccessGrant) -> Result<DisclosureGrant> {
+    if !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read") {
+        return Err(invalid_bound("record-aware Scope evaluation required"));
+    }
     // Reject the capability too: an unvalidated legacy scope must not project
     // a shared-brief read class that bypasses the live resolver.
     if grant.capability == AccessGrantCapability::SharedBriefRead {
@@ -73,7 +76,8 @@ fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>>
 /// only [`crate::Vault::resolve_share_for_view`] can resolve its live view authority.
 #[must_use]
 pub fn access_grant_projection_is_active(grant: &AccessGrant) -> bool {
-    grant.status == AccessGrantStatus::Active
+    crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read")
+        && grant.status == AccessGrantStatus::Active
         && matches!(
             grant.capability,
             AccessGrantCapability::CompanionProfileRead
@@ -93,6 +97,9 @@ pub fn access_grant_projection_is_active(grant: &AccessGrant) -> bool {
 pub fn action_grant_from_standing_outbound_grant(
     grant: &StandingOutboundGrant,
 ) -> Result<ActionGrant> {
+    if !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "effect") {
+        return Err(invalid_bound("record-aware Scope evaluation required"));
+    }
     if matches!(
         grant.scope,
         StandingOutboundGrantScope::ChannelIdentityEnvelope { .. }

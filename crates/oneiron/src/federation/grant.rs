@@ -20,7 +20,7 @@ use crate::error::{Error, RecordError, Result};
 /// seven-key Delegate body (its key allowlist rejects `expires_at`), which is
 /// the desired direction — an old peer never silently reads a delegate grant as
 /// a non-expiring one.
-pub const FEDERATION_GRANT_SCHEMA_VERSION: u64 = 1;
+pub const FEDERATION_GRANT_SCHEMA_VERSION: u64 = 2;
 
 /// Maximum delegate time-to-live: 90 days.
 pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
@@ -30,7 +30,7 @@ pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
 /// The first `FEDERATION_GRANT_REQUIRED_KEYS` entries are required on every
 /// body; `expires_at` and `delegated_by` are role-conditional — required for
 /// [`FederationGrantRole::Delegate`], forbidden for every other role.
-pub const FEDERATION_GRANT_BODY_KEYS: [&str; 7] = [
+pub const FEDERATION_GRANT_BODY_KEYS: [&str; 8] = [
     "schema_version",
     "scope",
     "member_ref",
@@ -38,6 +38,7 @@ pub const FEDERATION_GRANT_BODY_KEYS: [&str; 7] = [
     "preset",
     "expires_at",
     "delegated_by",
+    "authority_scope",
 ];
 
 /// Count of unconditionally required keys at the head of
@@ -233,8 +234,10 @@ impl FederationGrantPreset {
 }
 
 /// Shared-vault membership record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FederationGrant {
+    /// Canonical grant authority. Resource fields below are narrowing presets.
+    pub authority_scope: crate::federation::Scope,
     /// Shared-vault scope for this membership record.
     pub scope: FederationGrantScope,
     /// Entity representing the member/principal receiving access.
@@ -264,13 +267,14 @@ impl FederationGrant {
     /// through this door fails [`Self::validate`]. Delegates mint only through
     /// [`Self::attenuated_delegate`].
     #[must_use]
-    pub const fn new(
+    pub fn new(
         scope: FederationGrantScope,
         member_ref: EntityId,
         role: FederationGrantRole,
         preset: FederationGrantPreset,
     ) -> Self {
         Self {
+            authority_scope: super::grant_scope::membership_preset(role),
             scope,
             member_ref,
             role,
@@ -311,6 +315,7 @@ impl FederationGrant {
         // `pub` fields make any construction-time invariant unenforceable
         // anyway. Encode and decode remain the validating doors.
         Ok(Self {
+            authority_scope: parent.authority_scope.clone(),
             scope: parent.scope,
             member_ref,
             role: FederationGrantRole::Delegate,
@@ -343,7 +348,15 @@ impl FederationGrant {
     /// The expiry second itself DENIES. Grants without an expiry — every
     /// non-delegate role — confer regardless of age.
     #[must_use]
-    pub const fn confers_at(&self, now_secs: u64) -> bool {
+    pub fn confers_at(&self, now_secs: u64) -> bool {
+        if !self.authority_scope.verbs.contains(&"read".to_owned())
+            || self.authority_scope.worlds.is_bottom()
+            || self.authority_scope.bands.is_bottom()
+            || self.authority_scope.audience.is_bottom()
+            || self.authority_scope.sensitivity == super::SensitivityCeiling::Bottom
+        {
+            return false;
+        }
         match self.expires_at {
             None => true,
             Some(expires_at) => now_secs < expires_at,
@@ -352,8 +365,8 @@ impl FederationGrant {
 
     /// Returns whether this grant carries an administrative role.
     #[must_use]
-    pub const fn is_admin(&self) -> bool {
-        self.role.is_admin()
+    pub fn is_admin(&self) -> bool {
+        super::grant_scope::admits_preset(&self.authority_scope, "admin") && self.role.is_admin()
     }
 }
 
@@ -370,6 +383,10 @@ pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> 
             Value::from(FEDERATION_GRANT_SCHEMA_VERSION),
         ),
         (Value::from(KEY_SCOPE), encode_scope(grant.scope)),
+        (
+            "authority_scope".into(),
+            super::scope_codec::encode_scope_value(&grant.authority_scope)?,
+        ),
         (
             Value::from(KEY_MEMBER_REF),
             Value::from(grant.member_ref.to_hex()),
@@ -415,8 +432,10 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
     };
     validate_body_keys(entries)?;
 
-    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64()
-        != Some(FEDERATION_GRANT_SCHEMA_VERSION)
+    let legacy = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() == Some(1);
+    if !legacy
+        && required_value(entries, KEY_SCHEMA_VERSION)?.as_u64()
+            != Some(FEDERATION_GRANT_SCHEMA_VERSION)
     {
         return Err(invalid_grant());
     }
@@ -440,6 +459,11 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         .transpose()?;
 
     let grant = FederationGrant {
+        authority_scope: if legacy {
+            super::grant_scope::membership_preset(role)
+        } else {
+            super::scope_codec::decode_scope_value(required_value(entries, "authority_scope")?)?
+        },
         scope,
         member_ref,
         role,

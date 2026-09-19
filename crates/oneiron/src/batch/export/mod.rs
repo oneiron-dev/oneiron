@@ -25,8 +25,8 @@ mod tests;
 use crate::claim::ClaimLifecycleStatus;
 #[cfg(test)]
 use crate::companion::{
-    CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
-    CompanionRecord, CompanionRegister, CompanionScope,
+    CompanionExpression, CompanionExpressionRegister, CompanionRecord, CompanionRegister,
+    CompanionScope,
 };
 #[cfg(test)]
 use crate::entity_id::EntityId;

@@ -1,8 +1,8 @@
 //! Companion-layer export filtering.
 use crate::claim::ClaimLifecycleStatus;
 use crate::companion::{
-    CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
-    CompanionRecord, CompanionRecordKey, CompanionRecordKind, CompanionRegister, CompanionScope,
+    CompanionExpression, CompanionExpressionRegister, CompanionRecord, CompanionRecordKey,
+    CompanionRecordKind, CompanionRegister,
 };
 
 pub const COMPANION_EXPORT_LAYER_VERSION: u16 = 1;
@@ -24,12 +24,13 @@ pub struct CompanionExportRecord {
 pub fn companion_export_layer(
     records: &CompanionRegister,
     expressions: &CompanionExpressionRegister,
+    channel: &crate::federation::Scope,
 ) -> CompanionExportLayer {
     let mut personas = Vec::new();
     let mut relationships = Vec::new();
 
     for (key, record) in records.iter() {
-        if !companion_record_exportable(record) {
+        if !companion_record_exportable(record, channel.sensitivity) {
             continue;
         }
 
@@ -52,10 +53,11 @@ pub fn companion_export_layer(
     }
 }
 
-fn companion_record_exportable(record: &CompanionRecord) -> bool {
-    record.lifecycle == ClaimLifecycleStatus::Active
-        && record.export_classification == CompanionExportClassification::Portable
-        && !matches!(&record.scope, CompanionScope::SharedVault { .. })
+fn companion_record_exportable(
+    record: &CompanionRecord,
+    ceiling: crate::federation::SensitivityCeiling,
+) -> bool {
+    record.lifecycle == ClaimLifecycleStatus::Active && ceiling.permits(record.sensitivity)
 }
 
 impl CompanionExportLayer {

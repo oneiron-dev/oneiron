@@ -3,6 +3,8 @@
 //! Sections present: MEMORIES, TASKS, AGENTS, plugin, stream. SKILLS (§8, 2026-08-28) has no producer here yet.
 
 mod agents;
+mod agents_fanout;
+pub(crate) use agents_fanout::fanout_agent_rows;
 mod frame;
 mod hydration;
 mod memories;

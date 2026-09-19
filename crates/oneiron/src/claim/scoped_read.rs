@@ -2,7 +2,7 @@
 //! admission/filtering surface that layers `crate::gate` scoped-read grants on
 //! top of the claim surfaceability gate.
 
-use std::{collections::HashSet, sync::Mutex};
+use std::collections::HashSet;
 
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -25,6 +25,7 @@ mod retrieval_visibility;
 pub struct ScopedReadActorKey {
     actor_ref: String,
     actor_class: Option<String>,
+    proof: Option<crate::authority::VerifiedSlip>,
 }
 
 impl ScopedReadActorKey {
@@ -50,7 +51,26 @@ impl ScopedReadActorKey {
         Some(Self {
             actor_ref: actor_ref.trim().to_owned(),
             actor_class,
+            proof: None,
         })
+    }
+
+    /// Constructs a read capability only from a log/MAC/holder-verified slip.
+    #[must_use]
+    pub fn from_verified_slip(proof: &crate::authority::VerifiedSlip) -> Option<Self> {
+        if !proof.allows_verb("read") {
+            return None;
+        }
+        let mut key = Self::from_parts(
+            proof.claims().holder_ref.clone(),
+            proof.claims().actor_class.clone(),
+        )?;
+        key.proof = Some(proof.clone());
+        Some(key)
+    }
+
+    pub(crate) fn authority_scope(&self) -> Option<&crate::federation::Scope> {
+        self.proof.as_ref().map(|proof| proof.scope())
     }
 
     #[must_use]
@@ -71,7 +91,6 @@ impl ScopedReadActorKey {
 pub struct ScopedRead<'a> {
     vault: &'a crate::vault::Vault,
     actor_key: ScopedReadActorKey,
-    policy: Mutex<Option<PolicyManifestResolution>>,
     /// Session composition (ONE-1728 §7). `None` on the canonical handle,
     /// which therefore reads base only exactly as before; `Some` when the
     /// read was opened through a live session handle, in which case entity
@@ -87,7 +106,6 @@ impl crate::vault::Vault {
         ScopedRead {
             vault: self,
             actor_key,
-            policy: Mutex::new(None),
             session_view: None,
         }
     }
@@ -109,13 +127,38 @@ impl crate::vault::Vault {
         ScopedRead {
             vault: self,
             actor_key,
-            policy: Mutex::new(None),
             session_view: Some(view),
         }
     }
 }
 
 impl<'a> ScopedRead<'a> {
+    fn credential_allows_id(&self, id: &EntityId) -> bool {
+        self.actor_key.proof.as_ref().is_none_or(|proof| {
+            let claims = proof.claims();
+            // Generic records have no proved channel context. Channel-bound
+            // credentials must use their typed adapter instead of losing a caveat.
+            claims.channels.is_empty()
+                && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
+        })
+    }
+
+    fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        let Some(proof) = &self.actor_key.proof else {
+            return Ok(true);
+        };
+        let claims = proof.claims();
+        let now = self.vault.instant_in_txn(txn)?.secs();
+        if now < claims.issued_at || now >= claims.expires_at {
+            return Ok(false);
+        }
+        let fold = self.vault.authority_fold_readonly_in_txn(txn)?;
+        if fold.vault_id != Some(claims.vault_id) {
+            return Ok(false);
+        }
+        Ok(fold.slip_is_live(&claims.slip_id))
+    }
+
     #[must_use]
     pub fn vault(&self) -> &'a crate::Vault {
         self.vault
@@ -231,6 +274,11 @@ impl<'a> ScopedRead<'a> {
         txn: &heed::RoTxn<'_>,
         requested: Option<&RetrievalFilter>,
     ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
+        if !self.proof_live_in(txn)? {
+            return Err(Error::InvalidClaimBody(
+                "scoped read credential no longer live",
+            ));
+        }
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
         let filter = crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
@@ -298,10 +346,7 @@ impl<'a> ScopedRead<'a> {
             return Ok(None);
         }
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(Some((header.entity_type, header.learned_at, body.to_vec())));
-        }
-        if !self.is_claim_raw_readable_in(&rtxn, id, &raw)? {
+        if !self.is_entity_readable_in(&rtxn, id)? {
             return Ok(None);
         }
         Ok(Some((header.entity_type, header.learned_at, body.to_vec())))
@@ -315,24 +360,7 @@ impl<'a> ScopedRead<'a> {
         let Some(result) = self.vault.hydrate_short_id(short_id, content_hash)? else {
             return Ok(None);
         };
-        if result.body.is_none() {
-            if result.deletion.is_some() {
-                return Ok(Some(result));
-            }
-            return if result.entity_type == ENTITY_TYPE_CLAIM {
-                Ok(None)
-            } else {
-                Ok(Some(result))
-            };
-        }
-        if result.entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(Some(result));
-        }
-        let Some(body) = result.body.as_deref() else {
-            return Ok(None);
-        };
-        let body = decode_claim_body(body, true)?;
-        if self.is_claim_readable_with_body(&result.id, &body)? {
+        if self.is_entity_readable(&result.id)? {
             Ok(Some(result))
         } else {
             Ok(None)
@@ -465,21 +493,27 @@ impl<'a> ScopedRead<'a> {
         if self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some() {
             return Ok(false);
         }
+        if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {
+            return Ok(false);
+        }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw)
         } else {
-            Ok(true)
+            let Some(scope) = crate::federation::record_scope::scope_for_blob(
+                &self.vault.store,
+                rtxn,
+                *id,
+                &raw,
+            )?
+            else {
+                return Ok(false);
+            };
+            Ok(crate::gate::scoped_read_record_allowed(
+                policy,
+                &self.actor_key,
+                &scope,
+            ))
         }
-    }
-
-    fn is_claim_raw_readable_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        id: &EntityId,
-        raw: &[u8],
-    ) -> Result<bool> {
-        let policy = self.policy_manifest_in(rtxn)?;
-        self.is_claim_raw_readable_with_policy_in(rtxn, &policy, id, raw)
     }
 
     fn is_claim_raw_readable_with_policy_in(
@@ -496,21 +530,6 @@ impl<'a> ScopedRead<'a> {
         self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, &body)
     }
 
-    fn is_claim_readable_with_body(&self, id: &EntityId, body: &ClaimBody) -> Result<bool> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        self.is_claim_readable_with_body_in(&rtxn, id, body)
-    }
-
-    fn is_claim_readable_with_body_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        id: &EntityId,
-        body: &ClaimBody,
-    ) -> Result<bool> {
-        let policy = self.policy_manifest_in(rtxn)?;
-        self.is_claim_readable_with_body_and_policy_in(rtxn, &policy, id, body)
-    }
-
     fn is_claim_readable_with_body_and_policy_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -518,6 +537,15 @@ impl<'a> ScopedRead<'a> {
         id: &EntityId,
         body: &ClaimBody,
     ) -> Result<bool> {
+        if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {
+            return Ok(false);
+        }
+        if !crate::authority::claim_causal_admitted(
+            &self.vault.authority_fold_readonly_in_txn(rtxn)?,
+            body,
+        ) {
+            return Ok(false);
+        }
         if !claim_surfaceable(body) {
             return Ok(false);
         }
@@ -644,10 +672,9 @@ impl<'a> ScopedRead<'a> {
         for record in records {
             let readable = match (record.state, record.entity_type) {
                 (MemoryTimelineRecordState::Missing, _) => false,
-                (_, Some(ENTITY_TYPE_CLAIM)) => {
+                (_, Some(_)) => {
                     self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
                 }
-                (_, Some(_)) => true,
                 (_, None) => false,
             };
             if readable {
@@ -666,20 +693,7 @@ impl<'a> ScopedRead<'a> {
         &self,
         rtxn: &heed::RoTxn<'_>,
     ) -> Result<PolicyManifestResolution> {
-        let cached_policy = self
-            .policy
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        if let Some(policy) = cached_policy {
-            return Ok(policy);
-        }
-        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, rtxn)?;
-        *self
-            .policy
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(policy.clone());
-        Ok(policy)
+        crate::gate::resolve_policy_manifest(&self.vault.store, rtxn)
     }
 }
 
@@ -711,3 +725,6 @@ fn context_pack_edge_can_reach_neighbor(edge: &EdgeInfo) -> bool {
             .provenance
             .is_some_and(|flags| flags.confirmation_status == EdgeConfirmationStatus::Retracted)
 }
+
+#[cfg(test)]
+mod slip_tests;

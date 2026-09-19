@@ -67,6 +67,7 @@ fn authority_genesis_entry(seed: u8) -> AuthorityLogEntry {
             roles: ROLE_OWNER | ROLE_ADMIN,
         },
         genesis_nonce: [seed.wrapping_add(1); 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Software,
         pending_widen_delay_secs: 86_400,
     };
@@ -159,24 +160,20 @@ fn edge_provenance_claim_blob() -> Vec<u8> {
 
 fn companion_record_body(
     persona_ref: EntityId,
-    export_classification: CompanionExportClassification,
+    sensitivity: crate::federation::Sensitivity,
 ) -> Vec<u8> {
-    companion_record_body_in_scope(
-        persona_ref,
-        CompanionScope::neutral(),
-        export_classification,
-    )
+    companion_record_body_in_scope(persona_ref, CompanionScope::neutral(), sensitivity)
 }
 
 fn companion_record_body_in_scope(
     persona_ref: EntityId,
     scope: CompanionScope,
-    export_classification: CompanionExportClassification,
+    sensitivity: crate::federation::Sensitivity,
 ) -> Vec<u8> {
     companion_record_body_in_scope_with_lifecycle(
         persona_ref,
         scope,
-        export_classification,
+        sensitivity,
         ClaimLifecycleStatus::Active,
     )
 }
@@ -184,7 +181,7 @@ fn companion_record_body_in_scope(
 fn companion_record_body_in_scope_with_lifecycle(
     persona_ref: EntityId,
     scope: CompanionScope,
-    export_classification: CompanionExportClassification,
+    sensitivity: Sensitivity,
     lifecycle: ClaimLifecycleStatus,
 ) -> Vec<u8> {
     let mut record = CompanionRecord::persona(
@@ -198,7 +195,7 @@ fn companion_record_body_in_scope_with_lifecycle(
             ClaimApprovalStatus::Approved,
             Value::from("private provenance"),
         ),
-        export_classification,
+        sensitivity,
     );
     record.lifecycle = lifecycle;
     match lifecycle {
@@ -219,7 +216,10 @@ fn companion_record_body_in_scope_with_lifecycle(
 
 fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
     let mut entries = vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("selector-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (
@@ -1100,13 +1100,13 @@ fn companion_register_api_selector_suppresses_local_only_records() {
         &doc,
         local_id,
         ENTITY_TYPE_COMPANION_REGISTER,
-        &companion_record_body(local_id, CompanionExportClassification::LocalOnly),
+        &companion_record_body(local_id, crate::federation::Sensitivity::Restricted),
     );
     insert_entity(
         &doc,
         portable_id,
         ENTITY_TYPE_COMPANION_REGISTER,
-        &companion_record_body(portable_id, CompanionExportClassification::Portable),
+        &companion_record_body(portable_id, crate::federation::Sensitivity::Public),
     );
     insert_entity(
         &doc,
@@ -1115,7 +1115,7 @@ fn companion_register_api_selector_suppresses_local_only_records() {
         &companion_record_body_in_scope(
             shared_id,
             CompanionScope::shared_vault(7),
-            CompanionExportClassification::SharedVault,
+            crate::federation::Sensitivity::Private,
         ),
     );
     insert_entity(
@@ -1125,7 +1125,7 @@ fn companion_register_api_selector_suppresses_local_only_records() {
         &companion_record_body_in_scope(
             other_shared_id,
             CompanionScope::shared_vault(8),
-            CompanionExportClassification::SharedVault,
+            crate::federation::Sensitivity::Private,
         ),
     );
     insert_entity(
@@ -1135,7 +1135,7 @@ fn companion_register_api_selector_suppresses_local_only_records() {
         &companion_record_body_in_scope_with_lifecycle(
             retired_portable_id,
             CompanionScope::neutral(),
-            CompanionExportClassification::Portable,
+            crate::federation::Sensitivity::Public,
             ClaimLifecycleStatus::Retracted,
         ),
     );

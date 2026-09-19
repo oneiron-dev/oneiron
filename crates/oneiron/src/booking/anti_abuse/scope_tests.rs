@@ -71,6 +71,7 @@ fn published_page(vault: &Vault) -> BookingPagePublication {
             confidence: 1.0,
             source: "user_stated".to_owned(),
             world_ref: None,
+            relationship_ref: None,
             scope: None,
             valid_from: Some(100),
             valid_to: Some(200),

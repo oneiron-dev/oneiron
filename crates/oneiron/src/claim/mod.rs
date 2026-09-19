@@ -3,7 +3,7 @@
 //! Type byte 0 is the single SEMANTIC entity type. Its MessagePack body is a
 //! pinned storage ABI: the key set in [`CLAIM_BODY_KEYS`] (D11 short keys) is
 //! the ON-DISK vocabulary. ARCH-0003's camelCase `Claim` shape is the
-//! app-layer view; the engine never stores camelCase keys.
+//! app-layer view. The v2 Scope stamps use their canonical camelCase keys.
 //!
 //! Every type-0 write on every path (`Vault::put_entity`, `BatchBuilder`,
 //! `TxnBatchBuilder`, sync replay via `apply_ops`) is structurally validated
@@ -56,6 +56,7 @@ mod predicate_validators;
 mod put;
 mod read;
 mod scope;
+mod scope_stamp;
 mod scoped_read;
 mod source_trust;
 mod status;
@@ -68,6 +69,8 @@ pub use predicate_grammar::*;
 pub use predicate_validators::*;
 pub(crate) use read::*;
 pub(crate) use scope::*;
+pub(crate) use scope_stamp::upgrade_pre_scope_body;
+pub use scope_stamp::{base_world_id, default_project_id, substrate_facet_id};
 pub use scoped_read::*;
 pub use source_trust::*;
 pub use status::*;

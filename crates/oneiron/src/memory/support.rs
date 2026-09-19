@@ -139,7 +139,7 @@ pub(super) fn verify_actor_binding_in_txn(
 /// An UNCOMPUTABLE fold is a third state, and it is the one this gate must not
 /// paper over. When an AUTHORITY_LOG row has lost its first-seen sidecar after
 /// the one-shot migration ran, the readonly fold cannot decide whether a
-/// delayable widen elapsed — and a `RotateKey` or `RecoveryReboot` left
+/// delayable widen elapsed — and a `RotateKey` or `ReRoot` left
 /// un-applied keeps the key it RETIRES live and owner-bound. So the fold
 /// refuses instead of guessing, and the refusal surfaces here as INVALID_STATE
 /// (the vault's authority is broken, not the caller's request), suspending

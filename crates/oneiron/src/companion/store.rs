@@ -1,7 +1,6 @@
 //! Transaction key-lookup scans over the companion-register type index.
 
 use super::codec::decode_companion_record_body;
-use super::keys::ENTITY_TYPE_COMPANION_REGISTER;
 use super::model::{CompanionLifecycleEvent, CompanionRecordKey};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimLifecycleStatus;
@@ -18,7 +17,7 @@ pub(super) fn companion_record_id_for_key_in_txn(
     key.validate()?;
     for index_entry in store
         .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
+        .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_FACET])?
     {
         let (type_key, _) = index_entry?;
         let id = entity_id_from_type_index_key(&type_key)?;
@@ -27,8 +26,11 @@ pub(super) fn companion_record_id_for_key_in_txn(
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+        if header.entity_type != crate::registry::ENTITY_TYPE_FACET {
             return Err(Error::CorruptedIndex("companion register type index"));
+        }
+        if !super::is_identity_facet_body(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+            continue;
         }
         let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if record.lifecycle == ClaimLifecycleStatus::Active && record.key() == *key {
@@ -46,7 +48,7 @@ pub(super) fn companion_record_any_id_for_key_in_txn(
     key.validate()?;
     for index_entry in store
         .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
+        .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_FACET])?
     {
         let (type_key, _) = index_entry?;
         let id = entity_id_from_type_index_key(&type_key)?;
@@ -55,8 +57,11 @@ pub(super) fn companion_record_any_id_for_key_in_txn(
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+        if header.entity_type != crate::registry::ENTITY_TYPE_FACET {
             return Err(Error::CorruptedIndex("companion register type index"));
+        }
+        if !super::is_identity_facet_body(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+            continue;
         }
         let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if record.key() == *key {
@@ -83,7 +88,7 @@ pub(crate) fn companion_record_key_lookup_in_txn(
     let mut lookup = CompanionRecordKeyLookup::default();
     for index_entry in store
         .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
+        .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_FACET])?
     {
         let (type_key, _) = index_entry?;
         let id = entity_id_from_type_index_key(&type_key)?;
@@ -92,8 +97,11 @@ pub(crate) fn companion_record_key_lookup_in_txn(
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+        if header.entity_type != crate::registry::ENTITY_TYPE_FACET {
             return Err(Error::CorruptedIndex("companion register type index"));
+        }
+        if !super::is_identity_facet_body(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+            continue;
         }
         let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if record.key() != *key {

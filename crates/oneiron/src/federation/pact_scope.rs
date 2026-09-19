@@ -10,7 +10,7 @@ use crate::entity_id::{EntityId, is_foreign_world_id_range};
 use crate::error::{Error, RecordError, Result};
 
 /// Current FederationPactScope canonical encoding schema version.
-pub const FEDERATION_PACT_SCOPE_SCHEMA_VERSION: u64 = 1;
+pub const FEDERATION_PACT_SCOPE_SCHEMA_VERSION: u64 = 2;
 
 const FEDERATION_PACT_SCOPE_KEYS: [&str; 3] = ["schema_version", "lo_to_hi", "hi_to_lo"];
 
@@ -108,11 +108,13 @@ const FEDERATION_SCOPE_BAND_ORDER: [SelectorRange; 6] = [
 /// World axis of a federation pact direction scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FederationScopeWorlds {
+    /// No world, including no implicit base world.
+    Bottom,
     /// Base reality plus every world.
     All,
     /// Base reality only.
     Base,
-    /// Base reality plus the named worlds (sorted, deduplicated, non-empty,
+    /// Exactly the named worlds (sorted, deduplicated, non-empty,
     /// local-range only — foreign-range world ids fail closed).
     Worlds(Vec<EntityId>),
 }
@@ -172,7 +174,7 @@ pub struct FederationPactScope {
 impl FederationScopeWorlds {
     fn validate(&self) -> Result<()> {
         match self {
-            Self::All | Self::Base => Ok(()),
+            Self::All | Self::Base | Self::Bottom => Ok(()),
             Self::Worlds(ids) => {
                 validate_strictly_ascending_ids(ids)?;
                 if ids.iter().any(|id| is_foreign_world_id_range(*id)) {
@@ -185,26 +187,27 @@ impl FederationScopeWorlds {
 
     pub(super) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
         match (self, ceiling) {
-            (_, Self::All) => true,
-            (Self::All, _) => false,
-            (Self::Base, _) => true,
-            (Self::Worlds(_), Self::Base) => false,
+            (Self::Bottom, _) | (_, Self::All) => true,
+            (Self::All, _) | (_, Self::Bottom) => false,
+            (Self::Base, Self::Base) => true,
+            (Self::Base, Self::Worlds(_)) | (Self::Worlds(_), Self::Base) => false,
             (Self::Worlds(narrow), Self::Worlds(wide)) => narrow.iter().all(|id| wide.contains(id)),
         }
     }
-
     fn intersect(&self, other: &Self) -> Self {
         match (self, other) {
+            (Self::Bottom, _) | (_, Self::Bottom) => Self::Bottom,
             (Self::All, x) | (x, Self::All) => x.clone(),
-            (Self::Base, _) | (_, Self::Base) => Self::Base,
+            (Self::Base, Self::Base) => Self::Base,
+            (Self::Base, Self::Worlds(_)) | (Self::Worlds(_), Self::Base) => Self::Bottom,
             (Self::Worlds(left), Self::Worlds(right)) => {
-                let both: Vec<EntityId> = left
+                let both: Vec<_> = left
                     .iter()
                     .filter(|id| right.contains(id))
                     .copied()
                     .collect();
                 if both.is_empty() {
-                    Self::Base
+                    Self::Bottom
                 } else {
                     Self::Worlds(both)
                 }
@@ -439,6 +442,7 @@ fn decode_direction_scope_value(value: &Value) -> Result<FederationDirectionScop
 
 fn worlds_axis_value(worlds: &FederationScopeWorlds) -> Value {
     match worlds {
+        FederationScopeWorlds::Bottom => axis_kind_value(SCOPE_AXIS_KIND_BOTTOM),
         FederationScopeWorlds::All => axis_kind_value(SCOPE_WORLDS_KIND_ALL),
         FederationScopeWorlds::Base => axis_kind_value(SCOPE_WORLDS_KIND_BASE),
         FederationScopeWorlds::Worlds(ids) => Value::Map(vec![
@@ -500,10 +504,16 @@ fn axis_kind_value(kind: &str) -> Value {
 fn decode_worlds_axis(value: &Value) -> Result<FederationScopeWorlds> {
     let (kind, ids) = decode_axis_map(value)?;
     match (kind, ids) {
+        (SCOPE_AXIS_KIND_BOTTOM, None) => Ok(FederationScopeWorlds::Bottom),
         (SCOPE_WORLDS_KIND_ALL, None) => Ok(FederationScopeWorlds::All),
         (SCOPE_WORLDS_KIND_BASE, None) => Ok(FederationScopeWorlds::Base),
         (SCOPE_WORLDS_KIND_WORLDS, Some(ids)) => {
-            Ok(FederationScopeWorlds::Worlds(decode_hex_id_array(ids)?))
+            let ids = decode_hex_id_array(ids)?;
+            Ok(if ids.is_empty() {
+                FederationScopeWorlds::Bottom
+            } else {
+                FederationScopeWorlds::Worlds(ids)
+            })
         }
         _ => Err(invalid_pact_scope()),
     }

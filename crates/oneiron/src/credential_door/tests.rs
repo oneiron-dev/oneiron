@@ -119,7 +119,10 @@ fn door_fixture() -> (tempfile::TempDir, Arc<Vault>, CredentialDoorService) {
     let (tmp, vault) = temp_vault();
     register_door_secret(&vault);
     pin_vault_instant(&vault);
-    let door = CredentialDoorService::new(Arc::clone(&vault));
+    let issuer =
+        Arc::new(crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap());
+    vault.ensure_host_root_slip(&issuer).unwrap();
+    let door = CredentialDoorService::new(Arc::clone(&vault)).with_host_issuer(issuer);
     (tmp, vault, door)
 }
 
@@ -184,22 +187,31 @@ fn long_lived_push_credential(now: VaultInstant) -> DoorCredential {
 
 /// A verified one-shot: single-use caveat, one named secret, one named
 /// effector, 120s of life from `issued_at`.
-fn one_shot_credential_from(issued_at: u64) -> DoorCredential {
-    DoorCredential::verified(
-        "slip-one-shot-1",
-        "holder:tester",
-        issued_at,
-        issued_at + 120,
-    )
-    .with_verbs([DOOR_VERB_REDEEM])
-    .with_records([DOOR_SECRET])
-    .with_channels([EFFECTOR])
-    .with_single_use_caveat()
+fn one_shot_credential_from(door: &CredentialDoorService, issued_at: u64) -> DoorCredential {
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap();
+    let root = door.vault().ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    use rand_core::{OsRng, RngCore};
+    OsRng.fill_bytes(&mut claims.slip_id);
+    claims.parent_id = None;
+    claims.issued_at = issued_at;
+    claims.expires_at = issued_at + 120;
+    claims.ttl_secs = 120;
+    claims.single_use = true;
+    claims.scope.verbs = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        DOOR_VERB_REDEEM.to_owned(),
+    ]));
+    claims.records = std::collections::BTreeSet::from([DOOR_SECRET.to_owned()]);
+    claims.channels = std::collections::BTreeSet::from([EFFECTOR.to_owned()]);
+    let slip = door.vault().mint_capability_slip(&issuer, claims).unwrap();
+    let proof = issuer.binding_proof(&slip, b"door-test").unwrap();
+    door.vault()
+        .verify_capability_slip(&issuer, &slip, b"door-test", &proof)
+        .unwrap()
+        .door_credential()
 }
-
-/// The same, issued at the vault's witnessed instant.
-fn one_shot_credential(now: VaultInstant) -> DoorCredential {
-    one_shot_credential_from(now.secs())
+fn one_shot_credential(door: &CredentialDoorService, now: VaultInstant) -> DoorCredential {
+    one_shot_credential_from(door, now.secs())
 }
 
 fn blob(path: &str, lines: &[&[u8]]) -> PushedBlob {
@@ -1060,7 +1072,7 @@ fn a_one_shot_redeemed_after_the_vault_clock_advances_is_clamped_by_its_expiry()
     // rather than 120s after the stamp.
     let (_tmp, vault, door) = door_fixture();
     let issued_at = witnessed(&door).secs();
-    let one_shot = one_shot_credential_from(issued_at);
+    let one_shot = one_shot_credential_from(&door, issued_at);
 
     pin_vault_instant_at(&vault, issued_at + 60);
     let ticket = door
@@ -1735,29 +1747,29 @@ fn a_scanner_failure_is_a_rejection() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_one_shot_redeems_once_by_move_and_writes_no_ledger() {
+fn a_one_shot_redeems_once_and_records_its_consumption() {
     let (_tmp, vault, door) = door_fixture();
     let now = witnessed(&door);
-    let meta_before = vault_meta_rows(&vault);
-    let entities_before = entity_rows(&vault);
-
+    let credential = one_shot_credential(&door, now);
+    let replay = DoorCredential::verified(
+        credential.slip_id(),
+        credential.holder_ref(),
+        now.secs(),
+        now.secs() + 120,
+    )
+    .with_verbs([DOOR_VERB_REDEEM])
+    .with_records([DOOR_SECRET])
+    .with_channels([EFFECTOR])
+    .with_single_use_caveat();
     let ticket = door
-        .redeem_one_shot(one_shot_credential(now))
-        .expect("a live one-shot redeems");
-
+        .redeem_one_shot(credential)
+        .expect("logged live one-shot redeems");
     assert_eq!(ticket.lease.secret_ref, DOOR_SECRET);
     assert_eq!(ticket.lease.binding_effector, EFFECTOR);
     assert_eq!(ticket.value.as_slice(), SECRET_VALUE);
-    // Exactly two new rows — the landed lease and its landed receipt. No burn
-    // ledger, no token registry, no hash-at-rest store, and no new entity (so
-    // no authority-log append) appeared behind the redemption.
-    assert_eq!(vault_meta_rows(&vault) - meta_before, 2);
-    assert_eq!(entity_rows(&vault), entities_before);
+    assert!(door.redeem_one_shot(replay).is_err());
     assert_eq!(lease_rows(&vault), 1);
     assert_eq!(receipt_rows(&vault), 1);
-    // The credential was moved into the call and dropped there, so a second
-    // redemption of it cannot even be written: that IS the single-use
-    // guarantee this ticket ships.
 }
 
 #[test]
@@ -1767,7 +1779,7 @@ fn a_one_shot_lease_never_outlives_the_one_shot_cap() {
     let now = instant.secs();
 
     let ticket = door
-        .redeem_one_shot(one_shot_credential(instant))
+        .redeem_one_shot(one_shot_credential(&door, instant))
         .expect("redeem");
     // The one-shot's own absolute expiry is the ticket's, exactly: the
     // redemption asks for its whole remaining bound and the vault's instant
@@ -1807,7 +1819,7 @@ fn a_redeemed_one_shot_ticket_dies_with_its_one_shot() {
     let issued_at = now - 90;
 
     let ticket = door
-        .redeem_one_shot(one_shot_credential_from(issued_at))
+        .redeem_one_shot(one_shot_credential_from(&door, issued_at))
         .expect("a live one-shot redeems late");
     assert_eq!(ticket.lease.expires_at, issued_at + 120);
     assert!(ticket.lease.expires_at - ticket.lease.granted_at <= 30);
@@ -1853,11 +1865,12 @@ fn a_one_shot_needs_the_caveat_the_verb_and_one_named_scope() {
 fn a_verifier_that_cannot_reach_the_log_refuses_the_caveat() {
     let (_tmp, vault, door) = door_fixture();
     let now = witnessed(&door);
+    let credential = one_shot_credential(&door, now);
     let meta_before = vault_meta_rows(&vault);
 
     authority_log_fault_hook::arm_log_unreachable();
     let err = door
-        .redeem_one_shot(one_shot_credential(now))
+        .redeem_one_shot(credential)
         .expect_err("an unwitnessable single-use caveat is refused");
     assert!(is_log_unreachable(&err));
     assert_eq!(vault_meta_rows(&vault), meta_before);
@@ -1865,14 +1878,15 @@ fn a_verifier_that_cannot_reach_the_log_refuses_the_caveat() {
 
 #[test]
 fn the_one_shot_mint_arm_stops_closed() {
-    let (_tmp, vault, door) = door_fixture();
+    let (_tmp, vault, _door) = door_fixture();
+    let door = CredentialDoorService::new(vault.clone());
     let now = witnessed(&door).secs();
     let meta_before = vault_meta_rows(&vault);
     let entities_before = entity_rows(&vault);
 
     let err = door
         .mint_one_shot(DOOR_SECRET, EFFECTOR, 120, now)
-        .expect_err("no landed surface admits slip-mint bodies");
+        .expect_err("read-only door has no host signer");
     assert!(matches!(err, CredentialDoorError::MintUnavailable));
     // The stop is a stop: nothing was persisted in its place.
     assert_eq!(vault_meta_rows(&vault), meta_before);
@@ -1917,4 +1931,21 @@ fn door_refusals_and_credentials_print_no_secret_material() {
         assert!(!rendered.contains(secret_text()));
         assert!(!rendered.contains("ghp_"));
     }
+}
+
+#[test]
+fn signing_host_mints_and_redeems_one_shot_via_authority_log() {
+    let (_tmp, vault, door) = door_fixture();
+    let before = vault.authority_fold().unwrap().valid_entries.len();
+    let credential = door.mint_one_shot(DOOR_SECRET, EFFECTOR, 120, 0).unwrap();
+    assert_eq!(
+        vault.authority_fold().unwrap().valid_entries.len(),
+        before + 1
+    );
+    let ticket = door.redeem_one_shot(credential).unwrap();
+    assert_eq!(ticket.value.as_slice(), SECRET_VALUE);
+    assert_eq!(
+        vault.authority_fold().unwrap().valid_entries.len(),
+        before + 2
+    );
 }

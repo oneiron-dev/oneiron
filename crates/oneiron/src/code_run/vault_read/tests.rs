@@ -879,6 +879,13 @@ fn scoped_grant_manifest(actor_ref: &str, world_ref: &str) -> Vec<u8> {
         ),
         (
             MsgpackValue::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .expect("scope fixture"),
+        ),
+        (
+            MsgpackValue::from("selectors"),
             MsgpackValue::Map(vec![(
                 MsgpackValue::from("world_ref"),
                 MsgpackValue::from(world_ref),
@@ -892,7 +899,7 @@ fn scoped_grant_manifest(actor_ref: &str, world_ref: &str) -> Vec<u8> {
     let manifest = MsgpackValue::Map(vec![
         (
             MsgpackValue::from("schema_version"),
-            MsgpackValue::from("1.1"),
+            MsgpackValue::from("1.2"),
         ),
         (
             MsgpackValue::from("pack_id"),

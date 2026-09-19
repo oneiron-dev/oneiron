@@ -67,6 +67,7 @@ pub struct ResolvedShare {
 impl Share {
     pub(crate) fn grant(&self) -> AccessGrant {
         AccessGrant {
+            authority_scope: crate::federation::scope_codec::read_preset(),
             principal_ref: self.recipient_ref,
             scope: AccessGrantScope::SharedBrief {
                 brief_ref: self.brief_ref.clone(),
@@ -82,6 +83,9 @@ impl Share {
     }
 
     pub(crate) fn from_grant(grant: &AccessGrant) -> Option<Self> {
+        if !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read") {
+            return None;
+        }
         let AccessGrantScope::SharedBrief {
             brief_ref,
             world_refs,

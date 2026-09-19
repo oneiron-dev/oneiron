@@ -7,17 +7,15 @@ mod admission;
 mod replay;
 mod types;
 
-/// Pre-execution fan-out admission. It sits ahead of everything below: a
-/// fan-out that is paused for judgment never reaches the gate, the ledger, or
-/// transport. The peer-consult consumer calls it immediately before TASK
-/// realization, so until that lands only this module's own tests drive it.
-#[cfg_attr(not(test), allow(dead_code))]
 mod fanout;
 
-/// The fan-out admission contract other lanes bind to. `fanout` itself stays
-/// private; these four are the pinned cross-lane surface.
-#[cfg_attr(not(test), allow(unused_imports))]
-pub(crate) use fanout::{FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutPlan};
+pub use fanout::FanoutApprovalMode;
+pub(crate) use fanout::{
+    FanoutAdmission, FanoutApprovalChoice, FanoutApprovalError, FanoutApprovalRow,
+    FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutHistory, FanoutPathology,
+    FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink, PeerRateSnapshot, admit_fanout_with_history,
+    approve_and_resume_fanout, fanout_estimate, fanout_history_pathology, fanout_plan_digest,
+};
 
 pub(crate) use self::admission::execute_outbound_effect;
 #[cfg(test)]

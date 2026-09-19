@@ -1680,6 +1680,7 @@ fn auth_genesis(seed: u8) -> AuthorityLogEntry {
         AuthorityOp::Genesis {
             device: auth_device(auth_pub(&signing), ROLE_OWNER | ROLE_ADMIN),
             genesis_nonce: [seed.wrapping_add(10); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: 86_400,
         },

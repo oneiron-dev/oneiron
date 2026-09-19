@@ -40,6 +40,7 @@ fn both_backends_refuse_complete_claim_payload_before_dispatch() {
         confidence: 1.0,
         source: "user_stated".to_owned(),
         world_ref: None,
+        relationship_ref: None,
         scope: Some(serde_json::json!({"opaque": "x".repeat(MAX_ENTITY_PAYLOAD_BYTES)})),
         valid_from: None,
         valid_to: None,

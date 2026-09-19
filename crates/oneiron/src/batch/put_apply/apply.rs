@@ -60,6 +60,19 @@ pub(in crate::batch) fn apply_put(
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
+    super::super::person_substrate::validate_scope_identity(id)?;
+    // Normalize before body comparison, short-id hashing and scope stamping so
+    // every index names the bytes actually stored. Malformed policy stays intact
+    // and is diagnosed fail-closed by the policy resolver, never defaulted away.
+    let normalized_policy = if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
+        crate::gate::normalize_policy_manifest_scope(data)
+    } else {
+        None
+    };
+    let data = normalized_policy.as_deref().unwrap_or(data);
+    if entity_type == crate::registry::ENTITY_TYPE_FACET {
+        super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
+    }
     // Publication admission reuses the write-door decode and must precede
     // gate receipts, debits, and every other write effect.
     let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {
@@ -318,6 +331,12 @@ pub(in crate::batch) fn apply_put(
         crate::agent_def::validate_reserved_logical_id(&id, &decoded)?;
         new_agent_definition = Some(decoded);
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+        return Err(Error::InvalidClaimBody(
+            "CompanionRecord storage retired; use PERSON/FACET",
+        ));
+    } else if entity_type == crate::registry::ENTITY_TYPE_FACET
+        && crate::companion::is_identity_facet_body(data)
+    {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     } else if entity_type == ENTITY_TYPE_TASK {
         // The role's TREE invariants are not judged here: `ChildOf` nesting
@@ -714,6 +733,17 @@ pub(in crate::batch) fn apply_put(
     }
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
+    crate::federation::record_scope::stamp_put(store, wtxn, id, entity_type, data, replicated)?;
+    if entity_type == crate::registry::ENTITY_TYPE_FACET {
+        super::super::facet_identity::reconcile_identity_facet(
+            store, wtxn, id, data, occurred, learned_at,
+        )?;
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_PERSON {
+        super::super::person_substrate::ensure_person_substrate(
+            store, wtxn, id, occurred, learned_at,
+        )?;
+    }
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;

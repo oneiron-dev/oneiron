@@ -376,8 +376,8 @@ pub(super) fn apply_world_filter(
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.iter().copied() {
         let keep = match claim_world(store, rtxn, &scored.id)? {
-            // Base reality (no world key, or a non-claim entity) always passes.
-            None => true,
+            // Base is an explicit member, never implicit in a named world.
+            None => target.is_none(),
             // A world-scoped claim passes only for its own world.
             Some(world) => target == Some(world),
         };
@@ -747,7 +747,7 @@ fn pipeline_candidate_matches_world_filter(
     };
 
     Ok(match claim_world(store, rtxn, id)? {
-        None => true,
+        None => target.is_none(),
         Some(world) => target == Some(world),
     })
 }

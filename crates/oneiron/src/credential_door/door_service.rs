@@ -213,6 +213,7 @@ impl AdmittedLease {
 /// composition and its refusals.
 pub(crate) struct CredentialDoorService {
     vault: Arc<Vault>,
+    issuer: Option<Arc<crate::authority::HostSlipIssuer>>,
 }
 
 /// Compatibility alias for the door's shorter name. One principal noun, two
@@ -222,7 +223,19 @@ pub(super) type CredentialDoor = CredentialDoorService;
 impl CredentialDoorService {
     /// Binds the door to a vault.
     pub(crate) fn new(vault: Arc<Vault>) -> Self {
-        Self { vault }
+        Self {
+            vault,
+            issuer: None,
+        }
+    }
+
+    /// A signing host may mint and consume logged one-shots. A read-only door cannot.
+    pub(crate) fn with_host_issuer(
+        mut self,
+        issuer: Arc<crate::authority::HostSlipIssuer>,
+    ) -> Self {
+        self.issuer = Some(issuer);
+        self
     }
 
     /// The vault this door composes over.
@@ -345,6 +358,7 @@ impl CredentialDoorService {
             admitted.effector().as_str(),
             admitted.instant(),
         )?;
+        self.consume_single_use(presented)?;
         let vault = &self.vault;
         // T0 stamps no lease, so there is no lease-stamping transaction for an
         // admission to move inside of. The landed injection keeps its
@@ -414,6 +428,7 @@ impl CredentialDoorService {
             });
         }
         let not_after = now.after(presented.remaining_secs(now));
+        self.consume_single_use(presented)?;
         let vault = &self.vault;
         vault.materialize_admitted_lease(&admitted.into_lease(secret_ref, ttl_secs, not_after))
     }
@@ -437,8 +452,6 @@ impl CredentialDoorService {
                 reason: DoorDenyReason::SingleUseCaveatAbsent,
             });
         }
-        self.witness_single_use(&one_shot)?;
-
         let lifetime = one_shot.lifetime_secs();
         if lifetime == 0 || lifetime > DOOR_ONE_SHOT_MAX_LIFETIME_SECS {
             return Err(CredentialDoorError::OneShotLifetimeDenied {
@@ -469,6 +482,7 @@ impl CredentialDoorService {
             admitted.effector().as_str(),
             now,
         )?;
+        self.witness_single_use(&one_shot)?;
 
         // The declared lifetime is the CAP the one-shot was written under; the
         // ceiling carries what is left of it at `now`, so a one-shot redeemed
@@ -481,6 +495,7 @@ impl CredentialDoorService {
                 ceiling_secs: ceiling.secs(),
             });
         }
+        self.consume_single_use(&one_shot)?;
         let vault = &self.vault;
         // The one-shot's own absolute expiry rides along, for the same reason
         // `issue_lease_ticket` sends the slip's, and derived the same way: the
@@ -492,27 +507,70 @@ impl CredentialDoorService {
         // `one_shot` drops here: the credential is spent.
     }
 
-    /// The one-shot MINT arm — a recorded stop, not a feature.
-    ///
-    /// Minting a slip is an authority-log act, and this tree exposes no landed
-    /// append surface that admits slip-mint bodies. Inventing an operation
-    /// variant, a door-local ledger, or a hash-at-rest token store to fake one
-    /// is exactly the shortcut that must not be taken, so this fails closed
-    /// and says why. Redemption above works today with a verified one-shot the
-    /// verifier hands over.
-    ///
-    /// `_now` survives the typed-instant migration deliberately: this arm
-    /// authorizes nothing and reads nothing, so it has no clock seam to move
-    /// onto. When the mint surface lands it will read its instant the same way
-    /// every other door operation does.
+    /// Mints a real log-backed one-shot, with exact secret and effector bounds.
+    /// The advisory legacy clock argument is ignored; the vault owns time.
     pub(super) fn mint_one_shot(
         &self,
-        _secret_ref: &str,
-        _effector: &str,
-        _lifetime_secs: u64,
+        secret_ref: &str,
+        effector: &str,
+        lifetime_secs: u64,
         _now: u64,
     ) -> DoorResult<DoorCredential> {
-        Err(CredentialDoorError::MintUnavailable)
+        let issuer = self
+            .issuer
+            .as_ref()
+            .ok_or(CredentialDoorError::MintUnavailable)?;
+        let now = self.door_instant()?;
+        self.admit_scope(effector, now)?;
+        if lifetime_secs == 0 || lifetime_secs > DOOR_ONE_SHOT_MAX_LIFETIME_SECS {
+            return Err(CredentialDoorError::OneShotLifetimeDenied {
+                lifetime_secs,
+                ceiling_secs: DOOR_ONE_SHOT_MAX_LIFETIME_SECS,
+            });
+        }
+        if secret_ref.is_empty() {
+            return Err(CredentialDoorError::MintUnavailable);
+        }
+        let root = self.vault.ensure_host_root_slip(issuer).map_err(custody)?;
+        let mut claims = root.claims.clone();
+        use rand_core::{OsRng, RngCore};
+        OsRng.fill_bytes(&mut claims.slip_id);
+        // Host-root is the issuer, not a same-holder secret-record delegation.
+        claims.parent_id = None;
+        claims.issued_at = now.secs();
+        claims.expires_at = now.secs().saturating_add(lifetime_secs);
+        claims.ttl_secs = lifetime_secs;
+        claims.single_use = true;
+        claims.records = std::collections::BTreeSet::from([secret_ref.to_owned()]);
+        claims.channels = std::collections::BTreeSet::from([effector.to_owned()]);
+        claims.scope.verbs =
+            crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+                DOOR_VERB_REDEEM.to_owned(),
+            ]));
+        let slip = self
+            .vault
+            .mint_capability_slip(issuer, claims)
+            .map_err(custody)?;
+        let proof = issuer
+            .binding_proof(&slip, b"credential-door-mint")
+            .map_err(custody)?;
+        let verified = self
+            .vault
+            .verify_capability_slip(issuer, &slip, b"credential-door-mint", &proof)
+            .map_err(custody)?;
+        Ok(verified.door_credential())
+    }
+
+    fn consume_single_use(&self, credential: &DoorCredential) -> DoorResult<()> {
+        if !credential.single_use {
+            return Ok(());
+        }
+        let issuer = self
+            .issuer
+            .as_ref()
+            .ok_or(CredentialDoorError::MintUnavailable)?;
+        let id = credential_slip_id(credential)?;
+        self.vault.consume_slip(issuer, id).map_err(custody)
     }
 
     /// A single-use caveat is only meaningful against the log that records
@@ -534,9 +592,15 @@ impl CredentialDoorService {
         }
         let vault = &self.vault;
         let rtxn = vault.store.env.read_txn().map_err(log_unreachable)?;
-        vault
+        let fold = vault
             .authority_fold_readonly_in_txn(&rtxn)
             .map_err(log_unreachable)?;
+        let id = credential_slip_id(credential)?;
+        if !fold.slips.is_live(&id, &fold.roster) {
+            return Err(CredentialDoorError::UnauthorizedPrincipal {
+                reason: DoorDenyReason::Revoked,
+            });
+        }
         Ok(())
     }
 }
@@ -624,4 +688,24 @@ fn validate_seam_fields(blob: &PushedBlob) -> DoorResult<()> {
         });
     }
     Ok(())
+}
+
+fn credential_slip_id(credential: &DoorCredential) -> DoorResult<[u8; 32]> {
+    let value = credential.slip_id();
+    let error = || CredentialDoorError::UnauthorizedPrincipal {
+        reason: DoorDenyReason::HolderUnverified,
+    };
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(error());
+    }
+    let mut id = [0; 32];
+    for (slot, pair) in id.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+        let nibble = |b: u8| if b <= b'9' { b - b'0' } else { b - b'a' + 10 };
+        *slot = nibble(pair[0]) * 16 + nibble(pair[1]);
+    }
+    Ok(id)
 }

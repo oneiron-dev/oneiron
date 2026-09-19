@@ -14,6 +14,8 @@ use super::ErrorKind;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClaimError {
+    #[error("write is concurrent with an actor revocation/regrant window")]
+    WriteConcurrentWithRevocation,
     /// Claim predicate violates the pinned D17 grammar (≥2 segments of
     /// `[a-z][a-z0-9_]*` joined by `.`, total ≤128 bytes).
     #[error("invalid claim predicate {predicate:?}: {reason}")]
@@ -186,6 +188,7 @@ impl ClaimError {
     #[must_use]
     pub(crate) fn kind(&self) -> ErrorKind {
         match self {
+            Self::WriteConcurrentWithRevocation => ErrorKind::WriteConcurrentWithRevocation,
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::ProvenanceOnStructuralEdge { .. } => ErrorKind::ProvenanceOnStructuralEdge,

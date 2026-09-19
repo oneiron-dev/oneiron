@@ -94,7 +94,7 @@ pub(super) fn authorize_selector_export(
     // substitute for it. Unpacted grants have no pact and keep legacy-allow —
     // on the export path too, which is what `EmptyAxis` carries out of here.
     let empty = match effective_scope_for_grant(&fold, &selector.grant_id) {
-        None => EmptyAxis::Unfiltered,
+        None => EmptyAxis::Bottom,
         Some(ceiling) => {
             if !selector_direction_scope(selector).is_narrowing_of(&ceiling) {
                 return Err(selector_err(SelectorError::GrantScopeMismatch));
@@ -232,6 +232,17 @@ pub(super) fn filter_window_doc(
     selector: &SyncSelector,
     empty: EmptyAxis,
 ) -> Result<LoroDoc> {
+    let grant_raw = vault
+        .get_raw(&selector.grant_id)?
+        .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
+    let grant_header = EntityMetadataHeader::parse(&grant_raw)
+        .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
+    if grant_header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
+        return Err(selector_err(SelectorError::GrantWrongType));
+    }
+    let grant = decode_federation_grant_body(&grant_raw[ENTITY_METADATA_HEADER_LEN..])?;
+    let rtxn = vault.store.env.read_txn()?;
+    let mut scope_error = None;
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");
     let source_edges = source.get_map("edges");
@@ -264,6 +275,32 @@ pub(super) fn filter_window_doc(
         if tombstoned.contains(&id) {
             return;
         }
+        if scope_error.is_some() {
+            return;
+        }
+        match crate::authority::row_causal_admitted(vault, &rtxn, blob) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
+        let scope =
+            match crate::federation::record_scope::scope_for_blob(&vault.store, &rtxn, id, blob) {
+                Ok(Some(scope)) => scope,
+                Ok(None) => return,
+                Err(error) => {
+                    scope_error = Some(error);
+                    return;
+                }
+            };
+        if !grant
+            .authority_scope
+            .admits("read", &scope, &crate::federation::Scope::top())
+        {
+            return;
+        }
         let Some(decision) = entity_selector_decision(
             &id,
             blob,
@@ -288,6 +325,10 @@ pub(super) fn filter_window_doc(
         }
     });
 
+    if let Some(error) = scope_error {
+        return Err(error);
+    }
+    drop(rtxn);
     if selector.facet_filter_active(empty) {
         kept.extend(seeds.iter().copied());
         map_for_each_value_bytes(&source_edges, |raw_key, maybe_value| {

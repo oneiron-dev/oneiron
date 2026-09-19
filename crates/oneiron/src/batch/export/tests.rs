@@ -40,7 +40,7 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
         persona_ref,
         Value::from("portable persona"),
         provenance(0x55),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let relationship = CompanionRecord::relationship(
         personal,
@@ -48,7 +48,7 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
         relationship_target,
         Value::from("portable relationship"),
         provenance(0x56),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
 
     let mut records = CompanionRegister::new();
@@ -59,7 +59,16 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
     expressions.update(persona.key(), CompanionExpression::Professional)?;
     expressions.update(relationship.key(), CompanionExpression::Warm)?;
 
-    let layer = companion_export_layer(&records, &expressions);
+    let layer = companion_export_layer(
+        &records,
+        &expressions,
+        &crate::federation::Scope {
+            sensitivity: crate::federation::SensitivityCeiling::AtMost(
+                crate::federation::Sensitivity::Public,
+            ),
+            ..crate::federation::Scope::top()
+        },
+    );
 
     assert_eq!(layer.layer_version(), COMPANION_EXPORT_LAYER_VERSION);
     assert_eq!(layer.len(), 2);
@@ -89,14 +98,14 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
         entity(0x62),
         Value::from("portable neutral persona"),
         provenance(0xB1),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let private = CompanionRecord::persona(
         personal.clone(),
         entity(0x63),
         Value::from("private personal persona"),
         provenance(0xB2),
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
     let shared_classified = CompanionRecord::relationship(
         shared.clone(),
@@ -104,14 +113,14 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
         entity(0x65),
         Value::from("shared org relationship"),
         provenance(0xB3),
-        CompanionExportClassification::SharedVault,
+        crate::federation::Sensitivity::Private,
     );
     let shared_misclassified = CompanionRecord::persona(
         shared,
         entity(0x66),
         Value::from("shared scope with portable flag"),
         provenance(0xB4),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let mut closed = CompanionRecord::relationship(
         personal,
@@ -119,7 +128,7 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
         entity(0x68),
         Value::from("closed relationship"),
         provenance(0xB5),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     closed.lifecycle = ClaimLifecycleStatus::Retracted;
 
@@ -144,7 +153,16 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
     )?;
     expressions.update(closed.key(), CompanionExpression::Professional)?;
 
-    let layer = companion_export_layer(&records, &expressions);
+    let layer = companion_export_layer(
+        &records,
+        &expressions,
+        &crate::federation::Scope {
+            sensitivity: crate::federation::SensitivityCeiling::AtMost(
+                crate::federation::Sensitivity::Public,
+            ),
+            ..crate::federation::Scope::top()
+        },
+    );
 
     assert_eq!(layer.len(), 1);
     assert_eq!(layer.personas().len(), 1);
@@ -421,6 +439,7 @@ fn genesis_entry(seed: u8) -> AuthorityLogEntry {
                 roles: ROLE_OWNER,
             },
             genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: 86_400,
         },
@@ -902,7 +921,10 @@ mod staged_content_gc {
 
     fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
         let mut entries = vec![
-            (Value::from("schema_version"), Value::from("1.1")),
+            (
+                Value::from("schema_version"),
+                Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+            ),
             (Value::from("pack_id"), Value::from("export-stage-test")),
             (Value::from("pack_version"), Value::from("v1")),
             (
@@ -1388,7 +1410,7 @@ mod staged_content_gc {
             test_entity_id(0x7A),
             Value::from("portable persona"),
             provenance(0x7B),
-            CompanionExportClassification::Portable,
+            crate::federation::Sensitivity::Public,
         )
         .created_at(1_772_400_000)
         .expect("companion created_at");

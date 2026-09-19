@@ -33,7 +33,7 @@ impl<'vault> ScopedRead<'vault> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
     ) -> Result<bool> {
-        if filter.deny_all {
+        if filter.deny_all || !self.credential_allows_id(id) || !self.proof_live_in(txn)? {
             return Ok(false);
         }
         let Some(raw) = self.entities().get(txn, id.as_bytes())? else {
@@ -54,9 +54,15 @@ impl<'vault> ScopedRead<'vault> {
             return Ok(false);
         }
         if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(true);
+            return self.is_entity_readable_with_policy_in(txn, policy, id);
         }
         let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if !crate::authority::claim_causal_admitted(
+            &self.vault.authority_fold_readonly_in_txn(txn)?,
+            &body,
+        ) {
+            return Ok(false);
+        }
         let facets = self.claim_facet_refs_in(txn, id)?;
         Ok(crate::pipeline::retrieval_claim_allowed(filter, &body)
             && crate::gate::scoped_read_claim_allowed(policy, &self.actor_key, &body, &facets))

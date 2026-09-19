@@ -1,7 +1,7 @@
 //! Static entity-type x [`FieldProfile`] to allowed-field-slice table.
 
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::context_pack::FieldProfile;
+use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_EVENT, ENTITY_TYPE_FEDERATION_GRANT,
@@ -146,17 +146,19 @@ pub(super) fn fields_for_profile(
         (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Full) => {
             crate::persona_snapshot::PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL
         }
-        (ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Minimal) => &["kind", "scope", "subject"],
-        (ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Standard) => {
-            &["kind", "scope", "subject", "lifecycle", "export"]
+        (ENTITY_TYPE_FACET, FieldProfile::Minimal) => {
+            &["kind", "label", "scope", "subject", "sensitivity"]
         }
-        (ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Full) => &[
+        (ENTITY_TYPE_FACET, FieldProfile::Standard) => {
+            &["kind", "scope", "subject", "lifecycle", "sensitivity"]
+        }
+        (ENTITY_TYPE_FACET, FieldProfile::Full) => &[
             "schema_version",
             "kind",
             "scope",
             "subject",
             "lifecycle",
-            "export",
+            "sensitivity",
             "lifecycle_events",
             "provenance",
         ],

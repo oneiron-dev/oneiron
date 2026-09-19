@@ -16,7 +16,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedRead,
     claim_sensitivity_band, decode_claim_body,
 };
-use crate::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};
+use crate::companion::{CompanionRecordKind, CompanionScope};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
@@ -331,7 +331,7 @@ impl crate::Vault {
         let mut related: BTreeMap<EntityId, (Option<String>, String)> = BTreeMap::new();
         for (key, record) in register.iter() {
             if record.kind() != CompanionRecordKind::Relationship
-                || record.export_classification != CompanionExportClassification::Portable
+                || record.sensitivity > crate::federation::Sensitivity::Private
                 || matches!(record.scope, CompanionScope::SharedVault { .. })
             {
                 continue;

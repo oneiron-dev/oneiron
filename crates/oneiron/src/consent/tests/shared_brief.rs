@@ -81,6 +81,7 @@ fn consent_shared_brief_generic_projection_is_rejected_and_not_active() {
     };
 
     let access = AccessGrant {
+        authority_scope: crate::federation::scope_codec::read_preset(),
         principal_ref: entity(0x51),
         scope: AccessGrantScope::SharedBrief {
             brief_ref: "brief:opaque".to_owned(),

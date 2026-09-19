@@ -494,6 +494,7 @@ impl Vault {
         text_index_trusted: bool,
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
+        crate::batch::sweep_scope_stamps(&store)?;
         // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
         // open, fresh and existing, in its own write transaction before any
         // caller holds the handle. Missing rows are created with pinned

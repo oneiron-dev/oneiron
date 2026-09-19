@@ -25,7 +25,7 @@ pub(super) fn seed_generated_auto_source_trust_manifest(vault: &Vault) -> Result
     let manifest = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("schema_version"),
-            rmpv::Value::from("1.1"),
+            rmpv::Value::from(crate::gate::POLICY_SCHEMA_VERSION),
         ),
         (
             rmpv::Value::from("pack_id"),

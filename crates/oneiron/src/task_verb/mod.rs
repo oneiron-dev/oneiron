@@ -5,7 +5,11 @@
 //! reproduces the pre-split flat-module surface verbatim.
 
 mod consts;
+mod consult_fanout_admission;
 mod consult_fanout_facade;
+mod consult_fanout_resume;
+mod consult_fanout_store;
+mod consult_fanout_types;
 mod consult_ladder_facade;
 mod consult_payload;
 mod consult_result;
@@ -29,6 +33,10 @@ mod wire_encode;
 mod tests;
 
 pub use consts::TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED;
+pub use consult_fanout_types::{
+    ConsultFanOutChoice, ConsultFanOutMeter, ConsultFanOutMode, ConsultFanOutPause,
+    ConsultFanOutPolicy, ConsultFanOutRate,
+};
 pub use consult_ladder_facade::{
     CrossActorRoute, LadderTransitionReceipt, project_consult_ladder_state,
 };

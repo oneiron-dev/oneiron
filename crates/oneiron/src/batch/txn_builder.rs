@@ -67,6 +67,12 @@ impl<'a> TxnBatchBuilder<'a> {
         }
     }
 
+    /// Queues a scoped deletion in the caller-owned transaction.
+    pub(crate) fn delete(mut self, id: &EntityId) -> Self {
+        self.ops.push(BatchOp::Delete { id: *id });
+        self
+    }
+
     /// Adds an entity put operation.
     ///
     /// This is a PUBLIC door and is held to the public checks, the same ones

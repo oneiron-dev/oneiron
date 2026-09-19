@@ -100,6 +100,7 @@ impl Vault {
             crate::gate::resolve_policy_manifest(&self.store, &rtxn)?
         };
         let grant = StandingOutboundGrant {
+            authority_scope: crate::federation::scope_codec::effect_preset(),
             principal_ref: intent.publisher_principal.to_hex(),
             origin_component_id: BOOKING_PAGE_INVITE_ORIGIN_COMPONENT_ID.to_owned(),
             origin_action_id: BOOKING_PAGE_INVITE_ORIGIN_ACTION_ID.to_owned(),

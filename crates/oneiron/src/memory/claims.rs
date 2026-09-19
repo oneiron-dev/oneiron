@@ -51,6 +51,9 @@ pub struct ClaimInput {
     pub source: String,
     /// Optional WORLD entity ref.
     pub world_ref: Option<String>,
+    /// Optional RELATIONSHIP ref; unknown or wrong-kind refs are rejected.
+    #[serde(default)]
+    pub relationship_ref: Option<String>,
     /// Optional scope map (e.g. `{"sensitivity": 0}`).
     pub scope: Option<serde_json::Value>,
     /// Validity window start (Unix seconds).
@@ -490,6 +493,11 @@ impl Memory<'_> {
             Some(world_ref) => Some(self.resolve_ref(world_ref)?),
             None => None,
         };
+        let relationship = input
+            .relationship_ref
+            .as_deref()
+            .map(|r| self.resolve_ref(r))
+            .transpose()?;
         let scope_rmpv = input.scope.as_ref().map(json_to_rmpv);
         let now = crate::unix_seconds_now();
         let occurred_at = input.occurred_at.unwrap_or(now);
@@ -531,6 +539,9 @@ impl Memory<'_> {
             }
             if let Some(world) = world {
                 candidate = candidate.with_world(world);
+            }
+            if let Some(relationship) = relationship {
+                candidate = candidate.with_relationship(relationship);
             }
             if let Some(scope) = scope_rmpv.clone() {
                 candidate = candidate.with_scope(scope);
@@ -655,6 +666,16 @@ impl Memory<'_> {
             None
         };
         let new_scope = input.scope.clone();
+        let world = input
+            .world_ref
+            .as_deref()
+            .map(|r| self.resolve_ref(r))
+            .transpose()?;
+        let relationship = input
+            .relationship_ref
+            .as_deref()
+            .map(|r| self.resolve_ref(r))
+            .transpose()?;
         let ids = self.vault.claims_for_subject(subject)?;
         let mut best: Option<EntityId> = None;
         for id in ids {
@@ -668,7 +689,7 @@ impl Memory<'_> {
                 continue;
             }
             let prior_scope = body.scope.as_ref().map(companion_value_to_json);
-            if prior_scope != new_scope {
+            if prior_scope != new_scope || body.world != world || body.rel != relationship {
                 continue;
             }
             if let Some(new_qid) = &multi_key {

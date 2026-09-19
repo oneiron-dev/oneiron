@@ -16,9 +16,7 @@ use super::super::test_hooks;
 use super::{RematCtx, RematLedger};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::{
-    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
-};
+use crate::companion::decode_companion_record_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -238,11 +236,12 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             } else {
                 &[]
             };
-            if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+            if header.entity_type == crate::registry::ENTITY_TYPE_FACET
+                && crate::companion::is_identity_facet_body(data)
+            {
                 match decode_companion_record_body(data) {
                     Ok(record)
-                        if record.export_classification
-                            == CompanionExportClassification::LocalOnly =>
+                        if record.sensitivity == crate::federation::Sensitivity::Restricted =>
                     {
                         local_only_companion_entity_keys.push(key.to_owned());
                         local_only_companion_entity_ids.insert(id);

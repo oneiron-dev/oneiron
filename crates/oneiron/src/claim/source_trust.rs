@@ -240,7 +240,7 @@ pub(crate) fn sensitivity_band_from_value(value: &Value) -> Option<u8> {
 
     match value.as_str()? {
         "public" => Some(0),
-        "internal" => Some(1),
+        "private" | "internal" => Some(1),
         "sensitive" => Some(2),
         "restricted" => Some(3),
         _ => None,

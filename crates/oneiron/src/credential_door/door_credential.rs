@@ -33,11 +33,36 @@ pub(crate) struct DoorCredential {
 }
 
 impl DoorCredential {
+    /// The production constructor accepts only a MAC/log/binding-verified slip.
+    pub(crate) fn from_verified_slip(verified: &crate::authority::VerifiedSlip) -> Self {
+        let claims = verified.claims();
+        let verbs = match &claims.scope.verbs {
+            crate::federation::ScopeAxis::Some(values) => values.clone(),
+            crate::federation::ScopeAxis::All => ["inject", "lease", "redeem", "receive-pack"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            crate::federation::ScopeAxis::Bottom => BTreeSet::new(),
+        };
+        Self {
+            slip_id: claims.slip_id.iter().map(|b| format!("{b:02x}")).collect(),
+            holder_ref: claims.holder_ref.clone(),
+            verbs,
+            records: claims.records.clone(),
+            channels: claims.channels.clone(),
+            issued_at: claims.issued_at,
+            expires_at: claims.expires_at,
+            status: DoorCredentialStatus::Active,
+            single_use: claims.single_use,
+            ttl_cap: TtlCeiling::default().meet_secs(claims.ttl_secs),
+        }
+    }
     /// The holder view of a slip whose proof the caller has ALREADY verified.
     ///
     /// Fail-closed defaults: no verbs, no records, no channels, no caveat, and
     /// a TTL ceiling sitting at the floor ([`TtlCeiling::default`]) rather than
     /// unbounded. A credential built and never narrowed authorizes nothing.
+    #[cfg(test)]
     pub(crate) fn verified(
         slip_id: impl Into<String>,
         holder_ref: impl Into<String>,

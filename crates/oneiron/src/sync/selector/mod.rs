@@ -39,8 +39,6 @@ use crate::authority::{AuthorityOp, authority_log_entity_id, genesis_vault_id};
 #[cfg(test)]
 use crate::batch::EntityMetadataHeader;
 #[cfg(test)]
-use crate::companion::CompanionExportClassification;
-#[cfg(test)]
 use crate::edge::EdgeKind;
 #[cfg(test)]
 use crate::entity_id::{EntityId, LocalWorldId};
@@ -48,6 +46,8 @@ use crate::entity_id::{EntityId, LocalWorldId};
 use crate::error::{Error, SyncProtocolValidation, SyncSelectorValidation as SelectorError};
 #[cfg(test)]
 use crate::federation::SelectorRange;
+#[cfg(test)]
+use crate::federation::Sensitivity;
 #[cfg(test)]
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT};
 #[cfg(test)]

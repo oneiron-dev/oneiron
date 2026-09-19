@@ -112,6 +112,13 @@ fn scoped_read_world_manifest(actor_ref: &str, world: EntityId) -> Vec<u8> {
         (Value::from("effector"), Value::from("core:read")),
         (
             Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .expect("scope fixture"),
+        ),
+        (
+            Value::from("selectors"),
             Value::Map(vec![(
                 Value::from("world_ref"),
                 Value::from(world.to_hex()),
@@ -120,7 +127,7 @@ fn scoped_read_world_manifest(actor_ref: &str, world: EntityId) -> Vec<u8> {
         (Value::from("receipt_required"), Value::Boolean(false)),
     ]);
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("cal-09-scoped-read")),
         (Value::from("pack_version"), Value::from("1")),
         (Value::from("min_engine_version"), Value::from("0.0.0")),

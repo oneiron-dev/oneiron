@@ -16,7 +16,7 @@ use rmpv::Value;
 
 use super::ClaimBody;
 use crate::corpus::{CorpusId, corpus_id_from_scope};
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// Reads the corpus a claim is scoped to.
 ///
@@ -36,5 +36,39 @@ pub(crate) fn claim_corpus_id(body: &ClaimBody) -> Result<Option<CorpusId>> {
 /// value that is not a map carries no recognized entry at all. Widening the
 /// opaque contract is not a side effect of adding a recognized entry to it.
 pub(super) fn validate_known_claim_scope_entries(scope: Option<&Value>) -> Result<()> {
-    corpus_id_from_scope(scope).map(|_| ())
+    corpus_id_from_scope(scope)?;
+    if let Some(Value::Map(entries)) = scope {
+        let mut facet_seen = false;
+        let mut project_seen = false;
+        for (key, value) in entries {
+            let seen = match key.as_str() {
+                Some("facet" | "facet_ref" | "facetRef") => &mut facet_seen,
+                Some("scopeProjectId") => &mut project_seen,
+                _ => continue,
+            };
+            if std::mem::replace(seen, true) {
+                return Err(Error::InvalidClaimBody("duplicate scope selector"));
+            }
+            match value {
+                Value::Binary(bytes) => {
+                    crate::EntityId::from_bytes(
+                        bytes
+                            .as_slice()
+                            .try_into()
+                            .map_err(|_| Error::InvalidClaimBody("scope selector id"))?,
+                    )
+                    .map_err(|_| Error::InvalidClaimBody("scope selector id"))?;
+                }
+                Value::String(text) => {
+                    crate::EntityId::from_hex(
+                        text.as_str()
+                            .ok_or(Error::InvalidClaimBody("scope selector id"))?,
+                    )
+                    .map_err(|_| Error::InvalidClaimBody("scope selector id"))?;
+                }
+                _ => return Err(Error::InvalidClaimBody("scope selector id")),
+            }
+        }
+    }
+    Ok(())
 }

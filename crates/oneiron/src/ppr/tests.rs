@@ -2447,10 +2447,17 @@ fn single_reader_policy_manifest(actor_ref: &str) -> Vec<u8> {
     let grant = Value::Map(vec![
         (Value::from("actor_ref"), Value::from(actor_ref)),
         (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .unwrap(),
+        ),
         (Value::from("receipt_required"), Value::Boolean(false)),
     ]);
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("code-memory-scoped")),
         (Value::from("pack_version"), Value::from("1")),
         (Value::from("min_engine_version"), Value::from("0.0.0")),

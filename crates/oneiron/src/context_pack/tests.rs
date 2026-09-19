@@ -286,7 +286,7 @@ fn companion_register_api_context_pack_retrieves_affect_without_private_note_lea
         EntityId::from_bytes_unchecked([0x75; 16]),
         crate::companion_value_from_json(&serde_json::json!({ "note": private_note }))?,
         provenance,
-        crate::CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
     vault.create_companion_record(&companion_id, &record, 20)?;
     vault

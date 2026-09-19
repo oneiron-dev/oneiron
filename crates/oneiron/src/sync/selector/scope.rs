@@ -8,10 +8,7 @@ use crate::Vault;
 use crate::authority::{AuthorityFold, FederationPactStatus};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{COREFERENCE_PACT_ID_LEN, ClaimLifecycleStatus};
-use crate::companion::{
-    CompanionExportClassification, CompanionScope, ENTITY_TYPE_COMPANION_REGISTER,
-    decode_companion_record_body,
-};
+use crate::companion::decode_companion_record_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -419,7 +416,8 @@ pub(super) fn entity_selector_decision(
     if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
         return None;
     }
-    if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER
+    if header.entity_type == crate::registry::ENTITY_TYPE_FACET
+        && crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
         && !companion_register_passes_selector(blob, grant_scope)
     {
         return None;
@@ -513,21 +511,9 @@ fn companion_register_passes_selector(blob: &[u8], grant_scope: FederationGrantS
     ) {
         return false;
     }
-    match record.export_classification {
-        CompanionExportClassification::LocalOnly => false,
-        CompanionExportClassification::Portable => {
-            !matches!(record.scope, CompanionScope::SharedVault { .. })
-        }
-        CompanionExportClassification::SharedVault => {
-            let FederationGrantScope::Vault {
-                vault_id: grant_vault_id,
-            } = grant_scope;
-            matches!(
-                record.scope,
-                CompanionScope::SharedVault { vault_id } if vault_id == grant_vault_id
-            )
-        }
-    }
+    let _ = grant_scope;
+    crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Sensitive)
+        .permits(record.sensitivity)
 }
 
 fn world_passes(entity_type: u8, body: &[u8], world: SyncSelectorWorld) -> bool {

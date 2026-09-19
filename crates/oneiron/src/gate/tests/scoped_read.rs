@@ -982,3 +982,33 @@ fn scoped_read_facet_grants_match_facet_of_edges() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn stored_six_axis_scope_gates_real_claim_reads_and_preserves_mask_relevance() -> Result<()> {
+    use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xDE);
+    let mut body = source_trust_claim(ClaimSource::UserStated);
+    body.world = Some(test_id(0xDF));
+    put_claim_body(&vault, &id, &body)?;
+    let mut authority = Scope::top();
+    authority.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(test_id(0xDF))]));
+    authority.facets = ScopeAxis::Bottom; // a mask cannot deny authority
+    authority.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Sensitive);
+    let manifest = test_id(0xDD);
+    let data = encode_policy_manifest(vec![core_read_scoped_grant_entry(
+        "reader",
+        crate::federation::scope_codec::encode_scope_value(&authority)?,
+    )]);
+    put_policy_manifest_bytes(&vault, manifest, &data)?;
+    let actor = ScopedReadActorKey::new("reader").expect("fixture");
+    assert!(vault.scoped_read(actor.clone()).get(&id)?.is_some());
+    authority.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Public);
+    let data = encode_policy_manifest(vec![core_read_scoped_grant_entry(
+        "reader",
+        crate::federation::scope_codec::encode_scope_value(&authority)?,
+    )]);
+    put_policy_manifest_bytes(&vault, manifest, &data)?;
+    assert!(vault.scoped_read(actor).get(&id)?.is_none());
+    Ok(())
+}

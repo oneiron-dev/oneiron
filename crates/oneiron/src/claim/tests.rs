@@ -881,8 +881,25 @@ fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
     assert_eq!(
         CLAIM_BODY_KEYS,
         [
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj",
-            "scope", "appr", "life", "stale", "sess",
+            "pred",
+            "val",
+            "conf",
+            "sal",
+            "evid",
+            "from",
+            "to",
+            "src",
+            "worldId",
+            "scopeRelationshipId",
+            "subj",
+            "scope",
+            "appr",
+            "life",
+            "stale",
+            "sess",
+            "scopeFacetId",
+            "scopeProjectId",
+            "scopeVersion",
         ],
         "PsychProfile snapshots must preserve the pinned Claim body ABI"
     );
@@ -2271,7 +2288,10 @@ fn expression_preference_legacy_bare_predicate_remains_compatible() -> Result<()
 fn expression_preference_fixture() -> (tempfile::TempDir, Vault, EntityId, WriteActor, WriteActor) {
     let (temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (
             Value::from("pack_id"),
             Value::from("one-1421-expression-preference"),
@@ -2782,6 +2802,7 @@ fn expression_preference_claim_input(
         source: "inferred".to_owned(),
         scope: None,
         world_ref: None,
+        relationship_ref: None,
         occurred_at: Some(5),
         learned_at: Some(5),
         valid_from: Some(5),
@@ -2897,7 +2918,10 @@ fn vault_put_claim_refuses_an_expression_preference() -> Result<()> {
 /// `proposed`, so the gate refuses an `auto` request for this prefix.
 fn put_proposed_only_expression_manifest(vault: &Vault) {
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("proposed-only")),
         (Value::from("pack_version"), Value::from("v1")),
         (
@@ -4547,5 +4571,62 @@ fn scoped_read_search_with_effort_retrieval_depth_is_the_existing_text_door()
     );
     assert!(!dialed.backend_used, "no tier reaches a host by default");
     assert_eq!(dialed.tokens_used, 0);
+    Ok(())
+}
+
+#[test]
+fn relationship_candidate_stamps_and_rejects_unknown_or_wrong_kind() -> Result<()> {
+    let (_temp, vault, subject, human, _) = expression_preference_fixture();
+    let relationship = EntityId::now();
+    let occurred = TimeRange { start: 2, end: 2 };
+    vault.put_entity(
+        &relationship,
+        crate::registry::ENTITY_TYPE_RELATIONSHIP,
+        occurred,
+        2,
+        b"relationship",
+    )?;
+    let envelope = WriteEnvelope::new(
+        human,
+        ClaimSource::UserStated,
+        crate::write_envelope::WriteProvenance::new(Value::from("relationship-test"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    let candidate = || {
+        ClaimCandidate::new(
+            "profile.nickname",
+            ClaimSubject::Entity(subject),
+            Value::from("Ada"),
+            1.0,
+        )
+    };
+    let id = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate(
+            &id,
+            candidate().with_relationship(relationship),
+            &envelope,
+            occurred,
+            2,
+        )
+        .commit()?;
+    assert_eq!(vault.get_claim(&id)?.unwrap().rel, Some(relationship));
+    for invalid in [EntityId::now(), subject] {
+        let rejected = EntityId::now();
+        let error = vault
+            .batch()
+            .claim_candidate(
+                &rejected,
+                candidate().with_relationship(invalid),
+                &envelope,
+                occurred,
+                2,
+            )
+            .commit()
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::InvalidRelationship);
+        assert!(vault.get_claim(&rejected)?.is_none());
+    }
     Ok(())
 }

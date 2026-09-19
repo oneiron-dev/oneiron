@@ -9,8 +9,7 @@ use heed::RoTxn;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::companion::{
-    CompanionLifecycleEvent, CompanionScope, CompanionSubject, ENTITY_TYPE_COMPANION_REGISTER,
-    decode_companion_record_body,
+    CompanionLifecycleEvent, CompanionScope, CompanionSubject, decode_companion_record_body,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -182,7 +181,9 @@ fn decode_entity_fields(raw: &[u8], entity_type: u8) -> Option<HashMap<String, s
     }
 
     let payload = &raw[ENTITY_METADATA_HEADER_LEN..];
-    if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+    if entity_type == crate::registry::ENTITY_TYPE_FACET
+        && crate::companion::is_identity_facet_body(payload)
+    {
         return decode_companion_register_fields(payload);
     }
 
@@ -220,8 +221,8 @@ fn decode_companion_register_fields(raw: &[u8]) -> Option<HashMap<String, serde_
         serde_json::Value::String(record.lifecycle.as_str().to_owned()),
     );
     out.insert(
-        "export".to_owned(),
-        serde_json::Value::String(record.export_classification.as_str().to_owned()),
+        "sensitivity".to_owned(),
+        serde_json::Value::String(record.sensitivity.as_str().to_owned()),
     );
     out.insert(
         "provenance".to_owned(),

@@ -321,7 +321,7 @@ pub fn seed_file_drop_machine_fixture(
     let manifest = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("schema_version"),
-            rmpv::Value::from("1.1"),
+            rmpv::Value::from(crate::gate::POLICY_SCHEMA_VERSION),
         ),
         (
             rmpv::Value::from("pack_id"),
@@ -403,7 +403,10 @@ pub fn permit_imported_calendar_source_for_test(
     use rmpv::Value;
 
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("calendar-ingest-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (

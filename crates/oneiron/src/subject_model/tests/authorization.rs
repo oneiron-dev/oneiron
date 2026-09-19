@@ -36,6 +36,7 @@ pub(crate) fn root_owner(vault: &Vault, owner: WriteActor, seed: u8) -> Result<A
                 roles: ROLE_OWNER | ROLE_ADMIN,
             },
             genesis_nonce: [seed; 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },

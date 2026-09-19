@@ -4100,7 +4100,10 @@ fn witness_ceiling_refusal_stays_typed_through_the_executor_seam() {
 /// and a class-wide row alone leaves ordinary recording available.
 fn proposed_agent_manifest(actor_ref: &str) -> Vec<u8> {
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("executor-witness-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (
