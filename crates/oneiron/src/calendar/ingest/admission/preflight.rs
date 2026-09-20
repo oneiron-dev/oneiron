@@ -27,7 +27,11 @@ impl PollAdmission<'_> {
         if event.cancelled {
             validate_calendar_claim_value(
                 PREDICATE_CALENDAR_STATUS,
-                &status_value(CalendarStatus::Cancelled, CalendarStatusBasis::ImportedCancel, self.now),
+                &status_value(
+                    CalendarStatus::Cancelled,
+                    CalendarStatusBasis::ImportedCancel,
+                    self.now,
+                ),
             )?;
         }
         Ok(())

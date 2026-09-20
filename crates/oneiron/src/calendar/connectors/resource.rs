@@ -173,10 +173,14 @@ pub(super) fn render(
     if parsed.events.len() != member_ids.len() {
         return Err(ingest_error("rendered resource does not match its members"));
     }
-    let component_hashes = member_ids.into_iter()
+    let component_hashes = member_ids
+        .into_iter()
         .zip(parsed.events.into_iter().map(|event| event.content_hash))
         .collect();
-    Ok(RenderedResource { ics, component_hashes })
+    Ok(RenderedResource {
+        ics,
+        component_hashes,
+    })
 }
 fn line(out: &mut String, name: &str, value: &str) -> Result<(), CalendarConnectorError> {
     if value.contains(['\r', '\n']) {
@@ -216,7 +220,9 @@ mod tests {
             .unwrap();
         assert_eq!(master_for(&vault, child).unwrap(), master);
         assert_eq!(sequence_floor(&vault, master, "series@test").unwrap(), 4);
-        let bytes = render(&vault, &master, "series@test", 5, 1_800_000_001).unwrap().ics;
+        let bytes = render(&vault, &master, "series@test", 5, 1_800_000_001)
+            .unwrap()
+            .ics;
         let again = crate::calendar::ics::parse_ics_feed(&bytes).unwrap();
         assert_eq!(again.events.len(), 2);
         assert_eq!(again.events[0].summary, parsed.events[0].summary);

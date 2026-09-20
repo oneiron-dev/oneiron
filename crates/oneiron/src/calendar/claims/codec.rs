@@ -112,7 +112,10 @@ pub(crate) fn validate_calendar_claim_structure(body: &ClaimBody) -> Result<()> 
 }
 
 /// Validates a derived value before its EVENT or any claims are written.
-pub(in crate::calendar) fn validate_calendar_claim_value(predicate: &str, value: &Value) -> Result<()> {
+pub(in crate::calendar) fn validate_calendar_claim_value(
+    predicate: &str,
+    value: &Value,
+) -> Result<()> {
     if !is_calendar_claim_predicate(predicate) {
         return Err(invalid_claim("unknown calendar claim predicate"));
     }
@@ -127,9 +130,7 @@ pub(in crate::calendar) fn validate_calendar_claim_value(predicate: &str, value:
             validate_rrule_text(rrule)
         }
         PREDICATE_CALENDAR_SERIES_MASTER => decode_series_master_value(value).map(|_| ()),
-        PREDICATE_CALENDAR_SERIES_EXCEPTION => {
-            decode_series_exception_value(value).map(|_| ())
-        }
+        PREDICATE_CALENDAR_SERIES_EXCEPTION => decode_series_exception_value(value).map(|_| ()),
         PREDICATE_CALENDAR_SUCCESSOR => decode_successor_value(value).map(|_| ()),
         PREDICATE_CALENDAR_ATTENDEE => decode_attendee_value(value).map(|_| ()),
         PREDICATE_CALENDAR_MEETING_LINK => {

@@ -31,7 +31,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/comparability.rs` | src | s | 9 crate-vis | — | Seven independent comparability axes and per-number publication decisions |
 | `src/beam/corpus_clock.rs` | src | s | 1 crate-vis | — | Dataset valid-time admission |
 | `src/beam/edit_path.rs` | src | s | 6 crate-vis | — | Five edit-task shapes with an independent tests-plus-contract oracle |
-| `src/beam/edit_path/tests.rs` | test | s | — | — | — |
+| `src/beam/edit_path/tests.rs` | test | s | 2 fn · 1 mod | — | — |
 | `src/beam/fixture_protocol.rs` | src | s | 4 crate-vis | — | Retrieval-only gold-span protocol |
 | `src/beam/infra.rs` | src | s | 4 crate-vis | — | Vector-database cost framing |
 | `src/beam/judge.rs` | src | s | 13 crate-vis | — | Pinned majority-judge substrate |

@@ -533,8 +533,11 @@ impl StoredOutboxRow {
             uid: row.uid.clone(),
             sequence: row.sequence,
             content_hash: row.content_hash,
-            component_hashes: row.component_hashes.iter()
-                .map(|(member, hash)| (*member.as_bytes(), *hash)).collect(),
+            component_hashes: row
+                .component_hashes
+                .iter()
+                .map(|(member, hash)| (*member.as_bytes(), *hash))
+                .collect(),
             expected_etag: row.expected_etag.clone(),
             href: row.href.clone(),
             receipt: row.receipt.clone(),
@@ -556,10 +559,17 @@ impl StoredOutboxRow {
             uid: self.uid,
             sequence: self.sequence,
             content_hash: self.content_hash,
-            component_hashes: self.component_hashes.into_iter().map(|(member, hash)| {
-                Ok((EntityId::from_bytes(member)
-                    .map_err(|_| ingest_error("outbox component carries no entity id"))?, hash))
-            }).collect::<Result<_, CalendarConnectorError>>()?,
+            component_hashes: self
+                .component_hashes
+                .into_iter()
+                .map(|(member, hash)| {
+                    Ok((
+                        EntityId::from_bytes(member)
+                            .map_err(|_| ingest_error("outbox component carries no entity id"))?,
+                        hash,
+                    ))
+                })
+                .collect::<Result<_, CalendarConnectorError>>()?,
             expected_etag: self.expected_etag,
             href: self.href,
             receipt: self.receipt,

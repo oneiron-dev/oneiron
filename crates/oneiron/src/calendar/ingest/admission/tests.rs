@@ -446,51 +446,87 @@ fn calendar_property_replacement_preserves_other_sources() {
     );
 }
 
-
 #[test]
 fn missing_dtstart_retracts_time_metadata_and_never_bills_the_poll_instant() {
     use crate::calendar::claims::PREDICATE_CALENDAR_TIME_KIND;
     let (_dir, vault) = open_calendar_vault();
     let config = test_config();
-    let dated = String::from_utf8(one_event_feed("20260806T140000Z", "20260806T150000Z"))
-        .unwrap();
+    let dated = String::from_utf8(one_event_feed("20260806T140000Z", "20260806T150000Z")).unwrap();
     let now = 1_800_000_000;
     run_ics_feed_poll(
         &vault,
-        &BodyFetcher { body: dated.clone().into_bytes() },
+        &BodyFetcher {
+            body: dated.clone().into_bytes(),
+        },
         &config,
         now,
         7,
-    ).unwrap();
+    )
+    .unwrap();
     let event = crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x")
-        .unwrap().unwrap();
+        .unwrap()
+        .unwrap();
     // Imports remain proposed until reviewed. Approve the initial facts through
     // the public write door so this oracle tests time semantics, not filtering.
     for id in vault.claims_for_subject(&event).unwrap() {
         let mut claim = vault.get_claim(&id).unwrap().unwrap();
         claim.approval = crate::ClaimApprovalStatus::Approved;
-        vault.put_claim(&id, &claim, TimeRange { start: now, end: now }, now).unwrap();
+        vault
+            .put_claim(
+                &id,
+                &claim,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .unwrap();
     }
-    let window = TimeRange { start: 0, end: now + 100 };
-    assert_eq!(crate::calendar::freebusy::freebusy(&vault, &[], window).unwrap().len(), 1);
+    let window = TimeRange {
+        start: 0,
+        end: now + 100,
+    };
+    assert_eq!(
+        crate::calendar::freebusy::freebusy(&vault, &[], window)
+            .unwrap()
+            .len(),
+        1
+    );
     let undated = dated
         .replace("DTSTART:20260806T140000Z\r\n", "")
         .replace("DTEND:20260806T150000Z\r\n", "");
     run_ics_feed_poll(
         &vault,
-        &BodyFetcher { body: undated.into_bytes() },
+        &BodyFetcher {
+            body: undated.into_bytes(),
+        },
         &config,
         now + 1,
         7,
-    ).unwrap();
-    assert_eq!(crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x").unwrap(), Some(event));
-    assert!(!vault.claims_for_subject(&event).unwrap().into_iter().any(|id| {
-        vault.get_claim(&id).unwrap().is_some_and(|claim| {
-            claim.lifecycle == ClaimLifecycleStatus::Active
-                && claim.predicate == PREDICATE_CALENDAR_TIME_KIND
-        })
-    }));
-    assert!(crate::calendar::freebusy::freebusy(&vault, &[], window).unwrap().is_empty());
+    )
+    .unwrap();
+    assert_eq!(
+        crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x").unwrap(),
+        Some(event)
+    );
+    assert!(
+        !vault
+            .claims_for_subject(&event)
+            .unwrap()
+            .into_iter()
+            .any(|id| {
+                vault.get_claim(&id).unwrap().is_some_and(|claim| {
+                    claim.lifecycle == ClaimLifecycleStatus::Active
+                        && claim.predicate == PREDICATE_CALENDAR_TIME_KIND
+                })
+            })
+    );
+    assert!(
+        crate::calendar::freebusy::freebusy(&vault, &[], window)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -499,32 +535,67 @@ fn connector_missing_dtstart_preserves_other_sources_time_metadata() {
     let (_dir, vault) = open_calendar_vault();
     let dated = one_event_feed("20260806T140000Z", "20260806T150000Z");
     let feed = crate::calendar::ics::parse_ics_feed(&dated).unwrap();
-    admit_connector_event(&vault, "work", "fixture://dated", &feed.events[0], 1_800_000_000).unwrap();
-    let event = connector_event_ref(&vault, &feed.events[0]).unwrap().unwrap();
+    admit_connector_event(
+        &vault,
+        "work",
+        "fixture://dated",
+        &feed.events[0],
+        1_800_000_000,
+    )
+    .unwrap();
+    let event = connector_event_ref(&vault, &feed.events[0])
+        .unwrap()
+        .unwrap();
     let time_claims = || {
-        vault.claims_for_subject(&event).unwrap().into_iter().filter(|id| {
-            vault.get_claim(id).unwrap().is_some_and(|claim| {
-                claim.lifecycle == ClaimLifecycleStatus::Active
-                    && claim.predicate == PREDICATE_CALENDAR_TIME_KIND
+        vault
+            .claims_for_subject(&event)
+            .unwrap()
+            .into_iter()
+            .filter(|id| {
+                vault.get_claim(id).unwrap().is_some_and(|claim| {
+                    claim.lifecycle == ClaimLifecycleStatus::Active
+                        && claim.predicate == PREDICATE_CALENDAR_TIME_KIND
+                })
             })
-        }).collect::<Vec<_>>()
+            .collect::<Vec<_>>()
     };
     let work = time_claims();
     assert_eq!(work.len(), 1);
-    admit_connector_event(&vault, "personal", "fixture://dated", &feed.events[0], 1_800_000_000).unwrap();
+    admit_connector_event(
+        &vault,
+        "personal",
+        "fixture://dated",
+        &feed.events[0],
+        1_800_000_000,
+    )
+    .unwrap();
     let before = time_claims();
     assert_eq!(before.len(), 2);
     let personal = *before.iter().find(|id| !work.contains(id)).unwrap();
-    let undated = String::from_utf8(dated).unwrap()
+    let undated = String::from_utf8(dated)
+        .unwrap()
         .replace("DTSTART:20260806T140000Z\r\n", "")
         .replace("DTEND:20260806T150000Z\r\n", "");
     let feed = crate::calendar::ics::parse_ics_feed(undated.as_bytes()).unwrap();
-    admit_connector_event(&vault, "work", "fixture://undated", &feed.events[0], 1_800_000_001).unwrap();
+    admit_connector_event(
+        &vault,
+        "work",
+        "fixture://undated",
+        &feed.events[0],
+        1_800_000_001,
+    )
+    .unwrap();
     assert_eq!(time_claims(), vec![personal]);
-    admit_connector_event(&vault, "personal", "fixture://undated", &feed.events[0], 1_800_000_002).unwrap();
+    admit_connector_event(
+        &vault,
+        "personal",
+        "fixture://undated",
+        &feed.events[0],
+        1_800_000_002,
+    )
+    .unwrap();
     assert!(time_claims().is_empty());
 }
-
 
 #[test]
 fn invalid_derived_claim_values_leave_no_event_uid_or_claims_on_repeated_polls() {
@@ -536,13 +607,30 @@ fn invalid_derived_claim_values_leave_no_event_uid_or_claims_on_repeated_polls()
         let (_dir, vault) = open_calendar_vault();
         let invalid = base.replace("SUMMARY:standup", &format!("SUMMARY:standup\r\n{property}"));
         assert!(crate::calendar::ics::parse_ics_feed(invalid.as_bytes()).is_ok());
-        let fetcher = BodyFetcher { body: invalid.into_bytes() };
+        let fetcher = BodyFetcher {
+            body: invalid.into_bytes(),
+        };
         for now in [1_800_000_000, 1_800_000_001] {
-            assert!(matches!(run_ics_feed_poll(&vault, &fetcher, &test_config(), now, 7),
-                Err(CalendarError::IcsIngest { .. })));
-            assert!(vault.entities_by_type(ENTITY_TYPE_EVENT).unwrap().is_empty());
-            assert!(vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM).unwrap().is_empty());
-            assert_eq!(crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x").unwrap(), None);
+            assert!(matches!(
+                run_ics_feed_poll(&vault, &fetcher, &test_config(), now, 7),
+                Err(CalendarError::IcsIngest { .. })
+            ));
+            assert!(
+                vault
+                    .entities_by_type(ENTITY_TYPE_EVENT)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                vault
+                    .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(
+                crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x").unwrap(),
+                None
+            );
         }
     }
 }
@@ -552,36 +640,106 @@ fn invalid_connector_update_preserves_event_properties_and_passport() {
     let (_dir, vault) = open_calendar_vault();
     let base = String::from_utf8(one_event_feed("20260806T140000Z", "20260806T150000Z")).unwrap();
     let first = crate::calendar::ics::parse_ics_feed(base.as_bytes()).unwrap();
-    admit_connector_event(&vault, "work", "fixture://first", &first.events[0], 1_800_000_000).unwrap();
-    let event = connector_event_ref(&vault, &first.events[0]).unwrap().unwrap();
+    admit_connector_event(
+        &vault,
+        "work",
+        "fixture://first",
+        &first.events[0],
+        1_800_000_000,
+    )
+    .unwrap();
+    let event = connector_event_ref(&vault, &first.events[0])
+        .unwrap()
+        .unwrap();
     let before = vault.get(&event).unwrap();
     let header = vault.read_entity_header(&event).unwrap().unwrap();
     let claims = vault.claims_for_subject(&event).unwrap();
-    let invalid = base.replace("SEQUENCE:1", "SEQUENCE:2")
+    let invalid = base
+        .replace("SEQUENCE:1", "SEQUENCE:2")
         .replace("DTSTART:20260806T140000Z", "DTSTART:20260807T140000Z")
-        .replace("SUMMARY:standup", &format!("SUMMARY:changed\r\nURL:https://meet.example.org/{}", "x".repeat(513)));
+        .replace(
+            "SUMMARY:standup",
+            &format!(
+                "SUMMARY:changed\r\nURL:https://meet.example.org/{}",
+                "x".repeat(513)
+            ),
+        );
     let next = crate::calendar::ics::parse_ics_feed(invalid.as_bytes()).unwrap();
-    assert!(matches!(admit_connector_event(&vault, "work", "fixture://invalid", &next.events[0], 1_800_000_001),
-        Err(CalendarError::IcsIngest { .. })));
+    assert!(matches!(
+        admit_connector_event(
+            &vault,
+            "work",
+            "fixture://invalid",
+            &next.events[0],
+            1_800_000_001
+        ),
+        Err(CalendarError::IcsIngest { .. })
+    ));
     assert_eq!(vault.get(&event).unwrap(), before);
     let after = vault.read_entity_header(&event).unwrap().unwrap();
-    assert_eq!((after.occurred_start, after.occurred_end), (header.occurred_start, header.occurred_end));
+    assert_eq!(
+        (after.occurred_start, after.occurred_end),
+        (header.occurred_start, header.occurred_end)
+    );
     assert_eq!(vault.claims_for_subject(&event).unwrap(), claims);
-    assert!(claims.iter().all(|id| vault.get_claim(id).unwrap().unwrap().lifecycle == ClaimLifecycleStatus::Active));
-    assert_eq!(crate::calendar::passport::live_passport_for(&vault, &event, "work", "uid-oc@x")
-        .unwrap().unwrap().1.last_sequence, 1);
+    assert!(
+        claims
+            .iter()
+            .all(|id| vault.get_claim(id).unwrap().unwrap().lifecycle
+                == ClaimLifecycleStatus::Active)
+    );
+    assert_eq!(
+        crate::calendar::passport::live_passport_for(&vault, &event, "work", "uid-oc@x")
+            .unwrap()
+            .unwrap()
+            .1
+            .last_sequence,
+        1
+    );
 }
 
 #[test]
 fn invalid_detached_claim_value_preflights_before_the_feed_master_is_created() {
     let (_dir, vault) = open_calendar_vault();
     let base = String::from_utf8(one_event_feed("20260806T140000Z", "20260806T150000Z")).unwrap();
-    let exception = format!("BEGIN:VEVENT\r\nUID:uid-oc@x\r\nRECURRENCE-ID:20260806T140000Z\r\nDTSTART:20260806T160000Z\r\nURL:https://meet.example.org/{}\r\nEND:VEVENT\r\n", "x".repeat(513));
+    let exception = format!(
+        "BEGIN:VEVENT\r\nUID:uid-oc@x\r\nRECURRENCE-ID:20260806T140000Z\r\nDTSTART:20260806T160000Z\r\nURL:https://meet.example.org/{}\r\nEND:VEVENT\r\n",
+        "x".repeat(513)
+    );
     let invalid = base.replace("END:VCALENDAR", &format!("{exception}END:VCALENDAR"));
-    assert_eq!(crate::calendar::ics::parse_ics_feed(invalid.as_bytes()).unwrap().events.len(), 2);
-    assert!(matches!(run_ics_feed_poll(&vault, &BodyFetcher { body: invalid.into_bytes() }, &test_config(), 1_800_000_000, 7),
-        Err(CalendarError::IcsIngest { .. })));
-    assert!(vault.entities_by_type(ENTITY_TYPE_EVENT).unwrap().is_empty());
-    assert!(vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM).unwrap().is_empty());
-    assert_eq!(crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x").unwrap(), None);
+    assert_eq!(
+        crate::calendar::ics::parse_ics_feed(invalid.as_bytes())
+            .unwrap()
+            .events
+            .len(),
+        2
+    );
+    assert!(matches!(
+        run_ics_feed_poll(
+            &vault,
+            &BodyFetcher {
+                body: invalid.into_bytes()
+            },
+            &test_config(),
+            1_800_000_000,
+            7
+        ),
+        Err(CalendarError::IcsIngest { .. })
+    ));
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_EVENT)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x").unwrap(),
+        None
+    );
 }

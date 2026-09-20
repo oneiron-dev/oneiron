@@ -78,7 +78,10 @@ fn values(event: &ParsedVEvent) -> Vec<(&'static str, Value)> {
             PREDICATE_CALENDAR_TIME_KIND,
             Value::Map(vec![
                 ("kind".into(), kind.as_str().into()),
-                ("busy_transparency".into(), event.busy_transparency.as_str().into()),
+                (
+                    "busy_transparency".into(),
+                    event.busy_transparency.as_str().into(),
+                ),
             ]),
         ));
     }

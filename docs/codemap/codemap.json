@@ -3649,7 +3649,7 @@
      "path": "src/calendar/claims/codec.rs",
      "purpose": "Calendar claim validation dispatch plus MessagePack encode/decode and field helpers",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "fn": 1
      }
     },
@@ -3755,6 +3755,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/calendar/connectors/outbound/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -3784,7 +3792,7 @@
      "path": "src/calendar/connectors/resource.rs",
      "purpose": "One UID is one remote resource: master plus every live detached exception",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -3898,8 +3906,18 @@
      "path": "src/calendar/ingest/admission.rs",
      "purpose": "Diff-to-claim admission path and its test module",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/ingest/admission/preflight.rs",
+     "purpose": "Value-only admission checks shared by feed polls and connector imports",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -3978,7 +3996,7 @@
      "path": "src/calendar/ingest/property_claims.rs",
      "purpose": "Shared ICS-poll and connector property admission through their existing gates",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -25907,7 +25925,7 @@
      "purpose": "Vault-scoped immutable build results"
     },
     "calendar": {
-     "files": 54,
+     "files": 56,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27015,8 +27033,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1551,
-   "test_files": 548
+   "source_files": 1552,
+   "test_files": 549
   },
   "oneiron-bench": {
    "files": [
@@ -27221,7 +27239,10 @@
      "notable": [],
      "path": "src/beam/edit_path/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "fn": 2,
+      "mod": 1
+     }
     },
     {
      "bucket": "s",
