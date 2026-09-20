@@ -427,3 +427,41 @@ results, and terminal receipts are retained under
 `tickets/W7-C08/fix-tests-after-merge-receipts/`; the final intake is in
 `repair-terminal-pr-refresh/`. The original F01–F36 and internal-review
 records above are retained unchanged.
+
+
+## Current-head intake and C01 merge (2026-09-20)
+
+Read-only PR **#933** intake at published head `0c7320ed` includes **18 issue
+comments, 40 reviews, 127 inline comments, and 57 threads**. Every REST surface
+was paginated; every outer and nested GraphQL page is complete. Raw snapshots
+and the delta from the previous complete intake are retained under
+`tickets/W7-C08/current-main-merge-receipts/intake/`.
+
+F01–F48 and the original internal Opus/Grok roots, child findings, dismissals,
+and rechecks above remain intact. Their historical LANDABLE rechecks do not
+constitute a new-head approval. Two context reducers were interrupted before
+terminal reports; their captured intake/transcripts are retained and the root
+completed reconciliation. No replacement reviewer fanout was started.
+
+- Qodo comment `5740808018` reports zero bugs/rule violations and marks its
+  historical reports resolved; no new repair is requested.
+- CodeRabbit comment `5740792880` now says automatic review is disabled. Its
+  retained old walkthrough/risk notes are historical F01–F48, not fresh findings.
+  Docstring coverage is informational under REVIEW.md.
+- Codex comment `5746428374` is an explicit usage-limit error: **unavailable**,
+  not pending and not a passing review.
+- Cursor review `5258564946` on `0c7320ed` introduces the three groups below.
+  Its top-level summary `5740793353` is not a fourth finding. Old review
+  `5256231550` is explicitly stale. Own comment `5744404350` records earlier
+  validation and is not independent review evidence.
+
+| Group | Source inline ID | Disposition |
+| --- | --- | --- |
+| F49 | 4055422429 | Valid: consecutive Gemini text deltas need a stable part ID without losing text/tool/reasoning order. Repair pending. |
+| F50 | 4055422435 | Valid: omitted args on a parameterless Gemini tool call should decode as an empty object; malformed present args must still refuse. Repair pending. |
+| F51 | 4055422440 | Valid: repeated complete OpenAI tool IDs/names must not concatenate; fragmented fields still need accumulation. Repair pending. |
+
+No feedback from another ticket is applied to PR #933. No review draft or
+thread state was changed. The current-head Opus ladder is still required after
+these repairs; first-party default, alt, alt2, then CPA only for proven provider
+unavailability. GitHub explanations will name actual source IDs and validation.

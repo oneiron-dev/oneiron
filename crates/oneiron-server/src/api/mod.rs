@@ -81,6 +81,7 @@ mod booking;
 #[allow(dead_code)]
 mod booking_anti_abuse;
 mod campaign;
+mod client_metadata;
 mod companion;
 mod consumer_usage;
 mod context_pack;
@@ -311,6 +312,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())
         .nest("/v1/llm", self::llm::routes())
+        .route("/oauth/client/native.json", get(client_metadata::native))
+        .route("/oauth/client/web.json", get(client_metadata::web))
         .nest("/v1/core", core_routes)
         // ONE-1441: the facade projection is its own nest, not an arm inside
         // `core_routes`. Nesting expands each row into a concrete

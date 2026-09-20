@@ -196,6 +196,9 @@ pub(super) fn check_decode_point_taint_guard(
             if let Some(world) = candidate.world() {
                 check(&world)?;
             }
+            if let Some(rel) = candidate.relationship() {
+                check(&rel)?;
+            }
             check_claim_subject_refs(candidate.subject(), &check)?;
             check(&envelope.actor().entity_ref())?;
         }

@@ -15,7 +15,7 @@ impl ProviderSource {
         match self.0 {
             ProviderWire::Openai => "openai-compat",
             ProviderWire::Anthropic => "anthropic-messages",
-            ProviderWire::Gemini => "gemini",
+            ProviderWire::Gemini => "gemini-api",
         }
     }
     fn invalid(&self, path: &str) -> IngestError {

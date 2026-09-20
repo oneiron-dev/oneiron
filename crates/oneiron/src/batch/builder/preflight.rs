@@ -123,7 +123,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
             {
                 let result =
                     crate::claim::validate_claim_body_and_decode(data, false).and_then(|body| {
-                        crate::gate::check_claim_policy_for_write_as_original_event(
+                        crate::gate::check_claim_policy_for_write_with_record(
                             store,
                             wtxn,
                             id,
@@ -156,7 +156,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                 ..
             } if !*internal_lexical_query_hint => {
                 let body = (**candidate).clone().into_claim_body(envelope);
-                let result = crate::gate::check_claim_policy_for_write_as_original_event(
+                let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,
                     id,

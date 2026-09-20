@@ -18,6 +18,8 @@ mod defaults;
 #[cfg(test)]
 mod streaming_tests;
 pub use defaults::{PURPOSE_DEFAULTS, PurposeDefault};
+pub mod scope;
+pub use self::scope::{Scope, ScopeResource};
 mod catalog;
 pub(crate) mod entity_refs;
 mod error;
@@ -59,7 +61,7 @@ pub(crate) use budget::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable
 pub(crate) use self::autocheck::truncate_on_char_boundary;
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
-    AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker, BoundedAutoChecker,
+    AutoCheckCandidateOwned, AutoCheckOutcome, AutoCheckSignals, AutoChecker, BoundedAutoChecker,
     auto_check_llm_request,
 };
 pub use self::backend::{

@@ -108,6 +108,7 @@ fn generate_and_stream_conform_with_lease_and_catalog_only_vendor_swap() {
         let request = LlmRequest {
             model,
             envelope: CallEnvelope {
+                scope: Default::default(),
                 purpose: CallPurpose::AnswerGen,
                 class: CallClass::BestEffort,
                 tier: TierPrecedence::for_purpose(

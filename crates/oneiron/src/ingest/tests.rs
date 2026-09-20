@@ -798,7 +798,7 @@ fn provider_sources_normalize_same_conversation_at_imported_trust() {
             serde_json::json!({"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]},{"role":"assistant","content":[{"type":"text","text":"hi"}]}]}),
         ),
         (
-            "gemini",
+            "gemini-api",
             serde_json::json!({"contents":[{"role":"user","parts":[{"text":"hello"}]},{"role":"model","parts":[{"text":"hi"}]}]}),
         ),
     ];
@@ -821,12 +821,12 @@ fn provider_sources_normalize_same_conversation_at_imported_trust() {
         assert_eq!(config.default_admission, ClaimApprovalStatus::Proposed);
         assert!(!config.trust_ceiling.permits_auto(Some(0)));
     }
-    assert_eq!(INGEST_SOURCE_REGISTRY.entries().len(), 8);
+    assert_eq!(INGEST_SOURCE_REGISTRY.entries().len(), 21);
 }
 
 #[test]
 fn provider_ingest_rejects_malformed_blocks_and_empty_system() {
-    for source in ["openai-compat", "anthropic-messages", "gemini"] {
+    for source in ["openai-compat", "anthropic-messages", "gemini-api"] {
         for block in [
             serde_json::json!({"type":"text"}),
             serde_json::json!({"text":42}),
@@ -835,7 +835,7 @@ fn provider_ingest_rejects_malformed_blocks_and_empty_system() {
             serde_json::json!({"type":"bogus","thinking":"hello"}),
             serde_json::json!({"type":42,"text":"hello"}),
         ] {
-            let doc = if source == "gemini" {
+            let doc = if source == "gemini-api" {
                 serde_json::json!({"contents":[{"role":"user","parts":[block]}]})
             } else {
                 serde_json::json!({"messages":[{"role":"user","content":[block]}]})
@@ -861,7 +861,7 @@ fn provider_ingest_rejects_malformed_blocks_and_empty_system() {
 
 #[test]
 fn provider_ingest_accepts_only_its_protocol_roles() {
-    for source in ["openai-compat", "anthropic-messages", "gemini"] {
+    for source in ["openai-compat", "anthropic-messages", "gemini-api"] {
         for role in [
             "system",
             "developer",
@@ -878,10 +878,10 @@ fn provider_ingest_accepts_only_its_protocol_roles() {
                     "system" | "developer" | "user" | "assistant" | "tool" | "function"
                 ),
                 "anthropic-messages" => matches!(role, "user" | "assistant"),
-                "gemini" => matches!(role, "user" | "model"),
+                "gemini-api" => matches!(role, "user" | "model"),
                 _ => unreachable!(),
             };
-            let doc = if source == "gemini" {
+            let doc = if source == "gemini-api" {
                 serde_json::json!({"contents":[{"role":role,"parts":[{"text":"hello"}]}]})
             } else {
                 serde_json::json!({"messages":[{"role":role,"content":"hello"}]})
@@ -929,12 +929,12 @@ fn provider_ingest_enforces_block_grammars_and_auxiliary_fields() {
             [false, false, true],
         ),
     ];
-    for (index, source) in ["openai-compat", "anthropic-messages", "gemini"]
+    for (index, source) in ["openai-compat", "anthropic-messages", "gemini-api"]
         .into_iter()
         .enumerate()
     {
         for (block, valid) in &blocks {
-            let doc = if source == "gemini" {
+            let doc = if source == "gemini-api" {
                 json!({"contents":[{"role":"model","parts":[block]}]})
             } else {
                 json!({"messages":[{"role":"assistant","content":[block]}]})
@@ -954,9 +954,9 @@ fn provider_ingest_enforces_block_grammars_and_auxiliary_fields() {
             ),
         ] {
             let mut message =
-                json!({"role":if source == "gemini" { "model" } else { "assistant" }});
+                json!({"role":if source == "gemini-api" { "model" } else { "assistant" }});
             message[key] = value;
-            let doc = if source == "gemini" {
+            let doc = if source == "gemini-api" {
                 json!({"contents":[message]})
             } else {
                 json!({"messages":[message]})
@@ -989,4 +989,39 @@ fn provider_ingest_enforces_block_grammars_and_auxiliary_fields() {
             matches!(result, Err(IngestError::InvalidDocumentField { path, .. }) if path == key)
         );
     }
+}
+
+#[test]
+fn gemini_api_and_native_export_have_distinct_registry_doors() {
+    let api = r#"{"contents":[{"role":"user","parts":[{"text":"API conversation"}]}]}"#;
+    let export = r#"[{"id":"m","title":"Native export","time":"1970-01-01T00:00:12Z"}]"#;
+    let api_source = INGEST_SOURCE_REGISTRY
+        .get("gemini-api")
+        .expect("API source");
+    let export_source = INGEST_SOURCE_REGISTRY.get("gemini").expect("export source");
+    assert_eq!(
+        api_source.normalize(api).expect("API input").records[0].text,
+        "API conversation"
+    );
+    let imported = export_source
+        .parse_import(export, 100)
+        .expect("native export");
+    assert_eq!(imported.messages[0].platform_source, "gemini");
+    assert_eq!(imported.messages[0].content, "Native export");
+    assert!(api_source.normalize(export).is_err());
+    assert!(export_source.normalize(api).is_err());
+    assert_eq!(
+        INGEST_SOURCE_REGISTRY
+            .get_config("gemini-api")
+            .expect("API config")
+            .format,
+        IngestSourceFormat::Gemini
+    );
+    assert_eq!(
+        INGEST_SOURCE_REGISTRY
+            .get_config("gemini")
+            .expect("export config")
+            .format,
+        IngestSourceFormat::NativeExport
+    );
 }

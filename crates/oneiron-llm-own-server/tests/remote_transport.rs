@@ -40,6 +40,7 @@ fn request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("own/model@1").expect("valid fixture model"),
         envelope: CallEnvelope {
+            scope: Default::default(),
             purpose: CallPurpose::AnswerGen,
             class: CallClass::BestEffort,
             tier: TierPrecedence::for_purpose(

@@ -250,6 +250,7 @@ fn sample_request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("local/fixture@2026-07-06").unwrap(),
         envelope: CallEnvelope {
+            scope: oneiron::llm::Scope::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::Durable {
                 fallback: DeterministicFallback {

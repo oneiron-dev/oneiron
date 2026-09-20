@@ -98,6 +98,7 @@ mod tests {
             tier.vault_policy = Some(ModelTierRef("vault".into()));
             assert_eq!(tier.resolved().as_str(), "vault");
             let envelope = CallEnvelope {
+                scope: Default::default(),
                 purpose: purpose.clone(),
                 class: super::super::CallClass::BestEffort,
                 tier,

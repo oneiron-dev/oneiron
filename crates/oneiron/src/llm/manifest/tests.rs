@@ -48,6 +48,7 @@ fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
         let mut request = LlmRequest {
             model: ModelId::new("host/unused@1").unwrap(),
             envelope: CallEnvelope {
+                scope: Default::default(),
                 purpose: CallPurpose::Extraction,
                 class: CallClass::BestEffort,
                 tier: TierPrecedence::for_purpose(
@@ -160,6 +161,7 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
     let mut request = LlmRequest {
         model: ModelId::new("host/model@1").unwrap(),
         envelope: CallEnvelope {
+            scope: Default::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::BestEffort,
             tier: TierPrecedence::for_purpose(

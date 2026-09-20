@@ -151,6 +151,7 @@ fn sample_request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("openai/gpt-4.1@2026-07-02").unwrap(),
         envelope: CallEnvelope {
+            scope: oneiron::llm::Scope::default(),
             purpose: CallPurpose::AnswerGen,
             class: CallClass::Durable {
                 fallback: DeterministicFallback {

@@ -678,6 +678,7 @@ fn barge_in_settles_actual_generation_spend_and_aborts_unspent_reservation() -> 
         let request = LlmRequest {
             model: ModelId::new("test/voice@1").expect("model"),
             envelope: CallEnvelope {
+                scope: Default::default(),
                 purpose: CallPurpose::Voice,
                 class: CallClass::BestEffort,
                 tier: TierPrecedence::for_purpose(

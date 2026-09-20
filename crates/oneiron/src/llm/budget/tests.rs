@@ -15,6 +15,7 @@ fn on_device_request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("test/model@r1").expect("model id"),
         envelope: CallEnvelope {
+            scope: crate::llm::Scope::default(),
             purpose: CallPurpose::Consolidation,
             class: CallClass::BestEffort,
             tier: TierPrecedence {
@@ -329,6 +330,7 @@ fn request_for(purpose: CallPurpose, locality: ModelLocality) -> LlmRequest {
     LlmRequest {
         model: ModelId::new("test/model@r1").expect("model id"),
         envelope: CallEnvelope {
+            scope: crate::llm::Scope::default(),
             purpose,
             class: CallClass::BestEffort,
             tier: TierPrecedence {
