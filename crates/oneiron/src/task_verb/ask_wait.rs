@@ -5,6 +5,7 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 const WAITS: &[u8] = b"tasks.ask_wait.v1/";
+const MAX_WAITS_PER_ASK: usize = 64;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskWaitOutcome {
     Pending { trap_ref: String },
@@ -13,7 +14,7 @@ pub enum TaskWaitOutcome {
 }
 #[derive(Serialize, Deserialize)]
 struct WaitRow {
-    trap_ref: String,
+    trap_ref: Option<String>,
     step_hash: [u8; 32],
     actor: String,
     consumed: bool,
@@ -21,7 +22,11 @@ struct WaitRow {
 impl WaitRow {
     fn trap(&self) -> crate::Result<TrapRef> {
         Ok(TrapRef {
-            trap_claim_id: EntityId::from_hex(&self.trap_ref)?,
+            trap_claim_id: EntityId::from_hex(
+                self.trap_ref
+                    .as_deref()
+                    .ok_or(crate::Error::CorruptedIndex("pending wait has no trap"))?,
+            )?,
             kind: DreamerTrapKind::HumanResponse,
             step_hash: self.step_hash,
         })
@@ -80,6 +85,16 @@ impl Memory<'_> {
         ctx: &DurableStepContext<'_>,
         step_hash: [u8; 32],
     ) -> MemoryResult<TaskWaitOutcome> {
+        self.wait_for_ask(handle, ctx, step_hash, false)
+    }
+
+    fn wait_for_ask(
+        &self,
+        handle: &TaskAskHandle,
+        ctx: &DurableStepContext<'_>,
+        step_hash: [u8; 32],
+        external: bool,
+    ) -> MemoryResult<TaskWaitOutcome> {
         if !std::ptr::eq(self.vault(), ctx.vault)
             || ctx.envelope_actor.entity_ref() != self.actor()
             || ctx.envelope_actor.actor_class() != self.actor_class()
@@ -103,9 +118,39 @@ impl Memory<'_> {
                 serde_json::from_slice::<WaitRow>(&raw)
                     .map_err(|_| MemoryError::bad_request("wait record"))?
             } else {
+                let count = self
+                    .vault()
+                    .store
+                    .vault_meta
+                    .prefix_iter(txn, &prefix(task))?
+                    .take(MAX_WAITS_PER_ASK)
+                    .try_fold(0, |count, row| row.map(|_| count + 1))?;
+                if count >= MAX_WAITS_PER_ASK {
+                    return Err(MemoryError::bad_request("ask waiter limit reached"));
+                }
+                // Answer-before-wait needs only bounded exactly-once bookkeeping.
+                // Do not mint a detached step or a trap for a completed answer.
+                if let Some(answer) = ask.answer {
+                    let row = WaitRow {
+                        trap_ref: None,
+                        step_hash,
+                        actor: self.actor().to_hex(),
+                        consumed: true,
+                    };
+                    self.vault().store.vault_meta.put(
+                        txn,
+                        &key,
+                        &serde_json::to_vec(&row)
+                            .map_err(|_| MemoryError::bad_request("wait encoding"))?,
+                    )?;
+                    return Ok(TaskWaitOutcome::Ready(answer));
+                }
+                if external {
+                    crate::llm::register_detached_step_in_txn(self.vault(), txn, ctx, step_hash)?;
+                }
                 let trap = crate::llm::open_step_wait_in_txn(self.vault(), txn, ctx, step_hash)?;
                 WaitRow {
-                    trap_ref: trap.trap_claim_id.to_hex(),
+                    trap_ref: Some(trap.trap_claim_id.to_hex()),
                     step_hash,
                     actor: self.actor().to_hex(),
                     consumed: false,
@@ -129,7 +174,10 @@ impl Memory<'_> {
                 }
             } else {
                 TaskWaitOutcome::Pending {
-                    trap_ref: row.trap_ref.clone(),
+                    trap_ref: row
+                        .trap_ref
+                        .clone()
+                        .ok_or_else(|| MemoryError::bad_request("pending wait has no trap"))?,
                 }
             };
             self.vault().store.vault_meta.put(
@@ -174,15 +222,6 @@ impl Memory<'_> {
             deadline: None,
             now_ms: crate::unix_seconds_now().saturating_mul(1000),
         };
-        self.with_verified_actor_write_txn(|txn| {
-            let ask = read(self.vault(), txn, task)?;
-            if ask.owner != self.actor().to_hex() {
-                return Err(MemoryError::bad_request("only the asking step may wait"));
-            }
-            require_answerable(self.vault(), txn, task, ask.answer.is_some())?;
-            crate::llm::register_detached_step_in_txn(self.vault(), txn, &ctx, step_hash)?;
-            Ok(())
-        })?;
-        self.tasks_wait(handle, &ctx, step_hash)
+        self.wait_for_ask(handle, &ctx, step_hash, true)
     }
 }

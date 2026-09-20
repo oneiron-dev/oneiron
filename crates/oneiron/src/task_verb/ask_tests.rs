@@ -341,3 +341,63 @@ fn unanswered_terminal_ask_refuses_both_wait_doors_without_a_trap() -> Result<()
     }
     Ok(())
 }
+
+#[test]
+fn answer_first_waits_do_not_mint_traps_and_waiter_storage_is_bounded() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    for answered in [true, false] {
+        let handle = memory
+            .tasks_ask(&TaskAskSpec {
+                question: serde_json::json!({"text":"bounded wait"}),
+                holders: [owner.to_hex()].into(),
+                idempotency_key: format!("bounded-{answered}"),
+                outcome_binding: None,
+            })?
+            .handle;
+        let answer = if answered {
+            Some(memory.tasks_answer(&handle, owner)?)
+        } else {
+            None
+        };
+        let before = vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+            .len();
+        for n in 0..64 {
+            let result = memory.tasks_wait_external(&handle, &format!("step-{n}"))?;
+            if let Some(answer) = &answer {
+                assert_eq!(result, TaskWaitOutcome::Ready(answer.clone()));
+                assert_eq!(
+                    memory.tasks_wait_external(&handle, &format!("step-{n}"))?,
+                    TaskWaitOutcome::AlreadyResumed(answer.clone())
+                );
+            } else {
+                assert!(matches!(result, TaskWaitOutcome::Pending { .. }));
+            }
+        }
+        let full = vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+            .len();
+        if answered {
+            assert_eq!(full, before);
+        }
+        assert!(memory.tasks_wait_external(&handle, "overflow").is_err());
+        assert_eq!(
+            vault
+                .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+                .len(),
+            full
+        );
+        assert!(memory.tasks_wait_external(&handle, "step-0").is_ok());
+    }
+    Ok(())
+}
