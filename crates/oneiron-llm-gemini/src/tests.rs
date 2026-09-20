@@ -306,8 +306,7 @@ fn interleaved_parts_keep_provider_order_across_chunks() {
                 name: "f".into(),
                 input: json!({})
             },
-            ContentPart::Text { text: "B".into() },
-            ContentPart::Text { text: "C".into() },
+            ContentPart::Text { text: "BC".into() },
         ]
     );
     let starts: Vec<_> = events
@@ -317,12 +316,98 @@ fn interleaved_parts_keep_provider_order_across_chunks() {
             _ => None,
         })
         .collect();
-    assert_eq!(starts.len(), 3);
+    assert_eq!(starts.len(), 2);
     assert_eq!(
         starts
             .iter()
             .collect::<std::collections::BTreeSet<_>>()
             .len(),
-        3
+        2
     );
+}
+
+#[test]
+fn consecutive_gemini_deltas_match_one_shot_reconstruction() {
+    let mut accumulator = GeminiAccumulator::default();
+    let mut events = Vec::new();
+    for (text, thought) in [
+        ("think", true),
+        (" more", true),
+        ("hel", false),
+        ("lo", false),
+    ] {
+        events.extend(
+            accumulator
+                .push(
+                    json!({"candidates":[{"content":{"parts":[{"text":text,"thought":thought}]}}]}),
+                )
+                .unwrap(),
+        );
+    }
+    let tail = json!({"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":1}});
+    events.extend(accumulator.push(tail.clone()).unwrap());
+    let mut one_shot = tail;
+    one_shot["candidates"][0]["content"] =
+        json!({"parts":[{"text":"think more","thought":true},{"text":"hello"}]});
+    let expected = parse_response(one_shot).unwrap();
+    let Some(LlmStreamEvent::Done {
+        message,
+        usage,
+        finish_reason,
+    }) = events.last()
+    else {
+        panic!("terminal missing");
+    };
+    assert_eq!(message, &expected.message);
+    assert_eq!(usage, &expected.usage);
+    assert_eq!(finish_reason, &expected.finish_reason);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, LlmStreamEvent::TextStart { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, LlmStreamEvent::ReasoningStart { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn parameterless_gemini_tools_default_only_missing_args() {
+    let body = json!({"candidates":[{"content":{"parts":[{"functionCall":{"id":"c","name":"clock"}}]},"finishReason":"STOP"}]});
+    let expected = vec![ContentPart::ToolCall {
+        call_id: "c".into(),
+        name: "clock".into(),
+        input: json!({}),
+    }];
+    assert_eq!(
+        parse_response(body.clone()).unwrap().message.content,
+        expected
+    );
+    let events = GeminiAccumulator::default().push(body.clone()).unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, LlmStreamEvent::ToolCallEnd { input, .. } if input == &json!({})))
+    );
+    assert!(
+        matches!(events.last(), Some(LlmStreamEvent::Done { message, finish_reason: FinishReason::ToolCalls, .. }) if message.content == expected)
+    );
+    for args in [json!(null), json!([]), json!("{}"), json!(3)] {
+        let mut invalid = body.clone();
+        invalid["candidates"][0]["content"]["parts"][0]["functionCall"]["args"] = args;
+        assert!(matches!(
+            parse_response(invalid.clone()),
+            Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+        ));
+        assert!(matches!(
+            GeminiAccumulator::default().push(invalid),
+            Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+        ));
+    }
 }

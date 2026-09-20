@@ -379,3 +379,25 @@ fn parallel_tool_fragments_keep_distinct_call_ids_and_inputs() {
         ]
     );
 }
+
+#[test]
+fn repeated_tool_headers_are_idempotent_after_fragmented_header() {
+    let mut stream = OpenAiCompatStreamAccumulator::new();
+    let mut events = stream.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-","function":{"name":"dou"}}]}}]})).unwrap();
+    events.extend(stream.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"1","function":{"name":"ble","arguments":"{\"n\":"}}]}}]})).unwrap());
+    events.extend(stream.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"double","arguments":"4}"}}]},"finish_reason":"tool_calls"}],"usage":{}})).unwrap());
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, LlmStreamEvent::ToolCallStart { .. }))
+            .count(),
+        1
+    );
+    assert!(
+        matches!(events.last(), Some(LlmStreamEvent::Done { message, .. }) if message.content == vec![ContentPart::ToolCall { call_id: "call-1".into(), name: "double".into(), input: json!({"n":4}) }])
+    );
+
+    let mut mismatch = OpenAiCompatStreamAccumulator::new();
+    mismatch.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"double","arguments":"{"}}]}}]})).unwrap();
+    assert!(matches!(mismatch.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-2","function":{"name":"double","arguments":"}"}}]}}]})), Err(LlmError::Fatal(FatalLlmError::InvalidRequest))));
+}

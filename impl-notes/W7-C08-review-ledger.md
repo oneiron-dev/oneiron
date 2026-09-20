@@ -457,9 +457,9 @@ completed reconciliation. No replacement reviewer fanout was started.
 
 | Group | Source inline ID | Disposition |
 | --- | --- | --- |
-| F49 | 4055422429 | Valid: consecutive Gemini text deltas need a stable part ID without losing text/tool/reasoning order. Repair pending. |
-| F50 | 4055422435 | Valid: omitted args on a parameterless Gemini tool call should decode as an empty object; malformed present args must still refuse. Repair pending. |
-| F51 | 4055422440 | Valid: repeated complete OpenAI tool IDs/names must not concatenate; fragmented fields still need accumulation. Repair pending. |
+| F49 | 4055422429 | Valid: consecutive Gemini text deltas need a stable part ID without losing text/tool/reasoning order. Implemented; runtime validation pending. |
+| F50 | 4055422435 | Valid: omitted args on a parameterless Gemini tool call should decode as an empty object; malformed present args must still refuse. Implemented; runtime validation pending. |
+| F51 | 4055422440 | Valid: repeated complete OpenAI tool IDs/names must not concatenate; fragmented fields still need accumulation. Implemented; runtime validation pending. |
 
 No feedback from another ticket is applied to PR #933. No review draft or
 thread state was changed. The current-head Opus ladder is still required after

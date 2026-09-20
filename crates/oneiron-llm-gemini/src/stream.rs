@@ -17,6 +17,7 @@ pub(super) struct GeminiAccumulator {
     usage: Option<LlmUsage>,
     tool_seq: usize,
     part_seq: usize,
+    active_text: Option<(String, bool)>,
 }
 impl GeminiAccumulator {
     pub(super) fn push(&mut self, chunk: Value) -> LlmResult<Vec<LlmStreamEvent>> {
@@ -53,12 +54,10 @@ impl GeminiAccumulator {
             .and_then(Value::as_array)
         {
             for part in parts {
-                // Chunk-local indices restart at zero. Use a stream-wide identity
-                // for every provider part so interleaved content keeps its order.
-                let part_id = format!("part-{}", self.part_seq);
-                self.part_seq += 1;
                 if let Some(text) = part.get("text").and_then(Value::as_str) {
-                    if part.get("thought").and_then(Value::as_bool) == Some(true) {
+                    let reasoning = part.get("thought").and_then(Value::as_bool) == Some(true);
+                    let part_id = self.text_part(reasoning, &mut events)?;
+                    if reasoning {
                         events.extend(
                             self.assembly.reasoning(
                                 &part_id,
@@ -72,6 +71,7 @@ impl GeminiAccumulator {
                         events.extend(self.assembly.text(&part_id, text)?);
                     }
                 } else if let Some(call) = part.get("functionCall") {
+                    self.end_text(&mut events)?;
                     let name = call
                         .get("name")
                         .and_then(Value::as_str)
@@ -81,7 +81,10 @@ impl GeminiAccumulator {
                         .and_then(Value::as_str)
                         .map_or_else(|| format!("call-{}", self.tool_seq), str::to_owned);
                     self.tool_seq += 1;
-                    let args = call.get("args").ok_or(FatalLlmError::InvalidRequest)?;
+                    let args = call
+                        .get("args")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({}));
                     let part_id = format!("tool-{id}");
                     events.extend(self.assembly.tool(&part_id, &id, name, &args.to_string())?);
                     events.push(self.assembly.end(&part_id)?);
@@ -112,6 +115,30 @@ impl GeminiAccumulator {
         }
         Ok(events)
     }
+    fn text_part(
+        &mut self,
+        reasoning: bool,
+        events: &mut Vec<LlmStreamEvent>,
+    ) -> LlmResult<String> {
+        if let Some((id, kind)) = &self.active_text
+            && *kind == reasoning
+        {
+            return Ok(id.clone());
+        }
+        self.end_text(events)?;
+        let id = format!("part-{}", self.part_seq);
+        self.part_seq += 1;
+        self.active_text = Some((id.clone(), reasoning));
+        Ok(id)
+    }
+
+    fn end_text(&mut self, events: &mut Vec<LlmStreamEvent>) -> LlmResult<()> {
+        if let Some((id, _)) = self.active_text.take() {
+            events.push(self.assembly.end(&id)?);
+        }
+        Ok(())
+    }
+
     pub(super) fn abort(&mut self, usage: LlmUsage) -> Vec<LlmStreamEvent> {
         self.assembly.abort(usage)
     }

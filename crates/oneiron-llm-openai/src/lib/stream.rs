@@ -82,11 +82,15 @@ impl OpenAiCompatStreamAccumulator {
                         .and_then(JsonValue::as_u64)
                         .ok_or(FatalLlmError::InvalidRequest)?;
                     let header = self.tools.entry(index).or_default();
-                    if let Some(id) = tool.get("id").and_then(JsonValue::as_str) {
+                    if let Some(id) = tool.get("id").and_then(JsonValue::as_str)
+                        && header.call_id != id
+                    {
                         header.call_id.push_str(id);
                     }
                     let function = &tool["function"];
-                    if let Some(name) = function.get("name").and_then(JsonValue::as_str) {
+                    if let Some(name) = function.get("name").and_then(JsonValue::as_str)
+                        && header.name != name
+                    {
                         header.name.push_str(name);
                     }
                     if let Some(fragment) = function.get("arguments").and_then(JsonValue::as_str) {
