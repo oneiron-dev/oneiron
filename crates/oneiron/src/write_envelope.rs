@@ -281,6 +281,7 @@ pub struct ClaimCandidate {
     valid_from: Option<u64>,
     valid_to: Option<u64>,
     world: Option<EntityId>,
+    rel: Option<EntityId>,
     scope: Option<Value>,
     stale: bool,
 }
@@ -305,6 +306,7 @@ impl ClaimCandidate {
             valid_from: None,
             valid_to: None,
             world: None,
+            rel: None,
             scope: None,
             stale: false,
         }
@@ -337,6 +339,17 @@ impl ClaimCandidate {
     pub fn with_world(mut self, world: EntityId) -> Self {
         self.world = Some(world);
         self
+    }
+
+    /// Adds an optional relationship axis. Absent means all relationships.
+    #[must_use]
+    pub fn with_relationship(mut self, rel: EntityId) -> Self {
+        self.rel = Some(rel);
+        self
+    }
+
+    pub(crate) const fn relationship(&self) -> Option<EntityId> {
+        self.rel
     }
 
     /// Adds an optional opaque scope value.
@@ -420,6 +433,7 @@ impl ClaimCandidate {
         body.valid_to = self.valid_to;
         body.source = Some(envelope.source());
         body.world = self.world;
+        body.rel = self.rel;
         body.scope = self.scope;
         body.session_tag = envelope.session_tag.clone();
         body.stale = self.stale;

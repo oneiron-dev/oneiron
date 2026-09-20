@@ -1,0 +1,7 @@
+{
+ "profile.name": {"normalize_text":true,"topic_field":null},
+ "preference.food": {"normalize_text":true,"topic_field":"topic"},
+ "boundary.topic": {"normalize_text":true,"topic_field":"topic"},
+ "goal.financial": {"normalize_text":true,"topic_field":"topic"},
+ "commitment.promise": {"normalize_text":true,"topic_field":"topic"}
+}

@@ -79,3 +79,4 @@ use rmpv::Value;
 use std::collections::BTreeSet;
 
 pub(crate) use bootstrap::seed_bootstrap_skills;
+pub mod osv;

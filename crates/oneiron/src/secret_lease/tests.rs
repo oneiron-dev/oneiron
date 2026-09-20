@@ -1131,8 +1131,9 @@ fn register_local_refuses_symlinked_parent_directory() {
         .expect_err("a symlinked parent denies");
     assert!(
         matches!(
-            err,
-            Error::Secret(SecretError::SecretLeasePathRefused { .. })
+            &err,
+            Error::Secret(SecretError::SecretLeasePathRefused { path: refused, .. })
+                if std::path::Path::new(refused) == parent
         ),
         "got {err:?}"
     );

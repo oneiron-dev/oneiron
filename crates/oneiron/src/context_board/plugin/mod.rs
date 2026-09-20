@@ -28,6 +28,7 @@ mod errors;
 mod install;
 mod manifest;
 mod render;
+mod state;
 mod validate;
 
 pub use self::admission::{
@@ -56,6 +57,7 @@ pub use self::render::{
     pending_plugin_proposal_rows, quoted_leaf, render_plugin_proposal_row,
     render_plugin_proposal_section, render_plugin_row, render_plugin_sections,
 };
+pub use self::state::{BoardBlockKind, BoardBlockRecord, BoardBlockScope, BoardBlockWriteEnvelope};
 pub use self::validate::{
     CORE_SECTION_IDS, validate_manifest_for_admission, validate_manifest_for_proposal,
 };
