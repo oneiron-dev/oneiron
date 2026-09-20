@@ -99,7 +99,7 @@ proofs remain separately scoped. No full workspace verify.sh or new Android/Node
 runtime result is claimed.
 
 
-## PR #944 bot repair — active on reviewed head 4993356c
+## PR #944 bot repair — reviewed head 4993356c
 
 The earlier no-PR lookups above are historical. The actual review target now is
 `oneiron-dev/oneiron#944`, branch `w7/W7-C11`, published head
@@ -124,8 +124,8 @@ inline findings; each row retains both the numbered finding and inline ID.
 | Q2 / 4055144978 | Skip: intentional adopted-DAG boundary. Authorless ChildOf-only writes must refuse atomically; `/records` supplies actor, parent and advance semantics. Existing engine regression pins this refusal. No invented actor or permission bypass. |
 | Q3 / 4055144984 | Fix the real calendar-specific bypass: malformed, non-map, trailing, or origin-stripped writes cannot replace an EVENT with a live calendar origin. Generic opaque non-calendar EVENTs remain legal; the suggested global EVENT schema would break that distinct engine use. |
 | Q4 / 4055144989 | Fix: replay may precede an origin claim, but cannot contradict a live origin or remove it from the body. The same rule runs at the shared local/replay put door. |
-| Q5 / 4055144992 | Valid: canonical recovery must retain pending NOTE review state, not only orphan fork text. Non-lossy repair in progress; not a completed validation claim. |
-| Q6 / 4055144998 | Valid: remove stale NOTE sidecars only inside the admitted recovery scope so recapture can converge. Repair in progress. |
+| Q5 / 4055144992 | Fixed in c7881059/5219e468: canonical recovery preserves validated pending NOTE workflows with a history-independent merge basis. All 10 focused canonical recovery tests passed. |
+| Q6 / 4055144998 | Fixed in c7881059/5219e468: remove absent sidecars only within admitted scope, retain preflight/divergence checks and outside workflows, and prove repeated canonical equivalence. Focused recovery tests passed. |
 | Q7 / 4055144967 | Skip: MessageStreamError is a composite API wrapper for Error and MemoryError, not an Error domain leaf. Actual typed stream refusals already belong to error::RecordError. No new root export or loss of facade admission detail. |
 | Q8 / 4055144971 | Skip: upstream Sudachi lint style, not new first-party suppressions. Preserve the audited snapshot except the documented Android portability changes. REVIEW.md makes comment/style findings informational. |
 | Q9 / 4055144995 | Fix: bound the entire retained witness template and appended content by one byte budget. A bounded serialization counter avoids allocating a second payload. Final witness-policy validation remains authoritative. |
@@ -138,9 +138,9 @@ Service/non-finding comments are retained too: owner request `5745993580`;
 CodeRabbit `5745993884` and `5745995645` (542-file limit, unavailable, not pending);
 Greptile `5745993938` (automatic review disabled); Cursor summary `5745994484`;
 Qodo busy marker `5745994303` and descriptive summary `5746002512` (superseded by
-its complete review). Codex `5745994125` still reports its existing exact-head
-review running at the current collection checkpoint; no replacement request was
-created and no clean Codex verdict is claimed.
+its complete review). Codex `5745994125` reported running at the initial collection checkpoint.
+The same job later completed with review `5258308609` and eight findings, all
+recorded below. No replacement request or clean no-findings verdict is claimed.
 
 ### Internal sources retained and reassessed
 
@@ -199,7 +199,7 @@ All eight findings were read and assessed before this follow-up edit round:
 |---|---|
 | 4055199497 | Valid refinement of Q4: first-arriving bodies may defer the claim match, but end-of-forward replay must quarantine missing/conflicting origins. Initial put-order tolerance is not permanent validity. |
 | 4055199499 | Valid: an already-DAG forest currently passes the visited-count cycle check. Require one trunk root, preserving the legacy unparented-turn chaining behavior. |
-| 4055199503 | Valid: unconditional sourceFrontiers decoding at shared body staging incorrectly reserves a field in opaque PERSON/ASSET bodies. Restrict decoding to the owning typed schema. |
+| 4055199503 | Valid: unconditional sourceFrontiers decoding at shared body staging incorrectly reserves a field in opaque PERSON/ASSET bodies. The unowned decoder was removed; explicit dependency doors remain. |
 | 4055199511 | Duplicate of Q10/4055145001 with the starvation consequence. Already fixed by identified per-stream outcomes in 35bd84ed; the loop processes every due stream, including those after a refusal. |
 | 4055199518 | Valid: normal reverse rematerialization lacks document carriers. Repair normal export/replay, including later edits, without bypassing egress or deletion. |
 | 4055199529 | Valid: append session membership only reaches vault_meta. Carry validated membership in replicated record state and rebuild the two local indexes. |
@@ -223,3 +223,17 @@ was not a requirement to accept disconnected graph roots.
 Thread follow-ups `4055197859`, `4055197868`, `4055197876`, `4055198000` are Qodo's
 explicit dismissals of `4055144978`, `4055144967`, `4055144971`, `4055145005`
 respectively. They were read, not treated as unexamined duplicate thread IDs.
+
+### Integrated local repair candidate
+
+Local commits `35bd84ed`, `c7881059`, `5219e468`, and `cf30cded` implement the
+valid findings above. The latter carries ordinary NOTE sync and erasure, not
+a change to canonical recovery semantics. All original roots and prior
+validation failures are retained. The 2026-09-20 paginated refresh found 8 issue
+comments, 26 review records, 44 inline comments, and 21 complete review threads;
+no new defect was added. The removed/superseded Qodo busy and review-summary
+comments remain identified by their captured source IDs.
+
+Nineteen inline roots have replies. Replies to `4055199518` and `4055199539`
+await their new focused runtime proof. No final summary, push, merge, or close
+has been performed at this checkpoint.

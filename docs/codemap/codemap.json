@@ -16204,7 +16204,7 @@
      "purpose": "Governed NOTE cores, PACK kind descriptors, and per-note editable documents",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2,
       "re-export": 3,
@@ -16236,6 +16236,16 @@
       "enum": 2,
       "fn": 6,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/erase.rs",
+     "purpose": "Active-store erasure of NOTE snapshots and workflow text, including headerless residue",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -16274,6 +16284,74 @@
       "fn": 4,
       "struct": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/sync.rs",
+     "purpose": "Native NOTE carriers for ordinary window sync, distinct from history-free recovery",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/sync/codec.rs",
+     "purpose": "Binding validation of native NOTE snapshots, heads, and mutable workflows",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/sync/materialize.rs",
+     "purpose": "Atomic native NOTE core/document admission and monotone workflow replay",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/sync/merge.rs",
+     "purpose": "Reconcile durable NOTE edits with a window that may be ahead after a crash",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/sync/mirror.rs",
+     "purpose": "Snapshot-consistent NOTE packing and selective-export closure",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/sync/scrub.rs",
+     "purpose": "Remove active NOTE carriers in the same window commit as a tombstone",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/note/sync_tests.rs",
+     "purpose": "Normal NOTE window transport, selector closure, and delete-wins regression laws",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -22695,6 +22773,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/note.rs",
+     "purpose": "Live NOTE replay for document-only changes, retaining the existing entity observer",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -26480,7 +26568,7 @@
      "purpose": "Memory-only MESSAGE streaming with atomic witnessed finality receipts"
     },
     "note": {
-     "files": 7,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -26858,7 +26946,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 70,
+     "files": 71,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26993,8 +27081,8 @@
    },
    "over_bar": 1,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1555,
-   "test_files": 549
+   "source_files": 1563,
+   "test_files": 550
   },
   "oneiron-android": {
    "files": [

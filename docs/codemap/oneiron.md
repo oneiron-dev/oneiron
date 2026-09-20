@@ -1281,11 +1281,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/message_stream/receipts.rs` | src | s | 1 fn · 1 crate-vis | — | Finality sidecars written inside the witness transaction |
 | `src/message_stream/tests.rs` | test | m | — | — | Caller-visible streaming laws; partial text never reaches storage |
 | `src/message_stream/types.rs` | src | s | 5 struct · 5 enum · 9 fn | IdleMessageStreamOutcome, MessageFinality, MessageFinalityReceipt, MessageStreamFrame, MessageStreamHandle, MessageStreamPolicy, MessageWriteMode, StreamCadence +2 | Stream policy, ephemeral frames and durable finality receipts |
-| `src/note.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 3 re-export · 3 crate-vis | NoteBody, TakeTarget | Governed NOTE cores, PACK kind descriptors, and per-note editable documents |
+| `src/note.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 3 re-export · 5 crate-vis | NoteBody, TakeTarget | Governed NOTE cores, PACK kind descriptors, and per-note editable documents |
 | `src/note/document_tests.rs` | test | m | — | — | NOTE caller-observable storage, cursor, fork and bridge laws |
 | `src/note/documents.rs` | src | m | 3 struct · 2 enum · 6 fn · 12 crate-vis | NoteAnchor, NoteDocument, NoteEdit, NoteEditOutcome, NoteVersion | Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites |
+| `src/note/erase.rs` | src | s | 2 crate-vis | — | Active-store erasure of NOTE snapshots and workflow text, including headerless residue |
 | `src/note/kinds.rs` | src | s | 2 struct · 3 enum · 6 fn · 2 crate-vis | ContextDefault, ExtractionDefault, NoteKind, NoteKindDescriptor, RetentionDefault | Vault-resident PACK descriptor records; the shipped kinds are data, not variants |
 | `src/note/proposals.rs` | src | m | 3 struct · 1 enum · 4 fn · 2 crate-vis | NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict | Grant-routed fork bundles, atomic verdicts and durable head-move receipts |
+| `src/note/sync.rs` | src | s | 6 crate-vis | — | Native NOTE carriers for ordinary window sync, distinct from history-free recovery |
+| `src/note/sync/codec.rs` | src | s | 3 crate-vis | — | Binding validation of native NOTE snapshots, heads, and mutable workflows |
+| `src/note/sync/materialize.rs` | src | s | 1 crate-vis | — | Atomic native NOTE core/document admission and monotone workflow replay |
+| `src/note/sync/merge.rs` | src | s | 1 crate-vis | — | Reconcile durable NOTE edits with a window that may be ahead after a crash |
+| `src/note/sync/mirror.rs` | src | s | 2 crate-vis | — | Snapshot-consistent NOTE packing and selective-export closure |
+| `src/note/sync/scrub.rs` | src | s | 1 crate-vis | — | Remove active NOTE carriers in the same window commit as a tombstone |
+| `src/note/sync_tests.rs` | test | m | — | — | Normal NOTE window transport, selector closure, and delete-wins regression laws |
 | `src/note/tests.rs` | test | s | — | — | NOTE body ABI: the pinned three keys, the closed kind, and the negative set the decoder must fail closed on |
 | `src/note/verbs.rs` | src | s | 4 fn · 1 crate-vis | — | Actor-bound NOTE creation, edit and source-entity bridge |
 | `src/off_record/lifecycle/executor.rs` | src | m | 8 crate-vis | — | Second OffRecordSession block: executor witness doors, routed shells and executor traps |
@@ -1831,6 +1839,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/bridge/edges.rs` | src | m | 5 crate-vis | — | Edge-delta materialization and per-op quarantine bookkeeping |
 | `src/sync/bridge/entities.rs` | src | m | 6 crate-vis | — | Entity-delta materialization and the per-entity blob writer |
 | `src/sync/bridge/mod.rs` | src | s | 3 re-export · 6 crate-vis | — | Entity bridge: CRDT ↔ LMDB materialization observers |
+| `src/sync/bridge/note.rs` | src | s | 1 crate-vis | — | Live NOTE replay for document-only changes, retaining the existing entity observer |
 | `src/sync/bridge/observers.rs` | src | m | 5 struct · 1 trait · 13 fn · 1 const · 9 crate-vis | LiveQueryTee, MaterializedDiffSummary, Materializer, ObserverAState, OriginMark, OutboundSink | Observer A/B registration and the shared Materializer/OutboundSink state |
 | `src/sync/bridge/recovery.rs` | src | s | 1 crate-vis | — | Recovery preflight through the existing replay doors, in an aborted transaction |
 | `src/sync/bridge/tests.rs` | test | XL | — | — | — |
