@@ -591,21 +591,11 @@ pub(super) fn assert_no_erasure_audit_artifacts(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
-/// ONE-1149 RACED-TO-NOTHING construction (delete-safety), DETERMINISTIC —
-/// no timing sleep. Builds the RACED-TO-NOTHING case (scope existed at the
-/// deleter's read-probe, then raced away before its purge txn), NOT the
-/// FULLY-MISSING case (an id that never had scope). The eraser thread opens
-/// the single LMDB write txn, STAGES the scope erasure inside it but leaves
-/// it UNCOMMITTED (MVCC keeps it invisible to any read txn), then meets the
-/// deleter at a `Barrier`. After the barrier the deleter takes its read
-/// snapshot — a µs in-memory read that still sees the full scope because the
-/// erasure is uncommitted — and blocks on the held write lock, while the
-/// eraser commits (a ms-scale fsync). The read-vs-commit asymmetry makes the
-/// deleter observe the pre-erase scope every run, so its purge txn
-/// deterministically finds nothing once the eraser's commit lands. The
-/// astronomically-rare scheduling miss (the deleter is descheduled until
-/// after the commit) takes the FULLY-MISSING strict-noop path instead;
-/// callers detect it via the absent `dt:` marker and retry.
+/// Constructs RACED-TO-NOTHING after the deleter has proved a live scope
+/// and published its tombstone, but before it opens the purge transaction.
+/// The existing vault-local, entity-keyed rendezvous parks the deleter while
+/// the eraser commits. No scheduling assumption, held writer lock or retry
+/// is needed; the headerful and headerless paths both reach this seam.
 pub(super) fn run_raced_delete<F>(
     vault: &Vault,
     id: &EntityId,
@@ -615,7 +605,24 @@ pub(super) fn run_raced_delete<F>(
 where
     F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
 {
-    run_raced_delete_inner(vault, id, reason, erase_scope, false)
+    let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+    vault.test_hooks().install_delete_rendezvous(
+        crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+        *id,
+        arrived_tx,
+        resume_rx,
+    );
+    std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
+        let deleter = scope.spawn(|| vault.delete_entity_with_reason(id, reason));
+        arrived_rx.recv().expect("deleter must reach the publish seam");
+        let erased = vault.with_write_txn(erase_scope);
+        // Release even if the eraser fails, so scope teardown can join.
+        resume_tx.send(()).expect("deleter must wait for the eraser");
+        let outcome = deleter.join().expect("deleter thread must not panic");
+        erased?;
+        outcome
+    })
 }
 
 /// ONE-1149 rendezvous variant: forces the deleter's lock-free
