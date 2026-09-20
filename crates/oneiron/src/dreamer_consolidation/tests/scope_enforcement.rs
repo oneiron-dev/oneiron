@@ -739,6 +739,16 @@ fn graph_signals_enforce_relationship_and_exact_project_slice() -> Result<()> {
     let (attempt, turns, _) = admitted_attempt_fixture(&vault, &store, 0x48, &[("user", "slice")])?;
     let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
     let relationship = EntityId::now();
+    let other_relationship = EntityId::now();
+    for id in [relationship, other_relationship] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            occurred(1),
+            1,
+            b"relationship fixture",
+        )?;
+    }
     let subject = EntityId::now();
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"subject")?;
     let author = EntityId::now();
@@ -764,7 +774,7 @@ fn graph_signals_enforce_relationship_and_exact_project_slice() -> Result<()> {
     for (rel, pinned) in [
         (Some(relationship), true),
         (None, true),
-        (Some(EntityId::now()), true),
+        (Some(other_relationship), true),
         (Some(relationship), false),
     ] {
         let id = EntityId::now();
