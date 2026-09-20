@@ -1854,16 +1854,31 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
     // The fenced marker writer persists the open question directly. The
     // ordinary belief sink must not receive any conflicting candidate.
     assert!(sink.accepted.is_empty());
-    let markers = vault.claims_for_subject(&subject)?;
-    assert_eq!(markers.len(), 1);
-    let marker = vault
-        .get_claim(&markers[0])?
-        .expect("durable open question");
-    assert_eq!(marker.predicate, crate::claim::PREDICATE_CONFLICT_OPEN);
+    let claims = vault
+        .claims_for_subject(&subject)?
+        .into_iter()
+        .map(|id| {
+            vault
+                .get_claim(&id)
+                .map(|body| (id, body.expect("stored claim")))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    assert!(
+        claims
+            .iter()
+            .all(|(_, body)| body.predicate != "profile.name")
+    );
+    let markers = claims
+        .iter()
+        .filter(|(_, body)| body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN)
+        .collect::<Vec<_>>();
+    let [(marker_id, marker)] = markers.as_slice() else {
+        panic!("exactly one durable open question");
+    };
     assert_eq!(marker.approval, crate::ClaimApprovalStatus::Proposed);
     assert!(
         vault
-            .edges_out(&markers[0])?
+            .edges_out(marker_id)?
             .iter()
             .all(|edge| edge.kind != EdgeKind::Supersedes)
     );
