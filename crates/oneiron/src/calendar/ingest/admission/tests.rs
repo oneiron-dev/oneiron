@@ -598,7 +598,7 @@ fn connector_missing_dtstart_preserves_other_sources_time_metadata() {
 }
 
 #[test]
-fn invalid_derived_claim_values_leave_no_event_uid_or_claims_on_repeated_polls() {
+fn invalid_derived_claim_values_leave_no_event_uid_or_calendar_claims_on_repeated_polls() {
     let base = String::from_utf8(one_event_feed("20260806T140000Z", "20260806T150000Z")).unwrap();
     for property in [
         format!("URL:https://meet.example.org/{}", "x".repeat(513)),
@@ -621,11 +621,15 @@ fn invalid_derived_claim_values_leave_no_event_uid_or_claims_on_repeated_polls()
                     .unwrap()
                     .is_empty()
             );
+            // Raw-feed archival may add artifact claims, never calendar facts.
             assert!(
                 vault
                     .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)
                     .unwrap()
-                    .is_empty()
+                    .iter()
+                    .all(|id| !crate::calendar::claims::is_calendar_claim_predicate(
+                        &vault.get_claim(id).unwrap().unwrap().predicate
+                    ))
             );
             assert_eq!(
                 crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x").unwrap(),
@@ -736,7 +740,10 @@ fn invalid_detached_claim_value_preflights_before_the_feed_master_is_created() {
         vault
             .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)
             .unwrap()
-            .is_empty()
+            .iter()
+            .all(|id| !crate::calendar::claims::is_calendar_claim_predicate(
+                &vault.get_claim(id).unwrap().unwrap().predicate
+            ))
     );
     assert_eq!(
         crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x").unwrap(),
