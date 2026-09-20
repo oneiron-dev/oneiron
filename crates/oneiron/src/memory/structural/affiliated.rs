@@ -14,7 +14,7 @@ use crate::memory::support::{
     facade_provenance, hard_deleted_refusal, id_from_optional_hex, json_to_rmpv,
 };
 use crate::memory::{CommitReceipt, Memory, MemoryError, MemoryResult};
-use crate::note::{NoteBody, NoteKind, TakeTarget, encode_note_body};
+use crate::note::{NoteBody, NoteKind, NoteScope, NoteWriteEnvelope, TakeTarget, encode_note_body};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
@@ -32,7 +32,7 @@ impl Memory<'_> {
     /// mandatory `NOTE ─AuthoredBy→ actor` edge both come from the actor
     /// bound to this facade, revalidated against the store inside this write
     /// transaction. The input carries no author field, so there is nothing a
-    /// caller can spoof, and this is the only NOTE writer there is: the raw
+    /// caller can spoof, and this delegates to the typed NOTE writer: the raw
     /// batch put refuses the type, leaving no second door to hand-write a
     /// body through.
     ///
@@ -55,18 +55,45 @@ impl Memory<'_> {
         target: TakeTarget,
         markdown: impl Into<String>,
     ) -> MemoryResult<EntityRefReceipt> {
-        let body = encode_note_body(&NoteBody {
+        self.author_note(&NoteWriteEnvelope {
             kind: NoteKind::OpinionTake,
-            author_ref: self.actor,
+            scope: NoteScope::About(target),
             markdown: markdown.into(),
+            source_revision_ref: *EntityId::now().as_bytes(),
+        })
+    }
+
+    /// Writes an attributed NOTE through the existing NOTE transaction door.
+    /// Diary requests are actor-private and owner-only to write. A scope/kind
+    /// mismatch or a foreign owner is refused before any row is staged.
+    pub fn author_note(&self, envelope: &NoteWriteEnvelope) -> MemoryResult<EntityRefReceipt> {
+        let (target_id, link, target_must_be_claim) = match (envelope.kind, envelope.scope) {
+            (NoteKind::OpinionTake, NoteScope::About(TakeTarget::Subject(id))) => {
+                (id, EdgeKind::About, false)
+            }
+            (NoteKind::OpinionTake, NoteScope::About(TakeTarget::Claim(id))) => {
+                (id, EdgeKind::ClaimOf, true)
+            }
+            (NoteKind::Diary, NoteScope::ActorPrivate { owner_ref }) if owner_ref == self.actor => {
+                (owner_ref, EdgeKind::About, false)
+            }
+            _ => {
+                return Err(MemoryError::new(
+                    crate::memory::MEMORY_CODE_FORBIDDEN,
+                    "NOTE kind and actor-bound scope do not match",
+                    &["Use an opinion target or the bound actor as the private diary owner."],
+                ));
+            }
+        };
+        let body = encode_note_body(&NoteBody {
+            kind: envelope.kind,
+            author_ref: self.actor,
+            markdown: envelope.markdown.clone(),
+            source_revision_ref: envelope.source_revision_ref,
         })?;
         let note_id = EntityId::now();
         let at = crate::unix_seconds_now();
         let occurred = TimeRange { start: at, end: at };
-        let (target_id, link, target_must_be_claim) = match target {
-            TakeTarget::Subject(id) => (id, EdgeKind::About, false),
-            TakeTarget::Claim(id) => (id, EdgeKind::ClaimOf, true),
-        };
 
         self.with_verified_actor_write_txn(|wtxn| {
             let Some(stored_type) = self.vault.get_entity_type_in_txn(&*wtxn, &target_id)? else {

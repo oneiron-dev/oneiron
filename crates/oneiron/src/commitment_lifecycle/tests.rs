@@ -1018,10 +1018,9 @@ fn witness(vault: &Vault) -> Result<WitnessFixture> {
     let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
     crate::test_util::put_policy_manifest_bytes(vault, id, &auto_permitting_manifest())?;
 
-    let agent = crate::test_util::entity(0x61);
+    let agent = vault.dreamer_authority()?;
     let conversation = crate::test_util::entity(0x62);
     let turn = crate::test_util::entity(0x63);
-    vault.put_entity(&agent, ENTITY_TYPE_PERSON, time(1, 1), 1, b"dreamer")?;
     vault.put_entity(
         &conversation,
         ENTITY_TYPE_SESSION,
@@ -1044,11 +1043,22 @@ fn witness(vault: &Vault) -> Result<WitnessFixture> {
         .edge(&turn, EdgeKind::ChildOf, &conversation, 1.0)
         .commit()?;
 
+    let runner = crate::dreamer_runner::DreamerRunnerStore::new(vault);
+    let (crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Enqueued(status)
+    | crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Existing(status)) =
+        runner.enqueue(crate::dreamer_runner::EnqueueDreamerAttempt {
+            attempt_type: "commitment-witness-test".to_owned(),
+            input: Value::Nil,
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("run-cmt4".to_owned()),
+            now: 6,
+        })?;
     Ok(WitnessFixture {
         run: DreamerRunContext {
             run_id: "run-cmt4".to_owned(),
-            attempt_id: crate::attempt_queue::AttemptId::now(),
-            agent_actor: WriteActor::new(agent, EdgeActorClass::Agent),
+            attempt_id: status.attempt.id,
+            agent_actor: agent,
             now_ms: 10_000,
         },
         turn,

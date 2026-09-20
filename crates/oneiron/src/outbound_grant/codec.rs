@@ -13,6 +13,7 @@ use super::scope::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::outbound_consent::DataClass;
+use crate::outbound_consent::tool_call::ToolGrantDataClass;
 
 /// Current StandingOutboundGrant body schema version.
 pub const OUTBOUND_GRANT_SCHEMA_VERSION: u64 = 3;
@@ -265,6 +266,7 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
             tool: grant_tool,
             data_class_ceiling: grant_ceiling,
             endpoint_allowlist: grant_endpoints,
+            ..
         } => {
             server = Value::from(grant_server.clone());
             tool = Value::from(grant_tool.clone());
@@ -314,6 +316,20 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
     if let StandingOutboundGrantScope::BookingPageInvites { page_ref } = scope {
         entries.push((Value::from(SCOPE_KEYS[9]), Value::from(page_ref.to_hex())));
     }
+    if let StandingOutboundGrantScope::ScopedMcp {
+        tool_data_classes, ..
+    } = scope
+    {
+        entries.push((
+            Value::from("tool_data_classes"),
+            Value::Array(
+                tool_data_classes
+                    .iter()
+                    .map(|class| Value::from(class.as_str()))
+                    .collect(),
+            ),
+        ));
+    }
     Value::Map(entries)
 }
 
@@ -337,14 +353,15 @@ pub(super) fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> 
     let kind = required_value(entries, SCOPE_KEYS[0])?
         .as_str()
         .ok_or_else(invalid_grant)?;
-    // Each kind names exactly the keys it does NOT own. A blind kind's
-    // non-applicable set now reaches `page_ref` too: blind rows never carried
-    // it, so every pre-existing row still decodes identically.
+    // Each kind rejects authority fields it does not own. In particular,
+    // blind/booking grants cannot carry the scoped tool-data-class set.
     let non_applicable: Vec<&str> = if kind == SCOPE_KIND_BOOKING_PAGE_INVITES {
-        SCOPE_KEYS[1..9].to_vec()
+        let mut keys = SCOPE_KEYS[1..9].to_vec();
+        keys.push(SCOPE_KEYS[10]);
+        keys
     } else if kind == SCOPE_KIND_SCOPED_MCP {
         let mut keys = SCOPE_KEYS[1..5].to_vec();
-        keys.extend_from_slice(&SCOPE_KEYS[9..]);
+        keys.push(SCOPE_KEYS[9]);
         keys
     } else {
         SCOPE_KEYS[5..].to_vec()
@@ -384,6 +401,17 @@ pub(super) fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> 
                 server: decode_canonical_scoped_server(required_value(entries, SCOPE_KEYS[5])?)?,
                 tool: decode_canonical_non_empty_string(required_value(entries, SCOPE_KEYS[6])?)?,
                 data_class_ceiling,
+                tool_data_classes: required_value(entries, "tool_data_classes")?
+                    .as_array()
+                    .ok_or_else(invalid_grant)?
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .and_then(ToolGrantDataClass::parse)
+                            .ok_or_else(invalid_grant)
+                    })
+                    .collect::<Result<Vec<_>>>()?,
                 endpoint_allowlist: decode_canonical_non_empty_string_array(required_value(
                     entries,
                     SCOPE_KEYS[8],

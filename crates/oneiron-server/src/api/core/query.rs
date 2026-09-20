@@ -337,7 +337,6 @@ pub(crate) async fn list_core_outbound_capabilities(
     auth: CoreAuth,
 ) -> Result<Json<&'static [oneiron::OutboundCapabilityManifest]>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
     Ok(Json(oneiron::outbound_capability_manifests()))
 }
 
@@ -365,7 +364,6 @@ pub(crate) async fn get_core_outbound_capability(
     Path(connector): Path<String>,
 ) -> Result<Json<&'static oneiron::OutboundCapabilityManifest>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
     let manifest = oneiron::outbound_capability_manifest(&connector).ok_or_else(|| {
         let error = oneiron::unsupported_outbound_connector(&connector);
         outbound_capability_error(&error)
@@ -404,7 +402,6 @@ pub(crate) async fn get_core_outbound_verb_contract(
     Path((connector, verb)): Path<(String, String)>,
 ) -> Result<Json<&'static oneiron::OutboundVerbContract>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
     oneiron::outbound_verb_contract(&connector, &verb)
         .map(Json)
         .map_err(|error| outbound_capability_error(error.as_ref()))

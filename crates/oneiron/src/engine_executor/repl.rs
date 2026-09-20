@@ -613,6 +613,7 @@ impl EngineNativeExecutor<'_> {
         Ok(LlmRequest {
             model: config.model.clone(),
             envelope: CallEnvelope {
+                scope: crate::llm::Scope::default(),
                 purpose: CallPurpose::Other {
                     name: ENGINE_EXECUTOR_PURPOSE_NAME.to_owned(),
                 },

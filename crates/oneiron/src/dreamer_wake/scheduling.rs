@@ -65,6 +65,11 @@ pub(crate) fn request_wake_in_txn(
     run_id: Option<String>,
     now: u64,
 ) -> Result<EnqueueDreamerAttemptOutcome> {
+    if trigger == WakeTrigger::Event
+        && payload.attempt_type == crate::dreamer_runner::connector_event::CONNECTOR_EVENT_FACET
+    {
+        return store.enqueue_connector_event_in_txn(txn, payload, dedupe_key, run_id, now);
+    }
     let scope = trigger.default_scope();
     if trigger == WakeTrigger::Timer {
         // The queue dedupe domain includes the kind, so sharing the wake key

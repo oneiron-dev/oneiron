@@ -53,6 +53,51 @@ impl Vault {
         intent: &ScopedMcpGrantMintIntent,
         created_at: u64,
     ) -> Result<StandingOutboundGrant> {
+        if intent.tool_data_classes
+            != [crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments]
+        {
+            return Err(Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(
+                    "header-class grants require an authenticated owner",
+                ),
+            ));
+        }
+        self.persist_scoped_mcp_outbound_grant(id, intent, created_at)
+    }
+
+    /// Extends the same scoped grant vocabulary using the existing owner proof.
+    /// Header permission is an owner decision, never a caller-asserted flag.
+    pub fn mint_scoped_mcp_outbound_grant_with_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        id: &EntityId,
+        intent: &ScopedMcpGrantMintIntent,
+        created_at: u64,
+    ) -> Result<StandingOutboundGrant> {
+        if owner.principal_ref() != intent.principal_ref {
+            return Err(Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(
+                    "scoped grant principal does not match its owner",
+                ),
+            ));
+        }
+        // The owner token supplies the authentication result. Recheck identity
+        // against this vault; an absent or inactive owner cannot mint authority.
+        self.authenticate_owner(
+            owner.actor(),
+            owner.principal_ref(),
+            true,
+            owner.decision_id(),
+        )?;
+        self.persist_scoped_mcp_outbound_grant(id, intent, created_at)
+    }
+
+    fn persist_scoped_mcp_outbound_grant(
+        &self,
+        id: &EntityId,
+        intent: &ScopedMcpGrantMintIntent,
+        created_at: u64,
+    ) -> Result<StandingOutboundGrant> {
         let policy = {
             let rtxn = self.store.env.read_txn()?;
             crate::gate::resolve_policy_manifest(&self.store, &rtxn)?
@@ -258,6 +303,13 @@ fn scoped_mcp_grant_binding_handle(intent: &ScopedMcpGrantMintIntent) -> Vec<u8>
     scoped_mcp_binding_hash_str(&mut hasher, &intent.server);
     scoped_mcp_binding_hash_str(&mut hasher, &intent.tool);
     scoped_mcp_binding_hash_str(&mut hasher, intent.data_class_ceiling.as_str());
+    scoped_mcp_binding_hash_bytes(
+        &mut hasher,
+        &(intent.tool_data_classes.len() as u64).to_le_bytes(),
+    );
+    for class in &intent.tool_data_classes {
+        scoped_mcp_binding_hash_str(&mut hasher, class.as_str());
+    }
     for endpoint in &intent.endpoint_allowlist {
         scoped_mcp_binding_hash_str(&mut hasher, endpoint);
     }

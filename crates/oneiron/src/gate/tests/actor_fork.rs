@@ -883,8 +883,14 @@ fn approve_once_not_atomic_is_closed_for_production_and_public_evaluation() -> R
     vault.approve_once(&owner, production_digest)?;
 
     vault.with_write_txn(|wtxn| {
-        let governance =
-            evaluate_external_effect_policy(&vault.store, wtxn, &production_effect, &policy, None)?;
+        let governance = evaluate_external_effect_policy(
+            &vault.store,
+            wtxn,
+            &production_effect,
+            &policy,
+            None,
+            None,
+        )?;
         assert_eq!(governance.outcome(), GateOutcome::Allow);
         vault.store.vault_meta.put(wtxn, EFFECT_RAN_KEY, b"once")?;
         record_external_effect_policy(&vault.store, wtxn, governance)?;
@@ -892,8 +898,15 @@ fn approve_once_not_atomic_is_closed_for_production_and_public_evaluation() -> R
     })?;
     let replay = vault
         .with_write_txn(|wtxn| {
-            evaluate_external_effect_policy(&vault.store, wtxn, &production_effect, &policy, None)
-                .map(|_| ())
+            evaluate_external_effect_policy(
+                &vault.store,
+                wtxn,
+                &production_effect,
+                &policy,
+                None,
+                None,
+            )
+            .map(|_| ())
         })
         .expect_err("production replay must stop before a second effect");
     assert_eq!(replay.kind(), ErrorKind::ConsentApproveOnceSpent);

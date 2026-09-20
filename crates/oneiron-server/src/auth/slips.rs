@@ -20,21 +20,6 @@ impl BindingProof {
             .ok_or_else(ApiError::unauthorized)?;
         serde_json::from_str(raw).map_err(|_| ApiError::unauthorized())
     }
-    fn challenge(&self) -> Result<Vec<u8>, ApiError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |v| v.as_secs());
-        if now.abs_diff(self.timestamp) > 60
-            || self.nonce.len() != 32
-            || !self
-                .nonce
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(ApiError::unauthorized());
-        }
-        Ok(format!("oneiron-request:{}:{}", self.timestamp, self.nonce).into_bytes())
-    }
     fn signature(&self) -> Result<Vec<u8>, ApiError> {
         if self.signature.len() != 128
             || !self
@@ -68,7 +53,13 @@ impl CoreAuth {
             .ok_or_else(ApiError::unauthorized)?;
         let slip = CapabilitySlip::from_token(token).map_err(|_| ApiError::unauthorized())?;
         let verified = vault
-            .verify_slip(secret, &slip, &proof.challenge()?, &proof.signature()?)
+            .verify_slip(
+                secret,
+                &slip,
+                proof.timestamp,
+                proof.nonce.as_bytes(),
+                &proof.signature()?,
+            )
             .map_err(|_| ApiError::unauthorized())?;
         // These transports can call auth more than once per request; they must
         // not perform one-shot effects. The atomic consuming door owns those.

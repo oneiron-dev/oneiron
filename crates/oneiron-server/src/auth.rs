@@ -67,7 +67,8 @@ pub(crate) trait RevokedTokenJtis {
         &self,
         _secret: &str,
         _slip: &oneiron::authority::CapabilitySlip,
-        _challenge: &[u8],
+        _timestamp: u64,
+        _nonce: &[u8],
         _signature: &[u8],
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
         Err(())
@@ -86,12 +87,13 @@ impl RevokedTokenJtis for oneiron::Vault {
         &self,
         secret: &str,
         slip: &oneiron::authority::CapabilitySlip,
-        challenge: &[u8],
+        timestamp: u64,
+        nonce: &[u8],
         signature: &[u8],
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
         let issuer =
             oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).map_err(drop)?;
-        self.verify_capability_slip(&issuer, slip, challenge, signature)
+        self.verify_capability_slip_request(&issuer, slip, timestamp, signature, nonce)
             .map_err(drop)
     }
 

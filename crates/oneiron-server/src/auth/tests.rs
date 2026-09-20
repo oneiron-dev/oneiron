@@ -602,12 +602,21 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
             &self,
             secret: &str,
             slip: &CapabilitySlip,
-            challenge: &[u8],
+            timestamp: u64,
+            nonce: &[u8],
             signature: &[u8],
         ) -> Result<oneiron::authority::VerifiedSlip, ()> {
             let fold = self.fixture.vault.authority_fold().map_err(drop)?;
-            slip.verify(secret.as_bytes(), &fold, self.now, challenge, signature)
-                .map_err(drop)
+            let nonce = std::str::from_utf8(nonce).map_err(drop)?;
+            let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+            slip.verify(
+                secret.as_bytes(),
+                &fold,
+                self.now,
+                challenge.as_bytes(),
+                signature,
+            )
+            .map_err(drop)
         }
     }
     let fixture = Fixture::new();

@@ -46,7 +46,8 @@ pub use memories::{
 };
 pub use memories_projection::project_memories_section;
 pub use plugin::{
-    AdmittedPluginSection, AuthorityLaneRef, CORE_SECTION_IDS, PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION,
+    AdmittedPluginSection, AuthorityLaneRef, BoardBlockKind, BoardBlockRecord, BoardBlockScope,
+    BoardBlockWriteEnvelope, CORE_SECTION_IDS, PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION,
     PLUGIN_PROPOSALS_SECTION_NAME, PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload,
     PluginInstallExecutor, PluginInstallOrigin, PluginInstallSource, PluginInstallTarget,
     PluginProposalRow, PluginResult, PluginSectionAdmission, PluginSectionError,
@@ -114,7 +115,6 @@ mod test_support {
             failure: None,
             events: Vec::new(),
             children: Vec::new(),
-            gate_breaker_paused: false,
         }
     }
 }

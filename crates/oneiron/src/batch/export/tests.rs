@@ -422,6 +422,13 @@ fn whole_vault_export_runs_during_a_live_session_and_skips_only_overlay_members(
     assert!(whole_vault_export_excludes_entity(&vault, &room_member)?);
     assert!(!whole_vault_export_excludes_entity(&vault, &commissioned)?);
 
+    let rows = vault.whole_vault_export_rows()?;
+    assert!(rows.contains(&WholeVaultExportRow {
+        entity_id: commissioned,
+        entity_type: crate::registry::ENTITY_TYPE_TURN,
+    }));
+    assert!(!rows.iter().any(|row| row.entity_id == room_member));
+
     // Close drops membership; the id stops being excluded because the room it
     // belonged to is gone, not because anything was deleted.
     session.close()?;

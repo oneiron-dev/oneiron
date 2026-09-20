@@ -116,6 +116,7 @@ impl StandingOutboundGrant {
                 server: canonical_scoped_server(&intent.server)?,
                 tool: intent.tool.clone(),
                 data_class_ceiling: intent.data_class_ceiling,
+                tool_data_classes: intent.tool_data_classes.clone(),
                 endpoint_allowlist: intent.endpoint_allowlist.clone(),
             },
             status: StandingOutboundGrantStatus::Active,

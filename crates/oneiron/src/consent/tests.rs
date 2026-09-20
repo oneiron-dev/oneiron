@@ -1649,3 +1649,102 @@ fn consent_settle_bound_shape_is_action_domain_and_target_exact() {
     .expect("bound");
     assert!(!other_actor.contains(&bound));
 }
+
+#[test]
+fn agent_widen_parks_canonical_delta_and_only_owner_can_establish_grant() {
+    use super::widen::{WidenKind, canonical_widen_delta};
+    let (_dir, vault, owner) = owner_vault();
+    let agent = entity(0x62);
+    vault
+        .put_entity(&agent, ENTITY_TYPE_PERSON, at(1), 1, b"agent actor")
+        .unwrap();
+    let actor = crate::WriteActor::new(agent, EdgeActorClass::Agent);
+    let bound = action_bound(&agent.to_hex(), "claim.put", &["world:home"]);
+    let delta = canonical_widen_delta(WidenKind::AutoConfirm, &bound).unwrap();
+    let proposal = vault
+        .propose_widen(
+            actor,
+            WidenKind::AutoConfirm,
+            bound.clone(),
+            owner.principal_ref(),
+            crate::unix_seconds_now() + 600,
+        )
+        .unwrap();
+    assert_eq!(proposal.canonical_delta, delta);
+    assert_eq!(
+        vault.widen_proposal(&proposal.proposal_ref).unwrap(),
+        Some(proposal.clone())
+    );
+    assert!(
+        vault
+            .consent_grant(&bound.digest().to_hex())
+            .unwrap()
+            .is_none()
+    );
+    // An exact approve-once is frictionless confirmation, not widen authority.
+    vault.approve_once(&owner, bound.digest()).unwrap();
+    assert!(
+        vault
+            .consent_grant(&bound.digest().to_hex())
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        vault
+            .authenticate_owner(
+                owner.actor(),
+                owner.principal_ref(),
+                false,
+                GateDecisionId::now()
+            )
+            .is_err()
+    );
+    let mut tampered = delta.clone();
+    tampered.push(0);
+    assert!(
+        vault
+            .accept_widen(&owner, &proposal.proposal_ref, &tampered)
+            .is_err()
+    );
+    let receipt = vault
+        .accept_widen(&owner, &proposal.proposal_ref, &delta)
+        .unwrap();
+    assert!(matches!(
+        receipt,
+        ConsentReceipt::Approved {
+            grant: ConsentGrant::Standing(_),
+            ..
+        }
+    ));
+    assert!(
+        vault
+            .consent_grant(&bound.digest().to_hex())
+            .unwrap()
+            .unwrap()
+            .is_active()
+    );
+    assert!(
+        vault
+            .accept_widen(&owner, &proposal.proposal_ref, &delta)
+            .is_err()
+    );
+}
+
+#[test]
+fn widen_rejects_non_actor_entities_before_recording_proposal() {
+    let (_dir, vault, owner) = owner_vault();
+    let id = entity(0x72);
+    vault
+        .put_entity(&id, crate::registry::ENTITY_TYPE_WORLD, at(1), 1, b"world")
+        .unwrap();
+    let error = vault
+        .propose_widen(
+            crate::WriteActor::new(id, EdgeActorClass::Agent),
+            super::widen::WidenKind::Action,
+            action_bound(&id.to_hex(), "claim.put", &["world:home"]),
+            owner.principal_ref(),
+            crate::unix_seconds_now() + 600,
+        )
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::ActorClassMismatch);
+}

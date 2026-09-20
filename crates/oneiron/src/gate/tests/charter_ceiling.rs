@@ -115,6 +115,7 @@ fn scoped_mcp_grant_intent(
         server: server.to_owned(),
         tool: "read_file".to_owned(),
         data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+        tool_data_classes: vec![crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
         endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
     }
 }

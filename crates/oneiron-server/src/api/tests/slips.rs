@@ -16,6 +16,9 @@ fn proof(slip: &CapabilitySlip, key: &SigningKey) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
+    proof_at(slip, key, timestamp)
+}
+fn proof_at(slip: &CapabilitySlip, key: &SigningKey, timestamp: u64) -> String {
     let nonce = oneiron::EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
     let signature = key
@@ -319,4 +322,123 @@ async fn relay_server_with_transport_secret_never_bootstraps_owner_authority() {
     let response = api_routes(server).oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert!(vault.authority_fold().unwrap().vault_id.is_none());
+}
+
+#[tokio::test]
+async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
+    let (_dir, server) = server();
+    let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
+    let holder = SigningKey::from_bytes(&[89; 32]);
+    let mut claims = server
+        .vault()
+        .ensure_host_root_slip(&issuer)
+        .unwrap()
+        .claims;
+    claims.slip_id = [89; 32];
+    claims.holder_ref = seed_turn(&server, "clock holder").to_hex();
+    claims.binding_key = holder.verifying_key().to_bytes();
+    claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".into()]));
+    let slip = server
+        .vault()
+        .mint_capability_slip(&issuer, claims)
+        .unwrap();
+    // Persisted authority time ahead of raw wall time models a backward clock
+    // step without changing the process clock or another test's vault.
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let floor = wall + 300;
+    server
+        .vault()
+        .sync_state_put("authlog:first_seen:clock_floor", &floor.to_be_bytes())
+        .unwrap();
+    let token = slip.to_token().unwrap();
+    let request = |proof: &str| {
+        Request::builder()
+            .uri("/v1/core/conversations")
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .header("x-oneiron-binding", proof)
+            .body(Body::empty())
+            .unwrap()
+    };
+    let current = proof_at(&slip, &holder, floor);
+    for expected in [StatusCode::OK, StatusCode::UNAUTHORIZED] {
+        let (status, _) = route_json(server.clone(), request(&current)).await;
+        assert_eq!(status, expected);
+    }
+    for timestamp in [wall, floor + 300] {
+        let (status, _) = route_json(
+            server.clone(),
+            request(&proof_at(&slip, &holder, timestamp)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    let (status, _) = route_json(server, request(&proof_at(&slip, &holder, floor))).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn narrowed_read_slips_can_read_static_capabilities_but_not_unscoped_records() {
+    let (_dir, server) = server();
+    let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
+    let holder = SigningKey::from_bytes(&[90; 32]);
+    let actor = seed_turn(&server, "static capability holder");
+    let mut claims = server
+        .vault()
+        .ensure_host_root_slip(&issuer)
+        .unwrap()
+        .claims;
+    claims.slip_id = [90; 32];
+    claims.holder_ref = actor.to_hex();
+    claims.binding_key = holder.verifying_key().to_bytes();
+    claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".into()]));
+    claims.records = BTreeSet::from([actor.to_hex()]);
+    let slip = server
+        .vault()
+        .mint_capability_slip(&issuer, claims)
+        .unwrap();
+    let request = |slip: &CapabilitySlip, path: &str| {
+        Request::builder()
+            .uri(path)
+            .header(
+                AUTHORIZATION,
+                format!("Bearer {}", slip.to_token().unwrap()),
+            )
+            .header("x-oneiron-binding", proof(slip, &holder))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let paths = [
+        "/v1/core/outbound/capabilities",
+        "/v1/core/outbound/capabilities/slack",
+        "/v1/core/outbound/capabilities/slack/verbs/react",
+    ];
+    for path in paths {
+        let (status, body) = route_json(server.clone(), request(&slip, path)).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+    }
+    let (status, _) = route_json(server.clone(), request(&slip, "/v1/core/conversations")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let mut no_read = slip.clone();
+    no_read
+        .attenuate(oneiron::authority::SlipCaveat {
+            scope: Some(Scope {
+                verbs: ScopeAxis::Bottom,
+                ..Scope::top()
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+    for path in paths {
+        let (status, _) = route_json(server.clone(), request(&no_read, path)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    server
+        .vault()
+        .revoke_capability_slip(&issuer, slip.claims.slip_id)
+        .unwrap();
+    let (status, _) = route_json(server, request(&slip, paths[0])).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

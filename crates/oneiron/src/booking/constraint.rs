@@ -586,6 +586,7 @@ fn constraint_parse_llm_request(
     Ok(LlmRequest {
         model: config.model_id()?,
         envelope: CallEnvelope {
+            scope: crate::llm::Scope::default(),
             purpose: CallPurpose::Other {
                 name: CONSTRAINT_PARSE_CALL_PURPOSE.to_owned(),
             },

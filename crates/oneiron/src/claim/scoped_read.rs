@@ -15,6 +15,7 @@ use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFi
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
+mod note_visibility;
 mod retrieval_visibility;
 
 /// Actor key bound to a scoped read lane over the `core:read` surface.
@@ -527,6 +528,11 @@ impl<'a> ScopedRead<'a> {
         if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {
             return Ok(false);
         }
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+            && !self.note_readable_in(rtxn, &raw[ENTITY_METADATA_HEADER_LEN..])?
+        {
+            return Ok(false);
+        }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw)
         } else {
@@ -609,7 +615,7 @@ impl<'a> ScopedRead<'a> {
             if self.is_entity_readable_with_policy_in(rtxn, policy, &entity.id)? {
                 self.filter_context_entity_edges(rtxn, policy, &mut entity)?;
                 kept.push(entity);
-            } else if entity.entity_type == ENTITY_TYPE_CLAIM {
+            } else {
                 claims_suppressed += 1;
             }
         }

@@ -60,6 +60,7 @@
 
 mod driver;
 mod epoch;
+pub mod output;
 
 pub use driver::{
     CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver,

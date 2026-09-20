@@ -1,10 +1,14 @@
 //! Payload-aware scope axes, consent decisions, and batch evaluation.
 
+use super::tool_call::ToolGrantDataClass;
+use serde::{Deserialize, Serialize};
+
 /// Payload sensitivity ordered from least to most restrictive.
 ///
 /// [`Self::Unclassified`] is the fail-closed parse result. It sorts above the
 /// highest grantable ceiling, so it can never accidentally become public.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DataClass {
     Public,
     Personal,
@@ -59,6 +63,7 @@ pub struct ScopedMcpGrantRef<'a> {
     pub tool: &'a str,
     pub data_class_ceiling: DataClass,
     pub endpoint_allowlist: &'a [String],
+    pub tool_data_classes: &'a [ToolGrantDataClass],
 }
 
 /// One outbound tool call as the automated consent check sees it.
@@ -71,7 +76,8 @@ pub struct ScopedMcpCall<'a> {
 }
 
 /// Owned call axes threaded through the Gate before any transport is chosen.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScopedMcpCallContext {
     pub server: String,
     pub tool: String,
@@ -95,6 +101,7 @@ impl ScopedMcpCallContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScopedMcpEscalationReason {
     InvalidGrant,
+    ToolDataClassNotGranted,
     WrongPrincipal,
     WrongServer,
     WrongTool,
@@ -146,6 +153,7 @@ pub fn evaluate_scoped_mcp_call(
             .iter()
             .any(|endpoint| !is_canonical_non_empty(endpoint))
         || !grant.data_class_ceiling.is_grantable()
+        || !ToolGrantDataClass::valid_grant_set(grant.tool_data_classes)
     {
         return ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant);
     }
@@ -177,6 +185,14 @@ pub fn evaluate_scoped_mcp_call(
     if call.payload_data_class > grant.data_class_ceiling {
         return ScopedMcpConsentDecision::Escalate(
             ScopedMcpEscalationReason::DataClassCeilingExceeded,
+        );
+    }
+    if !grant
+        .tool_data_classes
+        .contains(&ToolGrantDataClass::Arguments)
+    {
+        return ScopedMcpConsentDecision::Escalate(
+            ScopedMcpEscalationReason::ToolDataClassNotGranted,
         );
     }
     ScopedMcpConsentDecision::AutoFire
