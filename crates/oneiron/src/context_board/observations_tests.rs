@@ -42,7 +42,7 @@ fn served_snapshot_resolves_real_supersession_and_loaded_requires_a_body() -> Re
     session.observe_snapshot(&read, first, kind, &body, false)?;
     assert!(session.refresh(&read, 1)?.rows.is_empty());
     vault.supersede_claim(&next, &first, 3)?;
-    let hidden = crate::test_util::entity(225);
+    let hidden = crate::EntityId::from_bytes([0x12; 16]).unwrap();
     vault.put_claim(
         &hidden,
         &ClaimBody::new(
