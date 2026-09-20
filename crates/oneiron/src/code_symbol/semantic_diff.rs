@@ -180,10 +180,34 @@ fn identity(node: tree_sitter::Node<'_>, source: &str) -> Option<String> {
         let trait_name = node
             .child_by_field_name("trait")
             .map(|n| &source[n.byte_range()]);
-        return Some(match trait_name {
+        let mut key = match trait_name {
             Some(trait_name) => format!("{}:{} for {}", node.kind(), trait_name, name),
             None => format!("{}:{}", node.kind(), name),
-        });
+        };
+        // Source capture sees every configuration, not just this host's build.
+        // Conditional siblings have distinct identities even when they name the
+        // same method. Conditions on an impl/module also qualify its children.
+        let mut conditions = Vec::new();
+        let mut previous = node.prev_named_sibling();
+        while let Some(attribute) = previous {
+            match attribute.kind() {
+                "line_comment" | "block_comment" => {}
+                "attribute_item" => {
+                    if let Some(name) = attribute.named_child(0).and_then(|n| n.named_child(0))
+                        && matches!(&source[name.byte_range()], "cfg" | "cfg_attr")
+                    {
+                        conditions.push(&source[attribute.byte_range()]);
+                    }
+                }
+                _ => break,
+            }
+            previous = attribute.prev_named_sibling();
+        }
+        conditions.sort_unstable();
+        for condition in conditions {
+            key.push_str(condition);
+        }
+        return Some(key);
     }
     None
 }
@@ -350,6 +374,28 @@ mod tests {
         assert_eq!(diff.len(), 1);
         assert_eq!(diff[0].symbol, "impl_item:A::function_item:f");
     }
+    #[test]
+    fn conditional_methods_and_impls_keep_distinct_stable_identities() {
+        for before in [
+            "impl Foo { #[cfg(unix)] fn f() { one(); } #[cfg(windows)] fn f() { other(); } }",
+            "#[cfg(unix)] impl Foo { fn f() { one(); } } #[cfg(windows)] impl Foo { fn f() { other(); } }",
+        ] {
+            let after = before.replace("one()", "two()");
+            let changes = semantic_code_diff("lib.rs", before, &after).unwrap();
+            assert_eq!(changes.len(), 1);
+            assert!(changes[0].symbol.contains("cfg(unix)"));
+            assert!(changes[0].symbol.contains("function_item:f"));
+        }
+        let before = "#[cfg(unix)] impl Foo { fn f() {} } #[cfg(windows)] impl Foo { fn f() {} }";
+        let after = "#[cfg(windows)] impl Foo { fn f() {} } #[cfg(unix)] impl Foo { fn f() {} }";
+        assert!(
+            semantic_code_diff("lib.rs", before, after)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(semantic_code_diff("lib.rs", "", "impl Foo { fn f() {} fn f() {} }").is_err());
+    }
+
     #[test]
     fn repeated_inherent_impls_keep_method_identity_and_ignore_block_order() {
         let before = "struct Foo;\nimpl Foo { fn a() { one(); } }\nimpl Foo { fn b() {} }\n";

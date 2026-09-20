@@ -238,3 +238,27 @@ fn exported_macros_are_root_api_even_from_private_modules() {
     .unwrap();
     assert!(rust_public_names(dir.path(), "fixture", "lib.rs").is_err());
 }
+
+#[test]
+fn conditional_exported_macros_need_compiler_metadata_in_every_module_shape() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("external.rs"),
+        "#[macro_export] macro_rules! conditional { () => {} }",
+    )
+    .unwrap();
+    for source in [
+        "#[cfg(unix)] #[macro_export] macro_rules! conditional { () => {} }",
+        "#[macro_export] #[cfg(unix)] macro_rules! conditional { () => {} }",
+        "#[cfg(unix)] mod hidden { #[macro_export] macro_rules! conditional { () => {} } }",
+        "#[cfg(unix)] mod external;",
+    ] {
+        std::fs::write(dir.path().join("lib.rs"), source).unwrap();
+        assert!(matches!(
+            rust_public_names(dir.path(), "fixture", "lib.rs"),
+            Err(crate::Error::Code(
+                crate::error::CodeError::InvalidRepoMutationRecord(_)
+            ))
+        ));
+    }
+}

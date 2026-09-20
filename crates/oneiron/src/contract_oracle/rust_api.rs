@@ -30,8 +30,23 @@ pub fn rust_public_names(
         names: &mut names,
         files: BTreeSet::new(),
     };
-    scan.file(root_file, &directory, crate_name, 0, true)?;
+    scan.file(
+        root_file,
+        &directory,
+        crate_name,
+        0,
+        ModuleScope {
+            reachable: true,
+            conditional: false,
+        },
+    )?;
     Ok(names)
+}
+
+#[derive(Clone, Copy)]
+struct ModuleScope {
+    reachable: bool,
+    conditional: bool,
 }
 
 struct Scan<'a> {
@@ -49,7 +64,7 @@ impl Scan<'_> {
         directory: &str,
         prefix: &str,
         depth: usize,
-        reachable: bool,
+        scope: ModuleScope,
     ) -> Result<()> {
         if depth > 64 || self.files.len() >= 4096 || !self.files.insert(file.to_owned()) {
             return Err(invalid("Rust module traversal is recursive or too large"));
@@ -68,14 +83,7 @@ impl Scan<'_> {
         if tree.root_node().has_error() {
             return Err(invalid("Rust source contains parse errors"));
         }
-        self.items(
-            tree.root_node(),
-            source,
-            directory,
-            prefix,
-            depth,
-            reachable,
-        )
+        self.items(tree.root_node(), source, directory, prefix, depth, scope)
     }
 
     fn items(
@@ -85,7 +93,7 @@ impl Scan<'_> {
         directory: &str,
         prefix: &str,
         depth: usize,
-        reachable: bool,
+        scope: ModuleScope,
     ) -> Result<()> {
         let mut cursor = parent.walk();
         let children: Vec<_> = parent.named_children(&mut cursor).collect();
@@ -97,6 +105,11 @@ impl Scan<'_> {
                 return Err(invalid("custom module paths require compiler API metadata"));
             }
             if node.kind() == "macro_definition" && exported_macro(*node, source)? {
+                if scope.conditional || conditional_attributes(*node, source) {
+                    return Err(invalid(
+                        "conditional macro exports require compiler API metadata",
+                    ));
+                }
                 let name = node
                     .child_by_field_name("name")
                     .ok_or_else(|| invalid("exported macro name missing"))?;
@@ -104,7 +117,7 @@ impl Scan<'_> {
                     .insert(format!("{}::{}", self.crate_name, text(name, source)));
                 continue;
             }
-            let visible = reachable && public(*node, source);
+            let visible = scope.reachable && public(*node, source);
             // A private module may contain a macro_export at the crate root.
             if !visible && node.kind() != "mod_item" {
                 continue;
@@ -131,8 +144,19 @@ impl Scan<'_> {
             match node.kind() {
                 "mod_item" => {
                     let child_directory = join(directory, name);
+                    let child_scope = ModuleScope {
+                        reachable: visible,
+                        conditional: scope.conditional || conditional_attributes(*node, source),
+                    };
                     if let Some(body) = node.child_by_field_name("body") {
-                        self.items(body, source, &child_directory, &full, depth + 1, visible)?;
+                        self.items(
+                            body,
+                            source,
+                            &child_directory,
+                            &full,
+                            depth + 1,
+                            child_scope,
+                        )?;
                     } else {
                         let flat = format!("{child_directory}.rs");
                         let nested = format!("{child_directory}/mod.rs");
@@ -147,7 +171,7 @@ impl Scan<'_> {
                                 ));
                             }
                         };
-                        self.file(&file, &child_directory, &full, depth + 1, visible)?;
+                        self.file(&file, &child_directory, &full, depth + 1, child_scope)?;
                     }
                 }
                 "struct_item" | "union_item" | "enum_item" | "trait_item" => {
@@ -202,6 +226,7 @@ fn text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
     &source[node.byte_range()]
 }
 fn exported_macro(node: Node<'_>, source: &str) -> Result<bool> {
+    let mut exported = false;
     let mut previous = node.prev_named_sibling();
     while let Some(attribute) = previous {
         match attribute.kind() {
@@ -212,7 +237,7 @@ fn exported_macro(node: Node<'_>, source: &str) -> Result<bool> {
                     .ok_or_else(|| invalid("macro attribute missing"))?;
                 let name = attribute.named_child(0).map(|n| text(n, source));
                 if name == Some("macro_export") {
-                    return Ok(true);
+                    exported = true;
                 }
                 if name == Some("cfg_attr") && text(attribute, source).contains("macro_export") {
                     return Err(invalid(
@@ -224,7 +249,25 @@ fn exported_macro(node: Node<'_>, source: &str) -> Result<bool> {
         }
         previous = attribute.prev_named_sibling();
     }
-    Ok(false)
+    Ok(exported)
+}
+fn conditional_attributes(node: Node<'_>, source: &str) -> bool {
+    let mut previous = node.prev_named_sibling();
+    while let Some(attribute) = previous {
+        match attribute.kind() {
+            "line_comment" | "block_comment" => {}
+            "attribute_item" => {
+                if let Some(name) = attribute.named_child(0).and_then(|n| n.named_child(0))
+                    && matches!(text(name, source), "cfg" | "cfg_attr")
+                {
+                    return true;
+                }
+            }
+            _ => break,
+        }
+        previous = attribute.prev_named_sibling();
+    }
+    false
 }
 fn public(node: Node<'_>, source: &str) -> bool {
     let mut cursor = node.walk();
