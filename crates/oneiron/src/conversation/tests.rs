@@ -858,3 +858,104 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
 
 #[path = "tests/audience_boundaries.rs"]
 mod audience_boundaries;
+
+#[test]
+fn room_members_reject_non_person_and_agent_def_atomically() {
+    let (_dir, vault, actor, room, bob) = fixture();
+    let agent = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &agent,
+            crate::registry::ENTITY_TYPE_AGENT_DEF,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode(&serde_json::json!({
+                "agentId": "oneiron.agent.room_fixture",
+                "desc": "Room member type fixture",
+                "version": "1.0.0",
+                "skills": [],
+                "connectors": [],
+                "codeModeMcps": [],
+                "scope": "all",
+                "approvalStatus": "approved",
+                "lifecycleStatus": "active",
+                "source": "user_stated",
+                "confidence": 1.0,
+                "generated": false,
+                "humanAuthored": true,
+                "provenance": {"definedVia": "define_agent"}
+            }))
+            .unwrap(),
+        )
+        .commit()
+        .unwrap();
+    for non_person in [room, agent] {
+        let new_room = EntityId::now();
+        let body = ConversationBody {
+            // A valid member is staged first, so refusal must roll back its ledger row.
+            member_ids: vec![bob, non_person],
+            ..Default::default()
+        };
+        assert_eq!(
+            vault
+                .create_conversation(new_room, &body, actor, 2)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidConversationBody
+        );
+        assert!(vault.get_raw(&new_room).unwrap().is_none());
+        assert!(vault.membership_ledger(new_room).unwrap().is_empty());
+        assert_eq!(
+            vault
+                .join_member(room, non_person, actor, 2, HistoryChoice::None)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidConversationBody
+        );
+        assert!(vault.members(room).unwrap().is_empty());
+        assert!(vault.membership_ledger(room).unwrap().is_empty());
+    }
+    vault
+        .join_member(room, bob, actor, 2, HistoryChoice::None)
+        .unwrap();
+    assert_eq!(vault.members(room).unwrap(), vec![bob]);
+}
+
+#[test]
+fn thread_replies_obey_membership_time_windows() {
+    let (_dir, vault, actor, room, bob) = fixture();
+    let trunk = record(room, actor, 1);
+    vault.append_record(&trunk).unwrap();
+    let before = vault
+        .reply_in_thread(trunk.id, &record(room, actor, 2))
+        .unwrap();
+    vault
+        .join_member(room, bob, actor, 3, HistoryChoice::None)
+        .unwrap();
+    let during = vault
+        .reply_in_thread(trunk.id, &record(room, actor, 4))
+        .unwrap();
+    vault.leave_member(room, bob, actor, 5).unwrap();
+    let gap = vault
+        .reply_in_thread(trunk.id, &record(room, actor, 6))
+        .unwrap();
+    vault
+        .join_member(room, bob, actor, 7, HistoryChoice::None)
+        .unwrap();
+    let after = vault
+        .reply_in_thread(trunk.id, &record(room, actor, 8))
+        .unwrap();
+
+    assert_eq!(
+        vault.thread(trunk.id).unwrap().replies,
+        vec![before, during, gap, after]
+    );
+    assert_eq!(vault.conversation_head(room).unwrap(), Some(trunk.id));
+    // Visibility is evaluated at each reply's time, not at the older trunk/root.
+    assert!(!vault.record_visible_to(trunk.id, bob).unwrap());
+    assert!(!vault.record_visible_to(before, bob).unwrap());
+    assert!(vault.record_visible_to(during, bob).unwrap());
+    assert!(!vault.record_visible_to(gap, bob).unwrap());
+    assert!(vault.record_visible_to(after, bob).unwrap());
+}

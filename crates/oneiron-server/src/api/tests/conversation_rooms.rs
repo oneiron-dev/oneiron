@@ -217,3 +217,62 @@ async fn member_backed_create_preserves_timestamps_and_text_selection() {
         }
     }
 }
+
+#[tokio::test]
+async fn conversation_kind_filters_are_exact_and_include_legacy_direct() {
+    let (_dir, server) = test_server();
+    let legacy = oneiron::EntityId::now();
+    // Seed an actual legacy body without kind, not a new create's defaults.
+    server
+        .vault
+        .batch()
+        .put(
+            &legacy,
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&json!({"title": "legacy room"})).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let mut by_kind = std::collections::BTreeMap::new();
+    for kind in ["direct", "agent", "group", "channel", "mirror"] {
+        let (status, response) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/conversations",
+                json!({
+                    "body": {"kind": kind, "external_id": "remote-room"}
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{response}");
+        by_kind.insert(kind, response["id"].as_str().unwrap().to_owned());
+    }
+    for (kind, expected) in [
+        ("agent", vec![by_kind["agent"].clone()]),
+        ("direct", vec![by_kind["direct"].clone(), legacy.to_hex()]),
+    ] {
+        let (status, response) = route_json(
+            server.clone(),
+            Request::builder()
+                .uri(format!("/v1/core/conversations?kind={kind}&limit=10"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{response}");
+        let mut actual: Vec<_> = response["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_owned())
+            .collect();
+        let mut expected = expected;
+        actual.sort();
+        expected.sort();
+        assert_eq!(actual, expected, "{kind}");
+    }
+}
