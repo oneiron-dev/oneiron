@@ -2559,10 +2559,20 @@ fn inbound_events_cross_the_existing_gate() {
     let google_outcome = run_sync(&vault, &google_seat(), &google, T0);
     assert_eq!(counters(&google_outcome), (1, 0, 0, 0));
 
-    for (uid, provider) in [
-        ("uid-gate-c@x", CALDAV_PROVIDER_KEY),
-        ("uid-gate-g@x", GOOGLE_INTERNAL_PROVIDER_KEY),
+    use sha2::{Digest, Sha256};
+
+    for (uid, provider, seat) in [
+        ("uid-gate-c@x", CALDAV_PROVIDER_KEY, caldav_seat()),
+        ("uid-gate-g@x", GOOGLE_INTERNAL_PROVIDER_KEY, google_seat()),
     ] {
+        let property_prefix = format!(
+            "calendar-source:{:x}:",
+            Sha256::digest(seat.config.system.as_bytes())
+        );
+        let expected_ref = format!(
+            "calendar-connector:{provider}:{}:{}:{uid}:{uid}",
+            seat.config.system, seat.config.calendar_ref
+        );
         let event = resolve_event_by_uid(&vault, uid)
             .expect("resolve")
             .expect("event");
@@ -2600,10 +2610,16 @@ fn inbound_events_cross_the_existing_gate() {
             let source_record_id = value_field(candidate, "source_record_id")
                 .and_then(rmpv::Value::as_str)
                 .expect("source_record_id");
-            assert!(
-                source_record_id.starts_with(&format!("calendar-connector:{provider}:")),
-                "the provenance ref names the transport, got {source_record_id}"
-            );
+            // Reconciled properties carry source ownership before the same
+            // transport provenance retained by origin and passport claims.
+            let transport_ref = if body.predicate == PREDICATE_CALENDAR_TIME_KIND {
+                source_record_id
+                    .strip_prefix(&property_prefix)
+                    .expect("time-kind provenance is scoped to its source")
+            } else {
+                source_record_id
+            };
+            assert_eq!(transport_ref, expected_ref);
         }
     }
 }

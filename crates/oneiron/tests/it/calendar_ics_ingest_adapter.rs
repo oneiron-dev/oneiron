@@ -779,10 +779,17 @@ fn parse_failure_never_marks_prior_uids_missing() {
 
 #[test]
 fn raw_ics_is_archived_before_semantic_admission() {
+    use sha2::{Digest, Sha256};
+
     let (_dir, vault) = temp_vault();
+    let cfg = config("work");
     let body = feed(&[EventSpec::new("uid-r@x", 1)]);
     let expected_hash = *blake3::hash(&body).as_bytes();
-    poll(&vault, &config("work"), complete(body, "v1"), T0).expect("poll");
+    let property_prefix = format!(
+        "calendar-source:{:x}:",
+        Sha256::digest(cfg.system.as_bytes())
+    );
+    poll(&vault, &cfg, complete(body, "v1"), T0).expect("poll");
 
     // Every semantic candidate's evidence names the archived blob version.
     let event = resolve_event_by_uid(&vault, "uid-r@x")
@@ -797,9 +804,17 @@ fn raw_ics_is_archived_before_semantic_admission() {
         let source_record_id = value_field(candidate, "source_record_id")
             .and_then(rmpv::Value::as_str)
             .expect("source_record_id");
-        let (artifact_hex, _) = source_record_id
+        let archive_ref = if claim.predicate == PREDICATE_CALENDAR_TIME_KIND {
+            source_record_id
+                .strip_prefix(&property_prefix)
+                .expect("time-kind provenance is scoped to its source")
+        } else {
+            source_record_id
+        };
+        let (artifact_hex, version_and_uid) = archive_ref
             .split_once("#v")
             .expect("blob version provenance");
+        assert_eq!(version_and_uid, "1:uid-r@x");
         artifact_refs.insert(artifact_hex.to_owned());
     }
     assert_eq!(artifact_refs.len(), 1, "one archive backs every candidate");
