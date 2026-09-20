@@ -444,9 +444,6 @@ pub(in crate::batch) fn apply_put(
         None
     };
     let data = reconciled_critical_claim_body.as_deref().unwrap_or(data);
-    let breaker_demoted_claim_body =
-        super::gate_staging::demote_claim_body(staged_claim_gate, &mut decoded_claim_body)?;
-    let data = breaker_demoted_claim_body.as_deref().unwrap_or(data);
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = authority_entry_hash_pin
@@ -672,6 +669,9 @@ pub(in crate::batch) fn apply_put(
     // never be re-presented as an ordinary birth. Only a genuine optimizer-born
     // create at an unmarked id produces a row here.
     stage_optimizer_birth_marker_row(store, wtxn, optimizer_birth_marker)?;
+    if let Some(body) = decoded_claim_body.as_ref() {
+        crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+    }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {

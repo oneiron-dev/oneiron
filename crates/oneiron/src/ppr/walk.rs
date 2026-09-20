@@ -364,7 +364,7 @@ fn visible_neighbor(
 ) -> Result<bool> {
     match context.visibility {
         Some(visibility) => visibility.ppr_node_visible(context.txn, &edge.neighbor),
-        None => Ok(true),
+        None => crate::note::ordinary_entity_visible(context.store, context.txn, &edge.neighbor),
     }
 }
 fn cache_state_from_maps(

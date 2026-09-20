@@ -84,6 +84,12 @@ pub(super) fn hydrate_entity(
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
 
+    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+        && !crate::note::note_body_readable(&raw[ENTITY_METADATA_HEADER_LEN..], None)
+    {
+        return Ok(None);
+    }
+
     let mut gated_claim_body: Option<&ClaimBody> = None;
     let decoded_here: Option<ClaimBody>;
     if header.entity_type == ENTITY_TYPE_CLAIM {

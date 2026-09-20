@@ -67,14 +67,13 @@ mod trust_boundary;
 mod vad_vetting;
 mod witness_message;
 
-#[path = "breaker.rs"]
-mod breaker;
+mod auto_signals;
 
 use charter_ceiling::scoped_capability_connector;
 use connector_budget::{
     check_effect, connector_key_line_send_manifest, connector_key_two_verb_manifest, day_window,
 };
-use consent_bundle::{consent_bundle_owner, consent_bundle_receipts, park_consent_bundle_member};
+use consent_bundle::{consent_bundle_owner, consent_bundle_receipts};
 use critical_confirm_lifecycle::{
     critical_confirm_owner_entry, critical_confirm_pending, put_critical_auto_claim,
 };

@@ -5,6 +5,7 @@
 //! first-party memory writes through the existing batch/gate chokepoint. The
 //! sandbox link-time boundary contract lives in [`crate::code_sandbox`].
 
+pub mod actions;
 pub mod blocked;
 pub mod consent;
 pub mod vault_read;

@@ -87,8 +87,10 @@ impl ScopedRead<'_> {
         if self.vault.archive_tombstone_in_txn(&txn, id)?.is_some() {
             return Ok(None);
         }
-        if header.entity_type == ENTITY_TYPE_CLAIM
-            && !self.is_claim_raw_readable_in(&txn, id, &live)?
+        if (header.entity_type == ENTITY_TYPE_CLAIM
+            && !self.is_claim_raw_readable_in(&txn, id, &live)?)
+            || (header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                && !self.note_readable_in(&txn, &live[ENTITY_METADATA_HEADER_LEN..])?)
         {
             return Ok(None);
         }
@@ -112,8 +114,10 @@ impl ScopedRead<'_> {
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type == ENTITY_TYPE_CLAIM
-            && !self.is_claim_raw_readable_in(&txn, id, &raw)?
+        if (header.entity_type == ENTITY_TYPE_CLAIM
+            && !self.is_claim_raw_readable_in(&txn, id, &raw)?)
+            || (header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                && !self.note_readable_in(&txn, &raw[ENTITY_METADATA_HEADER_LEN..])?)
         {
             return Ok(None);
         }
@@ -179,6 +183,9 @@ impl ScopedRead<'_> {
         let Some(raw) = raw else {
             return Ok(false);
         };
+        if raw[0] == crate::registry::ENTITY_TYPE_NOTE {
+            return self.note_readable_in(txn, &raw[ENTITY_METADATA_HEADER_LEN..]);
+        }
         if raw[0] != ENTITY_TYPE_CLAIM {
             return Ok(true);
         }
