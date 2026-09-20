@@ -3432,7 +3432,8 @@ fn forward_remat_refuses_replicated_message_bodies_before_any_mutation() -> Resu
 }
 
 #[test]
-fn replicated_lww_overwrite_removes_loser_bm25f_in_the_write_transaction() -> Result<()> {
+fn replicated_lww_overwrite_keeps_indexed_body_until_idle_removes_loser_bm25f() -> Result<()> {
+    use crate::memory::ReadMode;
     let (_dir, vault) = test_vault();
     let id = EntityId::now();
     vault.put_entity(
@@ -3463,7 +3464,30 @@ fn replicated_lww_overwrite_removes_loser_bm25f_in_the_write_transaction() -> Re
                 b"winner",
             )
             .apply(txn)?;
-        // Assert stored postings inside the overwrite transaction, before commit.
+        let row = vault.store.entities.get(txn, id.as_bytes())?.unwrap();
+        assert_eq!(&row[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"winner");
+        Ok(())
+    })?;
+    // A replicated overwrite advances Live, not the published search frontier.
+    // Retained hits must still hydrate the exact body that owned those postings.
+    let hits = vault.search_text("loseruniquetoken", 10)?;
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].id, id);
+    let indexed = vault.get_raw_with_mode(&id, ReadMode::Indexed)?.unwrap();
+    assert_eq!(&indexed[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"old");
+    let live = vault.get_raw_with_mode(&id, ReadMode::Live)?.unwrap();
+    assert_eq!(&live[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"winner");
+
+    vault.set_indexed_idle_delay_ms(0)?;
+    let report = vault.refresh_staged_indexed_at_idle(u64::MAX)?;
+    assert_eq!(report.refreshed.len(), 1);
+    assert_eq!(report.refreshed[0].0, id);
+    assert!(report.failed.is_empty());
+    assert!(report.superseded.is_empty());
+    assert_eq!(vault.get_raw_with_mode(&id, ReadMode::Indexed)?, Some(live));
+    assert!(vault.search_text("loseruniquetoken", 10)?.is_empty());
+    vault.with_write_txn(|txn| {
+        // Idle publication removes every old text-index component together.
         assert!(vault.store.text_forward.get(txn, id.as_bytes())?.is_none());
         assert!(
             vault
