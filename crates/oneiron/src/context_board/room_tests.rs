@@ -201,4 +201,28 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
             bar: RoomBar::High
         }
     );
+
+    // A capped room read must not materialize the rest of a large inbound lane.
+    let edge_value = crate::edge::encode_edge_value(
+        crate::EdgeKind::BelongsTo,
+        1.0,
+        0,
+        crate::affect::Vad::NEUTRAL,
+        None,
+    )
+    .unwrap();
+    vault
+        .with_write_txn(|txn| {
+            for n in 0..=crate::vault::MAX_EDGE_QUERY_RESULTS {
+                let mut bytes = [0xff; 16];
+                bytes[8..].copy_from_slice(&(n as u64).to_be_bytes());
+                let peer = EntityId::from_bytes(bytes).unwrap();
+                let key =
+                    crate::store::Store::encode_edge_key(&room, crate::EdgeKind::BelongsTo, &peer);
+                vault.store.edges_in.put(txn, &key, &edge_value)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(memory.rooms_messages(room, &presence, 1).unwrap().len(), 1);
 }
