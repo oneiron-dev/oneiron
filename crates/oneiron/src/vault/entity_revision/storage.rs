@@ -212,10 +212,9 @@ pub(crate) fn capture_entity_revision(
         .get(txn, id.as_bytes())?
         .map(|r| r.to_vec());
     let existing = state(store, txn, id)?;
-    // Opaque/immutable structural rows need no document until explicitly pinned.
-    if existing.is_none() && text_fields(&new_raw[ENTITY_METADATA_HEADER_LEN..]).is_empty() {
-        return Ok(());
-    }
+    // Every citable row needs a lightweight revision/identity binding, including
+    // opaque structural rows. The Loro document still waits for a replacement
+    // or explicit citation, but a read-only pack can already emit a usable pin.
     let metadata_only = prior.as_deref().is_some_and(|old| {
         old.first() == new_raw.first()
             && old.get(ENTITY_METADATA_HEADER_LEN..) == Some(&new_raw[ENTITY_METADATA_HEADER_LEN..])

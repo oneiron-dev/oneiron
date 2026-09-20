@@ -636,6 +636,36 @@ fn chat_answers_cite_short_ids_that_hydrate_back_out_of_the_pack() {
     let sources = &answered.source_short_ids;
     let views = memory.hydrate(sources).expect("hydrate sources");
     assert_eq!(views.len(), sources.len());
+
+    // A structural TURN has no editable text leaves. Its implicit pack pin
+    // must still survive a later metadata write, without an explicit pin call.
+    let turn = views.iter().find(|view| view.kind == "TURN").unwrap();
+    let id = EntityId::from_hex(&turn.id_hex).unwrap();
+    let raw = vault
+        .get_raw_with_mode(&id, crate::vault::ReadMode::Live)
+        .unwrap()
+        .unwrap();
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    let learned_at = header.learned_at.checked_add(1).unwrap();
+    vault
+        .batch()
+        .put(
+            &id,
+            header.entity_type,
+            crate::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            learned_at,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .commit()
+        .unwrap();
+    assert_eq!(
+        memory.get_entity(&turn.id_hex).unwrap().unwrap().learned_at,
+        learned_at
+    );
+    assert_eq!(memory.hydrate(sources).unwrap(), views);
 }
 
 #[test]

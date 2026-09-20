@@ -446,3 +446,28 @@ R10 stopped at fixture compilation before running the HTTP case: the managed
 argument parser returns `Result<Option<ManagedArgs>>`. The fixture now unwraps
 the selected managed mode as the neighboring fixtures do. R9's nine runtime
 passes are retained; this changes no production code or assertion.
+
+
+### R11 full runtime failure: implicit structural citations lacked identity
+
+At `660f5964`, code-map, fmt, all three Clippy lanes and strict rustdoc passed.
+Full run `efc5d2a7-2a95-4751-b57a-218a150e76c2` ran 4087/9472 tests: 4086 passed
+(eight slow), one failed, 21 skipped, 5385 unrun. Featureless runtime, doctests and
+narrow sync were unrun. The failure was the existing chat→hydrate round trip.
+
+The facade already parses `@revision` and uses exact pinned reads. The missing
+piece was storage admission: opaque TURN rows skipped the lightweight revision
+state/identity binding, yet a read-only recall pack emitted a revision-qualified
+reference for them. Resolution therefore returned NOT_FOUND. All non-custody
+rows now receive the same lightweight binding. Loro documents remain lazy until
+replacement or explicit citation; secret custody still returns before capture.
+The earlier optimization note about skipping opaque rows was too broad: skipping
+document creation is valid, skipping the identity of an emitted pin is not.
+
+The existing failing chat test now also changes the cited structural TURN's
+metadata and proves the original hydrated views stay exact while the live view
+advances. It never calls an explicit pin helper to mask the missing admission.
+No pin suffix is stripped and no latest-row fallback is added.
+
+This adds lightweight state and identity metadata for otherwise unversioned opaque
+rows; it does not create an eager document snapshot at insertion.
