@@ -104,13 +104,7 @@ impl FirecrackerBackend {
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
     ) -> Result<MicroVmExit> {
-        if !budget.is_bounded()
-            || budget.wall_clock_secs > 86_400
-            || budget.mem_mib > 65_536
-            || budget.pids > 65_536
-        {
-            return Err(refused("execution budget outside supported bounds"));
-        }
+        validate_guest_budget(&budget)?;
         let config = self
             .config
             .as_ref()
@@ -259,4 +253,17 @@ fn refused(detail: &'static str) -> Error {
         backend: FIRECRACKER_BACKEND_NAME,
         detail: detail.to_owned(),
     })
+}
+
+fn validate_guest_budget(budget: &ExecutionBudget) -> Result<()> {
+    // Protocol v1 and the provisioned guest cgroup door both cap pids at 4096.
+    // Refuse an unsupported request before boot, not at the first guest frame.
+    if !budget.is_bounded()
+        || budget.wall_clock_secs > 86_400
+        || budget.mem_mib > 65_536
+        || budget.pids > 4096
+    {
+        return Err(refused("execution budget outside supported bounds"));
+    }
+    Ok(())
 }

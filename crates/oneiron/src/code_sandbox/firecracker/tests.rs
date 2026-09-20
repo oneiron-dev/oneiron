@@ -158,3 +158,18 @@ fn firecracker_real_boot_returns_only_proposals() -> Result<()> {
     assert!(adapter.collect_overlay_proposals().is_err());
     Ok(())
 }
+
+#[test]
+fn guest_pid_budget_matches_protocol_ceiling_before_boot() {
+    for pids in [1, 4096] {
+        validate_guest_budget(&ExecutionBudget::new(15, 128, pids)).unwrap();
+    }
+    for pids in [0, 4097, 65_536] {
+        assert_eq!(
+            validate_guest_budget(&ExecutionBudget::new(15, 128, pids))
+                .unwrap_err()
+                .kind(),
+            crate::error::ErrorKind::MicroVmBackendError
+        );
+    }
+}
