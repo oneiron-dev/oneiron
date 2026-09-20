@@ -622,3 +622,15 @@ Qodo changed head links only, CodeRabbit refreshed its skip notice, Codex
 `5747184109` is an explicit usage refusal. All internal findings remain retained.
 No new review or worker was started. R17 green evidence remains bound to its
 unchanged sources; R18 is pending, not a completion claim.
+
+
+### R18 compile terminal
+
+R18 was admitted after the normal capacity wait, formatted and committed
+`e04dbafa`/`d1748830`, then stopped at Clippy exit 101: the new call supplied
+`EntityId` where `indexed_revision` takes `&EntityId`. **Zero R18 tests ran**.
+R19 corrects that borrow without changing the pinning design. Existing R17
+partial greens remain; no full-runtime, featureless, doctest or sync pass is
+claimed. The full own-PR intake was refreshed again; only our progress comment
+changed, with no new external finding. R19 first proves the fleet fixture and
+then runs the remaining test stages on a frozen candidate.
