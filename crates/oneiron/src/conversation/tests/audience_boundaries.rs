@@ -26,10 +26,14 @@ fn make_unavailable(vault: &Vault, id: EntityId, state: Unavailable) {
                 request_id: [1; 16],
             };
             vault
-                .sync_state_put(
-                    &crate::deletion::archive_tombstone_key(&id),
-                    &tombstone.encode(),
-                )
+                .with_write_txn(|txn| {
+                    vault.store.sync_state.put(
+                        txn,
+                        &crate::deletion::archive_tombstone_key(&id),
+                        &tombstone.encode(),
+                    )?;
+                    Ok(())
+                })
                 .unwrap();
         }
         state => vault
@@ -198,7 +202,7 @@ fn replicated_rooms_before_members_do_not_wedge_live_or_recovery_replay() {
         let window =
             live_observer.then(|| LoadedWindow::new("remote", key.clone(), &vault, &materializer));
         let bare = create_window_doc("remote", &key);
-        let doc = window.as_ref().map(|window| &window.doc).unwrap_or(&bare);
+        let doc = window.as_ref().map_or(&bare, |window| &window.doc);
         let replay = || {
             if !live_observer {
                 forward_rematerialize(&vault, doc, &materializer, &key).unwrap();
