@@ -1851,13 +1851,15 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
     };
     block_on_ready(executor.execute(&admitted, &mut ctx))?;
 
-    // Contradictions land only as a conflict.open marker, not as a belief.
-    assert_eq!(sink.accepted.len(), 1);
-    assert_eq!(
-        sink.accepted[0].candidate.predicate(),
-        crate::claim::PREDICATE_CONFLICT_OPEN
-    );
-    assert!(sink.accepted[0].supersedes.is_none());
+    // The fenced marker writer persists the open question directly. The
+    // ordinary belief sink must not receive any conflicting candidate.
+    assert!(sink.accepted.is_empty());
+    let markers = vault.claims_for_subject(&subject)?;
+    assert_eq!(markers.len(), 1);
+    let marker = vault.get_claim(&markers[0])?.expect("durable open question");
+    assert_eq!(marker.predicate, crate::claim::PREDICATE_CONFLICT_OPEN);
+    assert_eq!(marker.approval, crate::ClaimApprovalStatus::Proposed);
+    assert!(vault.edges_out(&markers[0])?.iter().all(|edge| edge.kind != EdgeKind::Supersedes));
     let probe = ReflectionGap {
         kind: ReflectionGapKind::ContradictionLeftStanding,
         subject,
