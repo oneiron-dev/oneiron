@@ -219,7 +219,7 @@ fn verify_writes(vault: &Vault, agents: &mut [Agent], round: usize) -> Result<()
         // Pin the expected frontier outside measured write/recall traffic instead
         // of accepting any revision by stripping the returned suffix.
         let revision = vault
-            .indexed_revision(message_id)?
+            .indexed_revision(&message_id)?
             .ok_or("committed message has no indexed revision")?;
         agent.expected_message = format!("{}@{}", agent.expected_message, revision.to_hex());
     }
