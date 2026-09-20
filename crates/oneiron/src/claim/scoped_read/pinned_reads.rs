@@ -2,7 +2,7 @@
 use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::decode_claim_body;
-use crate::{EntityId, Error, Result};
+use crate::{Error, Result};
 
 impl ScopedRead<'_> {
     /// Current engine-issued refs for live claims in declared critical classes.
@@ -12,8 +12,14 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let mut value = Vec::new();
         let mut suppressed = 0;
-        for entry in self.entities().iter(&txn)? {
-            let (key, raw) = entry?;
+        for id in crate::claim::projection_index::pinned_claim_ids_in_txn(
+            &self.vault.store,
+            &txn,
+            &policy,
+        )? {
+            let Some(raw) = self.entities().get(&txn, id.as_bytes())? else {
+                continue;
+            };
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("pin entity header"))?;
             if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
@@ -25,11 +31,6 @@ impl ScopedRead<'_> {
             if !policy.pins_predicate(&body.predicate) {
                 continue;
             }
-            let id = EntityId::from_bytes(
-                key[..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("pin entity id"))?,
-            )?;
             if !self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &id)? {
                 suppressed += 1;
                 continue;
@@ -55,6 +56,7 @@ impl ScopedRead<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EntityId;
     use crate::claim::{ClaimBody, ClaimSource, ClaimSubject, ScopedReadActorKey};
     #[test]
     fn manifest_critical_claims_are_pinned_without_query_selection() -> Result<()> {
@@ -103,6 +105,17 @@ mod tests {
             crate::gate::default_policy_manifest_id()?,
             &bytes,
         )?;
+        // A targeted pin lookup must not decode unrelated entity rows. This
+        // malformed legacy row is outside every claim posting list.
+        let unrelated = EntityId::now();
+        {
+            let mut txn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .entities
+                .put(&mut txn, unrelated.as_bytes(), b"bad")?;
+            txn.commit()?;
+        }
         let pins = reader.manifest_pinned_refs()?;
         assert_eq!(pins.value.len(), 1);
         assert_eq!(pins.receipt.suppressed_count, 0);
@@ -162,6 +175,10 @@ mod tests {
         assert!(hidden.value.is_empty());
         assert_eq!(hidden.receipt.suppressed_count, 1);
         assert!(!hidden.receipt.narrowed_axes.is_empty());
+        vault.batch().delete(&id).commit()?;
+        let deleted = reader.manifest_pinned_refs()?;
+        assert!(deleted.value.is_empty());
+        assert_eq!(deleted.receipt.suppressed_count, 0);
         Ok(())
     }
 }
