@@ -129,6 +129,15 @@ impl GitWire<'_> {
         spawn_git(&self.process_env, root, argv.args(), argv.stdin())
     }
 
+    fn validate_repo_binding(&self, repo: &GitWireRepo) -> Result<()> {
+        // Git searches ancestor directories when a checkout loses its own
+        // .git entry. A cached handle must not silently move to that ancestor.
+        if self.canonical_common_dir(&repo.repo_root)? != repo.common_dir {
+            return Err(invalid("git wire repository binding changed"));
+        }
+        Ok(())
+    }
+
     /// Runs a read. Every operation whose effect class is not [`Read`] is
     /// refused before a child can be spawned, so a "read" can never remove a
     /// worktree or move a ref.
@@ -142,6 +151,7 @@ impl GitWire<'_> {
         if !argv.operation().effect_class().is_read() {
             return Err(invalid("git wire read phase refuses a mutating operation"));
         }
+        self.validate_repo_binding(repo)?;
         self.run_at(&repo.repo_root, argv)
     }
 
@@ -157,6 +167,7 @@ impl GitWire<'_> {
                 "git wire mutation phase refuses a read-only operation",
             ));
         }
+        self.validate_repo_binding(repo)?;
         self.run_at(&repo.repo_root, argv)
     }
 
@@ -172,6 +183,7 @@ impl GitWire<'_> {
                 "git wire publication phase refuses an object-producing operation",
             ));
         }
+        self.validate_repo_binding(repo)?;
         let output = self.run_raw_at(&repo.repo_root, argv)?;
         if output.success {
             return Ok(Ok(output));

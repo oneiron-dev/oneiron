@@ -44,6 +44,9 @@ fn scoped_mcp_grant_codec_round_trips_all_payload_axes() -> Result<()> {
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
             data_class_ceiling: DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
             endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
         },
         status: StandingOutboundGrantStatus::Active,
@@ -71,7 +74,13 @@ fn scoped_mcp_grant_codec_round_trips_all_payload_axes() -> Result<()> {
     let Value::Map(scope_entries) = &scope.1 else {
         panic!("scope map");
     };
-    for required in ["server", "tool", "data_class_ceiling", "endpoint_allowlist"] {
+    for required in [
+        "server",
+        "tool",
+        "data_class_ceiling",
+        "endpoint_allowlist",
+        "tool_data_classes",
+    ] {
         assert!(
             scope_entries
                 .iter()
@@ -218,6 +227,9 @@ fn scoped_mcp_grant_decode_rejects_every_non_nil_legacy_scope_field() -> Result<
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
             data_class_ceiling: DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
             endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
         },
         status: StandingOutboundGrantStatus::Active,
@@ -462,12 +474,17 @@ fn scoped_intent(server: &str) -> ScopedMcpGrantMintIntent {
         server: server.to_owned(),
         tool: "read_file".to_owned(),
         data_class_ceiling: DataClass::Personal,
+        tool_data_classes: vec![crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
         endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
     }
 }
 
 fn scoped_mcp_scope_value(server: &str) -> Value {
     Value::Map(vec![
+        (
+            Value::from("tool_data_classes"),
+            Value::Array(vec![Value::from("arguments")]),
+        ),
         (
             Value::from(SCOPE_KEYS[0]),
             Value::from(SCOPE_KIND_SCOPED_MCP),
@@ -619,6 +636,9 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
             server: "files:extra".to_owned(),
             tool: "read_file".to_owned(),
             data_class_ceiling: DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
             endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
         },
         ..hyphen
@@ -689,6 +709,7 @@ fn scoped_mcp_admission_shares_the_safe_server_rule() {
             server: unsafe_server,
             tool: "read_file",
             data_class_ceiling: DataClass::Personal,
+            tool_data_classes: &[crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
             endpoint_allowlist: &endpoints,
         };
         assert_eq!(
@@ -722,6 +743,9 @@ fn schema_v2_carries_every_outbound_scope_and_rejects_other_versions() -> Result
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
             data_class_ceiling: DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
             endpoint_allowlist: vec!["https://files.example.test".to_owned()],
         },
         StandingOutboundGrantScope::BookingPageInvites {
@@ -793,3 +817,5 @@ fn schema_v2_carries_every_outbound_scope_and_rejects_other_versions() -> Result
     }
     Ok(())
 }
+
+mod header_classes;

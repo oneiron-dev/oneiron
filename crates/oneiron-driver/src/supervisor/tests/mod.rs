@@ -6,8 +6,6 @@ use super::{config::*, factory::*, pass::*, run::*, shutdown::*};
 use crate::tick::PushTick;
 use crate::tick::{Tick, TickSource};
 use oneiron::attempt_queue::AttemptId;
-#[cfg(all(unix, feature = "voice"))]
-use oneiron::edge::EdgeActorClass;
 use oneiron::{
     BudgetGuard, ConsolidationSink, DreamerAdmittedAttempt, DreamerAttemptExecution,
     DreamerAttemptExecutor, DreamerBudgetReserveOutcome, DreamerConsolidationScope,
