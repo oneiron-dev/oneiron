@@ -205,23 +205,29 @@ fn root_and_parent_projects_cannot_be_deleted_at_any_door() -> Result<()> {
 }
 
 #[test]
-fn soft_erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    let root = vault.root_project()?;
-    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
-    let parent = EntityId::now();
-    vault.put_project(
-        parent,
-        &ProjectRecord::new(parent, Some(root), root, leader),
-        1,
-    )?;
-    vault.delete_entity_with_reason(&parent, crate::DeleteReason::UserDelete)?;
-    let child = EntityId::now();
-    let body = ProjectRecord::new(child, Some(parent), root, leader);
-    let error = vault.put_project(child, &body, 2).unwrap_err();
-    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
-    assert!(vault.get(&child)?.is_none());
-    assert!(vault.get(&EntityId::from_hex(&body.home_room)?)?.is_none());
+fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
+    for hard in [false, true] {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let root = vault.root_project()?;
+        let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+        let parent = EntityId::now();
+        vault.put_project(
+            parent,
+            &ProjectRecord::new(parent, Some(root), root, leader),
+            1,
+        )?;
+        if hard {
+            vault.delete_entity(&parent)?;
+        } else {
+            vault.delete_entity_with_reason(&parent, crate::DeleteReason::UserDelete)?;
+        }
+        let child = EntityId::now();
+        let body = ProjectRecord::new(child, Some(parent), root, leader);
+        let error = vault.put_project(child, &body, 2).unwrap_err();
+        assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
+        assert!(vault.get(&child)?.is_none());
+        assert!(vault.get(&EntityId::from_hex(&body.home_room)?)?.is_none());
+    }
     Ok(())
 }

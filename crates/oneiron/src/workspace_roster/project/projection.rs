@@ -17,6 +17,13 @@ fn dependency(
     kind: u8,
 ) -> Result<ProjectRecord> {
     let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        if store
+            .sync_state
+            .get(txn, &crate::deletion::local_hard_delete_key(&id))?
+            .is_some()
+        {
+            return Err(invalid());
+        }
         return Err(RecordError::ProjectDependencyPending.into());
     };
     let header = EntityMetadataHeader::parse(&raw)
