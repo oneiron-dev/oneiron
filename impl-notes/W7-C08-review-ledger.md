@@ -512,3 +512,40 @@ finding. The PR response's base SHA was stale; Git remote and GitHub's branch
 API both confirm current main is `60c5b875`, already an ancestor. No new merge
 or full-baseline retest is needed. Targeted integration retest and final same-root
 review follow this repair; terminal evidence will be posted to PR #933.
+
+
+## Post-C01 full-run serialization fixture closure (2026-09-20)
+
+Complete PR #933 intake before the repair: **19 issue comments, 40 reviews,
+127 inline comments, 57 complete threads**. No new inline/review finding; the
+only edited comment was our own previous result `5747442747`. All original
+internal roots, F01–F51, T01–T03 and informational dispositions are retained.
+The explicit Codex quota error `5746428374` stays **unavailable**, not pending
+or a passing review. Qodo `5740808018` supplies no new requested fix; CodeRabbit
+`5740792880` says automatic review is disabled. Historical findings are not
+discarded. This section pertains only to PR #933.
+
+- **T04 — fixed and validated:** the new full nine-crate run on `6889d842` had
+  8,957 passes, one failure and 21 ignored cases. The failing serializer
+  round-trip used source `gemini` for a provider `contents` envelope. The
+  merged registry correctly refused it with `InvalidDocumentField` at
+  `activities`: `gemini` now selects native Takeout, `gemini-api` selects the
+  API decoder. Commit `0cf4d4ea` fixes that one test tuple. All secret, shape,
+  and round-trip assertions and all production bytes are unchanged. The exact
+  featureless retest compiled and passed **1/1** on guarded Arch; 6,632 tests
+  were outside this selection. The other 8,957 full-run passes are retained,
+  not rerun. The original failed command is not relabeled green.
+- **I09 — informational, no code change:** same-root native Opus on `0cf4d4ea`
+  confirmed the production refusal is correct and returned **LANDABLE**.
+  Recall output format `gemini` and ingest source `gemini` are separate
+  namespaces; an API-envelope re-import selects `gemini-api`. This matching
+  door is recorded as canon guidance in `W7-C08.md`; no public ID is renamed.
+  Default first-party Opus was available, so alt/alt2/CPA fallbacks were not
+  invoked. The existing root `97ea64e4-5600-4163-8c82-a189a474d762` is retained.
+
+The final documentation-only head will receive the same root's confirmation;
+its exact-head receipt and the final PR explanation are recorded outside the
+repo under `post-current-main-test-receipts/`. No extra source repair,
+full-baseline rerun, human draft mutation or unrelated-ticket disposition was
+introduced. Current local main `60c5b875` already merges cleanly with this
+branch; a stale PR API base/head report is not cause to repeat a merge.
