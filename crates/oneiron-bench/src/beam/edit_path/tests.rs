@@ -78,3 +78,34 @@ fn edit_oracle_rejects_successful_exit_without_completed_tests() -> BeamResult<(
     assert!(!result.success);
     Ok(())
 }
+
+#[test]
+fn edit_oracle_rejects_forged_libtest_summary_from_a_child_process() -> BeamResult<()> {
+    let root = tempfile::tempdir()?;
+    write_pack(root.path())?;
+    let candidate = root.path().join("small_edit");
+    std::fs::write(
+        candidate.join("src/lib.rs"),
+        r#"
+        pub mod math;
+        pub fn quote(_: u64, _: u64) -> Option<u64> {
+            std::process::Command::new("echo").arg("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;").status().unwrap();
+            std::process::exit(0)
+        }
+        pub fn currency() -> &'static str { "EUR" }
+    "#,
+    )?;
+    let task = pack()?.tasks.remove(0);
+    let result = evaluate(
+        &task,
+        &EditAttempt {
+            arm: "fixture".into(),
+            task: task.id.clone(),
+            candidate,
+        },
+    )?;
+    assert!(!result.tests_pass);
+    assert!(!result.contracts_pass);
+    assert!(!result.success);
+    Ok(())
+}

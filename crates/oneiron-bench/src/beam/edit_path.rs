@@ -31,10 +31,16 @@ struct EditTask {
     shape: String,
     instruction: String,
     files: BTreeMap<String, String>,
-    tests: String,
-    test_count: usize,
-    contracts: String,
-    contract_count: usize,
+    driver: String,
+    tests: Vec<EditProbe>,
+    contracts: Vec<EditProbe>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct EditProbe {
+    args: Vec<String>,
+    expected: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,7 +75,7 @@ pub(super) struct EditPathReport {
 
 fn pack() -> BeamResult<EditTaskPack> {
     let pack: EditTaskPack = serde_json::from_str(PACK)?;
-    if pack.version != 1 || pack.tasks.len() != 5 {
+    if pack.version != 2 || pack.tasks.len() != 5 {
         return Err(BeamError::InvalidFixture {
             fixture_id: pack.repo,
             reason: "invalid edit task pack".into(),
@@ -100,7 +106,7 @@ pub(super) fn run_manifest(path: &Path) -> BeamResult<EditPathReport> {
     let attempts: Vec<EditAttempt> = serde_json::from_slice(&std::fs::read(path)?)?;
     let pack = pack()?;
     let mut report = EditPathReport {
-        oracle: "tests-plus-contract/v1",
+        oracle: "tests-plus-contract/host-observed-v2",
         results: Vec::new(),
         arms: BTreeMap::new(),
     };
@@ -132,7 +138,6 @@ pub(super) fn run_manifest(path: &Path) -> BeamResult<EditPathReport> {
 fn evaluate(task: &EditTask, attempt: &EditAttempt) -> BeamResult<EditOracleResult> {
     let oracle = tempfile::tempdir()?;
     std::fs::create_dir(oracle.path().join("src"))?;
-    std::fs::create_dir(oracle.path().join("tests"))?;
     // This fixture has two source units. Only those units can affect the build;
     // candidate tests/build.rs/manifests cannot replace the independent oracle.
     for name in task.files.keys() {
@@ -147,10 +152,21 @@ fn evaluate(task: &EditTask, attempt: &EditAttempt) -> BeamResult<EditOracleResu
         std::fs::write(oracle.path().join(name), std::fs::read(path)?)?;
     }
     std::fs::write(oracle.path().join("Cargo.toml"), ORACLE_MANIFEST)?;
-    std::fs::write(oracle.path().join("tests/task.rs"), &task.tests)?;
-    std::fs::write(oracle.path().join("tests/contract.rs"), &task.contracts)?;
-    let tests_pass = test_suite(oracle.path(), "task", task.test_count)?;
-    let contracts_pass = test_suite(oracle.path(), "contract", task.contract_count)?;
+    std::fs::write(oracle.path().join("src/main.rs"), &task.driver)?;
+    let compiled = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .args(["build", "--quiet", "--offline", "--bin", "subject"])
+        .current_dir(oracle.path())
+        .env("CARGO_TARGET_DIR", oracle.path().join("target"))
+        .env("CARGO_BUILD_JOBS", "1")
+        .output()?
+        .status
+        .success();
+    let executable = oracle
+        .path()
+        .join("target/debug")
+        .join(format!("subject{}", std::env::consts::EXE_SUFFIX));
+    let tests_pass = compiled && test_suite(&executable, &task.tests)?;
+    let contracts_pass = compiled && test_suite(&executable, &task.contracts)?;
     Ok(EditOracleResult {
         arm: attempt.arm.clone(),
         task: task.id.clone(),
@@ -161,24 +177,21 @@ fn evaluate(task: &EditTask, attempt: &EditAttempt) -> BeamResult<EditOracleResu
     })
 }
 
-fn test_suite(root: &Path, test: &str, expected: usize) -> BeamResult<bool> {
-    let output = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
-        .args(["test", "--quiet", "--offline", "--test", test])
-        .current_dir(root)
-        .env("CARGO_TARGET_DIR", root.join("target"))
-        .env("CARGO_BUILD_JOBS", "1")
-        .env("RUST_TEST_THREADS", "1")
-        .output()?;
-    let completed = format!(
-        "test result: ok. {expected} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;"
-    );
-    // libtest emits this only after returning from all sealed tests. A candidate
-    // calling exit(0) can exit successfully, but cannot complete the test suite.
-    Ok(expected > 0
-        && output.status.success()
-        && String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .any(|line| line.starts_with(&completed)))
+fn test_suite(executable: &Path, probes: &[EditProbe]) -> BeamResult<bool> {
+    if probes.is_empty() {
+        return Ok(false);
+    }
+    for probe in probes {
+        let output = Command::new(executable).args(&probe.args).output()?;
+        // Candidate code can print anything, exit, or spawn a child. None can
+        // pronounce a verdict: the parent compares the actual observed value
+        // for each separately executed input against its own sealed expectation.
+        // This remains a behavioral oracle, not an OS sandbox for native code.
+        if !output.status.success() || output.stdout != probe.expected.as_bytes() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
