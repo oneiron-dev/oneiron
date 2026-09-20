@@ -210,10 +210,34 @@ async fn production_socket_reads_and_subscribes_then_receives_materialized_engin
     open(&mut socket, 7, "solar", Value::Null).await;
     let initial = app(&mut socket, TAG_SUB).await;
     assert_snapshot(&initial, 7, 1);
-    assert_eq!(
-        initial["result"][0]["short_id"],
-        witnessed.message_short_ids[0]
-    );
+    let message = f
+        .server
+        .vault()
+        .memory(
+            oneiron::EntityId::from_hex(ACTOR).unwrap(),
+            oneiron::EdgeActorClass::Human,
+        )
+        .get_entity(&witnessed.message_short_ids[0])
+        .unwrap()
+        .unwrap();
+    let message_id = oneiron::EntityId::from_hex(&message.id_hex).unwrap();
+    let revision = f
+        .server
+        .vault()
+        .indexed_revision(&message_id)
+        .unwrap()
+        .unwrap();
+    let pinned_ref = format!("{}@{}", witnessed.message_short_ids[0], revision.to_hex());
+    assert_eq!(initial["result"][0]["short_id"], pinned_ref);
+    send(
+        &mut socket,
+        TAG_RPC,
+        json!({"requestId":8,"method":"hydrate","params":{"refs":[pinned_ref]}}),
+    )
+    .await;
+    let pinned = app(&mut socket, TAG_RPC).await;
+    assert_eq!(pinned["requestId"], 8);
+    assert_eq!(pinned["result"][0]["body"], read["result"][0]["body"]);
     ack(&mut socket, 7, &initial["cursor"]).await;
     barrier(&mut socket).await;
     witness(&f.server, "solar panel update");

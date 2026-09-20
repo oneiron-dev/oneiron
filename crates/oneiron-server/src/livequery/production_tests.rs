@@ -626,7 +626,8 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
             .text(&id, &[("body", text)])
             .commit()
             .unwrap();
-        expected.push(receipt.claim_short_id);
+        let revision = server.vault().indexed_revision(&id).unwrap().unwrap();
+        expected.push(format!("{}@{}", receipt.claim_short_id, revision.to_hex()));
     }
     // All 1,005 unrelated hits outrank both matches in the old pre-filter top-k.
     let old = memory
