@@ -20118,7 +20118,7 @@
      "path": "src/repo_mutation/git.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -20128,7 +20128,7 @@
      "path": "src/repo_mutation/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 2,
       "re-export": 4
      }
@@ -20171,7 +20171,7 @@
      "path": "src/repo_mutation/proposal.rs",
      "purpose": "Durable per-operation code proposals",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 2,
       "fn": 6,
       "struct": 1
@@ -20223,6 +20223,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/repo_mutation/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/repo_mutation/tests/export_authority.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -27175,7 +27183,7 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "repo_mutation": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27521,7 +27529,7 @@
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 1581,
-   "test_files": 556
+   "test_files": 557
   },
   "oneiron-bench": {
    "files": [
