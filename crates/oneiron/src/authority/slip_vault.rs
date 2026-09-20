@@ -240,7 +240,6 @@ impl Vault {
             signature,
         )
     }
-    /// Appends a signed mint in the same transaction that checks its ancestry.
     /// Verify a transport proof without consuming its nonce, using the same
     /// vault clock and signed challenge as atomic request admission.
     pub fn verify_capability_slip_request(
@@ -255,9 +254,11 @@ impl Vault {
         let now = self.instant_in_txn(&txn)?.secs();
         let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
-        slip.verify(&issuer.secret, &fold, now, &challenge, signature)
+        require_host(&fold, issuer)?;
+        slip.verify(issuer.secret(), &fold, now, &challenge, signature)
     }
 
+    /// Appends a signed mint in the same transaction that checks its ancestry.
     pub fn mint_capability_slip(
         &self,
         issuer: &HostSlipIssuer,
