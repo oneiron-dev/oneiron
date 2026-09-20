@@ -276,7 +276,7 @@ pub(super) const fn verb_argument_fields(binding: McpVerbBinding) -> &'static [&
 }
 
 pub(super) const fn verb_required_fields(binding: McpVerbBinding) -> &'static [&'static str] {
-    if let Some(fields) = super::surface::agent_argument_fields(binding) {
+    if let Some(fields) = super::surface::agent_required_fields(binding) {
         return fields;
     }
     match binding {

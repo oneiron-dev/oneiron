@@ -21,6 +21,21 @@ pub(super) const fn agent_argument_fields(
         McpVerbBinding::TasksAnswer => Some(&["spec"]),
         McpVerbBinding::TasksOutcomes => Some(&["task_ref"]),
         McpVerbBinding::RoomsList => Some(&[]),
+        McpVerbBinding::RoomsMessages => Some(&["room_ref", "turn_ref"]),
+        McpVerbBinding::RoomsClaim => Some(&["room_ref", "turn_ref"]),
+        McpVerbBinding::RoomsSpeak => Some(&["room_ref", "spec"]),
+        _ => None,
+    }
+}
+pub(super) const fn agent_required_fields(
+    binding: McpVerbBinding,
+) -> Option<&'static [&'static str]> {
+    match binding {
+        McpVerbBinding::TasksAsk => Some(&["spec"]),
+        McpVerbBinding::TasksWait => Some(&["task_ref", "key"]),
+        McpVerbBinding::TasksAnswer => Some(&["spec"]),
+        McpVerbBinding::TasksOutcomes => Some(&["task_ref"]),
+        McpVerbBinding::RoomsList => Some(&[]),
         McpVerbBinding::RoomsMessages => Some(&["room_ref"]),
         McpVerbBinding::RoomsClaim => Some(&["room_ref", "turn_ref"]),
         McpVerbBinding::RoomsSpeak => Some(&["room_ref", "spec"]),

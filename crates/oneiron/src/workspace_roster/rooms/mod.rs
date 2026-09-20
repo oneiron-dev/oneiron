@@ -1,4 +1,5 @@
 //! Room participation and addressed turn claims. Joining grants no memory scope.
+mod history;
 #[cfg(test)]
 mod tests;
 mod witness;
@@ -6,6 +7,7 @@ use super::ProjectRoom;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult, WitnessReceipt, WitnessTurn};
 use crate::{EntityId, Vault};
+pub(super) use history::delete_room_metadata;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use witness::admit_witness;
@@ -127,28 +129,6 @@ impl Memory<'_> {
         }
         Ok(result)
     }
-    pub fn rooms_messages(&self, room: EntityId) -> MemoryResult<Vec<RoomTurn>> {
-        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
-        let mut rows: Vec<RoomTurn> = Vec::new();
-        for row in self.vault().store.vault_meta.prefix_iter(&txn, TURNS)? {
-            let (_, bytes) = row?;
-            let turn: RoomTurn = decode(&bytes)?;
-            if turn.room_id == room.to_hex() {
-                rows.push(turn);
-            }
-        }
-        rows.sort_by(|a, b| (a.at, &a.turn_id).cmp(&(b.at, &b.turn_id)));
-        Ok(rows)
-    }
-    /// Canonical HEAD is a read-time view. Branch turns never enter this path.
-    pub fn room_head(&self, room: EntityId) -> MemoryResult<Option<RoomTurn>> {
-        Ok(self
-            .rooms_messages(room)?
-            .into_iter()
-            .rev()
-            .find(|turn| turn.thread_of.is_none()))
-    }
     pub fn rooms_claim(
         &self,
         room: EntityId,
@@ -193,7 +173,9 @@ impl Memory<'_> {
     /// the claim, membership, reply binding, and addressing before any message.
     pub fn rooms_speak(&self, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
         let room = EntityId::from_hex(&turn.conversation_ref)?;
-        self.rooms_messages(room)?;
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        require_member(self.vault(), &txn, room, self.actor())?;
+        drop(txn);
         self.witness(turn)
     }
 }

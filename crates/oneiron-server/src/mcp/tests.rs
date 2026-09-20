@@ -3936,3 +3936,26 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
     );
     decode("   ").expect_err("a blank label keeps its settled refusal");
 }
+
+#[test]
+fn room_history_cursor_is_optional_and_validated() {
+    let mut audited = 0;
+    for mode in McpSurfaceMode::ALL {
+        for tool in registered_surface(mode).tools() {
+            let McpEndpointTool::Verb(verb) = *tool else {
+                continue;
+            };
+            if verb.binding != McpVerbBinding::RoomsMessages {
+                continue;
+            }
+            let mut args = endpoint_census_args(*tool);
+            assert!(validate_mcp_endpoint_tool_args(*tool, args.clone()).is_ok());
+            args["arguments"]["turn_ref"] = json!(ACTOR_ID);
+            assert!(validate_mcp_endpoint_tool_args(*tool, args.clone()).is_ok());
+            args["arguments"]["turn_ref"] = json!("not-an-id");
+            assert!(validate_mcp_endpoint_tool_args(*tool, args).is_err());
+            audited += 1;
+        }
+    }
+    assert_eq!(audited, McpSurfaceMode::ALL.len());
+}

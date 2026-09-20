@@ -64,9 +64,13 @@
       "name": "rooms.messages",
       "input": "RoomRequest",
       "output": "Vec<crate::workspace_roster::RoomTurn>",
-      "call": "memory.rooms_messages(crate::EntityId::from_hex(&input.room_ref)?)?",
+      "call": "memory.rooms_messages_page(crate::EntityId::from_hex(&input.room_ref)?, input.after.as_deref().map(crate::EntityId::from_hex).transpose()?, input.limit.unwrap_or(256))?",
       "scope": "Read",
       "mcp_fields": [
+        "room_ref",
+        "turn_ref"
+      ],
+      "mcp_required_fields": [
         "room_ref"
       ]
     },

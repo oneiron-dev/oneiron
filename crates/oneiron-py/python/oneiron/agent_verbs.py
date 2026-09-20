@@ -15,8 +15,8 @@ class RoomsVerbs:
         self._call = call
     def list(self):
         return self._call("rooms_list", {})
-    def messages(self, room_ref):
-        return self._call("rooms_messages", {"room_ref": room_ref})
+    def messages(self, room_ref, after=None, limit=None):
+        return self._call("rooms_messages", {"room_ref": room_ref, "after": after, "limit": limit})
     def claim(self, room_ref, turn_ref):
         return self._call("rooms_claim", {"room_ref": room_ref, "turn_ref": turn_ref})
     def speak(self, spec):

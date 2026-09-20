@@ -159,3 +159,69 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn root_and_parent_projects_cannot_be_deleted_at_any_door() -> Result<()> {
+    for door in [0, 1, 2] {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let root = vault.root_project()?;
+        let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+        let parent = EntityId::now();
+        vault.put_project(
+            parent,
+            &ProjectRecord::new(parent, Some(root), root, leader),
+            1,
+        )?;
+        let child = EntityId::now();
+        vault.put_project(
+            child,
+            &ProjectRecord::new(child, Some(parent), root, leader),
+            2,
+        )?;
+        for id in [root, parent] {
+            let before = vault.project(id)?.unwrap();
+            let error = match door {
+                0 => vault.batch().delete(&id).commit().unwrap_err(),
+                1 => vault
+                    .delete_entity_with_reason(&id, crate::DeleteReason::UserDelete)
+                    .unwrap_err(),
+                _ => vault.delete_entity(&id).unwrap_err(),
+            };
+            assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
+            assert_eq!(vault.project(id)?, Some(before.clone()));
+            assert!(
+                vault
+                    .project_room(EntityId::from_hex(&before.home_room)?)?
+                    .is_some()
+            );
+        }
+        drop(vault);
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        assert_eq!(vault.root_project()?, root);
+        assert!(vault.project(root)?.is_some());
+    }
+    Ok(())
+}
+
+#[test]
+fn soft_erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let parent = EntityId::now();
+    vault.put_project(
+        parent,
+        &ProjectRecord::new(parent, Some(root), root, leader),
+        1,
+    )?;
+    vault.delete_entity_with_reason(&parent, crate::DeleteReason::UserDelete)?;
+    let child = EntityId::now();
+    let body = ProjectRecord::new(child, Some(parent), root, leader);
+    let error = vault.put_project(child, &body, 2).unwrap_err();
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
+    assert!(vault.get(&child)?.is_none());
+    assert!(vault.get(&EntityId::from_hex(&body.home_room)?)?.is_none());
+    Ok(())
+}

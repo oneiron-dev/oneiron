@@ -22,6 +22,10 @@ pub struct EmptyRequest {}
 #[serde(deny_unknown_fields)]
 pub struct RoomRequest {
     pub room_ref: String,
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

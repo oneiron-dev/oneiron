@@ -28,6 +28,8 @@ class AgentSdkProjectionTests(unittest.TestCase):
         rooms.list();rooms.messages("room");rooms.claim("room","turn");rooms.speak({"conversation_ref":"room"})
         self.assertEqual([name for name,_ in calls],["tasks_ask","tasks_wait","tasks_answer","tasks_outcomes","rooms_list","rooms_messages","rooms_claim","rooms_speak"])
         self.assertEqual(calls[6][1],{"room_ref":"room","turn_ref":"turn"})
+        rooms.messages("room", after="last-turn", limit=5)
+        self.assertEqual(calls[-1], ("rooms_messages", {"room_ref":"room", "after":"last-turn", "limit":5}))
 
     def test_public_python_namespaces_decode_native_results_and_translate_refusals(self):
         package_path = ROOT / "crates/oneiron-py/python/oneiron"

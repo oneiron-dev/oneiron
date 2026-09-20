@@ -25,7 +25,8 @@ fn dependency(
         return Err(invalid());
     }
     if raw.len() == ENTITY_METADATA_HEADER_LEN {
-        return Err(RecordError::ProjectDependencyPending.into());
+        // A soft-erased parent is terminal, not an out-of-order arrival.
+        return Err(invalid());
     }
     rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
         .map_err(|_| Error::CorruptedIndex("project dependency body"))

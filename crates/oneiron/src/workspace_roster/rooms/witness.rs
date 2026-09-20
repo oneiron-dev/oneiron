@@ -130,5 +130,6 @@ pub(crate) fn admit_witness(
         .store
         .vault_meta
         .put(txn, &key(TURNS, turn_id), &encode(&turn)?)?;
+    super::history::index_turn(&vault.store, txn, &turn)?;
     Ok(())
 }

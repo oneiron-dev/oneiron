@@ -28,7 +28,7 @@ pub(super) fn execute(
         }
         McpVerbBinding::RoomsList => json!({}),
         McpVerbBinding::RoomsMessages => {
-            json!({"room_ref":a.room_ref.as_deref().ok_or_else(invalid)?})
+            json!({"room_ref":a.room_ref.as_deref().ok_or_else(invalid)?,"after":a.turn_ref})
         }
         McpVerbBinding::RoomsClaim => {
             json!({"room_ref":a.room_ref.as_deref().ok_or_else(invalid)?,"turn_ref":a.turn_ref.as_deref().ok_or_else(invalid)?})
@@ -68,5 +68,12 @@ pub(super) fn execute(
         .get("rows")
         .and_then(Value::as_array)
         .map_or(1, Vec::len);
-    Ok((output, McpPageSource::complete(count)))
+    let source = if args.tool.binding == McpVerbBinding::RoomsMessages && count == 256 {
+        // Storage caps the producer before MCP's response budget. Continue
+        // with arguments.turn_ref set to the last returned turn id.
+        McpPageSource::scoped_window(count, 0, 0, false)
+    } else {
+        McpPageSource::complete(count)
+    };
+    Ok((output, source))
 }

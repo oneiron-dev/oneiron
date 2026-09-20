@@ -49,7 +49,17 @@ pub fn invoke(
         }
         "rooms.messages" => {
             let input: RoomRequest = decode(value)?;
-            encode(memory.rooms_messages(crate::EntityId::from_hex(&input.room_ref)?)?)
+            encode(
+                memory.rooms_messages_page(
+                    crate::EntityId::from_hex(&input.room_ref)?,
+                    input
+                        .after
+                        .as_deref()
+                        .map(crate::EntityId::from_hex)
+                        .transpose()?,
+                    input.limit.unwrap_or(256),
+                )?,
+            )
         }
         "rooms.claim" => {
             let input: RoomClaimRequest = decode(value)?;
