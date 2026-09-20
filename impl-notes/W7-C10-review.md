@@ -516,3 +516,30 @@ its text index, and a focused test checks an indexed hit projects its original
 body while an unpublished live edit remains visible through Live. The existing
 private-NOTE projection test remains enabled. Validation is pending; neither
 failure is counted as passing evidence.
+
+
+## R15: focused acceptance pass and indexed sync fixture correction
+
+At `ed4882967f036fb5e64776d848259989d083c9ad`, focused run
+`e0477c7f-514a-4a60-a4ac-eb6856aa4474` passed **9/9** tests, including both
+repairs and the five-effort/Max-sigma, high/xhigh/max, nonempty partial,
+raw-deadline and HyDE trace regressions. All six static/documentation stages
+passed. Full runtime run `6ba6759a-b41e-4ba8-8672-1eec078460ac` failed after
+**6389/9522 tests: 6388 passed (8 slow), 1 failed, 21 skipped, 3133 unrun**.
+Featureless runtime, doctests and narrow sync did not run. These are partial
+receipts, not a full-script pass.
+
+The failure expected a replicated body overwrite to remove its old text
+postings immediately. OF-476 instead keeps the Indexed body and postings until
+idle publishes the new revision. The corrected fixture proves the retained hit
+hydrates the original Indexed body while Live returns the winning body. It then
+runs the model-free idle publication and retains every original absent-forward,
+absent-length and absent-posting assertion, plus the winning-body assertion.
+No production behavior changes, and no assertion is simply inverted or removed.
+
+The complete pre-edit PR refresh `pr939-20260920T022807Z` contains 18 issue comments,
+75 reviews, 112 inline comments and 46 fully paginated resolved threads. No new
+or edited bot finding appeared. Codex refusal `5746896419` is an explicit usage
+error, not pending. All prior native/subreview/bot dispositions remain retained.
+The successor will reuse unchanged static/doc proof, lint the changed sync test,
+and complete runtime coverage; the separate Mac-native semaphore blocker remains.
