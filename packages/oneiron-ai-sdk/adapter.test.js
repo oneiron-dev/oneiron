@@ -26,3 +26,14 @@ test("engine error identity and suggestions are not rewritten", () => {
   const tools = memoryTools({ witness() { throw refusal } })
   try { tools.witness.execute({}); throw new Error("missing refusal") } catch (error) { expect(error).toBe(refusal) }
 })
+
+
+test("read limit schemas match the engine's inclusive bounds", () => {
+  const tools = memoryTools({})
+  for (const limit of [
+    tools.recall.inputSchema.jsonSchema.properties.options.properties.limit,
+    tools.receipts.inputSchema.jsonSchema.properties.limit,
+  ]) {
+    expect(limit).toEqual({ type: "integer", minimum: 1, maximum: 1000 })
+  }
+})

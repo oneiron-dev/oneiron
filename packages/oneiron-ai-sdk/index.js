@@ -33,7 +33,7 @@ export function memoryTools(memory) {
         query: { type: "string" },
         options: { type: "object", additionalProperties: false, properties: {
           effort: { type: "string", enum: ["minimal", "standard", "deep"] },
-          limit: { type: "integer", minimum: 0 },
+          limit: { type: "integer", minimum: 1, maximum: 1000 },
           format: { type: "string", enum: ["json", "yaml", "toon", "md", "txt"] },
           scope: { type: "object", additionalProperties: false, properties: {
             worldRef: { type: "string" }, facet: { type: "string" },
@@ -44,7 +44,7 @@ export function memoryTools(memory) {
     }),
     receipts: tool({
       description: "Read memory governance receipts, newest first.",
-      inputSchema: schema({ limit: { type: "integer", minimum: 0 } }),
+      inputSchema: schema({ limit: { type: "integer", minimum: 1, maximum: 1000 } }),
       execute: ({ limit }) => memory.receipts(limit),
     }),
   }
