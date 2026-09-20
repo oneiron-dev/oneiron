@@ -597,3 +597,28 @@ strengthened BEAM join test, then full runtime and all previously unrun lanes.
 Unchanged static/doc evidence is retained; changed code/tests are linted again.
 Mac-native Python/NAPI vault testing remains separately blocked by the recorded
 POSIX semaphore admission failure, without any unauthorized host workaround.
+
+
+## R17 focused result and remaining fleet pin
+
+At published `d054a7fc09bc7519d86110f83ca00e59c8f46d53`, formatting, code-map and
+scoped Clippy passed. Focused run `20868bf1-88d4-443c-b7ab-940f2fc5f515` ran 26
+cases with no retries: **25 passed, 1 failed, 9136 filtered**, exit 100. All seven
+index/clock cases, fourteen BEAM cases, the strengthened mismatched-frontier
+regression, and three server cases passed. Full runtime and subsequent lanes did
+not run in R17. The fleet failure moved past hello and verified all four writes,
+then exposed its same bare-write-ref versus pinned-recall-ref comparison.
+
+Fleet's out-of-measurement write verification now resolves the committed message's
+Indexed revision and retains it in the expected reference. Recall still requires
+exact reference equality; it does not strip/ignore a revision. The original stored
+content, real RPC, four recalls and held-socket assertions remain. This does not
+add an RPC, drop a measured operation, or change reported write/recall timing.
+The existing small fleet test is the minimal falsifier and runs first in R18.
+
+The pre-edit complete intake has 20 issue comments, 75 reviews, 112 inline
+comments and 46 resolved threads with complete pagination. No new finding:
+Qodo changed head links only, CodeRabbit refreshed its skip notice, Codex
+`5747184109` is an explicit usage refusal. All internal findings remain retained.
+No new review or worker was started. R17 green evidence remains bound to its
+unchanged sources; R18 is pending, not a completion claim.
