@@ -38,7 +38,39 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
 }
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(VaultConfig::device())
+    let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    grant_fixture_reads(&vault).expect("explicit consolidation read grant");
+    (dir, vault)
+}
+
+fn grant_fixture_reads(vault: &Vault) -> Result<()> {
+    let actor = vault.dreamer_authority()?;
+    let bytes = crate::gate::default_policy_manifest();
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut bytes.as_slice()).expect("default policy map")
+    else {
+        unreachable!()
+    };
+    entries.push((
+        "scoped_grants".into(),
+        Value::Array(vec![Value::Map(vec![
+            ("actor_ref".into(), actor.entity_ref().to_hex().into()),
+            ("actor_class".into(), "agent".into()),
+            ("effector".into(), "core:read".into()),
+            (
+                "scope".into(),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::read_preset(),
+                )?,
+            ),
+            ("receipt_required".into(), false.into()),
+        ])]),
+    ));
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &super::support::encode_value(&Value::Map(entries))?,
+    )
 }
 
 fn occurred(at: u64) -> TimeRange {

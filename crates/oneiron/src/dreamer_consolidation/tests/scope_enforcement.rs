@@ -383,6 +383,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
     for resolution in ["accumulate", "merge", "missing", "unlisted"] {
         let (_dir, vault) =
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        grant_fixture_reads(&vault)?;
         let store = DreamerRunnerStore::new(&vault);
         let (attempt, turns, _) =
             admitted_attempt_fixture(&vault, &store, 0x46, &[("user", "two related facts")])?;
@@ -1080,5 +1081,39 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             assert!(sink.accepted[0].evidence_turn_refs.contains(&next_turn));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn admitted_branch_does_not_infer_read_authority_from_its_queue() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, turns, _) =
+        admitted_attempt_fixture(&vault, &store, 0x49, &[("user", "read grant required")])?;
+    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    assert!(matches!(
+        BranchResources::open(
+            &vault,
+            vault.dreamer_authority()?,
+            partition,
+            &turns,
+            attempt.status.attempt.id,
+            None,
+        ),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    grant_fixture_reads(&vault)?;
+    let branch = BranchResources::open(
+        &vault,
+        vault.dreamer_authority()?,
+        partition,
+        &turns,
+        attempt.status.attempt.id,
+        None,
+    )?;
+    assert_eq!(
+        branch.turn(branch.scope(), &turns[0])?.text.as_deref(),
+        Some("read grant required")
+    );
     Ok(())
 }

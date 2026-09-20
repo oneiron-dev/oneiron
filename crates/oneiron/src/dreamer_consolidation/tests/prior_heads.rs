@@ -20,7 +20,10 @@ fn policy(vault: &Vault, reader: EntityId, auto: bool) -> Result<()> {
         ("warned".into(), true.into()),
     ]);
     let manifest = Value::Map(vec![
-        ("schema_version".into(), "1.1".into()),
+        (
+            "schema_version".into(),
+            crate::gate::POLICY_SCHEMA_VERSION.into(),
+        ),
         ("pack_id".into(), "prior-head-test".into()),
         ("pack_version".into(), "v1".into()),
         (
@@ -76,6 +79,12 @@ fn policy(vault: &Vault, reader: EntityId, auto: bool) -> Result<()> {
             Value::Array(vec![Value::Map(vec![
                 ("actor_ref".into(), reader.to_hex().into()),
                 ("effector".into(), "core:read".into()),
+                (
+                    "scope".into(),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::read_preset(),
+                    )?,
+                ),
                 ("receipt_required".into(), false.into()),
             ])]),
         ),
