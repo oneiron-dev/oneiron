@@ -302,9 +302,7 @@ fn phonetic_codes_advance_with_the_idle_indexed_revision() {
     assert_eq!(search("OLD"), vec![id]);
     assert!(search("NEW").is_empty());
     vault.set_indexed_idle_delay_ms(0).unwrap();
-    vault
-        .refresh_indexed_at_idle(crate::unix_seconds_now().saturating_mul(1000), &Embed)
-        .unwrap();
+    vault.refresh_indexed_at_idle(u64::MAX, &Embed).unwrap();
     assert!(search("OLD").is_empty());
     assert_eq!(search("NEW"), vec![id]);
 }

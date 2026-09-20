@@ -415,19 +415,9 @@ fn concurrent_edit_same_entity_lww_converges_and_displaces_loser_metadata_rows()
     assert_converged(&a, &b, WINDOW);
 }
 
-/// Spec 2(b) text leg: after the LWW merge replaces the loser's body, the
-/// loser node's text postings for its OWN losing payload must be displaced
-/// — a stale posting would keep serving content the converged vault no
-/// longer holds.
-///
-/// ONE-1141 (ARCH-0031 amendment, ratified 2026-06-13): deindex-on-overwrite
-/// — "no replicated overwrite ever leaves loser postings live". A replicated
-/// overwrite that changes the stored body drops the loser's BM25F postings
-/// in the SAME transaction as the overwrite (`put_replicated` → `apply_put`,
-/// replicated arm); lazy-stale + periodic sweep was REJECTED by the ruling
-/// (it leaves a window where dead content matches searches). The byte-compare
-/// guard keeps the WINNER node's own postings intact: its replayed value is
-/// byte-identical to what it already stores, so its index is never touched.
+/// OF-476 keeps each node's indexed body with its text postings until idle.
+/// Both Live rows converge immediately; idle atomically retires the loser's
+/// postings while leaving the unchanged winner's index intact.
 #[test]
 fn concurrent_edit_same_entity_lww_displaces_loser_text_postings() {
     let (a, b) = vault_pair();
@@ -453,18 +443,54 @@ fn concurrent_edit_same_entity_lww_displaces_loser_text_postings() {
     exchange(&a, &b, WINDOW);
 
     let winner = map_get_bytes(&a.doc(WINDOW).get_map("entities"), &id.to_hex()).unwrap();
-    let (loser_node, loser_term) = if winner == blob_a {
-        (&b, "betaonlyterm")
+    let (loser_node, loser_term, loser_body, winner_node, winner_term) = if winner == blob_a {
+        (&b, "betaonlyterm", &blob_b, &a, "alphaonlyterm")
     } else {
-        (&a, "alphaonlyterm")
+        (&a, "alphaonlyterm", &blob_a, &b, "betaonlyterm")
     };
+    assert_eq!(
+        loser_node.vault.get_raw(&id).unwrap().as_ref(),
+        Some(&winner)
+    );
+    assert_eq!(
+        loser_node
+            .vault
+            .get_raw_with_mode(&id, oneiron::memory::ReadMode::Indexed)
+            .unwrap()
+            .as_ref(),
+        Some(loser_body),
+    );
+    assert_eq!(
+        loser_node.vault.search_text(loser_term, 10).unwrap()[0].id,
+        id
+    );
+    loser_node.vault.set_indexed_idle_delay_ms(0).unwrap();
+    let published = loser_node
+        .vault
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    assert_eq!(published.refreshed.len(), 1);
+    assert_eq!(published.refreshed[0].0, id);
+    assert!(published.failed.is_empty());
+    assert_eq!(
+        loser_node
+            .vault
+            .get_raw_with_mode(&id, oneiron::memory::ReadMode::Indexed)
+            .unwrap()
+            .as_ref(),
+        Some(&winner),
+    );
+    assert_eq!(
+        winner_node.vault.search_text(winner_term, 10).unwrap()[0].id,
+        id
+    );
     assert!(
         loser_node
             .vault
             .search_text(loser_term, 10)
             .unwrap()
             .is_empty(),
-        "{}: loser's text postings must be displaced after the LWW merge",
+        "{}: loser's text postings must be displaced after idle publication",
         loser_node.name
     );
 }
