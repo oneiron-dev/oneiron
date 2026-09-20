@@ -217,13 +217,8 @@ mod transport {
         reverse_rematerialize(&source, &doc, &key).unwrap();
         let stale = send(&source, &doc, &key);
         let delete_retry_key = format!("rm:w:{key}:{}", note.to_hex());
-        peer.with_write_txn(|txn| {
-            peer.store
-                .sync_state
-                .put(txn, &delete_retry_key, &[1])
-                .map_err(Into::into)
-        })
-        .unwrap();
+        peer.with_write_txn(|txn| peer.store.sync_state.put(txn, &delete_retry_key, &[1]))
+            .unwrap();
         receive(&peer, &stale, &key);
         assert!(peer.get_raw(&note).unwrap().is_none());
         assert!(peer.note_text(note).is_err());
@@ -236,7 +231,6 @@ mod transport {
                 .sync_state
                 .delete(txn, &delete_retry_key)
                 .map(|_| ())
-                .map_err(Into::into)
         })
         .unwrap();
         receive(&peer, &stale, &key);
@@ -343,13 +337,6 @@ mod transport {
     fn already_open_window_materializes_document_only_updates() {
         use crate::sync::window::LoadedWindow;
         use std::sync::Arc;
-        let (_dir, source, actor) = fixture();
-        let peer_dir = tempfile::tempdir().unwrap();
-        let peer = Arc::new(Vault::open(peer_dir.path(), VaultConfig::default()).unwrap());
-        let note = source.create_note("research", "live", actor).unwrap();
-        let key = window(&source, note);
-        let doc = LoroDoc::new();
-        reverse_rematerialize(&source, &doc, &key).unwrap();
         struct NoteChanges(std::sync::mpsc::Sender<Vec<String>>);
         impl crate::sync::bridge::LiveQueryTee for NoteChanges {
             fn on_materialized(
@@ -361,6 +348,13 @@ mod transport {
                 self.0.send(diff.containers.clone()).unwrap();
             }
         }
+        let (_dir, source, actor) = fixture();
+        let peer_dir = tempfile::tempdir().unwrap();
+        let peer = Arc::new(Vault::open(peer_dir.path(), VaultConfig::default()).unwrap());
+        let note = source.create_note("research", "live", actor).unwrap();
+        let key = window(&source, note);
+        let doc = LoroDoc::new();
+        reverse_rematerialize(&source, &doc, &key).unwrap();
         let (changes, received) = std::sync::mpsc::channel();
         let tee: Arc<dyn crate::sync::bridge::LiveQueryTee> = Arc::new(NoteChanges(changes));
         let materializer = Arc::new(Materializer::new());

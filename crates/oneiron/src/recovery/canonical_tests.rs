@@ -478,7 +478,7 @@ fn canonical_workflows_bind_membership_and_refuse_partial_window_bundles() -> Re
         .unwrap()
         .proposal = None;
     assert!(bad.validate().is_err());
-    bad = snapshot.clone();
+    bad = snapshot;
     bad.note_proposals
         .iter_mut()
         .find(|row| row.id == bundle.id)
