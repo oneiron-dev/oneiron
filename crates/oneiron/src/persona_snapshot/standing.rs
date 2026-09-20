@@ -436,7 +436,21 @@ mod tests {
                 )
                 .is_err()
         );
-        let reader = ScopedReadActorKey::new(actor.to_hex()).ok_or_else(invalid)?;
+        let issuer = crate::authority::HostSlipIssuer::from_secret(b"standing block fixture")?;
+        let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+        claims.slip_id = [0x54; 32];
+        claims.holder_ref = actor.to_hex();
+        claims.actor_class = Some("agent".into());
+        claims.scope = crate::federation::scope_codec::read_preset();
+        claims.scope.worlds =
+            crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+                crate::federation::ScopeId(world),
+            ]));
+        let slip = vault.mint_capability_slip(&issuer, claims)?;
+        let signature = issuer.binding_proof(&slip, b"standing-session")?;
+        let verified =
+            vault.verify_capability_slip(&issuer, &slip, b"standing-session", &signature)?;
+        let reader = ScopedReadActorKey::from_verified_slip(&verified).ok_or_else(invalid)?;
         let mut cache = StandingBlockCache::default();
         let first =
             vault.begin_standing_block_session(&handle, reader.clone(), 20, 4, &mut cache)?;

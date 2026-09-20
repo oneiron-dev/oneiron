@@ -165,6 +165,17 @@ fn install_policy(vault: &Vault, actor: EntityId, allow_send: bool) {
         (Value::from("receipt_required"), Value::from(false)),
         (
             Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::legacy_read_scope(Some(&Value::Map(vec![(
+                    Value::from("world"),
+                    Value::from("base"),
+                )])))
+                .unwrap(),
+            )
+            .unwrap(),
+        ),
+        (
+            Value::from("selectors"),
             Value::Map(vec![(Value::from("world"), Value::from("base"))]),
         ),
     ])];
@@ -174,6 +185,13 @@ fn install_policy(vault: &Vault, actor: EntityId, allow_send: bool) {
             (Value::from("effector"), Value::from("external:send")),
             (
                 Value::from("scope"),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::effect_preset(),
+                )
+                .unwrap(),
+            ),
+            (
+                Value::from("selectors"),
                 Value::Map(vec![(Value::from("channel"), Value::from("email"))]),
             ),
         ]));
