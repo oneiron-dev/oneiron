@@ -129,7 +129,7 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
     let mut verified_recalls = 0;
     for round in 0..plan.rounds {
         write_phase(&mut agents, plan, &http, &endpoint, round, &mut metrics).await?;
-        verify_writes(&vault, plan, round)?;
+        verify_writes(&vault, &mut agents, round)?;
         verified_writes += plan.agents;
         progress(
             "writes_verified",
@@ -205,15 +205,23 @@ async fn write_phase(
     Ok(())
 }
 
-fn verify_writes(vault: &Vault, plan: &Plan, round: usize) -> Result<()> {
-    for i in 0..plan.agents {
+fn verify_writes(vault: &Vault, agents: &mut [Agent], round: usize) -> Result<()> {
+    for agent in agents {
+        let message_id = id(0x33, agent.index * 100 + round)?;
         let bytes = vault
-            .get(&id(0x33, i * 100 + round)?)?
+            .get(&message_id)?
             .ok_or("witness acknowledged an absent message")?;
         let body: serde_json::Value = rmp_serde::from_slice(&bytes)?;
-        if body["content"].as_str() != Some(needle(i, round).as_str()) {
+        if body["content"].as_str() != Some(needle(agent.index, round).as_str()) {
             return Err("stored witness content differs from submitted bytes".into());
         }
+        // Receipts name the written entity; recall emits its published revision.
+        // Pin the expected frontier outside measured write/recall traffic instead
+        // of accepting any revision by stripping the returned suffix.
+        let revision = vault
+            .indexed_revision(message_id)?
+            .ok_or("committed message has no indexed revision")?;
+        agent.expected_message = format!("{}@{}", agent.expected_message, revision.to_hex());
     }
     Ok(())
 }
