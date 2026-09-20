@@ -531,7 +531,7 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
                     shutdown.trigger();
                 } else {
                     executor_call.take().unwrap().reply
-                        .send(Err(FatalLlmError::InvalidRequest.into())).unwrap();
+                        .send(Err(BudgetDenied::AdmissionDenied.into())).unwrap();
                 }
                 line.clear();
                 assert_eq!(read.read_line(&mut line).await.unwrap(), 0, "serve must close");
@@ -540,7 +540,7 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
                 if let Some(call) = executor_call {
                     // ManagedShutdown cancels voice while wake remains cooperative.
                     assert_eq!(guard.read().reserved_units, 100);
-                    call.reply.send(Err(FatalLlmError::InvalidRequest.into())).unwrap();
+                    call.reply.send(Err(BudgetDenied::AdmissionDenied.into())).unwrap();
                 }
             })
         }).await.expect("bounded test-only pass and stream");

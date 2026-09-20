@@ -309,6 +309,18 @@ impl ConsolidationExecutor<'_> {
                     ));
                 }
                 MergeResolution::Escalate => {
+                    // A durable outage fallback is still an unresolved question,
+                    // not permission to lose the prior head's conflict marker.
+                    resources.require_output(resources.scope())?;
+                    super::open_conflict::park_open_conflict(
+                        ctx.vault,
+                        self.actor,
+                        step_identity.0,
+                        conflict,
+                        &members,
+                        &resources.write_fence(),
+                        ctx.now_ms,
+                    )?;
                     dropped.extend(conflict.candidate_indexes.iter().copied());
                     escalated.push(contradiction_gap(conflict, &members, ctx.now_ms));
                 }

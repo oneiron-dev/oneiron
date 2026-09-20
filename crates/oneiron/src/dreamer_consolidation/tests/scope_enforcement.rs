@@ -402,20 +402,23 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             "value": "same text", "evidence_turn_refs": [turns[0].to_hex()]}),
             );
         }
+        let judge = text_response(match resolution {
+            "accumulate" => serde_json::json!({"resolution":"accumulate"}),
+            "merge" => serde_json::json!({"resolution":"merge", "candidate_ref":selected_id.to_hex(), "value":"selected alias"}),
+            "missing" => serde_json::json!({"resolution":"merge", "value":"unbound"}),
+            _ => serde_json::json!({"resolution":"merge", "candidate_ref":EntityId::now().to_hex(), "value":"unlisted"}),
+        }.to_string());
+        // The non-native JSON shim rejects unlisted identities before decode,
+        // including both paid corrective attempts. Other refusals are semantic.
+        let judge_attempts = if resolution == "unlisted" { 3 } else { 1 };
+        let mut replies = vec![Ok(text_response(
+            serde_json::json!({"candidates": items}).to_string(),
+        ))];
+        replies.extend((0..judge_attempts).map(|_| Ok(judge.clone())));
         let backend = ScopeBackend {
-        seen: Mutex::new(Vec::new()),
-        inner: ScriptedBackend::new(vec![
-            Ok(text_response(
-                serde_json::json!({"candidates": items}).to_string(),
-            )),
-            Ok(text_response(match resolution {
-                "accumulate" => serde_json::json!({"resolution":"accumulate"}),
-                "merge" => serde_json::json!({"resolution":"merge", "candidate_ref":selected_id.to_hex(), "value":"selected alias"}),
-                "missing" => serde_json::json!({"resolution":"merge", "value":"unbound"}),
-                _ => serde_json::json!({"resolution":"merge", "candidate_ref":EntityId::now().to_hex(), "value":"unlisted"}),
-            }.to_string())),
-        ]),
-    };
+            seen: Mutex::new(Vec::new()),
+            inner: ScriptedBackend::new(replies),
+        };
         let guard = crate::BudgetGuard::with_reserve_units(
             "wake",
             10_000,
@@ -440,14 +443,19 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             now_ms: 21_000,
         };
         let result = block_on_ready(executor.execute(&attempt, &mut ctx));
-        if matches!(resolution, "missing" | "unlisted") {
-            assert!(result.is_err());
+        if resolution == "missing" {
+            assert!(matches!(result, Err(Error::InvalidClaimBody(_))));
+        } else if resolution == "unlisted" {
+            assert!(matches!(result?, DreamerAttemptExecution::Park { .. }));
         } else {
             assert!(matches!(result?, DreamerAttemptExecution::Completed { .. }));
         }
         drop(executor);
         // Different predicate keys only reach this judge through stored cosine input.
-        assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            backend.inner.calls.load(Ordering::SeqCst),
+            1 + judge_attempts
+        );
         assert_eq!(
             sink.accepted.len(),
             match resolution {
@@ -463,7 +471,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             );
         }
         let scopes = backend.seen.lock().unwrap();
-        assert_eq!(scopes[0], scopes[1]);
+        assert!(scopes.iter().all(|scope| scope == &scopes[0]));
     }
     Ok(())
 }

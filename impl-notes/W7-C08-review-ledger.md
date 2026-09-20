@@ -457,11 +457,58 @@ completed reconciliation. No replacement reviewer fanout was started.
 
 | Group | Source inline ID | Disposition |
 | --- | --- | --- |
-| F49 | 4055422429 | Valid: consecutive Gemini text deltas need a stable part ID without losing text/tool/reasoning order. Implemented; runtime validation pending. |
-| F50 | 4055422435 | Valid: omitted args on a parameterless Gemini tool call should decode as an empty object; malformed present args must still refuse. Implemented; runtime validation pending. |
-| F51 | 4055422440 | Valid: repeated complete OpenAI tool IDs/names must not concatenate; fragmented fields still need accumulation. Implemented; runtime validation pending. |
+| F49 | 4055422429 | Valid: consecutive Gemini text deltas need a stable part ID without losing text/tool/reasoning order. Fixed and validated by the provider regressions in the 469-test scoped run (the separate consolidation/voice failures are recorded below). |
+| F50 | 4055422435 | Valid: omitted args on a parameterless Gemini tool call should decode as an empty object; malformed present args must still refuse. Fixed and validated by the provider regressions in the 469-test scoped run (the separate consolidation/voice failures are recorded below). |
+| F51 | 4055422440 | Valid: repeated complete OpenAI tool IDs/names must not concatenate; fragmented fields still need accumulation. Fixed and validated by the provider regressions in the 469-test scoped run (the separate consolidation/voice failures are recorded below). |
 
 No feedback from another ticket is applied to PR #933. No review draft or
 thread state was changed. The current-head Opus ladder is still required after
 these repairs; first-party default, alt, alt2, then CPA only for proven provider
 unavailability. GitHub explanations will name actual source IDs and validation.
+
+
+### First-party current-head review and integration test reconciliation
+
+Native first-party default-profile Opus (`claude-opus-5`, session
+`97ea64e4-5600-4163-8c82-a189a474d762`) returned **LANDABLE** on clean
+`d177c71d`. Its complete result and original stream remain under
+`tickets/W7-C08/sessions/review-opus-ladder/d177c71de57905622530c6402fcf405a5ef44edf/`.
+No availability fallback was needed. This approval is historical once the
+following integration repair lands; the SAME reviewer root will check the delta.
+
+The 469-test scoped run passed 466 and failed three. All F49–F51 regressions
+passed. Two consolidation failures and one voice fixture failure exposed the
+combined behavior of the parents; no failed run is counted green:
+
+- T01: C08's fatal-judge fallback now finishes with `escalate`, bypassing C01's
+  exception-only open-conflict marker. Escalation now persists the same gated,
+  scope-fenced marker, as well as its existing reflection gap. The prior-head
+  test still pins the unchanged original and open question; completion replaces
+  parking only when the declared deterministic fallback finishes.
+- T02: The structured-output shim rejects an unlisted candidate ID and runs two
+  corrective attempts before parking. The scoped-embedding fixture now supplies
+  those attempts and checks that every attempt retains the identical scope.
+  Missing semantic candidate identity still returns the typed refusal; no sink
+  output is accepted for either invalid response.
+- T03: The voice lifetime test used fatal extraction as a non-completing stop,
+  but fatal extraction now has a completion fallback that correctly refuses the
+  fixture's unsupported scoped sink. It now sends `BudgetDenied::AdmissionDenied`
+  to park the held task. All connection, shared-meter, cancellation and shutdown
+  assertions remain unchanged. Production scoped-sink refusal is not weakened.
+
+The review's four informational observations require no code repair:
+1. Literal locality overwritten by purpose defaults: naming/comment clarity only;
+   the intentional effective defaults and scoped model binding are preserved.
+2. `ContinueOnLocal` assumes a trusted injected backend honors the engine-declared
+   extraction route. This is the stated on-device purpose default, not an HTTP
+   bypass (HTTP derives catalog locality); hosts must bind the actual model route.
+3. Ingest `skill_id` namespace differs for three sources: inert naming only; all
+   source IDs are unique and the two Gemini format doors are now distinct.
+4. Empty fallback `people` metadata is unused (`persons` is the extraction door):
+   extra empty metadata is allowed and creates no people. No behavior changes.
+
+Final complete API refresh remains **18/40/127/57**, with no new or edited
+finding. The PR response's base SHA was stale; Git remote and GitHub's branch
+API both confirm current main is `60c5b875`, already an ancestor. No new merge
+or full-baseline retest is needed. Targeted integration retest and final same-root
+review follow this repair; terminal evidence will be posted to PR #933.
