@@ -567,13 +567,15 @@ fn git_wire_cached_handle_refuses_ancestor_rediscovery_after_repository_removal(
     let inner_bound = open(&wire, &inner);
     fs::remove_dir_all(inner.path().join(".git")).expect("remove inner repository");
 
+    // The process discovery ceiling refuses the missing repository before
+    // binding validation can observe an ancestor as a different repository.
     assert!(matches!(
         wire.read_ref(&inner_bound, &outer.branch),
-        Err(crate::Error::Code(CodeError::InvalidRepoMutationRecord(_)))
+        Err(Error::Code(CodeError::RepoMutationFailed(_)))
     ));
     assert!(matches!(
         wire.object_exists(&inner_bound, &outer.head),
-        Err(crate::Error::Code(CodeError::InvalidRepoMutationRecord(_)))
+        Err(Error::Code(CodeError::RepoMutationFailed(_)))
     ));
     let marker = GitRefName::parse_full("refs/oneiron/test/no-ancestor-write").expect("ref");
     assert!(
