@@ -47,7 +47,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/fleet/report.rs` | src | s | 9 crate-vis | — | Observations, raw latency samples and run provenance, never capacity targets |
 | `src/fleet/scaling.rs` | src | s | 3 crate-vis | — | Isolated persisted-residual miss cost as graph cardinality grows |
 | `src/fleet/tests.rs` | test | s | — | — | Small falsification fixtures; smoke is never accepted as a fleet baseline |
-| `src/fleet/wire.rs` | src | s | 6 crate-vis | — | Real v8 app-tier WebSocket client for the shipped server |
+| `src/fleet/wire.rs` | src | s | 6 crate-vis | — | Real app-tier WebSocket client using the shipped server protocol version |
 | `src/fleet/workload.rs` | src | s | 2 crate-vis | — | Closed-loop authenticated fleet traffic against one real loopback server and vault |
 | `src/interface_bench/cli_and_pinned_config.rs` | src | m | 14 crate-vis | — | Subcommand dispatch and pinned-model config parsing |
 | `src/interface_bench/config_types.rs` | src | m | 71 crate-vis | — | Campaign, task, and report DTOs plus RunSettings |

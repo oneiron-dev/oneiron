@@ -543,3 +543,57 @@ or edited bot finding appeared. Codex refusal `5746896419` is an explicit usage
 error, not pending. All prior native/subreview/bot dispositions remain retained.
 The successor will reuse unchanged static/doc proof, lint the changed sync test,
 and complete runtime coverage; the separate Mac-native semaphore blocker remains.
+
+
+## R16 complete runtime result and grouped repairs
+
+At `933ff2067fe1616b75e440f17d2cab315eba6332`, changed-core Clippy passed and
+focused run `9cf9128f-beb2-4f76-bf4c-d0034ed9b4cf` passed the corrected sync
+publication fixture 1/1. The no-fail-fast full run
+`9f1c7a49-7e9e-49bc-83e0-35cf9bdcd63a` executed **9522 tests: 9497 passed
+(10 slow), 25 failed, 21 pre-existing skipped**, exit 100. Featureless runtime,
+doctests and narrow sync were unrun. No full-gate pass is inferred.
+
+All 25 failures are retained in the R16 raw log and failure-name JSON:
+
+- Five base text-index fixtures and one two-vault convergence fixture still
+  expected immediate deindexing. They now prove old Indexed bodies remain paired
+  with retained hits before idle, then retain the original removal/stat/corpus
+  assertions after idle. Same-body replay, immutable type, unrelated postings,
+  and non-final batch-body protections remain. The convergence fixture also
+  proves the unchanged winner's own postings survive.
+- The phonetic idle fixture used a seconds-rounded clock, earlier than the exact
+  changed-at millisecond. It now supplies an explicitly elapsed idle instant;
+  both old-code removal and new-code retrieval assertions remain.
+- Fourteen BEAM failures came from joining raw rows without a revision suffix
+  against serialized rows with one. The bench join now builds the exact
+  `short:hash@revision` key, including for budgeted text. A strengthened existing
+  128K smoke test proves the report join and rejects a mismatched frontier.
+  The diagnostic suggestion to strip suffixes is not applied: exact equality
+  preserves the pinned-content boundary. No BEAM budget or expected result/gate
+  score was lowered, and no engine serializer change was needed.
+- Fleet's real socket client used the app-tier feature-floor constant (v8) as
+  a hello version after main had moved to v9. It now uses `PROTOCOL_VERSION`.
+  The server's deliberate v9-accept/v8-reject compatibility pin is unchanged.
+- Two livequery fixtures compared pinned reads with unqualified write refs.
+  They now compare exact indexed pins; the socket test also hydrates the returned
+  pin and checks the body. This also makes the top-k precondition compare actual
+  identities instead of vacuously comparing different ref shapes.
+- The HTTP per-item truncation fixture now budgets 96 rather than 48 tokens to
+  include revision-qualified reference overhead while retaining one nonempty,
+  truncated text field. Its one-item truncation and tiny-budget drop assertions
+  are unchanged; this does not change the API's budget handling.
+
+The complete pre-edit PR intake is retained with R17. It has 19 issue comments,
+75 reviews, 112 inline comments and 46 fully paginated resolved threads. Qodo
+only refreshed links to the new head; it reports zero active findings.
+CodeRabbit refreshed its skip notice. Codex `5747088702` explicitly refused for
+usage limits, not pending or approved. All original internal/subreview findings
+and earlier dispositions remain. The read-only bench diagnosis was collected
+and its worker closed; there was no fresh review fanout or second editor.
+
+Validation of these repairs is pending. R17 runs all 25 failure cases plus the
+strengthened BEAM join test, then full runtime and all previously unrun lanes.
+Unchanged static/doc evidence is retained; changed code/tests are linted again.
+Mac-native Python/NAPI vault testing remains separately blocked by the recorded
+POSIX semaphore admission failure, without any unauthorized host workaround.

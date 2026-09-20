@@ -27542,7 +27542,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/fleet/wire.rs",
-     "purpose": "Real v8 app-tier WebSocket client for the shipped server",
+     "purpose": "Real app-tier WebSocket client using the shipped server protocol version",
      "surface": {
       "crate-vis": 6
      }
