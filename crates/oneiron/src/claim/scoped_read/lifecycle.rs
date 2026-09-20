@@ -78,8 +78,8 @@ impl ScopedRead<'_> {
             let Some(raw) = self.entities().get(&txn, edge.target.as_bytes())? else {
                 continue;
             };
-            if !EntityMetadataHeader::parse(&raw)
-                .is_some_and(|candidate| candidate.entity_type == header.entity_type)
+            if EntityMetadataHeader::parse(&raw)
+                .is_none_or(|candidate| candidate.entity_type != header.entity_type)
             {
                 continue;
             }
