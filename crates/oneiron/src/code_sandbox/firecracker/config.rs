@@ -71,16 +71,31 @@ impl FirecrackerHostConfig {
             return Err(refused("invalid cgroup parent"));
         }
         for path in [&self.firecracker, &self.jailer] {
-            if !path.is_absolute() {
-                return Err(refused("jailer binary path must be absolute"));
+            if !path.is_absolute()
+                || path
+                    .components()
+                    .any(|p| matches!(p, std::path::Component::ParentDir))
+            {
+                return Err(refused(
+                    "jailer binary path must be absolute and normalized",
+                ));
             }
             let metadata = regular_metadata(path, 256 * 1024 * 1024)?;
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
+                use std::os::unix::fs::{MetadataExt, PermissionsExt};
                 let mode = metadata.permissions().mode();
-                if mode & 0o111 == 0 || mode & 0o022 != 0 {
-                    return Err(refused("jailer binary permissions refused"));
+                validate_executable_owner(metadata.uid(), mode)?;
+                for parent in path.ancestors().skip(1) {
+                    let metadata = fs::symlink_metadata(parent)
+                        .map_err(|_| refused("jailer binary ancestry unavailable"))?;
+                    if !metadata.is_dir()
+                        || metadata.is_symlink()
+                        || metadata.uid() != 0
+                        || metadata.permissions().mode() & 0o022 != 0
+                    {
+                        return Err(refused("jailer binary ancestry is not root protected"));
+                    }
                 }
             }
             #[cfg(not(unix))]
@@ -116,6 +131,27 @@ impl FirecrackerHostConfig {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn validate_executable_owner(uid: u32, mode: u32) -> Result<()> {
+    if uid != 0 || mode & 0o111 == 0 || mode & 0o022 != 0 {
+        return Err(refused("jailer binary ownership or permissions refused"));
+    }
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn privileged_executable_requires_root_and_nonwritable_mode() {
+        assert!(validate_executable_owner(0, 0o755).is_ok());
+        for (uid, mode) in [(1000, 0o755), (0, 0o775), (0, 0o757), (0, 0o644)] {
+            assert!(validate_executable_owner(uid, mode).is_err());
+        }
     }
 }
 
