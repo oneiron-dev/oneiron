@@ -234,6 +234,31 @@ comments, 26 review records, 44 inline comments, and 21 complete review threads;
 no new defect was added. The removed/superseded Qodo busy and review-summary
 comments remain identified by their captured source IDs.
 
-Nineteen inline roots have replies. Replies to `4055199518` and `4055199539`
-await their new focused runtime proof. No final summary, push, merge, or close
+All 21 inline roots now have replies. The NOTE transport/erasure replies name
+the initial 17 passing cases and the separate teardown failure explicitly; they
+do not claim the follow-up rerun passed. No final summary, push, merge, or close
 has been performed at this checkpoint.
+
+| Source root | Posted reply |
+|---|---|
+| 4055141305 | [4055192717](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055192717) |
+| 4055141315 | [4055192715](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055192715) |
+| 4055144967 | [4055192756](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055192756) |
+| 4055144971 | [4055192713](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055192713) |
+| 4055144975 | [4055227303](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055227303) |
+| 4055144978 | [4055192714](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055192714) |
+| 4055144984 | [4055227315](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055227315) |
+| 4055144989 | [4055227301](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055227301) |
+| 4055144992 | [4055290132](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055290132) |
+| 4055144995 | [4055227305](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055227305) |
+| 4055144998 | [4055290135](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055290135) |
+| 4055145001 | [4055227307](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055227307) |
+| 4055145005 | [4055192718](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055192718) |
+| 4055199497 | [4055278335](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055278335) |
+| 4055199499 | [4055278353](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055278353) |
+| 4055199503 | [4055278333](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055278333) |
+| 4055199511 | [4055269022](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055269022) |
+| 4055199518 | [4055358292](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055358292) |
+| 4055199529 | [4055278336](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055278336) |
+| 4055199534 | [4055290136](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055290136) |
+| 4055199539 | [4055345118](https://github.com/oneiron-dev/oneiron/pull/944#discussion_r4055345118) |
