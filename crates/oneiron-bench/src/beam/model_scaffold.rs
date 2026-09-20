@@ -1,6 +1,7 @@
 //! Shared measured answerer scaffold. Gold is only visible after answering.
 use super::{
     BeamError, BeamResult,
+    judge::AnswerPromptPin,
     llm_host::{HostConfig, ModelPin, ModelSession},
     llm_judge::{JudgeConfig, JudgeItem, score_item},
     load::{load_dataset, resolve_manifest_paths},
@@ -41,6 +42,7 @@ pub(super) struct ModelRunPlan {
     pub host: HostConfig,
     pub judge: JudgeConfig,
     pub answer_prompt: String,
+    pub routing_prompt: AnswerPromptPin,
     pub answerers: Vec<AnswererArm>,
     pub efforts: Vec<Effort>,
     pub amortized_question_count: usize,
@@ -103,12 +105,20 @@ pub(super) struct MeasuredReport {
     pub ablation_query_cost_usd: f64,
     pub ablation_judge_cost_usd: f64,
     pub answer_prompt: String,
+    pub routing_prompt: AnswerPromptPin,
     pub judge: JudgeConfig,
     pub chroma_card_id: Option<String>,
 }
 impl ModelRunPlan {
     pub(super) fn validate(&self) -> BeamResult<()> {
         self.judge.validate(&self.answer_prompt)?;
+        if self.routing_prompt.content.trim().is_empty()
+            || !self
+                .routing_prompt
+                .matches_exact_text(&self.routing_prompt.content)
+        {
+            return Err(refusal("exact routing prompt content and hash required"));
+        }
         if self.efforts.is_empty() || self.amortized_question_count == 0 || self.temporal_now == 0 {
             return Err(refusal("efforts and fixed dataset denominator required"));
         }
@@ -276,6 +286,19 @@ pub(super) fn run_with_session(
             "offline denominator must equal the fixed dataset question count",
         ));
     }
+    let chroma_comparable = plan.chroma.as_ref().is_some_and(|chroma| {
+        manifest.competitors.iter().any(|row| {
+            row.arm == ArmKind::VanillaRag
+                && row.competitor_id == chroma.card_id
+                && row.card.as_ref().is_some_and(|card| {
+                    matches!(
+                        card.axes.disposition(),
+                        super::comparability::CitationDisposition::Cite
+                            | super::comparability::CitationDisposition::CiteWithCaveat
+                    )
+                })
+        })
+    });
     let mut ablation_rows = Vec::new();
     let mut ablation_unavailable = Vec::new();
     let mut access_factor_observations = Vec::new();
@@ -387,7 +410,13 @@ pub(super) fn run_with_session(
                         ArmKind::Agentic => {
                             let mut context = String::new();
                             for _ in 0..effort.retrieval_steps {
-                                let (query,cost)=session.invoke(&arm.model,CallPurpose::ToolRouting,"Return one search query for the unanswered question. Do not answer it.",&serde_json::json!({"question":case.query,"evidence":context}).to_string())?;
+                                let (query, cost) = session.invoke(
+                                    &arm.model,
+                                    CallPurpose::ToolRouting,
+                                    &plan.routing_prompt.content,
+                                    &serde_json::json!({"question":case.query,"evidence":context})
+                                        .to_string(),
+                                )?;
                                 costs.push(cost);
                                 request_case.query = query;
                                 context = String::from_utf8(
@@ -408,17 +437,7 @@ pub(super) fn run_with_session(
                                     .ok_or_else(|| refusal("Chroma query vector missing"))?,
                             )?,
                         ArmKind::BackboneSolo => String::new(),
-                        ArmKind::Chat => {
-                            let mut history = String::new();
-                            for item in record.corpus.iter().rev() {
-                                let text = format!("{}\n{history}", item.text);
-                                if oneiron::count_context_pack_tokens(&text) > effort.token_budget {
-                                    break;
-                                }
-                                history = text;
-                            }
-                            history
-                        }
+                        ArmKind::Chat => chat_history(&record.corpus, path, effort.token_budget)?,
                         _ => return Err(refusal("arm not supported by shared model scaffold")),
                     };
                     let context = bounded_context(&context, request_case.token_budget);
@@ -448,7 +467,7 @@ pub(super) fn run_with_session(
                         .to_owned();
                     let wedge_bucket: WedgeBucket =
                         serde_json::from_value(labels["wedge_bucket"].clone())?;
-                    let mut judgments = Vec::new();
+                    let mut best_verdict: Option<f64> = None;
                     let mut judge_costs = Vec::new();
                     for gold_answer in &gold.answers {
                         let judged = score_item(
@@ -463,11 +482,9 @@ pub(super) fn run_with_session(
                                 wedge_bucket,
                             },
                         )?;
-                        judgments.push(NuggetJudgment {
-                            ability: ability.clone(),
-                            wedge_bucket,
-                            value: judged.verdict,
-                        });
+                        best_verdict = Some(
+                            best_verdict.map_or(judged.verdict, |best| best.max(judged.verdict)),
+                        );
                         judge_costs.push(judged.judge_cost);
                     }
                     let row = ModelRow {
@@ -477,7 +494,13 @@ pub(super) fn run_with_session(
                         effort: effort.name.clone(),
                         answerer: arm.model.model_id.clone(),
                         answer: answer_text,
-                        scoring: FixedBeamScorer.score_nuggets(&judgments)?,
+                        // These are alternative answers under one question label,
+                        // not independent factual nuggets. Bill every alias vote.
+                        scoring: FixedBeamScorer.score_nuggets(&[NuggetJudgment {
+                            ability,
+                            wedge_bucket,
+                            value: best_verdict.ok_or_else(|| refusal("gold aliases required"))?,
+                        }])?,
                         query_cost,
                         judge_overhead: sum_costs(&judge_costs)?,
                     };
@@ -582,7 +605,9 @@ pub(super) fn run_with_session(
         frontier: pareto(
             &points
                 .iter()
-                .filter(|p| p.arm != ArmKind::Chat)
+                .filter(|p| {
+                    p.arm != ArmKind::Chat && (p.arm != ArmKind::VanillaRag || chroma_comparable)
+                })
                 .cloned()
                 .collect::<Vec<_>>(),
         ),
@@ -607,9 +632,34 @@ pub(super) fn run_with_session(
         ablation_judge_cost_usd,
         judge_overhead_usd: judge_total,
         answer_prompt: plan.answer_prompt.clone(),
+        routing_prompt: plan.routing_prompt.clone(),
         judge: plan.judge.clone(),
     })
 }
+fn chat_history(
+    corpus: &[super::report_model::ContractCorpusRecord],
+    path: &Path,
+    budget: usize,
+) -> BeamResult<String> {
+    let mut ordered = corpus
+        .iter()
+        .map(|item| {
+            // load_dataset already validates timestamps with their source line.
+            super::corpus_clock::occurred_at(item, path, 0).map(|at| (at, item))
+        })
+        .collect::<BeamResult<Vec<_>>>()?;
+    ordered.sort_by_key(|(at, _)| *at);
+    let mut history = String::new();
+    for (_, item) in ordered.into_iter().rev() {
+        let text = format!("{}\n{history}", item.text);
+        if oneiron::count_context_pack_tokens(&text) > budget {
+            break;
+        }
+        history = text;
+    }
+    Ok(history)
+}
+
 fn bounded_context(text: &str, budget: usize) -> String {
     if oneiron::count_context_pack_tokens(text) <= budget {
         return text.to_owned();

@@ -12,6 +12,8 @@ use oneiron::{
 #[derive(Default)]
 struct FixtureBackend {
     answer_inputs: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+    routing_prompts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    rejected_alias: Option<String>,
 }
 impl LlmBackend for FixtureBackend {
     fn generate<'a>(
@@ -21,10 +23,30 @@ impl LlmBackend for FixtureBackend {
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             let text = match request.envelope.purpose {
-                CallPurpose::Eval => "1",
+                CallPurpose::Eval => {
+                    let ContentPart::Text { text } = &request.messages[1].content[0] else {
+                        panic!("text")
+                    };
+                    let input: serde_json::Value = serde_json::from_str(text).unwrap();
+                    if self
+                        .rejected_alias
+                        .as_deref()
+                        .is_some_and(|alias| input["gold_answer"] == alias)
+                    {
+                        "0"
+                    } else {
+                        "1"
+                    }
+                }
                 CallPurpose::ToolRouting => "contract launch code",
                 _ => "tulip",
             };
+            if request.envelope.purpose == CallPurpose::ToolRouting {
+                let ContentPart::Text { text } = &request.messages[0].content[0] else {
+                    panic!("text")
+                };
+                self.routing_prompts.lock().unwrap().push(text.clone());
+            }
             if request.envelope.purpose == CallPurpose::AnswerGen {
                 let input = match &request.messages[1].content[0] {
                     ContentPart::Text { text } => text,
@@ -127,6 +149,7 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
             },
         },
         answer_prompt: prompt.into(),
+        routing_prompt: AnswerPromptPin::from_exact_text("Fixture query routing policy."),
         answerers: [
             ArmKind::Deterministic,
             ArmKind::Agentic,
@@ -389,5 +412,128 @@ fn measured_judge_must_match_the_loaded_dataset_before_model_calls() {
             run_with_session(&plan, &session),
             Err(BeamError::JudgeCardInvalid { .. })
         ));
+    }
+}
+
+#[test]
+fn routing_prompt_is_exactly_supplied_reported_and_validated_before_calls() {
+    let mut plan = shipped_plan();
+    plan.routing_prompt = AnswerPromptPin::from_exact_text("Custom query routing policy.\n");
+    let backend = FixtureBackend::default();
+    let prompts = backend.routing_prompts.clone();
+    let session = fixture_session(&plan, backend);
+    for invalid in [
+        AnswerPromptPin::from_exact_text(""),
+        AnswerPromptPin {
+            content: "changed".into(),
+            sha256: plan.routing_prompt.sha256.clone(),
+        },
+    ] {
+        let saved = std::mem::replace(&mut plan.routing_prompt, invalid);
+        assert!(run_with_session(&plan, &session).is_err());
+        assert!(session.receipts().is_empty());
+        plan.routing_prompt = saved;
+    }
+    let report = run_with_session(&plan, &session).unwrap();
+    assert_eq!(report.routing_prompt, plan.routing_prompt);
+    let prompts = prompts.lock().unwrap();
+    assert_eq!(
+        prompts.len(),
+        plan.efforts
+            .iter()
+            .map(|e| e.retrieval_steps)
+            .sum::<usize>()
+    );
+    assert!(prompts.iter().all(|p| p == &plan.routing_prompt.content));
+}
+
+#[test]
+fn chat_history_orders_by_dataset_time_and_keeps_the_newest_suffix() {
+    let record: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    let corpus: Vec<super::super::report_model::ContractCorpusRecord> =
+        serde_json::from_value(record["corpus"].clone()).unwrap();
+    let newer = &corpus[0].text;
+    let older = &corpus[1].text;
+    assert_eq!(
+        chat_history(&corpus, Path::new("fixture"), 1024).unwrap(),
+        format!("{older}\n{newer}\n")
+    );
+    let suffix = format!("{newer}\n");
+    assert_eq!(
+        chat_history(
+            &corpus,
+            Path::new("fixture"),
+            oneiron::count_context_pack_tokens(&suffix)
+        )
+        .unwrap(),
+        suffix
+    );
+}
+
+#[test]
+fn measured_gold_aliases_are_one_question_and_all_votes_are_billed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = shipped_plan();
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
+    manifest["dataset"]["path"] = serde_json::json!("run.jsonl");
+    plan.retrieval_manifest = dir.path().join("run.json");
+    std::fs::write(&plan.retrieval_manifest, manifest.to_string()).unwrap();
+    let mut record: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    record["gold"]["answers"] = serde_json::json!(["tulip", "tulip flower"]);
+    std::fs::write(dir.path().join("run.jsonl"), record.to_string()).unwrap();
+    let backend = FixtureBackend {
+        rejected_alias: Some("tulip flower".into()),
+        ..Default::default()
+    };
+    let session = fixture_session(&plan, backend);
+    let report = run_with_session(&plan, &session).unwrap();
+    for row in report.rows.iter().chain(&report.ablation_rows) {
+        let aggregate = &row.scoring.beam.as_ref().unwrap().aggregate;
+        assert_eq!(aggregate.count, 1);
+        assert_eq!(aggregate.official_int_cast, 1.0);
+        assert_eq!(row.judge_overhead.input_tokens, 600);
+    }
+}
+
+#[test]
+fn measured_chroma_frontier_excludes_walled_and_dropped_cards() {
+    for (regime, withdrawn) in [("full", false), ("oracle", false), ("full", true)] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut plan = shipped_plan();
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
+        manifest["dataset"]["path"] = serde_json::json!(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/beam_measure.run.jsonl")
+        );
+        manifest["competitors"][1]["card"]["axes"]["regime"] = serde_json::json!(regime);
+        manifest["competitors"][1]["card"]["axes"]["provenance"]["withdrawn"] =
+            serde_json::json!(withdrawn);
+        plan.retrieval_manifest = dir.path().join("run.json");
+        std::fs::write(&plan.retrieval_manifest, manifest.to_string()).unwrap();
+        let mock = crate::beam::chroma::tests::support::MockChroma::start(plan.efforts.len());
+        plan.chroma = Some(crate::beam::chroma::ChromaConfig {
+            endpoint: mock.endpoint.clone(),
+            retrieval_k: 5,
+            card_id: "vanilla-rag".into(),
+        });
+        plan.answerers.push(AnswererArm {
+            arm: ArmKind::VanillaRag,
+            model: plan.answerers[0].model.clone(),
+            cheap_chat: false,
+        });
+        let session = fixture_session(&plan, FixtureBackend::default());
+        let report = run_with_session(&plan, &session).unwrap();
+        mock.finish();
+        assert!(report.rows.iter().any(|row| row.arm == ArmKind::VanillaRag));
+        assert_eq!(
+            report
+                .frontier
+                .iter()
+                .any(|point| point.arm == ArmKind::VanillaRag),
+            regime == "full" && !withdrawn
+        );
     }
 }

@@ -103,7 +103,12 @@ pub(super) fn score_item(
     item: &JudgeItem,
 ) -> BeamResult<JudgedScore> {
     config.validate(runtime_answer_prompt)?;
-    let input = serde_json::to_string(item)?;
+    // Ability and wedge labels classify the report, not the judge's evidence.
+    let input = serde_json::to_string(&serde_json::json!({
+        "question": item.question,
+        "candidate_answer": item.candidate_answer,
+        "gold_answer": item.gold_answer,
+    }))?;
     let leases = session.reserve_calls(JUDGE_VOTE_COUNT)?;
     let mut costs = Vec::new();
     let decision = run_majority_judge_card(&config.card, runtime_answer_prompt, |index| {

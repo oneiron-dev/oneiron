@@ -109,5 +109,9 @@
     }
   ],
   "amortized_question_count": 1,
-  "chroma": null
+  "chroma": null,
+  "routing_prompt": {
+    "content": "Return one search query for the unanswered question. Do not answer it.",
+    "sha256": "0e67f57cbf1958ff84035155290cbc31ae6540e6c8ce40b2d30c7e7b18c33a8a"
+  }
 }

@@ -31,6 +31,15 @@ impl LlmBackend for CountingJudge {
             assert!(
                 matches!(&request.messages[0].content[0], ContentPart::Text { text } if text == "Fixture scoring policy.")
             );
+            let ContentPart::Text { text } = &request.messages[1].content[0] else {
+                panic!("expected judge evidence");
+            };
+            let evidence: serde_json::Value = serde_json::from_str(text).unwrap();
+            let fields = evidence.as_object().unwrap();
+            assert_eq!(fields.len(), 3);
+            for field in ["question", "candidate_answer", "gold_answer"] {
+                assert!(fields[field].is_string());
+            }
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if self.fail_first && n == 0 {
                 return Err(oneiron::FatalLlmError::InvalidRequest.into());
