@@ -53,7 +53,14 @@ pub(super) fn binding(
         .vault_meta
         .get(txn, &key)?
         .ok_or_else(|| invalid("invalid capability"))?;
-    serde_json::from_slice(&raw).map_err(|_| invalid("capability record"))
+    let cap: CapabilityBinding =
+        serde_json::from_slice(&raw).map_err(|_| invalid("capability record"))?;
+    // Event history and sealed artifacts survive erasure, but bearer authority does not.
+    let document = EntityId::from_hex(&cap.document)?;
+    if vault.get_blob_artifact_in_txn(txn, &document)?.is_none() {
+        return Err(invalid("invalid capability"));
+    }
+    Ok(cap)
 }
 pub(super) fn require_recipient_capabilities(
     vault: &Vault,

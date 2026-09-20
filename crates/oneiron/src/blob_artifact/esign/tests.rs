@@ -924,3 +924,134 @@ fn individual_events_cannot_be_deleted_or_retyped_but_subject_erasure_retains_au
     assert_eq!(vault.esign_audit(id)?, audit);
     Ok(())
 }
+
+#[test]
+fn deleted_documents_refuse_every_capability_door_but_retain_audit() -> Result<()> {
+    for deletion in ["hard", "batch", "soft"] {
+        let (dir, vault, original, doc, owner) = ceremony_setup()?;
+        // Keep the pinned item live so a failed read proves document admission,
+        // not incidental loss of the original PDF during artifact cleanup.
+        let id = EntityId::now();
+        let now = crate::unix_seconds_now();
+        vault.put_blob_artifact(
+            &id,
+            &crate::blob_artifact::BlobArtifactBody::new("envelope.pdf", "application/pdf"),
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )?;
+        vault.create_esign_document(id, &doc, actor(), now)?;
+        let tokens = vault.issue_esign_capabilities(&owner, id)?;
+        let token = &tokens[0].1;
+        let command = EsignOutboundCommand {
+            document: id.to_hex(),
+            recipient_count: doc.recipients.len(),
+            verb: EsignOutboundVerb::SendForSignature,
+            reason: None,
+        };
+        assert_eq!(
+            vault
+                .dispatch_esign(
+                    send_request(id, owner.actor(), command.verb, "delete-send"),
+                    &command,
+                    None,
+                    None,
+                )
+                .unwrap()
+                .outcome,
+            crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+        );
+        let mut image_bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            1,
+            1,
+            image::Rgba([1, 2, 3, 255]),
+        ))
+        .write_to(&mut image_bytes, image::ImageFormat::Png)
+        .unwrap();
+        let image = vault.upload_esign_signature_image(token, image_bytes.get_ref())?;
+        assert!(
+            !vault
+                .esign_signature_image_for_capability(token, &image)?
+                .is_empty()
+        );
+        assert!(
+            !vault
+                .esign_preview_for_capability(token, 0, None, None)?
+                .1
+                .is_empty()
+        );
+        let audit = vault.esign_audit(id)?;
+        match deletion {
+            "hard" => {
+                assert!(vault.delete_entity(&id)?);
+            }
+            "batch" => {
+                vault.batch().delete(&id).commit()?;
+            }
+            "soft" => {
+                vault.delete_entity_with_reason(&id, crate::DeleteReason::UserDelete)?;
+            }
+            _ => unreachable!(),
+        }
+        assert!(vault.read_blob_artifact_version(&original, 1)?.is_some());
+        for action in [
+            SigningAction::Load,
+            SigningAction::SaveField {
+                field: doc.fields[0].id.clone(),
+                value: FieldValue::Text("value".into()),
+            },
+            SigningAction::Complete {
+                consent: true,
+                next: None,
+            },
+            SigningAction::Reject {
+                reason: "declined".into(),
+            },
+        ] {
+            assert!(
+                vault
+                    .execute_signing_action(token, &action, None, None)
+                    .is_err(),
+                "{deletion}"
+            );
+        }
+        assert!(
+            vault
+                .esign_pdf_for_capability(token, 0, None, None)
+                .is_err(),
+            "{deletion}"
+        );
+        assert!(
+            vault
+                .esign_preview_for_capability(token, 0, None, None)
+                .is_err(),
+            "{deletion}"
+        );
+        assert!(
+            vault
+                .esign_signature_image_for_capability(token, &image)
+                .is_err(),
+            "{deletion}"
+        );
+        assert!(
+            vault
+                .upload_esign_signature_image(token, image_bytes.get_ref())
+                .is_err(),
+            "{deletion}"
+        );
+        assert_eq!(vault.esign_audit(id)?, audit);
+        drop(vault);
+        let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+        assert!(
+            reopened
+                .esign_pdf_for_capability(token, 0, None, None)
+                .is_err(),
+            "{deletion}"
+        );
+        assert_eq!(reopened.esign_audit(id)?, audit);
+    }
+    Ok(())
+}

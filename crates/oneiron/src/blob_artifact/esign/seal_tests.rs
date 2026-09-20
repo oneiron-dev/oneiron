@@ -257,5 +257,36 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
         vault.read_blob_artifact_version(&id, 1)?.as_deref(),
         Some(original.as_slice())
     );
+    let audit = vault.esign_audit(id)?;
+    let canonical = vault.esign_pdf_for_capability(&capabilities[0].1, 0, None, None)?;
+    assert!(vault.delete_entity(&id)?);
+    // The separately stored sealed artifact still exists; deletion revokes its
+    // public route, not the independent audit or owner-side storage read.
+    assert_eq!(
+        vault.read_blob_artifact_version(
+            &EntityId::from_hex(&resealed.items[0].sealed_artifact)?,
+            resealed.items[0].sealed_version,
+        )?,
+        Some(canonical)
+    );
+    assert!(
+        vault
+            .esign_pdf_for_capability(&capabilities[0].1, 0, None, None)
+            .is_err()
+    );
+    assert!(
+        vault
+            .execute_signing_action(&capabilities[0].1, &SigningAction::Load, None, None)
+            .is_err()
+    );
+    assert_eq!(vault.esign_audit(id)?, audit);
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    assert!(
+        reopened
+            .esign_pdf_for_capability(&capabilities[0].1, 0, None, None)
+            .is_err()
+    );
+    assert_eq!(reopened.esign_audit(id)?, audit);
     Ok(())
 }
