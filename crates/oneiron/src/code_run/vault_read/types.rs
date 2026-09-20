@@ -302,8 +302,10 @@ pub struct CoreMemoryTimelineRecord {
 }
 
 /// Timeline response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreMemoryTimelineResponse {
+    /// Policy intersection and withheld history count for this timeline.
+    pub narrowing: crate::claim::ScopedReadReceipt,
     /// Hex anchor entity id.
     #[serde(rename = "anchor_id")]
     pub anchor_id: String,

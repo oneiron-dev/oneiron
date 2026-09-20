@@ -225,6 +225,16 @@ mod tests {
         assert_eq!(projected.access_limited.unwrap().suppressed_count, 1);
         assert!(reader.get_entity_parts(&message)?.is_some());
         assert!(reader.get_entity_parts(&summary)?.is_none());
+        let fs = reader.graph_fs(crate::graph_fs::GraphFsOptions::default());
+        let found = fs.find("/entities", Some(0), None)?;
+        let paths = String::from_utf8(found.bytes().to_vec()).unwrap();
+        assert!(paths.contains(&message.to_hex()));
+        assert!(!paths.contains(&summary.to_hex()));
+        assert!(
+            fs.find(&format!("/entities/{}", summary.to_hex()), None, None)?
+                .bytes()
+                .is_empty()
+        );
         for fields in [
             vec![
                 (rmpv::Value::from("rel"), rmpv::Value::Nil),

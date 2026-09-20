@@ -172,6 +172,7 @@ fn canned_response(method: VaultReadMethod) -> VaultReadResponse {
         }
         VaultReadMethod::MemoryTimeline => {
             VaultReadResponse::MemoryTimeline(CoreMemoryTimelineResponse {
+                narrowing: read_receipt_fixture(),
                 anchor_id: String::new(),
                 records: Vec::new(),
             })
@@ -567,6 +568,7 @@ fn err_envelope_forwards_error_untranslated() {
 fn wire_request_body_is_the_inner_dto_not_the_tagged_envelope() {
     let anchor = entity(0x5A);
     let reply = VaultReadResponse::MemoryTimeline(CoreMemoryTimelineResponse {
+        narrowing: read_receipt_fixture(),
         anchor_id: anchor.to_hex(),
         records: Vec::new(),
     });
@@ -1509,6 +1511,7 @@ fn wire_read_response_without_narrowing_receipt_fails_closed() {
         VaultReadMethod::ContextPack,
         VaultReadMethod::Hydrate,
         VaultReadMethod::HydrateMany,
+        VaultReadMethod::MemoryTimeline,
     ] {
         let mut value = serde_json::to_value(canned_response(method)).expect("valid fixture");
         assert!(serde_json::from_value::<VaultReadResponse>(value.clone()).is_ok());
@@ -1576,6 +1579,41 @@ fn wire_hydrate_absence_without_its_receipt_fails_closed() {
     let (_, adapter) = wire_adapter(response);
     assert!(matches!(
         adapter.hydrate(hydrate_request("cl999999:00")),
+        Err(VaultReadError::ProtocolMismatch { .. })
+    ));
+}
+
+#[test]
+fn timeline_receipts_survive_success_absence_and_wire_transport() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (visible, hidden) = seed_scoped_pack_vault(&vault);
+    let adapter =
+        InProcessVaultReadAdapter::new(&vault, ScopedReadActorKey::new("reader").unwrap());
+    let request = |id: EntityId| CoreMemoryTimelineRequest {
+        id: id.to_hex(),
+        view: None,
+    };
+    let response = adapter
+        .memory_timeline(request(visible))
+        .expect("visible timeline");
+    assert_eq!(response.narrowing.suppressed_count, 0);
+    let (_, remote) =
+        wire_adapter(json!({"ok": VaultReadResponse::MemoryTimeline(response.clone())}));
+    assert_eq!(remote.memory_timeline(request(visible)).unwrap(), response);
+    let error = adapter
+        .memory_timeline(request(hidden))
+        .expect_err("hidden timeline");
+    assert!(
+        matches!(&error, VaultReadError::Engine { narrowing: Some(receipt), .. }
+        if receipt.suppressed_count > 0)
+    );
+    let (_, remote) = wire_adapter(json!({"err": error}));
+    assert_eq!(remote.memory_timeline(request(hidden)).unwrap_err(), error);
+    let mut stripped = serde_json::to_value(&error).unwrap();
+    stripped.as_object_mut().unwrap().remove("narrowing");
+    let (_, remote) = wire_adapter(json!({"err": stripped}));
+    assert!(matches!(
+        remote.memory_timeline(request(hidden)),
         Err(VaultReadError::ProtocolMismatch { .. })
     ));
 }

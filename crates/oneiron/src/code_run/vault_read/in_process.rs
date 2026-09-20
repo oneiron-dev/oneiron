@@ -354,7 +354,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .memory_timeline(&anchor)
             .map_err(|error| engine_failure(METHOD, &error))?;
         if timeline_is_absent(&timeline) {
-            return Err(engine_absent(METHOD, "entity"));
+            return Err(engine_absent(METHOD, "entity").with_read_receipt(timeline.receipt));
         }
         Ok(project_memory_timeline(&timeline))
     }

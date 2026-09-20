@@ -212,8 +212,11 @@ fn project_timeline_record(record: &MemoryTimelineRecord) -> CoreMemoryTimelineR
     }
 }
 
-pub(super) fn project_memory_timeline(timeline: &MemoryTimeline) -> CoreMemoryTimelineResponse {
+pub(super) fn project_memory_timeline(
+    timeline: &crate::claim::ScopedReadResult<MemoryTimeline>,
+) -> CoreMemoryTimelineResponse {
     CoreMemoryTimelineResponse {
+        narrowing: timeline.receipt.clone(),
         anchor_id: timeline.anchor.to_hex(),
         records: timeline
             .records

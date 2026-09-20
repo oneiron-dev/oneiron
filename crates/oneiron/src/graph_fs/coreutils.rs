@@ -519,13 +519,10 @@ impl GraphFsResolver<'_, '_> {
         let Some(entity_type) = self.entity_type_in(rtxn, id)? else {
             return Ok(false);
         };
-        if entity_type == ENTITY_TYPE_CLAIM {
+        if entity_type != ENTITY_TYPE_WORLD {
             return self
                 .scoped_read
                 .is_entity_readable_with_policy_in(rtxn, policy, id);
-        }
-        if entity_type != ENTITY_TYPE_WORLD {
-            return Ok(true);
         }
         if policy.diagnostics().loaded_manifest_forces_fail_closed() {
             return Ok(false);

@@ -74,12 +74,12 @@ pub(super) fn decode_wire_envelope(
             ));
         }
         if matches!(&error, VaultReadError::Engine {
-            method: VaultReadMethod::Hydrate, engine_code, narrowing: None, ..
+            method: VaultReadMethod::Hydrate | VaultReadMethod::MemoryTimeline, engine_code, narrowing: None, ..
         } if engine_code == super::error::NOT_FOUND_ENGINE_CODE)
         {
             return Err(protocol_mismatch(
                 method,
-                "hydrate absence omitted its read receipt".to_owned(),
+                "read absence omitted its read receipt".to_owned(),
             ));
         }
         // Identity is validated; forward the semantic variant and payload intact.
