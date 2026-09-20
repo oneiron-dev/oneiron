@@ -2345,3 +2345,58 @@ fn standalone_reviewed_document_recovery_refuses_diverged_repository() {
         RepoMutationStatus::Prepared
     );
 }
+
+#[test]
+fn standalone_reviewed_noop_crash_resumes_pinned_commit_without_edit_receipt() {
+    use crate::critic::CritiqueVerdict;
+    let (dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let template = reviewed_proposal_fixture(&vault, &repo);
+    let mut request = template.request().unwrap();
+    request.operation = RepoMutationOperation::CommitFile {
+        path: "README.md".into(),
+        content: b"base\n".to_vec(),
+        message: "reviewed metadata-only commit".into(),
+    };
+    let proposal = vault
+        .propose_repo_mutation(request, template.catalog)
+        .unwrap();
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    let old_head = current_head_commit(repo.path()).unwrap();
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterDocumentBeforeAction));
+    assert!(vault.apply_repo_proposal(proposal.id).is_err());
+    assert!(vault.code_file_edit_receipt(proposal.id).unwrap().is_none());
+    assert_eq!(current_head_commit(repo.path()).unwrap(), old_head);
+    let pending = vault
+        .repo_mutation_oplog(&repo_ref(&repo))
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(pending.status, RepoMutationStatus::Prepared);
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let outcomes = vault
+        .recover_prepared_repo_mutations(&repo_ref(&repo))
+        .unwrap();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].entry.seq, pending.seq);
+    assert_eq!(outcomes[0].entry.status, RepoMutationStatus::Applied);
+    assert_eq!(
+        outcomes[0].entry.expected_post_action_fork_hash,
+        pending.expected_post_action_fork_hash
+    );
+    assert_eq!(
+        std::fs::read(repo.path().join("README.md")).unwrap(),
+        b"base\n"
+    );
+    assert!(vault.code_file_edit_receipt(proposal.id).unwrap().is_none());
+    let head = current_head_commit(repo.path()).unwrap();
+    assert_ne!(head, old_head);
+    assert_eq!(
+        vault.apply_repo_proposal(proposal.id).unwrap().entry.seq,
+        pending.seq
+    );
+    assert_eq!(current_head_commit(repo.path()).unwrap(), head);
+}

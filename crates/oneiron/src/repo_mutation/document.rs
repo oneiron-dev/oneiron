@@ -53,7 +53,7 @@ pub(super) fn resume_reviewed_document(
     let Some(row) = super::proposal::for_operation(vault, repo, stale.seq)? else {
         return Ok(None);
     };
-    if row.merge_stack.is_some() || vault.code_file_edit_receipt(row.id)?.is_none() {
+    if row.merge_stack.is_some() {
         return Ok(None);
     }
     let request = row.request()?;
@@ -66,6 +66,15 @@ pub(super) fn resume_reviewed_document(
         || stale.operation_kind != request.operation.kind()
     {
         return Err(invalid("reviewed recovery authority differs"));
+    }
+    if vault.code_file_edit_receipt(row.id)?.is_none() {
+        // A byte-identical approved write has no document operation to receipt.
+        // Its immutable pre-snapshot must prove that fact; missing receipts for
+        // real edits still take the generic recovery path.
+        let before = vault.mount_repo_ref(repo, RepoMountRef::Fork(row.pre_action_fork_hash))?;
+        if before.read_file(&row.path)?.unwrap_or(b"") != row.content {
+            return Ok(None);
+        }
     }
     let commit = commit.ok_or(invalid("reviewed recovery staged commit missing"))?;
     if !super::git::git_commit_object_available(root, &commit.new_head, &commit.base_head)? {
