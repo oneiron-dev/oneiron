@@ -25,7 +25,7 @@ pub struct AdminRulingReceipt {
     pub previous_holder: Option<String>,
     pub previous_value: Option<Value>,
 }
-const RULING_PREDICATE: &str = "federation.admin_ruling";
+pub(super) const RULING_PREDICATE: &str = "federation.admin_ruling";
 pub(super) fn ruling_anchor_id(vault_id: u64) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(
         b"oneiron.shared-ruling.anchor.v1",
@@ -196,34 +196,47 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
     ) -> Result<Vec<AdminRulingReceipt>> {
-        let anchor = ruling_anchor_id(vault_id)?;
         let mut rows = Vec::new();
-        for id in self.claims_for_subject_in_txn(txn, &anchor)? {
-            let body = self.get_claim_in_txn(txn, &id)?.ok_or_else(invalid)?;
-            if body.predicate != RULING_PREDICATE
-                || body.approval != crate::claim::ClaimApprovalStatus::Auto
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        // ClaimOf edges are mutable graph materialization, not ledger custody.
+        // The put-maintained predicate index keeps detached rows discoverable.
+        for id in crate::claim::claim_ids_for_predicate_in_txn(&self.store, txn, RULING_PREDICATE)?
+        {
+            let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
+                continue;
+            };
+            let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            let Some(receipt) = super::ruling_integrity::admitted_ruling(
+                &self.store,
+                txn,
+                &id,
+                &body,
+                header.learned_at,
+            )?
+            else {
+                continue;
+            };
+            if receipt.ruling.vault_id != vault_id {
+                continue;
+            }
+            let grant = EntityId::from_hex(&receipt.ruling.grant_ref)?;
+            if fold
+                .pact_for_grant(&grant)
+                .is_some_and(|pact| pact.status != crate::authority::FederationPactStatus::Active)
             {
                 continue;
             }
-            let mut bytes = Vec::new();
-            rmpv::encode::write_value(&mut bytes, &body.value).map_err(|_| invalid())?;
-            let receipt: AdminRulingReceipt =
-                rmp_serde::from_slice(&bytes).map_err(|_| invalid())?;
-            let holder = EntityId::from_hex(&receipt.ruling.holder)?;
-            let actor_matches = body.evidence.as_ref().is_some_and(|evidence| {
-                let rmpv::Value::Map(fields) = evidence else { return false; };
-                fields.iter().any(|(key, value)| key.as_str() == Some("actor_entity_ref")
-                    && matches!(value, rmpv::Value::Binary(bytes) if bytes.as_slice() == holder.as_bytes()))
-            });
-            if receipt.ruling.id != id.to_hex()
-                || receipt.ruling.vault_id != vault_id
-                || body.subject != crate::claim::ClaimSubject::Entity(anchor)
-                || !actor_matches
-            {
-                return Err(invalid());
-            }
             rows.push(receipt);
         }
+        // A Lamport step requires at least that many admitted ledger entries.
+        // Partial replay stays inert until its history arrives; a peer's huge
+        // self-asserted counter can neither win nor poison the next append.
+        let observed_entries = u64::try_from(rows.len()).map_err(|_| invalid())?;
+        rows.retain(|row| row.ruling.ledger_order <= observed_entries);
         // Lamport order advances after every observed ruling; concurrent ties
         // use the immutable id. Receipts project the same merged history on all replicas.
         rows.sort_by(|a, b| {

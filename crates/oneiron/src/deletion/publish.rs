@@ -317,7 +317,9 @@ impl Vault {
         gate: Option<&GatedDeletion<'_>>,
     ) -> Result<heed::RwTxn<'_>> {
         let mut wtxn = self.store.env.write_txn()?;
-        if let Err(refusal) = reverify_deletion_authority_before_publication(gate, &wtxn) {
+        if let Err(refusal) = reverify_deletion_authority_before_publication(gate, &wtxn)
+            .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
+        {
             self.discard_staged_deletion_gate_recovery_in_txn(&mut wtxn, id, value, gate_decision)?;
             self.withdraw_own_pending_tombstone_in_txn(&mut wtxn, window_key.as_str(), id, value)?;
             wtxn.commit()?;
@@ -436,6 +438,7 @@ impl Vault {
             // SAME txn that stages it — a revocation landing since the gate ran
             // stops the deletion before it becomes remote truth.
             reverify_deletion_authority_before_publication(gate, wtxn)?;
+            crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
             self.store.put_pending_deletion_gate_decision_in_txn(
                 wtxn,
                 decision,

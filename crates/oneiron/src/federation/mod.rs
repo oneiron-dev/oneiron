@@ -8,7 +8,11 @@
 mod codec;
 mod coreference;
 mod grant;
+mod ruling_integrity;
 mod rulings;
+pub(crate) use ruling_integrity::{
+    guard_ruling_overwrite, reject_ruling_delete, validate_ruling_claim,
+};
 mod shared_creation;
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};

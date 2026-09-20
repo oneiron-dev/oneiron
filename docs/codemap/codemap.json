@@ -2261,6 +2261,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/put_apply/claim_admission.rs",
+     "purpose": "Claim-body and immutable-ledger admission before any put side effect",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/put_apply/mod.rs",
      "purpose": "Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers",
      "surface": {
@@ -5900,7 +5910,7 @@
      "path": "src/claim/projection_index.rs",
      "purpose": "Rebuildable claim projections maintained at the shared put chokepoint",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -12824,7 +12834,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 9
      }
     },
@@ -12881,6 +12891,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/federation/ruling_integrity.rs",
+     "purpose": "Stored authority bindings and append-only protection for administrative rulings",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AdminRuling",
       "AdminRulingReceipt"
@@ -12888,7 +12908,7 @@
      "path": "src/federation/rulings.rs",
      "purpose": "Append-only equal-holder rulings and deterministic newest-wins projection",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4,
       "struct": 2
      }
@@ -12910,7 +12930,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/federation/shared_creation_tests.rs",
@@ -26294,7 +26314,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26770,7 +26790,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27451,7 +27471,7 @@
    },
    "over_bar": 1,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1581,
+   "source_files": 1583,
    "test_files": 558
   },
   "oneiron-bench": {

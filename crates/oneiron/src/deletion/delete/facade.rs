@@ -67,6 +67,10 @@ impl Vault {
                 "cleanup archives require the cleanup proposal/decision door",
             ));
         }
+        {
+            let txn = self.store.env.read_txn()?;
+            crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
+        }
         let requested_at = unix_seconds_now();
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());

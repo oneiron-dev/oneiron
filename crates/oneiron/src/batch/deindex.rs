@@ -82,6 +82,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::federation::reject_ruling_delete(store, wtxn, id)?;
     let mut had_vector = false;
     let mut had_graph_mutation = false;
     let mut neighbors = Vec::new();

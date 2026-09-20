@@ -59,21 +59,19 @@ pub(in crate::batch) fn apply_put(
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
-    // Publication admission reuses the write-door decode and must precede
-    // gate receipts, debits, and every other write effect.
-    let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {
-        Some(crate::claim::validate_claim_body_and_decode(
-            data,
-            allow_reserved_predicate,
-        )?)
-    } else {
-        None
-    };
-    crate::booking::publication::guard_publication_put(
+    let incoming_claim_body = super::claim_admission::admit_claim_put(
         store,
         wtxn,
         id,
-        incoming_claim_body.as_ref(),
+        super::claim_admission::ClaimPutAdmission {
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            allow_reserved_predicate,
+            write_envelope,
+            replicated,
+        },
     )?;
     // ARCH-0052 D2: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A base row
