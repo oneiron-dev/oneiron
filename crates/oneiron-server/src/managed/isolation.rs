@@ -18,11 +18,19 @@ impl IsolationEvidence {
 pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {
     use std::{
         fs::OpenOptions,
+        io::Read,
         os::{
             fd::AsRawFd,
             unix::fs::{MetadataExt, OpenOptionsExt},
         },
     };
+    // FS_IOC_GET_ENCRYPTION_POLICY_EX, linux/fscrypt.h. The kernel fills
+    // policy_size and one of the v1 (12-byte) or v2 (24-byte) policy unions.
+    #[repr(C)]
+    struct Policy {
+        size: u64,
+        bytes: [u8; 24],
+    }
     let absent = IsolationEvidence {
         fscrypt: false,
         dedicated_uid: false,
@@ -43,13 +51,6 @@ pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {
     let Ok(metadata) = dir.metadata() else {
         return absent;
     };
-    // FS_IOC_GET_ENCRYPTION_POLICY_EX, linux/fscrypt.h. The kernel fills
-    // policy_size and one of the v1 (12-byte) or v2 (24-byte) policy unions.
-    #[repr(C)]
-    struct Policy {
-        size: u64,
-        bytes: [u8; 24],
-    }
     let mut policy = Policy {
         size: 24,
         bytes: [0; 24],
@@ -72,7 +73,6 @@ pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {
         {
             return None;
         }
-        use std::io::Read;
         let mut text = String::new();
         registry.take(1_048_577).read_to_string(&mut text).ok()?;
         Some(uid_binding_matches(&text, uid, name, &canonical))
