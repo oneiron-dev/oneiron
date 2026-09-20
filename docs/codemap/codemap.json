@@ -9015,6 +9015,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/conversation/tests/audience_boundaries.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "Thread",
@@ -25664,7 +25672,7 @@
      "purpose": "Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead…"
     },
     "conversation": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -26549,7 +26557,7 @@
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 1521,
-   "test_files": 539
+   "test_files": 540
   },
   "oneiron-bench": {
    "files": [

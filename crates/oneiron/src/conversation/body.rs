@@ -73,7 +73,7 @@ impl ConversationBody {
     }
     fn validate(&self) -> Result<()> {
         if self.member_ids.len() > 10_000 {
-            return Err(Error::IndexOverflow("conversation members"));
+            return Err(invalid("too many conversation members"));
         }
         if self.v.is_some_and(|v| v != 1) {
             return Err(invalid("unsupported version"));
@@ -108,18 +108,19 @@ pub(crate) fn validate_put_in_txn(
     replicated: bool,
 ) -> Result<()> {
     let body = ConversationBody::from_bytes(bytes)?;
-    for person in &body.member_ids {
-        let raw = store
-            .entities
-            .get(txn, person.as_bytes())?
-            .ok_or(invalid("member must be a PERSON"))?;
-        if EntityMetadataHeader::parse(&raw).is_none_or(|h| h.entity_type != ENTITY_TYPE_PERSON) {
-            return Err(invalid("member must be a PERSON"));
-        }
-    }
-    // A replica carries the body, not the local ledger. Its unresolved history
-    // remains unreadable until a local membership door establishes a window.
+    // A replica carries structurally valid body metadata, not local membership
+    // authority. PERSON rows may arrive later; only the local ledger grants reads.
     if !replicated {
+        for person in &body.member_ids {
+            let raw = store
+                .entities
+                .get(txn, person.as_bytes())?
+                .ok_or(invalid("member must be a PERSON"))?;
+            if EntityMetadataHeader::parse(&raw).is_none_or(|h| h.entity_type != ENTITY_TYPE_PERSON)
+            {
+                return Err(invalid("member must be a PERSON"));
+            }
+        }
         let rows = membership::rows_in(store, txn, id)?;
         let members = membership::members_at_rows(&rows, u64::MAX);
         if members != body.member_ids.iter().copied().collect() {

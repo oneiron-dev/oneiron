@@ -705,6 +705,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation/session.rs` | src | s | 1 struct · 1 enum · 3 fn | SessionMode, SessionPresence | Session mode persists; active participant presence belongs only to this process |
 | `src/conversation/summary.rs` | src | s | 2 fn | — | Caller-authored scoped summaries, landed as gated claim headers |
 | `src/conversation/tests.rs` | test | L | — | — | — |
+| `src/conversation/tests/audience_boundaries.rs` | test | s | — | — | — |
 | `src/conversation/threads.rs` | src | s | 2 struct · 6 fn · 1 crate-vis | Thread, ThreadMeta | Threads are ordinary branches with a rebuildable trunk metadata projection |
 | `src/conversation/visibility.rs` | src | s | 2 fn · 4 crate-vis | — | The audience predicate shared by all ScopedRead paths |
 | `src/corpus.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 const · 2 crate-vis | CorpusId, CorpusScope | Corpus scope for CLAIM records (ONE-1914): the AUDIENCE a claim belongs to, carried as a typed nested entry… |

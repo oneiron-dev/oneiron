@@ -54,7 +54,15 @@ impl AudienceCache {
             if audience.is_empty() {
                 return Ok(false);
             }
-            body::body_in(vault, txn, room)?;
+            match body::body_in(vault, txn, room) {
+                Ok(_) => {}
+                Err(
+                    Error::EntityNotFound | Error::Record(RecordError::InvalidConversationBody(_)),
+                ) => {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            }
             let revision = membership::revision_in(&vault.store, txn, room)?;
             if !self.rows.contains_key(&(room, revision)) {
                 if self.rows.len() >= 1024 {
@@ -111,7 +119,16 @@ impl AudienceCache {
                 if audience.is_empty() {
                     return Ok(false);
                 }
-                let rel = require_kind(vault, txn, relationship, ENTITY_TYPE_RELATIONSHIP)?;
+                let rel = match require_kind(vault, txn, relationship, ENTITY_TYPE_RELATIONSHIP) {
+                    Ok(rel) => rel,
+                    Err(
+                        Error::EntityNotFound
+                        | Error::Record(RecordError::InvalidConversationBody(_)),
+                    ) => {
+                        return Ok(false);
+                    }
+                    Err(error) => return Err(error),
+                };
                 let mut participants =
                     dag::peers(vault, txn, relationship, EdgeKind::ParticipatesIn, true)?;
                 // Relationship participant ids are a read-path feed, not a

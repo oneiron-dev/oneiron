@@ -142,6 +142,9 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::EntityTypeImmutable
         | ErrorKind::InvalidTimeRange
         | ErrorKind::InvalidClaimBody
+        // Replicated rooms carry only body metadata, not the local ledger.
+        // Invalid incoming codecs are remote rejections, not window failures.
+        | ErrorKind::InvalidConversationBody
         | ErrorKind::InvalidPsychProfileBody
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidAgentDefBody

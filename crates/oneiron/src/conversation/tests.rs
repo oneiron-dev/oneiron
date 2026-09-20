@@ -855,3 +855,6 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
         vec![good.id]
     );
 }
+
+#[path = "tests/audience_boundaries.rs"]
+mod audience_boundaries;
