@@ -1,6 +1,6 @@
-//! Real v8 app-tier WebSocket client for the shipped server.
+//! Real app-tier WebSocket client using the shipped server protocol version.
 use futures_util::{SinkExt, StreamExt};
-use oneiron::sync::transport::{APP_TIER_PROTOCOL_VERSION_VERSION, TAG_PROTOCOL_HELLO, TAG_RPC};
+use oneiron::sync::transport::{PROTOCOL_VERSION, TAG_PROTOCOL_HELLO, TAG_RPC};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -97,7 +97,7 @@ impl Agent {
             let (mut socket, _) = tokio_tungstenite::client_async(request, tcp).await?;
             socket
                 .send(Message::Binary(
-                    vec![TAG_PROTOCOL_HELLO, APP_TIER_PROTOCOL_VERSION_VERSION].into(),
+                    vec![TAG_PROTOCOL_HELLO, PROTOCOL_VERSION].into(),
                 ))
                 .await?;
             match socket
@@ -106,7 +106,7 @@ impl Agent {
                 .ok_or("socket closed before protocol hello")??
             {
                 Message::Binary(bytes) if bytes.first() == Some(&0) => {}
-                _ => return Err("server did not acknowledge v8 hello".into()),
+                _ => return Err("server did not acknowledge current protocol hello".into()),
             }
             let mut agent = Self {
                 index,
