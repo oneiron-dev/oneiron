@@ -5,7 +5,7 @@ use crate::connector_key::EffectorBudgetCharge;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::gate::ExternalEffectGateInput;
-use crate::outbound_consent::ScopedMcpCallContext;
+use crate::outbound_consent::tool_call::PreparedToolCall;
 use crate::outbound_intent_ledger::{
     BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentId, IntentLedgerError,
     OutboundSendOutcome, derive_intent_id, hash_frozen_payload,
@@ -43,7 +43,7 @@ pub(crate) enum PreparedAuthorization {
     ScopedMcp {
         grant_id: EntityId,
         principal_ref: String,
-        call: ScopedMcpCallContext,
+        prepared: Box<PreparedToolCall>,
     },
 }
 

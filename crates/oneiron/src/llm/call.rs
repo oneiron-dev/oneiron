@@ -14,6 +14,8 @@ use crate::error::Result;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallEnvelope {
+    #[serde(default)]
+    pub scope: super::scope::Scope,
     pub purpose: CallPurpose,
     pub class: CallClass,
     pub tier: TierPrecedence,
