@@ -2354,9 +2354,10 @@ fn standalone_reviewed_noop_crash_resumes_pinned_commit_without_edit_receipt() {
     let template = reviewed_proposal_fixture(&vault, &repo);
     let mut request = template.request().unwrap();
     request.operation = RepoMutationOperation::CommitFile {
-        path: "README.md".into(),
-        content: b"base\n".to_vec(),
-        message: "reviewed metadata-only commit".into(),
+        // Creating an empty file changes Git but needs no text edit operation.
+        path: "EMPTY.txt".into(),
+        content: Vec::new(),
+        message: "reviewed empty file creation".into(),
     };
     let proposal = vault
         .propose_repo_mutation(request, template.catalog)
@@ -2387,10 +2388,7 @@ fn standalone_reviewed_noop_crash_resumes_pinned_commit_without_edit_receipt() {
         outcomes[0].entry.expected_post_action_fork_hash,
         pending.expected_post_action_fork_hash
     );
-    assert_eq!(
-        std::fs::read(repo.path().join("README.md")).unwrap(),
-        b"base\n"
-    );
+    assert_eq!(std::fs::read(repo.path().join("EMPTY.txt")).unwrap(), b"");
     assert!(vault.code_file_edit_receipt(proposal.id).unwrap().is_none());
     let head = current_head_commit(repo.path()).unwrap();
     assert_ne!(head, old_head);
@@ -2400,3 +2398,6 @@ fn standalone_reviewed_noop_crash_resumes_pinned_commit_without_edit_receipt() {
     );
     assert_eq!(current_head_commit(repo.path()).unwrap(), head);
 }
+
+#[path = "tests/export_authority.rs"]
+mod export_authority;

@@ -105,14 +105,13 @@ impl Vault {
             ));
         }
         let mut files = BTreeMap::new();
-        let mut scope = None;
+        let target_scope = crate::repo_mutation::canonical_mutation_scope(repo.repo_root())?;
         for frontier in revision.file_frontiers.values() {
-            if scope.is_some_and(|repo: &String| repo != &frontier.repo) {
+            if frontier.repo != target_scope {
                 return Err(Error::InvariantViolation(
-                    "engine commit spans multiple repositories",
+                    "engine commit belongs to another repository",
                 ));
             }
-            scope = Some(&frontier.repo);
             let content = self.code_document_at(frontier)?.into_bytes();
             if files
                 .insert(

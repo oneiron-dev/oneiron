@@ -98,6 +98,44 @@ pub(super) fn store(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &RepoProposal
     Ok(())
 }
 impl RepoProposal {
+    /// File writes preserve the mode committed by the reviewed pre-action fork.
+    /// The live checkout and revision metadata are not authority for a mode.
+    pub(crate) fn reviewed_file_mode(
+        &self,
+        vault: &Vault,
+        frontier: &crate::code_document::CodeDocumentFrontier,
+    ) -> Result<u32> {
+        if super::oplog::repo_mutation_repo_key(&RepoRef::parse(&self.repo)?) != frontier.repo
+            || self.path != frontier.path
+        {
+            return Err(invalid("reviewed file belongs to another document"));
+        }
+        let txn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .vault_meta
+            .get(&txn, &repo_mutation_snapshot_key(self.pre_action_fork_hash))?
+            .ok_or(Error::EntityNotFound)?;
+        if *blake3::hash(&raw).as_bytes() != self.pre_action_fork_hash {
+            return Err(Error::CorruptedIndex("reviewed fork hash mismatch"));
+        }
+        let snapshot = super::snapshot::decode_snapshot(&raw)?;
+        match snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.path == self.path)
+        {
+            None => Ok(0o100644),
+            Some(entry) if entry.kind == super::snapshot::StoredRepoSnapshotEntryKind::File => {
+                Ok(if entry.executable { 0o100755 } else { 0o100644 })
+            }
+            // Both reviewed file operations refuse symlinks, rather than following
+            // or creating them. Export must not widen that authority.
+            Some(_) => Err(invalid(
+                "reviewed file operation cannot authorize a symlink",
+            )),
+        }
+    }
     pub(super) fn request(&self) -> Result<RepoMutationRequest> {
         Ok(RepoMutationRequest::new(
             RepoRef::parse(&self.repo)?,

@@ -84,11 +84,13 @@ impl Vault {
         revision_id: EntityId,
         proposal_ids: &[EntityId],
     ) -> Result<()> {
+        self.require_inherited_file_mode_reviews(revision_id)?;
         self.check_code_revision_reviews(revision_id, proposal_ids, true)
     }
 
     pub(crate) fn require_code_revision_promotion(&self, revision_id: EntityId) -> Result<()> {
         let reviews = self.code_revision_promotions(revision_id)?;
+        self.require_inherited_file_mode_reviews(revision_id)?;
         self.check_code_revision_reviews(revision_id, &reviews, false)
     }
 
@@ -112,10 +114,13 @@ impl Vault {
             let edit = self
                 .code_file_edit_receipt(*id)?
                 .ok_or(Error::InvalidClaimBody("review has no document operation"))?;
+            let reviewed_mode = proposal.reviewed_file_mode(self, &edit.after)?;
             if edit.session_id != proposal.session
                 || edit.actor.entity_ref() != proposal.actor
                 || edit.edit.path != proposal.path
-                || reviews.insert(edit.document_id, (proposal, edit)).is_some()
+                || reviews
+                    .insert(edit.document_id, (proposal, edit, reviewed_mode))
+                    .is_some()
             {
                 return Err(Error::InvalidClaimBody(
                     "duplicate or mismatched promotion review",
@@ -170,18 +175,19 @@ impl Vault {
             ));
         }
         for (id, file) in &revision.file_frontiers {
-            if parent
-                .as_ref()
-                .is_some_and(|p| p.file_frontiers.get(id) == Some(file))
-            {
+            if parent.as_ref().is_some_and(|p| {
+                p.file_frontiers.get(id) == Some(file)
+                    && file_mode(p, id) == file_mode(&revision, id)
+            }) {
                 continue;
             }
-            let (proposal, edit) = reviews
+            let (proposal, edit, reviewed_mode) = reviews
                 .remove(id)
                 .ok_or(Error::InvalidClaimBody("changed file lacks review"))?;
             if proposal.session != revision.session_id
                 || Some(proposal.provenance_claim) != revision.provenance_claim_id
                 || edit.after != *file
+                || file_mode(&revision, id) != reviewed_mode
             {
                 return Err(Error::InvalidClaimBody(
                     "promotion does not match reviewed document frontier",
@@ -218,6 +224,33 @@ impl Vault {
         }
         Ok(())
     }
+    fn require_inherited_file_mode_reviews(&self, revision_id: EntityId) -> Result<()> {
+        let mut revision = self
+            .get_code_revision(&revision_id)?
+            .ok_or(Error::EntityNotFound)?;
+        for _ in 0..crate::limits::MAX_ANCESTOR_DEPTH {
+            let Some(parent_id) = revision.parent_revision_id else {
+                return Ok(());
+            };
+            let parent = self
+                .get_code_revision(&parent_id)?
+                .ok_or(Error::EntityNotFound)?;
+            if !revision.file_frontiers.iter().any(|(id, file)| {
+                file_mode(&revision, id) != 0o100644
+                    && parent.file_frontiers.get(id) == Some(file)
+                    && file_mode(&parent, id) == file_mode(&revision, id)
+            }) {
+                return Ok(());
+            }
+            // An unchanged frontier is not a review capability. Revalidate the
+            // parent's receipt before inheriting its nondefault mode authority.
+            // Walk iteratively, with no nested write transactions.
+            let reviews = self.code_revision_promotions(parent_id)?;
+            self.check_code_revision_reviews(parent_id, &reviews, false)?;
+            revision = parent;
+        }
+        Err(Error::IndexOverflow("code_revision_mode_review_chain"))
+    }
     pub fn code_revision_promotions(&self, revision: EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
         let Some(raw) = self.store.vault_meta.get(
@@ -235,4 +268,13 @@ impl Vault {
             rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("promotion decode"))?;
         ids.iter().map(|id| EntityId::from_hex(id)).collect()
     }
+}
+
+fn file_mode(revision: &super::CodeRevision, document: &[u8; 32]) -> u32 {
+    revision
+        .commit_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.file_modes.get(document))
+        .copied()
+        .unwrap_or(0o100644)
 }
