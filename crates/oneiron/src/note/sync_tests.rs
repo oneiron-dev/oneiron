@@ -158,7 +158,8 @@ mod transport {
         let key = window(&source, note);
         let doc = LoroDoc::new();
         reverse_rematerialize(&source, &doc, &key).unwrap();
-        receive(&peer, &send(&source, &doc, &key), &key);
+        let before_fork = send(&source, &doc, &key);
+        receive(&peer, &before_fork, &key);
         assert_eq!(peer.note_text(note).unwrap(), "alpha");
         let before = source.note_document(note).unwrap().unwrap();
         let anchor = before.anchor(5).unwrap();
@@ -194,6 +195,11 @@ mod transport {
         assert_eq!(peer.note_text(note).unwrap(), "replacement");
         assert_eq!(peer.note_document(note).unwrap().unwrap().head(), fork);
         assert!(peer.note_proposal(bundle.id).unwrap().waiting.is_empty());
+        let stale = LoroDoc::from_snapshot(&before_fork).unwrap();
+        assert!(forward_rematerialize(&peer, &stale, &Materializer::new(), &key).is_err());
+        assert_eq!(peer.note_document(note).unwrap().unwrap().head(), fork);
+        assert_eq!(peer.note_text(note).unwrap(), "replacement");
+        assert!(peer.note_proposal(bundle.id).unwrap().waiting.is_empty());
     }
 
     #[test]
@@ -210,6 +216,21 @@ mod transport {
         let doc = LoroDoc::new();
         reverse_rematerialize(&source, &doc, &key).unwrap();
         let stale = send(&source, &doc, &key);
+        peer.with_write_txn(|txn| {
+            crate::sync::quarantine::set_remat_marker_in_txn(&peer, txn, key.as_str(), &note)
+        })
+        .unwrap();
+        receive(&peer, &stale, &key);
+        assert!(peer.get_raw(&note).unwrap().is_none());
+        assert!(peer.note_text(note).is_err());
+        assert_eq!(
+            crate::sync::quarantine::pending_remat_entities(&peer, key.as_str()).unwrap(),
+            vec![note.to_hex()]
+        );
+        peer.with_write_txn(|txn| {
+            crate::sync::quarantine::clear_remat_marker_in_txn(&peer, txn, key.as_str(), &note)
+        })
+        .unwrap();
         receive(&peer, &stale, &key);
         peer.apply_replayed_tombstone_for_sync(
             &note,
@@ -321,9 +342,25 @@ mod transport {
         let key = window(&source, note);
         let doc = LoroDoc::new();
         reverse_rematerialize(&source, &doc, &key).unwrap();
-        let loaded = LoadedWindow::new("peer", key.clone(), &peer, &Arc::new(Materializer::new()));
+        struct NoteChanges(std::sync::mpsc::Sender<Vec<String>>);
+        impl crate::sync::bridge::LiveQueryTee for NoteChanges {
+            fn on_materialized(
+                &self,
+                _: &str,
+                diff: &crate::sync::bridge::MaterializedDiffSummary,
+                _: &crate::sync::bridge::OriginMark,
+            ) {
+                self.0.send(diff.containers.clone()).unwrap();
+            }
+        }
+        let (changes, received) = std::sync::mpsc::channel();
+        let tee: Arc<dyn crate::sync::bridge::LiveQueryTee> = Arc::new(NoteChanges(changes));
+        let materializer = Arc::new(Materializer::new());
+        materializer.attach_live_query_tee(&tee);
+        let loaded = LoadedWindow::new("peer", key.clone(), &peer, &materializer);
         loaded.doc.import(&send(&source, &doc, &key)).unwrap();
         assert_eq!(peer.note_text(note).unwrap(), "live");
+        received.try_iter().for_each(drop);
         let anchor = source
             .note_document(note)
             .unwrap()
@@ -341,6 +378,14 @@ mod transport {
             )
             .unwrap();
         loaded.doc.import(&send(&source, &doc, &key)).unwrap();
+        assert_eq!(peer.note_text(note).unwrap(), "live update");
+        assert!(
+            received
+                .try_iter()
+                .flatten()
+                .any(|path| path == format!("w:{key}/entities/{}", note.to_hex()))
+        );
+        drop(loaded);
         assert_eq!(peer.note_text(note).unwrap(), "live update");
     }
 }

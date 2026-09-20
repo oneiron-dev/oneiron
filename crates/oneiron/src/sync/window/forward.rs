@@ -94,9 +94,12 @@ pub fn forward_rematerialize(
     // `?`: its error stays deferred past the marker txn (Trap 2).
     entity_pass::run(&ctx, &mut ledger)?;
     if let Some(documents) = native_documents {
-        ledger
-            .healed
-            .extend(crate::note::sync::apply(vault, doc, documents)?);
+        ledger.healed.extend(crate::note::sync::apply(
+            vault,
+            doc,
+            documents,
+            window_key.as_str(),
+        )?);
     }
     crate::recovery::materialize_retained_shells(vault, doc)?;
     edge_pass::run(&ctx, &mut ledger)?;

@@ -205,16 +205,16 @@ impl State {
             .into_iter()
             .map(|name| (name, BTreeMap::new()))
             .collect();
-        maps.get_mut("documents")
-            .unwrap()
+        maps.entry("documents")
+            .or_default()
             .insert(FORMAT_KEY.to_owned(), FORMAT.to_vec());
         for ((note, head), raw) in &self.docs {
-            maps.get_mut("documents")
-                .unwrap()
+            maps.entry("documents")
+                .or_default()
                 .insert(doc_key(*note, *head), raw.clone());
         }
         for (note, head) in &self.heads {
-            maps.get_mut("document_heads").unwrap().insert(
+            maps.entry("document_heads").or_default().insert(
                 note.to_hex(),
                 pack(&CanonicalHead {
                     entity_id: *note.as_bytes(),
@@ -223,7 +223,7 @@ impl State {
             );
         }
         for receipt in self.receipts.values() {
-            maps.get_mut("head_move_receipts").unwrap().insert(
+            maps.entry("head_move_receipts").or_default().insert(
                 receipt.id.to_hex(),
                 pack(&CanonicalHeadMove {
                     id: *receipt.id.as_bytes(),
@@ -233,13 +233,13 @@ impl State {
             );
         }
         for fork in self.forks.values() {
-            maps.get_mut("note_forks")
-                .unwrap()
+            maps.entry("note_forks")
+                .or_default()
                 .insert(fork.fork.to_hex(), pack(fork)?);
         }
         for bundle in self.bundles.values() {
-            maps.get_mut("note_proposals")
-                .unwrap()
+            maps.entry("note_proposals")
+                .or_default()
                 .insert(bundle.id.to_hex(), pack(bundle)?);
         }
         let mut changed = false;

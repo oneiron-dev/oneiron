@@ -3,11 +3,20 @@ use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::temporal::TimeRange;
 
-pub(crate) fn apply(vault: &Vault, doc: &LoroDoc, mut state: State) -> Result<Vec<EntityId>> {
+pub(crate) fn apply(
+    vault: &Vault,
+    doc: &LoroDoc,
+    mut state: State,
+    window: &str,
+) -> Result<Vec<EntityId>> {
     vault.with_write_txn(|txn| {
         let mut admitted = BTreeSet::new();
         for note in state.cores.keys() {
-            if !blocked(vault, txn, doc, note)? {
+            if !blocked(vault, txn, doc, note)?
+                && !crate::sync::quarantine::unproven_remat_marker_exists_in_txn(
+                    vault, txn, window, note,
+                )?
+            {
                 admitted.insert(*note);
             }
         }
@@ -19,6 +28,28 @@ pub(crate) fn apply(vault: &Vault, doc: &LoroDoc, mut state: State) -> Result<Ve
             .collect();
         state.drop_deleted(&dropped);
         state.validate()?;
+        for note in state.cores.keys() {
+            let Some(old) = vault
+                .store
+                .vault_meta
+                .get(txn, &super::super::documents::head_key(*note))?
+            else {
+                continue;
+            };
+            let previous = EntityId::from_bytes(
+                old.as_ref()
+                    .try_into()
+                    .map_err(|_| invalid("NOTE stored head"))?,
+            )?;
+            let head = state
+                .heads
+                .get(note)
+                .copied()
+                .ok_or(invalid("NOTE stale inline core"))?;
+            if !super::merge::reaches(&state, *note, previous, head) {
+                return Err(invalid("NOTE head move lacks forward receipt"));
+            }
+        }
         // An old carrier must not undo a verdict or overwrite an immutable
         // receipt, even when it arrives from an already-known window frontier.
         for row in state.receipts.values() {

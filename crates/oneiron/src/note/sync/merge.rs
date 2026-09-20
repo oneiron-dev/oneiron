@@ -1,7 +1,7 @@
 //! Reconcile durable NOTE edits with a window that may be ahead after a crash.
 use super::*;
 
-fn reaches(state: &State, note: EntityId, from: EntityId, to: EntityId) -> bool {
+pub(super) fn reaches(state: &State, note: EntityId, from: EntityId, to: EntityId) -> bool {
     let mut visited = BTreeSet::from([from]);
     for _ in 0..state.receipts.len() {
         let before = visited.len();

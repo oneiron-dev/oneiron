@@ -83,7 +83,7 @@ fn rows(doc: &LoroDoc, name: &str) -> Result<Vec<(String, Vec<u8>)>> {
     let mut bad = false;
     doc.get_map(name).for_each(|key, value| match value {
         ValueOrContainer::Value(LoroValue::Binary(bytes)) => {
-            rows.push((key.to_owned(), bytes.to_vec()))
+            rows.push((key.to_owned(), bytes.to_vec()));
         }
         _ => bad = true,
     });

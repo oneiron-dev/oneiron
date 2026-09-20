@@ -304,18 +304,17 @@ impl Vault {
             .filter(|s| s.last_op.elapsed() >= s.idle_timeout)
             .map(|s| s.handle.clone())
             .collect();
-        Ok(due
-            .into_iter()
-            .map(|handle| {
-                let result = self.finish_locked(
-                    &mut streams,
-                    &handle,
-                    MessageFinality::Partial,
-                    None,
-                    Some("idle_timeout".into()),
-                );
-                IdleMessageStreamOutcome { handle, result }
-            })
-            .collect())
+        let mut outcomes = Vec::with_capacity(due.len());
+        for handle in due {
+            let result = self.finish_locked(
+                &mut streams,
+                &handle,
+                MessageFinality::Partial,
+                None,
+                Some("idle_timeout".into()),
+            );
+            outcomes.push(IdleMessageStreamOutcome { handle, result });
+        }
+        Ok(outcomes)
     }
 }

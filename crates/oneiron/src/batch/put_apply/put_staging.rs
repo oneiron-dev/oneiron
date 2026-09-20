@@ -203,3 +203,21 @@ pub(super) fn stage_claim_projection_indexes(
     )?;
     crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)
 }
+
+/// Validate typed storage carriers before any put effect is staged.
+pub(super) fn validate_domain_carriers(
+    store: &Store,
+    txn: &RwTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    data: &[u8],
+    replicated: bool,
+) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_TURN {
+        crate::conversation_dag::validate_session_carrier(store, txn, id, data, replicated)?;
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_EVENT {
+        crate::calendar::origin::validate_event_write(store, txn, id, data, replicated)?;
+    }
+    Ok(())
+}

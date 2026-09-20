@@ -60,12 +60,7 @@ pub(in crate::batch) fn apply_put(
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
-    if entity_type == crate::registry::ENTITY_TYPE_TURN {
-        crate::conversation_dag::validate_session_carrier(store, wtxn, id, data, replicated)?;
-    }
-    if entity_type == crate::registry::ENTITY_TYPE_EVENT {
-        crate::calendar::origin::validate_event_write(store, wtxn, id, data, replicated)?;
-    }
+    super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
     // Publication admission reuses the write-door decode and must precede
     // gate receipts, debits, and every other write effect.
     let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {

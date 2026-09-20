@@ -49,7 +49,11 @@ fn plan(
     if admitted.is_empty() && snapshot.note_proposals.is_empty() {
         return Ok(cleanup);
     }
-    let expected_docs: BTreeSet<_> = snapshot.doc_snapshots.iter().map(|row| row.key()).collect();
+    let expected_docs: BTreeSet<_> = snapshot
+        .doc_snapshots
+        .iter()
+        .map(super::CanonicalDocument::key)
+        .collect();
     let heads: BTreeSet<_> = snapshot
         .document_heads
         .iter()

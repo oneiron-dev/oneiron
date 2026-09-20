@@ -456,7 +456,6 @@ pub fn register_observer_b_with_tee(
         ("tombstones", tee.clone()),
     );
 
-    let entity_sub = super::note::subscribe(doc, vault, materializer, window_key, entity_sub);
     (entity_sub, edge_sub, tombstone_sub)
 }
 
@@ -478,71 +477,126 @@ fn subscribe_map_observer(
     let lease_vault_id = materializer.lease_vault_id();
     let window_key = window_key.to_string();
     let cid = map.id();
-    subscription_doc.subscribe(
-        &cid,
-        Arc::new(move |event| {
-            if event.origin == DELETION_TOMBSTONE_ORIGIN {
-                // The owning LMDB transaction is still open. Publication owns
-                // its post-commit notification; never invalidate on this event.
-                return;
-            }
-            if event.origin == BRIDGE_ORIGIN {
-                // The bridge mirrors an already committed LMDB write.
-                materializer.notify_live_queries(
-                    &format!("w:{window_key}/{}", live_query.0),
-                    &MaterializedDiffSummary {
-                        containers: Vec::new(),
-                        bytes: 0,
-                    },
-                    &OriginMark {
-                        conn_id: None,
-                        origin: Some(event.origin.to_owned()),
-                    },
-                );
-                return;
-            }
-            let _guard = materializer.lock();
-            for cdiff in &event.events {
-                if let Some(map_delta) = cdiff.diff.as_map() {
-                    let committed = materialize(
+    let root_events = live_query.0 == "entities";
+    let callback_cid = cid.clone();
+    let callback = Arc::new(move |event: loro::event::DiffEvent<'_>| {
+        let entity_event = event.events.iter().any(|diff| diff.target == &callback_cid);
+        let native = root_events && crate::note::sync::is_native(&callback_doc);
+        if !entity_event && !native {
+            return;
+        }
+        if event.origin == DELETION_TOMBSTONE_ORIGIN {
+            // The owning LMDB transaction is still open. Publication owns
+            // its post-commit notification; never invalidate on this event.
+            return;
+        }
+        if event.origin == BRIDGE_ORIGIN {
+            // The bridge mirrors an already committed LMDB write.
+            materializer.notify_live_queries(
+                &format!("w:{window_key}/{}", live_query.0),
+                &MaterializedDiffSummary {
+                    containers: Vec::new(),
+                    bytes: 0,
+                },
+                &OriginMark {
+                    conn_id: None,
+                    origin: Some(event.origin.to_owned()),
+                },
+            );
+            return;
+        }
+        let native_committed = native
+            .then(|| super::note::materialize(&callback_doc, &vault, &materializer, &window_key));
+        if native_committed == Some(true) && !entity_event {
+            let path = format!("w:{window_key}/entities");
+            let mut containers = Vec::new();
+            crate::sync::loro_support::map_for_each_value_bytes(
+                &callback_doc.get_map("entities"),
+                |key, raw| {
+                    if raw
+                        .and_then(crate::batch::EntityMetadataHeader::parse)
+                        .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_NOTE)
+                    {
+                        containers.push(format!("{path}/{key}"));
+                    }
+                },
+            );
+            notify_materialized(
+                &materializer,
+                live_query.1.as_ref(),
+                &path,
+                &MaterializedDiffSummary {
+                    containers,
+                    bytes: 0,
+                },
+                event.origin,
+            );
+        }
+        let _guard = materializer.lock();
+        for cdiff in event
+            .events
+            .iter()
+            .filter(|diff| diff.target == &callback_cid)
+        {
+            if let Some(map_delta) = cdiff.diff.as_map() {
+                let committed = native_committed.unwrap_or_else(|| {
+                    materialize(
                         &callback_doc,
                         map_delta,
                         &vault,
                         &window_key,
                         lease_vault_id,
+                    )
+                });
+                if committed {
+                    let path = format!("w:{window_key}/{}", live_query.0);
+                    let mut bytes = 0usize;
+                    let containers = map_delta
+                        .updated
+                        .iter()
+                        .map(|(key, value)| {
+                            bytes = bytes.saturating_add(key.len());
+                            if let Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(
+                                blob,
+                            ))) = value
+                            {
+                                bytes = bytes.saturating_add(blob.len());
+                            }
+                            format!("{path}/{key}")
+                        })
+                        .collect();
+                    let diff = MaterializedDiffSummary { containers, bytes };
+                    notify_materialized(
+                        &materializer,
+                        live_query.1.as_ref(),
+                        &path,
+                        &diff,
+                        event.origin,
                     );
-                    if committed {
-                        let path = format!("w:{window_key}/{}", live_query.0);
-                        let mut bytes = 0usize;
-                        let containers = map_delta
-                            .updated
-                            .iter()
-                            .map(|(key, value)| {
-                                bytes = bytes.saturating_add(key.len());
-                                if let Some(loro::ValueOrContainer::Value(
-                                    loro::LoroValue::Binary(blob),
-                                )) = value
-                                {
-                                    bytes = bytes.saturating_add(blob.len());
-                                }
-                                format!("{path}/{key}")
-                            })
-                            .collect();
-                        let by = OriginMark {
-                            conn_id: event
-                                .origin
-                                .strip_prefix("conn:")
-                                .and_then(|id| id.parse().ok()),
-                            origin: (!event.origin.is_empty()).then(|| event.origin.to_owned()),
-                        };
-                        let diff = MaterializedDiffSummary { containers, bytes };
-                        if let Some(tee) = &live_query.1 {
-                            tee.on_materialized(&path, &diff, &by);
-                        }
-                        materializer.notify_live_queries(&path, &diff, &by);
-                    }
                 }
             }
-        }),
-    )
+        }
+    });
+    if root_events {
+        subscription_doc.subscribe_root(callback)
+    } else {
+        subscription_doc.subscribe(&cid, callback)
+    }
+}
+
+fn notify_materialized(
+    materializer: &Materializer,
+    tee: Option<&Arc<dyn LiveQueryTee>>,
+    path: &str,
+    diff: &MaterializedDiffSummary,
+    origin: &str,
+) {
+    let by = OriginMark {
+        conn_id: origin.strip_prefix("conn:").and_then(|id| id.parse().ok()),
+        origin: (!origin.is_empty()).then(|| origin.to_owned()),
+    };
+    if let Some(tee) = tee {
+        tee.on_materialized(path, diff, &by);
+    }
+    materializer.notify_live_queries(path, diff, &by);
 }

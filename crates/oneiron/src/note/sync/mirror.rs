@@ -35,8 +35,8 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
         let Some(raw) = vault.store.entities.get(&txn, note.as_bytes())? else {
             continue;
         };
-        if !EntityMetadataHeader::parse(&raw)
-            .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_NOTE)
+        if EntityMetadataHeader::parse(&raw)
+            .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_NOTE)
         {
             continue;
         }

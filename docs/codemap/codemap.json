@@ -2137,7 +2137,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -16322,7 +16322,7 @@
      "path": "src/note/sync/merge.rs",
      "purpose": "Reconcile durable NOTE edits with a window that may be ahead after a crash",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -22777,7 +22777,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/bridge/note.rs",
-     "purpose": "Live NOTE replay for document-only changes, retaining the existing entity observer",
+     "purpose": "Live NOTE replay for document-only changes on the existing entity observer",
      "surface": {
       "crate-vis": 1
      }

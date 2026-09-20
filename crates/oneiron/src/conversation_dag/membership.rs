@@ -39,12 +39,11 @@ pub(crate) fn validate_session_carrier(
     replicated: bool,
 ) -> Result<()> {
     let session = carrier(body)?;
-    if let Some(previous) = store.port_entity_record(txn, &turn)? {
-        if let Some(original) = carrier(&previous.body)? {
-            if session != Some(original) {
-                return Err(invalid("DAG session membership is immutable"));
-            }
-        }
+    if let Some(previous) = store.port_entity_record(txn, &turn)?
+        && let Some(original) = carrier(&previous.body)?
+        && session != Some(original)
+    {
+        return Err(invalid("DAG session membership is immutable"));
     }
     if let Some(session) = session {
         if !replicated {
