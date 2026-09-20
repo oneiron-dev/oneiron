@@ -875,9 +875,11 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
         .unwrap()
         .unwrap();
     let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    // Notes are append-only at the public author door. Seed a replicated
+    // revision to exercise historical admission without opening a raw writer.
     vault
         .batch()
-        .put(
+        .put_replicated(
             &id,
             ENTITY_TYPE_NOTE,
             crate::TimeRange {
@@ -888,7 +890,7 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
             &crate::note::encode_note_body(&public_body).expect("public body"),
         )
         .commit()
-        .expect("replace through the ordinary batch door");
+        .expect("seed replicated public revision");
 
     let owner_read = vault.scoped_read(
         ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").expect("owner key"),
