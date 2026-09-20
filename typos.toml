@@ -51,3 +51,17 @@ MESSAGEs = "MESSAGEs"
 ND = "ND"
 # Prose plural of the REQUEST record type; typos splits `REQUESTs` into `REQUES` + `Ts`.
 REQUESTs = "REQUESTs"
+
+# The exact gold filename is unique to crates/oneiron/src/data/.
+# Root-walk discovery does not read nested configs; type globs match basenames.
+# Frozen gold names/acronyms are evidence, not spelling fixes.
+[type.of360-gold]
+extend-glob = ["of360_gold.v1.json"]
+
+[type.of360-gold.extend-identifiers]
+FLE = "FLE" # French as a foreign language support in the exchange-student case.
+Hav = "Hav" # Employer name in the ferry-commuter case.
+Ines = "Ines" # Given name in the pastry and trail-running cases.
+ND5 = "ND5" # Neutral-density solar filter; do not allow the split word globally.
+NWO = "NWO" # Dutch research funding panel in the thesis case.
+Stads = "Stads" # Clinic name in the health case.
