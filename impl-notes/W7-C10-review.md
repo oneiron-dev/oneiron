@@ -634,3 +634,77 @@ partial greens remain; no full-runtime, featureless, doctest or sync pass is
 claimed. The full own-PR intake was refreshed again; only our progress comment
 changed, with no new external finding. R19 first proves the fleet fixture and
 then runs the remaining test stages on a frozen candidate.
+
+
+## Tests-after-review: portable checks complete, native environment blocked
+
+Tested code head: `9191347cbaad5ae0b65ea36c662ad3e0e990b43d`. R19 and R20 both
+ended with exit **0** and their services are inactive. Source stayed frozen until
+those terminals. These are actual results, not acknowledgements or review verdicts:
+
+| Lane | Actual result |
+| --- | --- |
+| R15 acceptance-focused | 9/9 passed; both original repairs, five presets/Max one-day sigma, high/xhigh/max, admitted partial deadline, raw deadline, final HyDE trace |
+| R17 additional-focused | 25 passed, 1 failed; the failure is retained below, not retroactively green |
+| R19 focused fleet | 1/1 passed, run `2eeeaf50-1586-4b16-9c3f-13445c6fa7af` |
+| Full workspace, all features, full profile, no fail-fast | **9522 passed (8 slow), 21 pre-existing skipped**, run `2234e2cd-0451-4d4b-855a-0f3a654e2c82` |
+| Featureless core library | **6654 passed, 0 failed, 4 pre-existing ignored, 0 filtered** |
+| Workspace doctests, excluding bench | **8 passed, 0 failed** |
+| Narrow `sync,test-hooks`, full profile, no fail-fast | **7918 passed (9 slow), 16 pre-existing skipped**, run `669feb1d-cbd4-4287-8a89-b01eba216b98` |
+| R19 changed-crate all-targets/all-features Clippy | Passed for core, server and bench, warnings denied |
+| R20 featureless all-targets core Clippy | Passed, warnings denied |
+| R20 strict bench rustdoc | Passed with encoded flags cleared and `RUSTDOCFLAGS=-D warnings` |
+| Formatting / code-map | Owning-crate formatting passed; current read-only code-map pin check passed |
+
+Full-runtime per-crate passed counts: core **7920**, server **918**, bench **303**,
+remote **33**, UniFFI **12**, vault-contract **29**, driver **96**, FFI **3**,
+Anthropic **8**, local LLM **5**, OpenAI **4**, macOS crate **23**, seal **168**.
+They sum to 9522. The prescribed Linux NAPI exclusion was retained; no failed case
+was filtered out and no new ignore or capacity override was added.
+
+R15's workspace/server-production Clippy and strict workspace documentation
+proof is retained for unchanged files. The complete changed-path list in
+`tests-after-review-r20/static-reuse.json` shows only core/server tests and bench
+implementation/test changes since that proof. R19 checks all changed crates;
+R20 renews featureless lint for the changed base tests and strict docs for bench.
+This is composed candidate-bound evidence, not a new all-in-one `VERIFY-OK` run.
+Commands, source SHA256 maps, stage exits and raw logs remain under ticket
+`review-recovery/tests-after-review-r{15,16,17,18,19,20}/`.
+
+The original E0061 fix passes **Indexed** because MCP navigation returns the
+indexed search frontier; the tests distinguish it from newer Live bytes. The
+original R14 NOTE test now uses the existing test-only replication fixture door,
+not a public raw NOTE put. The ordinary author_take admission rule, private
+historical-body refusal, immutable CLAIM/provenance checks and all original
+cleanup assertions remain. Later repairs align text/phonetic publication timing,
+pinned server/BEAM identities and the fleet's version/pin checks with those same
+contracts; no source-security assertion was removed.
+
+Failure history is retained: R14 5/6, factory E0061 with zero tests, R15 6388 pass /
+1 fail / 3133 unrun, R16 9497 pass / 25 fail, R17 25 pass / 1 fail, and R18 Clippy
+E0308 with zero tests. The later passes do not rewrite those terminals.
+
+The final pre-notes intake on the tested code head has 21 issue comments, 75
+reviews, 112 inline comments and 46 fully paginated resolved threads. No new
+external finding arrived. Qodo has zero active findings; CodeRabbit skipped;
+Codex `5747259582` is an explicit usage-limit refusal, not pending or approval.
+All native/subreview findings and reasoned skips remain in this ledger. The
+original native reviews at `34551442` are not approval of `9191347c`.
+
+### Exact remaining blocker (not waived)
+
+Native Mac vault-dependent validation, especially Python's direct-native default
+effort regression, is still unrun. The latest owned bounded POSIX semaphore
+receipt, `mac-posix-semaphore-pair-20260920T013840Z.json`, failed on the **first**
+fresh semaphore with errno **28 / ENOSPC**. Earlier receipts distinguish this
+from disk capacity and System V semaphores. No capacity restoration has been
+reported; no unchanged probe, alternate Python host, shared cleanup or kernel
+setting change was attempted during these portable repairs.
+
+Historical native evidence remains valid at its stated scope: macOS NAPI 22/22,
+Python build and 146-test collection with 10 no-vault passes at `949f006b`, plus
+later unchanged-byte Python/TypeScript metadata checks. None is a fresh
+vault-dependent native pass or a substitute for the retained Python regression.
+Restore native Mac POSIX semaphore admission, then finish that native lane on the
+current source. No implementation failure remains in the completed portable
+lanes. The coding assignment remains **BLOCKED W7-C10**, not DONE.
