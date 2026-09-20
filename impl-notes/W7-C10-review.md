@@ -751,3 +751,64 @@ passes and every prior failure/review disposition remain unchanged.
 **BLOCKED W7-C10**: restore native Mac storage/POSIX semaphore admission, then
 rerun the retained native acceptance case and remaining native suite. No engine
 or security test change can lawfully substitute for that host repair.
+
+
+## R22–R26: native evidence advanced; one NAPI case still lacks a pass
+
+The earlier checkpoint was not proof that every useful action was unavailable.
+A fresh bounded investigation and a strictly ticket-owned operation advanced the
+native coverage without changing shared host settings or weakening assertions.
+
+- R22: filesystem create/write/fsync/flock/mmap controls passed with about 745 GiB
+  free. A C program built with the Mac system headers refused its first fresh
+  `sem_open` with errno 28. No object was created. The installed Python extension
+  (SHA256 `c7a3f272c69f0600cab8a12bd17272b93365a02d3d4ae9722d5513529c1f32d8`)
+  was directly checked with `nm` and imports `sem_open`, `sem_close`, `sem_unlink`.
+  This is independent current allocation evidence, not inference from a configured
+  limit. Its initial system-Python import error was corrected to the existing
+  project venv before the C check; the initial receipt remains separate.
+- Historical diagnostic correction: the early single-object ctypes probe declared
+  four fixed arguments for variadic `sem_open`; its capacity result is unreliable
+  on Apple ARM64. The later pair probes declared the two fixed arguments correctly.
+  Older symbol evidence concerned a Rust test binary, not the Python extension.
+- R23 found one leftover C10 vault in its dedicated real temporary directory.
+  Its files had UID 501, one link, and no `lsof` holders. R24 preserved a full copy,
+  checked the inode/ownership again, then used ordinary `NativeClient.open` and
+  dropped the handle. It succeeded. Subsequent fresh paired allocations and their
+  cleanup both passed. This sequence does not prove a host-wide repair or exclude
+  unrelated host activity. No vault semaphore was manually unlinked.
+- R24: the retained direct-native default-effort regression **passed 1/1**. Full
+  Python then ran **147 cases: 139 passed, 3 failed, 5 setup errors**. Seven failures
+  were vault-open ENOSPC; one was a real fixture mismatch in the recall thread
+  probe. Full Python R24 remains a failed run, not retroactively green.
+- The thread-probe response omitted the newly serialized `RetrievalMeta.partial`.
+  Commit `68cc10cfed4b20ff3434a0a1fa337dabf19e32e7` adds **`partial: True`** so a
+  non-default deadline flag must survive native decode/re-encode. Full DTO equality,
+  Python thread-progress checks, and typed-refusal assertions remain intact.
+- R25: all **8/8** previously unsuccessful Python cases passed in ordinary isolated
+  pytest invocations, with the same native extension, host, guards, and assertions.
+  Together with the 139 unchanged passes this gives **147/147 cases with passing
+  evidence**. It is composed coverage, not a new all-green single pytest process.
+- R25 also compiled and ran the native NAPI crate: **21 passed, 1 failed, 0 ignored**.
+  `facade::tests::forget_drains_all_active_matches_beyond_one_page` failed at vault
+  open with OS error 28 before exercising forget. This is the remaining gap.
+- R26 checked the same owned-vault operation again, under the ticket/host locks and
+  after preservation/ownership checks. This time ordinary open failed with OS 28;
+  the independent C probe also failed its first allocation. The conditional NAPI
+  retry therefore did **not run**. No passed Python or portable test was repeated.
+
+Receipts, source hashes, before/after artifact copies, stage exits, and the new
+failure ledger are under ticket `review-recovery/native-{admission-r22,
+owned-artifacts-r23,owned-reopen-r24,validation-r25,final-case-r26}/`.
+The native test candidate is `68cc10cf`; production Rust/Python bytes and all
+R19/R20 portable passes are unchanged. The one edited Python fixture was run and
+passed. All earlier failures, review findings, and dispositions remain retained.
+
+**Remaining boundary:** a fresh native NAPI vault needs POSIX allocation that the
+current C probe cannot obtain. No ownership evidence permits unlinking other
+kernel objects; changing `kern.posix.sem.max`, reclaiming unowned semaphores, or
+killing foreign work is outside this ticket's authority. The available normal
+C10-owned recovery door was tried, not merely assumed unavailable. A host owner
+must restore admission (or authorize another native validation host), then run
+only the outstanding NAPI case. No orphan-versus-live-holder claim, system-wide
+recovery claim, or complete native NAPI pass is made. **BLOCKED W7-C10**.
