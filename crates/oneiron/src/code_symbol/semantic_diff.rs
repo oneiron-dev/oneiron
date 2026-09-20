@@ -290,7 +290,10 @@ fn collect(
                 node.end_position().row as u32 + 1,
             )?;
         }
-        Ok(format!("<{name}>"))
+        // Conditional identity is already retained by the definition's unit.
+        // Do not make condition ordering change its parent's residual bytes.
+        let residual_name = name.split("#[").next().unwrap_or(&name);
+        Ok(format!("<{residual_name}>"))
     } else {
         if node.kind() == "source_file" && !own.trim().is_empty() {
             // The root residual contains imports, attributes and other source

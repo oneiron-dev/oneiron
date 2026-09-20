@@ -248,6 +248,8 @@ fn conditional_exported_macros_need_compiler_metadata_in_every_module_shape() {
     )
     .unwrap();
     for source in [
+        "#![cfg(unix)] #[macro_export] macro_rules! conditional { () => {} }",
+        "mod hidden { #![cfg(unix)] #[macro_export] macro_rules! conditional { () => {} } }",
         "#[cfg(unix)] #[macro_export] macro_rules! conditional { () => {} }",
         "#[macro_export] #[cfg(unix)] macro_rules! conditional { () => {} }",
         "#[cfg(unix)] mod hidden { #[macro_export] macro_rules! conditional { () => {} } }",

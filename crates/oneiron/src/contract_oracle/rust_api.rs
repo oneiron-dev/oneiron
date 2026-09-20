@@ -97,6 +97,17 @@ impl Scan<'_> {
     ) -> Result<()> {
         let mut cursor = parent.walk();
         let children: Vec<_> = parent.named_children(&mut cursor).collect();
+        let scope = ModuleScope {
+            conditional: scope.conditional
+                || children.iter().any(|node| {
+                    node.kind() == "inner_attribute_item"
+                        && node
+                            .named_child(0)
+                            .and_then(|n| n.named_child(0))
+                            .is_some_and(|name| matches!(text(name, source), "cfg" | "cfg_attr"))
+                }),
+            ..scope
+        };
         for node in &children {
             if node.kind() == "impl_item" {
                 continue;
