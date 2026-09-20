@@ -22,6 +22,7 @@ use crate::error::{Error, RegistryError, Result};
 use crate::registry::{
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SECRET_CUSTODY,
 };
+use crate::sync::local_claims::{claim_sync_allowed, local_claim_sync_allowed};
 use loro::{CommitOptions, LoroDoc, LoroMap};
 
 /// Reverse re-materialization: LMDB→CRDT (insert-missing only).
@@ -40,6 +41,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         .end_timestamp()
         .ok_or_else(|| Error::InvalidConfig("invalid window key".to_string()))?;
 
+    super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
     let entities_in_range = vault.entities_in_learned_range(start_ts, end_ts)?;
 
     let entities_map = doc.get_map("entities");
@@ -136,15 +138,8 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         // Excluded credentials have no live carrier or incident edge. If a
         // local dial narrowed an existing portable row, ordinary history must
         // not carry its old value after the live-map scrub.
-        if is_unsyncable_secret_custody(&raw) {
-            let mut removed = false;
-            if map_contains_binary(&entities_map, &hex_id) {
-                map_delete(&entities_map, &hex_id)?;
-                removed = true;
-            }
-            if delete_edges_touching_entities(&edges_map, &HashSet::from([*id]))? {
-                removed = true;
-            }
+        if !claim_sync_allowed(&raw) || is_unsyncable_secret_custody(&raw) {
+            let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if removed {
                 super::egress::require_history_free_window(vault, window_key)?;
             }
@@ -163,14 +158,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         }
 
         if skip_companion_register_sync_mirror(&raw)? {
-            let mut removed = false;
-            if map_contains_binary(&entities_map, &hex_id) {
-                map_delete(&entities_map, &hex_id)?;
-                removed = true;
-            }
-            if delete_edges_touching_entities(&edges_map, &HashSet::from([*id]))? {
-                removed = true;
-            }
+            let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if removed {
                 super::egress::require_history_free_window(vault, window_key)?;
             }
@@ -255,7 +243,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                 continue;
             }
-            if local_entity_is_unsyncable_companion(vault, &edge.target)? {
+            if !local_claim_sync_allowed(vault, &edge.target)?
+                || local_entity_is_unsyncable_companion(vault, &edge.target)?
+            {
                 continue;
             }
             if map_contains_binary(&edges_map, &edge_key) {
