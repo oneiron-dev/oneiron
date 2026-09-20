@@ -615,10 +615,14 @@ where
     );
     std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
         let deleter = scope.spawn(|| vault.delete_entity_with_reason(id, reason));
-        arrived_rx.recv().expect("deleter must reach the publish seam");
+        arrived_rx
+            .recv()
+            .expect("deleter must reach the publish seam");
         let erased = vault.with_write_txn(erase_scope);
         // Release even if the eraser fails, so scope teardown can join.
-        resume_tx.send(()).expect("deleter must wait for the eraser");
+        resume_tx
+            .send(())
+            .expect("deleter must wait for the eraser");
         let outcome = deleter.join().expect("deleter thread must not panic");
         erased?;
         outcome
