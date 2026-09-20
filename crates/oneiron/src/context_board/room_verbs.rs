@@ -52,10 +52,12 @@ impl Memory<'_> {
             return Ok(Vec::new());
         }
         // Filter the inbound lane by MESSAGE kind before spending the result cap.
-        let ids = self.vault().sources(
+        let ids = self.vault().sources_page(
             &room,
             crate::EdgeKind::BelongsTo,
             Some(crate::registry::ENTITY_TYPE_MESSAGE),
+            None,
+            limit,
         )?;
         let mut messages = Vec::new();
         for id in ids {
