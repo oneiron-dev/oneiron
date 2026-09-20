@@ -570,7 +570,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     let unproven =
         vault.scoped_read(ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").unwrap());
     assert!(unproven.get(&id).unwrap().is_none());
-    let mut narrowed = owner_slip.clone();
+    let mut narrowed = owner_slip;
     narrowed
         .attenuate(crate::authority::SlipCaveat {
             records: Some(std::collections::BTreeSet::from([other.to_hex()])),
