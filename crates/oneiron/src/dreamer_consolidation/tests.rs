@@ -1856,10 +1856,17 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
     assert!(sink.accepted.is_empty());
     let markers = vault.claims_for_subject(&subject)?;
     assert_eq!(markers.len(), 1);
-    let marker = vault.get_claim(&markers[0])?.expect("durable open question");
+    let marker = vault
+        .get_claim(&markers[0])?
+        .expect("durable open question");
     assert_eq!(marker.predicate, crate::claim::PREDICATE_CONFLICT_OPEN);
     assert_eq!(marker.approval, crate::ClaimApprovalStatus::Proposed);
-    assert!(vault.edges_out(&markers[0])?.iter().all(|edge| edge.kind != EdgeKind::Supersedes));
+    assert!(
+        vault
+            .edges_out(&markers[0])?
+            .iter()
+            .all(|edge| edge.kind != EdgeKind::Supersedes)
+    );
     let probe = ReflectionGap {
         kind: ReflectionGapKind::ContradictionLeftStanding,
         subject,
