@@ -471,3 +471,14 @@ No pin suffix is stripped and no latest-row fallback is added.
 
 This adds lightweight state and identity metadata for otherwise unversioned opaque
 rows; it does not create an eager document snapshot at insertion.
+
+
+### R12 full validation and contact-cache eviction repair
+
+Candidate `998757bf999047705c104d625ba2e36e1ce8293f` passed all six static/doc stages. Full nextest run `7f822e41-665f-43ba-b823-52d053212580` failed: 2323/9472 run, 2321 passed (eight slow), two failed, 21 skipped, 7149 unrun. Featureless runtime, doctests and narrow sync were unrun. Both failures were contact-cache drop/rebuild tests returning `CorruptedIndex("revision without entity")`; this is not a green gate or a host-capacity failure.
+
+The complete PR939 intake at `pr939-20260920T010936Z` has 17 issue comments, 75 reviews, 112 inline comments and 46 fully paginated, resolved threads. Only our status comment changed since the prior complete intake; no new actionable bot finding arrived. Original internal/subreview/bot findings and all reasoned dispositions remain retained. Codex comment 5746454666 is still a terminal usage refusal, not a pending review or approval.
+
+The R12 birth registration exposed an eviction gap: a contact projection was physically removed while its lazy revision still required the original bytes. Cache eviction now materializes that existing revision in the same transaction before removing the row; it does not erase citation history or weaken missing-row/custody seals. Rebuilding an unchanged body compares against the retained document when the live projection is absent, so metadata-only rebuilds advance the indexed envelope without generating permanent indexing debt. The existing temporal-index regression now also checks that the implicit birth pin is hidden while the row is absent, survives repeated rebuilds byte-for-byte, and that indexed metadata advances to the latest rebuild. No explicit pin helper masks the lazy-document failure. The disclosure/interlocutor equality assertions are unchanged.
+
+R13 focused validation is pending. The nine main-integration/NOTE privacy drafts remain outside the worktree and are not part of this repair.

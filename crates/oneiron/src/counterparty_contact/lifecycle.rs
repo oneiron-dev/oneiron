@@ -395,6 +395,9 @@ pub fn drop_contact_cache_row(vault: &Vault, contact_id: &EntityId) -> Result<()
         },
         header.learned_at,
     )?;
+    // A lazy revision still depends on these bytes. Retain its document before
+    // evicting the projection, so a later rebuild can keep every cited frontier.
+    crate::vault::entity_revision::ensure_document(vault, &mut wtxn, contact_id)?;
     vault
         .store
         .entities

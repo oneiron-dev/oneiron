@@ -215,7 +215,7 @@ pub(crate) fn capture_entity_revision(
     // Every citable row needs a lightweight revision/identity binding, including
     // opaque structural rows. The Loro document still waits for a replacement
     // or explicit citation, but a read-only pack can already emit a usable pin.
-    let metadata_only = prior.as_deref().is_some_and(|old| {
+    let mut metadata_only = prior.as_deref().is_some_and(|old| {
         old.first() == new_raw.first()
             && old.get(ENTITY_METADATA_HEADER_LEN..) == Some(&new_raw[ENTITY_METADATA_HEADER_LEN..])
     });
@@ -266,6 +266,14 @@ pub(crate) fn capture_entity_revision(
         retain_frontier(store, txn, id, current.live, &doc)?;
         doc
     };
+    if prior.is_none() {
+        // Cache eviction may remove the live projection after retaining its
+        // document. Rebuilding the same body only advances envelope metadata.
+        let old = doc_raw(&doc)?;
+        metadata_only = old.first() == new_raw.first()
+            && old.get(ENTITY_METADATA_HEADER_LEN..)
+                == Some(&new_raw[ENTITY_METADATA_HEADER_LEN..]);
+    }
     write_doc_row(&doc, new_raw)?;
     let next = reference(id, &doc.oplog_frontiers().encode());
     retain_frontier(store, txn, id, next, &doc)?;
