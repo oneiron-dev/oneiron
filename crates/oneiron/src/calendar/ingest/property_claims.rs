@@ -2,7 +2,8 @@
 use crate::calendar::{claims::*, ics::ParsedVEvent};
 use crate::{EntityId, Vault, claim::ClaimLifecycleStatus};
 use rmpv::Value;
-const OWNED: [&str; 6] = [
+const OWNED: [&str; 7] = [
+    PREDICATE_CALENDAR_TIME_KIND,
     PREDICATE_CALENDAR_WALL_TIME,
     PREDICATE_CALENDAR_TZ,
     PREDICATE_CALENDAR_RRULE,
@@ -65,6 +66,15 @@ pub(in crate::calendar) fn reconcile<E: From<crate::Error>>(
 fn values(event: &ParsedVEvent) -> Vec<(&'static str, Value)> {
     let p = &event.properties;
     let mut values = Vec::new();
+    if let Some(kind) = p.time_kind {
+        values.push((
+            PREDICATE_CALENDAR_TIME_KIND,
+            Value::Map(vec![
+                ("kind".into(), kind.as_str().into()),
+                ("busy_transparency".into(), event.busy_transparency.as_str().into()),
+            ]),
+        ));
+    }
     if let Some(wall) = p.wall_time {
         values.push((
             PREDICATE_CALENDAR_WALL_TIME,

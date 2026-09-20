@@ -445,3 +445,75 @@ fn calendar_property_replacement_preserves_other_sources() {
         1
     );
 }
+
+
+#[test]
+fn missing_dtstart_retracts_time_metadata_and_never_bills_the_poll_instant() {
+    use crate::calendar::claims::PREDICATE_CALENDAR_TIME_KIND;
+    let (_dir, vault) = open_calendar_vault();
+    let config = test_config();
+    let dated = String::from_utf8(one_event_feed("20260806T140000Z", "20260806T150000Z"))
+        .unwrap();
+    let now = 1_800_000_000;
+    run_ics_feed_poll(
+        &vault,
+        &BodyFetcher { body: dated.clone().into_bytes() },
+        &config,
+        now,
+        7,
+    ).unwrap();
+    let event = crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x")
+        .unwrap().unwrap();
+    let window = TimeRange { start: 0, end: now + 100 };
+    assert_eq!(crate::calendar::freebusy::freebusy(&vault, &[], window).unwrap().len(), 1);
+    let undated = dated
+        .replace("DTSTART:20260806T140000Z\r\n", "")
+        .replace("DTEND:20260806T150000Z\r\n", "");
+    run_ics_feed_poll(
+        &vault,
+        &BodyFetcher { body: undated.into_bytes() },
+        &config,
+        now + 1,
+        7,
+    ).unwrap();
+    assert_eq!(crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x").unwrap(), Some(event));
+    assert!(!vault.claims_for_subject(&event).unwrap().into_iter().any(|id| {
+        vault.get_claim(&id).unwrap().is_some_and(|claim| {
+            claim.lifecycle == ClaimLifecycleStatus::Active
+                && claim.predicate == PREDICATE_CALENDAR_TIME_KIND
+        })
+    }));
+    assert!(crate::calendar::freebusy::freebusy(&vault, &[], window).unwrap().is_empty());
+}
+
+#[test]
+fn connector_missing_dtstart_preserves_other_sources_time_metadata() {
+    use crate::calendar::claims::PREDICATE_CALENDAR_TIME_KIND;
+    let (_dir, vault) = open_calendar_vault();
+    let dated = one_event_feed("20260806T140000Z", "20260806T150000Z");
+    let feed = crate::calendar::ics::parse_ics_feed(&dated).unwrap();
+    admit_connector_event(&vault, "work", "fixture://dated", &feed.events[0], 1_800_000_000).unwrap();
+    let event = connector_event_ref(&vault, &feed.events[0]).unwrap().unwrap();
+    let time_claims = || {
+        vault.claims_for_subject(&event).unwrap().into_iter().filter(|id| {
+            vault.get_claim(id).unwrap().is_some_and(|claim| {
+                claim.lifecycle == ClaimLifecycleStatus::Active
+                    && claim.predicate == PREDICATE_CALENDAR_TIME_KIND
+            })
+        }).collect::<Vec<_>>()
+    };
+    let work = time_claims();
+    assert_eq!(work.len(), 1);
+    admit_connector_event(&vault, "personal", "fixture://dated", &feed.events[0], 1_800_000_000).unwrap();
+    let before = time_claims();
+    assert_eq!(before.len(), 2);
+    let personal = *before.iter().find(|id| !work.contains(id)).unwrap();
+    let undated = String::from_utf8(dated).unwrap()
+        .replace("DTSTART:20260806T140000Z\r\n", "")
+        .replace("DTEND:20260806T150000Z\r\n", "");
+    let feed = crate::calendar::ics::parse_ics_feed(undated.as_bytes()).unwrap();
+    admit_connector_event(&vault, "work", "fixture://undated", &feed.events[0], 1_800_000_001).unwrap();
+    assert_eq!(time_claims(), vec![personal]);
+    admit_connector_event(&vault, "personal", "fixture://undated", &feed.events[0], 1_800_000_002).unwrap();
+    assert!(time_claims().is_empty());
+}

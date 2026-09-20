@@ -31,7 +31,6 @@ impl PollAdmission<'_> {
         if !exists {
             self.admit_origin(event_ref, event)?;
         }
-        self.admit_time_kind(event_ref, event)?;
         self.admit_properties(event_ref, event)?;
         let mut active = false;
         for id in self.vault.claims_for_subject(&event_ref)? {

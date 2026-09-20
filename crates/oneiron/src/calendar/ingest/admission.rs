@@ -8,8 +8,7 @@ use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
     CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND, decode_status_value,
-    decode_time_kind_value,
+    PREDICATE_CALENDAR_STATUS, decode_status_value,
 };
 use crate::calendar::ics::ParsedVEvent;
 use crate::calendar::passport::{
@@ -75,7 +74,6 @@ impl PollAdmission<'_> {
                 let event_ref = self.mint_event(event)?;
                 index_passport_uid(self.vault, &event.uid, &event_ref)?;
                 self.admit_origin(event_ref, event)?;
-                self.admit_time_kind(event_ref, event)?;
                 self.admit_properties(event_ref, event)?;
                 self.admit_fresh_passport(event_ref, event)?;
                 if !event.cancelled {
@@ -84,7 +82,6 @@ impl PollAdmission<'_> {
                 self.apply_imported_cancel(event_ref, event)?;
             }
             PassportDecision::AttachToExisting { event_ref } => {
-                self.admit_time_kind(event_ref, event)?;
                 self.admit_properties(event_ref, event)?;
                 self.admit_fresh_passport(event_ref, event)?;
                 if !event.cancelled {
@@ -98,7 +95,6 @@ impl PollAdmission<'_> {
                 // head: occurred and name follow the drifted VEVENT, and
                 // `calendar.time` re-mints when its value moved.
                 self.rewrite_event(event_ref, event)?;
-                self.admit_time_kind(event_ref, event)?;
                 self.admit_properties(event_ref, event)?;
                 let next = self.passport_value(event_ref, event, CalendarPassportPresence::Live)?;
                 let body = screen_body(event);
@@ -204,8 +200,8 @@ impl PollAdmission<'_> {
         Ok(())
     }
 
-    /// The EVENT's stored occurrence from the parsed times: `now` when the
-    /// feed expressed no convertible time.
+    /// The EVENT's stored occurrence from the parsed times. An unanchored
+    /// event uses the existing undated sentinel, never the poll instant.
     fn event_occurred(&self, event: &ParsedVEvent) -> TimeRange {
         match (event.starts_at_utc, event.ends_at_utc) {
             (Some(start), Some(end)) => TimeRange {
@@ -213,10 +209,7 @@ impl PollAdmission<'_> {
                 end: end.max(start),
             },
             (Some(start), None) => TimeRange { start, end: start },
-            (None, _) => TimeRange {
-                start: self.now,
-                end: self.now,
-            },
+            (None, _) => TimeRange { start: 0, end: 0 },
         }
     }
 
@@ -237,10 +230,8 @@ impl PollAdmission<'_> {
         Ok(())
     }
 
-    /// Admits the event's `calendar.time` kind claim, superseding the prior
-    /// live claim when the value moved and skipping when the live claim
-    /// already carries the exact value — the same one-live-claim discipline
-    /// as [`Self::admit_status_if_changed`].
+    /// Reconciles this source's properties, including removing its time kind
+    /// when DTSTART disappears. Claims owned by other sources are untouched.
     fn admit_properties(
         &mut self,
         event_ref: EntityId,
@@ -259,53 +250,6 @@ impl PollAdmission<'_> {
                 self.admit_screened(event_ref, &body, &source_record_id, predicate, value)
             },
         )
-    }
-
-    fn admit_time_kind(
-        &mut self,
-        event_ref: EntityId,
-        event: &ParsedVEvent,
-    ) -> Result<(), CalendarError> {
-        let Some(kind) = event.properties.time_kind else {
-            return Ok(());
-        };
-        let mut prior_live: Option<EntityId> = None;
-        for claim_id in self.vault.claims_for_subject(&event_ref)? {
-            let Some(claim) = self.vault.get_claim(&claim_id)? else {
-                continue;
-            };
-            if claim.predicate != PREDICATE_CALENDAR_TIME_KIND
-                || claim.lifecycle != ClaimLifecycleStatus::Active
-            {
-                continue;
-            }
-            let current = decode_time_kind_value(&claim.value)
-                .map_err(|_| ingest("stored time claim did not decode"))?;
-            if current.kind == kind && current.busy_transparency == event.busy_transparency {
-                return Ok(());
-            }
-            prior_live = Some(claim_id);
-        }
-        let value = rmpv::Value::Map(vec![
-            (rmpv::Value::from("kind"), rmpv::Value::from(kind.as_str())),
-            (
-                rmpv::Value::from("busy_transparency"),
-                rmpv::Value::from(event.busy_transparency.as_str()),
-            ),
-        ]);
-        let body = screen_body(event);
-        let source_record_id = self.source_record_id(event);
-        let new_id = self.admit_screened(
-            event_ref,
-            &body,
-            &source_record_id,
-            PREDICATE_CALENDAR_TIME_KIND,
-            value,
-        )?;
-        if let Some(old_id) = prior_live {
-            self.vault.supersede_claim(&new_id, &old_id, self.now)?;
-        }
-        Ok(())
     }
 
     /// Screens and admits the next passport head for `(system × UID)` —
