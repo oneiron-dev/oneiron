@@ -905,6 +905,11 @@ fn room_members_reject_non_person_and_agent_def_atomically() {
             ErrorKind::InvalidConversationBody
         );
         assert!(vault.get_raw(&new_room).unwrap().is_none());
+        // Ledger reads require a live room. Reuse the refused ID to expose any
+        // membership row that incorrectly survived the failed transaction.
+        vault
+            .create_conversation(new_room, &ConversationBody::default(), actor, 2)
+            .unwrap();
         assert!(vault.membership_ledger(new_room).unwrap().is_empty());
         assert_eq!(
             vault
