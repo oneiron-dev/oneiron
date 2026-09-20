@@ -141,6 +141,7 @@ pub mod made_by;
 mod queries;
 pub mod text_commit;
 mod writes;
+pub(crate) use writes::EdgeProvenanceWrite;
 
 #[cfg(test)]
 pub(crate) use self::actor_substrate::encode_actor_class_evidence;

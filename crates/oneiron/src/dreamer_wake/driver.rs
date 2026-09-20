@@ -256,6 +256,7 @@ impl<'a> DreamerWakeDriver<'a> {
             admitted: 0,
             completed: 0,
             failed: 0,
+            deferred: 0,
             parked: 0,
             landed: 0,
             stop: WakePassStop::QueueEmpty,
@@ -311,8 +312,36 @@ impl<'a> DreamerWakeDriver<'a> {
             } else {
                 DreamerAdmissionOutcome::Empty
             };
+            let priority = match cleanup {
+                DreamerAdmissionOutcome::Empty => {
+                    self.store.admit_next_maintenance(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                    })?
+                }
+                outcome => outcome,
+            };
+            let priority = match priority {
+                DreamerAdmissionOutcome::Empty => {
+                    self.store.admit_next_connector_event(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                    })?
+                }
+                outcome => outcome,
+            };
             let mut admitted =
-                match cleanup {
+                match priority {
                     DreamerAdmissionOutcome::Admitted(attempt) => *attempt,
                     DreamerAdmissionOutcome::BudgetExhausted(_) => {
                         report.stop = WakePassStop::BudgetExhausted;
@@ -436,6 +465,10 @@ impl<'a> DreamerWakeDriver<'a> {
                     {
                         crate::vault_cleanup::run_vault_cleanup(self.vault, &attempt_id)?;
                         Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                    } else if admitted.status.attempt.kind
+                        == crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
+                    {
+                        crate::dreamer_runner::maintenance::execute(&admitted, &ctx)
                     } else {
                         exec.execute(&admitted, &mut ctx).await
                     }
@@ -540,6 +573,27 @@ impl<'a> DreamerWakeDriver<'a> {
                     self.complete_attempt(&admitted, input.now)?;
                     self.write_milestone(attempt_id, DreamerMilestoneKind::Done, input.now)?;
                     report.completed += 1;
+                }
+                DreamerAttemptExecution::Deferred {
+                    completed_units,
+                    retry_at,
+                } => {
+                    self.store.defer_selection(
+                        &admitted,
+                        SettleDreamerBudget {
+                            budget_id: self.budget_id.clone(),
+                            child_attempt: attempt_id,
+                            actual_units: completed_units,
+                            now: input.now,
+                        },
+                        retry_at,
+                    )?;
+                    self.write_milestone(
+                        attempt_id,
+                        DreamerMilestoneKind::CheckpointReached,
+                        input.now,
+                    )?;
+                    report.deferred += 1;
                 }
                 DreamerAttemptExecution::Landed {
                     completed_units,

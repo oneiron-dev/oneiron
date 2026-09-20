@@ -129,6 +129,9 @@ fn grant(tool: &str, ceiling: DataClass, endpoints: &[&str]) -> StandingOutbound
         server: MCP_SERVER_NAME.to_owned(),
         tool: tool.to_owned(),
         data_class_ceiling: ceiling,
+        tool_data_classes: vec![
+            oneiron::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+        ],
         endpoint_allowlist: endpoints.iter().map(|entry| (*entry).to_owned()).collect(),
     }
 }
@@ -350,6 +353,9 @@ fn mcp_book_requires_scoped_grant() {
         server: "someone-elses-server".to_owned(),
         tool: "oneiron.book".to_owned(),
         data_class_ceiling: DataClass::Personal,
+        tool_data_classes: vec![
+            oneiron::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+        ],
         endpoint_allowlist: endpoints.clone(),
     };
     assert_eq!(
