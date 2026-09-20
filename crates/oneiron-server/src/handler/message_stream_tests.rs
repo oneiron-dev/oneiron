@@ -51,7 +51,9 @@ async fn message_stream_presence_canonical_fanout_and_late_join_never_persist_te
     .await
     .unwrap();
     assert!(direct_rx.try_recv().is_err());
-    let (sender, frame) = fanout.try_recv().unwrap();
+    let crate::server::BroadcastPayload::Frame(sender, frame) = fanout.try_recv().unwrap() else {
+        panic!("expected an ephemeral frame");
+    };
     assert_eq!(sender, 17);
     assert_eq!(frame[0], oneiron::sync::TAG_EPHEMERAL);
     let receiver = EphemeralStore::new(30_000);
@@ -79,7 +81,9 @@ async fn message_stream_presence_canonical_fanout_and_late_join_never_persist_te
     )
     .await
     .unwrap();
-    let (_, clear) = fanout.try_recv().unwrap();
+    let crate::server::BroadcastPayload::Frame(_, clear) = fanout.try_recv().unwrap() else {
+        panic!("expected an ephemeral clear frame");
+    };
     assert!(
         decode_ephemeral_states(&clear[1..])
             .unwrap()
@@ -138,10 +142,14 @@ async fn message_stream_local_host_relay_is_live_without_a_sync_client() {
     memory
         .append_to_stream(handle, "live native producer")
         .unwrap();
-    let (sender, frame) = tokio::time::timeout(std::time::Duration::from_secs(5), fanout.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let crate::server::BroadcastPayload::Frame(sender, frame) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), fanout.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    else {
+        panic!("expected a local ephemeral frame");
+    };
     assert_eq!(sender, 0);
     assert_eq!(frame[0], oneiron::sync::TAG_EPHEMERAL);
     assert!(

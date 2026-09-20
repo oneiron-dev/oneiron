@@ -24,6 +24,29 @@ pub(super) async fn handle_sync_message(
         SyncMessage::LfsChunks(payload) => {
             super::lfs_chunks::handle(server, payload, direct_tx, conn_state).await
         }
+        SyncMessage::Doc {
+            entity,
+            kind,
+            payload,
+        } => super::documents::handle_document(
+            server, conn_id, entity, kind, &payload, direct_tx, conn_state,
+        ),
+        SyncMessage::Batch(docs) => {
+            for doc in docs {
+                let SyncMessage::Doc {
+                    entity,
+                    kind,
+                    payload,
+                } = doc
+                else {
+                    return Err(ProtocolError::InvalidPayload("non-document batch member"));
+                };
+                super::documents::handle_document(
+                    server, conn_id, entity, kind, &payload, direct_tx, conn_state,
+                )?;
+            }
+            Ok(())
+        }
         SyncMessage::Rpc(payload) => {
             handle_app_message(server, conn_state, protocol::TAG_RPC, &payload, direct_tx)
         }

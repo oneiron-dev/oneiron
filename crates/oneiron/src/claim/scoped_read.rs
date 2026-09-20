@@ -15,6 +15,7 @@ use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFi
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
+mod note_visibility;
 mod retrieval_visibility;
 
 /// Actor key bound to a scoped read lane over the `core:read` surface.
@@ -347,6 +348,11 @@ impl<'a> ScopedRead<'a> {
         if !self.audience_readable_in(&rtxn, id)? {
             return Ok(None);
         }
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+            && !self.note_readable_in(&rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?
+        {
+            return Ok(None);
+        }
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Ok(Some((header.entity_type, header.learned_at, body.to_vec())));
         }
@@ -366,6 +372,13 @@ impl<'a> ScopedRead<'a> {
         };
         if result.body.is_some() && !self.is_entity_readable(&result.id)? {
             return Ok(None);
+        }
+        if result.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+            let txn = self.vault.store.env.read_txn()?;
+            return match result.body.as_deref() {
+                Some(body) if self.note_readable_in(&txn, &result.id, body)? => Ok(Some(result)),
+                _ => Ok(None),
+            };
         }
         if result.body.is_none() {
             if result.deletion.is_some() {
@@ -523,6 +536,9 @@ impl<'a> ScopedRead<'a> {
         if !self.audience_readable_in(rtxn, id)? {
             return Ok(false);
         }
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+            return self.note_readable_in(rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..]);
+        }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw)
         } else {
@@ -600,7 +616,7 @@ impl<'a> ScopedRead<'a> {
             if self.is_entity_readable_with_policy_in(rtxn, policy, &entity.id)? {
                 self.filter_context_entity_edges(rtxn, policy, &mut entity)?;
                 kept.push(entity);
-            } else if entity.entity_type == ENTITY_TYPE_CLAIM {
+            } else {
                 claims_suppressed += 1;
             }
         }
@@ -702,7 +718,7 @@ impl<'a> ScopedRead<'a> {
         for record in records {
             let readable = match (record.state, record.entity_type) {
                 (MemoryTimelineRecordState::Missing, _) => false,
-                (_, Some(ENTITY_TYPE_CLAIM)) => {
+                (_, Some(ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE)) => {
                     self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
                 }
                 (_, Some(_)) => self.audience_readable_in(&rtxn, &record.id)?,

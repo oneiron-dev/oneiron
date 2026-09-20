@@ -44,6 +44,14 @@ impl SyncClient {
                 }
                 responses.extend(self.handle_lfs_chunk_reply(payload)?);
             }
+            transport::TAG_DOCUMENT => {
+                responses.extend(self.handle_document_frame(transport::decode_document(payload)?)?);
+            }
+            transport::TAG_BATCH => {
+                for frame in transport::decode_document_batch(payload)? {
+                    responses.extend(self.handle_document_frame(frame)?);
+                }
+            }
             TAG_SYNC_UPDATE => {
                 // Root doc update/snapshot from server — cap before import so a
                 // hostile/buggy server cannot force an unbounded allocation.
@@ -189,8 +197,7 @@ impl SyncClient {
                         max: MAX_DECODED_PAYLOAD_BYTES,
                     });
                 }
-                let window = self.ensure_window(window_key)?;
-                self.import_accepted_window_update(window_key, &window, payload)?;
+                self.import_window_update(window_key, payload, super::ImportTier::OwnDevice)?;
                 Ok(Vec::new())
             }
             window_sub_tags::VV_RESPONSE => {

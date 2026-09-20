@@ -9,6 +9,7 @@
 mod app_tier;
 mod conn_state;
 mod connection;
+mod documents;
 mod ephemeral;
 mod hello;
 mod lfs_chunks;

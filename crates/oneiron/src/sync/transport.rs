@@ -12,6 +12,12 @@ use serde::{Deserialize, Serialize};
 use std::debug_assert_matches;
 use std::ops::{Deref, DerefMut};
 
+mod documents;
+pub use documents::{
+    DocumentFrame, TAG_BATCH, TAG_DOCUMENT, decode_document, decode_document_batch,
+    document_sub_tags, encode_document, encode_document_batch,
+};
+
 // ─── Custom Message Tags ──────────────────────────────────────────────────────
 
 /// CRDT update bytes for the root doc.
@@ -77,11 +83,12 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 /// v7 = Loro-native ephemeral tag 1 payloads for selector-capable clients,
 /// kept distinct from v6 for broadcast filtering.
 /// v8 = in-band bound app-tier RPC and subscription frames.
-/// v9 = BLAKE3 manifest-scoped chunk have/want on its own binary lane.
+/// v9 = entity-document frames, document batches and manifest-scoped chunk tags.
+/// Selector connections remain distinct from the owner/full-window v10 lane.
 pub const PROTOCOL_VERSION: u8 = 9;
 /// Content-addressed chunk negotiation, outside the Loro op stream.
 pub const TAG_LFS_CHUNK_SYNC: u8 = 22;
-/// Full-window owner lane with chunk sync. Kept distinct from selector v9.
+/// Full-window owner lane with document and chunk sync, distinct from selector v9.
 pub const CHUNK_FULL_WINDOW_PROTOCOL_VERSION: u8 = 10;
 /// Sync version that introduces app-tier tags and their close codes.
 pub const APP_TIER_PROTOCOL_VERSION_VERSION: u8 = 8;

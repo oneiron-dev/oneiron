@@ -44,3 +44,6 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
 #[cfg(test)]
 use rmpv::Value;
+
+#[cfg(test)]
+pub(crate) use tests::block_on_ready;

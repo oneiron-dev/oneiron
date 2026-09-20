@@ -16,6 +16,7 @@ mod mcp_source_gate;
 mod auth_idempotency;
 mod billing_usage;
 mod companion;
+mod context_board_standing;
 mod context_pack_disclosure;
 mod context_pack_v4;
 mod contract_snapshots;

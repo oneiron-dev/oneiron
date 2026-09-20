@@ -71,3 +71,17 @@ pub(super) fn validate_protocol_hello(frame: &[u8]) -> Result<u8, u16> {
         _ => Err(close_codes::VERSION_MISMATCH),
     }
 }
+
+#[cfg(test)]
+mod document_version_tests {
+    use super::*;
+    #[test]
+    fn document_and_app_tier_protocols_are_negotiated() {
+        assert_eq!(validate_protocol_hello(&[3, 9]), Ok(9));
+        assert_eq!(validate_protocol_hello(&[3, 10]), Ok(10));
+        assert_eq!(
+            validate_protocol_hello(&[3, 8]),
+            Ok(protocol::APP_TIER_PROTOCOL_VERSION_VERSION)
+        );
+    }
+}

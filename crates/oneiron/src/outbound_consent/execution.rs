@@ -8,16 +8,13 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::outbound_intent_ledger::{
-    FrozenOutboundCall, IntentDispatchResult, IntentLedgerError, IntentState, OutboundCallClass,
-    OutboundSendOutcome, OutboundToolDescriptor, classify_outbound_tool,
+    FrozenOutboundCall, IntentDispatchResult, IntentLedgerError, IntentState, OutboundSendOutcome,
 };
 
-use super::authority::{FrozenMcpPayload, OutboundBindingAuthority, observed_freeze_events_since};
+use super::authority::{OutboundBindingAuthority, observed_freeze_events_since};
 use super::result_scrub::{OutboundResultSender, scrub_outbound_result};
-use super::scope::{
-    ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason,
-    evaluate_scoped_mcp_call,
-};
+use super::scope::{ScopedMcpConsentDecision, ScopedMcpEscalationReason};
+use super::tool_call::PreparedToolCall;
 
 /// Counted output of one consent-bound durable dispatch.
 #[derive(Clone, PartialEq, Eq)]
@@ -53,26 +50,24 @@ impl fmt::Debug for ScopedMcpDispatchResult {
 /// Runs one scoped call through the intent ledger and authenticated result
 /// sender. Scope-exceeds return without constructing a ledger request.
 #[expect(clippy::too_many_arguments)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
     grant_id: EntityId,
     grant: &StandingOutboundGrant,
     principal_ref: &str,
-    descriptor: OutboundToolDescriptor,
     attempt_id: AttemptId,
     call_seq: u64,
-    call: ScopedMcpCallContext,
-    payload: FrozenMcpPayload,
+    prepared_call: PreparedToolCall,
     now_ms: u64,
     sender: &mut S,
 ) -> std::result::Result<ScopedMcpDispatchResult, IntentLedgerError> {
     #[cfg(test)]
-    let freeze_event_baseline = payload.freeze_event_baseline;
+    let freeze_event_baseline = prepared_call.freeze_event_baseline();
     #[cfg(not(test))]
     let freeze_event_baseline = ();
     let _ = grant;
+    let call = prepared_call.call().clone();
     let actor_entity_ref = Some(EntityId::from_hex(principal_ref).unwrap_or(grant_id));
     let gate = crate::gate::ExternalEffectGateInput {
         actor: crate::gate::GateActor {
@@ -99,22 +94,21 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         has_permission: false,
         policy_risk: crate::gate::ExternalEffectPolicyRisk::Normal,
     };
-    let idempotency_supported = descriptor.idempotency_supported()
-        || classify_outbound_tool(descriptor) == OutboundCallClass::ReadOnly;
+    let idempotency_supported = prepared_call.idempotency_supported();
     let prepared = crate::outbound_chokepoint::PreparedEffect {
         attempt_id,
         call_seq,
-        server: call.server.clone(),
-        tool: call.tool.clone(),
-        payload: payload.bytes,
+        server: call.server,
+        tool: call.tool,
+        payload: prepared_call.frozen_bytes().to_vec(),
         idempotency_supported,
-        resolved_endpoint: Some(call.resolved_endpoint.clone()),
+        resolved_endpoint: Some(call.resolved_endpoint),
         gate,
         budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
         authorization: crate::outbound_chokepoint::PreparedAuthorization::ScopedMcp {
             grant_id,
             principal_ref: principal_ref.to_owned(),
-            call: call.clone(),
+            prepared: Box::new(prepared_call.clone()),
         },
         verified_actor: None,
     };
@@ -126,7 +120,8 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         now_ms,
         &mut transport,
     )?;
-    let decision = scoped_decision_after_effect(vault, grant_id, principal_ref, &call, &effect)?;
+    let decision =
+        scoped_decision_after_effect(vault, grant_id, principal_ref, &prepared_call, &effect)?;
     let authorization_rejections = usize::from(
         effect.dispatch.state == Some(IntentState::Abandoned)
             || (effect.dispatch.state == Some(IntentState::Pending)
@@ -153,7 +148,7 @@ fn scoped_decision_after_effect(
     vault: &Vault,
     grant_id: EntityId,
     principal_ref: &str,
-    call: &ScopedMcpCallContext,
+    prepared: &PreparedToolCall,
     effect: &crate::outbound_chokepoint::OutboundEffectResult,
 ) -> std::result::Result<ScopedMcpConsentDecision, IntentLedgerError> {
     let connector_reason =
@@ -233,7 +228,7 @@ fn scoped_decision_after_effect(
     }
     Ok(grant.scope.scoped_mcp_grant().map_or(
         ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant),
-        |scope| evaluate_scoped_mcp_call(scope, call.as_call()),
+        |scope| prepared.decision(scope),
     ))
 }
 

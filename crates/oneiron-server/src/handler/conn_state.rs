@@ -14,6 +14,8 @@ use crate::protocol::{self, ProtocolError};
 /// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
 pub(super) struct ConnState {
     windows_touched: HashSet<WindowKey>,
+    pub(super) documents:
+        std::collections::HashMap<oneiron::EntityId, oneiron::sync::SelectorVvRequest>,
     federation_quota: FederationConnectionQuota,
     rate_limiter: MessageRateLimiter,
     pub(super) window_sync_mode: WindowSyncMode,
@@ -31,6 +33,7 @@ impl ConnState {
     ) -> Self {
         Self {
             windows_touched: HashSet::new(),
+            documents: std::collections::HashMap::new(),
             federation_quota: FederationConnectionQuota::new(federation_quota),
             rate_limiter: MessageRateLimiter::new(max_messages_per_sec),
             window_sync_mode: WindowSyncMode::Unbound,

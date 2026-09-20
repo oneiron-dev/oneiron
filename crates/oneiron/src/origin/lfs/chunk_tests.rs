@@ -361,3 +361,51 @@ fn generic_writes_cannot_change_shared_chunks_or_manifests() {
     }
     assert_eq!(vault.get_lfs_object(oid).unwrap().unwrap(), bytes);
 }
+
+#[cfg(feature = "sync")]
+#[test]
+fn window_export_scrubs_chunk_carriers_but_keeps_manifest() {
+    use crate::sync::{WindowKey, schema::create_window_doc, window::export_window_updates_since};
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let bytes = b"chunk bytes must stay outside Loro history";
+    let oid = LfsOid::digest(bytes);
+    let object = vault
+        .put_lfs_object(oid, bytes, time(), time().start)
+        .unwrap();
+    let manifest = vault.lfs_manifest(oid).unwrap().unwrap();
+    let chunk = chunks::chunk_id(&manifest.chunks[0].hash).unwrap();
+    let key = WindowKey::new("2023-11");
+    let doc = create_window_doc("source", &key);
+    for id in [chunk, object.object.asset_id] {
+        doc.get_map("entities")
+            .insert(
+                &id.to_hex(),
+                loro::LoroValue::Binary(vault.get_raw(&id).unwrap().unwrap().into()),
+            )
+            .unwrap();
+    }
+    doc.commit();
+    let exported =
+        export_window_updates_since(&vault, &key, &doc, &loro::VersionVector::default().encode())
+            .unwrap();
+    let peer = create_window_doc("peer", &key);
+    peer.import(&exported).unwrap();
+    assert!(peer.get_map("entities").get(&chunk.to_hex()).is_none());
+    assert!(
+        peer.get_map("entities")
+            .get(&object.object.asset_id.to_hex())
+            .is_some()
+    );
+    // A second export must not reintroduce the scrubbed historical set-op.
+    let later =
+        export_window_updates_since(&vault, &key, &doc, &loro::VersionVector::default().encode())
+            .unwrap();
+    let later_peer = create_window_doc("later", &key);
+    later_peer.import(&later).unwrap();
+    assert!(
+        later_peer
+            .get_map("entities")
+            .get(&chunk.to_hex())
+            .is_none()
+    );
+}
