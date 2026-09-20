@@ -464,6 +464,13 @@ fn missing_dtstart_retracts_time_metadata_and_never_bills_the_poll_instant() {
     ).unwrap();
     let event = crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x")
         .unwrap().unwrap();
+    // Imports remain proposed until reviewed. Approve the initial facts through
+    // the public write door so this oracle tests time semantics, not filtering.
+    for id in vault.claims_for_subject(&event).unwrap() {
+        let mut claim = vault.get_claim(&id).unwrap().unwrap();
+        claim.approval = crate::ClaimApprovalStatus::Approved;
+        vault.put_claim(&id, &claim, TimeRange { start: now, end: now }, now).unwrap();
+    }
     let window = TimeRange { start: 0, end: now + 100 };
     assert_eq!(crate::calendar::freebusy::freebusy(&vault, &[], window).unwrap().len(), 1);
     let undated = dated
