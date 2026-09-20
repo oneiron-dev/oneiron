@@ -117,7 +117,7 @@ pub struct DreamerWakeDriver<'a> {
     pub(super) steering: Vec<BudgetSteeringSignal>,
     tournament_candidate: Option<(
         crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin,
-        crate::dreamer_runner::DreamerTournamentAdmission,
+        DreamerClaimAuthoringAdmission,
     )>,
     #[cfg(feature = "sync")]
     pub(super) progress: Option<WakeProgressLane<'a>>,
@@ -143,16 +143,23 @@ impl<'a> DreamerWakeDriver<'a> {
         }
     }
 
-    /// Supplies the loaded candidate and its per-claim gate metadata. It stays
-    /// inactive until the exact strategy pin has won the one-shot sealed test.
-    #[must_use]
+    /// Loads the evaluated configuration and fresh per-claim metadata. The
+    /// configuration derives both the pin and admission axes; a caller cannot
+    /// attach an unrelated admission policy to a promoted pin.
     pub fn with_tournament_candidate(
         mut self,
-        strategy: crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin,
-        candidate: crate::dreamer_runner::DreamerTournamentAdmission,
-    ) -> Self {
-        self.tournament_candidate = Some((strategy, candidate));
-        self
+        config: &crate::autoreason_campaign::CampaignConfig,
+        claim: crate::dreamer_runner::DreamerTournamentClaim,
+    ) -> Result<Self> {
+        let strategy =
+            crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin::from_campaign(config)
+                .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+        let admission = config
+            .tournament_admission(claim)
+            .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+        self.tournament_candidate = Some((strategy, admission));
+        self.selected_claim_authoring()?;
+        Ok(self)
     }
 
     fn selected_claim_authoring(&self) -> Result<DreamerClaimAuthoringAdmission> {
@@ -171,9 +178,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 "loaded authoring candidate does not match the promoted default".into(),
             ));
         }
-        Ok(DreamerClaimAuthoringAdmission::Tournament(
-            candidate.clone(),
-        ))
+        Ok(candidate.clone())
     }
 
     /// Configures the wake-budget counter for legibility and the 80% wrap

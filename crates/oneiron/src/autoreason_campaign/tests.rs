@@ -2391,6 +2391,35 @@ fn sealed_beam_promotion_is_one_shot_and_never_enters_campaign_reward() -> Resul
         )
     })?;
     assert!(receipt.became_default);
+    let claim = crate::dreamer_runner::DreamerTournamentClaim {
+        predicate: "pattern.fixture".into(),
+        sample_count: 10,
+        incumbent_confidence: 0.1,
+        evidence_state: crate::dreamer_runner::DreamerClaimEvidenceState::Uncontested,
+    };
+    let load = |config: &CampaignConfig| {
+        crate::dreamer_wake::DreamerWakeDriver::new(
+            &vault,
+            "fixture",
+            crate::dreamer_wake::WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0)),
+        )
+        .with_tournament_candidate(config, claim.clone())
+    };
+    assert!(load(&config).is_ok());
+    for axis in 0..4 {
+        let mut changed = config.clone();
+        match axis {
+            0 => changed.tournament.uncertainty_tau = 0.9,
+            1 => changed.tournament.fanout_m += 1,
+            2 => changed.tournament.max_rounds_k += 1,
+            _ => changed.budget.as_mut().unwrap().reserve_units_per_step += 1,
+        }
+        assert!(matches!(
+            load(&changed),
+            Err(crate::Error::InvalidConfig(_))
+        ));
+    }
+
     assert_eq!(default_strategy(&vault)?, Some(winner.clone()));
     drop(vault);
     let vault = crate::Vault::open(dir.path(), VaultConfig::device())?;

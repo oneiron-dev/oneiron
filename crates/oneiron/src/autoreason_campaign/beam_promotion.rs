@@ -16,7 +16,8 @@ pub struct AuthoringStrategyPin {
 }
 impl AuthoringStrategyPin {
     /// Pins the validated authoring behavior used to evaluate this strategy.
-    /// Dataset, budget and verdict settings cannot mint a new sealed shot.
+    /// Dataset, budget labels and verdict settings cannot mint a new sealed shot.
+    /// Per-step reservation units are a behavioral admission axis, not a label.
     pub fn from_campaign(config: &super::CampaignConfig) -> super::CampaignResult<Self> {
         config.validate()?;
         // Declaration order is not authoring behavior; config validation accepts
@@ -31,11 +32,12 @@ impl AuthoringStrategyPin {
         if tournament.uncertainty_tau == 0.0 {
             tournament.uncertainty_tau = 0.0;
         }
-        let bytes = serde_json::to_vec(&(&arms, &config.corpus, &tournament)).map_err(|_| {
-            super::CampaignError::ReportMismatch {
-                reason: "campaign configuration cannot be serialized",
-            }
-        })?;
+        let reserve_units_per_step = config.tournament_budget_axes()?.reserve_units_per_step;
+        let bytes =
+            serde_json::to_vec(&(&arms, &config.corpus, &tournament, reserve_units_per_step))
+                .map_err(|_| super::CampaignError::ReportMismatch {
+                    reason: "campaign configuration cannot be serialized",
+                })?;
         Ok(Self {
             strategy_id: config.campaign_id.clone(),
             revision: format!("schema-{}", config.schema_version),
