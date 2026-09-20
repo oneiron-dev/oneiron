@@ -241,6 +241,7 @@ impl ModelSession {
         let request = LlmRequest {
             model: pin.model_id.clone(),
             envelope: CallEnvelope {
+                scope: Default::default(),
                 purpose,
                 class: CallClass::BestEffort,
                 tier: TierPrecedence {
