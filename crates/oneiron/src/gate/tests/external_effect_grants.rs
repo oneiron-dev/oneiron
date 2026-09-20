@@ -172,6 +172,9 @@ fn scoped_mcp_grant_is_payload_aware_at_external_effect_gate() -> Result<()> {
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
             data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
             endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
         },
         10,
@@ -252,6 +255,9 @@ fn scoped_mcp_grant_without_registered_connector_key_stays_pending() -> Result<(
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
             data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
             endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
         },
         10,
@@ -296,6 +302,9 @@ fn scoped_mcp_grant_budget_matches_its_synthetic_governing_key() -> Result<()> {
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
             data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
             endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
         },
         10,
@@ -367,6 +376,9 @@ fn scoped_mcp_grant_dissolves_only_its_proposed_external_effect_fork() -> Result
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
             data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
             endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
         },
         10,
@@ -418,6 +430,9 @@ fn scoped_mcp_grant_does_not_cross_an_unverified_identity_pair() -> Result<()> {
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
             data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
             endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
         },
         10,

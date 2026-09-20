@@ -108,8 +108,6 @@ pub(super) fn hash_policy_frontier_v0(
         hash_owner_policy_row(hasher, row);
     }
 
-    resolution.hash_actor_burst_breaker(hasher);
-
     hash_opt_str(hasher, resolution.owner_policy_document.as_deref());
     hash_opt_str(hasher, resolution.owner_policy_output_contract.as_deref());
     hash_bool(hasher, resolution.owner_policy_patterns_dropped);

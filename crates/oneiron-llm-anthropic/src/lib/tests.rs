@@ -234,6 +234,7 @@ fn sample_request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("anthropic/claude-sonnet@2026-07-02").unwrap(),
         envelope: CallEnvelope {
+            scope: oneiron::llm::Scope::default(),
             purpose: CallPurpose::AnswerGen,
             class: CallClass::Durable {
                 fallback: DeterministicFallback {

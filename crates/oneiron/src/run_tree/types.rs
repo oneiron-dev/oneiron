@@ -38,23 +38,6 @@ pub struct RunTreeNode {
     pub failure: Option<RunTreeFailure>,
     pub events: Vec<RunTreeEvent>,
     pub children: Vec<RunTreeNode>,
-    /// ONE-1453 presentation marker: this run is durably paused by the
-    /// per-actor burst breaker.
-    ///
-    /// PRESENTATION ONLY, and additive: it never mutates [`RunTreeStatus`],
-    /// [`RunTreeEventKind`], attempt rows, or
-    /// [`crate::attempt_queue::AttemptState`]. A breaker pause is not
-    /// terminal and synthesizes no attempt event. Breaker truth lives in
-    /// `gate`; the read adapter obtains that projection without storing it. Elided
-    /// when false, so serialized trees stay wire-compatible in both
-    /// directions.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub gate_breaker_paused: bool,
-}
-
-/// Serializer predicate that elides the additive `false` marker.
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 /// Surface lifecycle status.
