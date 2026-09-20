@@ -44,13 +44,20 @@ fn document(artifact: EntityId) -> EsignDocument {
                 page: 1,
                 x_percent: 10.0,
                 y_percent: 10.0,
-                width_percent: 20.0,
-                height_percent: 5.0,
+                // The pinned fixture has a 200pt-square page.
+                width_percent: 50.0,
+                height_percent: 20.0,
             },
             meta: FieldMeta::Text { max_bytes: 50 },
         }],
         full_trail_appendix: true,
     }
+}
+fn original_pdf() -> &'static [u8] {
+    include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../oneiron-seal/tests/fixtures/pdf-input/classic_1page.pdf"
+    ))
 }
 fn setup() -> Result<(tempfile::TempDir, Vault, EntityId, EsignDocument)> {
     let dir = tempfile::tempdir()?;
@@ -70,10 +77,9 @@ fn setup() -> Result<(tempfile::TempDir, Vault, EntityId, EsignDocument)> {
         TimeRange { start: 1, end: 1 },
         1,
     )?;
-    // Model test only: the native prepare/seal gate owns PDF syntax validation.
     vault.append_blob_artifact_version(
         &artifact,
-        b"%PDF-1.7\n",
+        original_pdf(),
         &crate::blob_artifact::BlobVersionProvenance::UserUpload,
         crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human),
         TimeRange { start: 1, end: 1 },
@@ -348,7 +354,7 @@ fn capability_ceremony_gates_turn_date_consent_and_default_closed_automation() -
     );
     assert_eq!(
         vault.esign_pdf_for_capability(first, 0, None, None)?,
-        b"%PDF-1.7\n"
+        original_pdf()
     );
     assert!(
         vault
@@ -823,7 +829,7 @@ fn added_draft_recipients_get_only_missing_capabilities_and_preview_admits_once(
     for _ in 0..61 {
         let (page, bytes) = vault.esign_preview_for_capability(&original[0].1, 0, None, None)?;
         assert_eq!(page.recipient, doc.recipients[0].id);
-        assert_eq!(bytes, b"%PDF-1.7\n");
+        assert_eq!(bytes, original_pdf());
     }
     assert!(vault.issue_esign_capabilities(&owner, id).is_err());
     Ok(())
@@ -1352,5 +1358,184 @@ fn draft_reissuance_replaces_only_revoked_expired_or_short_lived_capabilities() 
             SigningOutcome::Page(_)
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn unrenderable_fields_are_refused_before_save_and_final_signature_without_locking_correction()
+-> Result<()> {
+    let (_dir, vault, id, mut doc, owner) = ceremony_setup()?;
+    doc.recipients.truncate(1);
+    doc.recipients[0].automated = false;
+    doc.fields[0].meta = FieldMeta::Text { max_bytes: 1024 };
+    let now = crate::unix_seconds_now();
+    event(
+        &vault,
+        id,
+        EsignEvent::Drafted {
+            document: doc.clone(),
+        },
+        now,
+    )?;
+    let tokens = vault.issue_esign_capabilities(&owner, id)?;
+    let token = &tokens[0].1;
+    let command = EsignOutboundCommand {
+        document: id.to_hex(),
+        recipient_count: 1,
+        verb: EsignOutboundVerb::SendForSignature,
+        reason: None,
+    };
+    assert_eq!(
+        vault
+            .dispatch_esign(
+                send_request(id, owner.actor(), command.verb, "renderable-send"),
+                &command,
+                None,
+                None,
+            )
+            .unwrap()
+            .outcome,
+        crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+    );
+    vault.execute_signing_action(token, &SigningAction::Load, None, None)?;
+    let before = vault.esign_document(id)?;
+    let audit = vault.esign_audit(id)?;
+    let field = &doc.fields[0].id;
+    for invalid_text in ["😀".into(), "control\tcharacter".into(), "W".repeat(1024)] {
+        assert!(matches!(
+            vault.execute_signing_action(
+                token,
+                &SigningAction::SaveField {
+                    field: field.clone(),
+                    value: FieldValue::Text(invalid_text),
+                },
+                None,
+                None
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert_eq!(vault.esign_document(id)?, before);
+        assert_eq!(vault.esign_audit(id)?, audit);
+    }
+    let complete = SigningAction::Complete {
+        consent: true,
+        next: None,
+    };
+    assert!(
+        vault
+            .execute_signing_action(token, &complete, None, None)
+            .is_err()
+    );
+    assert_eq!(vault.esign_document(id)?, before);
+
+    // Reproduce a value admitted before field-layout validation. This fixture
+    // uses the reserved writer, not the public claim/capability mutation door.
+    let legacy = EsignEventRow {
+        sequence: audit.len() as u64,
+        previous_sha256: super::ledger::hash(audit.last().unwrap())?,
+        event: EsignEvent::FieldSaved {
+            signature: SignatureRow {
+                field: field.clone(),
+                recipient: doc.recipients[0].id.clone(),
+                value: FieldValue::Text("W".repeat(1024)),
+                at: now,
+            },
+        },
+        actor: actor(),
+        at: crate::unix_seconds_now(),
+    };
+    let encoded = super::ledger::encoded(&legacy)?;
+    let mut claim = crate::claim::ClaimBody::new(
+        "esign.field",
+        crate::claim::ClaimSubject::Entity(id),
+        rmpv::Value::Binary(encoded.clone()),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Auto,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    claim.source = Some(crate::claim::ClaimSource::Observed);
+    vault.with_write_txn(|txn| {
+        vault.put_reserved_claim_in_txn(
+            txn,
+            &EntityId::now(),
+            &claim,
+            TimeRange {
+                start: legacy.at,
+                end: legacy.at,
+            },
+            legacy.at,
+        )?;
+        vault.store.vault_meta.put(
+            txn,
+            &[
+                b"esign.audit.v1/".as_slice(),
+                id.as_bytes(),
+                &legacy.sequence.to_be_bytes(),
+            ]
+            .concat(),
+            &encoded,
+        )?;
+        Ok(())
+    })?;
+    let stored = vault.esign_document(id)?;
+    let audit = vault.esign_audit(id)?;
+    assert_eq!(
+        stored.signatures[field].value,
+        FieldValue::Text("W".repeat(1024))
+    );
+    assert!(matches!(
+        vault.execute_signing_action(token, &complete, None, None),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert_eq!(vault.esign_document(id)?, stored);
+    assert_eq!(vault.esign_audit(id)?, audit);
+    assert_eq!(
+        stored.recipients[&doc.recipients[0].id].signing,
+        SigningStatus::Ready
+    );
+    assert!(
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .list()?
+            .iter()
+            .all(|attempt| attempt.kind != ESIGN_SEAL_ATTEMPT_KIND)
+    );
+
+    let corrected = FieldValue::Text("Café\nAccepted".into());
+    let SigningOutcome::Page(page) = vault.execute_signing_action(
+        token,
+        &SigningAction::SaveField {
+            field: field.clone(),
+            value: corrected.clone(),
+        },
+        None,
+        None,
+    )?
+    else {
+        panic!("correction returns the page")
+    };
+    assert_eq!(page.values[field].value, corrected);
+    assert_eq!(
+        vault.execute_signing_action(token, &complete, None, None)?,
+        SigningOutcome::AwaitingSeal
+    );
+    let final_state = vault.esign_document(id)?;
+    assert!(final_state.ready_to_seal());
+    assert_eq!(
+        final_state.recipients[&doc.recipients[0].id].signing,
+        SigningStatus::Completed
+    );
+    let prepared = render::prepare_esign_pdf(
+        original_pdf(),
+        render::PdfPreparation {
+            document_ref: &id.to_hex(),
+            item: 0,
+            state: &final_state,
+            audit: &vault.esign_audit(id)?,
+            canonical_url: &format!("https://example.test/sign#{}", token.expose_for_delivery()),
+            signature_images: &std::collections::BTreeMap::new(),
+        },
+    )
+    .unwrap();
+    assert_eq!(prepared.original_pages, 1);
     Ok(())
 }

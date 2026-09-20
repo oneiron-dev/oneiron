@@ -1,4 +1,5 @@
 //! Native signing requests on versioned blob artifacts; claims are the state machine.
+mod field_admission;
 mod fold;
 mod ledger;
 mod model;

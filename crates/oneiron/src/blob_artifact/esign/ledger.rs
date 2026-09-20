@@ -116,6 +116,9 @@ pub(super) fn append(
     } else {
         return Err(invalid("first event must create a draft"));
     };
+    // Refuse unrenderable input before any event or Completed recipient state
+    // commits. Signed rechecks all of that recipient's saved values as a backstop.
+    super::field_admission::validate_event_fields(vault, txn, &state, &event)?;
     let row = EsignEventRow {
         sequence: rows.len() as u64,
         previous_sha256: rows.last().map(hash).transpose()?.unwrap_or([0; 32]),
