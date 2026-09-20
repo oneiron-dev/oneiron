@@ -1208,3 +1208,149 @@ fn actionable_recipient_is_required_for_send_and_seal_but_not_draft_editing() ->
     );
     Ok(())
 }
+
+#[test]
+fn draft_reissuance_replaces_only_revoked_expired_or_short_lived_capabilities() -> Result<()> {
+    for cause in ["revoked", "expired", "deadline_extended"] {
+        let (_dir, vault, original, mut doc, owner) = ceremony_setup()?;
+        let now = crate::unix_seconds_now();
+        doc.sequential = false;
+        doc.fields.clear();
+        for recipient in &mut doc.recipients {
+            recipient.automated = false;
+        }
+        // Historical drafts let the expiry case run without sleeping or a
+        // process-global clock override. The original PDF stays pinned.
+        let id = if cause == "expired" {
+            doc.expires_at = 1000;
+            for recipient in &mut doc.recipients {
+                recipient.expires_at = 1000;
+            }
+            let id = EntityId::now();
+            vault.put_blob_artifact(
+                &id,
+                &crate::blob_artifact::BlobArtifactBody::new("envelope.pdf", "application/pdf"),
+                TimeRange { start: 1, end: 1 },
+                1,
+            )?;
+            vault.create_esign_document(id, &doc, actor(), 2)?;
+            id
+        } else {
+            event(
+                &vault,
+                original,
+                EsignEvent::Drafted {
+                    document: doc.clone(),
+                },
+                now,
+            )?;
+            original
+        };
+        let original_tokens = vault.issue_esign_capabilities(&owner, id)?;
+        assert_eq!(original_tokens.len(), 2);
+        if cause == "revoked" {
+            vault.revoke_esign_capability(&owner, &original_tokens[0].1)?;
+        } else {
+            doc.expires_at = now + 7200;
+            for recipient in &mut doc.recipients {
+                recipient.expires_at = doc.expires_at;
+            }
+            event(
+                &vault,
+                id,
+                EsignEvent::Drafted {
+                    document: doc.clone(),
+                },
+                now,
+            )?;
+        }
+        let mut command = EsignOutboundCommand {
+            document: id.to_hex(),
+            recipient_count: doc.recipients.len(),
+            verb: EsignOutboundVerb::SendForSignature,
+            reason: None,
+        };
+        assert_ne!(
+            vault
+                .dispatch_esign(
+                    send_request(id, owner.actor(), command.verb, "unusable-send"),
+                    &command,
+                    None,
+                    None,
+                )
+                .unwrap()
+                .outcome,
+            crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+        );
+        assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Draft);
+        assert!(
+            crate::attempt_queue::AttemptQueue::new(&vault)
+                .list()?
+                .is_empty()
+        );
+        let replacements = vault.issue_esign_capabilities(&owner, id)?;
+        assert_eq!(replacements.len(), if cause == "revoked" { 1 } else { 2 });
+        for ((recipient, replacement), (old_recipient, old_token)) in
+            replacements.iter().zip(&original_tokens)
+        {
+            assert_eq!(recipient, old_recipient);
+            assert_ne!(
+                replacement.expose_for_delivery(),
+                old_token.expose_for_delivery()
+            );
+        }
+        assert!(vault.issue_esign_capabilities(&owner, id)?.is_empty());
+        assert_eq!(
+            vault
+                .dispatch_esign(
+                    send_request(id, owner.actor(), command.verb, "replacement-send"),
+                    &command,
+                    None,
+                    None,
+                )
+                .unwrap()
+                .outcome,
+            crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+        );
+        for (index, (_, old)) in original_tokens.iter().enumerate() {
+            if cause == "revoked" && index == 1 {
+                assert!(matches!(
+                    vault.execute_signing_action(old, &SigningAction::Load, None, None)?,
+                    SigningOutcome::Page(_)
+                ));
+            } else {
+                assert!(
+                    vault
+                        .execute_signing_action(old, &SigningAction::Load, None, None)
+                        .is_err(),
+                    "{cause}"
+                );
+            }
+        }
+        for (_, replacement) in &replacements {
+            assert!(matches!(
+                vault.execute_signing_action(replacement, &SigningAction::Load, None, None)?,
+                SigningOutcome::Page(_)
+            ));
+        }
+        command.verb = EsignOutboundVerb::Remind;
+        assert_eq!(
+            vault
+                .dispatch_esign(
+                    send_request(id, owner.actor(), command.verb, "replacement-remind"),
+                    &command,
+                    None,
+                    None,
+                )
+                .unwrap()
+                .outcome,
+            crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+        );
+        assert!(vault.issue_esign_capabilities(&owner, id).is_err());
+        assert!(matches!(
+            vault.execute_signing_action(&replacements[0].1, &SigningAction::Load, None, None)?,
+            SigningOutcome::Page(_)
+        ));
+    }
+    Ok(())
+}

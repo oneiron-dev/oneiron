@@ -62,6 +62,37 @@ pub(super) fn binding(
     }
     Ok(cap)
 }
+impl CapabilityBinding {
+    fn usable_until(&self, expires_at: u64, now: u64) -> bool {
+        self.revoked_at.is_none()
+            && now < self.hard_expires_at
+            && expires_at <= self.hard_expires_at
+    }
+}
+fn recipient_binding(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+    recipient: &str,
+) -> Result<Option<([u8; 32], CapabilityBinding)>> {
+    let key = [RECIPIENT, document.as_bytes(), recipient.as_bytes()].concat();
+    let Some(digest) = vault.store.vault_meta.get(txn, &key)? else {
+        return Ok(None);
+    };
+    let digest =
+        <[u8; 32]>::try_from(digest.as_ref()).map_err(|_| invalid("recipient capability index"))?;
+    let raw = vault
+        .store
+        .vault_meta
+        .get(txn, &[TOKENS, digest.as_slice()].concat())?
+        .ok_or_else(|| invalid("missing recipient capability"))?;
+    let cap: CapabilityBinding =
+        serde_json::from_slice(&raw).map_err(|_| invalid("capability record"))?;
+    if cap.document != document.to_hex() || cap.recipient != recipient {
+        return Err(invalid("recipient capability binding"));
+    }
+    Ok(Some((digest, cap)))
+}
 pub(super) fn require_recipient_capabilities(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -70,25 +101,9 @@ pub(super) fn require_recipient_capabilities(
     now: u64,
 ) -> Result<()> {
     for recipient in &state.document.recipients {
-        let key = [RECIPIENT, document.as_bytes(), recipient.id.as_bytes()].concat();
-        let digest = vault
-            .store
-            .vault_meta
-            .get(txn, &key)?
+        let (_, cap) = recipient_binding(vault, txn, document, &recipient.id)?
             .ok_or_else(|| invalid("mint recipient capabilities before send"))?;
-        let raw = vault
-            .store
-            .vault_meta
-            .get(txn, &[TOKENS, digest.as_ref()].concat())?
-            .ok_or_else(|| invalid("missing recipient capability"))?;
-        let cap: CapabilityBinding =
-            serde_json::from_slice(&raw).map_err(|_| invalid("capability record"))?;
-        if cap.document != document.to_hex()
-            || cap.recipient != recipient.id
-            || cap.revoked_at.is_some()
-            || now >= cap.hard_expires_at
-            || cap.hard_expires_at < state.document.expires_at
-        {
+        if !cap.usable_until(state.document.expires_at, now) {
             return Err(invalid("recipient capability is unavailable"));
         }
     }
@@ -96,9 +111,10 @@ pub(super) fn require_recipient_capabilities(
 }
 
 impl Vault {
-    /// Mint missing recipients in DRAFT. Existing tokens are never rotated or
-    /// returned again. An unchanged draft returns an empty list; re-sends reuse
-    /// tokens held by the secret-aware delivery adapter.
+    /// Mint missing or unusable recipient capabilities in DRAFT. Live tokens
+    /// covering the current deadline are never rotated or returned again.
+    /// Replacements revoke the old digest; re-sends reuse tokens held by the
+    /// secret-aware delivery adapter.
     /// The caller passes raw tokens only to its secret-aware delivery adapter.
     pub fn issue_esign_capabilities(
         &self,
@@ -111,12 +127,23 @@ impl Vault {
             if state.status != DocumentStatus::Draft {
                 return Err(invalid("tokens are minted before send"));
             }
+            let now = crate::unix_seconds_now();
             let mut issued = Vec::new();
             for recipient in &state.document.recipients {
                 let recipient_key =
                     [RECIPIENT, document.as_bytes(), recipient.id.as_bytes()].concat();
-                if self.store.vault_meta.get(txn, &recipient_key)?.is_some() {
-                    continue;
+                if let Some((digest, mut prior)) =
+                    recipient_binding(self, txn, document, &recipient.id)?
+                {
+                    if prior.usable_until(state.document.expires_at, now) {
+                        continue;
+                    }
+                    prior.revoked_at.get_or_insert(now);
+                    self.store.vault_meta.put(
+                        txn,
+                        &[TOKENS, digest.as_slice()].concat(),
+                        &serde_json::to_vec(&prior).map_err(|_| invalid("capability encoding"))?,
+                    )?;
                 }
                 let mut entropy = [0u8; 32];
                 OsRng
