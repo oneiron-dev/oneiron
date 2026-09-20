@@ -667,7 +667,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/memories.rs` | src | s | 5 struct · 2 enum · 7 fn · 1 const | CompanionAssembly, MemoriesBudget, MemoriesCursor, MemoriesSection, MemoryRow, MemorySlot, MemorySource | MEMORIES section — what retrieval pulled: typed rows, the slot budget, the companion echo, and the… |
 | `src/context_board/memories_projection.rs` | src | s | 1 fn | — | MEMORIES projection over a finished context pack — "what retrieval PULLED" (ARCH-0067 §1) |
 | `src/context_board/mod.rs` | src | s | 14 re-export · 5 crate-vis | — | Typed Context Board render projections |
-| `src/context_board/observations.rs` | src | s | 3 fn | — | Read-time lifecycle observations over the same scoped bytes served to a session |
+| `src/context_board/observations.rs` | src | s | 4 fn | — | Read-time lifecycle observations over the same scoped bytes served to a session |
 | `src/context_board/observations_tests.rs` | test | s | — | — | Real ledger lifecycle and skill-body observations for the session board |
 | `src/context_board/plugin/admission.rs` | src | m | 2 struct · 1 enum · 9 fn · 2 crate-vis | AdmittedPluginSection, PluginSectionAdmission, PluginSectionRegistry | Post-consent execution and the live registry projection |
 | `src/context_board/plugin/claim.rs` | src | m | 2 struct · 4 fn · 2 const · 1 crate-vis | PluginInstallClaimPayload, PluginSectionInstallProposal | Install claim payload and the pre-consent proposal path |

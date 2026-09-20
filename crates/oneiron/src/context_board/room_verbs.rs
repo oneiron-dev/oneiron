@@ -4,7 +4,7 @@ use super::room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, roo
 use crate::EntityId;
 use crate::memory::{
     ClaimInput, ClaimListFilter, CommitReceipt, EntityView, Memory, MemoryError, MemoryResult,
-    NeighborOpts, WitnessReceipt, WitnessTurn,
+    WitnessReceipt, WitnessTurn,
 };
 
 pub const ROOM_VERBS: [&str; 4] = ["rooms.list", "rooms.messages", "rooms.speak", "rooms.claim"];
@@ -51,23 +51,19 @@ impl Memory<'_> {
         if !section.scope.include_base() {
             return Ok(Vec::new());
         }
-        let neighbors = self.neighbors(
-            &room.to_hex(),
-            &NeighborOpts {
-                edge_kind: Some("belongs_to".into()),
-                min_weight: None,
-                limit,
-            },
+        // Filter the inbound lane by MESSAGE kind before spending the result cap.
+        let ids = self.vault().sources(
+            &room,
+            crate::EdgeKind::BelongsTo,
+            Some(crate::registry::ENTITY_TYPE_MESSAGE),
         )?;
         let mut messages = Vec::new();
-        for neighbor in neighbors {
-            if neighbor.direction != "in" {
-                continue;
-            }
-            if let Some(entity) = self.get_entity(&neighbor.short_id)?
-                && entity.kind == "MESSAGE"
-            {
+        for id in ids {
+            if let Some(entity) = self.get_entity(&id.to_hex())? {
                 messages.push(entity);
+                if messages.len() == limit {
+                    break;
+                }
             }
         }
         messages.sort_by(|a, b| (a.occurred_start, &a.id_hex).cmp(&(b.occurred_start, &b.id_hex)));
@@ -123,6 +119,23 @@ impl Memory<'_> {
             .read_txn()
             .map_err(crate::Error::from)?;
         for member in presence.iter().filter(|member| member.present) {
+            let kind = self
+                .vault()
+                .get_entity_type_in_txn(&txn, &member.actor)?
+                .ok_or_else(|| MemoryError::bad_request_with("missing room actor", &[]))?;
+            let class = member.actor_class.ok_or_else(|| {
+                MemoryError::bad_request_with(
+                    "present room actor requires authenticated class",
+                    &[],
+                )
+            })?;
+            crate::provenance::validate_actor_class(kind, class)?;
+            if member.actor == self.actor() && class != self.actor_class() {
+                return Err(MemoryError::bad_request_with(
+                    "room actor class differs from bound caller",
+                    &[],
+                ));
+            }
             crate::pipeline::resolve_world_authority(
                 &self.vault().store,
                 &txn,
@@ -140,6 +153,7 @@ impl Memory<'_> {
             if !present.contains(&member) {
                 roster.push(RoomPresence {
                     actor: member,
+                    actor_class: None,
                     label: member.to_hex(),
                     present: false,
                     active_worlds: Default::default(),
@@ -159,9 +173,20 @@ impl Memory<'_> {
             .iter()
             .filter(|member| member.present && member.actor != self.actor())
             .map(|member| {
-                crate::claim::ScopedReadActorKey::new(member.actor.to_hex())
-                    .map(|key| self.vault().scoped_read(key))
-                    .ok_or_else(|| MemoryError::bad_request_with("invalid room actor", &[]))
+                crate::claim::ScopedReadActorKey::with_actor_class(
+                    member.actor.to_hex(),
+                    member
+                        .actor_class
+                        .ok_or_else(|| {
+                            MemoryError::bad_request_with(
+                                "present room actor requires authenticated class",
+                                &[],
+                            )
+                        })?
+                        .gate_actor_class(),
+                )
+                .map(|key| self.vault().scoped_read(key))
+                .ok_or_else(|| MemoryError::bad_request_with("invalid room actor", &[]))
             })
             .collect::<MemoryResult<_>>()?;
         let mut claims = Vec::new();
@@ -171,7 +196,9 @@ impl Memory<'_> {
             subject_ref: Some(room.to_hex()),
             predicate: None,
             lifecycle: Some("active".into()),
-            limit: 1000,
+            // The native subject scan fails closed at its work bound. Room
+            // output spends its own cap only after all visibility predicates.
+            limit: crate::vault::MAX_EDGE_QUERY_RESULTS,
         })? {
             let id = EntityId::from_hex(&claim.claim_ref)?;
             if read.get(&id)?.is_none()
@@ -193,6 +220,9 @@ impl Memory<'_> {
             }
             if !peers_admit {
                 continue;
+            }
+            if claims.len() == 1000 {
+                return Err(crate::Error::IndexOverflow("visible room claims").into());
             }
             match (claim.predicate.as_str(), claim.value.as_str()) {
                 ("room.posture.mode", Some(mode)) => {

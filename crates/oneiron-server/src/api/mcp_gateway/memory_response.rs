@@ -32,6 +32,13 @@ pub(super) async fn execute(
                     &body,
                     true,
                 )
+            } else if observation.is_claim {
+                // ScopedRead's D19 door admits only active CLAIMs. That fact
+                // belongs to the served row, not a new post-await read txn.
+                staged.observe_lifecycle(
+                    observation.id,
+                    oneiron::context_board::ServedLifecycle::Active,
+                )
             } else {
                 staged.observe_rows(&reader, &[observation.id])
             }
@@ -92,7 +99,11 @@ fn execute_read(
                 } else {
                     None
                 };
-                served.push(ReadObservation { id, skill_body });
+                served.push(ReadObservation {
+                    id,
+                    skill_body,
+                    is_claim: row.entity_type == oneiron::registry::ENTITY_TYPE_CLAIM,
+                });
             }
             encode(response)?
         }
@@ -132,6 +143,7 @@ fn execute_read(
 struct ReadObservation {
     id: oneiron::EntityId,
     skill_body: Option<Vec<u8>>,
+    is_claim: bool,
 }
 
 fn observation(row: &CoreEntityRecord, full: bool) -> Result<ReadObservation, McpGatewayError> {
@@ -151,7 +163,11 @@ fn observation(row: &CoreEntityRecord, full: bool) -> Result<ReadObservation, Mc
     } else {
         None
     };
-    Ok(ReadObservation { id, skill_body })
+    Ok(ReadObservation {
+        id,
+        skill_body,
+        is_claim: row.entity_type == oneiron::registry::ENTITY_TYPE_CLAIM,
+    })
 }
 
 fn observe_hydrate(

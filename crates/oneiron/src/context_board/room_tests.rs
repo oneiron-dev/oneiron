@@ -58,12 +58,14 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
     let presence = [
         RoomPresence {
             actor,
+            actor_class: Some(EdgeActorClass::Human),
             label: "first".into(),
             present: true,
             active_worlds: a,
         },
         RoomPresence {
             actor: other,
+            actor_class: Some(EdgeActorClass::Human),
             label: "second".into(),
             present: true,
             active_worlds: b.clone(),
@@ -97,6 +99,14 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
         .unwrap();
     assert_eq!(receipt.message_short_ids.len(), 1);
     assert_eq!(memory.rooms_messages(room, &presence, 10).unwrap().len(), 1);
+    vault
+        .put_edge(&room, crate::EdgeKind::BelongsTo, &actor, 1.0)
+        .unwrap();
+    vault
+        .put_edge(&other, crate::EdgeKind::BelongsTo, &room, 1.0)
+        .unwrap();
+    assert_eq!(memory.rooms_messages(room, &presence, 1).unwrap().len(), 1);
+
     let input = crate::memory::ClaimInput {
         id: None,
         predicate: "room.posture.mode".into(),
@@ -113,6 +123,54 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
         salience: None,
     };
     let claim = memory.rooms_claim(room, &input).unwrap();
+    // Earlier hidden rows may not consume the room's visible claim budget.
+    for n in 1..=1000u16 {
+        let mut bytes = [0u8; 16];
+        bytes[14..].copy_from_slice(&n.to_be_bytes());
+        let mut hidden = crate::ClaimBody::new(
+            "room.rule",
+            crate::ClaimSubject::Entity(room),
+            rmpv::Value::from("hidden"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            crate::ClaimLifecycleStatus::Active,
+        );
+        hidden.world = Some(world_a);
+        vault
+            .put_claim(&EntityId::from_bytes(bytes).unwrap(), &hidden, at, 1)
+            .unwrap();
+    }
+    // Both participants' authenticated class must survive the scoped-read key.
+    let mut policy: rmpv::Value =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice()).unwrap();
+    let rmpv::Value::Map(entries) = &mut policy else {
+        panic!("manifest map")
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
+    entries.push((
+        "scoped_grants".into(),
+        rmpv::Value::Array(
+            [actor, other]
+                .map(|id| {
+                    rmpv::Value::Map(vec![
+                        ("actor_ref".into(), id.to_hex().into()),
+                        ("actor_class".into(), "human".into()),
+                        ("effector".into(), "core:read".into()),
+                        ("scope".into(), rmpv::Value::Map(vec![])),
+                        ("receipt_required".into(), false.into()),
+                    ])
+                })
+                .to_vec(),
+        ),
+    ));
+    let mut policy_bytes = Vec::new();
+    rmpv::encode::write_value(&mut policy_bytes, &policy).unwrap();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().unwrap(),
+        &policy_bytes,
+    )
+    .unwrap();
     let section = memory.rooms_render(room, &presence).unwrap();
     assert_eq!(section.scope, turn_scope.selected.unwrap());
     assert_eq!(section.posture.mode, RoomMode::Silent);

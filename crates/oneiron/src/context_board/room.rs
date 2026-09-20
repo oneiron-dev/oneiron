@@ -8,6 +8,8 @@ use crate::{EntityId, Result};
 #[derive(Debug, Clone)]
 pub struct RoomPresence {
     pub actor: EntityId,
+    /// Class authenticated by the host; validated against the actor entity on each read.
+    pub actor_class: Option<crate::EdgeActorClass>,
     pub label: String,
     pub present: bool,
     pub active_worlds: WorldAuthoritySet,

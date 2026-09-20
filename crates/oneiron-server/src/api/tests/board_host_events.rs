@@ -296,19 +296,23 @@ async fn board_host_mcp_get_loaded_and_changed_only_ride_existing_frames() {
     )
     .await;
     assert!(get["result"].get("carrier").is_none());
+    let observation_lock = server.memories_cursors.lock().await;
     let query = board_mcp_call(
         &server,
         "board-main",
         actor,
         "memory.query",
         json!({"request":{"query":"boardmcpclaim","view":"standard"}}),
-    )
-    .await;
+    );
+    tokio::pin!(query);
+    assert!(futures_util::poll!(query.as_mut()).is_pending());
+    server.vault.supersede_claim(&next, &old, 3).unwrap();
+    drop(observation_lock);
+    let query = query.await;
     assert_eq!(
         query["result"]["structuredContent"]["output"]["response"]["items"][0]["id"],
         old.to_hex()
     );
-    server.vault.supersede_claim(&next, &old, 3).unwrap();
     let no_push = board_mcp_call(&server, "board-main", actor, "tasks.check", json!({})).await;
     assert!(no_push["result"].get("carrier").is_none());
     let setup = board_mcp_call(&server, "board-main", actor, "setup_oneiron", json!({})).await;

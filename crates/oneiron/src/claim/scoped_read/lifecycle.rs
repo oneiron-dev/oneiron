@@ -72,21 +72,21 @@ impl ScopedRead<'_> {
             if edge.kind != crate::EdgeKind::Supersedes {
                 continue;
             }
+            if !self.is_entity_readable_with_policy_in(&txn, &policy, &edge.target)? {
+                continue;
+            }
+            let Some(raw) = self.entities().get(&txn, edge.target.as_bytes())? else {
+                continue;
+            };
+            if !EntityMetadataHeader::parse(&raw)
+                .is_some_and(|candidate| candidate.entity_type == header.entity_type)
+            {
+                continue;
+            }
             if successor.replace(edge.target).is_some() {
                 return Ok(None);
             }
         }
-        let Some(next) = successor else {
-            return Ok(None);
-        };
-        if !self.is_entity_readable_with_policy_in(&txn, &policy, &next)? {
-            return Ok(None);
-        }
-        let Some(raw) = self.entities().get(&txn, next.as_bytes())? else {
-            return Ok(None);
-        };
-        let same_kind = EntityMetadataHeader::parse(&raw)
-            .is_some_and(|next_header| next_header.entity_type == header.entity_type);
-        Ok(same_kind.then(|| ServedLifecycle::Superseded(next.to_hex())))
+        Ok(successor.map(|next| ServedLifecycle::Superseded(next.to_hex())))
     }
 }

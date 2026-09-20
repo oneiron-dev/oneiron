@@ -42,6 +42,22 @@ fn served_snapshot_resolves_real_supersession_and_loaded_requires_a_body() -> Re
     session.observe_snapshot(&read, first, kind, &body, false)?;
     assert!(session.refresh(&read, 1)?.rows.is_empty());
     vault.supersede_claim(&next, &first, 3)?;
+    let hidden = crate::test_util::entity(225);
+    vault.put_claim(
+        &hidden,
+        &ClaimBody::new(
+            "profile.likes",
+            ClaimSubject::Entity(subject),
+            "unapproved".into(),
+            0.8,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        ),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    vault.put_edge(&hidden, crate::EdgeKind::Supersedes, &first, 1.0)?;
+    vault.put_edge(&subject, crate::EdgeKind::Supersedes, &first, 1.0)?;
     let changed = session.refresh(&read, 1)?;
     assert_eq!(
         changed.rows,

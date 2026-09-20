@@ -28,6 +28,13 @@ impl SessionReadSet {
         Ok(())
     }
 
+    /// Record lifecycle metadata captured from an authorized, actually served row.
+    pub fn observe_lifecycle(&mut self, id: EntityId, state: ServedLifecycle) -> Result<()> {
+        self.require_capacity(&id.to_hex())?;
+        self.served(id.to_hex(), state);
+        Ok(())
+    }
+
     /// Record typed rows that survived the host's response projection.
     pub fn observe_rows(&mut self, read: &ScopedRead<'_>, ids: &[EntityId]) -> Result<()> {
         for id in ids {
@@ -101,16 +108,15 @@ fn successor(read: &ScopedRead<'_>, id: EntityId, kind: u8) -> Result<Option<Ser
         if edge.kind != crate::EdgeKind::Supersedes {
             continue;
         }
-        if next.is_some() {
+        let Some((next_kind, _, _)) = read.get_entity_parts(&edge.target)? else {
+            continue;
+        };
+        if next_kind != kind {
+            continue;
+        }
+        if next.replace(edge.target).is_some() {
             return Ok(None);
         }
-        next = Some(edge.target);
     }
-    let Some(next) = next else {
-        return Ok(None);
-    };
-    let Some((next_kind, _, _)) = read.get_entity_parts(&next)? else {
-        return Ok(None);
-    };
-    Ok((next_kind == kind).then(|| ServedLifecycle::Superseded(next.to_hex())))
+    Ok(next.map(|next| ServedLifecycle::Superseded(next.to_hex())))
 }

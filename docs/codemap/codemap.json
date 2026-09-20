@@ -8496,7 +8496,7 @@
      "path": "src/context_board/observations.rs",
      "purpose": "Read-time lifecycle observations over the same scoped bytes served to a session",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
