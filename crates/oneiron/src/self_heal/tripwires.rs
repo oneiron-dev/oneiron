@@ -483,7 +483,9 @@ impl Vault {
         records: &[DreamerRunFacts],
     ) -> Result<Vec<EntityId>> {
         if records.len() > MAX_EVENTS_PER_RUN {
-            return Ok(vec![]);
+            return Err(crate::Error::InvalidConfig(
+                "tripwire dreamer window exceeds observation capacity".into(),
+            ));
         }
         run(
             self,

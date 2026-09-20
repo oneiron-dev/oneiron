@@ -56,20 +56,17 @@ impl Vault {
         // not silently disappear.
         for row in self.store.vectors.iter(&txn)? {
             let (id, _) = row?;
-            let entity_type = self
-                .store
-                .entities
-                .get(&txn, &id)?
-                .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
-                .map(|header| header.entity_type);
-            if !matches!(
-                entity_type,
-                Some(
-                    crate::registry::ENTITY_TYPE_CLAIM
-                        | crate::registry::ENTITY_TYPE_SUMMARY
-                        | crate::registry::ENTITY_TYPE_DIAGNOSTIC
-                )
-            ) {
+            let raw = self.store.entities.get(&txn, &id)?;
+            let reconstructable = match raw.as_deref() {
+                Some(raw) => {
+                    rebuild::has_embedding_source(raw)?
+                        || crate::batch::EntityMetadataHeader::parse(raw).is_some_and(|header| {
+                            header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
+                        })
+                }
+                None => false,
+            };
+            if !reconstructable {
                 return Err(Error::InvalidConfig(
                     "checkpoint vector lacks a canonical re-embedding source".into(),
                 ));

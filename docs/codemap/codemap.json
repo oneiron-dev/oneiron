@@ -19389,7 +19389,7 @@
      "path": "src/recovery/checkpoint/rebuild.rs",
      "purpose": "Rebuild mechanical projections and reset leased attempt ownership",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {

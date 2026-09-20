@@ -316,28 +316,63 @@ fn checkpoint_omits_ingest_counters_but_preserves_quota_configuration() {
 
 #[test]
 fn checkpoint_refuses_unreconstructable_explicit_vectors_before_creating_image() {
+    for (entity_type, body) in [
+        (crate::registry::ENTITY_TYPE_PERSON, b"person".as_slice()),
+        (crate::registry::ENTITY_TYPE_SUMMARY, b"".as_slice()),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = VaultConfig::device();
+        config.dimensions = 4;
+        config.embedding_model = Some("test/model@v1".into());
+        let source = Vault::open(dir.path().join("source"), config).unwrap();
+        let id = EntityId::now();
+        source
+            .put_entity(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, body)
+            .unwrap();
+        let vector = vec![1.0, 0.0, 0.0, 0.0];
+        source.put_vector(&id, &vector).unwrap();
+        let checkpoint = dir.path().join("checkpoint");
+        assert!(matches!(
+            source.snapshot_checkpoint(&checkpoint, 100),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert!(!checkpoint.exists());
+        assert_eq!(source.get_vector(&id).unwrap(), Some(vector));
+    }
+}
+
+#[test]
+fn checkpoint_requeues_nonempty_summary_vectors_for_embedding() {
     let dir = tempfile::tempdir().unwrap();
     let mut config = VaultConfig::device();
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".into());
-    let source = Vault::open(dir.path().join("source"), config).unwrap();
+    let source = Vault::open(dir.path().join("source"), config.clone()).unwrap();
     let id = EntityId::now();
     source
         .put_entity(
             &id,
-            crate::registry::ENTITY_TYPE_PERSON,
+            crate::registry::ENTITY_TYPE_SUMMARY,
             TimeRange { start: 1, end: 1 },
             1,
-            b"person",
+            b"summary rebuild source",
         )
         .unwrap();
-    let vector = vec![1.0, 0.0, 0.0, 0.0];
-    source.put_vector(&id, &vector).unwrap();
+    source.put_vector(&id, &[1.0, 0.0, 0.0, 0.0]).unwrap();
     let checkpoint = dir.path().join("checkpoint");
-    assert!(matches!(
-        source.snapshot_checkpoint(&checkpoint, 100),
-        Err(Error::InvalidConfig(_))
-    ));
-    assert!(!checkpoint.exists());
-    assert_eq!(source.get_vector(&id).unwrap(), Some(vector));
+    source.snapshot_checkpoint(&checkpoint, 100).unwrap();
+    let (restored, report) = Vault::restore_checkpoint(
+        &checkpoint,
+        &dir.path().join("restored"),
+        config,
+        RestoreReason::Restore,
+        101,
+    )
+    .unwrap();
+    assert_eq!(
+        restored.get(&id).unwrap(),
+        Some(b"summary rebuild source".to_vec())
+    );
+    assert_eq!(report.pending_embeddings, 1);
+    assert!(restored.get_vector(&id).unwrap().is_none());
 }

@@ -28,6 +28,17 @@ pub(super) fn unlease_attempt(key: &[u8], bytes: &[u8]) -> Result<Vec<u8>> {
     out.extend(rmp_serde::to_vec_named(&record).map_err(|_| codec_error())?);
     Ok(out)
 }
+pub(super) fn has_embedding_source(raw: &[u8]) -> Result<bool> {
+    let header = EntityMetadataHeader::parse(raw).ok_or_else(codec_error)?;
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    match header.entity_type {
+        crate::registry::ENTITY_TYPE_SUMMARY => Ok(!body.is_empty()),
+        crate::registry::ENTITY_TYPE_CLAIM => Ok(crate::claim::decode_claim_body(body, true)?
+            .predicate
+            != crate::claim::PREDICATE_LEXICAL_QUERY_HINT),
+        _ => Ok(false),
+    }
+}
 pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
     vault.with_write_txn(|txn| {
         let rows: Vec<_> = vault
@@ -52,11 +63,9 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                 header.learned_at,
             )?;
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            let mut embeddable = !body.is_empty();
             match header.entity_type {
                 crate::registry::ENTITY_TYPE_CLAIM => {
                     let claim = crate::claim::decode_claim_body(body, true)?;
-                    embeddable &= claim.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
                     crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
                         &vault.store,
                         txn,
@@ -98,12 +107,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                 }
                 _ => {}
             }
-            if embeddable
-                && matches!(
-                    header.entity_type,
-                    crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_SUMMARY
-                )
-            {
+            if has_embedding_source(raw)? {
                 vault
                     .store
                     .mark_pending_embedding(txn, &id, &raw[ENTITY_METADATA_HEADER_LEN..])?;

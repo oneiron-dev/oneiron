@@ -531,3 +531,38 @@ fn invalid_tripwire_scope_is_not_a_successful_empty_run() {
         ));
     }
 }
+
+#[test]
+fn oversized_dreamer_tripwire_batch_is_an_error_not_a_healthy_run() {
+    let (_dir, v) = vault();
+    let fact = DreamerRunFacts {
+        run_ref: EntityId::now(),
+        completed_at: 100,
+        completed: true,
+        output_expected: true,
+        output: String::new(),
+        error_count: 0,
+        conversation: true,
+    };
+    let records = vec![fact; MAX_EVENTS_PER_RUN + 1];
+    assert!(matches!(
+        v.run_dreamer_output_tripwires("oversized", &records),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    assert!(
+        v.entities_by_type(crate::registry::ENTITY_TYPE_DIAGNOSTIC)
+            .unwrap()
+            .is_empty()
+    );
+    // The exact capacity remains valid; duplicate facts project one event.
+    let ids = v
+        .run_dreamer_output_tripwires("bounded", &records[..MAX_EVENTS_PER_RUN])
+        .unwrap();
+    assert_eq!(ids.len(), 1);
+    assert_eq!(
+        decode_diagnostic_event_body(&v.get(&ids[0]).unwrap().unwrap())
+            .unwrap()
+            .event_class,
+        DiagnosticEventClass::SilentConversationDegradation
+    );
+}
