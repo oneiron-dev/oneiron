@@ -436,6 +436,13 @@ mod tests {
                 )
                 .is_err()
         );
+        // The legacy edit fixture has no policy. Read admission independently
+        // requires a valid manifest as well as the actor's logged capability.
+        crate::test_util::put_policy_manifest_bytes(
+            &vault,
+            crate::gate::default_policy_manifest_id()?,
+            &crate::gate::default_policy_manifest(),
+        )?;
         let issuer = crate::authority::HostSlipIssuer::from_secret(b"standing block fixture")?;
         let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
         claims.slip_id = [0x54; 32];
