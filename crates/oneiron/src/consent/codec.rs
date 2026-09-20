@@ -328,3 +328,39 @@ fn decode_owner_stamp(value: &Value) -> Result<ConsentOwnerStamp> {
         decision_id,
     })
 }
+
+/// Canonical bound-only value used by propose-only widen deltas.
+pub(super) fn encode_bound_value(bound: &GrantBound) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_DOMAIN),
+            Value::from(bound.domain().as_str()),
+        ),
+        (Value::from(KEY_SUBJECT), encode_subject(bound.subject())),
+        (Value::from(KEY_CLASS), Value::from(bound.class().as_str())),
+        (Value::from(KEY_ENVELOPE), encode_envelope(bound.envelope())),
+    ])
+}
+pub(super) fn decode_bound_value(value: &Value) -> Result<GrantBound> {
+    let Value::Map(entries) = value else {
+        return Err(invalid_row());
+    };
+    validate_keys(entries, &[KEY_DOMAIN, KEY_SUBJECT, KEY_CLASS, KEY_ENVELOPE])?;
+    let domain = required_value(entries, KEY_DOMAIN)?
+        .as_str()
+        .and_then(ConsentDomain::parse)
+        .ok_or_else(invalid_row)?;
+    let subject = decode_subject(required_value(entries, KEY_SUBJECT)?, domain)?;
+    let class = required_value(entries, KEY_CLASS)?
+        .as_str()
+        .ok_or_else(invalid_row)?;
+    let class = match domain {
+        ConsentDomain::Action => BoundClass::Action(ActionClass::new(class)?),
+        ConsentDomain::Disclosure => BoundClass::Disclosure(DisclosureClass::new(class)?),
+    };
+    GrantBound::new(
+        subject,
+        class,
+        decode_envelope(required_value(entries, KEY_ENVELOPE)?, domain)?,
+    )
+}

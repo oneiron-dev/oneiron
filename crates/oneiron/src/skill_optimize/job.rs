@@ -168,6 +168,7 @@ pub fn run_skill_optimize(
     // A proposal whose cycle cannot be PROVEN at this moment is not born at
     // all — a private label is exactly the free budget the cap exists to deny.
     let drafted_in = proven_cycle(vault, attempt)?;
+    let authority = vault.dreamer_actor_for_attempt(attempt)?;
     let proposal_id = EntityId::now();
     vault.with_write_txn(|wtxn| {
         // Resolved at the WRITE door, not carried from the ranking: the
@@ -181,7 +182,7 @@ pub fn run_skill_optimize(
                 "optimization target moved while the author was drafting",
             ));
         }
-        let record = proposal_record(
+        let mut record = proposal_record(
             &target,
             &desc,
             &rationale,
@@ -192,6 +193,23 @@ pub fn run_skill_optimize(
             &drafted_in,
             tier_verdict_in_txn(vault, &*wtxn, &candidate.skill, &target)?,
         )?;
+        let Value::Map(provenance) = &mut record.provenance else {
+            return Err(invalid("invalid optimizer provenance"));
+        };
+        provenance.extend([
+            (
+                Value::from("actor_entity_ref"),
+                Value::Binary(authority.entity_ref().as_bytes().to_vec()),
+            ),
+            (
+                Value::from("actor_class"),
+                Value::from(crate::EdgeActorClass::Agent as u8),
+            ),
+            (
+                Value::from("facet"),
+                Value::from(crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND),
+            ),
+        ]);
         vault.put_skill_record_in_txn(wtxn, &proposal_id, &record, occurred, learned_at)?;
         Ok(())
     })?;

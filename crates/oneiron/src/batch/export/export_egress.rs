@@ -33,9 +33,8 @@ use super::export_manifest::{
 /// normally. That asymmetry is the whole point of the predicate: it asks about
 /// membership in a room, not about whether a room exists.
 ///
-/// The whole-vault ROW enumerator is OF-222 / ONE-1240 and does not exist yet.
-/// When it lands, its sole entity-row loop calls THIS function and nothing
-/// else — no second predicate, no fences-present fast path, no scrub.
+/// [`Vault::whole_vault_export_rows`] calls this for every entity row.
+/// There is no second predicate, fences-present fast path, or scrub.
 pub fn whole_vault_export_excludes_entity(vault: &Vault, id: &EntityId) -> Result<bool> {
     vault.store.off_record_sessions.contains_entity(id)
 }

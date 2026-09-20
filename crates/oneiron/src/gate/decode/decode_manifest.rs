@@ -4,7 +4,6 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
-use crate::gate::breaker::{GATE_BREAKER_POLICY_KEY, GateBreakerThresholds};
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
     PolicySignature, SourceTrustCeiling,
@@ -56,11 +55,6 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
-    /// ONE-1453: this manifest's burst-breaker candidate. `None` covers both
-    /// an absent key and a malformed override — a malformed override
-    /// contributes NO candidate to the cross-manifest fold and never makes the
-    /// manifest itself malformed.
-    pub(in crate::gate) actor_burst_breaker: Option<GateBreakerThresholds>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -103,7 +97,6 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
-                | GATE_BREAKER_POLICY_KEY
         ) {
             return None;
         }
@@ -220,7 +213,6 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
-    let actor_burst_breaker = super::breaker::decode_gate_breaker_override(&entries);
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -249,7 +241,6 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         comm_opt_out_posture,
         auto_checker,
         budget_policy,
-        actor_burst_breaker,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

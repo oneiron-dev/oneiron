@@ -65,6 +65,7 @@ impl OutboundDispatchPipeline {
         sink: &mut S,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        crate::dreamer_runner::maintenance::representation::validate_dispatch(vault, &request)?;
         // OF-326 talk-only (ONE-1546): an intent originating from a session
         // currently in off-record mode is rejected before verb resolution —
         // the typed error carries the exit-prompt semantics. Intents from a

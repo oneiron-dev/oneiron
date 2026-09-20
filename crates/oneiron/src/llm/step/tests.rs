@@ -106,6 +106,7 @@ fn request_fixture() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("test/model@r1").expect("model id"),
         envelope: CallEnvelope {
+            scope: crate::llm::Scope::default(),
             purpose: CallPurpose::Consolidation,
             class: CallClass::BestEffort,
             tier: TierPrecedence {

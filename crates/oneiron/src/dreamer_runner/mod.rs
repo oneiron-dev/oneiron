@@ -63,3 +63,8 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
 #[cfg(test)]
 use rmpv::Value;
+
+pub mod authority;
+
+pub mod connector_event;
+pub mod maintenance;

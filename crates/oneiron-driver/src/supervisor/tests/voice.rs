@@ -56,12 +56,12 @@ fn fixture() -> (
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
-    let actor = seed_actor(&vault, 0x71, oneiron::registry::ENTITY_TYPE_MACHINE);
+    let actor = vault.dreamer_authority().unwrap();
     let (send, calls) = mpsc::unbounded_channel();
     let factory = ConsolidationExecutorFactory::new(
         Arc::new(ControlledBackend(send)),
         DreamerClaimAuthoringStrategy::SinglePass,
-        WriteActor::new(actor, EdgeActorClass::System),
+        actor,
         ModelId::new("test/model@v1").unwrap(),
         Box::new(UnusedSink),
     );
@@ -140,7 +140,7 @@ async fn factory_backend_and_executor_share_the_voice_pass_meter() {
 
     // Drive the REAL factory executor to its backend await. The host
     // can release its lease only if this is the very same pass meter.
-    let conversation = seed_actor(&vault, 0x72, oneiron::registry::ENTITY_TYPE_PERSON);
+    let conversation = seed_actor(&vault, 0x72, oneiron::registry::ENTITY_TYPE_SESSION);
     let input = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("conversation_ref"),
@@ -159,17 +159,23 @@ async fn factory_backend_and_executor_share_the_voice_pass_meter() {
         now_ms: 11_000,
     };
     let mut executor = factory.executor(&guard).unwrap();
-    let (result, ()) = tokio::join!(executor.execute(&admitted, &mut ctx), async {
-        let call = calls.recv().await.unwrap();
-        assert_eq!(host.budget().read().used_units, 14);
-        assert_eq!(host.budget().read().reserved_units, 100);
-        host.budget()
-            .abort(&call.lease)
-            .expect("factory executor lease belongs to host meter");
-        call.reply
-            .send(Err(FatalLlmError::InvalidRequest.into()))
-            .unwrap();
-    });
+    let execution = executor.execute(&admitted, &mut ctx);
+    tokio::pin!(execution);
+    // A refused fixture must fail here, not wait forever for a backend call
+    // that correct admission checks prevented.
+    let call = tokio::select! {
+        result = &mut execution => panic!("executor returned before backend admission: {result:?}"),
+        call = calls.recv() => call.expect("backend call"),
+    };
+    assert_eq!(host.budget().read().used_units, 14);
+    assert_eq!(host.budget().read().reserved_units, 100);
+    host.budget()
+        .abort(&call.lease)
+        .expect("factory executor lease belongs to host meter");
+    call.reply
+        .send(Err(FatalLlmError::InvalidRequest.into()))
+        .unwrap();
+    let result = execution.await;
     assert!(matches!(result, Ok(DreamerAttemptExecution::Park { .. })));
     assert_eq!(guard.read().used_units, 14);
     assert_eq!(guard.read().reserved_units, 0);
@@ -466,7 +472,7 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
             inner: factory.with_voice(config),
             guard: Arc::clone(&observed),
         };
-        let conversation = seed_actor(&vault, 0x72, oneiron::registry::ENTITY_TYPE_PERSON);
+        let conversation = seed_actor(&vault, 0x72, oneiron::registry::ENTITY_TYPE_SESSION);
         enqueue_input(
             &vault,
             rmpv::Value::Map(vec![

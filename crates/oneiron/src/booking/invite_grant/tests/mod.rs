@@ -478,23 +478,30 @@ fn booking_page_invite_scope_round_trips_without_retagging_existing_scopes() {
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
             data_class_ceiling: DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
             endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
         },
         StandingOutboundGrantScope::BookingPageInvites { page_ref: page },
     ];
     for scope in scopes {
-        let is_new = matches!(scope, StandingOutboundGrantScope::BookingPageInvites { .. });
+        let has_scope_specific_key = matches!(
+            scope,
+            StandingOutboundGrantScope::BookingPageInvites { .. }
+                | StandingOutboundGrantScope::ScopedMcp { .. }
+        );
         let grant = grant_with(scope);
         let encoded = encode_standing_outbound_grant_body(&grant).expect("encode");
         let decoded = decode_standing_outbound_grant_body(&encoded).expect("decode");
         assert_eq!(decoded, grant, "a round trip must not retag a scope");
         assert_eq!(decoded.scope.dial_label(), grant.scope.dial_label());
-        // Discriminating: a Nil tenth pair on the old scopes would move
-        // their encoded bytes, which is exactly what append-only forbids.
+        // Each scope owns its additional key: page_ref for booking and
+        // tool_data_classes for MCP header consent. Other scopes get neither.
         assert_eq!(
             scope_pairs(&encoded),
-            if is_new { 10 } else { 9 },
-            "only the booking-page scope carries the tenth key"
+            if has_scope_specific_key { 10 } else { 9 },
+            "scope-specific keys must not appear on unrelated grants"
         );
     }
 }

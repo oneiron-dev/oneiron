@@ -13,6 +13,7 @@
 mod accounting;
 mod charter;
 mod codec;
+pub mod events;
 mod lifecycle;
 mod meter;
 mod record;

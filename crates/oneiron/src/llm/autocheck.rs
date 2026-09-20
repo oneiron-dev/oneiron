@@ -61,6 +61,15 @@ const AUTO_CHECK_GLOBAL_DEFAULT_TIER: &str = "standard";
 /// fail-closed verdict every other failure mode produces.
 const AUTO_CHECK_DETERMINISTIC_FALLBACK: &str = "fail_closed_to_proposed";
 
+/// Soft auto-verdict inputs computed from committed/same-transaction receipts.
+/// They are observations, not a durable trip or an authority ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AutoCheckSignals {
+    pub recent_writes: u64,
+    pub window_secs: u64,
+    pub failure_streak: u64,
+}
+
 /// One candidate write presented to a host checker, borrowed from the write
 /// door's own state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +83,7 @@ pub struct AutoCheckCandidate<'a> {
     pub lineage: Option<&'a SourceLineage>,
     pub actor_class: &'a str,
     pub sensitivity_band: Option<u8>,
+    pub signals: AutoCheckSignals,
 }
 
 /// [`AutoCheckCandidate`] with every borrow resolved.
@@ -91,6 +101,7 @@ pub struct AutoCheckCandidateOwned {
     pub lineage: Option<SourceLineage>,
     pub actor_class: String,
     pub sensitivity_band: Option<u8>,
+    pub signals: AutoCheckSignals,
 }
 
 impl AutoCheckCandidateOwned {
@@ -104,6 +115,7 @@ impl AutoCheckCandidateOwned {
             lineage: self.lineage.as_ref(),
             actor_class: &self.actor_class,
             sensitivity_band: self.sensitivity_band,
+            signals: self.signals,
         }
     }
 }
@@ -117,6 +129,7 @@ impl From<&AutoCheckCandidate<'_>> for AutoCheckCandidateOwned {
             lineage: candidate.lineage.cloned(),
             actor_class: candidate.actor_class.to_owned(),
             sensitivity_band: candidate.sensitivity_band,
+            signals: candidate.signals,
         }
     }
 }
@@ -288,6 +301,7 @@ pub fn auto_check_llm_request(
     LlmRequest {
         model: auto_check_model_id(checker_ref),
         envelope: CallEnvelope {
+            scope: crate::llm::Scope::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::Durable {
                 fallback: DeterministicFallback {
@@ -366,12 +380,15 @@ fn auto_check_candidate_text(candidate: &AutoCheckCandidate<'_>) -> String {
         None => "unstamped".to_owned(),
     };
     format!(
-        "predicate: {}\nsource: {}\nlineage: {}\nactor_class: {}\nsensitivity_band: {}\nvalue_preview: {}",
+        "predicate: {}\nsource: {}\nlineage: {}\nactor_class: {}\nsensitivity_band: {}\nrecent_writes: {}\nwindow_secs: {}\nfailure_streak: {}\nvalue_preview: {}",
         candidate.predicate,
         candidate.source.as_str(),
         lineage,
         candidate.actor_class,
         sensitivity_band,
+        candidate.signals.recent_writes,
+        candidate.signals.window_secs,
+        candidate.signals.failure_streak,
         candidate.value_preview,
     )
 }

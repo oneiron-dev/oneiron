@@ -87,6 +87,8 @@ pub struct WakePassReport {
     pub admitted: u32,
     pub completed: u32,
     pub failed: u32,
+    /// Attempts whose spend settled and whose remaining work has a timed retry.
+    pub deferred: u32,
     pub parked: u32,
     /// ONE-1896: attempts that answered a stop by LANDING. Deliberately its own
     /// counter and never folded into `completed`: a landing delivered no
@@ -107,6 +109,11 @@ pub enum DreamerAttemptExecution {
     },
     Park {
         reason: String,
+    },
+    /// Selection holds are scheduled retries, never unspent parked attempts.
+    Deferred {
+        completed_units: u64,
+        retry_at: u64,
     },
     /// ONE-1896 rung 1, answered: the worker saw a soft request or a typed
     /// runtime warning ([`WakeAttemptContext::landing_request`]) and chose to

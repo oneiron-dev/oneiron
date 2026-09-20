@@ -140,11 +140,10 @@ struct PromotionFixture {
 }
 
 fn fixture(vault: &Vault) -> Result<PromotionFixture> {
-    let actor = EntityId::now();
+    let actor = vault.dreamer_authority()?.entity_ref();
     let subject = EntityId::now();
     let conversation = EntityId::now();
     let turn = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"subject")?;
     vault.put_entity(
         &conversation,

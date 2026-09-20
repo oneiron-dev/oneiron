@@ -12,7 +12,6 @@ use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
 use super::manifest_types::PolicyManifestResolution;
-use crate::gate::breaker::{GateBreakerThresholds, resolve_gate_breaker_thresholds};
 use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
     fold_delegated_grants,
@@ -25,9 +24,6 @@ pub(crate) fn resolve_policy_manifest(
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
-    // ONE-1453: only VALID overrides enter the fold; a malformed one
-    // contributed no candidate at decode.
-    let mut actor_burst_breaker_candidates: Vec<GateBreakerThresholds> = Vec::new();
 
     for index_entry in store
         .type_index
@@ -123,9 +119,6 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
-                if let Some(thresholds) = decoded.actor_burst_breaker {
-                    actor_burst_breaker_candidates.push(thresholds);
-                }
                 resolution.packs.push(decoded.pack);
             }
             None => {
@@ -147,13 +140,6 @@ pub(crate) fn resolve_policy_manifest(
         resolution.owner_policy_rows.clear();
         resolution.owner_policy_rows_dropped = true;
     }
-
-    // ONE-1453: the distinct-valid-value rule alone decides. One distinct
-    // valid value applies; two or more are an ambiguity, and both that case
-    // and the zero-candidate case take engine defaults. A conflicting dial is
-    // NOT a malformed manifest: it does not fail-close the write gate.
-    resolution.actor_burst_breaker =
-        resolve_gate_breaker_thresholds(&actor_burst_breaker_candidates);
 
     // A resolved table must stay addressable by a u16 row index: up to 65,536
     // rows (indices 0..=65535) are valid; the 65,537th row marks the whole

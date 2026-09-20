@@ -167,6 +167,10 @@ fn send_pending_with_gate<T: OutboundTransport>(
             &prepared.gate,
             &policy,
             required_grant_id,
+            match &prepared.authorization {
+                PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
+                PreparedAuthorization::None => None,
+            },
         )?;
         if governance.outcome() != GateOutcome::Allow {
             let (decision_id, decision) =

@@ -85,6 +85,7 @@ fn imported_owner_materialization_retracts_and_supersedes_without_actor_loss() -
                 learned_at: 10,
                 explicit_prior: None,
                 imported_evidence: Some(Value::from("external record")),
+                generated_evidence: None,
             },
         )
     })?;
@@ -135,6 +136,7 @@ fn imported_owner_materialization_retracts_and_supersedes_without_actor_loss() -
                 learned_at: 10,
                 explicit_prior: None,
                 imported_evidence: Some(Value::from("other record")),
+                generated_evidence: None,
             },
         )
     })?;

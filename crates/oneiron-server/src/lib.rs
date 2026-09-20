@@ -13,6 +13,7 @@
 //! supervised child process behind `--managed-by-hypnos`. Without the switch
 //! nothing in this crate behaves differently.
 
+pub mod actions;
 mod api;
 mod auth;
 mod broadcast;

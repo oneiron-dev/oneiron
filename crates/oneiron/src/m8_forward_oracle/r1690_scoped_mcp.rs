@@ -7,7 +7,7 @@ use crate::outbound_chokepoint::{
     OutboundEffectCommand, OutboundTransport, execute_outbound_effect,
 };
 use crate::outbound_consent::{
-    DataClass, FrozenMcpPayload, OutboundResultSender, OutboundTransportResult, RawOutboundResult,
+    DataClass, OutboundResultSender, OutboundTransportResult, RawOutboundResult,
     ScopedMcpCall as EngineScopedMcpCall,
     evaluate_scoped_mcp_calls as evaluate_engine_scoped_mcp_calls, observed_freeze_events_since,
     scrub_outbound_result,
@@ -78,6 +78,7 @@ fn evaluate_scoped_mcp_calls(
         server: grant.server.to_owned(),
         tool: grant.tool.to_owned(),
         data_class_ceiling: DataClass::parse(grant.data_class_ceiling),
+        tool_data_classes: vec![crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
         endpoint_allowlist,
     };
     let grant = scope.scoped_mcp_grant().expect("scoped fixture grant");
@@ -262,15 +263,21 @@ impl OutboundTransport for OracleResultChokepointTransport<'_> {
 
 fn trace_effectful_mcp_send(vault: &Vault) -> EffectfulSendTrace {
     let fixture = install_oracle_scoped_fixture(vault);
-    let payload = FrozenMcpPayload::new(b"{\"path\":\"calendar.txt\"}".to_vec());
-    let freeze_event_baseline = payload.freeze_event_baseline();
     let prepared = oracle_prepared_effect(
         &fixture,
         AttemptId::from_bytes(&[0x91; 16]).expect("attempt id"),
         1,
-        payload.into_bytes(),
+        b"{\"path\":\"calendar.txt\"}".to_vec(),
         true,
     );
+    let crate::outbound_chokepoint::PreparedAuthorization::ScopedMcp {
+        prepared: tool_call,
+        ..
+    } = &prepared.authorization
+    else {
+        panic!("scoped prepared fixture");
+    };
+    let freeze_event_baseline = tool_call.freeze_event_baseline();
     let mut sender = OracleMcpResultSender::default();
     let (effectful_sends, checked_bytes, scrubbable_result_fields, scrubbed_result_fields) = {
         let mut transport = OracleResultChokepointTransport {

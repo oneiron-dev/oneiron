@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "soak_ms": 0,
+  "evidence_minimum": 1,
+  "cosine_threshold": 0.9,
+  "weights": { "type_prior": 0.7, "frequency": 0.1, "recency": 0.1, "diversity": 0.1 },
+  "type_priors": {},
+  "default_type_prior": 0.5,
+  "frequency_scale": 10,
+  "diversity_scale": 3,
+  "recency_window_ms": 86400000
+}

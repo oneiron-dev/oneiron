@@ -80,6 +80,7 @@ impl PolicyClassifyPrompt {
         LlmRequest {
             model: config.safeguard_binding.llm_model_id(),
             envelope: CallEnvelope {
+                scope: crate::llm::Scope::default(),
                 purpose: CallPurpose::Other {
                     name: "policy_model_classify".to_owned(),
                 },

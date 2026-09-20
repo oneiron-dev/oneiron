@@ -55,6 +55,7 @@ mod effect;
 mod grant;
 mod registry;
 mod support;
+pub mod widen;
 
 #[cfg(test)]
 mod tests;

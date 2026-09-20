@@ -154,9 +154,6 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
         },
         events,
         children: Vec::new(),
-        // Rendering reads durable attempt rows only. The breaker marker is
-        // applied afterwards, by a caller holding the projection.
-        gate_breaker_paused: false,
     };
 
     Ok(FlatRunTreeNode {

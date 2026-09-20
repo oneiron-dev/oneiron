@@ -653,3 +653,167 @@ fn dreamer_origin_carries_exactly_one_canonical_hex_boundary_form() {
         Err(PluginSectionError::MalformedSuggestionKey)
     ));
 }
+
+#[test]
+fn scratchpad_is_persisted_actor_scoped_board_state_under_live_registration() {
+    use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::edge::EdgeActorClass;
+    use crate::temporal::TimeRange;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault =
+        crate::Vault::open(dir.path(), crate::config::VaultConfig::default()).expect("vault");
+    let owner = EntityId::from_bytes([0x31; 16]).expect("owner");
+    let other = EntityId::from_bytes([0x32; 16]).expect("other");
+    let skill_id = EntityId::from_bytes([0x33; 16]).expect("skill");
+    let install = EntityId::from_bytes([0x34; 16]).expect("install");
+    let at = TimeRange { start: 1, end: 1 };
+    for actor in [owner, other] {
+        vault
+            .put_entity(
+                &actor,
+                crate::registry::ENTITY_TYPE_PERSON,
+                at,
+                1,
+                b"person",
+            )
+            .expect("actor");
+    }
+    let candidate = skill(SkillLifecycle::Candidate, "1.0.0", CRM_HASH_HEX);
+    vault
+        .put_skill_record(&skill_id, &candidate, at, 1)
+        .expect("candidate skill");
+    let active = skill(SkillLifecycle::Active, "1.0.0", CRM_HASH_HEX);
+    vault
+        .update_skill_record(&skill_id, &active, at, 2)
+        .expect("admitted skill");
+    let mut envelope = crm_envelope();
+    envelope.manifest.section_id = SectionId("actor_scratchpad".to_owned());
+    envelope.manifest.name = "SCRATCHPAD".to_owned();
+    envelope.manifest.state_family = StateFamilyRef {
+        family: "scratchpad".to_owned(),
+        version: 1,
+    };
+    envelope.manifest.authority_lane = AuthorityLaneRef("actor.private".to_owned());
+    let manifest_bytes = encode_section_manifest(&envelope).expect("manifest");
+    let payload = PluginInstallClaimPayload {
+        schema_version: PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION,
+        manifest_digest: section_manifest_digest(&manifest_bytes),
+        manifest_bytes,
+        section_id: envelope.manifest.section_id.clone(),
+        target: PluginInstallTarget::ExistingSkill {
+            skill_ref: skill_id,
+        },
+        origin: PluginInstallOrigin::Conversation {
+            turn_ref: "turn_1".to_owned(),
+        },
+        skill_id: active.skill_id.clone(),
+        skill_version: active.version.clone(),
+        content_hash_hex: CRM_HASH_HEX.to_owned(),
+        package_pin_type: String::new(),
+        package_pin: String::new(),
+    };
+    let mut install_body = ClaimBody::new(
+        PREDICATE_PLUGIN_SECTION_INSTALL,
+        ClaimSubject::Entity(skill_id),
+        payload.to_value(),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &install,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            at,
+            1,
+            &crate::claim::encode_claim_body(&install_body).expect("claim bytes"),
+        )
+        .commit()
+        .expect("replicated approved install fixture");
+    let registry =
+        PluginSectionRegistry::rebuild(&vault, &AllowAll).expect("registered board section");
+    let section = envelope.manifest.section_id;
+    assert!(registry.get(&section).is_some());
+    let input = BoardBlockWriteEnvelope {
+        section_id: section.clone(),
+        kind: BoardBlockKind::Scratchpad,
+        scope: BoardBlockScope::ActorPrivate { owner_ref: owner },
+        source_revision_ref: [0x35; 16],
+        markdown: "private scratchpad revision".to_owned(),
+    };
+    let stored = vault
+        .memory(owner, EdgeActorClass::Human)
+        .put_board_block(&registry, &input)
+        .expect("board block");
+    assert_eq!(stored.author_ref, *owner.as_bytes());
+    assert_eq!(stored.source_revision_ref, [0x35; 16]);
+    assert!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_NOTE)
+            .expect("notes")
+            .is_empty()
+    );
+    let error = vault
+        .memory(other, EdgeActorClass::Human)
+        .put_board_block(&registry, &input)
+        .expect_err("foreign owner");
+    assert_eq!(error.code, crate::memory::MEMORY_CODE_FORBIDDEN);
+    assert!(
+        vault
+            .memory(other, EdgeActorClass::Human)
+            .board_blocks(&registry, &section, 10)
+            .expect("other blocks")
+            .is_empty()
+    );
+    let snapshot = vault
+        .memory(owner, EdgeActorClass::Human)
+        .board_block_snapshot(&registry, &section, 10)
+        .expect("projection");
+    assert_eq!(
+        snapshot.rows[0].cells,
+        vec![stored.markdown.clone(), "35".repeat(16)]
+    );
+    let sections = render_plugin_sections(&registry, &[snapshot], &Lifecycle(Some(active)))
+        .expect("existing renderer");
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0].name(), "SCRATCHPAD");
+    assert!(sections[0].pinned_rows().is_empty());
+    drop(vault);
+
+    let vault =
+        crate::Vault::open(dir.path(), crate::config::VaultConfig::default()).expect("reopen");
+    let registry = PluginSectionRegistry::rebuild(&vault, &AllowAll).expect("rebuild");
+    assert_eq!(
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .board_blocks(&registry, &section, 10)
+            .expect("durable blocks"),
+        vec![stored]
+    );
+    // Revocation invalidates even a previously cached registry at both doors.
+    install_body.lifecycle = ClaimLifecycleStatus::Retracted;
+    vault
+        .batch()
+        .put_replicated(
+            &install,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            at,
+            2,
+            &crate::claim::encode_claim_body(&install_body).expect("claim bytes"),
+        )
+        .commit()
+        .expect("replicated retracted install fixture");
+    for error in [
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .put_board_block(&registry, &input)
+            .expect_err("revoked write"),
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .board_blocks(&registry, &section, 10)
+            .expect_err("revoked read"),
+    ] {
+        assert_eq!(error.code, crate::memory::MEMORY_CODE_FORBIDDEN);
+    }
+}

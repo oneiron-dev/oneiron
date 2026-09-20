@@ -448,7 +448,8 @@ where
 
     let mut ranked =
         scoring::score_query_terms(store, rtxn, config, &query_terms, options.recency, |id| {
-            Ok(!crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?)
+            Ok(!crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?
+                && crate::note::ordinary_entity_visible(store, rtxn, id)?)
         })?;
     ranked.sort_by(|a, b| {
         b.1.total_cmp(&a.1)

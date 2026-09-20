@@ -45,6 +45,7 @@ pub(super) fn mint_extracted_people(
     vault: &Vault,
     response: &LlmResponse,
     working_set: &[EntityId],
+    scope: &crate::llm::Scope,
     now: u64,
 ) -> Result<()> {
     let text: String = response
@@ -110,6 +111,18 @@ pub(super) fn mint_extracted_people(
                 {
                     admissible = false;
                     break;
+                }
+                let raw = vault
+                    .get_raw_in(txn, &turn)?
+                    .ok_or_else(|| invalid_consolidation("extraction source disappeared"))?;
+                let resource = super::resources::document_version(
+                    turn,
+                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                );
+                if !scope.allows_read(&resource) {
+                    return Err(invalid_consolidation(
+                        "extraction source version is not in scope",
+                    ));
                 }
                 let facts = read_turn_facts_in_txn(vault, txn, &turn)?;
                 if !dreamer_extraction_role_admissible(dreamer_turn_role(

@@ -484,6 +484,7 @@ fn semantic_mutations(request: &LlmRequest) -> Vec<(&'static str, LlmRequest)> {
 
 fn sample_envelope() -> CallEnvelope {
     CallEnvelope {
+        scope: crate::llm::Scope::default(),
         purpose: CallPurpose::AutoCheck,
         class: CallClass::Durable {
             fallback: DeterministicFallback {
@@ -632,6 +633,7 @@ fn poll_stream_once(stream: &mut LlmStream<'_>) -> Option<LlmResult<LlmStreamEve
 
 fn auto_check_candidate() -> AutoCheckCandidateOwned {
     AutoCheckCandidateOwned {
+        signals: crate::llm::AutoCheckSignals::default(),
         predicate: "profile.name".to_owned(),
         value_preview: "Ada".to_owned(),
         source: ClaimSource::Generated,

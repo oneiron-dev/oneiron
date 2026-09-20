@@ -621,3 +621,30 @@ async fn local_artifact_route_serves_preview_pointer_and_rejects_ambiguous_selec
     let error: Value = serde_json::from_slice(&body).expect("error JSON");
     assert_error_envelope(&error, "BAD_REQUEST");
 }
+
+#[tokio::test]
+async fn configured_cimd_documents_are_served_without_client_capabilities() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                oauth_resource_indicator: Some("https://oneiron.test".into()),
+                allow_unauthenticated: true,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    for application in ["native", "web"] {
+        let path = format!("/oauth/client/{application}.json");
+        let request = Request::builder().uri(&path).body(Body::empty()).unwrap();
+        let (status, body) = route_json(server.clone(), request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["application_type"], application);
+        assert_eq!(body["client_id"], format!("https://oneiron.test{path}"));
+        assert!(body.get("sampling").is_none());
+        assert!(body.get("roots").is_none());
+    }
+}

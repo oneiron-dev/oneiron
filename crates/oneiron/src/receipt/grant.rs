@@ -531,6 +531,7 @@ fn append_outbound_grant_scope_fields(
             server,
             tool,
             data_class_ceiling,
+            tool_data_classes,
             endpoint_allowlist,
         } => {
             fields.insert("scope".to_owned(), "scoped_mcp".to_owned());
@@ -539,6 +540,14 @@ fn append_outbound_grant_scope_fields(
             fields.insert(
                 "data_class_ceiling".to_owned(),
                 data_class_ceiling.as_str().to_owned(),
+            );
+            fields.insert(
+                "tool_data_classes".to_owned(),
+                tool_data_classes
+                    .iter()
+                    .map(|class| class.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
             );
             fields.insert(
                 "endpoint_allowlist".to_owned(),

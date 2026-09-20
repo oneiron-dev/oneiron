@@ -256,6 +256,7 @@ fn create_request(filter: FilterAst, matcher: MatcherSpec) -> CreateSavedQueryRe
 
 fn judge_envelope() -> CallEnvelope {
     CallEnvelope {
+        scope: oneiron::llm::Scope::default(),
         purpose: CallPurpose::Eval,
         class: CallClass::BestEffort,
         tier: TierPrecedence {

@@ -15,6 +15,31 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
 
 use crate::test_util::entity;
 
+fn fixture_descriptor() -> OutboundToolDescriptor {
+    OutboundToolDescriptor {
+        read_only_hint: Some(false),
+        idempotency_supported_hint: Some(true),
+    }
+}
+
+fn prepared_fixture(
+    call: ScopedMcpCallContext,
+    descriptor: OutboundToolDescriptor,
+    bytes: Vec<u8>,
+) -> tool_call::PreparedToolCall {
+    tool_call::prepare_tool_call(
+        call,
+        tool_call::ToolCallDescriptor {
+            schema: &serde_json::json!({"properties": {}}),
+            destructive_hint: false,
+            replay: descriptor,
+        },
+        &serde_json::json!({"fixture_bytes": bytes}),
+        tool_call::MutationIntent::default(),
+    )
+    .expect("prepare fixture")
+}
+
 fn scoped_intent() -> ScopedMcpGrantMintIntent {
     ScopedMcpGrantMintIntent {
         principal_ref: "principal:owner".to_owned(),
@@ -24,6 +49,7 @@ fn scoped_intent() -> ScopedMcpGrantMintIntent {
         server: "files".to_owned(),
         tool: "read_file".to_owned(),
         data_class_ceiling: DataClass::Personal,
+        tool_data_classes: vec![crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
         endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
     }
 }
@@ -184,6 +210,7 @@ fn scoped_call_matrix_counts_every_scope_exceed() {
         server: "files",
         tool: "read_file",
         data_class_ceiling: DataClass::Personal,
+        tool_data_classes: &[crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
         endpoint_allowlist: &endpoints,
     };
     let in_scope = ScopedMcpCall {
@@ -248,6 +275,9 @@ fn invalid_scoped_grant_strings_never_auto_fire() {
                 server: " ",
                 tool: "read_file",
                 data_class_ceiling: DataClass::Personal,
+                tool_data_classes: &[
+                    crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+                ],
                 endpoint_allowlist: &valid_endpoint,
             },
             matching_blank_server_call,
@@ -257,6 +287,9 @@ fn invalid_scoped_grant_strings_never_auto_fire() {
                 server: "files",
                 tool: "read_file",
                 data_class_ceiling: DataClass::Personal,
+                tool_data_classes: &[
+                    crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+                ],
                 endpoint_allowlist: &blank_endpoint,
             },
             matching_blank_endpoint_call,
@@ -308,11 +341,9 @@ fn binding_authenticity_and_endpoint_swap_fail_closed_at_chokepoint() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        descriptor,
         AttemptId::from_bytes(&[0x31; 16]).expect("attempt id"),
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"valid payload".to_vec()),
+        prepared_fixture(scoped_call(), descriptor, b"valid payload".to_vec()),
         11,
         &mut transport,
     )
@@ -327,11 +358,9 @@ fn binding_authenticity_and_endpoint_swap_fail_closed_at_chokepoint() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        descriptor,
         AttemptId::from_bytes(&[0x32; 16]).expect("attempt id"),
         2,
-        scoped_call(),
-        FrozenMcpPayload::new(b"tampered payload".to_vec()),
+        prepared_fixture(scoped_call(), descriptor, b"tampered payload".to_vec()),
         12,
         &mut ambiguous,
     )
@@ -380,11 +409,13 @@ fn binding_authenticity_and_endpoint_swap_fail_closed_at_chokepoint() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        descriptor,
         AttemptId::from_bytes(&[0x33; 16]).expect("attempt id"),
         3,
-        scoped_call(),
-        FrozenMcpPayload::new(b"endpoint-bound payload".to_vec()),
+        prepared_fixture(
+            scoped_call(),
+            descriptor,
+            b"endpoint-bound payload".to_vec(),
+        ),
         14,
         &mut ambiguous,
     )
@@ -428,14 +459,16 @@ fn binding_authenticity_and_endpoint_swap_fail_closed_at_chokepoint() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        descriptor,
         AttemptId::from_bytes(&[0x34; 16]).expect("attempt id"),
         4,
-        ScopedMcpCallContext {
-            resolved_endpoint: "https://exfil.example".to_owned(),
-            ..scoped_call()
-        },
-        FrozenMcpPayload::new(b"swapped endpoint".to_vec()),
+        prepared_fixture(
+            ScopedMcpCallContext {
+                resolved_endpoint: "https://exfil.example".to_owned(),
+                ..scoped_call()
+            },
+            descriptor,
+            b"swapped endpoint".to_vec(),
+        ),
         16,
         &mut transport,
     )
@@ -467,8 +500,11 @@ fn authorize_request_reloads_persisted_grant_liveness() {
             &stale_active_grant.principal_ref,
             AttemptId::from_bytes(&[0x34; 16]).expect("attempt id"),
             1,
-            &scoped_call(),
-            b"stale caller payload",
+            &prepared_fixture(
+                scoped_call(),
+                fixture_descriptor(),
+                b"stale caller payload".to_vec(),
+            ),
         )
         .expect("stale caller grant must fail closed");
 
@@ -503,8 +539,11 @@ fn scoped_mcp_authorization_is_bound_to_the_acting_principal() {
             &principal_b,
             AttemptId::from_bytes(&[0x35; 16]).expect("attempt id"),
             1,
-            &call,
-            b"wrong principal payload",
+            &prepared_fixture(
+                call.clone(),
+                fixture_descriptor(),
+                b"wrong principal payload".to_vec(),
+            ),
         )
         .expect("wrong principal must fail closed");
     // Discriminating: without the principal check, caller B mints a valid
@@ -526,11 +565,9 @@ fn scoped_mcp_authorization_is_bound_to_the_acting_principal() {
         grant_id,
         &grant,
         &principal_b,
-        descriptor,
         AttemptId::from_bytes(&[0x36; 16]).expect("attempt id"),
         2,
-        call.clone(),
-        FrozenMcpPayload::new(b"rejected payload".to_vec()),
+        prepared_fixture(call.clone(), descriptor, b"rejected payload".to_vec()),
         11,
         &mut transport,
     )
@@ -549,11 +586,9 @@ fn scoped_mcp_authorization_is_bound_to_the_acting_principal() {
         grant_id,
         &grant,
         &principal_a,
-        descriptor,
         AttemptId::from_bytes(&[0x37; 16]).expect("attempt id"),
         3,
-        call,
-        FrozenMcpPayload::new(b"authorized payload".to_vec()),
+        prepared_fixture(call, descriptor, b"authorized payload".to_vec()),
         12,
         &mut transport,
     )
@@ -584,14 +619,16 @@ fn suspended_scoped_mcp_connector_key_blocks_the_public_send_path() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(false),
-            idempotency_supported_hint: Some(true),
-        },
         AttemptId::from_bytes(&[0x51; 16]).expect("attempt id"),
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"blocked payload".to_vec()),
+        prepared_fixture(
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"blocked payload".to_vec(),
+        ),
         12,
         &mut transport,
     )
@@ -651,14 +688,16 @@ fn drifted_scoped_mcp_connector_charter_blocks_the_direct_send_path() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(false),
-            idempotency_supported_hint: Some(true),
-        },
         AttemptId::from_bytes(&[0x71; 16]).expect("attempt id"),
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"drifted charter payload".to_vec()),
+        prepared_fixture(
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"drifted charter payload".to_vec(),
+        ),
         13,
         &mut transport,
     )
@@ -710,11 +749,13 @@ fn scoped_mcp_connector_key_budget_refuses_the_n_plus_one_send() {
             grant_id,
             &grant,
             &grant.principal_ref,
-            descriptor,
             AttemptId::from_bytes(&[attempt_seed; 16]).expect("attempt id"),
             u64::try_from(index).expect("small index") + 1,
-            scoped_call(),
-            FrozenMcpPayload::new(format!("payload {index}").into_bytes()),
+            prepared_fixture(
+                scoped_call(),
+                descriptor,
+                format!("payload {index}").into_bytes(),
+            ),
             20 + u64::try_from(index).expect("small index"),
             &mut transport,
         )
@@ -730,11 +771,9 @@ fn scoped_mcp_connector_key_budget_refuses_the_n_plus_one_send() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        descriptor,
         AttemptId::from_bytes(&[0x62; 16]).expect("attempt id"),
         3,
-        scoped_call(),
-        FrozenMcpPayload::new(b"payload refused".to_vec()),
+        prepared_fixture(scoped_call(), descriptor, b"payload refused".to_vec()),
         22,
         &mut transport,
     )
@@ -778,11 +817,9 @@ fn done_intent_replay_skips_the_connector_key_debit() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        descriptor,
         attempt_id,
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"replay payload".to_vec()),
+        prepared_fixture(scoped_call(), descriptor, b"replay payload".to_vec()),
         11,
         &mut transport,
     )
@@ -796,11 +833,9 @@ fn done_intent_replay_skips_the_connector_key_debit() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        descriptor,
         attempt_id,
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"replay payload".to_vec()),
+        prepared_fixture(scoped_call(), descriptor, b"replay payload".to_vec()),
         12,
         &mut transport,
     )
@@ -851,11 +886,9 @@ fn pending_resume_and_done_replay_charge_and_complete_once() {
             grant_id,
             &grant,
             &grant.principal_ref,
-            descriptor,
             attempt_id,
             1,
-            scoped_call(),
-            FrozenMcpPayload::new(b"exactly once".to_vec()),
+            prepared_fixture(scoped_call(), descriptor, b"exactly once".to_vec()),
             now_ms,
             transport,
         )
@@ -923,14 +956,16 @@ fn pending_and_budget_marker_are_committed_before_transport() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(false),
-            idempotency_supported_hint: Some(true),
-        },
         AttemptId::from_bytes(&[0x7B; 16]).expect("attempt id"),
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"commit before transport".to_vec()),
+        prepared_fixture(
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"commit before transport".to_vec(),
+        ),
         11,
         &mut transport,
     )
@@ -966,14 +1001,16 @@ fn same_version_reopen_recovers_own_budget_marker_and_outcome_row() {
             grant_id,
             &grant,
             &grant.principal_ref,
-            OutboundToolDescriptor {
-                read_only_hint: Some(false),
-                idempotency_supported_hint: Some(true),
-            },
             AttemptId::from_bytes(&[0x7D; 16]).expect("attempt id"),
             1,
-            scoped_call(),
-            FrozenMcpPayload::new(b"same-version crash row".to_vec()),
+            prepared_fixture(
+                scoped_call(),
+                OutboundToolDescriptor {
+                    read_only_hint: Some(false),
+                    idempotency_supported_hint: Some(true),
+                },
+                b"same-version crash row".to_vec(),
+            ),
             11,
             &mut ambiguous,
         )
@@ -1045,14 +1082,16 @@ fn scoped_effect_without_send_ref_still_debits_the_sends_dimension() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(true),
-            idempotency_supported_hint: None,
-        },
         AttemptId::from_bytes(&[0x74; 16]).expect("attempt id"),
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"lookup payload".to_vec()),
+        prepared_fixture(
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(true),
+                idempotency_supported_hint: None,
+            },
+            b"lookup payload".to_vec(),
+        ),
         11,
         &mut transport,
     )
@@ -1077,14 +1116,16 @@ fn scoped_effect_without_send_ref_still_debits_the_sends_dimension() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(false),
-            idempotency_supported_hint: Some(true),
-        },
         AttemptId::from_bytes(&[0x75; 16]).expect("attempt id"),
         2,
-        scoped_call(),
-        FrozenMcpPayload::new(b"effectful payload".to_vec()),
+        prepared_fixture(
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"effectful payload".to_vec(),
+        ),
         12,
         &mut transport,
     )
@@ -1147,14 +1188,16 @@ fn paid_pending_ignores_later_standing_grant_revocation_and_completes() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(false),
-            idempotency_supported_hint: Some(true),
-        },
         AttemptId::from_bytes(&[0x41; 16]).expect("attempt id"),
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"pending payload".to_vec()),
+        prepared_fixture(
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"pending payload".to_vec(),
+        ),
         11,
         &mut ambiguous,
     )
@@ -1220,14 +1263,16 @@ fn recovery_rechecks_suspended_connector_key_and_keeps_intent_pending() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(false),
-            idempotency_supported_hint: Some(true),
-        },
         AttemptId::from_bytes(&[0x76; 16]).expect("attempt id"),
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"pending recovery payload".to_vec()),
+        prepared_fixture(
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"pending recovery payload".to_vec(),
+        ),
         11,
         &mut ambiguous,
     )
@@ -1278,14 +1323,16 @@ fn recovery_keeps_charter_never_list_and_drift_recoverable_pending() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(false),
-            idempotency_supported_hint: Some(true),
-        },
         AttemptId::from_bytes(&[0x7C; 16]).expect("attempt id"),
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"charter pending".to_vec()),
+        prepared_fixture(
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"charter pending".to_vec(),
+        ),
         11,
         &mut ambiguous,
     )
@@ -1372,14 +1419,16 @@ fn revoked_connector_abandons_paid_pending_without_transport() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(false),
-            idempotency_supported_hint: Some(true),
-        },
         AttemptId::from_bytes(&[0x77; 16]).expect("attempt id"),
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"revoked pending".to_vec()),
+        prepared_fixture(
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"revoked pending".to_vec(),
+        ),
         11,
         &mut ambiguous,
     )
@@ -1428,14 +1477,16 @@ fn non_idempotent_pending_abandons_without_resume_attempt() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(false),
-            idempotency_supported_hint: Some(true),
-        },
         AttemptId::from_bytes(&[0x79; 16]).expect("attempt id"),
         1,
-        scoped_call(),
-        FrozenMcpPayload::new(b"non-idempotent crash row".to_vec()),
+        prepared_fixture(
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"non-idempotent crash row".to_vec(),
+        ),
         11,
         &mut ambiguous,
     )
@@ -1490,17 +1541,19 @@ fn allowlisted_endpoint_rotation_freezes_the_selected_endpoint() {
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(false),
-            idempotency_supported_hint: Some(true),
-        },
         AttemptId::from_bytes(&[0x78; 16]).expect("attempt id"),
         1,
-        ScopedMcpCallContext {
-            resolved_endpoint: "https://files-backup.internal.example".to_owned(),
-            ..scoped_call()
-        },
-        FrozenMcpPayload::new(b"rotated endpoint".to_vec()),
+        prepared_fixture(
+            ScopedMcpCallContext {
+                resolved_endpoint: "https://files-backup.internal.example".to_owned(),
+                ..scoped_call()
+            },
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"rotated endpoint".to_vec(),
+        ),
         11,
         &mut transport,
     )
@@ -1626,15 +1679,17 @@ fn capability_provenance_survives_admission_ledger_and_recovery() {
             grant_id,
             grant,
             &grant.principal_ref,
-            OutboundToolDescriptor {
-                read_only_hint: Some(false),
-                idempotency_supported_hint: Some(true),
-            },
             AttemptId::from_bytes(&[0x71 + u8::try_from(index).expect("index"); 16])
                 .expect("attempt id"),
             1,
-            scoped_call(),
-            FrozenMcpPayload::new(b"capability payload".to_vec()),
+            prepared_fixture(
+                scoped_call(),
+                OutboundToolDescriptor {
+                    read_only_hint: Some(false),
+                    idempotency_supported_hint: Some(true),
+                },
+                b"capability payload".to_vec(),
+            ),
             11,
             &mut ambiguous,
         )
@@ -1741,14 +1796,16 @@ fn canonical_hyphenated_server_round_trips_through_key_ledger_and_recovery_trans
         grant_id,
         &grant,
         &grant.principal_ref,
-        OutboundToolDescriptor {
-            read_only_hint: Some(false),
-            idempotency_supported_hint: Some(true),
-        },
         AttemptId::from_bytes(&[0x75; 16]).expect("attempt id"),
         1,
-        call,
-        FrozenMcpPayload::new(b"exact server identity".to_vec()),
+        prepared_fixture(
+            call,
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"exact server identity".to_vec(),
+        ),
         11,
         &mut ambiguous,
     )
@@ -1778,3 +1835,5 @@ fn canonical_hyphenated_server_round_trips_through_key_ledger_and_recovery_trans
     assert_eq!(rows[0].server, "files-prod");
     assert_eq!(rows[0].state, IntentState::Done);
 }
+
+mod header_consent;

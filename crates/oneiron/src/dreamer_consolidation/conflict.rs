@@ -29,6 +29,7 @@ pub struct ConsolidationBucketKey {
     pub predicate_root: String,
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
+    pub rel: Option<EntityId>,
 }
 
 impl ConsolidationBucketKey {
@@ -44,6 +45,7 @@ impl ConsolidationBucketKey {
         hasher.update(self.predicate_root.as_bytes());
         hash_optional_entity(&mut hasher, self.world.as_ref());
         hash_optional_entity(&mut hasher, self.facet.as_ref());
+        hash_optional_entity(&mut hasher, self.rel.as_ref());
         *hasher.finalize().as_bytes()
     }
 }
@@ -63,6 +65,7 @@ pub(super) struct CandidateFacts {
     pub(super) value: Value,
     pub(super) world: Option<EntityId>,
     pub(super) facet: Option<EntityId>,
+    pub(super) rel: Option<EntityId>,
 }
 
 pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFacts> {
@@ -86,6 +89,7 @@ pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFac
         value: body.value,
         world: body.world,
         facet: facet_from_scope(body.scope.as_ref()),
+        rel: body.rel,
     })
 }
 
@@ -119,6 +123,7 @@ pub fn plan_candidate_buckets(
             predicate_root: predicate_root(&facts.predicate).to_owned(),
             world: facts.world,
             facet: facts.facet,
+            rel: facts.rel,
         };
         buckets.entry(key).or_default().push(index);
     }
@@ -302,6 +307,7 @@ pub struct ConflictIdentity {
     pub predicate: String,
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
+    pub rel: Option<EntityId>,
 }
 
 /// One conflicting set: same full identity, non-equal canonical values.
@@ -330,6 +336,7 @@ pub fn detect_conflicts(
             predicate: facts.predicate,
             world: facts.world,
             facet: facts.facet,
+            rel: facts.rel,
         };
         groups
             .entry(identity)
@@ -383,6 +390,7 @@ pub fn conflict_open_marker_id(
         &Value::from(conflict.identity.predicate.as_str()),
         conflict.identity.world,
         conflict.identity.facet,
+        conflict.identity.rel,
     )
 }
 
@@ -393,10 +401,11 @@ fn prior_matches_identity(body: &ClaimBody, identity: &ConflictIdentity) -> bool
     subject == identity.subject
         && body.predicate == identity.predicate
         && body.world == identity.world
+        && body.rel == identity.rel
         && facet_from_scope(body.scope.as_ref()) == identity.facet
 }
 
-fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
+pub(super) fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
     encode_value(&canonicalize_value(value))
 }
 
@@ -417,6 +426,7 @@ pub(super) fn deterministic_claim_id(
     value: &Value,
     world: Option<EntityId>,
     facet: Option<EntityId>,
+    rel: Option<EntityId>,
 ) -> EntityId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(DREAMER_CLAIM_ID_HASH_DOMAIN);
@@ -435,6 +445,7 @@ pub(super) fn deterministic_claim_id(
     if let Some(facet) = facet {
         hasher.update(facet.as_bytes());
     }
+    hash_optional_entity(&mut hasher, rel.as_ref());
     let digest = hasher.finalize();
     let mut raw = [0_u8; 16];
     raw.copy_from_slice(&digest.as_bytes()[..16]);

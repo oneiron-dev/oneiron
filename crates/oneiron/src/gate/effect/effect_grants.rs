@@ -20,6 +20,7 @@ pub(super) fn standing_outbound_grant_for_effect(
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
     required_grant_id: Option<EntityId>,
+    prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
 ) -> Result<Option<(EntityId, StandingOutboundGrant)>> {
     let current_policy_floor = policy.read_frontier_hash()?;
     let mut candidate_ids = if let Some(required_grant_id) = required_grant_id {
@@ -74,8 +75,18 @@ pub(super) fn standing_outbound_grant_for_effect(
                 continue;
             }
             if let Some(scoped_grant) = grant.scope.scoped_mcp_grant()
-                && evaluate_scoped_mcp_call(scoped_grant, call.as_call())
-                    == ScopedMcpConsentDecision::AutoFire
+                && prepared.map_or_else(
+                    || evaluate_scoped_mcp_call(scoped_grant, call.as_call()),
+                    |prepared| {
+                        if prepared.call() == call {
+                            prepared.decision(scoped_grant)
+                        } else {
+                            ScopedMcpConsentDecision::Escalate(
+                                crate::outbound_consent::ScopedMcpEscalationReason::InvalidGrant,
+                            )
+                        }
+                    },
+                ) == ScopedMcpConsentDecision::AutoFire
             {
                 return Ok(Some((id, grant)));
             }

@@ -80,7 +80,17 @@ impl Vault {
         learned_at: u64,
     ) -> Result<EntityId> {
         let package = adapter.fetch_package(hub_ref)?;
-        self.import_skill_from_hub(hub_ref, &package, occurred, learned_at)
+        let inventory = super::osv::dependency_inventory(&package)?;
+        Ok(self
+            .install_skill_with_advisories(
+                hub_ref,
+                &package,
+                &inventory,
+                &super::osv::OsvDevClient,
+                occurred,
+                learned_at,
+            )?
+            .entity)
     }
 
     /// Fetches an indexed adapter package and cross-checks its declared hash
@@ -104,7 +114,18 @@ impl Vault {
         let mut canonical_record = package.record.clone();
         canonical_record.content_hash = Some(canonical_hash);
         cross_check_declared_content_hash(&canonical_record, &declared_hex)?;
-        self.import_skill_from_hub_with_id(&hub_ref, &package, preferred_id, occurred, learned_at)
+        let inventory = super::osv::dependency_inventory(&package)?;
+        Ok(self
+            .import_with_advisories(
+                &hub_ref,
+                &package,
+                preferred_id,
+                &inventory,
+                &super::osv::OsvDevClient,
+                occurred,
+                learned_at,
+            )?
+            .entity)
     }
 
     pub(super) fn import_skill_from_hub_with_id(
@@ -112,6 +133,25 @@ impl Vault {
         hub_ref: &HubRef,
         package: &HubPackage,
         preferred_id: EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        self.import_skill_from_hub_with_scans(
+            hub_ref,
+            package,
+            preferred_id,
+            &[],
+            occurred,
+            learned_at,
+        )
+    }
+
+    pub(super) fn import_skill_from_hub_with_scans(
+        &self,
+        hub_ref: &HubRef,
+        package: &HubPackage,
+        preferred_id: EntityId,
+        scans: &[super::SkillScanReceipt],
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
@@ -219,6 +259,16 @@ impl Vault {
             occurred,
             learned_at,
         )?;
+        for receipt in scans {
+            self.ingest_skill_scan_verdict_in_txn(
+                &mut wtxn,
+                &entity,
+                content_hash,
+                receipt,
+                occurred,
+                learned_at,
+            )?;
+        }
         wtxn.commit()?;
         Ok(entity)
     }
@@ -240,9 +290,37 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<HubSyncDisposition> {
+        self.sync_skill_from_hub_with_query(
+            entity,
+            hub_ref,
+            package,
+            sync_policy,
+            occurred,
+            learned_at,
+            &super::osv::OsvDevClient,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "typed hub update plus an injectable dependency advisory transport"
+    )]
+    pub(super) fn sync_skill_from_hub_with_query(
+        &self,
+        entity: &EntityId,
+        hub_ref: &HubRef,
+        package: &HubPackage,
+        sync_policy: HubSyncPolicy,
+        occurred: TimeRange,
+        learned_at: u64,
+        query: &dyn super::osv::OsvQuery,
+    ) -> Result<HubSyncDisposition> {
         hub_ref.validate()?;
         encode_skill_record(&package.record)?;
         let content_hash = package.content_hash()?;
+        let inventory = super::osv::dependency_inventory(package)?;
+        let (_, _, scans) =
+            self.dependency_advisories(content_hash, &inventory, query, learned_at)?;
         let mut wtxn = self.store.env.write_txn()?;
         let current = self.read_skill_record_in_txn(&wtxn, entity)?;
         if current.source != ClaimSource::Imported
@@ -411,6 +489,25 @@ impl Vault {
             occurred,
             learned_at,
         )?;
+        for receipt in &scans {
+            self.ingest_skill_scan_verdict_in_txn(
+                &mut wtxn,
+                entity,
+                content_hash,
+                receipt,
+                occurred,
+                learned_at,
+            )?;
+        }
+        if matches!(
+            crate::skill_scan::scan_gate_for_activation_in_txn(&self.store, &wtxn, content_hash)?,
+            crate::skill_scan::ActivationPosture::ProposedRequired { .. }
+        ) && updated.lifecycle_status == SkillLifecycle::Active
+        {
+            // The old bytes' approval cannot authorize a newly unvetted update.
+            updated.approval_status = ClaimApprovalStatus::Proposed;
+            self.apply_hub_sync_skill_record(&mut wtxn, entity, &updated, occurred, learned_at)?;
+        }
         wtxn.commit()?;
         Ok(HubSyncDisposition::Applied)
     }
