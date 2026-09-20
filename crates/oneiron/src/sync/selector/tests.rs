@@ -4872,3 +4872,106 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
         })
     ));
 }
+
+#[test]
+fn replay_tier_fork_scales_federated_confidence_once_and_audits_remote_value() {
+    use crate::sync::client::ImportTier;
+    let key = WindowKey::new("2026-03");
+    let (_own_dir, own, _, mut own_client) = test_client_with_grant(entity_id(0xB1), key.as_str());
+    let (_fed_dir, fed, _, mut fed_client) = test_client_with_grant(entity_id(0xB2), key.as_str());
+    let id = entity_id(0xB3);
+    let remote = create_window_doc("remote", &key);
+    insert_blob(&remote, id, &edge_provenance_claim_blob());
+    remote.commit();
+    let bytes = remote.export(ExportMode::all_updates()).unwrap();
+    own_client
+        .import_window_update(key.as_str(), &bytes, ImportTier::OwnDevice)
+        .unwrap();
+    let own_body = own.get_claim(&id).unwrap().unwrap();
+    assert_eq!(own_body.confidence, 0.75);
+    assert_eq!(
+        crate::provenance::decode_edge_provenance_body(&own_body.value)
+            .unwrap()
+            .confidence,
+        0.75
+    );
+    assert_eq!(own_body.source, Some(ClaimSource::ToolOutput));
+    assert!(matches!(
+        fed_client.import_window_update(
+            key.as_str(),
+            &bytes,
+            ImportTier::Federated(FederationAdmissionRole::Member)
+        ),
+        Err(crate::sync::TransportError::AdmissionDenied(_))
+    ));
+    assert!(fed.get_claim(&id).unwrap().is_none());
+    put_imported_source_trust(&fed);
+    fed_client
+        .import_window_update(
+            key.as_str(),
+            &bytes,
+            ImportTier::Federated(FederationAdmissionRole::Member),
+        )
+        .unwrap();
+    assert!(
+        quarantined_records(&fed).unwrap().is_empty(),
+        "admitted claim must materialize: {:?}",
+        quarantined_records(&fed).unwrap()
+    );
+    let body = fed.get_claim(&id).unwrap().unwrap();
+    assert_eq!(body.confidence, 0.375);
+    assert_eq!(
+        crate::provenance::decode_edge_provenance_body(&body.value)
+            .unwrap()
+            .confidence,
+        0.375
+    );
+    assert_eq!(body.source, Some(ClaimSource::Imported));
+    let Some(Value::Map(scope)) = body.scope else {
+        panic!("missing audit scope")
+    };
+    assert!(scope.iter().any(
+        |(key, value)| key.as_str() == Some("federated_original_confidence")
+            && value.as_f64() == Some(0.75)
+    ));
+    fed_client
+        .import_window_update(
+            key.as_str(),
+            &bytes,
+            ImportTier::Federated(FederationAdmissionRole::Member),
+        )
+        .unwrap();
+    assert_eq!(fed.get_claim(&id).unwrap().unwrap().confidence, 0.375);
+    // Direct replicated puts take the identical tier fork, inside their write transaction.
+    for (tag, tier, confidence) in [
+        (0xB4, ImportTier::OwnDevice, 0.75),
+        (
+            0xB5,
+            ImportTier::Federated(FederationAdmissionRole::Guest),
+            0.375,
+        ),
+    ] {
+        let id = entity_id(tag);
+        let blob = edge_provenance_claim_blob();
+        crate::sync::replay::replay_entity(
+            &fed,
+            crate::sync::replay::ReplicatedEntity {
+                id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: crate::TimeRange { start: 1, end: 1 },
+                learned_at: 1,
+                body: &blob[ENTITY_METADATA_HEADER_LEN..],
+            },
+            tier,
+        )
+        .unwrap();
+        let body = fed.get_claim(&id).unwrap().unwrap();
+        assert_eq!(body.confidence, confidence);
+        assert_eq!(
+            crate::provenance::decode_edge_provenance_body(&body.value)
+                .unwrap()
+                .confidence,
+            confidence
+        );
+    }
+}

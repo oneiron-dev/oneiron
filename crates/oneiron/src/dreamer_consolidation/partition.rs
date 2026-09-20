@@ -520,6 +520,7 @@ pub fn decode_partition_payload(
     value: &Value,
 ) -> Result<(ConsolidationPartitionKey, Vec<EntityId>, u64)> {
     let entries = expect_map(value, "dreamer partition payload must be a MessagePack map")?;
+    super::branch_scope::decode_branch_scope(value)?;
     let mut conversation = None;
     let mut world = None;
     let mut facet = None;
@@ -528,6 +529,7 @@ pub fn decode_partition_payload(
     for (key, value) in entries {
         match expect_key(key)? {
             KEY_SCHEMA_VERSION => {}
+            super::branch_scope::KEY_BRANCH_SCOPE => {}
             KEY_CONVERSATION => conversation = entity_ref_from_value(value),
             KEY_WORLD => world = entity_ref_from_value(value),
             KEY_FACET => facet = entity_ref_from_value(value),

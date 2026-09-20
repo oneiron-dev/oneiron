@@ -300,6 +300,11 @@ impl<'a> ScopedRead<'a> {
             return Ok(None);
         }
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+            && !self.note_readable_in(&rtxn, body)?
+        {
+            return Ok(None);
+        }
         if header.entity_type != ENTITY_TYPE_CLAIM {
             let body = crate::note::live_body_in_txn(
                 &self.vault.store,
@@ -328,6 +333,13 @@ impl<'a> ScopedRead<'a> {
         let Some(result) = self.vault.hydrate_short_id(short_id, content_hash)? else {
             return Ok(None);
         };
+        if result.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+            let txn = self.vault.store.env.read_txn()?;
+            return match result.body.as_deref() {
+                Some(body) if self.note_readable_in(&txn, body)? => Ok(Some(result)),
+                _ => Ok(None),
+            };
+        }
         if result.body.is_none() {
             if result.deletion.is_some() {
                 return Ok(Some(result));
@@ -507,11 +519,46 @@ impl<'a> ScopedRead<'a> {
         if self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some() {
             return Ok(false);
         }
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+            return self.note_readable_in(rtxn, &raw[ENTITY_METADATA_HEADER_LEN..]);
+        }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw)
         } else {
             Ok(true)
         }
+    }
+
+    /// Scoped actor keys are asserted by a trusted host, not bearer secrets.
+    /// A private NOTE additionally requires an exact entity id and a live,
+    /// class-valid actor row in the same snapshot as its body.
+    fn note_readable_in(&self, txn: &heed::RoTxn<'_>, bytes: &[u8]) -> Result<bool> {
+        let Ok(body) = crate::note::decode_note_body(bytes) else {
+            return Ok(false);
+        };
+        if body.kind != crate::note::NoteKind::Diary {
+            return Ok(true);
+        }
+        let Ok(actor) = EntityId::from_hex(self.actor_key.actor_ref()) else {
+            return Ok(false);
+        };
+        if actor != body.author_ref {
+            return Ok(false);
+        }
+        let Some(class) = self.actor_key.actor_class().and_then(|class| match class {
+            "human" => Some(crate::edge::EdgeActorClass::Human),
+            "agent" => Some(crate::edge::EdgeActorClass::Agent),
+            "system" => Some(crate::edge::EdgeActorClass::System),
+            _ => None,
+        }) else {
+            return Ok(false);
+        };
+        let crate::vault::LiveEntityRow::Live { entity_type, .. } =
+            crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &actor)?
+        else {
+            return Ok(false);
+        };
+        Ok(crate::provenance::validate_actor_class(entity_type, class).is_ok())
     }
 
     fn is_claim_raw_readable_in(
@@ -584,7 +631,7 @@ impl<'a> ScopedRead<'a> {
             if self.is_entity_readable_with_policy_in(rtxn, policy, &entity.id)? {
                 self.filter_context_entity_edges(rtxn, policy, &mut entity)?;
                 kept.push(entity);
-            } else if entity.entity_type == ENTITY_TYPE_CLAIM {
+            } else {
                 claims_suppressed += 1;
             }
         }
@@ -686,7 +733,7 @@ impl<'a> ScopedRead<'a> {
         for record in records {
             let readable = match (record.state, record.entity_type) {
                 (MemoryTimelineRecordState::Missing, _) => false,
-                (_, Some(ENTITY_TYPE_CLAIM)) => {
+                (_, Some(ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE)) => {
                     self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
                 }
                 (_, Some(_)) => true,

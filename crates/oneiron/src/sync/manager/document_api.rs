@@ -22,7 +22,6 @@ impl WindowManager {
     pub(crate) fn notify_note(&self, id: crate::EntityId) {
         self.documents.notify_note(id);
     }
-
     /// Grant-backed text-plane export. The entity's canonical ledger supplies
     /// all world/facet/band decisions, never a peer-supplied substitute.
     pub fn export_document(

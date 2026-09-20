@@ -15,7 +15,9 @@ mod exec_host;
 mod quickjs_provider;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub use self::quickjs_provider::McpQuickJsProvider;
+pub mod oauth_client;
 mod paging;
+pub mod qualification;
 mod registry;
 mod results;
 mod schema_parts;

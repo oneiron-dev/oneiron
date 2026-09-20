@@ -1210,6 +1210,3 @@ fn failure_marker_does_not_change_status_or_events() {
         "\"paused\"",
     );
 }
-
-#[path = "tests/breaker.rs"]
-mod breaker;

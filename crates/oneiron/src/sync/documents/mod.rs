@@ -158,7 +158,6 @@ impl DocumentRegistry {
             let _ = self.notices.send(frame);
         }
     }
-
     pub fn resident_count(&self) -> usize {
         self.residents.lock().map_or(MAX_RESIDENTS, |r| {
             r.values().filter(|v| v.strong_count() > 0).count()
@@ -433,7 +432,6 @@ impl EntityDocument {
         }
         Ok(())
     }
-
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, LoroDoc>> {
         self.doc
             .lock()

@@ -294,6 +294,14 @@ pub(crate) struct CoreContextPackRequest {
 }
 
 impl CoreContextPackRequest {
+    /// The Context Board reserves standing context before this retrieval runs.
+    pub(crate) fn cap_serialized_tokens(&mut self, remaining: usize) {
+        let budget = self
+            .budget
+            .get_or_insert_with(ContextPackBudgetControls::default);
+        budget.token_budget = Some(budget.token_budget.map_or(remaining, |n| n.min(remaining)));
+    }
+
     /// The `(limit, max_neighbors)` shape the MEMORIES slot defaults derive
     /// from, resolved the same way the pipeline resolves depth.
     pub(crate) fn retrieval_budget_shape(&self) -> (usize, usize) {

@@ -3703,9 +3703,6 @@
               }
             ]
           },
-          "gate_breaker_paused": {
-            "type": "boolean"
-          },
           "job_id": {
             "type": "string"
           },

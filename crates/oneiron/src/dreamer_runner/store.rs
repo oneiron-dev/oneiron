@@ -84,6 +84,11 @@ impl<'a> DreamerRunnerStore<'a> {
             task_ref,
         )?;
 
+        let record = match &outcome {
+            EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record) => record,
+        };
+        super::authority::stamp_attempt(self.vault, wtxn, record, &payload.attempt_type)?;
+
         match outcome {
             EnqueueOutcome::Enqueued(record) => {
                 put_run_tree_record_in_txn(
@@ -130,7 +135,10 @@ impl<'a> DreamerRunnerStore<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         input: EnqueueDreamerConsolidationAttempt,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.enqueue_kind_in_txn(
+        let requested_scope =
+            crate::dreamer_consolidation::branch_scope::decode_branch_scope(&input.input)?;
+        let requested_parent = input.parent_attempt;
+        let outcome = self.enqueue_kind_in_txn(
             wtxn,
             input.scope.attempt_kind(),
             DreamerAttemptPayload {
@@ -141,7 +149,18 @@ impl<'a> DreamerRunnerStore<'a> {
             input.dedupe_key,
             input.run_id,
             input.now,
-        )
+        )?;
+        if let EnqueueDreamerAttemptOutcome::Existing(status) = &outcome
+            && (status.payload.parent_attempt != requested_parent
+                || crate::dreamer_consolidation::branch_scope::decode_branch_scope(
+                    &status.payload.input,
+                )? != requested_scope)
+        {
+            return Err(invalid_dreamer_runner(
+                "consolidation dedupe cannot change branch scope or parent",
+            ));
+        }
+        Ok(outcome)
     }
 
     /// Enqueues a SKILL-OPT maintenance attempt (ONE-1448) on its own queue
@@ -265,7 +284,7 @@ impl<'a> DreamerRunnerStore<'a> {
     /// The one enqueue law for a kind-scoped Dreamer lane: encode the payload,
     /// take the advisory dedupe floor, and co-commit the private run-tree row
     /// whichever way the queue answered.
-    fn enqueue_kind_in_txn(
+    pub(super) fn enqueue_kind_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         queue_kind: &str,
@@ -286,6 +305,11 @@ impl<'a> DreamerRunnerStore<'a> {
                 now,
             },
         )?;
+
+        let record = match &outcome {
+            EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record) => record,
+        };
+        super::authority::stamp_attempt(self.vault, wtxn, record, &payload.attempt_type)?;
 
         match outcome {
             EnqueueOutcome::Enqueued(record) => {
@@ -309,6 +333,46 @@ impl<'a> DreamerRunnerStore<'a> {
                 ))
             }
         }
+    }
+
+    pub(crate) fn defer_selection(
+        &self,
+        admitted: &super::DreamerAdmittedAttempt,
+        budget: super::SettleDreamerBudget,
+        retry_at: u64,
+    ) -> Result<()> {
+        let source = &admitted.status.attempt;
+        if budget.child_attempt != source.id || retry_at <= budget.now {
+            return Err(invalid_dreamer_runner("invalid selection retry"));
+        }
+        self.vault.with_write_txn(|txn| {
+            self.settle_budget_in_txn(txn, budget.clone())?;
+            let crate::attempt_queue::RetryOutcome::Retried(record) = self.attempts.retry_in_txn(
+                txn,
+                crate::attempt_queue::RetryAttempt {
+                    id: source.id,
+                    lease_owner: source
+                        .lease_owner
+                        .clone()
+                        .ok_or_else(|| invalid_dreamer_runner("selection retry missing lease"))?,
+                    attempt_count: source.attempt_count,
+                    backoff_until: retry_at,
+                    last_error: Some("consolidation selection deferred".into()),
+                    now: budget.now,
+                },
+            )?;
+            super::authority::stamp_attempt(
+                self.vault,
+                txn,
+                &record,
+                &admitted.status.payload.attempt_type,
+            )?;
+            crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
+                self.vault, txn, source.id, record.id,
+            )?;
+            ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
+            Ok(())
+        })
     }
 
     /// Marks a leased Dreamer attempt complete through the generic queue.
@@ -510,7 +574,9 @@ pub(super) fn decode_dreamer_attempt_status(record: AttemptRecord) -> Result<Dre
 }
 
 fn is_dreamer_queue_kind(kind: &str) -> bool {
-    kind == DREAMER_RUNNER_ATTEMPT_KIND
+    kind == super::connector_event::CONNECTOR_EVENT_QUEUE_KIND
+        || kind == super::maintenance::MAINTENANCE_QUEUE_KIND
+        || kind == DREAMER_RUNNER_ATTEMPT_KIND
         || kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
         || kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
         || kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND

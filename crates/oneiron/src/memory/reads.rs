@@ -354,6 +354,15 @@ impl Memory<'_> {
                 return Ok(None);
             }
         }
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+            self.verified_actor_class()?;
+            if !crate::note::note_body_readable(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                Some(&self.actor),
+            ) {
+                return Ok(None);
+            }
+        }
         let projected = crate::note::live_body_in_txn(
             &self.vault.store,
             &txn,

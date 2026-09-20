@@ -6,6 +6,7 @@ mod cursor;
 mod memories;
 mod prefix;
 mod session;
+mod standing;
 
 pub(crate) use cursor::*;
 pub(crate) use memories::*;
@@ -44,6 +45,9 @@ pub(crate) struct ContextBoardRequest {
     /// cursor advances.
     #[serde(default)]
     retrieval: Option<CoreContextPackRequest>,
+    /// Configured standing block reservation for an agent session.
+    #[serde(default)]
+    standing: Option<standing::StandingSessionControls>,
     /// MEMORIES section controls: whether to project it and the per-slot row caps.
     #[serde(default)]
     memories: Option<ContextBoardMemoriesControls>,
@@ -58,6 +62,9 @@ pub(crate) struct ContextBoardRequest {
 /// The assembled context for one turn.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ContextBoardResponse {
+    /// The pinned block precedes all dynamic retrieval content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    standing: Option<standing::StandingSessionPrefix>,
     /// Session prefix: API level, entity counts, latest activity.
     #[schema(value_type = ContextBoardSession)]
     session: oneiron::SessionContext,
@@ -176,7 +183,20 @@ pub(crate) async fn context_board_hydrate(
     payload: Result<Json<ContextBoardRequest>, JsonRejection>,
 ) -> Result<Json<ContextBoardResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
-    let req = json_payload(payload)?;
+    let mut req = json_payload(payload)?;
+    let standing = standing::standing_prefix(&server, &auth, req.standing.as_ref()).await?;
+    if let Some(prefix) = &standing
+        && let Some(retrieval) = &mut req.retrieval
+    {
+        if prefix.other_context_tokens == 0 {
+            return Err(crate::error::ApiError::bad_request(
+                "standing floor leaves no retrieval budget",
+                Some("standing.token_budget"),
+            )
+            .into());
+        }
+        retrieval.cap_serialized_tokens(prefix.other_context_tokens);
+    }
     // Identity keys on the authenticated actor, never on a free label: the
     // same key the MEMORIES cursor store already uses.
     let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
@@ -184,7 +204,15 @@ pub(crate) async fn context_board_hydrate(
     let session = session_prefix(&server).await?;
     let notifications = pending_notifications(&server, caller)?;
     let unprocessed = pending_unprocessed_items(&server, caller);
-    let budget = current_hydration_budget(&server);
+    let budget = standing.as_ref().map_or_else(
+        || current_hydration_budget(&server),
+        |prefix| {
+            oneiron::HydrationBudget::from_meter(
+                prefix.reserved_tokens as u64,
+                prefix.total_tokens as u64,
+            )
+        },
+    );
 
     let (pack, memories, advanced) = match req.retrieval {
         Some(retrieval) => {
@@ -236,7 +264,9 @@ pub(crate) async fn context_board_hydrate(
         Some(cursor) => cursor,
         None => current_memories_cursor(&server, caller).await,
     };
-    Ok(Json(ContextBoardResponse {
+
+    let response = ContextBoardResponse {
+        standing,
         session,
         notifications,
         unprocessed,
@@ -247,5 +277,18 @@ pub(crate) async fn context_board_hydrate(
         changed,
         skills,
         agents,
-    }))
+    };
+    if let Some(prefix) = &response.standing {
+        let wire = serde_json::to_string(&response).map_err(|_| {
+            crate::error::ApiError::internal_server_error("context serialization failed")
+        })?;
+        if oneiron::count_context_pack_tokens(&wire) > prefix.total_tokens {
+            return Err(crate::error::ApiError::bad_request(
+                "session prefix and retrieval exceed the token budget",
+                Some("standing.token_budget"),
+            )
+            .into());
+        }
+    }
+    Ok(Json(response))
 }

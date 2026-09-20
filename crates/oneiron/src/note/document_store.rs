@@ -39,7 +39,7 @@ pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result
 pub(super) fn persist(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocument) -> Result<()> {
     super::ensure_citations_ready(&vault.store, txn, doc.id)?;
     super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;
-    // Keep the live three-key projection valid, including after concurrent
+    // Keep the live NOTE projection valid, including after concurrent
     // batches merge. A refused commit leaves the durable document unchanged.
     let markdown = doc.view()?.markdown;
     super::validate_markdown(&markdown)?;
@@ -132,6 +132,7 @@ impl Memory<'_> {
             kind: NoteKind::Plugin("brief".into()),
             author_ref: self.actor(),
             markdown: markdown.clone(),
+            source_revision_ref: *id.as_bytes(),
         })?;
         self.with_verified_actor_write_txn(|txn| {
             if self.vault().brief_kind_contract_in_txn(txn)?.is_none() {

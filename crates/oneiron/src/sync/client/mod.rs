@@ -49,6 +49,7 @@ mod sync_frames;
 mod types;
 
 pub use self::base::SyncClient;
+pub use self::federated::ImportTier;
 pub use self::sync_frames::next_backoff;
 pub use self::types::{
     EphemeralChangeOrigin, NoteSyncSession, SyncClientConfig, SyncEvent, SyncStatus,

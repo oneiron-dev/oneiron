@@ -192,8 +192,7 @@ impl SyncClient {
                         max: MAX_DECODED_PAYLOAD_BYTES,
                     });
                 }
-                let window = self.ensure_window(window_key)?;
-                self.import_accepted_window_update(window_key, &window, payload)?;
+                self.import_window_update(window_key, payload, super::ImportTier::OwnDevice)?;
                 Ok(Vec::new())
             }
             window_sub_tags::VV_RESPONSE => {

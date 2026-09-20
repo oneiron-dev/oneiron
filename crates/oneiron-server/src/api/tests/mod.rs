@@ -17,6 +17,7 @@ mod auth_idempotency;
 mod billing_usage;
 mod board_host_events;
 mod companion;
+mod context_board_standing;
 mod context_pack_disclosure;
 mod context_pack_v4;
 mod contract_snapshots;

@@ -163,16 +163,7 @@ pub(crate) fn execute_mcp_nav(
             let results = scoped_read
                 .search_text(query, limit, None)
                 .map_err(|error| mcp_engine_error("mcp nav search failed", error))?;
-            let items = results
-                .into_iter()
-                .map(|result| {
-                    projection::project_search_result(scoped_read.vault(), result, View::Summary)
-                        .map_err(|error| mcp_engine_error("mcp nav projection failed", error))
-                })
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>();
+            let items = project_nav_results(&scoped_read, results)?;
             Ok(json!({
                 "content": [mcp_text_content(format!("{} result(s)", items.len()))],
                 "structuredContent": {
@@ -704,4 +695,46 @@ pub(crate) fn mcp_routed_ask_result(args: McpRoutedAskToolArgs, actor: &McpResol
         },
         "isError": false,
     })
+}
+
+fn project_nav_results(
+    scoped: &oneiron::claim::ScopedRead<'_>,
+    results: Vec<oneiron::ScoredEntity>,
+) -> Result<Vec<Value>, McpGatewayError> {
+    results
+        .into_iter()
+        .map(|result| {
+            crate::api::search::project_scoped_search_result(scoped, result, View::Summary)
+                .map_err(|error| mcp_engine_error("mcp nav projection failed", error))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|items| items.into_iter().flatten().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn navigation_projection_rechecks_private_notes_even_if_nominated() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
+        let receipt = vault
+            .memory(owner, oneiron::EdgeActorClass::Human)
+            .author_note(&oneiron::note::NoteWriteEnvelope {
+                kind: oneiron::note::NoteKind::Diary,
+                scope: oneiron::note::NoteScope::ActorPrivate { owner_ref: owner },
+                source_revision_ref: [0x75; 16],
+                markdown: "private diary canary".into(),
+            })
+            .unwrap();
+        let id = oneiron::EntityId::from_hex(&receipt.id_hex).unwrap();
+        let reader =
+            vault.scoped_read(oneiron::claim::ScopedReadActorKey::new(owner.to_hex()).unwrap());
+        assert!(
+            project_nav_results(&reader, vec![oneiron::ScoredEntity { id, score: 1.0 }])
+                .unwrap()
+                .is_empty()
+        );
+    }
 }

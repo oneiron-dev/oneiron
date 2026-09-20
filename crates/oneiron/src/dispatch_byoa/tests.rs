@@ -1430,6 +1430,7 @@ fn execution_llm_request() -> LlmRequest {
     LlmRequest {
         model: model("byo/fast@1"),
         envelope: CallEnvelope {
+            scope: crate::llm::Scope::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::BestEffort,
             tier: TierPrecedence {

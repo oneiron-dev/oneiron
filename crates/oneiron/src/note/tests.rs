@@ -1,4 +1,4 @@
-//! NOTE body ABI: the pinned three keys, the closed kind, and the negative
+//! NOTE body ABI: the pinned four keys, the closed kind, and the negative
 //! set the decoder must fail closed on.
 
 use rmpv::Value;
@@ -14,6 +14,7 @@ fn take(markdown: &str) -> NoteBody {
         kind: NoteKind::OpinionTake,
         author_ref: actor(0x7a),
         markdown: markdown.to_owned(),
+        source_revision_ref: [0x42; 16],
     }
 }
 
@@ -30,13 +31,17 @@ fn opinion_kind_round_trip() {
     // The wire literal IS the ABI — pinned here, not derived.
     assert_eq!(NoteKind::OpinionTake.as_str(), "opinion/take");
     assert_eq!(NoteKind::parse("opinion/take"), Some(NoteKind::OpinionTake));
-    assert_eq!(NOTE_BODY_KEYS, ["kind", "author_ref", "markdown"]);
+    assert_eq!(
+        NOTE_BODY_KEYS,
+        ["kind", "author_ref", "markdown", "source_revision_ref"]
+    );
+    assert_eq!(NoteKind::parse("diary"), Some(NoteKind::Diary));
 
     let body = take("Disagree: the source predates the merger.");
     let decoded = decode_note_body(&encode_note_body(&body).expect("encode")).expect("decode");
     assert_eq!(decoded, body);
 
-    // Unknown kinds fail closed — the other six ARCH-0032 kinds are not
+    // Unknown kinds fail closed — the remaining ARCH-0032 kinds are not
     // implemented, so they must not decode as anything.
     for unknown in [
         "scratchpad",
@@ -44,7 +49,7 @@ fn opinion_kind_round_trip() {
         "handoff",
         "research",
         "reflection",
-        "diary",
+        "plugin/",
         "OPINION/TAKE",
         "",
     ] {
@@ -67,11 +72,15 @@ fn decode_rejects_every_abi_deviation() {
     rmpv::encode::write_value(&mut not_a_map, &Value::from("opinion/take")).expect("encode");
     assert!(decode_note_body(&not_a_map).is_err(), "non-map body");
 
-    // Unknown key alongside the pinned three.
+    // Unknown key alongside the pinned four.
     let unknown_key = encode_map(vec![
         (Value::from("kind"), Value::from("opinion/take")),
         (Value::from("author_ref"), Value::from(author.to_hex())),
         (Value::from("markdown"), Value::from("solid")),
+        (
+            Value::from("source_revision_ref"),
+            Value::Binary(vec![0x42; 16]),
+        ),
         (Value::from("author_display"), Value::from("Ada")),
     ]);
     assert!(decode_note_body(&unknown_key).is_err(), "unknown key");
@@ -83,6 +92,10 @@ fn decode_rejects_every_abi_deviation() {
         (Value::from("author_ref"), Value::from(author.to_hex())),
         (Value::from("author_ref"), Value::from(actor(0x7b).to_hex())),
         (Value::from("markdown"), Value::from("solid")),
+        (
+            Value::from("source_revision_ref"),
+            Value::Binary(vec![0x42; 16]),
+        ),
     ]);
     assert!(decode_note_body(&duplicate).is_err(), "duplicate key");
 
@@ -95,6 +108,10 @@ fn decode_rejects_every_abi_deviation() {
         (Value::from("kind"), Value::from("scratchpad")),
         (Value::from("author_ref"), Value::from(author.to_hex())),
         (Value::from("markdown"), Value::from("solid")),
+        (
+            Value::from("source_revision_ref"),
+            Value::Binary(vec![0x42; 16]),
+        ),
     ]);
     assert!(decode_note_body(&unknown_kind).is_err(), "unknown kind");
 
@@ -108,6 +125,10 @@ fn decode_rejects_every_abi_deviation() {
             (Value::from("kind"), Value::from("opinion/take")),
             (Value::from("author_ref"), bad_actor.clone()),
             (Value::from("markdown"), Value::from("solid")),
+            (
+                Value::from("source_revision_ref"),
+                Value::Binary(vec![0x42; 16]),
+            ),
         ]);
         assert!(decode_note_body(&body).is_err(), "actor {bad_actor:?}");
     }
@@ -118,6 +139,10 @@ fn decode_rejects_every_abi_deviation() {
             (Value::from("kind"), Value::from("opinion/take")),
             (Value::from("author_ref"), Value::from(author.to_hex())),
             (Value::from("markdown"), Value::from(blank)),
+            (
+                Value::from("source_revision_ref"),
+                Value::Binary(vec![0x42; 16]),
+            ),
         ]);
         assert!(decode_note_body(&body).is_err(), "blank {blank:?} decode");
         assert!(
@@ -126,12 +151,16 @@ fn decode_rejects_every_abi_deviation() {
         );
     }
 
-    // Every missing-key subset of the pinned three.
+    // Every missing-key subset of the pinned four.
     for omit in NOTE_BODY_KEYS {
         let entries = vec![
             (Value::from("kind"), Value::from("opinion/take")),
             (Value::from("author_ref"), Value::from(author.to_hex())),
             (Value::from("markdown"), Value::from("solid")),
+            (
+                Value::from("source_revision_ref"),
+                Value::Binary(vec![0x42; 16]),
+            ),
         ]
         .into_iter()
         .filter(|(key, _)| key.as_str() != Some(omit))
@@ -238,11 +267,47 @@ fn brief_kind_round_trip_is_person_stamped_and_fail_closed() {
             kind: NoteKind::Plugin(tag.into()),
             author_ref: actor,
             markdown: "authored".into(),
+            source_revision_ref: [0x42; 16],
         };
         assert_eq!(
             decode_note_body(&encode_note_body(&body).unwrap()).unwrap(),
             body
         );
     }
-    assert_eq!(NOTE_BODY_KEYS, ["kind", "author_ref", "markdown"]);
+    assert_eq!(
+        NOTE_BODY_KEYS,
+        ["kind", "author_ref", "markdown", "source_revision_ref"]
+    );
+}
+
+#[test]
+fn diary_round_trip_and_revision_are_required() {
+    let mut diary = take("private journal");
+    diary.kind = NoteKind::Diary;
+    let bytes = encode_note_body(&diary).expect("encode diary");
+    assert_eq!(decode_note_body(&bytes).expect("decode diary"), diary);
+    assert!(!note_body_readable(&bytes, None));
+    assert!(!note_body_readable(&bytes, Some(&actor(0x7b))));
+    assert!(note_body_readable(&bytes, Some(&diary.author_ref)));
+    for revision in [
+        Value::Nil,
+        Value::Binary(vec![1; 15]),
+        Value::Binary(vec![1; 17]),
+        Value::from("opaque"),
+    ] {
+        let bytes = encode_map(vec![
+            (Value::from("kind"), Value::from("diary")),
+            (
+                Value::from("author_ref"),
+                Value::from(diary.author_ref.to_hex()),
+            ),
+            (Value::from("markdown"), Value::from("private")),
+            (Value::from("source_revision_ref"), revision),
+        ]);
+        assert!(matches!(
+            decode_note_body(&bytes),
+            Err(Error::Record(RecordError::InvalidNoteBody(_)))
+        ));
+        assert!(!note_body_readable(&bytes, Some(&diary.author_ref)));
+    }
 }
