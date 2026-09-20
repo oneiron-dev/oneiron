@@ -708,3 +708,46 @@ vault-dependent native pass or a substitute for the retained Python regression.
 Restore native Mac POSIX semaphore admission, then finish that native lane on the
 current source. No implementation failure remains in the completed portable
 lanes. The coding assignment remains **BLOCKED W7-C10**, not DONE.
+
+
+## R21: current-source native acceptance attempt confirms the host failure
+
+A read-only `kern.posix.sem.max` check still returned 10000, but that limit alone
+could not establish current allocation availability. The retained **actual native
+regression**, rather than another generic semaphore probe, was therefore attempted
+on clean published `01b18ba9e3a0db0b7b8ca19d933f49bb4a7d54ca` (implementation bytes
+unchanged from the R19/R20 tested code). No portable runtime test was repeated.
+
+The writer-owned `w7-c10-native-current-r21` service acquired the existing C10
+ticket lock and MacBook slot 1. It retained jobs=3, the established native test
+thread setting, the existing project venv, real Cinema TMPDIR, and 100 GiB checks
+for both test/build volumes. Source hashes matched after sync. No slot, reserve,
+semaphore limit, shared resource or alternative Python host was changed.
+
+- Native `maturin develop --manifest-path Cargo.toml` in `crates/oneiron-py`:
+  **passed**, exit 0; built and installed the current native extension.
+- `python -m pytest -q crates/oneiron-py/tests/test_embedded.py::test_native_recall_default_is_a_supported_effort`:
+  **1 failed**, exit 1. It failed at `NativeClient.open` with typed
+  `INTERNAL_SERVER_ERROR`, `storage error: No space left on device (os error 28)`.
+  It never reached recall, so default-effort behavior is **not proved**.
+- Full Python and native NAPI follow-up stages: **unrun**, not passed.
+
+This fresh current-candidate failure is consistent with the independently
+established Mac POSIX semaphore exhaustion; build/test volume reserve checks
+passed. The previous “unrun” statement is now superseded for this one attempted
+case by an actual failure, not by a waiver or success. The complete native suite
+remains unvalidated. Native and outer R21 terminal exits are **1**, with no live
+service process. A collected systemd unit's default status fields are not the
+exit receipt; the saved native/outer `result.json` and pytest log are authoritative.
+
+Raw results, commands and source SHA256 records are in ticket
+`review-recovery/native-current-r21/`. Its initial local launcher quoting failure
+occurred before any native work; it was corrected and syntax-checked before the
+recorded attempt, and its exit/zero-test receipt is retained separately.
+The complete pre-notes PR intake remains 22 issue comments, 75 reviews, 112 inline
+comments and 46 resolved threads with no new actionable finding. R19/R20 portable
+passes and every prior failure/review disposition remain unchanged.
+
+**BLOCKED W7-C10**: restore native Mac storage/POSIX semaphore admission, then
+rerun the retained native acceptance case and remaining native suite. No engine
+or security test change can lawfully substitute for that host repair.
