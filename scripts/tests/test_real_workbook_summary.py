@@ -114,5 +114,60 @@ class WorkbookSummaryTests(unittest.TestCase):
             MODULE.summarize(config, self.provenance, self.pins)
 
 
+
+class StoredSpreadsheetBenchComparisonTests(unittest.TestCase):
+    def test_complete_same_truth_comparisons_keep_native_default_closed(self):
+        import gzip
+        fixtures = Path(__file__).parents[2] / "crates/oneiron-docedit/tests/fixtures/real-workbooks"
+        oracle = json.loads((fixtures / "spreadsheetbench-excel-complete.json").read_text())
+        oracle_rows = [json.loads(line) for line in gzip.decompress((fixtures / "spreadsheetbench-excel-rows.jsonl.gz").read_bytes()).splitlines()]
+        manifest = {row["sha256"]: row["path"] for row in oracle_rows}
+        pins = json.loads((fixtures / "engine-comparison-pins.json").read_text())
+        decision = json.loads((fixtures / "spreadsheetbench-fresh-decision.json").read_text())
+        common = None
+        scores = {}
+        with tempfile.TemporaryDirectory() as temporary:
+            for engine in MODULE.ENGINES:
+                path = Path(temporary) / engine
+                path.mkdir()
+                source = fixtures / "spreadsheetbench-fresh-excel"
+                (path / "summary.json").write_bytes((source / (engine + "-summary.json")).read_bytes())
+                (path / "rows.jsonl").write_bytes(gzip.decompress((source / (engine + "-rows.jsonl.gz")).read_bytes()))
+                summary, truth = MODULE.load_comparison(path, manifest)
+                self.assertEqual(summary["excel_rows_sha256"], oracle["rows_sha256"])
+                self.assertEqual(summary["excel_identity"], oracle["identity"])
+                self.assertEqual(summary["manifest_sha256"], decision["manifest_sha256"])
+                key = "engine" if engine == "libreoffice" else "executable_sha256"
+                self.assertEqual(summary["engine_identity"][key], pins[engine])
+                current = (summary["comparator_sha256"], truth)
+                if common is not None:
+                    self.assertEqual(current, common)
+                common = current
+                for row in oracle_rows:
+                    actual = truth[row["sha256"]]
+                    if row["status"] == "completed":
+                        self.assertEqual(actual[0], "scored")
+                    else:
+                        self.assertEqual(actual, ("no-excel-truth", row["status"]))
+                scores[engine] = dict(matching_workbooks=summary["matching_workbooks"],
+                                      scored_workbooks=summary["scored_workbooks"],
+                                      matching_cells=summary["formula_cells"] - summary["mismatches"],
+                                      formula_cells=summary["formula_cells"])
+        self.assertEqual(scores, decision["scores"])
+        self.assertEqual(decision["excel_rows_sha256"], oracle["rows_sha256"])
+        self.assertEqual(decision["workbooks"], len(manifest))
+        self.assertEqual(decision["excel_completed"], oracle["statuses"]["completed"])
+        self.assertEqual(decision["no_excel_truth"], len(manifest) - oracle["statuses"]["completed"])
+        native, lo = scores["native"], scores["libreoffice"]
+        meets = native["matching_workbooks"] >= lo["matching_workbooks"] and native["matching_cells"] >= lo["matching_cells"]
+        self.assertEqual(decision["native_at_or_above_libreoffice"], meets)
+        self.assertFalse(meets)
+        self.assertFalse(decision["native_default_eligible"])
+        self.assertFalse(decision["runtime_default_changed"])
+        unchanged = scores["formualizer_unchanged"]
+        self.assertEqual(decision["unchanged_meets_91_percent_workbook_threshold"],
+                         100 * unchanged["matching_workbooks"] >= 91 * unchanged["scored_workbooks"])
+
+
 if __name__ == "__main__":
     unittest.main()

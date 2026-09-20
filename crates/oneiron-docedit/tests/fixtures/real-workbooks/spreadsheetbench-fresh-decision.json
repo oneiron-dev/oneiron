@@ -1,0 +1,33 @@
+{
+  "scope": "Complete SpreadsheetBench cohort only. FUSE Excel run is still pending.",
+  "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+  "excel_rows_sha256": "c326736a8691d6c56add4af5caf095313f9f03f4be67262e3b1916a17ab52c99",
+  "workbooks": 5455,
+  "excel_completed": 5400,
+  "no_excel_truth": 55,
+  "scores": {
+    "native": {
+      "matching_workbooks": 570,
+      "scored_workbooks": 2951,
+      "matching_cells": 13798,
+      "formula_cells": 1168076
+    },
+    "libreoffice": {
+      "matching_workbooks": 2648,
+      "scored_workbooks": 2951,
+      "matching_cells": 1001582,
+      "formula_cells": 1168076
+    },
+    "formualizer_unchanged": {
+      "matching_workbooks": 753,
+      "scored_workbooks": 2951,
+      "matching_cells": 55866,
+      "formula_cells": 1168076
+    }
+  },
+  "native_at_or_above_libreoffice": false,
+  "native_default_eligible": false,
+  "runtime_default_changed": false,
+  "unchanged_meets_91_percent_workbook_threshold": false,
+  "decision": "Reject current native candidate for default use. Unchanged formualizer is far below the ARCH-0075 threshold on this real-workbook cohort; the compatibility-only fork rationale is superseded. Retain LibreOffice precision fallback. Record the full two-cohort rewrite decision after FUSE completes; do not relabel the existing evaluator as a rewrite."
+}

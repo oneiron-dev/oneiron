@@ -628,5 +628,84 @@
     "live_admission": "not substituted into the active recovery-6 job; optional new supervisor reserved for subsequent recovery",
     "office_driver_or_identity_changed": false,
     "behavior": "At most one existing-PID activation between the two bounded inventory reads. No application launch/restart/quit or workbook mutation; exact workbook proof still required."
+  },
+  "spreadsheetbench_fresh_excel": {
+    "oracle": {
+      "workbooks": 5455,
+      "statuses": {
+        "completed": 5400,
+        "excel-rejected": 23,
+        "timed-out": 26,
+        "preflight-rejected": 6
+      },
+      "outputs_hash_verified": 5400,
+      "app_versions": [
+        "16.112.4"
+      ],
+      "identity": {
+        "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+        "script_sha256": "4a3227fad8f78b5b3e485c7c5c427d4dc7bc930f459f436b334f79dcf0401e56",
+        "driver_sha256": "4457f4f2c42a49e13d1211917c4907b0b9f96b11efd0c470788965ff77ed3832"
+      },
+      "custody": {
+        "owner": "W7-C14 real workbook oracle /Users/olety/w7-oracle/W7-C14/real-workbook-oracle/sb-truth-2",
+        "lock_retained": false,
+        "stage": "/Users/olety/Library/Containers/com.microsoft.Excel/Data/tmp/w7-oracle/1789875669145919000-91417",
+        "finished_at": 1789876326.0519528
+      },
+      "rows_sha256": "c326736a8691d6c56add4af5caf095313f9f03f4be67262e3b1916a17ab52c99",
+      "status": "complete-cohort-classified",
+      "completed_means": "Fresh Excel full rebuild, saved output hash verified and final workbook custody restored; not all 5455 workbooks yielded truth.",
+      "native_default_eligible": false,
+      "supervisor_terminal": {
+        "job": "sb-truth-supervised-recovery-6",
+        "exit_code": 0,
+        "finished_at": 1789876326.575328
+      }
+    },
+    "scores": {
+      "native": {
+        "matching_workbooks": 570,
+        "scored_workbooks": 2951,
+        "matching_cells": 13798,
+        "formula_cells": 1168076
+      },
+      "libreoffice": {
+        "matching_workbooks": 2648,
+        "scored_workbooks": 2951,
+        "matching_cells": 1001582,
+        "formula_cells": 1168076
+      },
+      "formualizer_unchanged": {
+        "matching_workbooks": 753,
+        "scored_workbooks": 2951,
+        "matching_cells": 55866,
+        "formula_cells": 1168076
+      }
+    },
+    "comparison_terminal": {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/olety/w7-oracle/W7-C14/real-workbook-oracle/sb-final-comparisons-runner-v3.py"
+      ],
+      "exit_code": 0,
+      "started_at": 1789876718.285603,
+      "finished_at": 1789876849.0625641
+    },
+    "tests": [
+      {
+        "command": "python3 -m unittest discover -s scripts/tests -p test_real_workbook_receipts.py -k spreadsheetbench_excel_complete -v",
+        "exit_code": 0,
+        "tests": 1
+      },
+      {
+        "command": "python3 -m unittest discover -s scripts/tests -p test_real_workbook_summary.py -k complete_same_truth -v",
+        "exit_code": 0,
+        "tests": 1
+      }
+    ],
+    "native_parity_passed": false,
+    "native_default_promoted": false,
+    "full_two_cohort_decision": "pending FUSE fresh Excel comparisons"
   }
 }

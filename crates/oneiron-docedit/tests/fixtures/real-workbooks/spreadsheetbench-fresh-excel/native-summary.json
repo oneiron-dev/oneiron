@@ -1,0 +1,27 @@
+{
+  "fresh_excel_truth": true,
+  "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+  "workbooks": 5455,
+  "excel_completed": 5400,
+  "scored_workbooks": 2951,
+  "matching_workbooks": 570,
+  "formula_cells": 1168076,
+  "mismatches": 1154278,
+  "excel_identity": {
+    "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+    "script_sha256": "4a3227fad8f78b5b3e485c7c5c427d4dc7bc930f459f436b334f79dcf0401e56",
+    "driver_sha256": "4457f4f2c42a49e13d1211917c4907b0b9f96b11efd0c470788965ff77ed3832"
+  },
+  "engine_identity": {
+    "mode": "saved-cache-diagnostic",
+    "fresh_excel_truth": false,
+    "executable_sha256": "c54211ad849c022ac84facc4230f5e10b3cfd06a7a069460c274fe12e3c775d7",
+    "manifest_sha256": "df27ed50e2bf53b7be4dfe1204d1d3576231aa51a945ba6a38a1db3fbf594825",
+    "comparator_sha256": "b9867331066c04cfaf47f16a53887dde6e57f58c97c7db1ea4320ef989d39242",
+    "timeout_seconds": 120
+  },
+  "excel_rows_sha256": "c326736a8691d6c56add4af5caf095313f9f03f4be67262e3b1916a17ab52c99",
+  "engine_rows_sha256": "561b4a48230b49c1c5ef850aa2217b88faaf39b2d6391b8cbac16adcf194f165",
+  "comparator_sha256": "b9867331066c04cfaf47f16a53887dde6e57f58c97c7db1ea4320ef989d39242",
+  "comparison_rows_sha256": "f011ae665003728ed1f1f8cd1a14716baae8844af9cc66eefc8ae5fd78a57d29"
+}

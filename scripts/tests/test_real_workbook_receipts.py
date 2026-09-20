@@ -157,6 +157,28 @@ class CompleteCorpusReceipts(unittest.TestCase):
             self.assertEqual(row["recalc"]["exit"], 1)
             self.assertFalse(row.get("output_sha256"))
 
+    def test_spreadsheetbench_excel_complete_cohort_keeps_unscored_failures(self):
+        receipt = read_json("spreadsheetbench-excel-complete.json")
+        rows = read_rows("spreadsheetbench-excel-rows.jsonl.gz", receipt["rows_sha256"])
+        manifest = self.manifest("spreadsheetbench")
+        self.assertEqual(len(rows), len(manifest))
+        self.assertEqual({row["sha256"]: row["path"] for row in rows}, manifest)
+        self.assertEqual(receipt["workbooks"], len(manifest))
+        self.assertEqual(dict(Counter(row["status"] for row in rows)), receipt["statuses"])
+        self.assertEqual(set(receipt["statuses"]), {"completed", "excel-rejected", "preflight-rejected", "timed-out"})
+        self.assertEqual(receipt["identity"]["manifest_sha256"], read_json("provenance.json")["spreadsheetbench"]["manifest_sha256"])
+        completed = [row for row in rows if row["status"] == "completed"]
+        self.assertEqual(len(completed), receipt["outputs_hash_verified"])
+        self.assertEqual(sorted({row["app_version"] for row in completed}), receipt["app_versions"])
+        for row in completed:
+            self.assertEqual(row["calculation"], "calculate full rebuild")
+            self.assertEqual(row["final_workbooks"], 0)
+            self.assertIs(row["update_links"], False)
+            self.assertRegex(row["output_sha256"], r"^[0-9a-f]{64}$")
+        self.assertTrue(all("output_sha256" not in row for row in rows if row["status"] != "completed"))
+        self.assertIs(receipt["custody"]["lock_retained"], False)
+        self.assertIs(receipt["native_default_eligible"], False)
+
     def test_fuse_libreoffice_complete_lane_matches_pinned_cohort(self):
         manifest = self.manifest("fuse")
         receipt = read_json("fuse-libreoffice-classification.json")
