@@ -216,8 +216,12 @@ mod transport {
         let doc = LoroDoc::new();
         reverse_rematerialize(&source, &doc, &key).unwrap();
         let stale = send(&source, &doc, &key);
+        let delete_retry_key = format!("rm:w:{key}:{}", note.to_hex());
         peer.with_write_txn(|txn| {
-            crate::sync::quarantine::set_remat_marker_in_txn(&peer, txn, key.as_str(), &note)
+            peer.store
+                .sync_state
+                .put(txn, &delete_retry_key, &[1])
+                .map_err(Into::into)
         })
         .unwrap();
         receive(&peer, &stale, &key);
@@ -228,7 +232,11 @@ mod transport {
             vec![note.to_hex()]
         );
         peer.with_write_txn(|txn| {
-            crate::sync::quarantine::clear_remat_marker_in_txn(&peer, txn, key.as_str(), &note)
+            peer.store
+                .sync_state
+                .delete(txn, &delete_retry_key)
+                .map(|_| ())
+                .map_err(Into::into)
         })
         .unwrap();
         receive(&peer, &stale, &key);

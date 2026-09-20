@@ -3,7 +3,12 @@ use crate::Vault;
 use crate::sync::{bridge::Materializer, types::WindowKey};
 use loro::LoroDoc;
 
-pub(super) fn materialize(doc: &LoroDoc, vault: &Vault, materializer: &Materializer, window: &str) {
+pub(super) fn materialize(
+    doc: &LoroDoc,
+    vault: &Vault,
+    materializer: &Materializer,
+    window: &str,
+) -> bool {
     let Some(key) = WindowKey::try_new(window) else {
         return false;
     };
