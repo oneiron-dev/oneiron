@@ -116,7 +116,7 @@ pub(super) fn materialize_entities_from_delta(
                     // value-agnostic (a non-binary tombstone decodes HARD
                     // downstream).
                     if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-                        && crate::note::sync::is_native(doc)
+                        && crate::sync::note::is_native(doc)
                     {
                         continue; // Root NOTE observer admits core and documents atomically.
                     }

@@ -47,9 +47,9 @@ pub fn forward_rematerialize(
     materializer: &Materializer,
     window_key: &WindowKey,
 ) -> Result<u32> {
-    let native_notes = crate::note::sync::is_native(doc);
+    let native_notes = crate::sync::note::is_native(doc);
     let native_documents = native_notes
-        .then(|| crate::note::sync::validate(doc))
+        .then(|| crate::sync::note::validate(doc))
         .transpose()?;
     let documents = (!native_notes)
         .then(|| crate::recovery::validate_window_documents(doc))
@@ -94,7 +94,7 @@ pub fn forward_rematerialize(
     // `?`: its error stays deferred past the marker txn (Trap 2).
     entity_pass::run(&ctx, &mut ledger)?;
     if let Some(documents) = native_documents {
-        ledger.healed.extend(crate::note::sync::apply(
+        ledger.healed.extend(crate::sync::note::apply(
             vault,
             doc,
             documents,

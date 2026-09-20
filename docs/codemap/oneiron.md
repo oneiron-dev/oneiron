@@ -1281,18 +1281,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/message_stream/receipts.rs` | src | s | 1 fn · 1 crate-vis | — | Finality sidecars written inside the witness transaction |
 | `src/message_stream/tests.rs` | test | m | — | — | Caller-visible streaming laws; partial text never reaches storage |
 | `src/message_stream/types.rs` | src | s | 5 struct · 5 enum · 9 fn | IdleMessageStreamOutcome, MessageFinality, MessageFinalityReceipt, MessageStreamFrame, MessageStreamHandle, MessageStreamPolicy, MessageWriteMode, StreamCadence +2 | Stream policy, ephemeral frames and durable finality receipts |
-| `src/note.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 3 re-export · 5 crate-vis | NoteBody, TakeTarget | Governed NOTE cores, PACK kind descriptors, and per-note editable documents |
+| `src/note.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 3 re-export · 4 crate-vis | NoteBody, TakeTarget | Governed NOTE cores, PACK kind descriptors, and per-note editable documents |
 | `src/note/document_tests.rs` | test | m | — | — | NOTE caller-observable storage, cursor, fork and bridge laws |
 | `src/note/documents.rs` | src | m | 3 struct · 2 enum · 6 fn · 12 crate-vis | NoteAnchor, NoteDocument, NoteEdit, NoteEditOutcome, NoteVersion | Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites |
 | `src/note/erase.rs` | src | s | 2 crate-vis | — | Active-store erasure of NOTE snapshots and workflow text, including headerless residue |
 | `src/note/kinds.rs` | src | s | 2 struct · 3 enum · 6 fn · 2 crate-vis | ContextDefault, ExtractionDefault, NoteKind, NoteKindDescriptor, RetentionDefault | Vault-resident PACK descriptor records; the shipped kinds are data, not variants |
 | `src/note/proposals.rs` | src | m | 3 struct · 1 enum · 4 fn · 2 crate-vis | NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict | Grant-routed fork bundles, atomic verdicts and durable head-move receipts |
-| `src/note/sync.rs` | src | s | 6 crate-vis | — | Native NOTE carriers for ordinary window sync, distinct from history-free recovery |
-| `src/note/sync/codec.rs` | src | s | 3 crate-vis | — | Binding validation of native NOTE snapshots, heads, and mutable workflows |
-| `src/note/sync/materialize.rs` | src | s | 1 crate-vis | — | Atomic native NOTE core/document admission and monotone workflow replay |
-| `src/note/sync/merge.rs` | src | s | 2 crate-vis | — | Reconcile durable NOTE edits with a window that may be ahead after a crash |
-| `src/note/sync/mirror.rs` | src | s | 2 crate-vis | — | Snapshot-consistent NOTE packing and selective-export closure |
-| `src/note/sync/scrub.rs` | src | s | 1 crate-vis | — | Remove active NOTE carriers in the same window commit as a tombstone |
 | `src/note/sync_tests.rs` | test | m | — | — | Normal NOTE window transport, selector closure, and delete-wins regression laws |
 | `src/note/tests.rs` | test | s | — | — | NOTE body ABI: the pinned three keys, the closed kind, and the negative set the decoder must fail closed on |
 | `src/note/verbs.rs` | src | s | 4 fn · 1 crate-vis | — | Actor-bound NOTE creation, edit and source-entity bridge |
@@ -1864,7 +1858,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/loro_support.rs` | src | m | 1 fn · 15 crate-vis | — | Loro-native helpers for the sync layer |
 | `src/sync/manager.rs` | src | m | 1 struct · 12 fn · 7 crate-vis | WindowManager | Production window manager: ARCH-0023b startup orchestration + registry |
 | `src/sync/manager/tests.rs` | test | s | — | — | — |
-| `src/sync/mod.rs` | src | s | 14 mod · 14 re-export · 1 crate-vis | — | CRDT sync layer for Oneiron |
+| `src/sync/mod.rs` | src | s | 14 mod · 14 re-export · 2 crate-vis | — | CRDT sync layer for Oneiron |
+| `src/sync/note.rs` | src | s | 6 crate-vis | — | Native NOTE carriers for ordinary window sync, distinct from history-free recovery |
+| `src/sync/note/codec.rs` | src | s | 3 crate-vis | — | Binding validation of native NOTE snapshots, heads, and mutable workflows |
+| `src/sync/note/materialize.rs` | src | s | 1 crate-vis | — | Atomic native NOTE core/document admission and monotone workflow replay |
+| `src/sync/note/merge.rs` | src | s | 2 crate-vis | — | Reconcile durable NOTE edits with a window that may be ahead after a crash |
+| `src/sync/note/mirror.rs` | src | s | 2 crate-vis | — | Snapshot-consistent NOTE packing and selective-export closure |
+| `src/sync/note/scrub.rs` | src | s | 1 crate-vis | — | Remove active NOTE carriers in the same window commit as a tombstone |
 | `src/sync/quarantine/keys_classifier.rs` | src | m | 1 struct · 1 enum · 1 fn · 3 const · 14 crate-vis | QuarantineContainer, QuarantineRecord | Quarantine key codec plus remote/local rejection classifier |
 | `src/sync/quarantine/mod.rs` | src | s | 4 re-export · 10 crate-vis | — | Quarantine sink (`x:` family) + needs-rematerialization (`rm:`) retry markers — no silent drops on the sync… |
 | `src/sync/quarantine/reassert_drain.rs` | src | m | 1 struct · 2 fn · 8 crate-vis | ReassertDrainReport | ra: tombstone reassert markers, enqueue/pending/drain |

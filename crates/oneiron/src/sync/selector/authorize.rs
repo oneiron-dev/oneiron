@@ -220,7 +220,7 @@ pub(super) fn strip_guest_share_metadata(
 
     // Tombstone rows are entity ids without type metadata. A guest-share
     // snapshot omits them to avoid leaking deleted membership/topology counts.
-    crate::note::sync::copy_selected(vault, source, &out)?;
+    crate::sync::note::copy_selected(vault, source, &out)?;
     out.commit();
     Ok(out)
 }
@@ -246,7 +246,7 @@ pub(super) fn filter_window_doc(
     // Refresh a detached window, then copy only owners that pass this filter.
     let source_bytes = crate::sync::loro_support::export_snapshot(source)?;
     let refreshed = crate::sync::loro_support::doc_from_snapshot(&source_bytes)?;
-    crate::note::sync::refresh(vault, &refreshed, key)?;
+    crate::sync::note::refresh(vault, &refreshed, key)?;
     let source = &refreshed;
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");
@@ -374,7 +374,7 @@ pub(super) fn filter_window_doc(
         }
     });
 
-    crate::note::sync::copy_selected(vault, source, &out)?;
+    crate::sync::note::copy_selected(vault, source, &out)?;
     out.commit();
     Ok(out)
 }

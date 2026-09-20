@@ -138,7 +138,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
             };
             if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-                && crate::note::sync::is_native(doc)
+                && crate::sync::note::is_native(doc)
             {
                 return; // Core and editable document share the NOTE transaction.
             }

@@ -32,7 +32,7 @@ pub(crate) fn apply(
             let Some(old) = vault
                 .store
                 .vault_meta
-                .get(txn, &super::super::documents::head_key(*note))?
+                .get(txn, &crate::note::documents::head_key(*note))?
             else {
                 continue;
             };
@@ -115,9 +115,9 @@ pub(crate) fn apply(
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                 )
                 .apply(txn)?;
-            let core = super::super::decode_note_body_using(
+            let core = crate::note::decode_note_body_using(
                 &raw[ENTITY_METADATA_HEADER_LEN..],
-                super::super::NoteKind::wire,
+                crate::note::NoteKind::wire,
             )?;
             if core.document_head.is_none() {
                 vault
@@ -136,7 +136,7 @@ pub(crate) fn apply(
             vault.store.sync_state.put(txn, &key, &bytes)?;
         }
         for receipt in state.receipts.values() {
-            if receipt.verdict == super::super::NoteVerdict::Reject {
+            if receipt.verdict == crate::note::NoteVerdict::Reject {
                 vault
                     .store
                     .sync_state
@@ -151,10 +151,10 @@ pub(crate) fn apply(
         for (note, head) in &state.heads {
             vault.store.vault_meta.put(
                 txn,
-                &super::super::documents::head_key(*note),
+                &crate::note::documents::head_key(*note),
                 head.as_bytes(),
             )?;
-            let current = super::super::documents::load_head(vault, txn, *note, *head)?;
+            let current = crate::note::documents::load_head(vault, txn, *note, *head)?;
             vault
                 .batch_in()
                 .text(note, &[("markdown", &current.text())])

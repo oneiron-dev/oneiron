@@ -16204,7 +16204,7 @@
      "purpose": "Governed NOTE cores, PACK kind descriptors, and per-note editable documents",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "re-export": 3,
@@ -16283,66 +16283,6 @@
       "enum": 1,
       "fn": 4,
       "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/note/sync.rs",
-     "purpose": "Native NOTE carriers for ordinary window sync, distinct from history-free recovery",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/note/sync/codec.rs",
-     "purpose": "Binding validation of native NOTE snapshots, heads, and mutable workflows",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/note/sync/materialize.rs",
-     "purpose": "Atomic native NOTE core/document admission and monotone workflow replay",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/note/sync/merge.rs",
-     "purpose": "Reconcile durable NOTE edits with a window that may be ahead after a crash",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/note/sync/mirror.rs",
-     "purpose": "Snapshot-consistent NOTE packing and selective-export closure",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/note/sync/scrub.rs",
-     "purpose": "Remove active NOTE carriers in the same window commit as a tombstone",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -23062,9 +23002,69 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 14,
       "re-export": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/note.rs",
+     "purpose": "Native NOTE carriers for ordinary window sync, distinct from history-free recovery",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/note/codec.rs",
+     "purpose": "Binding validation of native NOTE snapshots, heads, and mutable workflows",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/note/materialize.rs",
+     "purpose": "Atomic native NOTE core/document admission and monotone workflow replay",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/note/merge.rs",
+     "purpose": "Reconcile durable NOTE edits with a window that may be ahead after a crash",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/note/mirror.rs",
+     "purpose": "Snapshot-consistent NOTE packing and selective-export closure",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/note/scrub.rs",
+     "purpose": "Remove active NOTE carriers in the same window commit as a tombstone",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -26568,7 +26568,7 @@
      "purpose": "Memory-only MESSAGE streaming with atomic witnessed finality receipts"
     },
     "note": {
-     "files": 15,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -26946,7 +26946,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 71,
+     "files": 77,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",

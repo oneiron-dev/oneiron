@@ -227,7 +227,7 @@ impl NoteDocument {
     }
 }
 
-pub(super) fn invalid(reason: &'static str) -> Error {
+pub(crate) fn invalid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidNoteBody(reason))
 }
 pub(super) fn stamp(doc: &LoroDoc, actor: EntityId, at: u64, action: &str) {
@@ -235,13 +235,13 @@ pub(super) fn stamp(doc: &LoroDoc, actor: EntityId, at: u64, action: &str) {
     doc.set_next_commit_timestamp(at.min(i64::MAX as u64) as i64);
     doc.commit();
 }
-pub(super) fn head_key(note: EntityId) -> Vec<u8> {
+pub(crate) fn head_key(note: EntityId) -> Vec<u8> {
     [b"note_head:v1:".as_slice(), note.as_bytes()].concat()
 }
-pub(super) fn doc_key(note: EntityId, head: EntityId) -> String {
+pub(crate) fn doc_key(note: EntityId, head: EntityId) -> String {
     format!("note_doc:v1:{}:{}", note.to_hex(), head.to_hex())
 }
-pub(super) fn snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
+pub(crate) fn snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.export(ExportMode::Snapshot)
         .map_err(|_| invalid("document snapshot"))
 }
@@ -308,7 +308,7 @@ pub(super) fn load_doc(
     }
     load_head(vault, txn, note, head).map(Some)
 }
-pub(super) fn load_head(
+pub(crate) fn load_head(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     note: EntityId,

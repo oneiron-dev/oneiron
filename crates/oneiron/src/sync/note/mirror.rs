@@ -76,7 +76,7 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
         if let Some(raw) = vault
             .store
             .vault_meta
-            .get(&txn, &super::super::documents::head_key(*note))?
+            .get(&txn, &crate::note::documents::head_key(*note))?
         {
             state.heads.insert(
                 *note,
@@ -173,9 +173,9 @@ pub(crate) fn copy_selected(vault: &Vault, source: &LoroDoc, out: &LoroDoc) -> R
             if EntityMetadataHeader::parse(&raw)
                 .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_NOTE)
                 && raw.len() > ENTITY_METADATA_HEADER_LEN
-                && super::super::decode_note_body_using(
+                && crate::note::decode_note_body_using(
                     &raw[ENTITY_METADATA_HEADER_LEN..],
-                    super::super::NoteKind::wire,
+                    crate::note::NoteKind::wire,
                 )?
                 .document_head
                 .is_some()

@@ -34,6 +34,7 @@ mod diagnostic_ingest;
 pub mod lease;
 pub(crate) mod loro_support;
 pub mod manager;
+pub(crate) mod note;
 pub mod quarantine;
 pub mod queue;
 pub mod quota;

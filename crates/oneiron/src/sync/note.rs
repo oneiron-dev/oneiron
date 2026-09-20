@@ -13,8 +13,8 @@ pub(crate) use scrub::deleted;
 pub(crate) use materialize::apply;
 pub(crate) use mirror::{copy_selected, refresh};
 
-use super::documents::{doc_key, invalid};
-use super::{NoteFork, NoteLandingReceipt, NoteReviewBundle};
+use crate::note::documents::{doc_key, invalid};
+use crate::note::{NoteFork, NoteLandingReceipt, NoteReviewBundle};
 use crate::{EntityId, Vault, error::Result};
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
 use std::collections::{BTreeMap, BTreeSet};
@@ -169,5 +169,5 @@ fn merge_document(local: &[u8], incoming: &[u8]) -> Result<Vec<u8>> {
     merged
         .import(incoming)
         .map_err(|_| invalid("NOTE CRDT merge"))?;
-    super::documents::snapshot(&merged)
+    crate::note::documents::snapshot(&merged)
 }

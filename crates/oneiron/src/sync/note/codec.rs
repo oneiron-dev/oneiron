@@ -99,9 +99,9 @@ impl State {
             documents.insert((*note, *head), doc);
         }
         for (note, raw) in &self.cores {
-            let core = super::super::decode_note_body_using(
+            let core = crate::note::decode_note_body_using(
                 &raw[ENTITY_METADATA_HEADER_LEN..],
-                super::super::NoteKind::wire,
+                crate::note::NoteKind::wire,
             )?;
             if core.document_head != self.heads.get(note).copied() {
                 return Err(invalid("NOTE core/head mismatch"));
@@ -127,10 +127,10 @@ impl State {
                 return Err(invalid("NOTE receipt binding"));
             }
             match row.verdict {
-                super::super::NoteVerdict::Switch if row.head == row.fork => {}
-                super::super::NoteVerdict::Merge
+                crate::note::NoteVerdict::Switch if row.head == row.fork => {}
+                crate::note::NoteVerdict::Merge
                     if !fork.rewrite && row.head == row.previous_head => {}
-                super::super::NoteVerdict::Reject
+                crate::note::NoteVerdict::Reject
                     if row.head == row.previous_head
                         && !documents.contains_key(&(row.note, row.fork)) => {}
                 _ => return Err(invalid("NOTE receipt verdict")),

@@ -481,7 +481,7 @@ fn subscribe_map_observer(
     let callback_cid = cid.clone();
     let callback = Arc::new(move |event: loro::event::DiffEvent<'_>| {
         let entity_event = event.events.iter().any(|diff| diff.target == &callback_cid);
-        let native = root_events && crate::note::sync::is_native(&callback_doc);
+        let native = root_events && crate::sync::note::is_native(&callback_doc);
         if !entity_event && !native {
             return;
         }

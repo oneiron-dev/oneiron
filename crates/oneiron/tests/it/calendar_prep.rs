@@ -129,17 +129,24 @@ fn claim_id(seed: u8, index: u8) -> EntityId {
 
 fn put_event(vault: &Vault, seed: u8, start: u64, end: u64) -> EntityId {
     let id = test_id(seed);
+    let origin = claim_id(seed, 0xFE);
+    let has_origin = vault.get_claim(&origin).expect("origin lookup").is_some();
+    let mut fields = vec![(Value::from("name"), Value::from("quarterly review"))];
+    if has_origin {
+        fields.push((Value::from("origin"), Value::from("native")));
+    }
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &Value::Map(fields)).expect("encode event");
     vault
         .put_entity(
             &id,
             ENTITY_TYPE_EVENT,
             TimeRange { start, end },
             PLANNED_AT,
-            &text_body("name", "quarterly review"),
+            &body,
         )
         .expect("put event");
-    let origin = claim_id(seed, 0xFE);
-    if vault.get_claim(&origin).expect("origin lookup").is_none() {
+    if !has_origin {
         put_claim(
             vault,
             origin,

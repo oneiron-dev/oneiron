@@ -6,6 +6,8 @@ use crate::deletion::DeleteReason;
 #[cfg(feature = "sync")]
 use crate::deletion::{TombstoneReason, TombstoneValueV2};
 use crate::edge::EdgeActorClass;
+#[cfg(feature = "sync")]
+use crate::sync::note as sync;
 use crate::write_envelope::WriteActor;
 use crate::{Vault, VaultConfig};
 

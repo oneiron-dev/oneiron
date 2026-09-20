@@ -167,7 +167,7 @@ impl LoadedWindow {
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
         let subsumed_update_keys = merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
 
-        crate::note::sync::refresh(vault, &self.doc, &self.key)?;
+        crate::sync::note::refresh(vault, &self.doc, &self.key)?;
         let history_free = history_free_window_required(vault, &self.key)?;
 
         // Once a sealed carrier has existed in this window, a normal Loro

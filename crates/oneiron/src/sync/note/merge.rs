@@ -7,7 +7,7 @@ pub(super) fn reaches(state: &State, note: EntityId, from: EntityId, to: EntityI
         let before = visited.len();
         for row in state.receipts.values() {
             if row.note == note
-                && row.verdict == super::super::NoteVerdict::Switch
+                && row.verdict == crate::note::NoteVerdict::Switch
                 && visited.contains(&row.previous_head)
             {
                 visited.insert(row.head);
@@ -65,7 +65,7 @@ impl State {
             }
         }
         for row in self.receipts.values() {
-            if row.verdict == super::super::NoteVerdict::Reject {
+            if row.verdict == crate::note::NoteVerdict::Reject {
                 self.docs.remove(&(row.note, row.fork));
             }
         }
@@ -81,13 +81,13 @@ impl State {
             self.heads.insert(note, chosen);
             if let Some(raw) = self.cores.get_mut(&note) {
                 let header = raw[..crate::batch::ENTITY_METADATA_HEADER_LEN].to_vec();
-                let mut body = super::super::decode_note_body_using(
+                let mut body = crate::note::decode_note_body_using(
                     &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                    super::super::NoteKind::wire,
+                    crate::note::NoteKind::wire,
                 )?;
                 body.document_head = Some(chosen);
                 body.markdown.clear();
-                *raw = [header, super::super::encode_note_body(&body)?].concat();
+                *raw = [header, crate::note::encode_note_body(&body)?].concat();
             }
         }
         for (key, bundle) in carried.bundles {

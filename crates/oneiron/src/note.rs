@@ -17,8 +17,6 @@ const KEY_DOCUMENT_HEAD: &str = NOTE_BODY_KEYS[3];
 pub(crate) mod documents;
 pub(crate) mod erase;
 mod kinds;
-#[cfg(feature = "sync")]
-pub(crate) mod sync;
 pub(crate) use kinds::validate_registered_kind;
 mod proposals;
 mod verbs;
