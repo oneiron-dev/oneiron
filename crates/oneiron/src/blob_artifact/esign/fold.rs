@@ -35,14 +35,24 @@ impl EsignState {
             reseal_pending: false,
         })
     }
+    fn has_actionable_recipient(&self) -> bool {
+        self.document.recipients.iter().any(|recipient| {
+            matches!(
+                recipient.role,
+                RecipientRole::Signer | RecipientRole::Approver
+            )
+        })
+    }
     pub fn ready_to_seal(&self) -> bool {
-        (self.status == DocumentStatus::Pending
-            && (self.rejection.is_some()
-                || self
-                    .recipients
-                    .values()
-                    .all(|r| r.signing == SigningStatus::Completed)))
-            || self.reseal_pending
+        self.document.kind == DocumentKind::Document
+            && self.has_actionable_recipient()
+            && ((self.status == DocumentStatus::Pending
+                && (self.rejection.is_some()
+                    || self
+                        .recipients
+                        .values()
+                        .all(|r| r.signing == SigningStatus::Completed)))
+                || self.reseal_pending)
     }
     fn promote(&mut self, dictated: Option<&str>) -> Result<()> {
         if self.document.sequential {
@@ -107,6 +117,7 @@ impl EsignState {
             EsignEvent::Sent => {
                 if self.status != DocumentStatus::Draft
                     || self.document.kind != DocumentKind::Document
+                    || !self.has_actionable_recipient()
                     || now >= self.document.expires_at
                 {
                     return Err(invalid("document cannot be sent"));

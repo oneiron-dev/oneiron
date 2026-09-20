@@ -141,7 +141,7 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
             id: EntityId::now().to_hex(),
             email: "reader@example.test".into(),
             name: "Reader".into(),
-            role: RecipientRole::Cc,
+            role: RecipientRole::Approver,
             order: 0,
             expires_at: now + 3600,
             principal_ref: None,
@@ -169,14 +169,27 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
     );
     vault.with_write_txn(|txn| {
         super::ledger::append(&vault, txn, id, EsignEvent::Sent, actor, now)?;
-        super::ceremony::enqueue_seal(&vault, txn, id, now)
+        Ok(())
     })?;
+    assert!(!vault.esign_document(id)?.ready_to_seal());
+    assert_eq!(
+        vault.execute_signing_action(
+            &capabilities[0].1,
+            &SigningAction::Complete {
+                consent: true,
+                next: None
+            },
+            None,
+            None,
+        )?,
+        SigningOutcome::AwaitingSeal
+    );
     let queue = AttemptQueue::new(&vault);
     let ClaimOutcome::Claimed(attempt) = queue.claim_kind(
         ESIGN_SEAL_ATTEMPT_KIND,
         ClaimAttempt {
             lease_owner: "seal-test".into(),
-            now,
+            now: crate::unix_seconds_now(),
         },
     )?
     else {

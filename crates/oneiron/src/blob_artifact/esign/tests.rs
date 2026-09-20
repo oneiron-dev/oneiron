@@ -1055,3 +1055,156 @@ fn deleted_documents_refuse_every_capability_door_but_retain_audit() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn actionable_recipient_is_required_for_send_and_seal_but_not_draft_editing() -> Result<()> {
+    let (_dir, vault, id, mut doc, owner) = ceremony_setup()?;
+    let mut actionable = doc.recipients[0].clone();
+    actionable.id = EntityId::now().to_hex();
+    actionable.role = RecipientRole::Approver;
+    actionable.automated = false;
+    doc.fields.clear();
+    let now = crate::unix_seconds_now();
+    for roles in [
+        vec![],
+        vec![RecipientRole::Viewer],
+        vec![RecipientRole::Cc],
+        vec![RecipientRole::Viewer, RecipientRole::Cc],
+    ] {
+        doc.recipients = roles
+            .iter()
+            .map(|role| {
+                let mut recipient = actionable.clone();
+                recipient.id = EntityId::now().to_hex();
+                recipient.role = *role;
+                recipient
+            })
+            .collect();
+        event(
+            &vault,
+            id,
+            EsignEvent::Drafted {
+                document: doc.clone(),
+            },
+            now,
+        )?;
+        vault.issue_esign_capabilities(&owner, id)?;
+        let audit = vault.esign_audit(id)?;
+        let command = EsignOutboundCommand {
+            document: id.to_hex(),
+            recipient_count: doc.recipients.len(),
+            verb: EsignOutboundVerb::SendForSignature,
+            reason: None,
+        };
+        assert_ne!(
+            vault
+                .dispatch_esign(
+                    send_request(id, owner.actor(), command.verb, &format!("empty-{roles:?}")),
+                    &command,
+                    None,
+                    None,
+                )
+                .unwrap()
+                .outcome,
+            crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+        );
+        let mut state = vault.esign_document(id)?;
+        assert_eq!(state.status, DocumentStatus::Draft);
+        assert_eq!(vault.esign_audit(id)?, audit);
+        assert!(
+            crate::attempt_queue::AttemptQueue::new(&vault)
+                .list()?
+                .is_empty()
+        );
+        // Pin the readiness backstop independently of send admission.
+        state.status = DocumentStatus::Pending;
+        assert!(!state.ready_to_seal());
+        state.reseal_pending = true;
+        assert!(!state.ready_to_seal());
+        assert!(
+            event(
+                &vault,
+                id,
+                EsignEvent::Sealed {
+                    rejected: false,
+                    item_sha256: vec![[1; 32]],
+                },
+                now
+            )
+            .is_err()
+        );
+    }
+    doc.kind = DocumentKind::Template;
+    doc.recipients.clear();
+    event(
+        &vault,
+        id,
+        EsignEvent::Drafted {
+            document: doc.clone(),
+        },
+        now,
+    )?;
+    assert_eq!(vault.esign_document(id)?.document, doc);
+    doc.kind = DocumentKind::Document;
+    doc.recipients = vec![actionable.clone()];
+    event(
+        &vault,
+        id,
+        EsignEvent::Drafted {
+            document: doc.clone(),
+        },
+        now,
+    )?;
+    let tokens = vault.issue_esign_capabilities(&owner, id)?;
+    assert_eq!(tokens.len(), 1);
+    let command = EsignOutboundCommand {
+        document: id.to_hex(),
+        recipient_count: 1,
+        verb: EsignOutboundVerb::SendForSignature,
+        reason: None,
+    };
+    assert_eq!(
+        vault
+            .dispatch_esign(
+                send_request(id, owner.actor(), command.verb, "approver-send"),
+                &command,
+                None,
+                None,
+            )
+            .unwrap()
+            .outcome,
+        crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+    );
+    assert!(!vault.esign_document(id)?.ready_to_seal());
+    assert_eq!(
+        vault.execute_signing_action(
+            &tokens[0].1,
+            &SigningAction::Complete {
+                consent: false,
+                next: None
+            },
+            None,
+            None
+        )?,
+        SigningOutcome::ConsentRequired
+    );
+    assert!(!vault.esign_document(id)?.ready_to_seal());
+    assert_eq!(
+        vault.execute_signing_action(
+            &tokens[0].1,
+            &SigningAction::Complete {
+                consent: true,
+                next: None
+            },
+            None,
+            None
+        )?,
+        SigningOutcome::AwaitingSeal
+    );
+    assert!(vault.esign_document(id)?.ready_to_seal());
+    assert_eq!(
+        vault.esign_document(id)?.recipients[&actionable.id].signing,
+        SigningStatus::Completed
+    );
+    Ok(())
+}
