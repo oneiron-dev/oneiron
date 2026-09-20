@@ -2535,6 +2535,8 @@ fn calendar_connector_poll_jitter_is_bounded_and_nonzero() {
 
 #[test]
 fn inbound_events_cross_the_existing_gate() {
+    use sha2::{Digest, Sha256};
+
     // The seeded default policy manifest is deliberate: this oracle measures
     // that admission crosses the Gate, so the Gate must be present.
     let (_dir, vault) = temp_vault_seeded();
@@ -2558,8 +2560,6 @@ fn inbound_events_cross_the_existing_gate() {
     )));
     let google_outcome = run_sync(&vault, &google_seat(), &google, T0);
     assert_eq!(counters(&google_outcome), (1, 0, 0, 0));
-
-    use sha2::{Digest, Sha256};
 
     for (uid, provider, seat) in [
         ("uid-gate-c@x", CALDAV_PROVIDER_KEY, caldav_seat()),
