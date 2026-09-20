@@ -586,14 +586,16 @@ use crate::cli::ApiCommand;
 #[cfg(unix)]
 const PLACEHOLDER_SECRET: &str = "placeholder-secret-not-a-credential";
 
-/// Stage an executable stand-in for `curl` under a temporary directory.
+/// Stage a stand-in for `curl` without executing a freshly written inode.
 #[cfg(unix)]
 fn write_fake_curl(dir: &std::path::Path, script: &str) -> std::path::PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
     let path = dir.join("fake-curl");
-    std::fs::write(&path, script).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(path.with_extension("sh"), script).unwrap();
+    // A concurrent fork can briefly inherit the script writer despite CLOEXEC.
+    // Execute an immutable launcher and read the per-test script as data instead.
+    let launcher = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/commands/tests/curl-launcher.sh");
+    std::os::unix::fs::symlink(launcher, &path).unwrap();
     path
 }
 
@@ -1052,6 +1054,11 @@ fn api_failure_keeps_the_body_and_exits_non_zero() {
     let body = b"{\"code\":\"UNAUTHORIZED\",\"message\":\"request is not authorized\"}";
     std::fs::write(dir.path().join("response.bin"), body).unwrap();
     let program = write_fake_curl(dir.path(), &fake_curl_script(dir.path(), 22));
+    // Pin the raced descriptor lifetime without depending on sibling scheduling.
+    let script_writer = std::fs::OpenOptions::new()
+        .write(true)
+        .open(program.with_extension("sh"))
+        .unwrap();
 
     let request = api::request_for_command("http://127.0.0.1:3000", ApiCommand::Discover).unwrap();
     let output = api::run_curl_output(
@@ -1062,6 +1069,7 @@ fn api_failure_keeps_the_body_and_exits_non_zero() {
         std::process::Stdio::piped(),
     )
     .unwrap();
+    drop(script_writer);
 
     assert_eq!(
         output.stdout,
