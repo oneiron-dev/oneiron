@@ -2654,7 +2654,7 @@ fn provider_read_formats_have_wire_envelopes_and_null_secrets_before_truncation(
             "anthropic-messages",
             "messages",
         ),
-        (PackFormat::Gemini, "gemini", "contents"),
+        (PackFormat::Gemini, "gemini-api", "contents"),
     ] {
         let mut pack = sample_pack();
         pack.results[1].fields.as_mut().unwrap().insert(
