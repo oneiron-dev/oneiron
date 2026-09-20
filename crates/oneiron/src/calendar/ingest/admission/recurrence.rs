@@ -27,6 +27,15 @@ impl PollAdmission<'_> {
         if matches!(decision, PassportDecision::SkipUnchanged { .. }) {
             return Ok(());
         }
+        let exception_value = rmpv::Value::Map(vec![
+            ("master_ref".into(), rmpv::Value::from(master.to_hex())),
+            ("uid".into(), event.uid.as_str().into()),
+            ("original_start_utc".into(), original.into()),
+        ]);
+        crate::calendar::claims::validate_calendar_claim_value(
+            PREDICATE_CALENDAR_SERIES_EXCEPTION,
+            &exception_value,
+        )?;
         self.rewrite_event(event_ref, event)?;
         if !exists {
             self.admit_origin(event_ref, event)?;
@@ -48,11 +57,7 @@ impl PollAdmission<'_> {
                 &screen_body(event),
                 &self.source_record_id(event),
                 PREDICATE_CALENDAR_SERIES_EXCEPTION,
-                rmpv::Value::Map(vec![
-                    ("master_ref".into(), rmpv::Value::from(master.to_hex())),
-                    ("uid".into(), event.uid.as_str().into()),
-                    ("original_start_utc".into(), original.into()),
-                ]),
+                exception_value,
             )?;
         }
         match decision {

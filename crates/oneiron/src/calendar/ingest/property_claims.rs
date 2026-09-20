@@ -11,6 +11,13 @@ const OWNED: [&str; 7] = [
     PREDICATE_CALENDAR_ATTENDEE,
     PREDICATE_CALENDAR_MEETING_LINK,
 ];
+pub(super) fn preflight(event: &ParsedVEvent) -> crate::Result<()> {
+    for (predicate, value) in values(event) {
+        validate_calendar_claim_value(predicate, &value)?;
+    }
+    Ok(())
+}
+
 pub(in crate::calendar) fn reconcile<E: From<crate::Error>>(
     vault: &Vault,
     event_ref: EntityId,

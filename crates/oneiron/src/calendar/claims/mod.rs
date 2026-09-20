@@ -46,6 +46,7 @@ pub use self::values::{
 pub(in crate::calendar) use self::codec::{
     decode_attendee_value, decode_series_exception_value, decode_series_master_value,
     decode_status_value, decode_time_kind_value, encode_event_outcome_value,
+    validate_calendar_claim_value,
 };
 pub(crate) use self::codec::{
     decode_event_outcome_value, decode_passport_value, validate_calendar_claim_structure,

@@ -110,6 +110,7 @@ fn apply_remote_change(
                 .first()
                 .ok_or_else(|| ingest_error("remote resource has no event"))?;
             let source = pull_source_record_id(provider, seat, &primary.uid);
+            crate::calendar::ingest::preflight_connector_feed(vault, system, &source, &feed, now)?;
             for parsed in &feed.events {
                 let normalized = RemoteCalendarChange::Upsert(RemoteCalendarObject {
                     href: object.href.clone(),

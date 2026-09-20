@@ -517,3 +517,64 @@ fn connector_missing_dtstart_preserves_other_sources_time_metadata() {
     admit_connector_event(&vault, "personal", "fixture://undated", &feed.events[0], 1_800_000_002).unwrap();
     assert!(time_claims().is_empty());
 }
+
+
+#[test]
+fn invalid_derived_claim_values_leave_no_event_uid_or_claims_on_repeated_polls() {
+    let base = String::from_utf8(one_event_feed("20260806T140000Z", "20260806T150000Z")).unwrap();
+    for property in [
+        format!("URL:https://meet.example.org/{}", "x".repeat(513)),
+        format!("ATTENDEE;ROLE={}:mailto:host@example.org", "x".repeat(513)),
+    ] {
+        let (_dir, vault) = open_calendar_vault();
+        let invalid = base.replace("SUMMARY:standup", &format!("SUMMARY:standup\r\n{property}"));
+        assert!(crate::calendar::ics::parse_ics_feed(invalid.as_bytes()).is_ok());
+        let fetcher = BodyFetcher { body: invalid.into_bytes() };
+        for now in [1_800_000_000, 1_800_000_001] {
+            assert!(matches!(run_ics_feed_poll(&vault, &fetcher, &test_config(), now, 7),
+                Err(CalendarError::IcsIngest { .. })));
+            assert!(vault.entities_by_type(ENTITY_TYPE_EVENT).unwrap().is_empty());
+            assert!(vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM).unwrap().is_empty());
+            assert_eq!(crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x").unwrap(), None);
+        }
+    }
+}
+
+#[test]
+fn invalid_connector_update_preserves_event_properties_and_passport() {
+    let (_dir, vault) = open_calendar_vault();
+    let base = String::from_utf8(one_event_feed("20260806T140000Z", "20260806T150000Z")).unwrap();
+    let first = crate::calendar::ics::parse_ics_feed(base.as_bytes()).unwrap();
+    admit_connector_event(&vault, "work", "fixture://first", &first.events[0], 1_800_000_000).unwrap();
+    let event = connector_event_ref(&vault, &first.events[0]).unwrap().unwrap();
+    let before = vault.get(&event).unwrap();
+    let header = vault.read_entity_header(&event).unwrap().unwrap();
+    let claims = vault.claims_for_subject(&event).unwrap();
+    let invalid = base.replace("SEQUENCE:1", "SEQUENCE:2")
+        .replace("DTSTART:20260806T140000Z", "DTSTART:20260807T140000Z")
+        .replace("SUMMARY:standup", &format!("SUMMARY:changed\r\nURL:https://meet.example.org/{}", "x".repeat(513)));
+    let next = crate::calendar::ics::parse_ics_feed(invalid.as_bytes()).unwrap();
+    assert!(matches!(admit_connector_event(&vault, "work", "fixture://invalid", &next.events[0], 1_800_000_001),
+        Err(CalendarError::IcsIngest { .. })));
+    assert_eq!(vault.get(&event).unwrap(), before);
+    let after = vault.read_entity_header(&event).unwrap().unwrap();
+    assert_eq!((after.occurred_start, after.occurred_end), (header.occurred_start, header.occurred_end));
+    assert_eq!(vault.claims_for_subject(&event).unwrap(), claims);
+    assert!(claims.iter().all(|id| vault.get_claim(id).unwrap().unwrap().lifecycle == ClaimLifecycleStatus::Active));
+    assert_eq!(crate::calendar::passport::live_passport_for(&vault, &event, "work", "uid-oc@x")
+        .unwrap().unwrap().1.last_sequence, 1);
+}
+
+#[test]
+fn invalid_detached_claim_value_preflights_before_the_feed_master_is_created() {
+    let (_dir, vault) = open_calendar_vault();
+    let base = String::from_utf8(one_event_feed("20260806T140000Z", "20260806T150000Z")).unwrap();
+    let exception = format!("BEGIN:VEVENT\r\nUID:uid-oc@x\r\nRECURRENCE-ID:20260806T140000Z\r\nDTSTART:20260806T160000Z\r\nURL:https://meet.example.org/{}\r\nEND:VEVENT\r\n", "x".repeat(513));
+    let invalid = base.replace("END:VCALENDAR", &format!("{exception}END:VCALENDAR"));
+    assert_eq!(crate::calendar::ics::parse_ics_feed(invalid.as_bytes()).unwrap().events.len(), 2);
+    assert!(matches!(run_ics_feed_poll(&vault, &BodyFetcher { body: invalid.into_bytes() }, &test_config(), 1_800_000_000, 7),
+        Err(CalendarError::IcsIngest { .. })));
+    assert!(vault.entities_by_type(ENTITY_TYPE_EVENT).unwrap().is_empty());
+    assert!(vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM).unwrap().is_empty());
+    assert_eq!(crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x").unwrap(), None);
+}

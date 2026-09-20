@@ -1,5 +1,6 @@
 //! Diff-to-claim admission path and its test module.
 
+mod preflight;
 mod recurrence;
 #[cfg(test)]
 use super::poll::IcsFeedPollConfig;
@@ -52,6 +53,11 @@ impl PollAdmission<'_> {
         &mut self,
         feed: &super::ics::ParsedIcsFeed,
     ) -> Result<(), CalendarError> {
+        // No EVENT, UID index, or claim can be left behind by a value refusal,
+        // including when a later detached component is the invalid one.
+        for event in &feed.events {
+            self.preflight_event(event)?;
+        }
         for event in &feed.events {
             self.apply_event(event)?;
         }
@@ -59,6 +65,7 @@ impl PollAdmission<'_> {
     }
 
     fn apply_event(&mut self, event: &ParsedVEvent) -> Result<(), CalendarError> {
+        self.preflight_event(event)?;
         if let Some(original) = event.properties.recurrence_id_utc {
             return self.apply_exception(event, original);
         }
@@ -372,20 +379,7 @@ impl PollAdmission<'_> {
             }
             prior_live = Some(claim_id);
         }
-        let value = rmpv::Value::Map(vec![
-            (
-                rmpv::Value::from("status"),
-                rmpv::Value::from(status.as_str()),
-            ),
-            (
-                rmpv::Value::from("basis"),
-                rmpv::Value::from(basis.as_str()),
-            ),
-            (
-                rmpv::Value::from("recorded_at"),
-                rmpv::Value::from(self.now),
-            ),
-        ]);
+        let value = preflight::status_value(status, basis, self.now);
         let new_id = self.admit_screened(
             event_ref,
             body,
@@ -497,6 +491,19 @@ fn connector_admission<'a>(
         blob_ref: source,
         verdict_fold: VerdictFold::default(),
     }
+}
+pub(in crate::calendar) fn preflight_connector_feed(
+    vault: &Vault,
+    system: &str,
+    source: &str,
+    feed: &super::ics::ParsedIcsFeed,
+    now: u64,
+) -> Result<(), CalendarError> {
+    let admission = connector_admission(vault, system, source, now);
+    for event in &feed.events {
+        admission.preflight_event(event)?;
+    }
+    Ok(())
 }
 pub(in crate::calendar) fn admit_connector_event(
     vault: &Vault,
