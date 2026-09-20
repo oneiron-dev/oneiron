@@ -1,6 +1,5 @@
 //! Claim write entry seams plus the phase-ordered inner executor.
 
-use super::breaker_staging::{self, GateBreakerAccounting, RecordedClaimGateDecision};
 use super::consent::{
     GateConsentBinding, claim_gate_input, enforce_claim_gate_decision_with_consent,
     gate_decision_matches_pending_candidate, reject_gate_decision,
@@ -13,6 +12,7 @@ use super::peripheral::{
     ClaimGateWrite, GateWriteMode, auto_check_value_preview, edge_actor_class_str,
     local_write_actor_entity_ref, validate_write_envelope, write_envelope_actor_ref,
 };
+use super::staged_claim_gate::RecordedClaimGateDecision;
 use crate::claim::{ClaimApprovalStatus, claim_sensitivity_band, dreamer_isolation_class};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -63,11 +63,6 @@ pub(crate) fn check_claim_policy_for_write(
         &mut recorded_decision,
         None,
         operation_effect_body,
-        // A pre-check door DISCARDS its receipt, so it cannot carry a
-        // breaker demotion into the write that materializes the body. The
-        // ordinary batch preflight books that event instead; counting it here
-        // too would debit one write twice.
-        GateBreakerAccounting::Exempt,
     )
 }
 
@@ -96,9 +91,6 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         // The batch/replay claim door only ever carries PERSISTED candidates,
         // so it never opens the synthetic-operation mode.
         false,
-        // Phase-2 materialization replays an identity the preflight already
-        // booked. Re-counting it would debit the breaker twice for one write.
-        GateBreakerAccounting::Exempt,
     )
 }
 
@@ -122,12 +114,6 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         None,
         // Every caller of the record seam writes a persisted candidate.
         false,
-        // Exempt by default. A door earns breaker accounting by being able to
-        // CARRY the demotion into the body it materializes, and this seam's
-        // callers — claim lifecycle transitions, the session-bundle merge, the
-        // commitment gap-decay preflight — materialize through paths that
-        // consume no staged verdict.
-        GateBreakerAccounting::Exempt,
     )
 }
 
@@ -145,7 +131,6 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
     preflight_decision_id: Option<GateDecisionId>,
     operation_effect_body: bool,
-    breaker_accounting: GateBreakerAccounting,
 ) -> Result<()> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let ClaimGateWrite {
@@ -185,11 +170,6 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     // unchanged — and every persisted Dreamer claim candidate, on every
     // candidate door, still clears the full evidence floor.
     let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
-    // ONE-1453 keys its rows on the SAME run id the pending-consent path
-    // carries. The detection above already restricts it to an `Agent` actor
-    // on a Dreamer run surface, so an owner-interactive write is outside the
-    // breaker even when a caller supplies run-shaped metadata.
-    let breaker_run_id = dreamer_run_id.clone();
     let dreamer_candidate = dreamer_run_id.is_some() && !operation_effect_body;
     let precommit_denial = if dreamer_candidate {
         dreamer_precommit_denial(store, &*wtxn, body)
@@ -321,6 +301,12 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         {
             let value_preview = auto_check_value_preview(&body.value);
             let candidate = AutoCheckCandidate {
+                signals: crate::gate::auto_signals::auto_check_signals(
+                    store,
+                    &*wtxn,
+                    input.actor.actor_ref.as_deref(),
+                    crate::unix_seconds_now(),
+                )?,
                 predicate: &body.predicate,
                 value_preview: &value_preview,
                 source,
@@ -367,26 +353,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
         let created_at = mutation_recorded_at;
 
-        let breaker = breaker_staging::OriginalBreakerEvent {
-            accounting: breaker_accounting,
-            record_decision: mode.record_decision,
-            run_id: breaker_run_id.as_deref(),
-            input: &input,
-            policy,
-            binding: &binding,
-            body,
-            attach_critical_confirm,
-            created_at,
-        }
-        .apply(store, wtxn, &mut decision)?;
-        let breaker_demoted = breaker
-            .as_ref()
-            .is_some_and(|applied| applied.breaker_demoted);
-        let effective_approval = if breaker_demoted {
-            ClaimApprovalStatus::Proposed
-        } else {
-            body.approval
-        };
+        let effective_approval = body.approval;
 
         let mut decision_record = GateDecisionRecord {
             version: 0,
@@ -429,10 +396,6 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             let recorded = RecordedClaimGateDecision {
                 record: decision_record.clone(),
                 decision: decision.clone(),
-                breaker_demoted,
-                breaker_undo: breaker
-                    .as_ref()
-                    .and_then(|applied| applied.breaker_undo.clone()),
             };
             if !defer_metrics_until_commit {
                 recorded.record_metrics(&store.diagnostics.gate);
@@ -478,23 +441,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 } else {
                     pending_decision.reason_codes
                 },
-                dreamer_run_id: if breaker_demoted {
-                    // Breaker accounting already required and validated a
-                    // nonempty run id for this write, so failing to recover it
-                    // here is an invariant error rather than `None`. The
-                    // landed derivation cannot be reused: it narrows on the
-                    // body's own `Proposed` stamp, and a demoted body still
-                    // reads `Auto` until `batch` re-encodes it.
-                    Some(
-                        envelope
-                            .and_then(dreamer_run_id_from_write_envelope)
-                            .ok_or(Error::InvariantViolation(
-                                "breaker-demoted pending consent lost its dreamer run id",
-                            ))?,
-                    )
-                } else {
-                    pending_consent_dreamer_run_id(envelope, body)
-                },
+                dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
             };
             store.put_pending_gate_consent_in_txn(wtxn, &pending)?;
             // This is the sole reopening transition: a successful local

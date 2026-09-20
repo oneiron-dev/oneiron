@@ -20,9 +20,25 @@ impl RetrievalIndex for Vault {
         limit: usize,
         skip_rescore: bool,
     ) -> Result<Vec<ScoredEntity>> {
-        let rows =
-            crate::hnsw::hnsw_search(&self.store, &self.config, txn, query, limit, skip_rescore)?;
-        filter_results(self, txn, rows)
+        let population = crate::hnsw::hnsw_entity_count(&self.store, txn)?;
+        // A nonzero request still validates an apparently empty index.
+        let mut requested = limit.min(population.max(1));
+        loop {
+            let rows = crate::hnsw::hnsw_search(
+                &self.store,
+                &self.config,
+                txn,
+                query,
+                requested,
+                skip_rescore,
+            )?;
+            let mut visible = filter_results(self, txn, rows)?;
+            visible.truncate(limit);
+            if visible.len() >= limit || requested >= population {
+                return Ok(visible);
+            }
+            requested = requested.saturating_mul(2).max(1).min(population);
+        }
     }
 
     fn port_retrieval_phonetic_upsert(
@@ -78,8 +94,7 @@ impl RetrievalIndex for Vault {
         query: &[f32],
         limit: usize,
     ) -> Result<Vec<ScoredEntity>> {
-        let rows = crate::hnsw::hnsw_search(&self.store, &self.config, txn, query, limit, false)?;
-        filter_results(self, txn, rows)
+        self.port_retrieval_vector_search_quality(txn, query, limit, false)
     }
     fn port_retrieval_text_search(
         &self,
@@ -103,6 +118,7 @@ fn filter_results(
     for row in rows {
         if !vault.port_tombstone_is_deleted(txn, &row.id)?
             && !stale_in_txn(&vault.store, txn, &row.id)?
+            && crate::note::ordinary_entity_visible(&vault.store, txn, &row.id)?
         {
             result.push(row);
         }

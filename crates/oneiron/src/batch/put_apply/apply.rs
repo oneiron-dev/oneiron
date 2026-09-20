@@ -10,11 +10,11 @@ use super::{
     StagedClaimGateOutcome, apply_short_id_plan, authority_observation_secs_for_write,
     check_authority_log_store_key, delete_short_id_rows_for_id,
     evict_authority_log_store_key_squatter, lexical_query_hint_claim_id, parse_entity_metadata,
-    plan_short_id_update, reject_overlay_member_base_write, stage_entity_body_row,
-    stage_entity_index_rows, stage_optimizer_birth_marker_row, validate_companion_register_put,
-    validate_local_agent_definition_create, validate_local_skill_create,
-    validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
-    validate_task_checkin_immutable,
+    plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
+    stage_entity_body_row, stage_entity_index_rows, stage_optimizer_birth_marker_row,
+    validate_companion_register_put, validate_local_agent_definition_create,
+    validate_local_skill_create, validate_replicated_authority_log_for_local_vault,
+    validate_skill_body_overwrite, validate_task_checkin_immutable,
 };
 use crate::claim::ClaimApprovalStatus;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
@@ -26,6 +26,7 @@ use crate::registry::{
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
     ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
+use crate::secret_custody::plan_replicated_name_index;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
@@ -95,6 +96,8 @@ pub(in crate::batch) fn apply_put(
     // Registered maintenance kinds with pinned body schemas get the same
     // fail-closed treatment on every path that can admit their type byte.
     // Bodies of all other type bytes stay opaque at the storage layer.
+    let custody_name_index =
+        plan_replicated_name_index(store, wtxn, &id, entity_type, data, replicated)?;
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
     let mut new_agent_definition = None;
@@ -442,9 +445,6 @@ pub(in crate::batch) fn apply_put(
         None
     };
     let data = reconciled_critical_claim_body.as_deref().unwrap_or(data);
-    let breaker_demoted_claim_body =
-        super::gate_staging::demote_claim_body(staged_claim_gate, &mut decoded_claim_body)?;
-    let data = breaker_demoted_claim_body.as_deref().unwrap_or(data);
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = authority_entry_hash_pin
@@ -683,10 +683,12 @@ pub(in crate::batch) fn apply_put(
             envelope: write_envelope,
         },
     )?;
+    stage_claim_projection(store, wtxn, id, decoded_claim_body.as_ref())?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
         crate::conversation_dag::stage_session_carrier(store, wtxn, id, data)?;
     }
+    crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {
         super::put_staging::stage_skill_index_rows(
             store,

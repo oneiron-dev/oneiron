@@ -20,7 +20,7 @@ use super::*;
 
 mod cleanup_lane;
 
-fn block_on_ready<F: Future>(future: F) -> F::Output {
+pub(crate) fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
     let mut cx = Context::from_waker(waker);
     let mut future = pin!(future);
@@ -1416,5 +1416,61 @@ fn budget_pressure_warns_the_admitted_worker_to_land() -> Result<()> {
         .expect("warning receipt");
     assert_eq!(warning.actor, ATTEMPT_RUNTIME_ACTOR);
     assert_eq!(warning.standing, None);
+    Ok(())
+}
+
+struct SelectionDeferredExecutor;
+impl DreamerAttemptExecutor for SelectionDeferredExecutor {
+    async fn execute(
+        &mut self,
+        attempt: &DreamerAdmittedAttempt,
+        _: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        Ok(if attempt.status.attempt.retry_of.is_none() {
+            DreamerAttemptExecution::Deferred {
+                completed_units: 7,
+                retry_at: 50,
+            }
+        } else {
+            DreamerAttemptExecution::Completed { completed_units: 3 }
+        })
+    }
+}
+#[test]
+fn selection_retry_settles_spend_and_releases_without_manual_resume() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let original = enqueue_micro(&store, "selection-hold", 10)?;
+    let mut driver =
+        DreamerWakeDriver::new(&vault, "selection-budget", frozen_deadline(0, 180_000));
+    let mut exec = SelectionDeferredExecutor;
+    let cancel = WakeCancellation::new();
+    let first = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, 1, 10),
+        &mut exec,
+        &cancel,
+    ))?;
+    assert_eq!((first.deferred, first.completed, first.parked), (1, 0, 0));
+    assert!(store.parked_attempt(original.attempt.id)?.is_none());
+    assert_eq!(
+        store.budget("selection-budget")?.unwrap().remaining_units,
+        9_993
+    );
+    let early = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, 1, 49),
+        &mut exec,
+        &cancel,
+    ))?;
+    assert_eq!(early.admitted, 0);
+    let released = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, 1, 50),
+        &mut exec,
+        &cancel,
+    ))?;
+    assert_eq!(released.completed, 1);
+    assert_eq!(
+        store.budget("selection-budget")?.unwrap().remaining_units,
+        9_990
+    );
     Ok(())
 }

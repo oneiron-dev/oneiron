@@ -164,8 +164,19 @@ pub(crate) fn validate_registered_kind(
 ) -> Result<()> {
     let body = super::decode_note_body_using(bytes, NoteKind::wire)?;
     let kind = body.kind.as_str();
-    if NoteKind::parse(kind).is_some() {
-        return Ok(());
+    context_in_txn(store, txn, kind).map(|_| ())
+}
+
+pub(super) fn context_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    kind: &str,
+) -> Result<ContextDefault> {
+    if let Some(descriptor) = shipped()
+        .into_iter()
+        .find(|descriptor| descriptor.kind == kind)
+    {
+        return Ok(descriptor.context);
     }
     let Some(raw) = store.vault_meta().get(txn, &key(kind))? else {
         return Err(RecordError::InvalidNoteBody("unknown NOTE kind").into());
@@ -178,5 +189,5 @@ pub(crate) fn validate_registered_kind(
     {
         return Err(Error::CorruptedIndex("NOTE kind binding"));
     }
-    Ok(())
+    Ok(descriptor.context)
 }

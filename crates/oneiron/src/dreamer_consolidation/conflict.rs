@@ -29,6 +29,7 @@ pub struct ConsolidationBucketKey {
     pub predicate_root: String,
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
+    pub rel: Option<EntityId>,
 }
 
 impl ConsolidationBucketKey {
@@ -44,6 +45,7 @@ impl ConsolidationBucketKey {
         hasher.update(self.predicate_root.as_bytes());
         hash_optional_entity(&mut hasher, self.world.as_ref());
         hash_optional_entity(&mut hasher, self.facet.as_ref());
+        hash_optional_entity(&mut hasher, self.rel.as_ref());
         *hasher.finalize().as_bytes()
     }
 }
@@ -63,6 +65,7 @@ pub(super) struct CandidateFacts {
     pub(super) value: Value,
     pub(super) world: Option<EntityId>,
     pub(super) facet: Option<EntityId>,
+    pub(super) rel: Option<EntityId>,
     pub(super) topic: Option<Vec<u8>>,
 }
 
@@ -88,6 +91,7 @@ pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFac
         value: body.value,
         world: body.world,
         facet: facet_from_scope(body.scope.as_ref()),
+        rel: body.rel,
     })
 }
 
@@ -134,6 +138,7 @@ pub fn plan_candidate_buckets(
             predicate_root: predicate_root(&facts.predicate).to_owned(),
             world: facts.world,
             facet: facts.facet,
+            rel: facts.rel,
         };
         buckets.entry(key).or_default().push(index);
     }
@@ -317,6 +322,7 @@ pub struct ConflictIdentity {
     pub predicate: String,
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
+    pub rel: Option<EntityId>,
     /// Canonical question key supplied by the per-predicate extractor.
     pub topic: Option<Vec<u8>>,
 }
@@ -349,6 +355,7 @@ pub fn detect_conflicts(
             predicate: facts.predicate,
             world: facts.world,
             facet: facts.facet,
+            rel: facts.rel,
             topic: facts.topic,
         };
         groups
@@ -412,6 +419,7 @@ pub fn conflict_open_marker_id(
         ]),
         conflict.identity.world,
         conflict.identity.facet,
+        conflict.identity.rel,
         conflict.identity.topic.as_deref(),
     )
 }
@@ -423,11 +431,12 @@ fn prior_matches_identity(body: &ClaimBody, identity: &ConflictIdentity) -> Resu
     Ok(subject == identity.subject
         && body.predicate == identity.predicate
         && body.world == identity.world
+        && body.rel == identity.rel
         && facet_from_scope(body.scope.as_ref()) == identity.facet
         && topic_key(body.scope.as_ref())? == identity.topic)
 }
 
-fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
+pub(super) fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
     encode_value(&canonicalize_value(value))
 }
 
@@ -441,6 +450,10 @@ fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
 /// NEW ids for the same beliefs — DUPLICATE claims. A content-addressed id is
 /// stable across re-runs (and independent of `now`), so promotion stays
 /// idempotent (#485-3).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "claim identity includes both relationship and extractor topic axes"
+)]
 pub(super) fn deterministic_claim_id(
     attempt_id: crate::attempt_queue::AttemptId,
     subject: EntityId,
@@ -448,6 +461,7 @@ pub(super) fn deterministic_claim_id(
     value: &Value,
     world: Option<EntityId>,
     facet: Option<EntityId>,
+    rel: Option<EntityId>,
     topic: Option<&[u8]>,
 ) -> EntityId {
     let mut hasher = blake3::Hasher::new();
@@ -467,6 +481,7 @@ pub(super) fn deterministic_claim_id(
     if let Some(facet) = facet {
         hasher.update(facet.as_bytes());
     }
+    hash_optional_entity(&mut hasher, rel.as_ref());
     hasher.update(&[u8::from(topic.is_some())]);
     if let Some(topic) = topic {
         hasher.update(&(topic.len() as u64).to_le_bytes());

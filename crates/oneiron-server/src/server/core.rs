@@ -26,10 +26,14 @@ use crate::usage::UsageLedger;
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
 use super::windows::{SERVER_USER_ID, spawn_local_change_producer};
 
-/// Broadcast payload: (conn_id, encoded_message).
-/// conn_id 0 = local/bridge writes (broadcast to all devices).
-/// conn_id >= 1 = specific connection (echo suppression skips sender).
-pub(crate) type BroadcastPayload = (u32, Vec<u8>);
+/// Internal fan-out. Recovery notices never become wire frames.
+#[derive(Debug, Clone)]
+pub(crate) enum BroadcastPayload {
+    /// Sender zero denotes a local write; other senders use echo suppression.
+    Frame(u32, Vec<u8>),
+    /// A producer lost notifications before they reached this channel.
+    Resync { missed: u64 },
+}
 
 /// Core sync server state shared across all connections.
 pub struct SyncServer {
@@ -40,6 +44,8 @@ pub struct SyncServer {
     pub(crate) ephemeral_store: EphemeralStore,
     /// Producer state for Dreamer live attempt-progress rows on the ephemeral lane.
     pub(crate) dreamer_progress: Mutex<DreamerAttemptProgressProducer>,
+    /// Node-local compiled standing blocks; rebuilt from claims, never synced.
+    pub(crate) standing_block_cache: Mutex<oneiron::persona_snapshot::standing::StandingBlockCache>,
     /// Broadcast channel for fan-out to all connected clients.
     pub(crate) broadcast_tx: broadcast::Sender<BroadcastPayload>,
     /// Monotonic connection ID counter. 0 = reserved for bridge/local writes.
@@ -173,6 +179,9 @@ impl SyncServer {
             reassert_manager,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             lifecycle_in_flight: Mutex::new(HashSet::new()),
+            standing_block_cache: Mutex::new(
+                oneiron::persona_snapshot::standing::StandingBlockCache::default(),
+            ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
             config,
             mcp_registry,

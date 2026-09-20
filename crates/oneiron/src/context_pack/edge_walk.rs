@@ -53,7 +53,9 @@ pub(super) fn load_entity_edges(
     // The OF-365 clamp below is the only target filter this list needs.
     let mut kept = Vec::with_capacity(edges.len());
     for edge in edges {
-        if !disclosure_admits_target(store, rtxn, clamp, &edge.target)? {
+        if !crate::note::ordinary_entity_visible(store, rtxn, &edge.target)?
+            || !disclosure_admits_target(store, rtxn, clamp, &edge.target)?
+        {
             continue;
         }
         kept.push(edge);
@@ -180,7 +182,9 @@ pub(super) fn walk_edges(
                 }
                 // OF-365 clamp (enforcement point 2): a non-admitted entity
                 // is never admitted as a neighbor NOR traversed through.
-                if !disclosure_admits_target(store, rtxn, clamp, &edge.target)? {
+                if !crate::note::ordinary_entity_visible(store, rtxn, &edge.target)?
+                    || !disclosure_admits_target(store, rtxn, clamp, &edge.target)?
+                {
                     continue;
                 }
                 // ONE-1411, on the same rule: content the scope already

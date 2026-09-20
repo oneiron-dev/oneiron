@@ -221,12 +221,21 @@ pub(crate) fn scan_gate_for_activation_in_txn(
 ) -> Result<ActivationPosture> {
     let threshold = activation_risk_threshold_in_txn(store, rtxn)?;
     let mut worst = ScanRiskLevel::None;
+    let mut incomplete = false;
     for body in
         crate::skill_hub::skill_scan_verdicts_for_content_hash_in_store(store, rtxn, content_hash)?
     {
         worst = worst.max(crate::skill_hub::scan_verdict_row_risk(&body)?);
+        if let rmpv::Value::Map(fields) = &body.value {
+            incomplete |= fields.iter().any(|(key, value)| {
+                key.as_str() == Some("provider")
+                    && value.as_str() == Some(crate::skill_hub::osv::OSV_SCAN_PROVIDER)
+            }) && fields.iter().any(|(key, value)| {
+                key.as_str() == Some("completeness") && value.as_str() == Some("partial")
+            });
+        }
     }
-    Ok(if worst >= threshold {
+    Ok(if incomplete || worst >= threshold {
         ActivationPosture::ProposedRequired { risk: worst }
     } else {
         ActivationPosture::AutoEligible

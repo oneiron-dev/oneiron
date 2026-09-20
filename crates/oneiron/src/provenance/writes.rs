@@ -35,14 +35,17 @@ use rmpv::Value;
 /// wrapper's id, the semantic edge it attaches to, the record body, the
 /// validated actor class, and the two optional halves an import or an
 /// explicit supersession adds.
-pub(super) struct EdgeProvenanceWrite<'a> {
-    pub(super) claim_id: &'a EntityId,
-    pub(super) subject: &'a EdgeRef,
-    pub(super) body: &'a EdgeProvenanceClaimBody,
-    pub(super) actor_class: EdgeActorClass,
-    pub(super) learned_at: u64,
-    pub(super) explicit_prior: Option<&'a EntityId>,
-    pub(super) imported_evidence: Option<Value>,
+pub(crate) struct EdgeProvenanceWrite<'a> {
+    pub(crate) claim_id: &'a EntityId,
+    pub(crate) subject: &'a EdgeRef,
+    pub(crate) body: &'a EdgeProvenanceClaimBody,
+    pub(crate) actor_class: EdgeActorClass,
+    pub(crate) learned_at: u64,
+    pub(crate) explicit_prior: Option<&'a EntityId>,
+    pub(crate) imported_evidence: Option<Value>,
+    /// Computed evidence source for an attributed derived edge. The original
+    /// head is not re-sourced; the provenance wrapper records this assertion.
+    pub(crate) generated_evidence: Option<Value>,
 }
 
 impl Vault {
@@ -367,12 +370,13 @@ impl Vault {
                     learned_at,
                     explicit_prior,
                     imported_evidence: None,
+                    generated_evidence: None,
                 },
             )
         })
     }
 
-    pub(super) fn write_edge_provenance_in_txn(
+    pub(crate) fn write_edge_provenance_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         write: EdgeProvenanceWrite<'_>,
@@ -385,7 +389,11 @@ impl Vault {
             learned_at,
             explicit_prior,
             imported_evidence,
+            generated_evidence,
         } = write;
+        if imported_evidence.is_some() && generated_evidence.is_some() {
+            return Err(Error::InvalidClaimBody("ambiguous edge evidence origin"));
+        }
         if explicit_prior == Some(claim_id) {
             return Err(Error::Claim(ClaimError::ProvenanceSelfSupersession));
         }
@@ -441,6 +449,47 @@ impl Vault {
         claim_body.valid_to = body.valid_to;
         if let Some(evidence) = imported_evidence {
             imported::stamp_imported_source(&mut claim_body, evidence);
+        }
+        if let Some(evidence) = generated_evidence {
+            let decoded = crate::dreamer_consolidation::decode_consolidation_evidence(&evidence)?
+                .ok_or(Error::InvalidClaimBody(
+                "derived edge requires typed evidence",
+            ))?;
+            if decoded.source_meet != crate::claim::ClaimSource::Generated
+                || !decoded.chain.is_empty()
+                || decoded.refs != [subject.source]
+                || subject.kind != EdgeKind::Supports
+            {
+                return Err(Error::InvalidClaimBody("derived support evidence mismatch"));
+            }
+            let source_row = self
+                .store
+                .entities
+                .get(wtxn, subject.source.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let head_row = self
+                .store
+                .entities
+                .get(wtxn, subject.target.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            if EntityMetadataHeader::parse(&source_row)
+                .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_TURN)
+                || EntityMetadataHeader::parse(&head_row)
+                    .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_CLAIM)
+            {
+                return Err(Error::InvalidClaimBody(
+                    "derived support endpoints mismatch",
+                ));
+            }
+            let source = crate::claim::ClaimSource::Generated;
+            claim_body.source = Some(source);
+            claim_body.scope = Some(Value::Map(vec![
+                (
+                    Value::from(crate::claim::CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
+                    Value::from(source.as_str()),
+                ),
+                (Value::from("derived_evidence"), evidence),
+            ]));
         }
         // The write-time validated actor_class is persisted as the record's
         // BODY key (set above, ONE-1138); the wrapper's `evid` stays empty —

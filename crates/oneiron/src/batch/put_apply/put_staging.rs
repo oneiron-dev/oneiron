@@ -221,3 +221,17 @@ pub(super) fn validate_domain_carriers(
     }
     Ok(())
 }
+
+/// Replaces claim projection keys while the previous body is still readable.
+/// This must run before staging the replacement entity body, in the same txn.
+pub(super) fn stage_claim_projection(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: EntityId,
+    body: Option<&crate::claim::ClaimBody>,
+) -> Result<()> {
+    if let Some(body) = body {
+        crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+    }
+    Ok(())
+}

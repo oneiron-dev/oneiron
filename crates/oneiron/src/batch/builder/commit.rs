@@ -83,12 +83,8 @@ impl BatchBuilder<'_> {
             return Err(err);
         }
 
-        // ONE-1453: the verdicts the preflight above already recorded for the
-        // local claims whose ORIGINAL gate event the burst breaker booked.
-        // Phase 2 enforces them instead of asking the gate again, so one write
-        // debits the breaker exactly once and a demotion computed in phase 1
-        // reaches the body that lands. `staged_gate_decisions` itself is
-        // retained unchanged for post-commit metric emission.
+        // Enforce the verdicts recorded by this same transaction, once per
+        // operation receipt. Retain the records for post-commit metrics.
         let staged_claim_gate = staged_claim_gate_outcomes(&staged_gate_decisions);
 
         let pending_vad_ids =

@@ -415,14 +415,23 @@ impl Store {
         before: Option<GateDecisionId>,
         limit: usize,
     ) -> Result<Vec<GateDecisionRecord>> {
+        let rtxn = self.env.read_txn()?;
+        self.gate_decisions_page_in_txn(&rtxn, before, limit)
+    }
+
+    pub(crate) fn gate_decisions_page_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        before: Option<GateDecisionId>,
+        limit: usize,
+    ) -> Result<Vec<GateDecisionRecord>> {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let rtxn = self.env.read_txn()?;
         let upper = before.map_or_else(gate_decision_upper_bound, gate_decision_key);
         let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
         for row in self.vault_meta.rev_range(
-            &rtxn,
+            rtxn,
             &(
                 std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
                 std::ops::Bound::Excluded(upper.as_slice()),

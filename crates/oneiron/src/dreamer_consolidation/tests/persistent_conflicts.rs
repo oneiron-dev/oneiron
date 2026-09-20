@@ -75,7 +75,10 @@ fn prior_head_disagreement_opens_one_persistent_marker_and_close_audit() -> Resu
     vault.put_claim(&head.claim_id, &head.body, occurred(2), 2)?;
     let mut c = topic_candidate(subject, "coffee", "no");
     c.evidence_turn_refs = vec![turn];
-    let priors = super::super::persistence::prior_heads(&vault, &[c.clone()])?;
+    let priors = vec![PriorHead {
+        claim_id: head.claim_id,
+        body: vault.get_claim(&head.claim_id)?.unwrap(),
+    }];
     let sets = detect_conflicts(&[c.clone()], &priors)?;
     assert_eq!(sets.len(), 1);
     assert_eq!(sets[0].prior_head, Some(head.claim_id));
@@ -85,7 +88,7 @@ fn prior_head_disagreement_opens_one_persistent_marker_and_close_audit() -> Resu
     let run = DreamerRunContext {
         run_id: "conflict-test".into(),
         attempt_id: admitted.status.attempt.id,
-        agent_actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        agent_actor: vault.dreamer_actor_for_attempt(admitted.status.attempt.id)?,
         now_ms: 10,
     };
     let marker =
@@ -132,12 +135,14 @@ fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Re
         admitted_attempt_fixture(&vault, &store, 0xB4, &[("user", "I like coffee and tea")])?;
     let subject = EntityId::now();
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
-    let candidates: Vec<_> = ["coffee", "tea"]
+    let relationships = [EntityId::now(), EntityId::now()];
+    let candidates: Vec<_> = relationships
         .into_iter()
-        .map(|topic| {
+        .flat_map(|rel| ["coffee", "tea"].into_iter().map(move |topic| (rel, topic)))
+        .map(|(rel, topic)| {
             serde_json::json!({
                 "subject": subject.to_hex(), "predicate": "preference.food",
-                "value": "yes", "topic_key": topic, "confidence": 0.9,
+                "value": "yes", "topic_key": topic, "rel": rel.to_hex(), "confidence": 0.9,
                 "evidence_turn_refs": [turns[0].to_hex()]
             })
         })
@@ -158,9 +163,10 @@ fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Re
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
-            actor: WriteActor::new(subject, EdgeActorClass::Agent),
+            actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("fixture model"),
             sink: &mut sink,
+            scope: None,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
@@ -178,14 +184,21 @@ fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Re
         .iter()
         .map(|candidate| candidate.claim_id)
         .collect();
-    assert_eq!(ids.len(), 4);
+    assert_eq!(ids.len(), 8);
+    assert_eq!(
+        ids[..4]
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        4
+    );
     assert_ne!(
         ids[0], ids[1],
         "different questions cannot overwrite each other"
     );
     assert_eq!(
-        &ids[..2],
-        &ids[2..],
+        &ids[..4],
+        &ids[4..],
         "replay keeps both write-once identities"
     );
     Ok(())

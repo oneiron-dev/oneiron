@@ -2481,6 +2481,7 @@ fn schema_v1_rows_decode_absent_spawn_fields() -> Result<()> {
         context_spec: Some(ContextSpec::excluded()),
         context_from: vec![test_id(0x96), test_id(0x97)],
         depth_remaining: Some(3),
+        scope: None,
     };
     assert_eq!(
         decode_agent_dispatch_input(&encode_agent_dispatch_input(&rich)?)?,
@@ -2825,5 +2826,86 @@ fn configured_healer_above_propose_only_is_rejected() -> Result<()> {
         ))
         .expect_err("the configured arm is deferred with the reference-context seam");
     assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+    Ok(())
+}
+
+#[test]
+fn child_dispatch_inherits_scope_and_refuses_widening_before_enqueue() -> Result<()> {
+    use crate::llm::{Scope, ScopeResource};
+    let (_dir, vault) = open_vault();
+    let row = put_row(&vault, 0xA8, "scope.row", AgentCeiling::Proposed)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let scope = Scope {
+        world: Some(test_id(0xA9)),
+        facet: Some(test_id(0xAA)),
+        relationship: Some(test_id(0xAB)),
+        project: Some(test_id(0xAC)),
+        readable: std::collections::BTreeSet::from([ScopeResource::Bucket {
+            key: "bounded-input".into(),
+        }]),
+        writable: std::collections::BTreeSet::new(),
+    };
+    let parent = dispatched(dispatcher.dispatch_with_context(
+        DispatchAgent {
+            target: AgentDispatchTarget::Custom(row),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("scope-run".into()),
+            now: 1,
+        },
+        AgentSpawnContext {
+            scope: Some(scope.clone()),
+            ..AgentSpawnContext::default()
+        },
+    )?);
+    let child_input = || DispatchAgent {
+        target: AgentDispatchTarget::Custom(row),
+        parent_attempt: Some(parent.attempt.id),
+        dedupe_key: None,
+        run_id: Some("scope-run".into()),
+        now: 2,
+    };
+    let child = dispatched(dispatcher.dispatch(child_input())?);
+    assert_eq!(child.input.scope, Some(scope.clone()));
+    let decoded = decode_dreamer_attempt_payload(&child.attempt.payload)?;
+    assert_eq!(
+        decode_agent_dispatch_input(&decoded.input)?.scope,
+        Some(scope.clone())
+    );
+    let before = AttemptQueue::new(&vault).list()?.len();
+    let mut variants = Vec::new();
+    let mut extra = scope.clone();
+    extra.readable.insert(ScopeResource::Bucket {
+        key: "unlisted-input".into(),
+    });
+    variants.push(extra);
+    let mut extra_write = scope.clone();
+    extra_write.writable.insert(ScopeResource::Projection {
+        key: "unlisted-output".into(),
+    });
+    variants.push(extra_write);
+    for axis in 0..4 {
+        let mut child = scope.clone();
+        match axis {
+            0 => child.world = None,
+            1 => child.facet = None,
+            2 => child.relationship = None,
+            _ => child.project = None,
+        }
+        variants.push(child);
+    }
+    for widened in variants {
+        assert!(matches!(
+            dispatcher.dispatch_with_context(
+                child_input(),
+                AgentSpawnContext {
+                    scope: Some(widened),
+                    ..AgentSpawnContext::default()
+                }
+            ),
+            Err(crate::Error::InvalidConfig(_))
+        ));
+    }
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
     Ok(())
 }

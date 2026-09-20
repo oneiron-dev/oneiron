@@ -7,8 +7,6 @@ fn production_executor_mints_only_explicit_evidenced_people_and_never_relabels()
     let store = DreamerRunnerStore::new(&vault);
     let (admitted, turns, conversation) =
         admitted_attempt_fixture(&vault, &store, 0x2F, &[("user", "I met Casey and Morgan")])?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let person = EntityId::now();
     let ordinary = EntityId::now();
     vault.put_entity(
@@ -54,9 +52,10 @@ fn production_executor_mints_only_explicit_evidenced_people_and_never_relabels()
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("regression fixture"),
         sink: &mut sink,
+        scope: None,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
@@ -119,6 +118,7 @@ fn extraction_provenance_rechecks_role_and_liveness_even_for_working_set_ids() -
         &vault,
         &response,
         &[user, tool, deleted],
+        &source_scope(&vault, &[user, tool, deleted])?,
         20,
     )?;
     assert_eq!(
@@ -174,6 +174,7 @@ fn extraction_requires_a_normalized_name_span_not_an_embedded_word() -> Result<(
         &vault,
         &response,
         &working_set,
+        &source_scope(&vault, &working_set)?,
         20,
     )?;
     for (person, name, text, should_mint) in expected {
@@ -190,4 +191,16 @@ fn extraction_requires_a_normalized_name_span_not_an_embedded_word() -> Result<(
         }
     }
     Ok(())
+}
+
+fn source_scope(vault: &Vault, ids: &[EntityId]) -> Result<crate::llm::Scope> {
+    let mut scope = crate::llm::Scope::default();
+    for id in ids {
+        if let Some(body) = vault.get(id)? {
+            scope
+                .readable
+                .insert(super::super::resources::document_version(*id, &body));
+        }
+    }
+    Ok(scope)
 }

@@ -23,6 +23,7 @@ impl Vault {
         let id = self.store.clock.entity_id()?;
         let at = self.store.clock.now_recorded_at();
         let body = encode_note_body(&NoteBody {
+            source_revision_ref: *self.store.clock.entity_id()?.as_bytes(),
             document_head: None,
             kind,
             author_ref: actor.entity_ref(),
@@ -223,6 +224,7 @@ fn create_from_text_in_txn(
     let id = vault.store.clock.entity_id()?;
     let at = mutation_recorded_at;
     let body = encode_note_body(&NoteBody {
+        source_revision_ref: *vault.store.clock.entity_id()?.as_bytes(),
         document_head: None,
         kind,
         author_ref: actor.entity_ref(),

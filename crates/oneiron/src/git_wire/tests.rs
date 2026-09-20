@@ -553,6 +553,44 @@ fn git_wire_reads_absence_positively_and_keeps_fatal_failures_typed() {
     );
 }
 
+#[test]
+fn git_wire_cached_handle_refuses_ancestor_rediscovery_after_repository_removal() {
+    let (_vault_dir, vault) = open_test_vault();
+    let outer = init_repo();
+    let inner_dir = tempfile::Builder::new()
+        .prefix("nested-repository-")
+        .tempdir_in(outer.path())
+        .expect("nested repo directory");
+    let inner = init_repo_at(inner_dir);
+    let wire = new_wire(&vault);
+    let outer_bound = open(&wire, &outer);
+    let inner_bound = open(&wire, &inner);
+    fs::remove_dir_all(inner.path().join(".git")).expect("remove inner repository");
+
+    assert!(matches!(
+        wire.read_ref(&inner_bound, &outer.branch),
+        Err(crate::Error::Code(CodeError::InvalidRepoMutationRecord(_)))
+    ));
+    assert!(matches!(
+        wire.object_exists(&inner_bound, &outer.head),
+        Err(crate::Error::Code(CodeError::InvalidRepoMutationRecord(_)))
+    ));
+    let marker = GitRefName::parse_full("refs/oneiron/test/no-ancestor-write").expect("ref");
+    assert!(
+        wire.set_ref(&inner_bound, &marker, &outer.head, 10)
+            .is_err()
+    );
+    assert_eq!(
+        wire.read_ref(&outer_bound, &marker).expect("outer ref"),
+        None
+    );
+    assert_eq!(
+        wire.read_ref(&outer_bound, &outer.branch)
+            .expect("outer head"),
+        Some(outer.head)
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn git_wire_ref_lock_is_uncertainty_and_preserves_recovery_intent() {

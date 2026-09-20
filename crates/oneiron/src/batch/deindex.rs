@@ -164,6 +164,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
 
     crate::dreamer_runner::deindex_dreamer_milestone_claim(store, wtxn, id)?;
     crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;
+    crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
     store.entities.delete(wtxn, id.as_bytes())?;
     crate::ports::audit_mutation_in_txn(
         store,

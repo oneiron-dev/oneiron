@@ -44,7 +44,7 @@ pub(crate) fn resolve_secret_ref_in_txn(
 }
 
 /// The `vault_meta` index key for a live secret name.
-fn name_index_key(name: &str) -> Vec<u8> {
+pub(super) fn name_index_key(name: &str) -> Vec<u8> {
     let mut key = Vec::with_capacity(SECRET_NAME_INDEX_PREFIX.len() + name.len());
     key.extend_from_slice(SECRET_NAME_INDEX_PREFIX.as_bytes());
     key.extend_from_slice(name.as_bytes());
@@ -323,11 +323,10 @@ pub(crate) fn refuse_bindings_wider_than_live_floor(
 /// Writes one custody body through the ONE sealed put shape, stamping
 /// `occurred_at` as both the occurrence range and the learned-at.
 ///
-/// Type-77 bodies are sealed from the raw/CRDT planes until ONE-1865: the
-/// `apply_put` seal admits byte 77 only through the engine-internal
-/// non-replicated shape (`allow_maintenance && !allow_reserved_predicate`,
-/// the shape the default policy-manifest seeder uses). Any public or
-/// replicated CRDT carry of byte 77 rejects there until then.
+/// Local type-77 writes use the engine-internal non-replicated shape
+/// (`allow_maintenance && !allow_reserved_predicate`). Public raw puts remain
+/// sealed; same-vault replay separately admits only portable, non-device-only
+/// records and maintains their name index in the body transaction.
 ///
 /// `pub(crate)` for SECRET-04's `Vault::rotate_secret` and
 /// `Vault::revoke_secret` (ONE-1922), which re-put an existing record inside

@@ -30,3 +30,5 @@ pub use pack_entry::{
 // `crate::serialize::` path resolvable for production callers.
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use pack_entry::{SerializedPackTelemetry, serialize_pack_with_telemetry};
+
+pub(crate) mod entity_ref;

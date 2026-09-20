@@ -55,6 +55,29 @@ fn six_descriptors_and_namespaced_kind_round_trip() {
         descriptor.kind
     );
     assert!(
+        !vault
+            .search_text("custom", 20)
+            .unwrap()
+            .iter()
+            .any(|row| row.id == id)
+    );
+    let public = NoteKindDescriptor {
+        kind: "example.notes/reference".into(),
+        context: ContextDefault::VaultReadable,
+        ..descriptor.clone()
+    };
+    vault.register_note_kind(&public).unwrap();
+    let public_id = vault
+        .create_note(&public.kind, "custom public", actor)
+        .unwrap();
+    assert!(
+        vault
+            .search_text("custom", 20)
+            .unwrap()
+            .iter()
+            .any(|row| row.id == public_id)
+    );
+    assert!(
         vault
             .register_note_kind(&NoteKindDescriptor {
                 pack: "other".into(),
@@ -68,6 +91,7 @@ fn six_descriptors_and_namespaced_kind_round_trip() {
 fn old_cursor_survives_concurrent_insert_and_rewrite_never_touches_live_head() {
     let (_dir, vault, actor) = fixture();
     let id = vault.create_note("research", "alpha beta", actor).unwrap();
+    let source_revision = vault.read_note(&id).unwrap().unwrap().source_revision_ref;
     let read = vault.note_document(id).unwrap().unwrap();
     let start = read.anchor(6).unwrap();
     let end = read.anchor(10).unwrap();
@@ -116,6 +140,10 @@ fn old_cursor_survives_concurrent_insert_and_rewrite_never_touches_live_head() {
         .review_note_proposal(bundle.id, NoteVerdict::Switch, actor)
         .unwrap();
     assert_eq!(current(&vault, id), "rewrite");
+    assert_eq!(
+        vault.read_note(&id).unwrap().unwrap().source_revision_ref,
+        source_revision
+    );
 }
 
 #[test]
@@ -407,25 +435,28 @@ fn agent_facade_and_pack_project_live_document_text() {
                 .unwrap()["markdown"],
             "olivine birth copper"
         );
-        assert!(
+        let ordinary_readable = !matches!(kind, "scratchpad" | "reflection" | "diary");
+        assert_eq!(
             vault
                 .search_text("copper", 20)
                 .unwrap()
                 .iter()
-                .any(|row| row.id == id)
+                .any(|row| row.id == id),
+            ordinary_readable
         );
         let result = vault
             .context_pack()
             .search_text("copper", 20)
             .run()
             .unwrap();
-        assert!(
+        assert_eq!(
             result
                 .results
                 .iter()
                 .chain(result.neighbors.iter())
                 .any(|row| row.id == id
-                    && row.fields.as_ref().unwrap()["markdown"] == "olivine birth copper")
+                    && row.fields.as_ref().unwrap()["markdown"] == "olivine birth copper"),
+            ordinary_readable
         );
     }
 }
@@ -434,6 +465,7 @@ fn agent_facade_and_pack_project_live_document_text() {
 fn unknown_plugin_kind_is_refused_at_raw_local_and_replay_doors() {
     let (_dir, vault, actor) = fixture();
     let body = encode_note_body(&NoteBody {
+        source_revision_ref: [0x42; 16],
         kind: NoteKind::wire("example.notes/uninstalled").unwrap(),
         author_ref: actor.entity_ref(),
         markdown: "birth".into(),

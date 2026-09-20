@@ -131,6 +131,7 @@ impl Vault {
                     learned_at: import.learned_at,
                     explicit_prior: None,
                     imported_evidence: Some(import.evidence),
+                    generated_evidence: None,
                 },
             )?;
             Ok(true)

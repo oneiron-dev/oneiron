@@ -118,6 +118,10 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         &prepared.gate,
         &policy,
         required_grant_id,
+        match &prepared.authorization {
+            PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
+            PreparedAuthorization::None => None,
+        },
     )?;
     if governance.outcome() != GateOutcome::Allow {
         let (decision_id, decision) =
@@ -143,13 +147,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         return Ok(result);
     }
 
-    let payload_hash = prepared.payload_hash();
     // The gate's VERIFIED per-grant capability identity. It is the only
     // capability authority this admission may carry forward (ONE-1885).
     let gate_capability = governance.scoped_capability().cloned();
     let (authorization_binding, capability_provenance) = match &prepared.authorization {
         PreparedAuthorization::None => {
-            if prepared.resolved_endpoint.is_some() {
+            if prepared.resolved_endpoint.is_some() || prepared.gate.scoped_mcp_call.is_some() {
                 return Err(IntentLedgerError::InvalidInput(
                     "endpoint effect requires scoped authorization",
                 ));
@@ -161,16 +164,27 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         PreparedAuthorization::ScopedMcp {
             grant_id,
             principal_ref,
-            call,
+            prepared: tool_call,
         } => {
+            if tool_call.frozen_bytes() != prepared.payload.as_slice()
+                || tool_call.call().server != prepared.server
+                || tool_call.call().tool != prepared.tool
+                || Some(tool_call.call().resolved_endpoint.as_str())
+                    != prepared.resolved_endpoint.as_deref()
+                || tool_call.idempotency_supported() != prepared.idempotency_supported
+                || prepared.gate.scoped_mcp_call.as_ref() != Some(tool_call.call())
+            {
+                return Err(IntentLedgerError::InvalidInput(
+                    "scoped preparation mismatch",
+                ));
+            }
             let minted = authority.mint_scoped_binding_in_txn(
                 vault,
                 &wtxn,
                 *grant_id,
                 principal_ref,
                 &intent_id,
-                call,
-                &payload_hash,
+                tool_call,
             )?;
             // Both readers of this admission — the gate's grant match and the
             // binding mint's own re-verification on this same write snapshot —

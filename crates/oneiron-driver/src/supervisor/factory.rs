@@ -166,6 +166,7 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
             actor: self.actor,
             model: self.model.clone(),
             sink: self.sink.as_mut(),
+            scope: None,
         };
         // The trait-object lifetime is shortened HERE, one reference at a time:
         // `&mut` is invariant in its pointee, so the coercion cannot happen

@@ -138,6 +138,7 @@ mod imported;
 mod lifecycle;
 mod queries;
 mod writes;
+pub(crate) use writes::EdgeProvenanceWrite;
 
 #[cfg(test)]
 pub(crate) use self::actor_substrate::encode_actor_class_evidence;

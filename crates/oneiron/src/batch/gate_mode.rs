@@ -13,10 +13,8 @@ pub(crate) struct ApplyOpsGateMode {
     pub(super) claim_materializations: VecDeque<ClaimMaterialization>,
     pub(super) preflight_gate_decision_ids:
         HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
-    /// ONE-1453: the gate verdicts this transaction's preflight already
-    /// recorded, keyed by operation receipt identity. Only claims whose ORIGINAL event the
-    /// burst breaker booked appear here; everything else keeps the landed
-    /// `apply_put` gate path byte for byte.
+    /// The gate verdicts this transaction's preflight already recorded,
+    /// keyed by operation receipt identity.
     pub(super) staged_claim_gate:
         Option<HashMap<crate::store::GateDecisionId, StagedClaimGateOutcome>>,
 }
@@ -71,7 +69,7 @@ impl ApplyOpsGateMode {
     }
 
     /// Binds the gate verdicts this transaction's preflight already recorded
-    /// for local claims the ONE-1453 burst breaker booked (ONE-1453).
+    /// for local claims, without a second auto-checker consult.
     ///
     /// Not a general gate bypass: the map is crate-private, `BatchBuilder`
     /// builds it only from decisions IT staged in THIS transaction, and the

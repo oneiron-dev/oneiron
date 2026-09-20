@@ -1,43 +1,17 @@
 //! Persistent contradiction markers and prior-head context for consolidation.
-use super::conflict::{
-    ConflictSet, PriorHead, candidate_facts, conflict_open_marker_id, deterministic_claim_id,
-};
+use super::conflict::deterministic_claim_id;
+#[cfg(test)]
+use super::conflict::{ConflictSet, PriorHead, conflict_open_marker_id};
 use super::provenance::{PromotionCandidate, source_meet};
 use super::support::{TURN_BODY_FACET_REF_KEY, invalid_consolidation};
 use crate::claim::{
     ClaimSource, ClaimSubject, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
-    claim_consolidatable, claim_evidence_taint,
+    claim_evidence_taint,
 };
 use crate::error::Result;
 use crate::write_envelope::ClaimCandidate;
 use crate::{EntityId, Vault};
 use rmpv::Value;
-
-pub(super) fn prior_heads(
-    vault: &Vault,
-    candidates: &[PromotionCandidate],
-) -> Result<Vec<PriorHead>> {
-    let mut subjects = std::collections::BTreeSet::new();
-    let candidate_ids: std::collections::BTreeSet<_> =
-        candidates.iter().map(|c| c.claim_id).collect();
-    for candidate in candidates {
-        subjects.insert(candidate_facts(&candidate.candidate)?.subject);
-    }
-    let mut heads = Vec::new();
-    for subject in subjects {
-        for id in vault.claims_for_subject(&subject)? {
-            if candidate_ids.contains(&id) {
-                continue;
-            }
-            if let Some(body) = vault.get_claim(&id)?
-                && claim_consolidatable(&body)
-            {
-                heads.push(PriorHead { claim_id: id, body });
-            }
-        }
-    }
-    Ok(heads)
-}
 
 pub(super) fn identity_scope(identity: &super::conflict::ConflictIdentity) -> Result<Value> {
     let mut fields = Vec::new();
@@ -55,6 +29,7 @@ pub(super) fn identity_scope(identity: &super::conflict::ConflictIdentity) -> Re
     Ok(Value::Map(fields))
 }
 
+#[cfg(test)]
 pub(super) fn open_marker(
     conflict: &ConflictSet,
     members: &[&PromotionCandidate],
@@ -125,6 +100,9 @@ pub(super) fn open_marker(
         1.0,
     )
     .with_scope(identity_scope(&conflict.identity)?);
+    if let Some(rel) = conflict.identity.rel {
+        candidate = candidate.with_relationship(rel);
+    }
     if let Some(world) = conflict.identity.world {
         candidate = candidate.with_world(world);
     }
@@ -175,7 +153,8 @@ pub fn close_persistent_conflict(
         &Value::Binary(open.as_bytes().to_vec()),
         body.world,
         None,
-        None,
+        body.rel,
+        super::conflict::topic_key(body.scope.as_ref())?.as_deref(),
     );
     let meet = source_meet(
         ClaimSource::Generated,
@@ -186,6 +165,9 @@ pub fn close_persistent_conflict(
     let mut candidate = ClaimCandidate::new(PREDICATE_CONFLICT_RESOLVED, body.subject, value, 1.0);
     if let Some(scope) = body.scope {
         candidate = candidate.with_scope(scope);
+    }
+    if let Some(rel) = body.rel {
+        candidate = candidate.with_relationship(rel);
     }
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);

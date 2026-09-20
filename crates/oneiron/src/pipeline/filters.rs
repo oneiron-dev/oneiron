@@ -68,6 +68,9 @@ pub(super) fn claim_status_gate_allows(
     let Some(meta) = metadata_cache.get(store, rtxn, id)? else {
         return Ok(true);
     };
+    if meta.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+        return crate::note::ordinary_entity_visible(store, rtxn, id);
+    }
     if meta.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(true);
     }
