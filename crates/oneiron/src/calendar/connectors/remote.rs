@@ -313,7 +313,7 @@ pub(super) fn render_owner_vevent(
     uid: &str,
     sequence: u32,
     now: u64,
-) -> Result<Vec<u8>, CalendarConnectorError> {
+) -> Result<super::resource::RenderedResource, CalendarConnectorError> {
     super::resource::render(vault, event_ref, uid, sequence, now)
 }
 

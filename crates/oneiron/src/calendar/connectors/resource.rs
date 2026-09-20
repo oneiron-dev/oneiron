@@ -78,16 +78,23 @@ pub(super) fn sequence_floor(
     }
     Ok(value)
 }
+/// The bytes and per-EVENT hashes captured by the same resource render.
+pub(super) struct RenderedResource {
+    pub(super) ics: Vec<u8>,
+    pub(super) component_hashes: Vec<(EntityId, [u8; 32])>,
+}
+
 pub(super) fn render(
     vault: &Vault,
     master: &EntityId,
     uid: &str,
     sequence: u32,
     now: u64,
-) -> Result<Vec<u8>, CalendarConnectorError> {
+) -> Result<RenderedResource, CalendarConnectorError> {
+    let member_ids = members(vault, *master, uid)?;
     let mut out =
         String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//calendar//EN\r\n");
-    for event in members(vault, *master, uid)? {
+    for &event in &member_ids {
         let rendered = String::from_utf8(render_component(vault, &event, uid, sequence, now)?)
             .map_err(|_| ingest_error("calendar renderer did not return UTF-8"))?;
         let start = rendered
@@ -161,7 +168,15 @@ pub(super) fn render(
         out.push_str("END:VEVENT\r\n");
     }
     out.push_str("END:VCALENDAR\r\n");
-    Ok(out.into_bytes())
+    let ics = out.into_bytes();
+    let parsed = crate::calendar::ics::parse_ics_feed(&ics)?;
+    if parsed.events.len() != member_ids.len() {
+        return Err(ingest_error("rendered resource does not match its members"));
+    }
+    let component_hashes = member_ids.into_iter()
+        .zip(parsed.events.into_iter().map(|event| event.content_hash))
+        .collect();
+    Ok(RenderedResource { ics, component_hashes })
 }
 fn line(out: &mut String, name: &str, value: &str) -> Result<(), CalendarConnectorError> {
     if value.contains(['\r', '\n']) {
@@ -201,7 +216,7 @@ mod tests {
             .unwrap();
         assert_eq!(master_for(&vault, child).unwrap(), master);
         assert_eq!(sequence_floor(&vault, master, "series@test").unwrap(), 4);
-        let bytes = render(&vault, &master, "series@test", 5, 1_800_000_001).unwrap();
+        let bytes = render(&vault, &master, "series@test", 5, 1_800_000_001).unwrap().ics;
         let again = crate::calendar::ics::parse_ics_feed(&bytes).unwrap();
         assert_eq!(again.events.len(), 2);
         assert_eq!(again.events[0].summary, parsed.events[0].summary);
