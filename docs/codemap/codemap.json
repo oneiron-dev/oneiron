@@ -5790,7 +5790,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ScopedRead",
@@ -5810,6 +5810,16 @@
      "notable": [],
      "path": "src/claim/scoped_read/lifecycle.rs",
      "purpose": "Status-only history reads for already-served session rows, without weakening body reads",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/note_privacy.rs",
+     "purpose": "Actor-private NOTE admission on the scoped read snapshot",
      "surface": {
       "crate-vis": 1
      }
@@ -26371,7 +26381,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -27414,9 +27424,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 3,
+   "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1576,
+   "source_files": 1577,
    "test_files": 561
   },
   "oneiron-bench": {
