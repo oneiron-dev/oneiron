@@ -269,7 +269,7 @@ fn replicated_rooms_before_members_do_not_wedge_live_or_recovery_replay() {
         assert!(
             quarantined
                 .iter()
-                .any(|row| row.reason_code == "InvalidConversationBody"
+                .any(|(_, row)| row.reason_code == "InvalidConversationBody"
                     && row.crdt_key_hash
                         == xxhash_rust::xxh3::xxh3_64(invalid.to_hex().as_bytes()))
         );
