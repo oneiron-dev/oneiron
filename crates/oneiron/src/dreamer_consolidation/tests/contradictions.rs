@@ -59,9 +59,10 @@ fn prior_head_judge_routes_merge_accumulate_escalate_and_down() -> Result<()> {
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
-            actor: WriteActor::new(actor, EdgeActorClass::Agent),
+            actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            scope: Some(prior_scope(&vault, &admitted, &turns, head)?),
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
@@ -69,28 +70,23 @@ fn prior_head_judge_routes_merge_accumulate_escalate_and_down() -> Result<()> {
             budget_id: "wake",
             now_ms: 21_000,
         };
-        assert!(matches!(
-            block_on_ready(executor.execute(&admitted, &mut ctx))?,
-            DreamerAttemptExecution::Completed { .. }
-        ));
-        let [result] = sink.accepted.as_slice() else {
-            panic!("one judge result");
-        };
+        let outcome = block_on_ready(executor.execute(&admitted, &mut ctx))?;
+        if resolution == "down" {
+            assert!(matches!(outcome, DreamerAttemptExecution::Park { .. }));
+        } else {
+            assert!(matches!(outcome, DreamerAttemptExecution::Completed { .. }));
+        }
         match resolution {
-            "merge" => {
-                assert_eq!(result.supersedes, Some(head));
-                assert_eq!(result.candidate.predicate(), "profile.name");
-            }
-            "accumulate" => {
-                assert_eq!(result.supersedes, None);
+            "merge" | "accumulate" => {
+                let [result] = sink.accepted.as_slice() else {
+                    panic!("one judge result");
+                };
+                assert_eq!(result.supersedes, (resolution == "merge").then_some(head));
                 assert_eq!(result.candidate.predicate(), "profile.name");
             }
             _ => {
-                assert_eq!(result.supersedes, None);
-                assert_eq!(
-                    result.candidate.predicate(),
-                    crate::claim::PREDICATE_CONFLICT_OPEN
-                );
+                assert!(sink.accepted.is_empty());
+                assert_open_marker(&vault, subject)?;
             }
         }
         assert_eq!(
@@ -173,9 +169,10 @@ fn manifest_single_value_skips_judge_only_at_sufficient_trust() -> Result<()> {
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
-            actor: WriteActor::new(actor, EdgeActorClass::Agent),
+            actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            scope: Some(prior_scope(&vault, &admitted, &turns, head)?),
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
@@ -184,17 +181,52 @@ fn manifest_single_value_skips_judge_only_at_sufficient_trust() -> Result<()> {
             now_ms: 21_000,
         };
         block_on_ready(executor.execute(&admitted, &mut ctx))?;
-        let [result] = sink.accepted.as_slice() else {
-            panic!("one result");
-        };
         if source == ClaimSource::Inferred {
+            let [result] = sink.accepted.as_slice() else {
+                panic!("one result");
+            };
             assert_eq!(result.supersedes, Some(head));
         } else {
-            assert_eq!(
-                result.candidate.predicate(),
-                crate::claim::PREDICATE_CONFLICT_OPEN
-            );
+            assert!(sink.accepted.is_empty());
+            assert_open_marker(&vault, subject)?;
         }
     }
+    Ok(())
+}
+
+fn prior_scope(
+    vault: &Vault,
+    admitted: &crate::dreamer_runner::DreamerAdmittedAttempt,
+    turns: &[EntityId],
+    head: EntityId,
+) -> Result<crate::llm::Scope> {
+    use super::super::resources::{BranchResources, document_version};
+    let (partition, _, _) = decode_partition_payload(&admitted.status.payload.input)?;
+    let branch = BranchResources::open(
+        vault,
+        vault.dreamer_authority()?,
+        partition,
+        turns,
+        admitted.status.attempt.id,
+        None,
+    )?;
+    let mut scope = branch.scope().clone();
+    let pin = document_version(head, &vault.get(&head)?.expect("head"));
+    scope.readable.insert(pin.clone());
+    scope.writable.insert(pin);
+    Ok(scope)
+}
+
+fn assert_open_marker(vault: &Vault, subject: EntityId) -> Result<()> {
+    let mut found = false;
+    for id in vault.claims_for_subject(&subject)? {
+        if let Some(body) = vault.get_claim(&id)?
+            && body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN
+        {
+            assert_eq!(body.approval, crate::ClaimApprovalStatus::Proposed);
+            found = true;
+        }
+    }
+    assert!(found, "durable open question");
     Ok(())
 }

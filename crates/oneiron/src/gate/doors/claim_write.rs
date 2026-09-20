@@ -308,6 +308,12 @@ fn check_claim_policy_for_write_with_record_inner(
         {
             let value_preview = auto_check_value_preview(&body.value);
             let candidate = AutoCheckCandidate {
+                signals: crate::gate::auto_signals::auto_check_signals(
+                    store,
+                    &*wtxn,
+                    input.actor.actor_ref.as_deref(),
+                    crate::unix_seconds_now(),
+                )?,
                 predicate: &body.predicate,
                 value_preview: &value_preview,
                 source,

@@ -213,6 +213,13 @@ pub(super) fn ppr_query_in_txn_with_identity(
     policy: PprCachePolicy,
 ) -> Result<PprQueryResult> {
     validate_ppr_request(seeds, depth)?;
+    let mut public_seeds = Vec::with_capacity(seeds.len());
+    for seed in seeds {
+        if crate::note::ordinary_entity_visible(store, txn, seed)? {
+            public_seeds.push(*seed);
+        }
+    }
+    let seeds = public_seeds.as_slice();
 
     validate_ppr_vad_alpha(alphas.ppr_vad_alpha)?;
 

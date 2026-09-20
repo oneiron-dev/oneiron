@@ -661,6 +661,9 @@ pub(in crate::batch) fn apply_put(
         replicated,
     )?;
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, &id)?;
+    if let Some(body) = decoded_claim_body.as_ref() {
+        crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+    }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {

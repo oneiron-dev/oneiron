@@ -27,14 +27,19 @@
 //! layer) own that contract; this module only reads the index and cannot
 //! enforce it.
 
+mod assembly;
+pub(crate) mod branch_scope;
 mod conflict;
 mod executor;
 mod extracted_people;
 mod gap;
-mod judge_codec;
 mod judge_context;
+mod open_conflict;
 mod partition;
 mod provenance;
+pub(crate) mod resources;
+pub mod routing;
+pub mod selection;
 mod support;
 mod watermark;
 
@@ -46,6 +51,7 @@ pub use executor::*;
 pub use gap::*;
 pub use partition::*;
 pub use provenance::*;
+pub use resources::ScopedConsolidationWrite;
 pub use support::*;
 pub use watermark::*;
 
@@ -83,3 +89,5 @@ use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
 use rmpv::Value;
 #[cfg(test)]
 use std::collections::BTreeSet;
+
+mod value_projection;

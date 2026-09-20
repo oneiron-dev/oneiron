@@ -62,6 +62,15 @@ const AUTO_CHECK_GLOBAL_DEFAULT_TIER: &str = "standard";
 /// fail-closed verdict every other failure mode produces.
 const AUTO_CHECK_DETERMINISTIC_FALLBACK: &str = "fail_closed_to_proposed";
 
+/// Soft auto-verdict inputs computed from committed/same-transaction receipts.
+/// They are observations, not a durable trip or an authority ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AutoCheckSignals {
+    pub recent_writes: u64,
+    pub window_secs: u64,
+    pub failure_streak: u64,
+}
+
 /// One candidate write presented to a host checker, borrowed from the write
 /// door's own state.
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +87,7 @@ pub struct AutoCheckCandidate<'a> {
     /// Native peer-relative observations, absent at doors with no write history.
     /// These are verdict inputs and never an engine-side clamp.
     pub burst: Option<NormalizedBurstInputs>,
+    pub signals: AutoCheckSignals,
 }
 
 /// [`AutoCheckCandidate`] with every borrow resolved.
@@ -98,6 +108,7 @@ pub struct AutoCheckCandidateOwned {
     /// Native peer-relative observations, absent at doors with no write history.
     /// These are verdict inputs and never an engine-side clamp.
     pub burst: Option<NormalizedBurstInputs>,
+    pub signals: AutoCheckSignals,
 }
 
 impl AutoCheckCandidateOwned {
@@ -112,6 +123,7 @@ impl AutoCheckCandidateOwned {
             actor_class: &self.actor_class,
             sensitivity_band: self.sensitivity_band,
             burst: self.burst,
+            signals: self.signals,
         }
     }
 }
@@ -126,6 +138,7 @@ impl From<&AutoCheckCandidate<'_>> for AutoCheckCandidateOwned {
             actor_class: candidate.actor_class.to_owned(),
             sensitivity_band: candidate.sensitivity_band,
             burst: candidate.burst,
+            signals: candidate.signals,
         }
     }
 }
@@ -297,6 +310,7 @@ pub fn auto_check_llm_request(
     LlmRequest {
         model: auto_check_model_id(checker_ref),
         envelope: CallEnvelope {
+            scope: crate::llm::Scope::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::Durable {
                 fallback: DeterministicFallback {
@@ -379,12 +393,15 @@ fn auto_check_candidate_text(candidate: &AutoCheckCandidate<'_>) -> String {
         None => "rate_ratio: unavailable\nstreak: unavailable".to_owned(),
     };
     format!(
-        "predicate: {}\nsource: {}\nlineage: {}\nactor_class: {}\nsensitivity_band: {}\n{}\nvalue_preview: {}",
+        "predicate: {}\nsource: {}\nlineage: {}\nactor_class: {}\nsensitivity_band: {}\nrecent_writes: {}\nwindow_secs: {}\nfailure_streak: {}\n{}\nvalue_preview: {}",
         candidate.predicate,
         candidate.source.as_str(),
         lineage,
         candidate.actor_class,
         sensitivity_band,
+        candidate.signals.recent_writes,
+        candidate.signals.window_secs,
+        candidate.signals.failure_streak,
         burst,
         candidate.value_preview,
     )

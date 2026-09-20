@@ -9,6 +9,8 @@ mod backend;
 mod budget;
 mod burst_inputs;
 mod call;
+pub mod scope;
+pub use self::scope::{Scope, ScopeResource};
 mod catalog;
 mod error;
 mod model_id;
@@ -43,7 +45,7 @@ pub use self::burst_inputs::{NormalizedBurstInputs, normalized_burst_inputs};
 pub(crate) use self::autocheck::truncate_on_char_boundary;
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
-    AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker, BoundedAutoChecker,
+    AutoCheckCandidateOwned, AutoCheckOutcome, AutoCheckSignals, AutoChecker, BoundedAutoChecker,
     auto_check_llm_request,
 };
 pub use self::backend::{

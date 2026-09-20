@@ -29,6 +29,7 @@ pub enum IngestSourceFormat {
     IcsFeed,
     ImageAsset,
     DocsExportV1,
+    NativeExport,
 }
 
 /// The ARCH-0027 adapter skill a source's records came from.
@@ -112,6 +113,13 @@ impl IngestHarnessConfig {
 
 pub trait IngestSource: Send + Sync {
     fn normalize(&self, input: &str) -> IngestResult<NormalizedIngestBatch>;
+
+    fn parse_import(&self, input: &str, recorded_at: u64) -> IngestResult<super::ParsedImport> {
+        Ok(super::ParsedImport::from_batch(
+            self.normalize(input)?,
+            recorded_at,
+        ))
+    }
 
     fn normalize_binary(&self, _bytes: &[u8]) -> IngestResult<NormalizedIngestBatch> {
         Err(IngestError::UnsupportedInput)
@@ -225,7 +233,7 @@ static ICS_FEED_SOURCE: crate::calendar::ingest::IcsFeedSource =
 static IMAGE_SOURCE: image::ImageIngestSource = image::ImageIngestSource::new();
 
 static DOCS_SOURCE: super::DocsExportSource = super::DocsExportSource;
-static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 6] = [
+static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 19] = [
     IngestSourceRegistration::new(
         IngestSourceConfig {
             source_id: super::DOCS_EXPORT_SOURCE_ID,
@@ -245,6 +253,305 @@ static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 6] = [
             default_admission: ClaimApprovalStatus::Proposed,
         },
         &DOCS_SOURCE,
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "chatgpt",
+            label: "chatgpt",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.chatgpt",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "chatgpt",
+            layout: super::exports::ExportLayout::ConversationTree,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "claude",
+            label: "claude",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.claude",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "claude",
+            layout: super::exports::ExportLayout::ConversationMessages,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "gemini",
+            label: "gemini",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.gemini",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "gemini",
+            layout: super::exports::ExportLayout::ActivityTakeout,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "sillytavern",
+            label: "sillytavern",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.sillytavern",
+                version: "1",
+            }),
+            writes_claims: true,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "sillytavern",
+            layout: super::exports::ExportLayout::CharacterLog,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "claude-code",
+            label: "claude-code",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.claude-code",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "claude-code",
+            layout: super::exports::ExportLayout::MemoryDirectory,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "codex",
+            label: "codex",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.codex",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "codex",
+            layout: super::exports::ExportLayout::MemoryDirectory,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "hermes",
+            label: "hermes",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.hermes",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "hermes",
+            layout: super::exports::ExportLayout::MemoryDirectory,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "openclaw",
+            label: "openclaw",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.openclaw",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "openclaw",
+            layout: super::exports::ExportLayout::MemoryDirectory,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "markdown",
+            label: "markdown",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.markdown",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "markdown",
+            layout: super::exports::ExportLayout::Markdown,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "okf",
+            label: "okf",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.okf",
+                version: "1",
+            }),
+            writes_claims: true,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "okf",
+            layout: super::exports::ExportLayout::Knowledge,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "letta",
+            label: "letta",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.letta",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "letta",
+            layout: super::exports::ExportLayout::AgentArchive,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "zep",
+            label: "zep",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.zep",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "zep",
+            layout: super::exports::ExportLayout::SessionArchive,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "mem0",
+            label: "mem0",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.mem0",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "mem0",
+            layout: super::exports::ExportLayout::MemoryArchive,
+        },
     ),
     IngestSourceRegistration::new(
         IngestSourceConfig {

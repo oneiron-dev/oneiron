@@ -415,6 +415,15 @@ pub fn surface_peer_answer_digest(
 /// implementation; tests stub it. This module never writes claims.
 pub trait ConsolidationSink {
     fn accept(&mut self, candidates: Vec<PromotionCandidate>) -> Result<()>;
+
+    /// A sealed executor result. Persisting sinks must consume its transaction
+    /// fence through `dreamer_promotion::promote_scoped_consolidation`.
+    /// Legacy sinks fail closed rather than silently discard the fence.
+    fn accept_scoped(&mut self, _write: super::ScopedConsolidationWrite) -> Result<()> {
+        Err(invalid_consolidation(
+            "sink does not support scoped consolidation",
+        ))
+    }
 }
 
 /// Lattice meet (most restrictive wins) over the D10 order

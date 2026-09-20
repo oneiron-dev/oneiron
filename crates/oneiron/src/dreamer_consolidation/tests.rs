@@ -25,6 +25,8 @@ use super::*;
 
 mod contradictions;
 mod person_extraction;
+mod prior_heads;
+mod scope_enforcement;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
@@ -1184,13 +1186,14 @@ fn bucket_hash_conformance() {
     let key = ConsolidationBucketKey {
         subject,
         predicate_root: "profile".to_owned(),
+        rel: None,
         world: None,
         facet: None,
     };
     // Pinned known-answer vector for the domain-separated hash.
     assert_eq!(
         bytes_to_hex_lower(&key.bucket_hash()),
-        "c096c3dfc3c02e94daa1347a58a7686939930e2e113f4507992f2452ab29d0a7",
+        "d317aabf2d943d106457feac194b64d955b825777bce237ae930232d76b2be6b",
         "bucket hash known-answer vector"
     );
 
@@ -1199,6 +1202,7 @@ fn bucket_hash_conformance() {
         facet: None,
         world: None,
         predicate_root: String::from("profile"),
+        rel: None,
         subject,
     };
     assert_eq!(key.bucket_hash(), rebuilt.bucket_hash());
@@ -1433,6 +1437,14 @@ struct CapturingSink {
 }
 
 impl ConsolidationSink for CapturingSink {
+    fn accept_scoped(&mut self, write: ScopedConsolidationWrite) -> Result<()> {
+        assert!(
+            write.attachments.is_empty(),
+            "use a real promotion sink for attachments"
+        );
+        self.accept(write.candidates().to_vec())
+    }
+
     fn accept(&mut self, candidates: Vec<PromotionCandidate>) -> Result<()> {
         self.accepted.extend(candidates);
         Ok(())
@@ -1447,8 +1459,6 @@ fn no_fabricated_belief_writes() -> Result<()> {
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
     let conversation = seed_session(&vault, 0x27, 1);
     let turn = seed_turn(&vault, &conversation, "user", "my name is Oleksii", 10);
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
 
     let watermark = read_watermark(&vault, scope)?;
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
@@ -1488,9 +1498,10 @@ fn no_fabricated_belief_writes() -> Result<()> {
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        scope: None,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
@@ -1756,8 +1767,6 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         0x2A,
         &[("user", "call me Oleksii"), ("user", "or Alex")],
     )?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let subject = EntityId::from_bytes([0x38; 16]).expect("subject");
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
 
@@ -1779,9 +1788,10 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        scope: None,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
@@ -1809,8 +1819,6 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         0x2B,
         &[("user", "i live in Tokyo"), ("user", "i live in Osaka")],
     )?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let subject = EntityId::from_bytes([0x39; 16]).expect("subject");
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
 
@@ -1830,9 +1838,10 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        scope: None,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
@@ -1858,7 +1867,16 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         escalations: 0,
         decayed: false,
     };
-    let delta = upsert_gap_queue(&vault, vec![probe], 22_000)?;
+    let (partition, _, _) = decode_partition_payload(&admitted.status.payload.input)?;
+    let resources = super::resources::BranchResources::open(
+        &vault,
+        vault.dreamer_authority()?,
+        partition,
+        &probe.evidence_turn_refs,
+        admitted.status.attempt.id,
+        None,
+    )?;
+    let delta = resources.upsert_gaps(resources.scope(), vec![probe], 22_000)?;
     assert_eq!(delta.refreshed, 1, "escalation created the gap row");
     assert_eq!(delta.created, 0);
     Ok(())
@@ -2135,8 +2153,6 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         0x2C,
         &[("user", "call me Oleksii"), ("user", "or Alex")],
     )?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
 
     // No script: admission is denied up-front, so generate is never called.
     let backend = ScriptedBackend::new(Vec::new());
@@ -2150,9 +2166,10 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        scope: None,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
@@ -2194,8 +2211,6 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         0x2D,
         &[("user", "i live in Tokyo"), ("user", "i live in Osaka")],
     )?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let subject = EntityId::from_bytes([0x3B; 16]).expect("subject");
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
 
@@ -2214,9 +2229,10 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        scope: None,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
@@ -2269,8 +2285,6 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
     let store = DreamerRunnerStore::new(&vault);
     let (admitted, turns, _) =
         admitted_attempt_fixture(&vault, &store, 0x2E, &[("user", "my name is Oleksii")])?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let subject = EntityId::from_bytes([0x37; 16]).expect("subject");
     let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turns[0]))]);
     let guard = crate::BudgetGuard::with_reserve_units(
@@ -2287,9 +2301,10 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
-            actor: WriteActor::new(actor, EdgeActorClass::Agent),
+            actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            scope: None,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
@@ -2334,8 +2349,6 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
         0x2F,
         &[("user", "call me Oleksii"), ("user", "or Alex")],
     )?;
-    let actor = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let subject = EntityId::from_bytes([0x38; 16]).expect("subject");
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
     let backend = ScriptedBackend::new(vec![
@@ -2358,9 +2371,10 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
-            actor: WriteActor::new(actor, EdgeActorClass::Agent),
+            actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            scope: None,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
@@ -2426,4 +2440,51 @@ pub(crate) fn claim_predicates_in_store(vault: &Vault) -> Result<Vec<String>> {
         }
     }
     Ok(predicates)
+}
+
+#[test]
+fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
+    use super::conflict::deterministic_claim_id;
+    let subject = EntityId::now();
+    let rel_a = EntityId::now();
+    let rel_b = EntityId::now();
+    let a = candidate(subject, "profile.name", "A", None);
+    let b = candidate(subject, "profile.name", "B", None);
+    assert_eq!(plan_candidate_buckets(&[a.clone(), b.clone()])?.len(), 1);
+    assert_eq!(detect_conflicts(&[a.clone(), b.clone()], &[])?.len(), 1);
+    let mut scoped_a = a;
+    scoped_a.candidate = scoped_a.candidate.with_relationship(rel_a);
+    let mut scoped_b = b;
+    scoped_b.candidate = scoped_b.candidate.with_relationship(rel_b);
+    let buckets = plan_candidate_buckets(&[scoped_a.clone(), scoped_b.clone()])?;
+    assert_eq!(buckets.len(), 2);
+    assert_ne!(buckets[0].key.bucket_hash(), buckets[1].key.bucket_hash());
+    assert!(detect_conflicts(&[scoped_a.clone(), scoped_b], &[])?.is_empty());
+    let mut prior = prior_head(
+        subject,
+        "profile.name",
+        "B",
+        ClaimApprovalStatus::Auto,
+        ClaimSource::Observed,
+    );
+    prior.body.rel = Some(rel_b);
+    assert!(detect_conflicts(&[scoped_a.clone()], &[prior.clone()])?.is_empty());
+    prior.body.rel = Some(rel_a);
+    assert_eq!(detect_conflicts(&[scoped_a], &[prior])?.len(), 1);
+    let attempt = crate::attempt_queue::AttemptId::now();
+    let id = |rel| {
+        deterministic_claim_id(
+            attempt,
+            subject,
+            "profile.name",
+            &Value::from("A"),
+            None,
+            None,
+            rel,
+        )
+    };
+    assert_ne!(id(Some(rel_a)), id(Some(rel_b)));
+    assert_ne!(id(None), id(Some(rel_a)));
+    assert_eq!(id(None), id(None));
+    Ok(())
 }

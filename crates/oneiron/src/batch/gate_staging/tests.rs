@@ -165,3 +165,85 @@ fn a_structural_refusal_preserves_only_its_receipt_and_no_candidate_rows() -> Re
     }
     Ok(())
 }
+
+#[test]
+fn late_refusal_preserves_only_its_receipt() -> Result<()> {
+    let (_dir, vault, mut body, envelope) = fixture()?;
+    let mut txn = vault.store.env.write_txn()?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    let mut staged = Vec::new();
+    let mut ids = HashMap::new();
+    for (index, claim) in [entity(0x30), entity(0x31)].into_iter().enumerate() {
+        if index == 1 {
+            body.approval = ClaimApprovalStatus::Proposed;
+        }
+        let pending_envelope = WriteEnvelope::new(
+            WriteActor::new(entity(0x41), EdgeActorClass::Agent),
+            ClaimSource::Generated,
+            envelope.provenance().clone(),
+            ClaimApprovalStatus::Proposed,
+        );
+        let active_envelope = if index == 0 {
+            &envelope
+        } else {
+            &pending_envelope
+        };
+        let mut recorded = None;
+        crate::gate::check_claim_policy_for_write_with_record(
+            &vault.store,
+            &mut txn,
+            &claim,
+            ClaimGateWrite {
+                body: &body,
+                envelope: Some(active_envelope),
+                auto_checker: None,
+                defer_metrics_until_commit: true,
+            },
+            &policy,
+            GateWriteMode {
+                record_decision: true,
+                persist_pending_consent: false,
+                resolve_pending: false,
+                can_resolve_pending_consent: true,
+                include_source_in_gate_input: false,
+            },
+            &mut recorded,
+        )?;
+        if index == 0 {
+            assert_eq!(recorded.as_ref().unwrap().outcome(), "allow");
+            stage_preflight_decision(
+                &vault.store,
+                &mut txn,
+                &claim,
+                recorded,
+                Ok(()),
+                &mut staged,
+                &mut ids,
+            )?;
+        } else {
+            assert_eq!(recorded.as_ref().unwrap().outcome(), "pending");
+            let error = crate::Error::Gate(crate::error::GateError::SourceNotTrustedForAuto {
+                claim_source: "generated",
+            });
+            assert!(
+                stage_preflight_decision(
+                    &vault.store,
+                    &mut txn,
+                    &claim,
+                    recorded,
+                    Err(error),
+                    &mut staged,
+                    &mut ids
+                )
+                .is_err()
+            );
+        }
+    }
+    assert_eq!(staged.len(), 1);
+    assert_eq!(staged[0].outcome(), "pending");
+    txn.commit()?;
+    let decisions = vault.store.gate_decisions(256)?;
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(decisions[0].claim_id, Some(*entity(0x31).as_bytes()));
+    Ok(())
+}

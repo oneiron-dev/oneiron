@@ -113,7 +113,10 @@ impl ScopedRead<'_> {
                 .entity_types
                 .as_ref()
                 .is_none_or(|types| types.contains(&header.entity_type))
-            && header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+            && !matches!(
+                header.entity_type,
+                crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
+            )
             && !(self.actor_key.enforce_access_grants
                 && matches!(
                     header.entity_type,
@@ -161,12 +164,15 @@ impl ScopedRead<'_> {
             // Claim history remains private. Relationship-scoped content cannot
             // prove its grant from an erased body. Other deletion metadata obeys
             // the same type ceiling as the short-reference hydrate door.
-            return Ok(header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-                && !(self.actor_key.enforce_access_grants
-                    && matches!(
-                        header.entity_type,
-                        crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
-                    ))
+            let scope_erased = matches!(
+                header.entity_type,
+                crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
+            ) || (self.actor_key.enforce_access_grants
+                && matches!(
+                    header.entity_type,
+                    crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
+                ));
+            return Ok(!scope_erased
                 && raw.len() == ENTITY_METADATA_HEADER_LEN
                 && self.vault.store.entity_deletion_present_in_txn(
                     txn,

@@ -36,6 +36,9 @@
 
 use rmpv::Value;
 
+mod scoped;
+pub use scoped::promote_scoped_consolidation;
+
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{
@@ -63,7 +66,7 @@ pub use crate::dreamer_consolidation::PromotionCandidate;
 pub struct DreamerRunContext {
     pub run_id: String,
     pub attempt_id: AttemptId,
-    /// The dreamer agent actor (`EdgeActorClass::Agent`).
+    /// The vault Dreamer authority (`Vault::dreamer_authority`), never a facet actor.
     pub agent_actor: WriteActor,
     pub now_ms: u64,
 }
@@ -123,11 +126,16 @@ pub fn promote_consolidated_claims_with_checker(
     candidates: Vec<PromotionCandidate>,
     checker: Option<&BoundedAutoChecker>,
 ) -> Result<PromotionOutcome> {
+    if run.agent_actor != vault.dreamer_actor_for_attempt(run.attempt_id)? {
+        return Err(Error::InvalidConfig(
+            "promotion actor is not the queued Dreamer authority".into(),
+        ));
+    }
     let mut outcome = PromotionOutcome::default();
 
     for candidate in candidates {
         let claim_id = candidate.claim_id;
-        match promote_one(vault, run, candidate, checker, false) {
+        match promote_one(vault, run, candidate, checker, false, None) {
             // `promote_one` rolls back anything the gate did not grant Auto,
             // so the non-Auto arm is unreachable defence-in-depth: it stays a
             // REJECTION rather than silently minting the approval queue row
@@ -157,6 +165,7 @@ fn promote_one(
     candidate: PromotionCandidate,
     checker: Option<&BoundedAutoChecker>,
     force_proposed: bool,
+    fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
 ) -> std::result::Result<ClaimApprovalStatus, String> {
     let retry = candidate.clone();
     // 1. Evidence admission (GATE-11 write-path consumption): drop refs
@@ -293,6 +302,9 @@ fn promote_one(
     // — commit or roll back BOTH (the landed torn-window contract).
     // GATE-007 (Generated over UserStated) surfaces here per-candidate.
     let finish_promotion = |wtxn: &mut heed::RwTxn<'_>| {
+        if let Some(fence) = fence {
+            fence.validate_in_txn(vault, wtxn)?;
+        }
         if let Some(old_id) = candidate.supersedes.as_ref() {
             vault.stage_claim_supersession_in_txn(
                 wtxn,
@@ -356,7 +368,7 @@ fn promote_one(
             && retry.supersedes.is_some()
             && error.kind() == crate::ErrorKind::GateWriteRejected
         {
-            return promote_one(vault, run, retry, checker, true);
+            return promote_one(vault, run, retry, checker, true, fence);
         }
         return Err(format!("gated write rejected: {error}"));
     }
@@ -528,6 +540,23 @@ impl<'a> PromotionWriterSink<'a> {
 }
 
 impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_> {
+    fn accept_scoped(
+        &mut self,
+        write: crate::dreamer_consolidation::ScopedConsolidationWrite,
+    ) -> Result<()> {
+        let outcome = promote_scoped_consolidation(self.vault, &self.run, write, self.checker)?;
+        let refused = !outcome.rejected.is_empty();
+        self.outcome.landed.extend(outcome.landed);
+        self.outcome.pended.extend(outcome.pended);
+        self.outcome.rejected.extend(outcome.rejected);
+        if refused {
+            return Err(Error::InvalidClaimBody(
+                "scoped consolidation write refused",
+            ));
+        }
+        Ok(())
+    }
+
     fn accept(&mut self, candidates: Vec<PromotionCandidate>) -> Result<()> {
         let outcome = promote_consolidated_claims_with_checker(
             self.vault,

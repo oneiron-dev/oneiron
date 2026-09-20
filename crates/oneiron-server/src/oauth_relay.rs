@@ -23,6 +23,16 @@ pub(crate) struct OAuthRelayClaims {
     pub scope: String,
     pub iss: String,
     pub exp: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub act: Option<OAuthAct>,
+}
+
+/// RFC 8693 actor claim. This verifier admits one actor, never act.act.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct OAuthAct {
+    pub sub: String,
+    #[serde(flatten)]
+    pub other: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 const MAX_JWKS_BYTES: usize = 1024 * 1024;
@@ -251,7 +261,18 @@ pub(crate) fn verify_oauth_relay_token(
     if scopes.is_empty() {
         return unauthorized();
     }
-    Ok(CoreAuth::from_oauth_relay(data.claims.sub, scopes))
+    let subject = match data.claims.act {
+        Some(actor) => {
+            // Presence rejects even act:null: a second actor slot is never
+            // interpreted as a delegated authority chain.
+            if actor.other.contains_key("act") || actor.sub.trim().is_empty() {
+                return unauthorized();
+            }
+            actor.sub
+        }
+        None => data.claims.sub,
+    };
+    Ok(CoreAuth::from_oauth_relay(subject, scopes))
 }
 
 #[cfg(test)]
@@ -285,6 +306,7 @@ mod tests {
         encode(
             &h,
             &OAuthRelayClaims {
+                act: None,
                 sub: "relay-subject".into(),
                 aud: aud.into(),
                 scope: scope.into(),
@@ -523,5 +545,41 @@ mod tests {
         ] {
             assert!(verify_oauth_relay_token(&bad, &config).is_err());
         }
+    }
+    #[test]
+    fn signed_nested_actor_is_rejected_by_verifier() {
+        let fixture = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(fixture.path(), JWKS).unwrap();
+        let mut config = config();
+        config.oauth_jwks_uri = Some(format!("file://{}", fixture.path().display()));
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("test-kid".into());
+        let exp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 600;
+        for nested in [
+            serde_json::json!({"sub":"nested-agent"}),
+            serde_json::Value::Null,
+        ] {
+            let claims = serde_json::json!({"sub":"owner", "aud":"https://api.example", "scope":"read", "iss":"https://issuer.example", "exp":exp,
+                "act":{"sub":"agent", "act":nested}});
+            let token = encode(
+                &header,
+                &claims,
+                &EncodingKey::from_rsa_pem(PRIVATE_KEY.as_bytes()).unwrap(),
+            )
+            .unwrap();
+            assert!(verify_oauth_relay_token(&token, &config).is_err());
+        }
+        let claims = serde_json::json!({"sub":"owner", "aud":"https://api.example", "scope":"read", "iss":"https://issuer.example", "exp":exp,"act":{"sub":"agent"}});
+        let token = encode(
+            &header,
+            &claims,
+            &EncodingKey::from_rsa_pem(PRIVATE_KEY.as_bytes()).unwrap(),
+        )
+        .unwrap();
+        assert!(verify_oauth_relay_token(&token, &config).is_ok());
     }
 }

@@ -3,6 +3,7 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+mod auto_signals;
 mod bundle;
 mod ceiling;
 pub(crate) mod manifest_authenticity;

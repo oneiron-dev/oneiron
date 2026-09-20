@@ -68,6 +68,7 @@ mod trust_boundary;
 mod vad_vetting;
 mod witness_message;
 
+mod auto_signals;
 mod burst_retired;
 
 use charter_ceiling::scoped_capability_connector;

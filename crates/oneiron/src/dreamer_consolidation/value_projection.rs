@@ -1,5 +1,4 @@
-//! JSON codec shared by extraction and contradiction judgment.
-use crate::entity_id::EntityId;
+//! Data projection between extraction/merge JSON and claim MessagePack values.
 use rmpv::Value;
 
 pub(super) fn rmpv_to_json(value: &Value) -> serde_json::Value {
@@ -27,29 +26,6 @@ pub(super) fn rmpv_to_json(value: &Value) -> serde_json::Value {
                 .collect(),
         ),
         _ => serde_json::Value::Null,
-    }
-}
-
-pub(super) fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
-    let hex = hex.trim();
-    if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut raw = [0_u8; 16];
-    for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-        let high = hex_nibble(chunk[0])?;
-        let low = hex_nibble(chunk[1])?;
-        raw[index] = (high << 4) | low;
-    }
-    EntityId::from_bytes(raw).ok()
-}
-
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
     }
 }
 

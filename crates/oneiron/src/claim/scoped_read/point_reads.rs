@@ -98,6 +98,7 @@ impl ScopedRead<'_> {
                     self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &row.id)?
                 } else {
                     row.deletion.is_some()
+                        && row.entity_type != crate::registry::ENTITY_TYPE_NOTE
                         && !(self.actor_key.enforce_access_grants
                             && matches!(
                                 row.entity_type,

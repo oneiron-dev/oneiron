@@ -91,6 +91,7 @@ pub(crate) fn evaluate_external_effect_policy(
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
     required_grant_id: Option<EntityId>,
+    prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
 ) -> Result<ExternalEffectGovernance> {
     let (mut hydrated_effect, counterparty_send_override) =
         hydrate_external_effect_contact(store, &*wtxn, effect)?;
@@ -102,6 +103,7 @@ pub(crate) fn evaluate_external_effect_policy(
         &hydrated_effect,
         policy,
         required_grant_id,
+        prepared,
     )?;
     if let Some((grant_id, grant)) = matched_grant.as_ref() {
         hydrated_effect.standing_grant_ref = Some(format!("grant:{}", grant_id.to_hex()));
@@ -470,7 +472,7 @@ pub(crate) fn check_external_effect_policy(
     policy: &PolicyManifestResolution,
     admit_for_execution: bool,
 ) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
-    let mut governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None)?;
+    let mut governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None, None)?;
     let mut effector_charge = None;
     if admit_for_execution && governance.outcome() == GateOutcome::Allow {
         let (charge, exhausted) = charge_admitted_external_effect(

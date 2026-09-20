@@ -3,6 +3,7 @@ pub use credential_filter::{redact_credentials, redacted_memory_body, redacted_m
 mod export_authority;
 mod export_companion;
 mod export_egress;
+mod export_enumerate;
 mod export_manifest;
 #[cfg(feature = "sync")]
 mod foreign_stage;
@@ -10,6 +11,7 @@ mod foreign_stage;
 pub use self::export_authority::*;
 pub use self::export_companion::*;
 pub use self::export_egress::*;
+pub use self::export_enumerate::*;
 pub use self::export_manifest::*;
 #[cfg(feature = "sync")]
 pub use foreign_stage::*;

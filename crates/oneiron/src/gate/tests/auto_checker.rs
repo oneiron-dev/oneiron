@@ -1076,6 +1076,7 @@ fn source_aware_checker_holds_tool_output_history_with_observed_declaration() ->
     // prove it allows that same declaration when ToolOutput is absent.
     let observed_lineage = SourceLineage::of(ClaimSource::Observed);
     let observed = AutoCheckCandidate {
+        signals: crate::llm::AutoCheckSignals::default(),
         predicate: &body.predicate,
         value_preview: "Ada Lovelace",
         source: ClaimSource::Observed,
@@ -1289,5 +1290,67 @@ fn native_checker_observes_structural_streak_outage_neutrality_and_success_reset
         stored_claim_body(&vault, &test_id(0x63))?.approval,
         ClaimApprovalStatus::Auto
     );
+    Ok(())
+}
+
+struct RateAndStreakChecker {
+    max_writes: u64,
+    max_failures: u64,
+}
+impl AutoChecker for RateAndStreakChecker {
+    fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+        if candidate.signals.recent_writes >= self.max_writes
+            || candidate.signals.failure_streak >= self.max_failures
+        {
+            AutoCheckOutcome::Hold {
+                reasons: vec!["rate_or_streak".into()],
+            }
+        } else {
+            AutoCheckOutcome::Allow
+        }
+    }
+}
+#[test]
+fn rate_and_streak_are_soft_inputs_to_the_existing_verdict() -> Result<()> {
+    for streak_case in [false, true] {
+        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+        if streak_case {
+            let (_, envelope) = dreamer_parts(&vault, &body)?;
+            let mut denied = body.clone();
+            denied.evidence = None;
+            assert!(
+                gate_claim_write(&vault, &test_id(0x31), &denied, &envelope, None, false).is_err()
+            );
+        } else {
+            let allow = BoundedAutoChecker::new(Arc::new(RecordingAutoChecker::allow()));
+            attempt_checked_candidate_write(&vault, &test_id(0x31), &body, Some(&allow))?;
+        }
+        let checker = BoundedAutoChecker::new(Arc::new(RateAndStreakChecker {
+            max_writes: if streak_case { u64::MAX } else { 1 },
+            max_failures: if streak_case { 1 } else { u64::MAX },
+        }));
+        assert!(
+            attempt_checked_candidate_write(&vault, &test_id(0x32), &body, Some(&checker)).is_err(),
+            "streak_case={streak_case}, receipts={:?}",
+            vault.store.gate_decisions(100)?
+        );
+        assert!(vault.get_claim(&test_id(0x32))?.is_none());
+        assert!(decision_rows(&vault)?.iter().any(|(reasons, receipts)| {
+            reasons.contains(&"gate.pending.checker".to_owned())
+                && receipts.contains(&"checker_rate_or_streak".to_owned())
+        }));
+        // The same observations do not latch a hard pause. A changed host
+        // policy can immediately allow; no bundle-clear or reset row exists.
+        let allow = BoundedAutoChecker::new(Arc::new(RateAndStreakChecker {
+            max_writes: u64::MAX,
+            max_failures: u64::MAX,
+        }));
+        attempt_checked_candidate_write(&vault, &test_id(0x33), &body, Some(&allow))?;
+        assert_eq!(
+            vault.get_claim(&test_id(0x33))?.unwrap().approval,
+            ClaimApprovalStatus::Auto
+        );
+    }
     Ok(())
 }

@@ -162,29 +162,7 @@ pub(crate) fn execute_mcp_nav(
             let results = scoped_read
                 .search_text(query, limit, None)
                 .map_err(|error| mcp_engine_error("mcp nav search failed", error))?;
-            let mut narrowing = results.receipt;
-            let projected = scoped_read
-                .get_entities_parts_with_receipt(
-                    &results.value.iter().map(|row| row.id).collect::<Vec<_>>(),
-                    Some(&narrowing.applied.as_filter()),
-                )
-                .map_err(|error| mcp_engine_error("mcp nav projection failed", error))?;
-            narrowing.restrict_with(&projected.receipt);
-            let items = results
-                .value
-                .into_iter()
-                .zip(projected.value)
-                .filter_map(|(row, parts)| {
-                    let (kind, learned_at, body) = parts?;
-                    Some(projection::project_entity_parts(
-                        &row.id,
-                        kind,
-                        learned_at,
-                        &body,
-                        View::Summary,
-                    ))
-                })
-                .collect::<Vec<_>>();
+            let (items, narrowing) = project_nav_results(&scoped_read, results)?;
             Ok(json!({
                 "content": [mcp_text_content(format!("{} result(s)", items.len()))],
                 "structuredContent": {
@@ -726,4 +704,63 @@ pub(crate) fn mcp_routed_ask_result(args: McpRoutedAskToolArgs, actor: &McpResol
         },
         "isError": false,
     })
+}
+
+fn project_nav_results(
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    results: oneiron::claim::ScopedReadResult<Vec<oneiron::ScoredEntity>>,
+) -> Result<(Vec<Value>, oneiron::claim::ScopedReadReceipt), McpGatewayError> {
+    let mut narrowing = results.receipt;
+    let projected = scoped_read
+        .get_entities_parts_with_receipt(
+            &results.value.iter().map(|row| row.id).collect::<Vec<_>>(),
+            Some(&narrowing.applied.as_filter()),
+        )
+        .map_err(|error| mcp_engine_error("mcp nav projection failed", error))?;
+    narrowing.restrict_with(&projected.receipt);
+    let items = results
+        .value
+        .into_iter()
+        .zip(projected.value)
+        .filter_map(|(row, parts)| {
+            let (kind, learned_at, body) = parts?;
+            Some(projection::project_entity_parts(
+                &row.id,
+                kind,
+                learned_at,
+                &body,
+                View::Summary,
+            ))
+        })
+        .collect::<Vec<_>>();
+    Ok((items, narrowing))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn navigation_projection_rechecks_private_notes_even_if_nominated() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
+        let receipt = vault
+            .memory(owner, oneiron::EdgeActorClass::Human)
+            .author_note(&oneiron::note::NoteWriteEnvelope {
+                kind: oneiron::note::NoteKind::Diary,
+                scope: oneiron::note::NoteScope::ActorPrivate { owner_ref: owner },
+                source_revision_ref: [0x75; 16],
+                markdown: "private diary canary".into(),
+            })
+            .unwrap();
+        let id = oneiron::EntityId::from_hex(&receipt.id_hex).unwrap();
+        let reader =
+            vault.scoped_read(oneiron::claim::ScopedReadActorKey::new(owner.to_hex()).unwrap());
+        let mut results = reader.search_text("private diary", 10, None).unwrap();
+        // Even a stale or overbroad nomination cannot bypass final projection.
+        results.value = vec![oneiron::ScoredEntity { id, score: 1.0 }];
+        let (items, receipt) = project_nav_results(&reader, results).unwrap();
+        assert!(items.is_empty());
+        assert!(receipt.suppressed_count > 0);
+    }
 }
