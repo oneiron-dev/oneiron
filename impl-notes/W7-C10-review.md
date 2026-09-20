@@ -491,3 +491,28 @@ R13 commit `0af41e486346cc13e02334057abb867cf41d5d8e` passed all three focused r
 Integration target: current main `60c5b875b9e2f0ce84b27d888b308f96ff366af1`. Conflict resolution keeps both dispatch keys and their independent validation, with `scope` at index eight and `healer_case` at index nine; both code-run modules survive. Main's actor-private NOTE predicate and C10's raw CLAIM predicate both remain. Equivalent canonical-temp fixtures use main's path comparison. The combined codec regression includes an exact resource scope and a healer case; no diagnostic context becomes an authority grant.
 
 The integration also carries main's private-NOTE admission through C10's explicit current/indexed/pinned scoped reads and historic context-pack checks. Current and selected historical NOTE bodies must both be admissible. Tests cover owner/other/class bindings, facade and scoped hydration, and an old private body behind a current public NOTE. The already-merged facade body/actor checks remain unchanged. Incoming NOTE fixtures use the five-effort vocabulary and the revision field. Generated code maps are regenerated from the combined tree, not hand-merged. Integration validation is pending; no inherited or focused receipt is reported as final merged-head proof.
+
+
+## Tests-after-review recovery: R14 and compile failures
+
+The complete own-PR refresh is retained at `pr939-20260920T015115Z`: 17 issue comments,
+75 reviews, 112 inline comments, and 46 fully paginated resolved threads. Only
+our status comment changed; there is no new bot finding. Saved internal finals
+`5d8b9de8` and `cde08f54` and all earlier dispositions are retained. Codex's
+explicit usage refusal remains terminal, not pending or approval. PR933 is C08
+and is not a source of C10 edits.
+
+R14 at `79534673` ran six focused cases: five passed, one failed (run
+`253d1ac4-1746-4791-b0dd-1b23a42efc53`). Its full script and narrow sync stages
+did not run. The historical-NOTE fixture used the public raw put door, which
+correctly refuses NOTE writes. It now seeds the public revision through the
+existing test-only replicated door, preserving all current/historical privacy
+assertions and the production raw-write refusal.
+
+The factory tests-after-review command then failed compilation before running
+any crate tests: MCP navigation still called the shared projector without its
+new required `ReadMode`. Navigation now explicitly selects Indexed, matching
+its text index, and a focused test checks an indexed hit projects its original
+body while an unpublished live edit remains visible through Live. The existing
+private-NOTE projection test remains enabled. Validation is pending; neither
+failure is counted as passing evidence.
