@@ -22,7 +22,7 @@ impl MergeQueue<'_> {
         F: FnMut(&CheckInvocation) -> Result<CheckReport>,
     {
         let batch = self.batch(id)?;
-        let path = batch
+        let mut path = batch
             .paths
             .iter()
             .find(|path| path.mask == mask)
@@ -50,12 +50,16 @@ impl MergeQueue<'_> {
         {
             return Err(invalid("batch is not accepting fast checks"));
         }
+        if phase == CheckPhase::Slow {
+            path = self.landed_check_path(&batch, &path)?;
+        }
         self.verify_worktree(&path)?;
         let baseline = oracle
             .baseline(&batch.baseline_id)?
             .ok_or(Error::CorruptedIndex("merge baseline is missing"))?;
         let report = runner(&CheckInvocation {
             worktree: path.worktree.clone(),
+            commit: path.commit.clone(),
             tree: path.tree.clone(),
             phase,
             selected_tests: batch.selected_tests.clone(),
@@ -63,7 +67,10 @@ impl MergeQueue<'_> {
         self.verify_worktree(&path)?;
         let snapshot = ContractOracle::capture(&baseline.spec, &path.worktree, report.outputs)?;
         self.verify_worktree(&path)?;
-        let candidate = format!("{}:{mask}:{phase:?}:{}", batch.id, path.tree);
+        let candidate = match phase {
+            CheckPhase::Fast => format!("{}:{mask}:Fast:{}", batch.id, path.tree),
+            CheckPhase::Slow => format!("{}:{mask}:Slow:{}:{}", batch.id, path.tree, path.commit),
+        };
         let verdict = oracle.compare_and_record(
             &batch.baseline_id,
             &candidate,
@@ -81,7 +88,9 @@ impl MergeQueue<'_> {
                 &mut current.paths[(mask - 1) as usize].verdict
             }
             CheckPhase::Slow => {
-                if current.state != BatchState::HeadAdvanced {
+                if current.state != BatchState::HeadAdvanced
+                    || current.landed_head.as_deref() != Some(path.commit.as_str())
+                {
                     return Err(Error::ConcurrentWrite("batch changed during slow check"));
                 }
                 &mut current.slow_verdict

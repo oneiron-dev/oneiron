@@ -102,6 +102,8 @@ pub(super) enum EffectIntent {
 #[derive(Debug, Clone)]
 pub struct CheckInvocation {
     pub worktree: PathBuf,
+    /// Exact commit under test; slow checks use the landed, not speculative, HEAD.
+    pub commit: String,
     pub tree: String,
     pub phase: CheckPhase,
     pub selected_tests: AffectedTests,

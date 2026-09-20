@@ -122,7 +122,11 @@ impl MergeQueue<'_> {
                     .paths
                     .last()
                     .ok_or(Error::CorruptedIndex("slow path missing"))?;
-                let expected = format!("{}:{}:Slow:{}", batch.id, path.mask, path.tree);
+                let commit = batch
+                    .landed_head
+                    .as_deref()
+                    .ok_or(Error::CorruptedIndex("landed HEAD missing"))?;
+                let expected = format!("{}:{}:Slow:{}:{}", batch.id, path.mask, path.tree, commit);
                 if verdict.candidate != expected || verdict.baseline_id != batch.baseline_id {
                     return Err(Error::CorruptedIndex("slow verdict scope differs"));
                 }

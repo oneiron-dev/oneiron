@@ -223,6 +223,10 @@ impl MergeQueue<'_> {
         for mask in 1..(1 << batch.proposals.len()) {
             wire.remove_worktree(&self.repo, &self.worktree_path(id, mask), 0)?;
         }
+        let slow = self.worktree_path(id, u64::MAX);
+        if wire.worktree_registered(&self.repo, &slow)? {
+            wire.remove_worktree(&self.repo, &slow, 0)?;
+        }
         Ok(())
     }
 
@@ -232,6 +236,52 @@ impl MergeQueue<'_> {
             self.repo.identity().as_hex()
         ))
     }
+    pub(super) fn landed_check_path(
+        &self,
+        batch: &MergeBatch,
+        speculative: &SpeculativePath,
+    ) -> Result<SpeculativePath> {
+        let _guard = lock_repository(self.repo.common_dir())?;
+        let current = self.batch(&batch.id)?;
+        if current.state != BatchState::HeadAdvanced || current.landed_head != batch.landed_head {
+            return Err(Error::ConcurrentWrite(
+                "landed batch changed before slow check",
+            ));
+        }
+        let commit = batch
+            .landed_head
+            .clone()
+            .ok_or(Error::CorruptedIndex("landed HEAD missing"))?;
+        let worktree = self.worktree_path(&batch.id, u64::MAX);
+        let wire = GitWire::new(self.vault)?;
+        if !wire.worktree_registered(&self.repo, &worktree)? {
+            if worktree.symlink_metadata().is_ok() {
+                return Err(invalid(
+                    "slow check path is occupied outside its registration",
+                ));
+            }
+            let outcome = self.vault.apply_repo_mutation(RepoMutationRequest::new(
+                self.repo.repo_ref().clone(),
+                RepoMutationOperation::CreateWorktree {
+                    worktree_path: worktree.clone(),
+                    base_ref: commit.clone(),
+                },
+            ))?;
+            if outcome.entry.status != RepoMutationStatus::Applied {
+                return Err(invalid("slow worktree creation was not applied"));
+            }
+        }
+        let path = SpeculativePath {
+            mask: speculative.mask,
+            worktree,
+            commit,
+            tree: speculative.tree.clone(),
+            verdict: None,
+        };
+        self.verify_worktree(&path)?;
+        Ok(path)
+    }
+
     pub(super) fn capture_current_snapshot(&self, batch: &MergeBatch) -> Result<[u8; 32]> {
         let path = self.worktree_path(&batch.id, 0);
         let wire = GitWire::new(self.vault)?;
@@ -294,6 +344,11 @@ fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Result<()> {
         }
         let mut paths = BTreeSet::new();
         for file in &proposal.files {
+            if file.content.is_none() {
+                return Err(invalid(
+                    "merge deletion requires a reviewed delete operation",
+                ));
+            }
             if !paths.insert(&file.path) || file.path.len() > 4096 || file.expected == file.content
             {
                 return Err(invalid("duplicate, oversized or empty merge edit"));

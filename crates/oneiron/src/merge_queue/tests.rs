@@ -456,3 +456,62 @@ fn interacting_red_pair_is_quarantined_together_not_falsely_blamed_on_one_member
     assert!(queue.requeue_survivors(&batch.id).unwrap().is_none());
     queue.cleanup(&batch.id).unwrap();
 }
+
+#[test]
+fn slow_check_uses_landed_commit_metadata_and_red_rolls_back() {
+    let fixture = Fixture::new();
+    let queue = fixture.queue();
+    let batch = queue.enqueue(vec![fixture.proposal("a", b"A\n")]).unwrap();
+    ready(&queue, &batch);
+    let staged = queue.batch(&batch.id).unwrap();
+    let speculative = staged.paths[0].commit.clone();
+    let landed = queue.land(&batch.id, &mut fixture.host(None)).unwrap();
+    let landed_head = landed.landed_head.unwrap();
+    assert_ne!(speculative, landed_head);
+    let mut checked_path = None;
+    let verdict = queue
+        .check(&batch.id, 1, CheckPhase::Slow, &mut |invocation| {
+            assert_eq!(invocation.commit, landed_head);
+            let head =
+                String::from_utf8(git(&invocation.worktree, &["rev-parse", "HEAD"])?).unwrap();
+            assert_eq!(head.trim(), landed_head);
+            let message =
+                String::from_utf8(git(&invocation.worktree, &["log", "-1", "--format=%s"])?)
+                    .unwrap();
+            checked_path = Some(invocation.worktree.clone());
+            Ok(CheckReport {
+                tests_passed: message.trim() == "Speculative merge candidate",
+                ..CheckReport::default()
+            })
+        })
+        .unwrap();
+    assert!(!verdict.passes());
+    assert!(verdict.candidate.ends_with(&landed_head));
+    assert_eq!(queue.settle_slow().unwrap().head, fixture.base);
+    queue.cleanup(&batch.id).unwrap();
+    assert!(!checked_path.unwrap().exists());
+}
+
+#[test]
+fn deletion_is_refused_at_enqueue_without_creating_a_batch_or_worktree() {
+    let fixture = Fixture::new();
+    let queue = fixture.queue();
+    let before = queue.pointers().unwrap();
+    let mut proposal = fixture.proposal("a", b"unused");
+    proposal.files[0].content = None;
+    assert!(matches!(
+        queue.enqueue(vec![proposal]),
+        Err(Error::Code(
+            crate::error::CodeError::InvalidRepoMutationRecord(_)
+        ))
+    ));
+    assert_eq!(queue.pointers().unwrap(), before);
+    assert_eq!(fixture.read("a"), b"base\n");
+    assert!(
+        fixture
+            .vault
+            .repo_mutation_oplog(&fixture.repo_ref)
+            .unwrap()
+            .is_empty()
+    );
+}
