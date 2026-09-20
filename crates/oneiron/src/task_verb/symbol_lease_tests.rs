@@ -68,6 +68,22 @@ fn overlapping_declarations_serialize_queue_claims_but_disjoint_tasks_run() -> c
             assert_eq!(record.task_ref.as_deref(), Some(task.to_hex().as_str()));
         }
         assert!(matches!(claim(100)?, ClaimOutcome::Empty));
+        assert!(matches!(
+            vault.declare_symbols(tasks[0], holder, ["replacement".to_owned()].into(), 10, 101),
+            Err(crate::Error::ConcurrentWrite(_))
+        ));
+        assert!(matches!(claim(101)?, ClaimOutcome::Empty));
+        assert!(matches!(
+            vault.declare_symbols(
+                tasks[0],
+                holder,
+                ["repo/src::symbol".to_owned()].into(),
+                9,
+                101
+            )?,
+            SymbolLeaseOutcome::Granted(_)
+        ));
+        assert!(matches!(claim(101)?, ClaimOutcome::Empty));
         assert!(vault.release_symbols(tasks[0], EntityId::now()).is_err());
         if kind_scoped {
             vault.release_symbols(tasks[0], holder)?;

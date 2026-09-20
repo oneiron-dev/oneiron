@@ -101,11 +101,12 @@ impl Vault {
             {
                 return Err(Error::EntityNotFound);
             }
-            if load(&self.store, txn, task)?
-                .is_some_and(|prior| prior.holder_ref != holder.to_hex() && prior.expires_at > now)
+            if let Some(prior) = load(&self.store, txn, task)?
+                && prior.expires_at > now
+                && (prior.holder_ref != holder.to_hex() || (prior.held && prior.symbols != symbols))
             {
-                return Err(Error::InvalidConfig(
-                    "symbol declaration belongs to another holder".to_owned(),
+                return Err(Error::ConcurrentWrite(
+                    "live symbol declaration cannot be replaced",
                 ));
             }
             let blockers = blockers(&self.store, txn, task, &symbols, now)?;
