@@ -1723,6 +1723,69 @@ fn repository_proposed_gate_retains_split_and_hard_veto_then_applies_unanimous()
     assert_eq!(claim.claim_id, accepted.provenance_claim);
 }
 #[test]
+fn mount_repo_ref_snapshot_serves_stored_bytes_read_only_and_refuses_cross_repo() {
+    use super::mount::RepoMountRef;
+    let (_dir, vault) = open_test_vault();
+    let repo_a = init_repo();
+    let repo_b = init_repo();
+    let config = crate::codebase::RepoIngestConfig::new(repo_a.path(), ["README.md"]).unwrap();
+    let ingested = vault
+        .ingest_local_repo_at_commit(
+            "mount.snapshot",
+            &config,
+            "HEAD",
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .unwrap();
+    let direct = vault
+        .mount_codebase_snapshot(&ingested.code_artifact_id)
+        .unwrap()
+        .expect("snapshot mount");
+    let mounted = vault
+        .mount_repo_ref(
+            &ingested.snapshot.repo_ref,
+            RepoMountRef::Snapshot(ingested.code_artifact_id),
+        )
+        .unwrap();
+    assert!(direct.is_read_only());
+    assert!(mounted.is_read_only());
+    assert_eq!(mounted.list_files(), direct.list_files());
+    assert_eq!(mounted.list_files(), vec!["README.md"]);
+    for path in direct.list_files() {
+        assert_eq!(
+            mounted.read_file(path).unwrap(),
+            direct.read_file(path).unwrap().as_deref()
+        );
+    }
+    assert_eq!(
+        mounted.read_file("README.md").unwrap(),
+        Some(b"base\n".as_slice())
+    );
+    fs::write(repo_a.path().join("README.md"), "changed after ingest\n").unwrap();
+    let reread = vault
+        .mount_repo_ref(
+            &ingested.snapshot.repo_ref,
+            RepoMountRef::Snapshot(ingested.code_artifact_id),
+        )
+        .unwrap();
+    assert_eq!(
+        reread.read_file("README.md").unwrap(),
+        Some(b"base\n".as_slice())
+    );
+    assert_eq!(
+        fs::read(repo_a.path().join("README.md")).unwrap(),
+        b"changed after ingest\n"
+    );
+    assert!(matches!(
+        vault.mount_repo_ref(
+            &repo_ref(&repo_b),
+            RepoMountRef::Snapshot(ingested.code_artifact_id)
+        ),
+        Err(Error::Code(CodeError::InvalidRepoMutationRecord(_)))
+    ));
+}
+#[test]
 fn repository_proposal_crash_rolls_forward_and_stale_base_never_rebases() {
     use crate::critic::CritiqueVerdict;
     let (_dir, vault) = open_test_vault();
