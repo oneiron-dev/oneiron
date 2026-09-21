@@ -2,7 +2,7 @@
 //!
 //! [`RecalcEngine`] is the trait the docedit pipeline calls: pure over cell
 //! maps, no vault, no filesystem, no clock. [`FormualizerEngine`] is the
-//! unchanged-upstream implementation behind it, driving the workbook API from
+//! owned implementation behind it, driving the workbook API from
 //! `.w7/formula-engine-context.md` verbatim (ephemeral config, `S` sheet,
 //! 1-based coordinates, demand-driven `evaluate_cell`, `read_range` spills).
 //!
@@ -25,13 +25,13 @@ use crate::error::{FormulaError, Result};
 /// Pinned upstream identity. Literal: `formualizer-workbook` exposes no
 /// version constant, and `env!` would stamp this harness, not the engine.
 pub const ENGINE_NAME: &str = "formualizer-workbook";
-/// Pinned upstream version.
-pub const ENGINE_VERSION: &str = "0.9.3";
+/// Owned evaluator version; upstream plus the error-concatenation repair.
+pub const ENGINE_VERSION: &str = "0.9.3-oneiron.1";
 /// Pinned upstream commit (tag `v0.9.3`).
 pub const ENGINE_UPSTREAM_REV: &str = "362becffa029d8f77349c2c477fc39eff7fc52d5";
 /// Full deterministic stamp recorded on every evaluation report.
 pub const ENGINE_STAMP: &str =
-    "formualizer-workbook 0.9.3 upstream 362becffa029d8f77349c2c477fc39eff7fc52d5";
+    "formualizer-workbook 0.9.3-oneiron.1 upstream 362becffa029d8f77349c2c477fc39eff7fc52d5";
 
 /// Fixed instant every volatile function observes. 2026-01-01T00:00:00Z in
 /// UTC: deterministic across hosts and timezones, never the wall clock.
@@ -52,7 +52,7 @@ fn current_engine_id() -> EngineId {
     }
 }
 
-/// Unchanged-upstream [`RecalcEngine`]: `formualizer-workbook 0.9.3`,
+/// Owned [`RecalcEngine`], based on `formualizer-workbook 0.9.3`,
 /// ephemeral config, deterministic UTC clock.
 #[derive(Debug)]
 pub struct FormualizerEngine {
@@ -280,9 +280,9 @@ mod tests {
     }
     #[test]
     fn stamp_is_deterministic_and_pinned() {
-        assert_eq!("formualizer-workbook/0.9.3", current_engine_id().stamp());
+        assert_eq!("formualizer-workbook/0.9.3-oneiron.1", current_engine_id().stamp());
         assert_eq!(ENGINE_NAME, "formualizer-workbook");
-        assert_eq!(ENGINE_VERSION, "0.9.3");
+        assert_eq!(ENGINE_VERSION, "0.9.3-oneiron.1");
         assert_eq!(ENGINE_UPSTREAM_REV.len(), 40);
     }
 

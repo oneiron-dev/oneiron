@@ -32904,7 +32904,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/bin/measure.rs",
-     "purpose": "Step-19 measurement executable: unchanged formualizer over `cases.json`",
+     "purpose": "Measurement executable: stamped owned formualizer over `cases.json`",
      "surface": {}
     },
     {
@@ -33071,6 +33071,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/error_concat.rs",
+     "purpose": "Error operands remain typed errors across both owned evaluator paths",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -33161,7 +33169,7 @@
    "over_bar": 0,
    "purpose": "In-process xlsx formula evaluation behind the docedit recalc seam",
    "source_files": 15,
-   "test_files": 2
+   "test_files": 3
   }
  }
 }

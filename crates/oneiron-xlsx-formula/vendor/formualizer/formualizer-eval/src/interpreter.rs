@@ -728,13 +728,16 @@ impl<'a> Interpreter<'a> {
                     "^" => self
                         .power(left, right)
                         .map(crate::traits::CalcValue::Scalar),
-                    "&" => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
-                        format!(
+                    "&" => Ok(crate::traits::CalcValue::Scalar(match (left, right) {
+                        (LiteralValue::Error(error), _) | (_, LiteralValue::Error(error)) => {
+                            LiteralValue::Error(error)
+                        }
+                        (left, right) => LiteralValue::Text(format!(
                             "{}{}",
                             crate::coercion::to_text_invariant(&left),
                             crate::coercion::to_text_invariant(&right)
-                        ),
-                    ))),
+                        )),
+                    })),
                     _ => Err(ExcelError::new(ExcelErrorKind::NImpl)
                         .with_message(format!("Binary op '{op}'"))),
                 }
@@ -1241,13 +1244,16 @@ impl<'a> Interpreter<'a> {
             "^" => self
                 .power(left, right)
                 .map(crate::traits::CalcValue::Scalar),
-            "&" => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
-                format!(
+            "&" => Ok(crate::traits::CalcValue::Scalar(match (left, right) {
+                (LiteralValue::Error(error), _) | (_, LiteralValue::Error(error)) => {
+                    LiteralValue::Error(error)
+                }
+                (left, right) => LiteralValue::Text(format!(
                     "{}{}",
                     crate::coercion::to_text_invariant(&left),
                     crate::coercion::to_text_invariant(&right)
-                ),
-            ))),
+                )),
+            })),
             ":" => {
                 let left_ref = self.evaluate_ast_as_reference(left_node)?;
                 let right_ref = self.evaluate_ast_as_reference(right_node)?;

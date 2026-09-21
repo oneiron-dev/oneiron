@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `examples/recalculate_native.rs` | src | s | — | — | Emit retained native XLSX bytes for one-time application-oracle checks |
-| `src/bin/measure.rs` | src | s | — | — | Step-19 measurement executable: unchanged formualizer over `cases.json` |
+| `src/bin/measure.rs` | src | s | — | — | Measurement executable: stamped owned formualizer over `cases.json` |
 | `src/bin/recalc_native.rs` | src | s | — | — | Measure the shipped retained XLSX adapter without a precision fallback |
 | `src/cache.rs` | src | s | 3 crate-vis | — | Typed formula caches as checked byte patches, preserving unmodelled XML |
 | `src/context.rs` | src | s | 1 crate-vis | — | Bound formula AST evaluation and keep ambient context out of native recalc |
@@ -27,4 +27,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/xlfn.rs` | src | m | 3 fn · 1 crate-vis | — | `_xlfn.` storage-prefix mapping for post-2007 functions (step 25) |
 | `src/xml.rs` | src | m | 16 crate-vis | — | Namespace-aware XML offsets for narrow cache edits; never a reserializer |
 | `tests/corpus.rs` | test | s | — | — | Corpus honesty: every case emits exactly one row, probes never score |
+| `tests/error_concat.rs` | test | s | — | — | Error operands remain typed errors across both owned evaluator paths |
 | `tests/session.rs` | test | m | — | — | Actual XLSX in/out tests through the production EditSession pipeline |

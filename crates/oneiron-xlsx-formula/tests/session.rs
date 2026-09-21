@@ -117,7 +117,7 @@ fn edit_session_recalculates_cross_sheet_graph_and_stamps_proposal() {
     assert_eq!(proposal.recalc, RecalcStatus::Performed);
     assert_eq!(
         proposal.engine.stamp(),
-        "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3"
+        "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.1"
     );
     let xml = part_text(&proposal.new_bytes, OUTPUT);
     assert!(xml.contains("<f>B1+3</f><v>17</v>"));
@@ -148,7 +148,7 @@ fn a_reused_session_does_not_stamp_an_old_engine_on_a_no_recalc_proposal() {
     };
     assert_eq!(
         first.engine.stamp(),
-        "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3"
+        "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.1"
     );
     let second = run_edit_roundtrip(
         &session,
@@ -642,7 +642,7 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     assert!(command.status.success());
     let report: serde_json::Value = serde_json::from_slice(&command.stdout).expect("engine report");
     assert_eq!(report["engine"]["engine"], "oneiron-xlsx-formula");
-    assert_eq!(report["engine"]["version"], "0.1.0+formualizer.0.9.3");
+    assert_eq!(report["engine"]["version"], "0.1.0+formualizer.0.9.3-oneiron.1");
     assert_eq!(report["formulas"], 1);
     assert_eq!(report["precision_fallback"], false);
     let result = std::fs::read(&output).expect("native output");
@@ -781,4 +781,18 @@ fn bounded_formula_values_stay_native_and_over_limit_preserves_fallback_identity
     };
     assert_eq!(proposal.new_bytes, input);
     assert_eq!(proposal.engine, EngineId::libreoffice("fixture-precision"));
+}
+
+#[test]
+fn concatenation_preserves_error_values_for_iferror_in_retained_xlsx() {
+    let input = fixture(
+        r#"<c r="A1" t="e"><v>#N/A</v></c>"#,
+        r#"<c r="A1"><f>IFERROR(Input!A1&amp;&quot;&quot;,&quot;missing&quot;)</f><v>0</v></c><c r="B1"><f>IFERROR(&quot;&quot;&amp;Input!A1,&quot;missing&quot;)</f><v>0</v></c><c r="C1"><f>&quot;#N/A&quot;&amp;&quot;&quot;</f><v>0</v></c>"#,
+        false,
+    );
+    let result = FormualizerEngine::new().recalculate_xlsx(&input).expect("recalc");
+    let xml = part_text(&result.bytes, OUTPUT);
+    assert_eq!(xml.matches("<v>missing</v>").count(), 2);
+    assert!(xml.contains("<v>#N/A</v>"));
+    assert_eq!(result.formula_count, 3);
 }

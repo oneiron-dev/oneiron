@@ -1,4 +1,4 @@
-//! Step-19 measurement executable: unchanged formualizer over `cases.json`.
+//! Measurement executable: stamped owned formualizer over `cases.json`.
 //!
 //! Reads the pinned corpus, evaluates every case on a fresh
 //! [`FormualizerEngine`](oneiron_xlsx_formula::engine::FormualizerEngine), and

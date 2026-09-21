@@ -2,14 +2,14 @@
 //!
 //! Step 20 builds the decided engine as a standalone crate; step 19 measures
 //! the pinned upstream unchanged first. This crate is the step-20 shell around
-//! the step-19 baseline: it links `formualizer-workbook 0.9.3` with default
+//! the step-19 baseline: it links the owned `formualizer-workbook` with default
 //! features off (no `xlsx-recalc`, no `system-clock`, no umya/calamine DOM),
 //! drives the workbook API from `.w7/formula-engine-context.md` verbatim, and
 //! exposes the result through a storage-independent [`RecalcEngine`] seam the
 //! docedit pipeline can adopt without taking an engine dependency.
 //!
-//! The compatibility subset clears its threshold; the separate real-workbook
-//! release gate remains unmet. Native recalculation therefore stays opt-in.
+//! The compatibility subset cleared its threshold, but the complete fresh-Excel
+//! SpreadsheetBench comparison failed parity. Native recalculation stays opt-in.
 //! Hosts construct the session explicitly. Unsupported features and formulas
 //! needing caller context stay on the precision fallback; the corpus clock is
 //! never substituted for production time. External-link workbooks stay on their

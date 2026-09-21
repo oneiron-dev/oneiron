@@ -1,6 +1,6 @@
 //! Corpus honesty: every case emits exactly one row, probes never score.
 //!
-//! Runs the full pinned 834-case fixture through the unchanged engine and
+//! Runs the full pinned 834-case fixture through the stamped owned engine and
 //! asserts the report shape laws. It does NOT assert a pass rate: the score
 //! is evidence for the step-20 decision, not a test threshold, and it is
 //! meaningless before the Excel goldens and the same-corpus LibreOffice
