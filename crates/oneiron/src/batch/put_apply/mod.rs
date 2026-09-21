@@ -24,10 +24,8 @@ use super::{
 };
 
 pub(super) use self::apply::apply_put;
-pub(crate) use self::put_staging::delete_entity_index_rows;
-pub(super) use self::put_staging::{
-    stage_edge_rows, stage_entity_body_row, stage_entity_index_rows,
-};
+pub(crate) use self::put_staging::{delete_entity_index_rows, stage_entity_index_rows};
+pub(super) use self::put_staging::{stage_edge_rows, stage_entity_body_row};
 
 /// The final `BatchOp::Put` this batch stages for one entity: where it lands
 /// in op order, its type byte, and — for a TASK only — the body its role is

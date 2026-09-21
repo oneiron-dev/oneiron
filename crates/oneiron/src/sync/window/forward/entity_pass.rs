@@ -5,7 +5,6 @@ use std::collections::{HashMap, HashSet};
 use loro::CommitOptions;
 
 use super::super::bridge::{self, BRIDGE_ORIGIN};
-use super::super::diagnostic_ingest;
 use super::super::egress::push_terminal_quarantine_marker;
 use super::super::loro_support::{map_delete, map_for_each_value_bytes, tombstone_map_contains_id};
 use super::super::quarantine::{self, QuarantineContainer};
@@ -300,15 +299,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // validation (unknown type bytes, ungrammatical predicates, and
             // malformed CLAIM bodies all still fail typed).
             let result = if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
-                vault.with_write_txn(|wtxn| {
-                    diagnostic_ingest::ingest_diagnostic_in_txn(
-                        vault,
-                        wtxn,
-                        &id,
-                        blob,
-                        lease_vault_id,
-                    )
-                })
+                // Replay may not revive a remote detector's local observations.
+                Ok(false)
             } else if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
                 #[cfg(any(test, feature = "test-hooks"))]
                 if let Err(err) = test_hooks::run_receipt_revocation_race(vault) {

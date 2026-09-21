@@ -38,6 +38,12 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    if let Some(bounds) = resolution.diagnostic_bounds {
+        hash_str(hasher, "diagnostic_bounds");
+        hash_u64(hasher, bounds.window_secs);
+        hash_u64(hasher, bounds.consent_depth);
+        hash_u64(hasher, bounds.actor_writes);
+    }
 
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {

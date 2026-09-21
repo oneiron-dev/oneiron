@@ -5,6 +5,8 @@
 //! artifacts are moved into a deterministic quarantine path next to the source
 //! artifact so the original bytes remain available for later inspection.
 
+pub mod checkpoint;
+
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};

@@ -55,7 +55,7 @@ pub(crate) use self::ops_pipeline::{
     BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode,
 };
 pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
-pub(crate) use self::put_apply::delete_entity_index_rows;
+pub(crate) use self::put_apply::{delete_entity_index_rows, stage_entity_index_rows};
 pub(crate) use self::short_id::{encode_short_id_forward_key, parse_short_id_value};
 pub(crate) use self::types::{
     ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
@@ -80,7 +80,7 @@ use self::deindex::*;
 use self::edge_apply::*;
 use self::lexical_query_hints::*;
 use self::ops_pipeline::*;
-use self::phonetic_apply::*;
+pub(crate) use self::phonetic_apply::apply_phonetic;
 use self::put_apply::*;
 use self::short_id::*;
 use self::thread_claim_index::*;

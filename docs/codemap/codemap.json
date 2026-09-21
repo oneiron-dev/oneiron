@@ -932,7 +932,7 @@
      "path": "src/attempt_queue/encoding.rs",
      "purpose": "Storage key derivation and LMDB row encode/decode for the attempt queue",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -2097,7 +2097,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 1,
       "re-export": 2
      }
@@ -6318,7 +6318,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 3,
-      "fn": 20,
+      "fn": 21,
       "struct": 2
      }
     },
@@ -8646,7 +8646,7 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 1,
       "re-export": 8
      }
@@ -8753,7 +8753,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "struct": 1
      }
     },
@@ -10077,19 +10077,19 @@
      "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/counterparty_contact/storage.rs",
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 2
      }
     },
@@ -13469,6 +13469,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DerivationKey",
+      "DerivationKind",
+      "DerivationOwner",
+      "DerivationScope",
+      "HostedDerivationCache",
+      "SealedOutput"
+     ],
+     "path": "src/federation/derivation.rs",
+     "purpose": "Account-sealed hosted derivations",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 12,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -13510,6 +13530,7 @@
      "purpose": "Federation grant record substrate",
      "surface": {
       "crate-vis": 5,
+      "mod": 1,
       "re-export": 7
      }
     },
@@ -19310,7 +19331,7 @@
      "path": "src/outbound_grant/index.rs",
      "purpose": "Principal index maintenance and lookup",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -19331,7 +19352,7 @@
      "path": "src/outbound_grant/mod.rs",
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 4
      }
     },
@@ -21126,7 +21147,56 @@
       "const": 3,
       "enum": 2,
       "fn": 7,
+      "mod": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RestoreEpoch",
+      "RestoreReason",
+      "RestoreReport"
+     ],
+     "path": "src/recovery/checkpoint/mod.rs",
+     "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/rebuild.rs",
+     "purpose": "Rebuild mechanical projections and reset leased attempt ownership",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StorageTier"
+     ],
+     "path": "src/recovery/checkpoint/tiers.rs",
+     "purpose": "Snapshot classification",
+     "surface": {
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -22165,6 +22235,35 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HealerDeployment",
+      "HealerProposalRecord",
+      "HealerRegistration",
+      "HealerRunReceipt",
+      "PatchPullRequest",
+      "ProposalBurstCheck",
+      "ProposalState"
+     ],
+     "path": "src/self_heal/healer_host.rs",
+     "purpose": "External healer capability, durable propose receipts, and human-only PR release",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 10,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/self_heal/healer_host_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -22182,6 +22281,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
       "crate-vis": 3,
+      "mod": 3,
       "re-export": 6
      }
     },
@@ -22192,6 +22292,16 @@
      "path": "src/self_heal/production_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/receipt_serde.rs",
+     "purpose": "Strict serde adapters for ids and provenance in local healer receipts",
+     "surface": {
+      "crate-vis": 12
+     }
     },
     {
      "bucket": "s",
@@ -22250,6 +22360,29 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SignedDetectorRun"
+     ],
+     "path": "src/self_heal/scheduled.rs",
+     "purpose": "Signed host-scheduled T1 runs",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/test_support.rs",
+     "purpose": "Shared policy fixtures; never a production policy installation door",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -22264,6 +22397,31 @@
      "path": "src/self_heal/text_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/self_heal/tripwire_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConsentStormDetector",
+      "DreamerRunFacts",
+      "PredicateDriftDetector",
+      "TripwireBounds"
+     ],
+     "path": "src/self_heal/tripwires.rs",
+     "purpose": "Closed-form T1 projections",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 7,
+      "struct": 5
+     }
     },
     {
      "bucket": "s",
@@ -23507,7 +23665,7 @@
      "path": "src/store/commitment_due.rs",
      "purpose": "The commitment due index (CMT-2, ONE-1539)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -23736,7 +23894,7 @@
      "path": "src/store/pending_embedding.rs",
      "purpose": "Pending-embedding marker rows gating vector writes: encode/decode, mark/clear, and token checks",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -23746,7 +23904,7 @@
      "path": "src/store/pending_gate_consent/indexes.rs",
      "purpose": "Run/group/hash index sidecars, group-alias refresh, and the critical-confirm confirm-id sidecar",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -24280,11 +24438,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/sync/bridge/diagnostic_tests.rs",
-     "purpose": "—",
+     "purpose": "Account-local diagnostic isolation at both replay paths and outbound packing",
      "surface": {}
     },
     {
@@ -24525,16 +24683,6 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/sync/diagnostic_ingest.rs",
-     "purpose": "Validate diagnostic replay before its echo check or quota debit",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -24581,7 +24729,7 @@
       "const": 7,
       "crate-vis": 3,
       "enum": 1,
-      "fn": 15,
+      "fn": 16,
       "mod": 1,
       "struct": 2
      }
@@ -24837,7 +24985,7 @@
      "purpose": "Per-connection federation quota and maintenance ingest quota decisions",
      "surface": {
       "const": 4,
-      "crate-vis": 9,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 7,
       "struct": 5
@@ -25026,11 +25174,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/admission.rs",
+     "purpose": "Full-window UPDATE locality admission without live document side effects",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/egress.rs",
-     "purpose": "Window egress: packing policy, secret scrub, exports, and mirror replay",
+     "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
      "surface": {
       "crate-vis": 5,
       "fn": 4
@@ -25088,7 +25246,7 @@
       "crate-vis": 8,
       "fn": 6,
       "mod": 1,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 1
      }
     },
@@ -26136,7 +26294,7 @@
      "path": "src/vault/transactions.rs",
      "purpose": "Vault maintenance, learned-at range scans, transaction helpers and sync state",
      "surface": {
-      "fn": 17
+      "fn": 18
      }
     },
     {
@@ -28378,7 +28536,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -28707,8 +28865,8 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 2,
-     "impl_vault": false,
+     "files": 6,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Canonical recovery artifact loader shell"
@@ -28798,7 +28956,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 17,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -29066,8 +29224,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1681,
-   "test_files": 581
+   "source_files": 1690,
+   "test_files": 584
   },
   "oneiron-bench": {
    "files": [
@@ -32214,7 +32372,7 @@
      "path": "src/api/booking.rs",
      "purpose": "ONE-1819 [BK-08] the agent-readable booking surface",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -32532,13 +32690,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/consumer_usage.rs",
-     "purpose": "—",
+     "purpose": "Per-vault usage facts",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 4
      }
     },
     {
@@ -32930,7 +33088,7 @@
      "path": "src/api/lease.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 7
      }
     },
     {
@@ -33254,11 +33412,11 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/billing_usage.rs",
-     "purpose": "Usage-event runtime debit boundaries, consumer top-up idempotency/validation, usage allowance + breakdowns",
+     "purpose": "Provider money facts, runtime metering boundaries, and removed wallet routes",
      "surface": {}
     },
     {
@@ -33390,7 +33548,7 @@
      "path": "src/api/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 64
+      "crate-vis": 60
      }
     },
     {
@@ -34208,6 +34366,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/isolation.rs",
+     "purpose": "Fail-closed Linux fscrypt and root-owned UID allocation probes",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -34275,6 +34443,7 @@
      "purpose": "Managed vault open gates: credentials, the canary marker, and the DEK MAC",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -34712,6 +34881,25 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GpuDerivationLease",
+      "GpuHealth",
+      "GpuLease",
+      "GpuRegistry",
+      "GpuRegistryError"
+     ],
+     "path": "src/runtime/gpu.rs",
+     "purpose": "Per-region single-writer GPU registry, suitable for a Durable Object owner",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 12,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -34719,7 +34907,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -34793,13 +34981,31 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/lease_rotation.rs",
+     "purpose": "Owner-authorized atomic rekey: revoke the old binding and grant a fresh one",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/server/lease_scope_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/leases.rs",
      "purpose": "Device-lease registry: reads, registration, revocation, and commit/mirror",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -34819,7 +35025,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 1
      }
     },
@@ -34830,6 +35036,16 @@
      "path": "src/server/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/vault_binding.rs",
+     "purpose": "Hosted API and socket binding to one local vault and one registered device key",
+     "surface": {
+      "crate-vis": 4
+     }
     },
     {
      "bucket": "s",
@@ -34863,33 +35079,12 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "ConsumerAllowanceState",
-      "ConsumerAllowanceWarning",
-      "ConsumerAllowanceWarningLevel",
-      "ConsumerTopUp",
-      "ConsumerTopUpRequest",
-      "ConsumerTopUpState",
-      "ConsumerUsageDetails",
-      "ConsumerUsageState"
-     ],
-     "path": "src/usage/allowance.rs",
-     "purpose": "Consumer allowance states, warning levels, and top-up request types",
-     "surface": {
-      "crate-vis": 7,
-      "enum": 1,
-      "struct": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
       "UsageError"
      ],
      "path": "src/usage/codec.rs",
-     "purpose": "Msgpack codec for ledger records and usage error mapping",
+     "purpose": "Msgpack codec for durable meter facts",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 1
      }
@@ -34899,23 +35094,37 @@
      "kind": "src",
      "notable": [],
      "path": "src/usage/keys.rs",
-     "purpose": "Storage key builders, key length guards, and field validators",
+     "purpose": "Owner/vault keys and validation for the durable meter queue",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 9
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "UsageLedger"
      ],
      "path": "src/usage/ledger.rs",
-     "purpose": "Usage ledger: event recording, rollups, consumer usage reads, and top-ups",
+     "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
-      "crate-vis": 3,
-      "fn": 7,
+      "crate-vis": 1,
+      "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CachedBudgetLimit",
+      "ExchangeRate"
+     ],
+     "path": "src/usage/limit.rs",
+     "purpose": "A host-pushed limit converts once",
+     "surface": {
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -34923,50 +35132,37 @@
      "kind": "src",
      "notable": [],
      "path": "src/usage/mod.rs",
-     "purpose": "—",
+     "purpose": "Provider-list metering and host-pushed vault budget limits",
      "surface": {
       "re-export": 4
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "UsageCost",
+      "Money",
       "UsageCostInput",
       "UsageCostRates",
       "UsageCounter",
-      "UsageDebit",
       "UsageEvent",
       "UsageEventType",
       "UsageMode",
       "UsageRecordResult",
       "UsageRollup",
-      "UsageServiceCost",
       "UsageTokenCounts"
      ],
      "path": "src/usage/model.rs",
-     "purpose": "Usage domain model: modes, events, costs, rollups, counters, and money helpers",
+     "purpose": "Provider-list money facts and per-vault usage counters",
      "surface": {
-      "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 3,
       "enum": 2,
-      "fn": 7,
-      "struct": 10
+      "fn": 6,
+      "struct": 8
      }
     },
     {
      "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/usage/telemetry.rs",
-     "purpose": "Usage telemetry events and per-token-type spans",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/usage/tests.rs",
@@ -35040,6 +35236,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/voice_host/tests/wire.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gpu_distribution.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -35218,7 +35422,7 @@
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
     "managed": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35253,14 +35457,14 @@
      "purpose": "Custom Oneiron sync protocol — server-side extensions"
     },
     "runtime": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
     "server": {
-     "files": 8,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35274,11 +35478,11 @@
      "purpose": "—"
     },
     "usage": {
-     "files": 8,
+     "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
-     "purpose": "—"
+     "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
      "files": 6,
@@ -35290,8 +35494,8 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 201,
-   "test_files": 76
+   "source_files": 204,
+   "test_files": 78
   },
   "oneiron-uniffi": {
    "files": [

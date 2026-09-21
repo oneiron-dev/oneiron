@@ -80,23 +80,7 @@ pub(crate) async fn lease_revoke(
 ) -> Result<Json<LeaseRevokeResponse>, ApiError> {
     check_api_auth(&headers, &server)?;
 
-    if req.client_id.len() != 16
-        || !req
-            .client_id
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return Err(ApiError::bad_request(
-            "client_id must be exactly 16 lowercase hex characters",
-            Some("client_id"),
-        ));
-    }
-    let client_id = u64::from_str_radix(&req.client_id, 16).map_err(|_| {
-        ApiError::bad_request(
-            "client_id must be exactly 16 lowercase hex characters",
-            Some("client_id"),
-        )
-    })?;
+    let client_id = parse_client_id(&req.client_id, "client_id")?;
 
     match server.revoke_lease(client_id).await {
         Ok(Some(update)) => {
@@ -110,4 +94,103 @@ pub(crate) async fn lease_revoke(
             Err(ApiError::internal_server_error("lease revoke failed"))
         }
     }
+}
+
+/// Fresh-key proof for initial registration or owner-authorized rotation.
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct LeaseRegisterRequest {
+    /// Opaque device binding, encoded as 16 lowercase hex characters.
+    #[schema(example = "fedcba9876543211")]
+    client_id: String,
+    pubkey: String,
+    proof: String,
+    /// Previous device binding to revoke during rotation, in the same hex form.
+    #[schema(example = "fedcba9876543210")]
+    old_client_id: Option<String>,
+}
+#[derive(Serialize, ToSchema)]
+pub(crate) struct LeaseRegisterResponse {
+    /// Opaque vault scope, lossless in JavaScript and ready for x-oneiron-vault.
+    vault_id: String,
+    granted: bool,
+    expires_at: u64,
+}
+#[utoipa::path(post, path = "/api/lease/register", request_body = LeaseRegisterRequest,
+    responses((status = 200, body = LeaseRegisterResponse), (status = 401, body = ApiError)))]
+pub(crate) async fn lease_register(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    Json(req): Json<LeaseRegisterRequest>,
+) -> Result<Json<LeaseRegisterResponse>, ApiError> {
+    lease_intake(&headers, &server, req, false).await
+}
+#[utoipa::path(post, path = "/api/lease/rotate", request_body = LeaseRegisterRequest,
+    responses((status = 200, body = LeaseRegisterResponse), (status = 401, body = ApiError)))]
+pub(crate) async fn lease_rotate(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    Json(req): Json<LeaseRegisterRequest>,
+) -> Result<Json<LeaseRegisterResponse>, ApiError> {
+    lease_intake(&headers, &server, req, true).await
+}
+async fn lease_intake(
+    headers: &HeaderMap,
+    server: &SyncServer,
+    req: LeaseRegisterRequest,
+    rotate: bool,
+) -> Result<Json<LeaseRegisterResponse>, ApiError> {
+    // Owner recovery is independent of the old device's lease (which may be lost).
+    check_api_auth(headers, server)?;
+    let client_id = parse_client_id(&req.client_id, "client_id")?;
+    let key =
+        crate::server::vault_binding::decode_hex(&req.pubkey).ok_or_else(ApiError::unauthorized)?;
+    let proof =
+        crate::server::vault_binding::decode_hex(&req.proof).ok_or_else(ApiError::unauthorized)?;
+    let decision = if rotate {
+        server
+            .rotate_lease(
+                parse_client_id(
+                    req.old_client_id
+                        .as_deref()
+                        .ok_or_else(ApiError::unauthorized)?,
+                    "old_client_id",
+                )?,
+                client_id,
+                &key,
+                &proof,
+            )
+            .await
+    } else {
+        server.register_lease(client_id, &key, &proof).await
+    }
+    .map_err(|_| ApiError::internal_server_error("lease registration failed"))?;
+    if let Some(update) = decision.root_update {
+        let _ = crate::broadcast::broadcast(
+            &server.broadcast_tx,
+            0,
+            crate::protocol::encode_root_update(&update),
+        );
+    }
+    Ok(Json(LeaseRegisterResponse {
+        vault_id: format!("{:016x}", server.config.lease_vault_id),
+        granted: decision.granted,
+        expires_at: decision.expires_at,
+    }))
+}
+
+fn parse_client_id(value: &str, field: &'static str) -> Result<u64, ApiError> {
+    let invalid = || {
+        ApiError::bad_request(
+            "client id must be exactly 16 lowercase hex characters",
+            Some(field),
+        )
+    };
+    if value.len() != 16
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(invalid());
+    }
+    u64::from_str_radix(value, 16).map_err(|_| invalid())
 }

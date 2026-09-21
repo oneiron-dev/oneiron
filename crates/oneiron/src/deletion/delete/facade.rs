@@ -14,7 +14,7 @@ use super::super::gate::{
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::rendezvous::{
-    DeleteRendezvous, maybe_fail_after_tombstone_before_purge, signal_after_header_read,
+    DeleteRendezvous, maybe_fail_after_tombstone_before_purge, signal_after_delete_probe,
     signal_delete_rendezvous,
 };
 use super::super::tombstone::{
@@ -87,7 +87,7 @@ impl Vault {
         // raced-delete harness recv()s here so the eraser commits AFTER this
         // header read, forcing the headerful leg every run. No-op in
         // production.
-        signal_after_header_read(self);
+        signal_after_delete_probe(self);
         // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
         // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
         // ONE-1149: minted only AFTER the header read proves there is

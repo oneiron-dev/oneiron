@@ -381,47 +381,20 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "enqueue goodbye artifact"
 - safety: Mutating teardown endpoint. Requires companion register write auth and an idempotency key for retries; skips the goodbye-artifact hook when the request marks the ending as bad.
 
-#### consumer-usage - `GET /v1/consumer/usage`
-
-- when-to-use: Read consumer usage counters, credited allowance, remaining balance, and explicit allowance warning state for a tenant or tenant/vault scope.
-- trigger phrases:
-  - "show consumer usage"
-  - "check allowance balance"
-  - "read allowance warning"
-- safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
-
-#### consumer-usage-details - `GET /v1/consumer/usage/details`
-
-- when-to-use: Read consumer usage details with agent, model, and service breakdowns alongside the same allowance and warning state.
-- trigger phrases:
-  - "show detailed consumer usage"
-  - "break down consumer usage"
-  - "inspect usage by service"
-- safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
-
-#### consumer-top-up - `POST /v1/consumer/top-up`
-
-- when-to-use: Credit a tenant allowance without payment-processor integration, replaying by top-up idempotency key on retries.
-- trigger phrases:
-  - "top up allowance"
-  - "add consumer credits"
-  - "credit tenant usage allowance"
-- safety: Mutating. Requires auth. The request body idempotency key records each tenant top-up once; no external payment processor is called.
-
 #### usage-event - `POST /v1/usage/events`
 
-- when-to-use: Submit tenant usage telemetry for cost and credit-unit calculation. Local and BYO sources return a no-debit response; Oneiron Cloud mode records each idempotency key once.
+- when-to-use: Submit per-owner, per-vault meter facts stamped with provider-list money, currency, and price-table snapshot. Local and BYO routes return an unrecorded response; hosted mode records each idempotency key once.
 - trigger phrases:
   - "record usage telemetry"
-  - "calculate credit units"
-  - "submit tenant usage event"
-- safety: Mutating only in Oneiron Cloud debit mode. Requires auth. Include an event idempotency key when retrying after transport failure.
+  - "record provider list cost"
+  - "submit vault usage event"
+- safety: Mutating only in hosted metered mode. Requires auth. Include an event idempotency key when retrying after transport failure. An existing key cannot be reused with changed facts.
 
-#### usage-rollup - `GET /v1/usage/tenants/{tenant_id}/rollup`
+#### usage-rollup - `GET /v1/usage/owners/{owner}/vaults/{vault_id}/rollup`
 
-- when-to-use: Read tenant-wide usage totals, or pass a vault id query parameter to read one tenant/vault rollup with agent, model, and service breakdowns.
+- when-to-use: Read one vault's usage totals, grouped by provider currency, with agent, model, and service breakdowns. There is no owner-wide aggregate or wallet route.
 - trigger phrases:
-  - "show tenant usage"
+  - "show vault usage"
   - "read vault usage rollup"
   - "break down usage by model"
 - safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.

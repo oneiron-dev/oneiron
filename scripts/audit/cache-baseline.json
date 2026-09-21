@@ -1,0 +1,15 @@
+{
+  "tool": "sccache 0.15.0",
+  "package": "oneiron-server",
+  "cargo_jobs": 2,
+  "seconds": {
+    "uncached": 111.42641366715543,
+    "populate": 123.8803152909968,
+    "cached": 46.94332666718401
+  },
+  "rust_cache_hits": 537,
+  "method": "one frozen source snapshot and target path; artifact directory empty before each lane; isolated compiler cache",
+  "host": "macOS arm64, MacBook",
+  "source_revision": "3a7c8b47",
+  "purpose": "cold-artifact cache proof; not a comparison with a no-op warm target"
+}

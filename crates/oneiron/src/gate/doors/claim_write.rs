@@ -398,6 +398,14 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             redacted_at: None,
         };
 
+        if input.actor.actor_class == "agent"
+            && policy.criticality_for_predicate(&body.predicate)
+                == crate::gate::PolicyCriticality::Normal
+        {
+            decision_record.receipt_reasons.push(
+                crate::self_heal::tripwires::normal_baseline_token(&body.predicate),
+            );
+        }
         if mode.record_decision {
             if attach_critical_confirm {
                 store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;

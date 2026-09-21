@@ -99,3 +99,4 @@ pub use slate::{
     ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateOwnerOverride,
     SlateRow, SlateToolManifest, draft_connector_slate,
 };
+pub(crate) use self::txn::rebuild_checkpoint_connector_index;

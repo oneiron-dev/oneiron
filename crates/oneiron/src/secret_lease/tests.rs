@@ -27,8 +27,8 @@ const VALUE_V2: &[u8] = b"wave5-lease-test-value-v2";
 const EFFECTOR: &str = "connector:test";
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
-    // macOS exposes its temp root through /var. The fixture must start on a
-    // real path so the T2 door can still reject symlinks introduced by tests.
+    // Resolve the OS temp root (macOS /var is a symlink), not the declared
+    // targets: tests deliberately plant symlinks here to exercise no-follow.
     let temp_root = std::env::temp_dir().canonicalize().expect("real temp root");
     let tmp = tempfile::tempdir_in(temp_root).expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");

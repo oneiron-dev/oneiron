@@ -587,10 +587,9 @@ pub(super) fn assert_no_erasure_audit_artifacts(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
-/// Orders a headerful deleter's read before the eraser commits. The staged
-/// erasure remains invisible to the read probe until the vault-local hook
-/// signals; the held write transaction then commits before deletion continues.
-/// Only valid for headerful deletes, which reach the post-header-read hook.
+/// Orders the deleter's positive header/scope probe before the eraser commits.
+/// The staged erasure stays invisible to the lock-free read under LMDB MVCC.
+/// Both headerful and headerless deletes signal before taking any write lock.
 pub(super) fn run_raced_delete_rendezvous<F>(
     vault: &Vault,
     id: &EntityId,
@@ -600,15 +599,17 @@ pub(super) fn run_raced_delete_rendezvous<F>(
 where
     F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
 {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
     std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
         let mut wtxn = vault.store.env.write_txn()?;
+        // Stage the erase, but keep the old scope visible to the deleter's read.
         erase_scope(&mut wtxn)?;
-        let (tx, rx) = std::sync::mpsc::sync_channel(0);
-        vault.test_hooks().install_after_header_read_signal(tx);
+        vault.test_hooks().install_after_delete_probe_signal(tx);
         let deleter = scope.spawn(|| vault.delete_entity_with_reason(id, reason));
-        // The signal fires before the deleter needs the write lock held here.
-        rx.recv_timeout(std::time::Duration::from_secs(30))
-            .expect("deleter must signal after the header read");
+        // The deleter cannot request a write lock until it signals. Once this
+        // read is complete, release the held lock with the scope already gone.
+        rx.recv()
+            .expect("deleter must signal after its scope probe");
         wtxn.commit()?;
         deleter.join().expect("deleter thread must not panic")
     })

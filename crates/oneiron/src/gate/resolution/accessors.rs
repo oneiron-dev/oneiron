@@ -73,7 +73,7 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
-    pub(in crate::gate) fn criticality_for_predicate(&self, predicate: &str) -> PolicyCriticality {
+    pub(crate) fn criticality_for_predicate(&self, predicate: &str) -> PolicyCriticality {
         if self.is_fail_closed() {
             return PolicyCriticality::Critical;
         }

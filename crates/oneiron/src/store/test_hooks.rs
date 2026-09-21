@@ -41,9 +41,9 @@ pub(crate) struct TestHooks {
     /// The one-shot delete rendezvous: the step and target entity a delete must
     /// park at, and the two `sync_channel(0)` halves that park it.
     delete_rendezvous: Mutex<Option<DeleteRendezvousChannels>>,
-    /// The one-shot sender fired once a headerful delete has proven its header
-    /// `Some` and before it takes any write lock.
-    after_header_read: Mutex<Option<SyncSender<()>>>,
+    /// The one-shot sender fired once a delete proves a header or orphan scope
+    /// exists, before it takes any write lock.
+    after_delete_probe: Mutex<Option<SyncSender<()>>>,
     /// The staged-foreign-import seams; see [`StagedImportHooks`].
     #[cfg(feature = "sync")]
     pub(crate) staged_import: StagedImportHooks,
@@ -98,29 +98,29 @@ impl TestHooks {
     }
 
     /// Installs the one-shot rendezvous sender consumed by
-    /// [`Self::signal_after_header_read`]. The raced-delete harness arms the
+    /// [`Self::signal_after_delete_probe`]. The raced-delete harness arms the
     /// vault it is about to delete from; the matching receiver `recv()`s on the
     /// eraser side just before its commit.
-    pub(crate) fn install_after_header_read_signal(&self, tx: SyncSender<()>) {
+    pub(crate) fn install_after_delete_probe_signal(&self, tx: SyncSender<()>) {
         *self
-            .after_header_read
+            .after_delete_probe
             .lock()
-            .expect("after-header-read slot poisoned") = Some(tx);
+            .expect("after-delete-probe slot poisoned") = Some(tx);
     }
 
     /// Fires the rendezvous signal exactly once if this vault has a sender
-    /// armed, then clears it so a later headerful delete never blocks on a
+    /// armed, then clears it so a later delete never blocks on a
     /// stale rendezvous. A no-op on every vault that armed nothing.
-    pub(crate) fn signal_after_header_read(&self) {
+    pub(crate) fn signal_after_delete_probe(&self) {
         let sender = self
-            .after_header_read
+            .after_delete_probe
             .lock()
-            .expect("after-header-read slot poisoned")
+            .expect("after-delete-probe slot poisoned")
             .take();
         if let Some(sender) = sender {
             // The rendezvous (`sync_channel(0)`) blocks here until the eraser
             // `recv()`s; that recv is positioned immediately before its commit,
-            // so the deleter's header read is provably ordered before the erase.
+            // so the deleter's scope probe is provably ordered before the erase.
             let _ = sender.send(());
         }
     }

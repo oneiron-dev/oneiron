@@ -55,6 +55,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
+    pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -97,6 +98,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
+                | "diagnostic_bounds"
         ) {
             return None;
         }
@@ -213,6 +215,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
+    let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => {
+            Some(crate::self_heal::tripwires::TripwireBounds::decode(value)?)
+        }
+    };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -241,6 +250,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         comm_opt_out_posture,
         auto_checker,
         budget_policy,
+        diagnostic_bounds,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

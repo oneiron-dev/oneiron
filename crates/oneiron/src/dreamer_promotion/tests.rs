@@ -1240,7 +1240,15 @@ fn assert_checker_rejection_receipt(
     let record = records.pop().expect("rejection receipt");
     assert_eq!(record.outcome, "pending");
     assert_eq!(record.reason_codes, [reason]);
-    assert_eq!(record.receipt_reasons, receipt_reasons);
+    // Tripwire baseline observations share this receipt but do not describe
+    // checker rejection. Keep the checker contract exact within its namespace.
+    let checker_reasons: Vec<_> = record
+        .receipt_reasons
+        .iter()
+        .filter(|reason| !reason.starts_with("tripwire_normal_"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(checker_reasons, receipt_reasons);
     assert_eq!(record.actor_class, "agent");
     assert!(vault.get_claim(claim_id)?.is_none());
     assert!(vault.pending_gate_consents(10)?.is_empty());

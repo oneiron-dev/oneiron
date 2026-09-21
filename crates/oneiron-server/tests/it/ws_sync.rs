@@ -2330,3 +2330,83 @@ async fn sync_connection_sends_auth_token_on_upgrade() {
 
     handle.abort();
 }
+
+#[tokio::test]
+async fn diagnostic_update_is_refused_before_live_state_persistence_and_relay() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let (addr, _server, handle) =
+        spawn_server(vault.clone(), config_with_secret(Some("diagnostic-secret"))).await;
+    let mut sender = connect(addr, Some("diagnostic-secret")).await.unwrap();
+    let mut receiver = connect(addr, Some("diagnostic-secret")).await.unwrap();
+    let _ = next_binary(&mut sender).await;
+    let _ = next_binary(&mut receiver).await;
+
+    let author = LoroDoc::new();
+    author
+        .get_map("entities")
+        .insert("ordinary", b"previously accepted".as_slice())
+        .unwrap();
+    author.commit();
+    let ordinary = author.export(ExportMode::all_updates()).unwrap();
+    let frame = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &ordinary);
+    sender.send(Message::Binary(frame.into())).await.unwrap();
+    let relayed = next_binary(&mut receiver).await;
+    let (_, _, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
+    assert_eq!(payload, ordinary.as_slice());
+    let before = author.oplog_vv();
+
+    let diagnostic_key = seeded_entity(0x71).to_hex();
+    let marker = b"private-diagnostic-wire-observation";
+    // Craft a hostile wire record without using the sealed native writer.
+    let mut diagnostic_blob = vec![oneiron::registry::ENTITY_TYPE_DIAGNOSTIC];
+    for timestamp in [1_u64, 1, 1] {
+        diagnostic_blob.extend_from_slice(&timestamp.to_be_bytes());
+    }
+    diagnostic_blob.extend_from_slice(marker);
+    for key in [diagnostic_key.as_str(), "malformed-diagnostic-id"] {
+        author
+            .get_map("entities")
+            .insert(key, diagnostic_blob.as_slice())
+            .unwrap();
+    }
+    author
+        .get_map("entities")
+        .insert("mixed-new-row", b"must not be accepted".as_slice())
+        .unwrap();
+    author.commit();
+    let update = author.export(ExportMode::updates(&before)).unwrap();
+    let frame = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &update);
+    sender.send(Message::Binary(frame.into())).await.unwrap();
+    assert_ws_closes(&mut sender, "local-only diagnostic update must be refused").await;
+
+    // A later positive fetch is also a relay barrier: a wrongly broadcast
+    // original UPDATE would be ahead of the response in this connection.
+    let empty_vv = LoroDoc::new().oplog_vv().encode();
+    let fetch = transport::encode_window_sync("2026-02", window_sub_tags::VV_REQUEST, &empty_vv);
+    receiver.send(Message::Binary(fetch.into())).await.unwrap();
+    let reply = next_binary(&mut receiver).await;
+    assert_eq!(reply[0], TAG_WINDOW_SYNC);
+    let (key, tag, payload) = transport::decode_window_sync(&reply[1..]).unwrap();
+    assert_eq!((key, tag), ("2026-02", window_sub_tags::UPDATE));
+    assert!(!payload.windows(marker.len()).any(|bytes| bytes == marker));
+    let peer = LoroDoc::new();
+    peer.import(payload).unwrap();
+    assert!(deep_map_bytes(&peer, "entities", &diagnostic_key).is_none());
+    assert!(deep_map_bytes(&peer, "entities", "malformed-diagnostic-id").is_none());
+    assert!(deep_map_bytes(&peer, "entities", "mixed-new-row").is_none());
+    assert_eq!(
+        deep_map_bytes(&peer, "entities", "ordinary").unwrap(),
+        b"previously accepted"
+    );
+
+    let key = oneiron::sync::WindowKey::new("2026-02");
+    let restored = oneiron::sync::window::load_window_from_state(&vault, "server", &key).unwrap();
+    assert_eq!(
+        deep_map_bytes(&restored, "entities", "ordinary").unwrap(),
+        b"previously accepted"
+    );
+    assert!(deep_map_bytes(&restored, "entities", &diagnostic_key).is_none());
+    assert!(deep_map_bytes(&restored, "entities", "mixed-new-row").is_none());
+    handle.abort();
+}

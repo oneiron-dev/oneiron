@@ -157,6 +157,11 @@ pub(super) async fn handle_window_sync(
             let _ = direct_tx.send(response);
         }
         window_sub_tags::UPDATE => {
+            // Admission runs on an isolated document before Observer B or
+            // persistence can see the input. Rejected diagnostics must never
+            // be relayed as raw history, even if a later export would scrub.
+            oneiron::sync::window::validate_window_update_locality(&doc, payload)
+                .map_err(map_delta_export_err)?;
             // Client sending Loro update bytes — import with origin for echo suppression
             let origin = format!("conn:{conn_id}");
             doc.import_with(payload, &origin)

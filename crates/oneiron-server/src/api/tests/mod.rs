@@ -313,16 +313,6 @@ pub(super) fn assert_default_policy_manifest_fixture(vault: &oneiron::Vault) {
     );
 }
 
-pub(super) fn test_server_with_runtime_mode(
-    mode: crate::runtime::RuntimeMode,
-) -> (tempfile::TempDir, Arc<SyncServer>) {
-    test_server_with_config(SyncServerConfig {
-        allow_unauthenticated: true,
-        runtime: crate::runtime::RuntimeConfig::for_mode(mode),
-        ..Default::default()
-    })
-}
-
 pub(super) fn seeded_test_entity_id(counter: u128) -> oneiron::EntityId {
     let mut bytes = counter.to_be_bytes();
     bytes[0] = 0x7e;
@@ -708,59 +698,6 @@ pub(super) fn attempt_id_hex(id: oneiron::AttemptId) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
-}
-
-pub(super) async fn top_up_route(
-    server: Arc<SyncServer>,
-    idempotency_key: &str,
-    credit_units: f64,
-) -> (StatusCode, Value) {
-    route_json(
-        server,
-        json_request(
-            "POST",
-            "/v1/consumer/top-up",
-            json!({
-                "tenantId": "tenant-a",
-                "idempotencyKey": idempotency_key,
-                "creditUnits": credit_units,
-            }),
-        ),
-    )
-    .await
-}
-
-pub(super) async fn record_usage_event_route(
-    server: Arc<SyncServer>,
-    idempotency_key: &str,
-    service_cost_usd: f64,
-) -> (StatusCode, Value) {
-    record_usage_event_for_vault_route(server, idempotency_key, "vault-a", service_cost_usd).await
-}
-
-pub(super) async fn record_usage_event_for_vault_route(
-    server: Arc<SyncServer>,
-    idempotency_key: &str,
-    vault_id: &str,
-    service_cost_usd: f64,
-) -> (StatusCode, Value) {
-    route_json(
-        server,
-        json_request(
-            "POST",
-            "/v1/usage/events",
-            json!({
-                "tenantId": "tenant-a",
-                "vaultId": vault_id,
-                "idempotencyKey": idempotency_key,
-                "agentId": "agent-a",
-                "model": "model-a",
-                "service": "inference",
-                "serviceCostUsd": service_cost_usd,
-            }),
-        ),
-    )
-    .await
 }
 
 /// Seeds one witnessed TURN + MESSAGE pair for the VAD annotation fixtures.

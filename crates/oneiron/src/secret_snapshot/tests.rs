@@ -189,7 +189,7 @@ fn absolute_t2_registration_excludes_relative_snapshot_entry_after_recovery() ->
     // Supply a real path without weakening the T2 symlink refusal policy.
     let temp_dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?;
     let vault = crate::Vault::open(temp_dir.path(), crate::config::VaultConfig::default())?;
-    // Resolve the owned temp root, not the intentionally guarded secret path.
+    // T2 refuses symlinked ancestors; TMPDIR itself may use an OS symlink.
     let target_path = temp_dir.path().canonicalize()?.join(".secrets/api.key");
     std::fs::create_dir_all(target_path.parent().expect("target parent"))?;
     let content = b"t2-registered-secret-fixture".to_vec();
