@@ -157,6 +157,7 @@ fn context_pack_response_limits_scrub_stats_after_scoped_truncation() {
     let neighbor = seeded_test_entity_id(0x0012_6504);
     let entity = |id: oneiron::EntityId, entity_type: u8| oneiron::ContextEntity {
         source_revision_ref: None,
+        critical: false,
         id,
         short_id: id.to_hex(),
         content_hash: 0,

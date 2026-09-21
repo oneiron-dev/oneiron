@@ -12,7 +12,7 @@ use crate::authority::{
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::secret_custody::CustodyTier;
-use crate::unix_seconds_now;
+
 use crate::vault::Vault;
 
 /// The `vault_meta` key prefix for secret-lease rows
@@ -118,7 +118,7 @@ impl Vault {
         Ok(VaultInstant(authority_observation_secs(
             &self.store,
             persisted_floor,
-            unix_seconds_now(),
+            self.store.clock.now_recorded_at(),
         )))
     }
 }

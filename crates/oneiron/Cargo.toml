@@ -75,7 +75,9 @@ zstd = { version = "0.13", optional = true }
 tracing = { version = "0.1" }
 whichlang = "0.1.1"
 rust-stemmers = "1.2.0"
-sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", tag = "v0.6.11" }
+# Direct path keeps generated compile-test workspaces and consumers on the same
+# audited Android-capable snapshot, without relying on an outer workspace patch.
+sudachi = { version = "0.6.11", path = "vendor/sudachi-0.6.11/sudachi" }
 jieba-rs = { version = "0.9", default-features = false }
 lindera = { version = "3.0", default-features = false }
 kamadak-exif = "0.5"

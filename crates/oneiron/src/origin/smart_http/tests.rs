@@ -11,7 +11,8 @@ use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
 
 pub(super) fn fixture_intent(vault: &Vault, root: &Path, updates: Vec<RefUpdate>) -> EntityId {
-    let stamp = DoorAdmissionStamp::from_principal(&EntityId::now().to_hex(), now_secs());
+    let stamp =
+        DoorAdmissionStamp::from_principal(EntityId::now(), &EntityId::now().to_hex(), now_secs());
     vault
         .record_receive_pack_admission(root, &stamp, DoorSeam::Landed)
         .expect("admission");
@@ -33,7 +34,8 @@ pub(super) fn fixture_attribution(
     vault: &Vault,
     outcome: &ReceivePackOutcome,
 ) -> ReceivePackAttribution {
-    let stamp = DoorAdmissionStamp::from_principal(&EntityId::now().to_hex(), now_secs());
+    let stamp =
+        DoorAdmissionStamp::from_principal(EntityId::now(), &EntityId::now().to_hex(), now_secs());
     vault
         .record_receive_pack_admission(&outcome.repo_root, &stamp, DoorSeam::Landed)
         .expect("fixture admission evidence");

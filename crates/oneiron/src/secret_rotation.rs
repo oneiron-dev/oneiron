@@ -53,6 +53,7 @@
 //! ref and a generation. Neither has a value field to leak, and the
 //! grep-guard test asserts it of their `Debug` and their wire bodies.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
@@ -500,7 +501,7 @@ pub(crate) fn exhaust_taint_refs_in_txn(
         Some(raw) => decode_taint_refs_row(&raw)?,
         None => Vec::new(),
     };
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())?
+    if let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode())
         && let Some(header) = EntityMetadataHeader::parse(&raw)
         && header.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
     {
@@ -646,7 +647,7 @@ impl Vault {
         rec.value_bytes = new_value.to_vec();
 
         let receipt = RotationReceipt {
-            receipt_id: EntityId::now(),
+            receipt_id: self.store.clock.entity_id()?,
             secret_ref: rec.name.clone(),
             from_generation,
             to_generation,
@@ -715,7 +716,7 @@ impl Vault {
         }
 
         let receipt = RotationReceipt {
-            receipt_id: EntityId::now(),
+            receipt_id: self.store.clock.entity_id()?,
             secret_ref: rec.name.clone(),
             from_generation: generation,
             to_generation: generation,

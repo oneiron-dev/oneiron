@@ -11,6 +11,7 @@ use crate::batch::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::provenance::validate_actor_class;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
@@ -54,7 +55,7 @@ impl Vault {
         // Canonical consolidation opens its own writer only after durable
         // approval. Errors remain errors, without rolling back Approved.
         for claim_id in approved {
-            self.consolidate_claim_vad_now(&claim_id, crate::unix_seconds_now())?;
+            self.consolidate_claim_vad_now(&claim_id, self.store.clock.now_recorded_at())?;
         }
         Ok(())
     }
@@ -132,7 +133,7 @@ impl Vault {
         }];
 
         if let ClaimSubject::Entity(subject) = body.subject {
-            if self.store.entities.get(wtxn, subject.as_bytes())?.is_none() {
+            if self.store.port_entity_record(wtxn, &subject)?.is_none() {
                 return Err(Error::EntityNotFound);
             }
             ops.push(BatchOp::Edge {
@@ -356,8 +357,8 @@ impl Vault {
         let actor = envelope.actor();
         let actor_raw = self
             .store
-            .entities
-            .get(wtxn, actor.entity_ref().as_bytes())?
+            .port_entity_record(wtxn, &actor.entity_ref())?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let actor_header = EntityMetadataHeader::parse(&actor_raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;

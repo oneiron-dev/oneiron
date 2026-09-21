@@ -124,10 +124,12 @@ impl Memory<'_> {
                 context_refs.push(carried);
             }
         }
-        Ok(
-            ConsultPayload::question(question_ref, context_refs, EntityId::now())
-                .with_entity_delta(delta),
+        Ok(ConsultPayload::question(
+            question_ref,
+            context_refs,
+            self.vault().store.clock.entity_id()?,
         )
+        .with_entity_delta(delta))
     }
 }
 

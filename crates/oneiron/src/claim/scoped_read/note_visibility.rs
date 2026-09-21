@@ -20,10 +20,10 @@ impl ScopedRead<'_> {
         let bytes = resolved.as_slice();
         #[cfg(not(feature = "sync"))]
         let _ = id;
-        let Ok(body) = crate::note::decode_note_body(bytes) else {
+        let Ok(body) = crate::note::decode_note_body_in_txn(&self.vault.store, txn, bytes) else {
             return Ok(false);
         };
-        if body.kind != crate::note::NoteKind::Diary {
+        if crate::note::note_body_readable(&self.vault.store, txn, bytes, None)? {
             return Ok(true);
         }
         let Ok(actor) = EntityId::from_hex(self.actor_key.actor_ref()) else {

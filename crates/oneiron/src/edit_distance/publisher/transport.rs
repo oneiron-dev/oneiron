@@ -146,7 +146,7 @@ pub fn send_signatures_if_enabled(
         });
     }
     let party = publisher_party(vault)?;
-    let now = crate::unix_seconds_now();
+    let now = vault.store.clock.now_recorded_at();
     for id in sigs {
         record_comm_send_receipt(vault, PUBLISHER_PARTY_KEY, PUBLISHER_CHANNEL_CLASS, now)?;
         put_send_state(vault, *id, SignatureSendState::Sent)?;

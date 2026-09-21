@@ -15,7 +15,7 @@ pub(crate) fn document_birth_in_txn(
     if header.entity_type != crate::registry::ENTITY_TYPE_NOTE {
         return Ok(None);
     }
-    let body = super::decode_note_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+    let (_, body) = super::verbs::note_core(vault, txn, id)?;
     let class = if vault.get_entity_type_in_txn(txn, &body.author_ref)?
         == Some(crate::registry::ENTITY_TYPE_PERSON)
     {

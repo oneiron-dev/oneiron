@@ -110,7 +110,7 @@ pub(super) fn project_stage_transition(
         return Err(invalid("crm.stage transition requires evidence"));
     }
     let body = stage_claim_body(input, mode);
-    let new_id = EntityId::now();
+    let new_id = vault.store.clock.entity_id()?;
     let recorded_at = input.value.recorded_at;
     match mode {
         PromotionMode::Propose => {

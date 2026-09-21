@@ -31,6 +31,14 @@ pub enum RecordError {
     #[error("conversation actor is not authorized")]
     ConversationDenied,
 
+    #[error("DAG parent is outside the conversation")]
+    DagParentOutsideConversation,
+    #[error("cannot advance HEAD off the current trunk")]
+    HeadAdvanceOffTrunk,
+    #[error("invalid conversation DAG: {0}")]
+    InvalidConversationDag(&'static str),
+    #[error("invalid scope summary: {0}")]
+    InvalidScopeSummary(&'static str),
     /// AccessGrant creation attempted to reuse an existing entity id.
     #[error("access grant already exists")]
     AccessGrantAlreadyExists,
@@ -178,6 +186,15 @@ pub enum RecordError {
         id.to_hex()
     )]
     AuthorityLogStoreKeyMismatch { id: EntityId },
+    #[error("MESSAGE stream already active: {}", message.to_hex())]
+    StreamAlreadyActive { message: EntityId },
+    #[error("MESSAGE stream handle is not active: {}", message.to_hex())]
+    StreamNotActive { message: EntityId },
+    #[error("MESSAGE stream {resource} limit: {limit}")]
+    StreamLimit {
+        resource: &'static str,
+        limit: usize,
+    },
 }
 
 impl RecordError {
@@ -192,6 +209,13 @@ impl RecordError {
             Self::ConversationState(_) => ErrorKind::ConversationState,
             Self::ConversationDenied => ErrorKind::ConversationDenied,
             Self::MessageStreamRecoveryFailed(_) => ErrorKind::MessageStreamRecoveryFailed,
+            Self::DagParentOutsideConversation => ErrorKind::DagParentOutsideConversation,
+            Self::HeadAdvanceOffTrunk => ErrorKind::HeadAdvanceOffTrunk,
+            Self::InvalidConversationDag(_) => ErrorKind::InvalidConversationDag,
+            Self::InvalidScopeSummary(_) => ErrorKind::InvalidScopeSummary,
+            Self::StreamAlreadyActive { .. } => ErrorKind::StreamAlreadyActive,
+            Self::StreamNotActive { .. } => ErrorKind::StreamNotActive,
+            Self::StreamLimit { .. } => ErrorKind::StreamLimit,
             Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
             Self::OutboundGrantAlreadyExists => ErrorKind::OutboundGrantAlreadyExists,
             Self::ConnectorKeyAlreadyExists => ErrorKind::ConnectorKeyAlreadyExists,

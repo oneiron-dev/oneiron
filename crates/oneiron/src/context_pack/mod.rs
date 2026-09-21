@@ -12,6 +12,7 @@ mod l2_base;
 mod mcp_ref;
 mod psych_mirror;
 mod quarantine;
+pub mod source_ranking;
 mod telemetry;
 mod types;
 mod validation;

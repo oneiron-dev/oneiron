@@ -49,6 +49,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) memory_category: bool,
     pub(super) candidate_filter: Option<&'a super::CandidateFilter<'a>>,
     pub(super) type_filter: Option<Vec<u8>>,
+    pub(super) criticality: Option<bool>,
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
@@ -112,6 +113,7 @@ impl<'a> PipelineBuilder<'a> {
             memory_category: false,
             candidate_filter: None,
             type_filter: None,
+            criticality: None,
             authority_filter: None,
             since_filter: None,
             occurred_range: None,
@@ -480,6 +482,12 @@ impl<'a> PipelineBuilder<'a> {
 
     pub(crate) fn filter_candidates(mut self, filter: &'a super::CandidateFilter<'a>) -> Self {
         self.candidate_filter = Some(filter);
+        self
+    }
+
+    /// Narrows CLAIM candidates to their manifest tier. No predicate is promoted.
+    pub fn criticality(mut self, critical: bool) -> Self {
+        self.criticality = Some(critical);
         self
     }
 

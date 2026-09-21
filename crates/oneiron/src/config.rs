@@ -266,6 +266,8 @@ impl Default for HnswConfig {
 #[non_exhaustive]
 pub struct VaultConfig {
     pub failure_signals: failure_signals::FailureSignalConfig,
+    /// Injected engine clock and id source; each opened store gets its own floor.
+    pub store_clock: crate::store::ports::StoreClock,
     /// Stored-edge VAD salience for PPR. Validated at query time in `0..=0.4`.
     /// Nonzero use requires the pinned BEAM recall and latency gate.
     pub ppr_vad_alpha: f32,
@@ -536,6 +538,7 @@ impl VaultConfig {
     pub fn device() -> Self {
         Self {
             failure_signals: failure_signals::FailureSignalConfig::default(),
+            store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
             ppr_community: PprCommunityConfig::default(),
             dimensions: 1024,
@@ -559,6 +562,7 @@ impl VaultConfig {
     pub fn server() -> Self {
         Self {
             failure_signals: failure_signals::FailureSignalConfig::default(),
+            store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
             ppr_community: PprCommunityConfig::default(),
             dimensions: 4096,

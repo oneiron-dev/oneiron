@@ -210,12 +210,17 @@ impl ConsolidationExecutor<'_> {
                 .iter()
                 .map(|index| &candidates[*index])
                 .collect();
-            let prior = conflict
-                .prior_head
-                .map(|id| resources.prior(id))
-                .transpose()?;
-            let mut request =
-                self.merge_request(&conflict.identity, &members, prior, resources.scope())?;
+            let prior_heads = conflict
+                .prior_heads
+                .iter()
+                .map(|id| resources.prior(*id).cloned())
+                .collect::<Result<Vec<_>>>()?;
+            let mut request = self.merge_request(
+                &conflict.identity,
+                &members,
+                &prior_heads,
+                resources.scope(),
+            )?;
             ctx.vault.bind_model_role(
                 crate::llm::manifest::ModelRole::GenerativeReasoner,
                 &mut request,
@@ -286,10 +291,8 @@ impl ConsolidationExecutor<'_> {
                             })?;
                         selected.identity =
                             super::routing::candidate_keys(member, resources.key_rules())?.identity;
-                        selected.prior_head = resources
-                            .matching_priors(member, resources.key_rules())?
-                            .first()
-                            .map(|(id, _)| *id);
+                        let matching = resources.matching_priors(member, resources.key_rules())?;
+                        selected.prior_head = (matching.len() == 1).then(|| matching[0].0);
                     } else if members.iter().any(|member| {
                         candidate_facts(&member.candidate)
                             .is_ok_and(|facts| facts.predicate != conflict.identity.predicate)
@@ -303,10 +306,11 @@ impl ConsolidationExecutor<'_> {
                     merged.push(merged_candidate(
                         &selected,
                         &members,
+                        &prior_heads,
                         value,
                         step_identity.0,
                         ctx.now_ms,
-                    ));
+                    )?);
                 }
                 MergeResolution::Escalate => {
                     // A durable outage fallback is still an unresolved question,
@@ -323,6 +327,15 @@ impl ConsolidationExecutor<'_> {
                     )?;
                     dropped.extend(conflict.candidate_indexes.iter().copied());
                     escalated.push(contradiction_gap(conflict, &members, ctx.now_ms));
+                    super::open_conflict::park_open_conflict(
+                        ctx.vault,
+                        self.actor,
+                        step_identity.0,
+                        conflict,
+                        &members,
+                        &resources.write_fence(),
+                        ctx.now_ms,
+                    )?;
                 }
             }
         }
@@ -355,11 +368,11 @@ impl ConsolidationExecutor<'_> {
         &self,
         identity: &ConflictIdentity,
         members: &[&PromotionCandidate],
-        prior: Option<&super::PriorHead>,
+        prior_heads: &[super::PriorHead],
         scope: &crate::llm::Scope,
     ) -> Result<LlmRequest> {
         let mut lines = String::new();
-        if let Some(prior) = prior {
+        for prior in prior_heads {
             lines.push_str(&format!(
                 "prior_head: {} predicate: {} value: {}\n",
                 prior.claim_id.to_hex(),
@@ -472,10 +485,11 @@ fn decode_merge_resolution(response: &LlmResponse) -> Result<MergeResolution> {
 fn merged_candidate(
     conflict: &ConflictSet,
     members: &[&PromotionCandidate],
+    priors: &[super::conflict::PriorHead],
     value: Value,
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
-) -> PromotionCandidate {
+) -> Result<PromotionCandidate> {
     let mut evidence: Vec<EntityId> = Vec::new();
     let mut chain: Vec<ConsolidationProvenanceHop> = Vec::new();
     let mut meet = ClaimSource::UserStated;
@@ -498,6 +512,17 @@ fn merged_candidate(
     }
     evidence.sort();
     evidence.dedup();
+    for prior in priors
+        .iter()
+        .filter(|p| conflict.prior_heads.contains(&p.claim_id))
+    {
+        meet = source_meet(
+            meet,
+            crate::claim::claim_evidence_taint(&prior.body)
+                .or(prior.body.source)
+                .unwrap_or(ClaimSource::Generated),
+        );
+    }
     let claim_id = deterministic_claim_id(
         attempt_id,
         conflict.identity.subject,
@@ -506,6 +531,7 @@ fn merged_candidate(
         conflict.identity.world,
         conflict.identity.facet,
         conflict.identity.rel,
+        conflict.identity.topic.as_deref(),
     );
     let mut candidate = ClaimCandidate::new(
         conflict.identity.predicate.clone(),
@@ -519,13 +545,8 @@ fn merged_candidate(
     if let Some(world) = conflict.identity.world {
         candidate = candidate.with_world(world);
     }
-    if let Some(facet) = conflict.identity.facet {
-        candidate = candidate.with_scope(Value::Map(vec![(
-            Value::from(TURN_BODY_FACET_REF_KEY),
-            Value::Binary(facet.as_bytes().to_vec()),
-        )]));
-    }
-    PromotionCandidate {
+    candidate = candidate.with_scope(super::persistence::identity_scope(&conflict.identity)?);
+    Ok(PromotionCandidate {
         claim_id,
         candidate,
         evidence_turn_refs: evidence,
@@ -537,7 +558,7 @@ fn merged_candidate(
             end: now_ms,
         },
         learned_at: now_ms,
-    }
+    })
 }
 
 fn contradiction_gap(

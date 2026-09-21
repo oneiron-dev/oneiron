@@ -1,14 +1,16 @@
 //! Vault maintenance, learned-at range scans, transaction helpers and sync state.
 
 use super::Vault;
-use super::entities::{MAX_LEARNED_RANGE_RESULTS, require_key_len};
+use super::entities::MAX_LEARNED_RANGE_RESULTS;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::hnsw;
 use crate::maintain::MaintenanceBuilder;
-use crate::store::{MODEL_ID_KEY, Store, validate_embedding_model_id};
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
+use crate::store::{MODEL_ID_KEY, validate_embedding_model_id};
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
@@ -46,14 +48,13 @@ impl Vault {
     /// Checks if an entity exists in the LMDB vault.
     pub fn entity_exists(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(self.store.entities.get(&rtxn, id.as_bytes())?.is_some())
+        Ok(self.store.port_entity_record(&rtxn, id)?.is_some())
     }
 
     /// Checks if a directed edge exists in the LMDB vault.
     pub fn edge_exists(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
-        let key = Store::encode_edge_key(src, kind, tgt);
         let rtxn = self.store.env.read_txn()?;
-        Ok(self.store.edges_out.get(&rtxn, &key)?.is_some())
+        Ok(self.store.port_edge_get(&rtxn, src, kind, tgt)?.is_some())
     }
 
     /// Returns the `learned_at` timestamp from an entity's header (bytes 17-24).
@@ -61,8 +62,8 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let raw = self
             .store
-            .entities
-            .get(&rtxn, id.as_bytes())?
+            .port_entity_record(&rtxn, id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -71,14 +72,18 @@ impl Vault {
 
     /// Returns the greatest `learned_at` timestamp present in the temporal index.
     pub fn latest_learned_at(&self) -> Result<Option<u64>> {
-        let rtxn = self.store.env.read_txn()?;
-        let Some((key, _)) = self.store.temporal_learned.last(&rtxn)? else {
-            return Ok(None);
-        };
-        require_key_len(&key, 24, "temporal learned key")?;
-        Ok(Some(u64::from_be_bytes(key[..8].try_into().map_err(
-            |_| Error::CorruptedIndex("temporal learned key"),
-        )?)))
+        let txn = self.store.env.read_txn()?;
+        self.store
+            .port_entity_timeline(
+                &txn,
+                crate::ports::TimelineQuery {
+                    reverse: true,
+                    ..Default::default()
+                },
+            )?
+            .next()
+            .transpose()
+            .map(|row| row.map(|row| row.timestamp))
     }
 
     /// Returns the greatest `learned_at` timestamp whose entity type is not excluded.
@@ -86,30 +91,21 @@ impl Vault {
         &self,
         excluded_types: &[u8],
     ) -> Result<Option<u64>> {
-        let rtxn = self.store.env.read_txn()?;
-        for entry in self.store.temporal_learned.rev_iter(&rtxn)? {
-            let (key, _) = entry?;
-            require_key_len(&key, 24, "temporal learned key")?;
-            let learned_at = u64::from_be_bytes(
-                key[..8]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
-            );
-            let id = EntityId::from_bytes(
-                key[8..24]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
-            let raw = self
+        let txn = self.store.env.read_txn()?;
+        for row in self.store.port_entity_timeline(
+            &txn,
+            crate::ports::TimelineQuery {
+                reverse: true,
+                ..Default::default()
+            },
+        )? {
+            let row = row?;
+            let entity = self
                 .store
-                .entities
-                .get(&rtxn, id.as_bytes())?
+                .port_entity_record(&txn, &row.id)?
                 .ok_or(Error::CorruptedIndex("temporal learned dangling entity"))?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if !excluded_types.contains(&header.entity_type) {
-                return Ok(Some(learned_at));
+            if !excluded_types.contains(&entity.entity_type) {
+                return Ok(Some(row.timestamp));
             }
         }
         Ok(None)
@@ -123,33 +119,18 @@ impl Vault {
         if start >= end {
             return Ok(Vec::new());
         }
-
-        let rtxn = self.store.env.read_txn()?;
+        let txn = self.store.env.read_txn()?;
+        let query = crate::ports::TimelineQuery {
+            start: std::ops::Bound::Included(start),
+            end: std::ops::Bound::Excluded(end),
+            ..Default::default()
+        };
         let mut ids = Vec::new();
-        let start_key = start.to_be_bytes();
-        let end_key = end.to_be_bytes();
-        for entry in self.store.temporal_learned.range(
-            &rtxn,
-            &(
-                std::ops::Bound::Included(&start_key[..]),
-                std::ops::Bound::Excluded(&end_key[..]),
-            ),
-        )? {
-            let (key, _) = entry?;
-            require_key_len(&key, 24, "temporal learned key")?;
-            // Cap check BEFORE push so an exact-MAX result set returns Ok,
-            // matching scan_edges semantics. Only an MAX+1-th in-range row
-            // triggers IndexOverflow.
+        for row in self.store.port_entity_timeline(&txn, query)? {
             if ids.len() >= MAX_LEARNED_RANGE_RESULTS {
                 return Err(Error::IndexOverflow("entities_in_learned_range"));
             }
-            let id = EntityId::from_bytes(
-                key[8..24]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
-            ids.push(id);
+            ids.push(row?.id);
         }
         Ok(ids)
     }
@@ -229,7 +210,7 @@ impl Vault {
         self.store.notify_attempt_observers();
         // Approval is durable now. The canonical consolidator opens its own
         // writer; its failure is returned without rolling back Approved.
-        let now = crate::unix_seconds_now();
+        let now = self.store.clock.now_recorded_at();
         for id in approved_vad_ids {
             self.consolidate_claim_vad_now(&id, now)?;
         }

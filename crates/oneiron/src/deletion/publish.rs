@@ -378,7 +378,8 @@ impl Vault {
     ) -> Result<bool> {
         Ok(
             crate::sync::window::history_free_window_required(self, window_key)?
-                || doc.is_shallow(),
+                || doc.is_shallow()
+                || crate::sync::note::is_native(doc),
         )
     }
 

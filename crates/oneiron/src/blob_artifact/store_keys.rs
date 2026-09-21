@@ -40,7 +40,7 @@ pub(super) fn blob_artifact_version_key(artifact_id: &EntityId, version: u64) ->
     key
 }
 
-pub(super) fn blob_artifact_asset_ref_prefix(
+pub(crate) fn blob_artifact_asset_ref_prefix(
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 ) -> Vec<u8> {
     let mut key = Vec::with_capacity(
@@ -51,7 +51,7 @@ pub(super) fn blob_artifact_asset_ref_prefix(
     key
 }
 
-pub(super) fn blob_artifact_asset_ref_key(
+pub(crate) fn blob_artifact_asset_ref_key(
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
     artifact_id: &EntityId,
 ) -> Vec<u8> {

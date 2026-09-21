@@ -1,0 +1,181 @@
+{
+  "ticket": "W7-C11",
+  "validation_source": "c71d87f8e0caba6d8445d52c10f3fb6e17d4f5ae",
+  "fix_commits": [
+    "d583201f",
+    "c71d87f8"
+  ],
+  "source_files_sha256": {
+    "Cargo.toml": "518ecfaec6ce6e557f85f7ccc187ca492ba81c51e401938538f7b23677a3c261",
+    "Cargo.lock": "d41fe0a42e9115d2794c785c96b0105f2b104a34051ed07ab2a79da14742199b",
+    "crates/oneiron/Cargo.toml": "4e087be6c09c94885e011ebb485b64da4a57d2ca3040c075893443acfa9fdc98",
+    "crates/oneiron/tests/vault_read_parity.rs": "b266a11e87690c60113da98b28aed36328871dc198fa4dc544655b14fd579407",
+    "crates/oneiron/vendor/SUDACHI.md": "6f469b4733a7c249dda5d269fec65af592ebc1d932d7c8b16e8123143d5cbb13"
+  },
+  "upstream_sudachi_snapshot_and_lock_unchanged_from": "135aeb90",
+  "host": "arch",
+  "unit": "w7-c11-current-gate-repair-01.service",
+  "terminal": {
+    "ActiveState": "inactive",
+    "SubState": "dead",
+    "Result": "success",
+    "ExecMainPID": "0",
+    "ExecMainStatus": "0"
+  },
+  "chain_log": "target/w7-logs/current-gate-repair-1.log",
+  "chain_log_sha256": "6d1313d8ec6deacafd7fdf674ea0215b160566e9bb518fd0dc1195f7115678ef",
+  "action_environment": {
+    "W7_CARGO_EXCLUDE_MACBOOK": "1",
+    "CARGO_BUILD_JOBS": "2",
+    "RUST_TEST_THREADS": "4"
+  },
+  "admission": "Installed stock dispatcher; Arch slot 2/2, three-job ceiling; Cargo requested -j 2. No forced-local route or changed capacity/lock policy.",
+  "commands": [
+    {
+      "name": "offline-current-targets",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--no-fail-fast",
+        "-p",
+        "oneiron",
+        "--no-default-features",
+        "--test",
+        "type_boundaries_compilefail",
+        "--test",
+        "vault_read_parity",
+        "-j",
+        "2",
+        "--",
+        "--test-threads=4"
+      ],
+      "exit_code": 0,
+      "success_marker": "C11-CURRENT-STAGE-1-EXIT-0 offline-current-targets"
+    },
+    {
+      "name": "core-featureless-all-target-lint",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "-p",
+        "oneiron",
+        "--all-targets",
+        "--no-default-features",
+        "-j",
+        "2",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "success_marker": "C11-CURRENT-STAGE-2-EXIT-0 core-featureless-all-target-lint"
+    },
+    {
+      "name": "original-six-package-tests",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--no-fail-fast",
+        "-p",
+        "oneiron",
+        "-p",
+        "oneiron-android",
+        "-p",
+        "oneiron-bench",
+        "-p",
+        "oneiron-driver",
+        "-p",
+        "oneiron-napi",
+        "-p",
+        "oneiron-server",
+        "-j",
+        "2",
+        "--",
+        "--test-threads=4"
+      ],
+      "exit_code": 0,
+      "success_marker": "C11-CURRENT-STAGE-3-EXIT-0 original-six-package-tests"
+    }
+  ],
+  "offline_focus": {
+    "totals": {
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "test_targets": [
+      "type_boundaries_compilefail",
+      "vault_read_parity"
+    ],
+    "nested_compile_fail_cases_passed": 10,
+    "nested_cases_not_added_to_rust_test_total": true,
+    "generated_manifest_sudachi": {
+      "version": "0.6.11",
+      "path": "/home/lexi/w7-build/wt/W7-C11/crates/oneiron/vendor/sudachi-0.6.11/sudachi/"
+    }
+  },
+  "full_run_totals": {
+    "passed": 9154,
+    "failed": 0,
+    "ignored": 21,
+    "measured": 0,
+    "filtered": 0
+  },
+  "full_run_per_package": {
+    "oneiron": {
+      "passed": 7867,
+      "failed": 0,
+      "ignored": 16,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-android": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-bench": {
+      "passed": 295,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-driver": {
+      "passed": 85,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-napi": {
+      "passed": 22,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-server": {
+      "passed": 884,
+      "failed": 0,
+      "ignored": 5,
+      "measured": 0,
+      "filtered": 0
+    }
+  },
+  "preexisting_ignored_set_unchanged": true,
+  "current_failure_targets_passed_in_focus_and_full": true,
+  "former_fixture_failures_passed": 18,
+  "new_filters_ignores_or_retries": false,
+  "android_native_proof": "Prior NDK/API36.1 proof retained unchanged, not rerun or replaced by the host Rust test",
+  "review_status": "Fresh paginated all-state exact-head lookup returned no C11 PR. No external bot surface/posting target or quota error. Original review roots/dispositions retained; CG-01/CG-02 fixed and validated; no unrelated PR post.",
+  "claim_boundary": "Fresh writer validation for the current Mini failures, not reuse of earlier green evidence or a synthetic factory pass. Manager owns the normal mandatory factory retry. Not a full-workspace verify.sh or Node-host runtime claim."
+}

@@ -1229,24 +1229,28 @@ fn run_root_ignores_non_dreamer_attempts_sharing_the_run_id() -> Result<()> {
 
 #[test]
 fn run_root_preserves_creation_order_when_a_run_has_multiple_roots() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let clock = crate::ports::ManualClock::new(10);
+    let (_tmp, vault) = crate::test_util::open_test_vault_with(VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    });
     let run_id = "run-multiple-roots";
-    // The attempt IDs follow enqueue order, but `list_run` has always selected
-    // roots in the persisted creation-time order.  Keep that distinction
-    // visible so the run-id sidecar cannot accidentally choose by key order.
-    let later_root = enqueue_dreamer_attempt(
+    // The root follows storage-recorded creation order. Caller timestamps
+    // cannot backdate a later enqueue and replace the first root.
+    let first_root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
-        Value::Map(vec![(Value::from("intent"), Value::from("Later root"))]),
+        Value::Map(vec![(Value::from("intent"), Value::from("First root"))]),
         run_id,
         20,
     )?;
-    let earlier_root = enqueue_dreamer_attempt(
+    clock.set(20);
+    let second_root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
-        Value::Map(vec![(Value::from("intent"), Value::from("Earlier root"))]),
+        Value::Map(vec![(Value::from("intent"), Value::from("Second root"))]),
         run_id,
         10,
     )?;
@@ -1267,11 +1271,11 @@ fn run_root_preserves_creation_order_when_a_run_has_multiple_roots() -> Result<(
     assert_eq!(groups.len(), 1);
     assert_eq!(
         groups[0].group_key,
-        bytes_to_hex_lower(earlier_root.as_bytes())
+        bytes_to_hex_lower(first_root.as_bytes())
     );
     assert_ne!(
         groups[0].group_key,
-        bytes_to_hex_lower(later_root.as_bytes())
+        bytes_to_hex_lower(second_root.as_bytes())
     );
     Ok(())
 }

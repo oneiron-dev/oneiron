@@ -76,7 +76,7 @@ impl ScopedRead<'_> {
         mode: ReadMode,
     ) -> Result<Option<(u8, u64, Vec<u8>)>> {
         let txn = self.vault.store.env.read_txn()?;
-        let Some(live) = self.entities().get(&txn, id.as_bytes())? else {
+        let Some(live) = self.entity_record_in(&txn, id)?.map(|row| row.encode()) else {
             return Ok(None);
         };
         let header =

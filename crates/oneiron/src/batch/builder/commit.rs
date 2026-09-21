@@ -87,6 +87,7 @@ impl BatchBuilder<'_> {
             // A gate rejection is itself an intentional ledger event. Keep
             // that denial receipt, matching the historical gate semantics;
             // later phase-2 failures drop this transaction and its receipt.
+            crate::ports::recorded_at_in_txn(&self.vault.store, &mut wtxn)?;
             wtxn.commit()?;
             for decision in staged_gate_decisions {
                 decision.record_metrics(&self.vault.store.diagnostics.gate);
@@ -120,6 +121,7 @@ impl BatchBuilder<'_> {
         let approved_vad_ids = self
             .vault
             .resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
+        crate::ports::recorded_at_in_txn(&self.vault.store, &mut wtxn)?;
         wtxn.commit()?;
         while self.vault.collect_lfs_garbage(32)? != 0 {}
         for decision in staged_gate_decisions {
@@ -128,7 +130,7 @@ impl BatchBuilder<'_> {
         // The canonical wrapper starts a separate write transaction. Never run
         // it during apply or preflight, and never turn a population error into
         // success merely because the approval is already durable.
-        let now = crate::unix_seconds_now();
+        let now = self.vault.store.clock.now_recorded_at();
         for id in approved_vad_ids {
             self.vault.consolidate_claim_vad_now(&id, now)?;
         }

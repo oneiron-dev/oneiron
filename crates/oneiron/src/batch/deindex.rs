@@ -39,6 +39,7 @@ pub(crate) fn deindex_entity(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::ports::invalidate_source_in_txn(store, wtxn, id)?;
     let (mut had_vector, mut had_graph_mutation, mut neighbors) =
         deindex_lexical_query_hints_for_target(store, wtxn, id)?;
 
@@ -184,6 +185,18 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;
     crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
     store.entities.delete(wtxn, id.as_bytes())?;
+    crate::ports::audit_mutation_in_txn(
+        store,
+        wtxn,
+        crate::ports::MutationAudit {
+            entity: *id,
+            op: crate::ports::ChangeOp::Delete,
+            actor_principal: None,
+            occurred_at: store.clock.now_recorded_at(),
+            input: id.as_bytes(),
+            reason: None,
+        },
+    )?;
     neighbors.sort_unstable();
     neighbors.dedup();
     Ok((true, had_vector, had_graph_mutation, neighbors))

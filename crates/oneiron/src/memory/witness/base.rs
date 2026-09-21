@@ -9,6 +9,7 @@ use super::validation::{
     validate_existing_witness_turn,
 };
 use super::{distinct_message_orders, witness_message_envelope};
+use crate::ports::EntityStoreRead;
 
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
@@ -84,7 +85,7 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         before_txn: impl FnOnce(),
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, false, before_txn, |_| Ok(()))
+        self.witness_authorized(turn, session_route, false, before_txn, None, |_| Ok(()))
     }
 
     pub(crate) fn witness_host_executor(
@@ -92,7 +93,32 @@ impl Memory<'_> {
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, true, || {}, |_| Ok(()))
+        self.witness_authorized(turn, session_route, true, || {}, None, |_| Ok(()))
+    }
+
+    pub(crate) fn witness_stream_finality(
+        &self,
+        turn: &WitnessTurn,
+        receipt: &mut crate::message_stream::MessageFinalityReceipt,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.witness_program(turn, None, || {}, Some(receipt))
+    }
+
+    fn witness_program(
+        &self,
+        turn: &WitnessTurn,
+        session_route: Option<&SessionWriteRoute>,
+        before_txn: impl FnOnce(),
+        stream_receipt: Option<&mut crate::message_stream::MessageFinalityReceipt>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.witness_authorized(
+            turn,
+            session_route,
+            false,
+            before_txn,
+            stream_receipt,
+            |_| Ok(()),
+        )
     }
 
     /// Stream terminal sidecars and EntityDoc birth share the canonical witness
@@ -104,7 +130,7 @@ impl Memory<'_> {
         before_txn: impl FnOnce(),
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, false, before_txn, effect)
+        self.witness_authorized(turn, session_route, false, before_txn, None, effect)
     }
 
     fn witness_authorized(
@@ -113,6 +139,7 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         host_executor: bool,
         before_txn: impl FnOnce(),
+        stream_receipt: Option<&mut crate::message_stream::MessageFinalityReceipt>,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         super::validate_witness_origin(turn, host_executor)?;
@@ -152,7 +179,7 @@ impl Memory<'_> {
         }
         let (turn_id, turn_is_new) = match &turn.turn_ref {
             Some(reference) => self.resolve_or_new_container(reference, ENTITY_TYPE_TURN)?,
-            None => (EntityId::now(), true),
+            None => (self.vault.store.clock.entity_id()?, true),
         };
 
         // The turn-level grouping fact, derived BEFORE the transaction: a
@@ -166,7 +193,7 @@ impl Memory<'_> {
         let mut envelopes = Vec::with_capacity(turn.messages.len());
         let mut bodies = Vec::with_capacity(turn.messages.len());
         for message in &turn.messages {
-            message_ids.push(id_from_optional_hex(message.id.as_deref())?);
+            message_ids.push(id_from_optional_hex(self.vault, message.id.as_deref())?);
             let envelope = witness_message_envelope(message);
             bodies.push(envelope.encode_body()?);
             envelopes.push(envelope);
@@ -231,8 +258,8 @@ impl Memory<'_> {
             let existing_turn_raw = self
                 .vault
                 .store
-                .entities
-                .get(&*wtxn, turn_id.as_bytes())?
+                .port_entity_record(&*wtxn, &turn_id)?
+                .map(|row| row.encode())
                 .map(|raw| raw.to_vec());
             let existing_turn = match existing_turn_raw {
                 // Absent and expected absent: the pre-transaction answer holds.
@@ -434,6 +461,11 @@ impl Memory<'_> {
                 &turn_id,
                 membership_session,
             )?;
+            if let Some(receipt) = stream_receipt {
+                crate::message_stream::write_receipt_in_txn(
+                    self.vault, wtxn, receipt, turn, self.actor,
+                )?;
+            }
             // LAST statement in the transaction, deliberately: a session
             // witness admitted on record must not commit base rows once the
             // room has flipped back off record (K10). Every earlier row is

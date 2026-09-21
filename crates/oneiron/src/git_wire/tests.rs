@@ -512,8 +512,7 @@ fn git_wire_durable_rows_carry_no_payload_secret_or_path() {
 fn git_wire_reads_absence_positively_and_keeps_fatal_failures_typed() {
     let (_vault_dir, vault) = open_test_vault();
     // Discovery must never escape into a containing repository after deletion.
-    let parent = tempfile::tempdir().expect("parent repo");
-    run_git(parent.path(), &["init"]);
+    let parent = init_repo();
     let repo = init_repo_at(tempfile::tempdir_in(parent.path()).expect("nested repo"));
     let wire = new_wire(&vault);
     let bound = open(&wire, &repo);
@@ -538,8 +537,20 @@ fn git_wire_reads_absence_positively_and_keeps_fatal_failures_typed() {
 
     // A destroyed repository is a failure, never an absence.
     fs::remove_dir_all(repo.path().join(".git")).expect("destroy repository");
-    assert!(wire.read_ref(&bound, &repo.branch).is_err());
-    assert!(wire.object_exists(&bound, &repo.head).is_err());
+    assert!(matches!(
+        wire.read_ref(&bound, &repo.branch),
+        Err(Error::Code(CodeError::RepoMutationFailed(_)))
+    ));
+    assert!(matches!(
+        wire.object_exists(&bound, &repo.head),
+        Err(Error::Code(CodeError::RepoMutationFailed(_)))
+    ));
+    let parent_bound = open(&wire, &parent);
+    assert_eq!(
+        wire.read_ref(&parent_bound, &parent.branch)
+            .expect("parent unchanged"),
+        Some(parent.head.clone())
+    );
 }
 
 #[test]

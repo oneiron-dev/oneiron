@@ -110,7 +110,7 @@ impl Vault {
         event: &DiagnosticEvent,
     ) -> Result<()> {
         let data = encode_diagnostic_event_body(event)?;
-        let learned_at = crate::unix_seconds_now();
+        let learned_at = self.store.clock.now_recorded_at();
         // An absent `valid_to` means STILL VALID, not "valid for an instant".
         // Collapsing it to a point would index the event as a closed interval
         // that ended the moment it began, so a temporal read anchored after

@@ -606,6 +606,7 @@ pub struct NapiCalendarSel {
 /// One projected calendar EVENT.
 #[napi(object)]
 pub struct NapiCalendarEventView {
+    pub origin: String,
     /// Hex EVENT entity id.
     pub event_ref: String,
     /// EVENT display name, when the body carries one.

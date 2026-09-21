@@ -49,9 +49,8 @@ impl PipelineBuilder<'_> {
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
         )?;
-        let mut scores = crate::hnsw::hnsw_search(
-            &self.vault.store,
-            &self.vault.config,
+        let mut scores = crate::ports::RetrievalIndex::port_retrieval_vector_search_quality(
+            self.vault,
             rtxn,
             query,
             channel_limit,

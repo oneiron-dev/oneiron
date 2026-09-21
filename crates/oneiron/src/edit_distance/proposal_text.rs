@@ -144,7 +144,7 @@ impl ProposalTextArtifact {
             receipt,
             at,
         )?;
-        let artifact_ref = ProposalArtifactRef::mint();
+        let artifact_ref = ProposalArtifactRef::new(vault.new_entity_id()?);
         // EntityDoc birth metadata, proposal metadata and text all land in
         // this one authenticated commit. No unreceipted birth precedes it.
         let doc = EntityDoc::open_initialized(

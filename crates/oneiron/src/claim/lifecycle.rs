@@ -15,15 +15,13 @@ use crate::Vault;
 use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::edge::{EdgeKind, validate_edge_weight};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, ClaimError, Error, RegistryError, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, ShortIdStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
-use crate::vault::{
-    MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT, edge_kind_prefix, parse_edge_record,
-    require_key_len,
-};
+use crate::vault::{MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT};
 
 /// Bound on the supersession-chain walk behind the write-verb validity guard
 /// (ONE-1936). Cycles are caught by the walk's visited set; this caps the WORK
@@ -47,7 +45,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<(ClaimBody, EntityMetadataHeader)> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
             return Err(Error::EntityNotFound);
         };
         let header =
@@ -73,7 +71,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<(ClaimBody, EntityMetadataHeader)> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
             return Err(Error::EntityNotFound);
         };
         let header =
@@ -245,9 +243,8 @@ impl Vault {
         id: &EntityId,
     ) -> Result<ClaimLifecycleStatus> {
         let raw = self
-            .store
-            .entities
-            .get(rtxn, id.as_bytes())?
+            .port_entity_record(rtxn, id)?
+            .map(|row| row.encode())
             .ok_or(Error::CorruptedIndex("supersession chain node"))?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -267,28 +264,21 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Vec<EntityId>> {
-        let prefix = edge_kind_prefix(id, EdgeKind::Supersedes);
         let mut successors = Vec::new();
-        for entry in self.store.edges_in.prefix_iter(rtxn, &prefix)? {
+        for entry in self.port_edges(
+            rtxn,
+            id,
+            EdgeDirection::In,
+            Some(EdgeKind::Supersedes),
+            None,
+        )? {
             if successors.len() >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("supersedes successors"));
             }
-            let (key, _) = entry?;
-            require_key_len(
-                &key,
-                ENTITY_ID_LEN + 1 + ENTITY_ID_LEN,
-                "supersedes edge key",
-            )?;
-            let successor = EntityId::from_bytes(
-                key[ENTITY_ID_LEN + 1..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?;
+            let successor = entry?.target;
             let raw = self
-                .store
-                .entities
-                .get(rtxn, successor.as_bytes())?
+                .port_entity_record(rtxn, &successor)?
+                .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("supersedes edge without entity"))?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -312,12 +302,9 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<String> {
-        let raw = self
-            .store
-            .short_ids_reverse
-            .get(rtxn, id.as_bytes())?
+        let (short_id, content_hash) = self
+            .port_short_id_reference(rtxn, id)?
             .ok_or(Error::CorruptedIndex("claim short id reverse row"))?;
-        let (short_id, content_hash) = crate::batch::parse_short_id_value(&raw)?;
         Ok(format!("{short_id}:{content_hash:02x}"))
     }
 
@@ -544,11 +531,15 @@ impl Vault {
                 let ClaimSubject::Entity(subject) = body.subject else {
                     return Err(Error::InvalidClaimBody("decay requires entity subject"));
                 };
-                let prefix = edge_kind_prefix(claim_id, EdgeKind::ClaimOf);
                 let mut found = None;
-                for entry in self.store.edges_out.prefix_iter(&wtxn, &prefix)? {
-                    let (key, value) = entry?;
-                    let edge = parse_edge_record(&key, &value)?;
+                for entry in self.port_edges(
+                    &wtxn,
+                    claim_id,
+                    EdgeDirection::Out,
+                    Some(EdgeKind::ClaimOf),
+                    None,
+                )? {
+                    let edge = entry?;
                     if edge.target == subject {
                         if found.is_some() {
                             return Err(Error::InvalidClaimBody("duplicate ClaimOf edge"));

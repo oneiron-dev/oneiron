@@ -152,7 +152,7 @@ impl NoteDocument {
 
     pub(super) fn load(id: EntityId, bytes: &[u8]) -> Result<Self> {
         let doc = LoroDoc::new();
-        crate::sync::documents::storage::import_complete(&doc, bytes)
+        super::storage::import_complete(&doc, bytes)
             .map_err(|_| invalid("invalid NOTE document snapshot"))?;
         Self::from_loro(id, doc)
     }

@@ -183,6 +183,7 @@ impl Vault {
                     },
                 )?;
             }
+            ownership::claim_in(&self.store, txn, id, ownership::Owner::Room)?;
             let mut batch = self.batch_in().put(
                 &id,
                 ENTITY_TYPE_CONVERSATION,

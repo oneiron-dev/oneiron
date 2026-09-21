@@ -4,7 +4,7 @@ use super::document::{
     NoteDocument, NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution,
     frontier, invalid,
 };
-use super::{NoteBody, NoteKind, decode_note_body, encode_note_body};
+use super::{NoteBody, NoteKind, encode_note_body};
 use crate::error::Result;
 use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
@@ -31,8 +31,8 @@ pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result
     if vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
         return Err(invalid("NOTE was erased"));
     }
-    decode_note_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
-    let doc = crate::sync::documents::storage::load(vault, txn, id)?;
+    super::verbs::note_core(vault, txn, id)?;
+    let doc = super::storage::load(vault, txn, id)?;
     NoteDocument::from_loro(id, doc)
 }
 
@@ -46,10 +46,14 @@ pub(super) fn persist(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocume
     if markdown.len() > super::document::MAX_NOTE_BYTES {
         return Err(invalid("NOTE body exceeds bound"));
     }
-    if doc.snapshot()?.len() > crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES - 18 {
+    if doc.snapshot()?.len() > super::operations::MAX_RECEIPT_PAYLOAD - 18 {
         return Err(invalid("NOTE snapshot exceeds wire bound"));
     }
-    crate::sync::documents::storage::snapshot(vault, txn, doc.id, &doc.doc, false)?;
+    super::storage::snapshot(vault, txn, doc.id, &doc.doc, false)?;
+    vault
+        .batch_in()
+        .text(&doc.id, &[("markdown", markdown.as_str())])
+        .apply(txn)?;
     // Reverse pins preserve every cited source frontier, including when the
     // citation is in a different document. They are written with the body.
     super::pin_index::remove_citing(&vault.store, txn, doc.id)?;
@@ -171,6 +175,7 @@ impl Memory<'_> {
             persist(self.vault(), txn, &doc)?;
             Ok(())
         })?;
+        #[cfg(feature = "sync")]
         self.vault().notify_note_document(id);
         self.entity_ref_receipt(&id)
     }
@@ -236,13 +241,7 @@ impl Memory<'_> {
                 .export(loro::ExportMode::shallow_snapshot(&through))
                 .map_err(|_| invalid("NOTE history purge failed"))?;
             let shallow = NoteDocument::load(note, &snapshot)?;
-            crate::sync::documents::storage::snapshot(
-                self.vault(),
-                txn,
-                note,
-                &shallow.doc,
-                false,
-            )?;
+            super::storage::snapshot(self.vault(), txn, note, &shallow.doc, false)?;
             self.vault().store.sync_state.put(
                 txn,
                 &format!("ssv:e:{}", note.to_hex()),
@@ -285,16 +284,7 @@ pub(super) fn require_note_writer(
     {
         return Err(invalid("NOTE was erased").into());
     }
-    let raw = memory
-        .vault()
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
-        .ok_or(crate::Error::EntityNotFound)?;
-    let body = raw
-        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-        .ok_or_else(|| invalid("NOTE header missing"))?;
-    let body = decode_note_body(body)?;
+    let (_, body) = super::verbs::note_core(memory.vault(), txn, id)?;
     if body.author_ref != memory.actor() {
         if memory.actor_class() != EdgeActorClass::Human {
             return Err(MemoryError::bad_request_with(

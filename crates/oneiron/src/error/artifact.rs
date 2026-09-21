@@ -123,6 +123,10 @@ pub enum ArtifactError {
         path.display()
     )]
     RecoveryArtifactQuarantineExhausted { path: PathBuf },
+    /// Recovery cannot admit all pending repair work within its bounded overlay.
+    /// The caller retains the entire obligation and may retry with more capacity.
+    #[error("recovery overlay limit: required {required}, limit {limit}")]
+    OverlayLimit { required: usize, limit: usize },
     /// An AttemptQueue input or persisted record failed structural validation.
     #[error("invalid attempt queue record: {0}")]
     InvalidAttemptQueueRecord(&'static str),
@@ -172,6 +176,7 @@ impl ArtifactError {
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
                 ErrorKind::RecoveryArtifactQuarantineExhausted
             }
+            Self::OverlayLimit { .. } => ErrorKind::OverlayLimit,
             Self::InvalidAttemptQueueRecord(_) => ErrorKind::InvalidAttemptQueueRecord,
             Self::InvalidAttemptQueueTransition { .. } => ErrorKind::InvalidAttemptQueueTransition,
             Self::DeltaCaptureUnavailable(_) => ErrorKind::DeltaCaptureUnavailable,

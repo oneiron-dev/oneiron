@@ -412,9 +412,11 @@ impl Memory<'_> {
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
             verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
             if !crate::note::note_body_readable(
+                &self.vault.store,
+                &txn,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 Some(&self.actor),
-            ) {
+            )? {
                 return Ok(None);
             }
         }

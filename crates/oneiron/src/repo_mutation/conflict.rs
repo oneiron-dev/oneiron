@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
@@ -155,7 +156,7 @@ pub(super) fn record_repo_conflict(
     {
         return Ok(existing.claim_id);
     }
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     put_repo_conflict_open_claim(
         vault,
         claim_id,
@@ -406,8 +407,7 @@ fn put_engine_repo_conflict_claim(
     let mut wtxn = vault.store.env.write_txn()?;
     if vault
         .store
-        .entities
-        .get(&wtxn, branch_subject.as_bytes())?
+        .port_entity_record(&wtxn, &branch_subject)?
         .is_none()
     {
         return Err(Error::EntityNotFound);
@@ -478,8 +478,8 @@ fn supersede_repo_conflict_claim(
     let mut wtxn = vault.store.env.write_txn()?;
     let new_raw = vault
         .store
-        .entities
-        .get(&wtxn, new_id.as_bytes())?
+        .port_entity_record(&wtxn, &new_id)?
+        .map(|row| row.encode())
         .ok_or(Error::EntityNotFound)?;
     let new_header =
         EntityMetadataHeader::parse(&new_raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -497,8 +497,8 @@ fn supersede_repo_conflict_claim(
 
     let old_raw = vault
         .store
-        .entities
-        .get(&wtxn, old_id.as_bytes())?
+        .port_entity_record(&wtxn, &old_id)?
+        .map(|row| row.encode())
         .ok_or(Error::EntityNotFound)?;
     let old_header =
         EntityMetadataHeader::parse(&old_raw).ok_or(Error::CorruptedIndex("entity header"))?;

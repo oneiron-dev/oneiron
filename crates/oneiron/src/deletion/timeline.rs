@@ -306,6 +306,50 @@ impl Vault {
         }
     }
 
+    /// Deletion metadata through the caller's snapshot, including unpublished tombstones.
+    pub(crate) fn entity_deletion_metadata_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        learned_at: u64,
+    ) -> Result<Option<HydratedShortIdDeletion>> {
+        let label = window_label_from_timestamp(learned_at);
+        let key = pending_tombstone_key(&label, id);
+        if let Some(raw) = self.store.sync_state.get(txn, key.as_str())? {
+            return Ok(Some(Self::deletion_metadata_from_tombstone_value(
+                HydratedShortIdDeletionSource::PendingTombstone,
+                &raw,
+            )));
+        }
+        #[cfg(feature = "sync")]
+        {
+            use crate::sync::loro_support::{
+                doc_from_snapshot, import_doc, tombstone_values_for_id,
+            };
+            let key = format!("d:w:{label}");
+            let Some(snapshot) = self.store.sync_state.get(txn, key.as_str())? else {
+                return Ok(None);
+            };
+            let doc = doc_from_snapshot(&snapshot)?;
+            let prefix = format!("u:w:{label}:");
+            for row in self.store.sync_state.prefix_iter(txn, prefix.as_str())? {
+                let (_, update) = row?;
+                import_doc(&doc, &update)?;
+            }
+            let values = tombstone_values_for_id(&doc.get_map("tombstones"), id);
+            Ok(Self::select_tombstone_metadata_value(&values).map(|raw| {
+                Self::deletion_metadata_from_tombstone_value(
+                    HydratedShortIdDeletionSource::Tombstone,
+                    raw,
+                )
+            }))
+        }
+        #[cfg(not(feature = "sync"))]
+        {
+            Ok(None)
+        }
+    }
+
     fn deletion_metadata_from_tombstone_value(
         source: HydratedShortIdDeletionSource,
         value: &[u8],

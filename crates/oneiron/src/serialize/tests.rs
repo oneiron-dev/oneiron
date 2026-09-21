@@ -67,6 +67,7 @@ fn sample_pack() -> ContextPack {
         results: vec![
             ContextEntity {
                 source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([1; 16]),
                 short_id: "cl88".to_owned(),
                 content_hash: 0xf2,
@@ -78,6 +79,7 @@ fn sample_pack() -> ContextPack {
             },
             ContextEntity {
                 source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([2; 16]),
                 short_id: "tn17".to_owned(),
                 content_hash: 0xa1,
@@ -90,6 +92,7 @@ fn sample_pack() -> ContextPack {
         ],
         neighbors: vec![ContextEntity {
             source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([3; 16]),
             short_id: "pr05".to_owned(),
             content_hash: 0xb3,
@@ -103,6 +106,8 @@ fn sample_pack() -> ContextPack {
             vector: None,
         }],
         stats: PackStats {
+            critical_over_budget: false,
+            critical_count: 0,
             candidates_considered: 45,
             signals_used: vec![Signal::Vector, Signal::Text, Signal::Temporal],
             query_time_us: 2_100,
@@ -146,6 +151,7 @@ fn savings_config(format: PackFormat, profile: FieldProfile) -> SerializeConfig 
 
 fn prepared_entity_for_test(id_len: usize, fields: Vec<(String, Value)>) -> PreparedEntity {
     PreparedEntity {
+        critical: false,
         entity_type: 0,
         score: 0.0,
         source: PreparedEntitySource::Result,
@@ -191,6 +197,7 @@ fn claim_entity(seed: u8, predicate: &str, value: &str, score: f32) -> ContextEn
 fn claim_entity_with_value(seed: u8, predicate: &str, value: Value, score: f32) -> ContextEntity {
     ContextEntity {
         source_revision_ref: None,
+        critical: false,
         id: EntityId::from_bytes_unchecked([seed; 16]),
         short_id: format!("cl{seed:02}"),
         content_hash: seed,
@@ -225,6 +232,8 @@ fn token_savings_regression_pack() -> ContextPack {
         results: Vec::new(),
         neighbors: Vec::new(),
         stats: PackStats {
+            critical_over_budget: false,
+            critical_count: 0,
             candidates_considered: 28,
             signals_used: vec![Signal::Vector, Signal::Text, Signal::Temporal],
             query_time_us: 3_800,
@@ -244,6 +253,7 @@ fn token_savings_regression_pack() -> ContextPack {
     for i in 0..10_u8 {
         pack.results.push(ContextEntity {
                 source_revision_ref: None,
+            critical: false,
                 id: EntityId::from_bytes_unchecked([20 + i; 16]),
                 short_id: format!("cl{i:02}"),
                 content_hash: 0x40 + i,
@@ -310,6 +320,7 @@ fn token_savings_regression_pack() -> ContextPack {
     for i in 0..15_u8 {
         pack.results.push(ContextEntity {
                 source_revision_ref: None,
+            critical: false,
                 id: EntityId::from_bytes_unchecked([0x90 + i; 16]),
                 short_id: format!("tn{i:02}"),
                 content_hash: 0x70 + i,
@@ -345,6 +356,7 @@ fn token_savings_regression_pack() -> ContextPack {
     for i in 0..3_u8 {
         pack.results.push(ContextEntity {
                 source_revision_ref: None,
+            critical: false,
                 id: EntityId::from_bytes_unchecked([100 + i; 16]),
                 short_id: format!("sm{i:02}"),
                 content_hash: 0xa0 + i,
@@ -415,6 +427,7 @@ fn toon_native_encoder_serializes_nested_and_tabular_sections() {
         (
             GroupKey::Kind(ENTITY_TYPE_CLAIM),
             vec![PreparedEntity {
+                critical: false,
                 entity_type: ENTITY_TYPE_CLAIM,
                 score: 0.0,
                 source: PreparedEntitySource::Result,
@@ -437,6 +450,7 @@ fn toon_native_encoder_serializes_nested_and_tabular_sections() {
             GroupKey::Kind(ENTITY_TYPE_TURN),
             vec![
                 PreparedEntity {
+                    critical: false,
                     entity_type: ENTITY_TYPE_TURN,
                     score: 0.0,
                     source: PreparedEntitySource::Result,
@@ -448,6 +462,7 @@ fn toon_native_encoder_serializes_nested_and_tabular_sections() {
                     ],
                 },
                 PreparedEntity {
+                    critical: false,
                     entity_type: ENTITY_TYPE_TURN,
                     score: 0.0,
                     source: PreparedEntitySource::Result,
@@ -475,6 +490,7 @@ fn toon_native_encoder_uses_list_form_for_arrays_of_empty_objects() {
     let groups = vec![(
         GroupKey::Kind(ENTITY_TYPE_EVENT),
         vec![PreparedEntity {
+            critical: false,
             entity_type: ENTITY_TYPE_EVENT,
             score: 0.0,
             source: PreparedEntitySource::Result,
@@ -500,6 +516,7 @@ fn toon_native_encoder_replaces_values_beyond_max_depth_with_null() {
     let groups = vec![(
         GroupKey::Kind(ENTITY_TYPE_EVENT),
         vec![PreparedEntity {
+            critical: false,
             entity_type: ENTITY_TYPE_EVENT,
             score: 0.0,
             source: PreparedEntitySource::Result,
@@ -707,6 +724,7 @@ fn split_mode_uses_shared_budget_pool() {
     for i in 0..6_u8 {
         pack.results.push(ContextEntity {
             source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([10 + i; 16]),
             short_id: format!("r{i}"),
             content_hash: i,
@@ -721,6 +739,7 @@ fn split_mode_uses_shared_budget_pool() {
         });
         pack.neighbors.push(ContextEntity {
             source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([30 + i; 16]),
             short_id: format!("n{i}"),
             content_hash: i,
@@ -826,6 +845,7 @@ fn max_field_chars_truncates_nested_json_strings() {
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
             source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "js01".to_owned(),
             content_hash: 0x42,
@@ -918,6 +938,7 @@ fn short_id_serialization_uses_at_most_two_tokens_per_reference() {
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
             source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "cl42".to_owned(),
             content_hash: 0x2a,
@@ -1111,6 +1132,7 @@ fn max_item_tokens_strips_claim_metadata_without_truncating_short_value() {
 #[test]
 fn max_item_tokens_trims_multiple_non_claim_strings_until_under_cap() {
     let mut entity = PreparedEntity {
+        critical: false,
         entity_type: ENTITY_TYPE_TURN,
         score: 1.0,
         source: PreparedEntitySource::Result,
@@ -1140,6 +1162,7 @@ fn max_item_tokens_trims_multiple_non_claim_strings_until_under_cap() {
 #[test]
 fn max_item_tokens_replaces_non_claim_without_safe_strings_with_minimal_row() {
     let mut entity = PreparedEntity {
+        critical: false,
         entity_type: ENTITY_TYPE_EVENT,
         score: 1.0,
         source: PreparedEntitySource::Result,
@@ -1219,43 +1242,30 @@ fn item_and_token_budget_reasons_are_discriminated() {
 }
 
 #[test]
-fn critical_predicate_claims_bypass_item_cap_when_serialized_budget_is_disabled() {
-    let critical_value = "c".repeat(1200);
-    let pack = pack_with_results(vec![claim_entity(
-        1,
-        "preference.food",
-        &critical_value,
-        1.0,
-    )]);
-
+fn critical_claims_do_not_bypass_item_cap_with_unlimited_pack_budget() {
+    let mut row = claim_entity(1, "boundary.topic", &"c".repeat(1200), 1.0);
+    row.critical = true;
+    let pack = pack_with_results(vec![row]);
     let mut cfg = config(PackFormat::Toon);
     cfg.max_field_chars = 0;
     cfg.max_item_tokens = 8;
     cfg.budget = 0;
-
-    let (bytes, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
-    let output = String::from_utf8(bytes).expect("TOON output");
-
-    assert_eq!(telemetry.result_ids, vec![[1; 16]]);
-    assert!(output.contains("preference.food"));
-    assert!(output.contains(&critical_value));
-    assert_eq!(telemetry.stats.items_truncated.count, 0);
-    assert_eq!(telemetry.stats.items_dropped.count, 0);
+    let (_, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
+    assert!(telemetry.result_ids.is_empty());
+    assert!(telemetry.stats.critical_over_budget);
+    assert_eq!(telemetry.stats.critical_count, 1);
 }
 
 #[test]
 fn hard_serialized_budget_can_drop_critical_predicate_claims() {
     let critical_value = "c".repeat(1200);
-    let pack = pack_with_results(vec![claim_entity(
-        1,
-        "preference.food",
-        &critical_value,
-        1.0,
-    )]);
+    let mut row = claim_entity(1, "preference.food", &critical_value, 1.0);
+    row.critical = true;
+    let pack = pack_with_results(vec![row]);
 
     let mut cfg = config(PackFormat::Toon);
     cfg.max_field_chars = 0;
-    cfg.max_item_tokens = 8;
+    cfg.max_item_tokens = 0;
     cfg.budget = 8;
 
     let prepared = prepare_pack(&pack, &cfg, false);
@@ -1320,6 +1330,7 @@ fn token_budget_zero_disables_budget_enforcement() {
     for i in 0..12_u8 {
         pack.results.push(ContextEntity {
             source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([50 + i; 16]),
             short_id: format!("cl{i}"),
             content_hash: i,
@@ -1346,7 +1357,7 @@ fn token_budget_zero_disables_budget_enforcement() {
 }
 
 #[test]
-fn json_budget_below_mandatory_envelope_emits_minimal_over_budget_payload() {
+fn json_budget_below_full_envelope_emits_budgeted_empty_object() {
     let pack = pack_with_results(vec![claim_entity(1, "note.tiny", "tiny budget row", 1.0)]);
 
     let mut cfg = config(PackFormat::Json);
@@ -1357,9 +1368,8 @@ fn json_budget_below_mandatory_envelope_emits_minimal_over_budget_payload() {
     let text = String::from_utf8(bytes).expect("utf8");
     let parsed: Value = serde_json::from_str(&text).expect("json parse");
 
-    assert_eq!(parsed["results"], serde_json::json!({}));
-    assert_eq!(parsed["neighbors"], serde_json::json!({}));
-    assert!(telemetry.stats.tokens.total_tokens > cfg.budget);
+    assert_eq!(parsed, serde_json::json!({}));
+    assert!(telemetry.stats.tokens.total_tokens <= cfg.budget);
     assert_eq!(telemetry.stats.items_dropped.count, 1);
     assert_eq!(
         telemetry.stats.items_dropped.reason.as_str(),
@@ -1376,6 +1386,7 @@ fn max_field_chars_zero_disables_and_one_emits_ellipsis() {
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
             source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "cl42".to_owned(),
             content_hash: 0x42,
@@ -1470,6 +1481,7 @@ fn unknown_entity_types_share_single_other_group() {
         results: vec![
             ContextEntity {
                 source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([18; 16]),
                 short_id: "u18".to_owned(),
                 content_hash: 0x18,
@@ -1484,6 +1496,7 @@ fn unknown_entity_types_share_single_other_group() {
             },
             ContextEntity {
                 source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([20; 16]),
                 short_id: "u20".to_owned(),
                 content_hash: 0x20,
@@ -1531,6 +1544,7 @@ fn yaml_quotes_unsafe_field_keys() {
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
             source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([0x92; 16]),
             short_id: "mc01".to_owned(),
             content_hash: 0x01,
@@ -1561,6 +1575,7 @@ fn yaml_quotes_scalar_control_characters() {
             retrieval_quality: Default::default(),
             results: vec![ContextEntity {
                 source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([0x93; 16]),
                 short_id: "mc02".to_owned(),
                 content_hash: 0x02,
@@ -1660,6 +1675,7 @@ fn surplus_budget_redistributes_to_hungry_types() {
 
     pack.results.push(ContextEntity {
         source_revision_ref: None,
+        critical: false,
         id: EntityId::from_bytes_unchecked([99; 16]),
         short_id: "tn01".to_owned(),
         content_hash: 0x01,
@@ -1676,6 +1692,7 @@ fn surplus_budget_redistributes_to_hungry_types() {
     for i in 0..40_u8 {
         pack.results.push(ContextEntity {
             source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([50 + i; 16]),
             short_id: format!("cl{i}"),
             content_hash: i,
@@ -1740,6 +1757,8 @@ fn surplus_budget_redistributes_to_hungry_types() {
 
 fn empty_stats() -> PackStats {
     PackStats {
+        critical_over_budget: false,
+        critical_count: 0,
         candidates_considered: 0,
         signals_used: vec![],
         query_time_us: 0,
@@ -1975,6 +1994,7 @@ fn productivity_field_profiles() {
     for case in cases {
         let entity = ContextEntity {
             source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([case.entity_type; 16]),
             short_id: case.short_id.to_owned(),
             content_hash: case.content_hash,
@@ -2146,6 +2166,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
         results: vec![
             ContextEntity {
                 source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([0x64; 16]),
                 short_id: "cr01".to_owned(),
                 content_hash: 0xa1,
@@ -2157,6 +2178,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
             },
             ContextEntity {
                 source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([0x65; 16]),
                 short_id: "cr02".to_owned(),
                 content_hash: 0xa2,
@@ -2252,6 +2274,7 @@ fn companion_register_records_budget_with_fixed_state_allocation() {
 
     let source_id = [0x64; 16];
     let groups = group_entities(vec![PreparedEntity {
+        critical: false,
         entity_type: ENTITY_TYPE_COMPANION_REGISTER,
         score: 0.9,
         source: PreparedEntitySource::Result,
@@ -2317,6 +2340,7 @@ fn federation_grant_member_ref_hex_projection_is_preserved() {
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
             source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([ENTITY_TYPE_FEDERATION_GRANT; 16]),
             short_id: String::new(),
             content_hash: 0,
@@ -2364,6 +2388,7 @@ fn test_due_date_timestamp_rendering() {
 
     let entity = ContextEntity {
         source_revision_ref: None,
+        critical: false,
         id: EntityId::from_bytes_unchecked([0x91; 16]),
         short_id: "tk02".to_owned(),
         content_hash: 0xcc,
@@ -2558,6 +2583,7 @@ fn note_group_is_separate_from_claims_with_pinned_profile_fields() {
     let author = EntityId::from_bytes_unchecked([0x7a; 16]);
     let note_row = ContextEntity {
         source_revision_ref: None,
+        critical: false,
         id: EntityId::from_bytes_unchecked([0x9e; 16]),
         short_id: "no01".to_owned(),
         content_hash: 0x11,
@@ -2566,7 +2592,12 @@ fn note_group_is_separate_from_claims_with_pinned_profile_fields() {
         fields: Some(HashMap::from([
             (
                 "kind".to_owned(),
-                Value::String(crate::note::NoteKind::OpinionTake.as_str().into_owned()),
+                Value::String(
+                    crate::note::NoteKind::parse("opinion/take")
+                        .expect("shipped kind")
+                        .as_str()
+                        .into_owned(),
+                ),
             ),
             ("author_ref".to_owned(), Value::String(author.to_hex())),
             (
@@ -2618,6 +2649,7 @@ fn note_group_is_separate_from_claims_with_pinned_profile_fields() {
 /// is the predicate itself.
 fn commitment_budget_row(seed: u8, predicate: &str) -> PreparedEntity {
     PreparedEntity {
+        critical: false,
         entity_type: ENTITY_TYPE_CLAIM,
         score: 1.0,
         source: PreparedEntitySource::Result,
@@ -2632,72 +2664,21 @@ fn commitment_budget_row(seed: u8, predicate: &str) -> PreparedEntity {
     }
 }
 
-/// CMT-2 (ONE-1539): the serializer's critical-claim set names CMT-1's ONE
-/// commitment predicate, EXACTLY.
-///
-/// Two things are being pinned at once. `commitment.record` is critical, so a
-/// per-item cap cannot quietly trim the obligation the owner is being shown.
-/// And the guard is an exact match rather than a `commitment.` prefix: the
-/// split-fact sibling probed below does not exist in this engine, and a prefix
-/// guard would silently adopt whatever a later ticket mints into the family —
-/// including the shape the ratified design rejected.
-///
-/// The absent sibling's name is COMPOSED at runtime rather than written as a
-/// literal. A tree oracle greps this directory for that predicate name and must
-/// stay zero-hit; a test asserting the name's absence must not be the one thing
-/// that puts it back into the tree.
+/// Criticality changes priority, not the item budget contract.
 #[test]
-fn commitment_record_is_critical_and_promise_is_absent() {
-    let absent_sibling = format!("commitment.{}", "promise");
-    assert_eq!(
-        crate::commitment::PREDICATE_COMMITMENT_RECORD,
-        "commitment.record"
+fn critical_claims_obey_item_budget() {
+    let mut critical = commitment_budget_row(0x2c, "boundary.topic");
+    critical.critical = true;
+    let mut stats = empty_stats();
+    assert!(apply_item_budget(&mut critical, 32, &mut stats));
+    assert!(
+        super::token_budget::estimate_entity_tokens_with_depth_limit(
+            &critical,
+            DEFAULT_CONTEXT_PACK_TOKENIZER,
+            None
+        ) <= 32
     );
-    assert!(is_critical_claim_predicate(
-        crate::commitment::PREDICATE_COMMITMENT_RECORD
-    ));
-    for absent in [
-        absent_sibling.as_str(),
-        "commitment.",
-        "commitment.record.draft",
-        "commitment",
-    ] {
-        assert!(
-            !is_critical_claim_predicate(absent),
-            "{absent:?} must not be critical: the guard is exact, never a prefix"
-        );
-    }
-
-    // The record survives a cap that trims every ordinary row of the same shape.
-    let mut record = commitment_budget_row(0x2c, "commitment.record");
-    let before = record.fields.clone();
-    let mut record_stats = empty_stats();
-    assert!(is_critical_predicate_claim(&record));
-    assert!(apply_item_budget(&mut record, 32, &mut record_stats));
-    assert_eq!(
-        record.fields, before,
-        "a commitment.record claim is critical context, not budget slack"
-    );
-    assert_eq!(record_stats.items_truncated.count, 0);
-    assert_eq!(record_stats.items_dropped.count, 0);
-
-    // A row carrying the absent sibling predicate is budgeted like any other
-    // claim, which is what "it is not a critical predicate" looks like from the
-    // outside.
-    let mut promise = commitment_budget_row(0x2d, &absent_sibling);
-    let mut promise_stats = empty_stats();
-    assert!(!is_critical_predicate_claim(&promise));
-    assert!(apply_item_budget(&mut promise, 32, &mut promise_stats));
-    assert_eq!(promise_stats.items_truncated.count, 1);
-    assert!(!promise.fields.iter().any(|(key, _)| key == "src"));
-    assert!(!promise.fields.iter().any(|(key, _)| key == "scope"));
-    assert_eq!(
-        promise
-            .fields
-            .iter()
-            .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten()),
-        Some(absent_sibling.as_str())
-    );
+    assert_eq!(stats.items_truncated.count, 1);
 }
 
 #[test]

@@ -22,6 +22,8 @@ mod companion_identity;
 mod edges;
 mod entities;
 mod observers;
+mod recovery;
+pub(crate) use recovery::preflight_canonical_recovery;
 mod tombstones;
 
 // it resolves through this import, so the moved body stays byte-identical.

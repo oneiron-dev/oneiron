@@ -5,7 +5,7 @@ use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
 };
 use crate::edge::EdgeKind;
-use crate::entity_id::EntityId;
+
 use crate::error::ErrorKind;
 use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
@@ -51,17 +51,17 @@ impl Memory<'_> {
     /// staged, so a refused take leaves no orphan NOTE or edge.
     ///
     /// Exempt from the hard-delete recreation refusal BY CONSTRUCTION: the
-    /// NOTE id is a fresh [`EntityId::now`], never caller-supplied.
+    /// The vault's injected ID source mints the NOTE id; callers do not choose it.
     pub fn author_take(
         &self,
         target: TakeTarget,
         markdown: impl Into<String>,
     ) -> MemoryResult<EntityRefReceipt> {
         self.author_note(&NoteWriteEnvelope {
-            kind: NoteKind::OpinionTake,
+            kind: NoteKind::parse("opinion/take").expect("shipped kind"),
             scope: NoteScope::About(target),
             markdown: markdown.into(),
-            source_revision_ref: *EntityId::now().as_bytes(),
+            source_revision_ref: *self.vault.store.clock.entity_id()?.as_bytes(),
         })
     }
 
@@ -93,8 +93,8 @@ impl Memory<'_> {
             markdown: envelope.markdown.clone(),
             source_revision_ref: envelope.source_revision_ref,
         })?;
-        let note_id = EntityId::now();
-        let at = crate::unix_seconds_now();
+        let note_id = self.vault.store.clock.entity_id()?;
+        let at = self.vault.store.clock.now_recorded_at();
         let occurred = TimeRange { start: at, end: at };
 
         self.with_verified_actor_write_txn(|wtxn| {
@@ -132,7 +132,7 @@ impl Memory<'_> {
         &self,
         input: &CompanionRecordInput,
     ) -> MemoryResult<EntityRefReceipt> {
-        let id = id_from_optional_hex(input.id.as_deref())?;
+        let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         self.refuse_hard_deleted_id(&id)?;
         let owner = self.resolve_ref(&input.owner_ref)?;
         let persona = self.resolve_ref(&input.persona_ref)?;
@@ -190,7 +190,7 @@ impl Memory<'_> {
                 &["Register the source in the ingest source registry first."],
             ));
         };
-        let id = id_from_optional_hex(input.id.as_deref())?;
+        let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         self.refuse_hard_deleted_id(&id)?;
         let subject = self.resolve_ref(&input.subject_ref)?;
         if self.vault.get_entity_type(&subject)?.is_none() {

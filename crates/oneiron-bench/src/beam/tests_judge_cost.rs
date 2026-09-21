@@ -95,6 +95,8 @@ pub(crate) mod tests {
                 results: Vec::new(),
                 neighbors: Vec::new(),
                 stats: PackStats {
+                    critical_over_budget: false,
+                    critical_count: 0,
                     candidates_considered: 0,
                     signals_used: Vec::new(),
                     query_time_us: 11,
@@ -111,6 +113,8 @@ pub(crate) mod tests {
             serialized: Vec::new(),
             serialized_tokens: 7,
             serialized_stats: PackStats {
+                critical_over_budget: false,
+                critical_count: 0,
                 candidates_considered: 0,
                 signals_used: Vec::new(),
                 query_time_us: 11,

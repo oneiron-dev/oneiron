@@ -17,10 +17,10 @@
 //! anchor rather than replacing this one.
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill::{
     SkillContentHash, SkillLifecycle, SkillRecord, decode_skill_record, encode_skill_record,
@@ -276,14 +276,14 @@ pub(crate) fn escalate_activation_approval_in_txn(
     // No stored body is a CREATE, not an activation: the birth law downstream
     // rejects a locally born `active` skill outright, so there is nothing here
     // to escalate.
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(false);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_SKILL {
+
+    if raw.entity_type != ENTITY_TYPE_SKILL {
         return Ok(false);
     }
-    let prior_body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    let prior_body = &raw.body;
     if decode_skill_record(prior_body)
         .is_ok_and(|prior| prior.lifecycle_status == SkillLifecycle::Active)
     {

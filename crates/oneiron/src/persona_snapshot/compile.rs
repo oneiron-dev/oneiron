@@ -480,7 +480,7 @@ impl crate::Vault {
         let stamp = PersonaSnapshotCompileStamp {
             schema_version: PERSONA_SNAPSHOT_COMPILE_STAMP_SCHEMA_VERSION.to_owned(),
             subject_ref: *subject_ref,
-            compiled_at_secs: crate::unix_seconds_now(),
+            compiled_at_secs: self.store.clock.now_recorded_at(),
             compiled_fingerprint,
         };
 

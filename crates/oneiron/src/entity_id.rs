@@ -435,3 +435,6 @@ mod tests {
         assert!(ForeignWorldId::from_entity_id(local).is_err());
     }
 }
+
+/// Explicit opt-in hex codec for domain records; EntityId has no implicit wire ABI.
+pub(crate) mod serde_hex;

@@ -17,7 +17,7 @@ use super::records::{
     CommEventKind, CommRecord, comm_records_in_txn, put_comm_record_in_txn, validate_channel_class,
 };
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::EntityMetadataHeader;
 use crate::claim::ClaimBody;
 use crate::counterparty_contact::{
     CounterpartyOptOutReason, normalize_channel_class, rematerialize_contact_cache_in_txn,
@@ -25,6 +25,8 @@ use crate::counterparty_contact::{
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use crate::provenance::validate_actor_class;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
@@ -148,7 +150,7 @@ pub fn request_opt_out_clear(
             created_at,
             pending: true,
         };
-        put_comm_record_in_txn(vault, wtxn, EntityId::now(), &gate)?;
+        put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &gate)?;
         Ok(CommClearOptOutOutcome::PendingHumanRuling)
     })
 }
@@ -177,8 +179,8 @@ pub fn approve_pending_opt_out_clear(
         // stale authorization decision (TOCTOU).
         let actor_entity_type = vault
             .store
-            .entities
-            .get(&*wtxn, actor_ref.as_bytes())?
+            .port_entity_record(&*wtxn, &actor_ref)?
+            .map(|row| row.encode())
             .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
             .ok_or(CommError::Engine(Error::EntityNotFound))?;
         validate_actor_class(actor_entity_type, actor.actor_class())?;
@@ -304,7 +306,7 @@ pub fn approve_pending_opt_out_clear(
                 outcome: OPT_OUT_CLEAR_APPROVED.to_owned(),
                 actor_ref: actor.entity_ref(),
             };
-            put_comm_record_in_txn(vault, wtxn, EntityId::now(), &receipt)?;
+            put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &receipt)?;
         }
         Ok(if live_claim.is_some() {
             ClearRuling::Cleared
@@ -459,8 +461,8 @@ pub fn mint_send_override(
         // authorization decision.
         let actor_entity_type = vault
             .store
-            .entities
-            .get(&*wtxn, actor_ref.as_bytes())?
+            .port_entity_record(&*wtxn, &actor_ref)?
+            .map(|row| row.encode())
             .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
             .ok_or(CommError::Engine(Error::EntityNotFound))?;
         validate_actor_class(actor_entity_type, actor.actor_class())?;
@@ -480,7 +482,13 @@ pub fn mint_send_override(
         // typed comm failure rather than as an opaque body rejection deep in
         // the claim door.
         validate_comm_claim_structure(&value.claim_body()).map_err(|_| CommError::InvalidRecord)?;
-        put_comm_claim_with_id_in_txn(vault, wtxn, EntityId::now(), &value, issued_at)
+        put_comm_claim_with_id_in_txn(
+            vault,
+            wtxn,
+            vault.store.clock.entity_id()?,
+            &value,
+            issued_at,
+        )
     })
 }
 
@@ -593,11 +601,16 @@ fn subject_claim_ids_in_txn(
     txn: &heed::RoTxn<'_>,
     subject: &EntityId,
 ) -> CommResult<Vec<EntityId>> {
-    let prefix = crate::vault::edge_kind_prefix(subject, EdgeKind::ClaimOf);
     let mut ids = Vec::new();
-    for entry in store.edges_in.prefix_iter(txn, &prefix)? {
-        let (key, value) = entry?;
-        ids.push(crate::vault::parse_edge_record(&key, &value)?.target);
+    for entry in store.port_edges(
+        txn,
+        subject,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::ClaimOf),
+        None,
+    )? {
+        let edge_row = entry?;
+        ids.push(edge_row.target);
     }
     Ok(ids)
 }
@@ -609,19 +622,14 @@ fn claim_body_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> CommResult<Option<ClaimBody>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Err(CommError::InvalidRecord);
-    };
-    if header.entity_type != ENTITY_TYPE_CLAIM {
+
+    if raw.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(None);
     }
-    Ok(Some(crate::claim::decode_claim_body(
-        &raw[ENTITY_METADATA_HEADER_LEN..],
-        true,
-    )?))
+    Ok(Some(crate::claim::decode_claim_body(&raw.body, true)?))
 }
 
 /// Moves the party-wide `comm.opt_out` head for `party` to `reason`, inside the
@@ -671,8 +679,13 @@ pub(crate) fn supersede_party_opt_out_head_in_txn(
         reason: reason.receipt_reason().to_owned(),
         occurred_at,
     };
-    let new_id =
-        put_engine_owned_comm_claim_in_txn(vault, wtxn, EntityId::now(), &value, occurred_at)?;
+    let new_id = put_engine_owned_comm_claim_in_txn(
+        vault,
+        wtxn,
+        vault.store.clock.entity_id()?,
+        &value,
+        occurred_at,
+    )?;
     if let Some((old_id, _)) = head {
         crate::counterparty_contact::supersede_family_owned_claim_in_txn(
             vault,

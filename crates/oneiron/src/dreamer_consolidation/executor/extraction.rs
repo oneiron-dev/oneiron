@@ -113,15 +113,6 @@ impl ConsolidationExecutor<'_> {
                     "extraction relationship crossed branch scope",
                 ));
             }
-            let claim_id = deterministic_claim_id(
-                attempt_id,
-                subject,
-                predicate,
-                &value,
-                partition.world_ref,
-                partition.facet_ref,
-                rel,
-            );
             let evidence_turn_refs: Vec<EntityId> = item
                 .get("evidence_turn_refs")
                 .and_then(|value| value.as_array())
@@ -140,12 +131,30 @@ impl ConsolidationExecutor<'_> {
             if let Some(world) = partition.world_ref {
                 candidate = candidate.with_world(world);
             }
+            let mut fields = Vec::new();
             if let Some(facet) = partition.facet_ref {
-                candidate = candidate.with_scope(Value::Map(vec![(
+                fields.push((
                     Value::from(TURN_BODY_FACET_REF_KEY),
                     Value::Binary(facet.as_bytes().to_vec()),
-                )]));
+                ));
             }
+            if let Some(topic) = item.get("topic_key").filter(|value| !value.is_null()) {
+                fields.push((Value::from("topic_key"), json_to_rmpv(topic)));
+            }
+            if !fields.is_empty() {
+                candidate = candidate.with_scope(Value::Map(fields));
+            }
+            let facts = candidate_facts(&candidate)?;
+            let claim_id = deterministic_claim_id(
+                attempt_id,
+                subject,
+                predicate,
+                &facts.value,
+                partition.world_ref,
+                partition.facet_ref,
+                rel,
+                facts.topic.as_deref(),
+            );
             candidates.push(PromotionCandidate {
                 claim_id,
                 candidate,

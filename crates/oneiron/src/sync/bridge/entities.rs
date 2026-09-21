@@ -115,6 +115,7 @@ pub(super) fn materialize_entities_from_delta(
                     // tombstone key still names this id). Presence is
                     // value-agnostic (a non-binary tombstone decodes HARD
                     // downstream).
+
                     let delete_protected =
                         crate::registry::is_delete_protected_engine_record(header.entity_type);
                     if !delete_protected && tombstone_map_contains_id(&tombstones_map, &id) {
@@ -348,6 +349,7 @@ pub(super) fn materialize_entity_blob_in_txn(
     blob: &[u8],
     lease_vault_id: u64,
 ) -> Result<bool> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
     if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, wtxn, &id)?
         || crate::origin::lfs::is_lfs_chunk_blob(&id, blob)
@@ -357,6 +359,13 @@ pub(super) fn materialize_entity_blob_in_txn(
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Err(crate::Error::CorruptedIndex("entity metadata"));
     };
+    // NOTE replay may not discharge or outlive an unproven purge retry.
+    // Shared by entity deltas and edge endpoint hydration, in the writer.
+    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+        && quarantine::unproven_remat_marker_exists_in_txn(vault, wtxn, window_key, &id)?
+    {
+        return Ok(false);
+    }
     let delete_protected = crate::registry::is_delete_protected_engine_record(header.entity_type);
 
     // Tombstone gate — fires BEFORE the put, never heals after (ARCH-0023b:
@@ -473,7 +482,7 @@ pub(super) fn materialize_entity_blob_in_txn(
             vault,
             wtxn,
             quota::peer_key_from_redaction_pubkey(&pubkey),
-            crate::unix_seconds_now(),
+            mutation_recorded_at,
         )?
     } else if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
         if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())?
@@ -504,7 +513,7 @@ pub(super) fn materialize_entity_blob_in_txn(
             vault,
             wtxn,
             peer_key,
-            crate::unix_seconds_now(),
+            mutation_recorded_at,
         )?
     } else if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         // ARCH-0055 identity-topology ledger events route through the ONE

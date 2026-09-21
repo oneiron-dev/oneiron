@@ -23,6 +23,7 @@ use crate::{
 
 use super::*;
 
+mod persistent_conflicts;
 mod person_extraction;
 mod prior_heads;
 mod scope_enforcement;
@@ -1874,6 +1875,15 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         // Contradictions never land silently: nothing sinks, the gap row exists
         // (a re-upsert of the same identity refreshes rather than creates).
         assert!(sink.accepted.is_empty());
+        let marker_count = vault
+            .claims_for_subject(&subject)?
+            .into_iter()
+            .filter_map(|id| vault.get_claim(&id).transpose())
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|body| body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN)
+            .count();
+        assert_eq!(marker_count, 1);
         let probe = ReflectionGap {
             kind: ReflectionGapKind::ContradictionLeftStanding,
             subject,
@@ -2628,6 +2638,7 @@ fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
             None,
             None,
             rel,
+            None,
         )
     };
     assert_ne!(id(Some(rel_a)), id(Some(rel_b)));

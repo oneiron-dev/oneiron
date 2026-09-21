@@ -36,6 +36,7 @@ pub use self::egress::{
     export_window_updates_since, history_free_window_required, replay_pending_mirrors,
     require_history_free_window,
 };
+pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
 pub use self::reverse::reverse_rematerialize;
 pub(crate) use self::tombstones::{DeleteBearingUpdate, export_tombstone_commit_delta};

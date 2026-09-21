@@ -70,7 +70,6 @@ pub(crate) fn erase_citations_in_txn(
     Ok(())
 }
 
-#[cfg(feature = "sync")]
 pub(super) fn pin_is_erased(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -90,7 +89,6 @@ pub(super) fn pin_is_erased(
     Ok(false)
 }
 
-#[cfg(feature = "sync")]
 pub(crate) fn validate_pins(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

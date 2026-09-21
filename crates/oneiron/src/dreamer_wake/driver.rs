@@ -312,7 +312,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     budget_total_units: input.budget_total_units,
                     reserve_units: input.reserve_units,
                     started_milestone: self
-                        .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                        .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
                 })?
             } else {
                 DreamerAdmissionOutcome::Empty
@@ -326,7 +326,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         budget_total_units: input.budget_total_units,
                         reserve_units: input.reserve_units,
                         started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
                     })?
                 }
                 outcome => outcome,
@@ -340,7 +340,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         budget_total_units: input.budget_total_units,
                         reserve_units: input.reserve_units,
                         started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
                     })?
                 }
                 outcome => outcome,
@@ -365,7 +365,7 @@ impl<'a> DreamerWakeDriver<'a> {
                                 budget_total_units: input.budget_total_units,
                                 reserve_units: input.reserve_units,
                                 started_milestone: self
-                                    .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                                    .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
                             },
                         },
                     )? {

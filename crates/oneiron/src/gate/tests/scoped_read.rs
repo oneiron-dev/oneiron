@@ -506,15 +506,18 @@ fn facet_scoped_read_fixture(vault: &crate::Vault) -> Result<(EntityId, EntityId
     Ok((claim, facet))
 }
 
-/// The `edges_out` key one `FacetOf` edge occupies, and a well-formed value
-/// for it. The facet scan reads the KEY only, so the value just has to be a
-/// parseable edge record.
-fn facet_edge_row(claim: EntityId, facet: EntityId) -> (Vec<u8>, [u8; 12]) {
+/// A session-staged `FacetOf` row uses the same semantic encoding as a stored edge.
+fn facet_edge_row(claim: EntityId, facet: EntityId) -> (Vec<u8>, Vec<u8>) {
     let mut key = crate::vault::edge_kind_prefix(&claim, EdgeKind::FacetOf).to_vec();
     key.extend_from_slice(facet.as_bytes());
-    let mut value = [0_u8; 12];
-    value[0..4].copy_from_slice(&0.7_f32.to_le_bytes());
-    value[4..12].copy_from_slice(&1_u64.to_le_bytes());
+    let value = crate::edge::encode_edge_value(
+        EdgeKind::FacetOf,
+        0.7,
+        1,
+        crate::affect::Vad::NEUTRAL,
+        None,
+    )
+    .expect("valid semantic facet edge");
     (key, value)
 }
 
@@ -706,6 +709,7 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
 
     let entity = |id: EntityId, entity_type: u8, score: f32| ContextEntity {
         source_revision_ref: None,
+        critical: false,
         id,
         short_id: id.to_hex(),
         content_hash: 0,
@@ -729,6 +733,8 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
             0.0,
         )],
         stats: PackStats {
+            critical_over_budget: false,
+            critical_count: 0,
             candidates_considered: 2,
             signals_used: Vec::new(),
             query_time_us: 0,

@@ -1,9 +1,9 @@
 //! Store-scanning manifest fold plus budget-guard and trust adapters.
 
+use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
 
 use crate::claim::{ClaimBody, claim_sensitivity_band};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
@@ -25,29 +25,30 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
 
-    for index_entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_POLICY_MANIFEST])?
-    {
-        let (key, _) = index_entry?;
-        let Some(id) = type_index_entity_id(&key, ENTITY_TYPE_POLICY_MANIFEST) else {
-            resolution.diagnostics.malformed_manifest_seen = true;
-            continue;
+    for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
+        let id = match index_entry {
+            Ok(id) => id,
+            Err(Error::CorruptedIndex(_)) => {
+                resolution.diagnostics.malformed_manifest_seen = true;
+                continue;
+            }
+            Err(error) => return Err(error),
         };
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
-            resolution.diagnostics.malformed_manifest_seen = true;
-            continue;
+        let raw = match store.port_entity_record(txn, &id) {
+            Ok(Some(row)) => row,
+            Ok(None) | Err(Error::CorruptedIndex("entity header")) => {
+                resolution.diagnostics.malformed_manifest_seen = true;
+                continue;
+            }
+            Err(error) => return Err(error),
         };
-        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
-            resolution.diagnostics.malformed_manifest_seen = true;
-            continue;
-        };
-        if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
+
+        if raw.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
             resolution.diagnostics.malformed_manifest_seen = true;
             continue;
         }
 
-        match decode_policy_manifest(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]) {
+        match decode_policy_manifest(&raw.body) {
             Some(decoded) => {
                 resolution.diagnostics.manifest_count += 1;
                 resolution.diagnostics.malformed_manifest_seen |=
@@ -270,11 +271,4 @@ pub(in crate::gate) fn check_claim_source_trust(
         &policy.source_trust,
         lineage,
     )
-}
-
-pub(crate) fn type_index_entity_id(key: &[u8], entity_type: u8) -> Option<EntityId> {
-    if key.len() != ENTITY_ID_LEN + 1 || key[0] != entity_type {
-        return None;
-    }
-    EntityId::from_bytes(key[1..].try_into().ok()?).ok()
 }

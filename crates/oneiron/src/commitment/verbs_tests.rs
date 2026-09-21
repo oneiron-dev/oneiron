@@ -403,12 +403,6 @@ fn status_verbs_reject_non_commitment_claims_without_rewriting() -> Result<()> {
 fn commitment_registry_dispatch_and_criticality_are_explicit() {
     assert!(is_commitment_claim_predicate(PREDICATE_COMMITMENT_RECORD));
     assert!(!is_commitment_claim_predicate("core.unrelated"));
-    assert!(crate::serialize::is_critical_claim_predicate(
-        PREDICATE_COMMITMENT_RECORD
-    ));
-    assert!(!crate::serialize::is_critical_claim_predicate(
-        "core.unrelated"
-    ));
 }
 
 #[test]

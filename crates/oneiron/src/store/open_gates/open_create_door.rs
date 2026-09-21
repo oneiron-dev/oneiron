@@ -345,7 +345,7 @@ impl Store {
         torn_creation_cleanup.disarm();
         drop(db_open_guard);
 
-        let store = Self::assemble(env, raw, registered_path)?;
+        let store = Self::assemble(env, raw, registered_path, &config.store_clock)?;
 
         // EMB-2 preflight: an out-of-range fast_dims is a caller bug and
         // fails closed before the HNSW compat check below can compare it.

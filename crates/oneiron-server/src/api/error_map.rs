@@ -18,6 +18,10 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::InvalidTemporalExpression
         | ErrorKind::InvalidEntityType
         | ErrorKind::InvalidTimeRange
+        | ErrorKind::InvalidConversationDag
+        | ErrorKind::InvalidScopeSummary
+        | ErrorKind::ActorClassMismatch
+        | ErrorKind::ReservedEdgeKind
         | ErrorKind::InvalidClaimBody
         | ErrorKind::InvalidAccessGrantBody
         | ErrorKind::InvalidCounterpartyContactBody
@@ -46,6 +50,10 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::AgentDefinitionNotFound
         | ErrorKind::AgentDefinitionDisabled => ApiError::bad_request(error.to_string(), None),
         ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
+        ErrorKind::HeadAdvanceOffTrunk => ApiError::invalid_state(Some("head_advance_off_trunk")),
+        ErrorKind::DagParentOutsideConversation => {
+            ApiError::invalid_state(Some("dag_parent_outside_conversation"))
+        }
         ErrorKind::CycleDetected | ErrorKind::ChildOfCardinality => {
             ApiError::invalid_state(Some("child_of_constraint"))
         }

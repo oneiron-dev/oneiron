@@ -29,8 +29,8 @@ use std::sync::Mutex;
 
 use oneiron::calendar::CalendarError;
 use oneiron::calendar::claims::{
-    CalendarPassportPresence, PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS,
-    PREDICATE_CALENDAR_TIME_KIND,
+    CalendarPassportPresence, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
+    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
 };
 use oneiron::calendar::ingest::{
     CustodyDoorIcsFeedFetcher, IcsFeedFetcher, IcsFeedPollConfig, IcsFeedPollPayload,
@@ -798,7 +798,15 @@ fn raw_ics_is_archived_before_semantic_admission() {
     let claims = claims_on(&vault, &event);
     assert!(!claims.is_empty());
     let mut artifact_refs = std::collections::BTreeSet::new();
-    for (_, claim) in &claims {
+    let candidates: Vec<_> = claims
+        .iter()
+        .filter(|(_, claim)| claim.predicate != PREDICATE_CALENDAR_ORIGIN)
+        .collect();
+    assert!(
+        candidates.len() >= 2,
+        "time_kind and passport retain imported evidence"
+    );
+    for (_, claim) in candidates {
         let evidence = claim.evidence.as_ref().expect("write envelope evidence");
         let candidate = value_field(evidence, "candidate_evidence").expect("candidate evidence");
         let source_record_id = value_field(candidate, "source_record_id")
@@ -852,11 +860,34 @@ fn imported_calendar_claims_cross_gate() {
         claims.len() >= 3,
         "origin + time_kind + passport, got {claims:?}"
     );
+    assert_eq!(
+        claims
+            .iter()
+            .filter(|(_, body)| body.predicate == PREDICATE_CALENDAR_ORIGIN)
+            .count(),
+        1
+    );
     for (_, body) in &claims {
+        if body.predicate == PREDICATE_CALENDAR_ORIGIN {
+            assert_eq!(body.value.as_str(), Some("imported"));
+            assert_eq!(body.source, None);
+            assert_eq!(body.approval, oneiron::ClaimApprovalStatus::Auto);
+            assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
+            let evidence = body.evidence.as_ref().expect("projector evidence");
+            assert_eq!(
+                value_field(evidence, "kind").and_then(rmpv::Value::as_str),
+                Some("calendar_projector")
+            );
+            assert_eq!(
+                value_field(evidence, "write_class").and_then(rmpv::Value::as_str),
+                Some("recorded")
+            );
+            continue;
+        }
         assert_eq!(
             body.source,
             Some(ClaimSource::Imported),
-            "every admitted claim is Imported"
+            "every semantic candidate is Imported"
         );
         assert_eq!(
             body.approval,

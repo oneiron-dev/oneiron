@@ -28,17 +28,8 @@ struct ClaimKindReadScan {
 }
 #[derive(Debug)]
 struct ClaimKindCandidate {
-    ready_key: Vec<u8>,
     id: AttemptId,
 }
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
-enum ClaimKindWriteAttempt {
-    Claimed(AttemptRecord),
-    Empty,
-    Retry,
-}
-const CLAIM_KIND_WRITE_RETRY_LIMIT: usize = 3;
 /// A dedupe index entry pointing at a row whose actor scope is not the one the
 /// key family named. Reported as corruption, never as a dedupe miss: silently
 /// enqueueing a second live row would be the exact double-send the index is
@@ -90,8 +81,15 @@ impl<'a> AttemptQueue<'a> {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
-        let outcome = self
-            .enqueue_with_task_ref_and_dedupe_actor_in_txn(&mut wtxn, input, task_ref, actor_ref)?;
+        let outcome = match task_ref {
+            None => crate::ports::JobQueue::port_job_enqueue(self, &mut wtxn, input)?,
+            Some(task_ref) => self.enqueue_with_task_ref_and_dedupe_actor_in_txn(
+                &mut wtxn,
+                input,
+                Some(task_ref),
+                actor_ref,
+            )?,
+        };
         wtxn.commit()?;
         self.store.notify_attempt_observers();
 
@@ -108,7 +106,7 @@ impl<'a> AttemptQueue<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         input: EnqueueAttempt,
     ) -> Result<EnqueueOutcome> {
-        self.enqueue_with_task_ref_and_dedupe_actor_in_txn(wtxn, input, None, None)
+        crate::ports::JobQueue::port_job_enqueue(self, wtxn, input)
     }
 
     /// Transaction-composable enqueue with an owning TASK backlink.
@@ -130,6 +128,24 @@ impl<'a> AttemptQueue<'a> {
     /// sharing one client key therefore occupy disjoint entries, instead of the
     /// second one silently coalescing onto the first one's pending row.
     pub(crate) fn enqueue_with_task_ref_and_dedupe_actor_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: EnqueueAttempt,
+        task_ref: Option<String>,
+        dedupe_actor_ref: Option<&str>,
+    ) -> Result<EnqueueOutcome> {
+        crate::ports::JobQueue::port_job_enqueue_scoped(
+            self,
+            wtxn,
+            input,
+            crate::ports::JobScope {
+                task_ref,
+                dedupe_actor_ref,
+            },
+        )
+    }
+
+    pub(in crate::attempt_queue) fn enqueue_scoped_storage_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: EnqueueAttempt,
@@ -166,7 +182,7 @@ impl<'a> AttemptQueue<'a> {
         }
 
         let record = AttemptRecord {
-            id: AttemptId::now(),
+            id: AttemptId::from_bytes(&self.store.clock.ulid()?)?,
             kind: input.kind,
             payload: input.payload,
             state: AttemptState::Queued,
@@ -190,6 +206,14 @@ impl<'a> AttemptQueue<'a> {
             result_ref: None,
         };
 
+        if self
+            .store
+            .attempt_records
+            .get(wtxn, record.id.as_bytes())?
+            .is_some()
+        {
+            return Err(crate::Error::InvariantViolation("attempt id collision"));
+        }
         let encoded = encode_record(&record)?;
         self.store
             .attempt_records
@@ -228,7 +252,7 @@ impl<'a> AttemptQueue<'a> {
     pub fn claim_kind(&self, kind: &str, input: ClaimAttempt) -> Result<ClaimOutcome> {
         validate_kind(kind)?;
         validate_lease_owner(&input.lease_owner)?;
-        self.claim_kind_with_read_scan(kind, input)
+        self.claim_matching(input, Some(kind))
     }
 
     /// Claims the oldest queued attempt with the requested kind in a caller-owned
@@ -237,14 +261,17 @@ impl<'a> AttemptQueue<'a> {
     /// The caller owns commit/abort. This path intentionally uses the
     /// write-transaction scan so higher-level stores can co-commit the lease
     /// with their own local state.
-    pub(crate) fn claim_kind_in_txn(
+    pub(crate) fn claim_kind_storage_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        kind: &str,
+        kind: Option<&str>,
         input: ClaimAttempt,
+        cutoff: u64,
     ) -> Result<ClaimOutcome> {
-        validate_kind(kind)?;
-        self.claim_matching_in_txn(wtxn, input, Some(kind))
+        if let Some(kind) = kind {
+            validate_kind(kind)?;
+        }
+        self.claim_matching_in_txn(wtxn, input, kind, cutoff)
     }
 
     /// Repairs ready/dedupe rows while returning the oldest claimable attempt id of
@@ -256,6 +283,7 @@ impl<'a> AttemptQueue<'a> {
         now: u64,
     ) -> Result<Option<AttemptId>> {
         validate_kind(kind)?;
+        let now = now.min(crate::ports::recorded_at_in_txn(self.store, wtxn)?);
 
         let mut scan = ClaimKindReadScan::default();
         for row in self.store.attempt_ready.iter(&*wtxn)? {
@@ -307,7 +335,6 @@ impl<'a> AttemptQueue<'a> {
                 continue;
             }
             scan.candidate = Some(ClaimKindCandidate {
-                ready_key: key.to_vec(),
                 id,
             });
             break;
@@ -316,165 +343,6 @@ impl<'a> AttemptQueue<'a> {
         let candidate = scan.candidate.as_ref().map(|candidate| candidate.id);
         self.apply_claim_kind_read_repairs(wtxn, scan)?;
         Ok(candidate)
-    }
-
-    fn claim_kind_with_read_scan(&self, kind: &str, input: ClaimAttempt) -> Result<ClaimOutcome> {
-        for _ in 0..CLAIM_KIND_WRITE_RETRY_LIMIT {
-            let scan = self.scan_claim_kind_ready_rows(kind, input.now, &input.lease_owner)?;
-            match self.try_claim_scanned_kind_candidate(kind, &input, scan)? {
-                ClaimKindWriteAttempt::Claimed(record) => return Ok(ClaimOutcome::Claimed(record)),
-                ClaimKindWriteAttempt::Empty => return Ok(ClaimOutcome::Empty),
-                ClaimKindWriteAttempt::Retry => {}
-            }
-        }
-
-        self.claim_matching(input, Some(kind))
-    }
-
-    fn scan_claim_kind_ready_rows(
-        &self,
-        kind: &str,
-        now: u64,
-        worker: &str,
-    ) -> Result<ClaimKindReadScan> {
-        let rtxn = self.store.env.read_txn()?;
-        let mut scan = ClaimKindReadScan::default();
-        for row in self.store.attempt_ready.iter(&rtxn)? {
-            let (key, value) = row?;
-            let Ok((key_ready_at, key_id)) = decode_ready_key(&key) else {
-                scan.stale_ready_keys.push(key.to_vec());
-                continue;
-            };
-            let Ok(id) = AttemptId::from_bytes(&value) else {
-                scan.stale_ready_keys.push(key.to_vec());
-                continue;
-            };
-            if id != key_id {
-                scan.stale_ready_keys.push(key.to_vec());
-                continue;
-            }
-            let Some(raw_record) = self.store.attempt_records.get(&rtxn, id.as_bytes())? else {
-                scan.stale_missing_record_ids.insert(id);
-                scan.stale_ready_keys.push(key.to_vec());
-                continue;
-            };
-            let record = decode_record(&raw_record, id)?;
-            if !record.state.is_ready_indexed() {
-                scan.stale_ready_keys.push(key.to_vec());
-                continue;
-            }
-            let record_ready_at = ready_at(&record);
-            if record_ready_at != key_ready_at {
-                scan.stale_ready_keys.push(key.to_vec());
-                if record_ready_at > now {
-                    scan.ready_replacements
-                        .push((ready_key(record_ready_at, id), id));
-                    continue;
-                }
-                if record.kind != kind || !record.accepts_worker(worker) {
-                    scan.ready_replacements
-                        .push((ready_key(record_ready_at, id), id));
-                    continue;
-                }
-            } else if record_ready_at > now || record.kind != kind || !record.accepts_worker(worker)
-            {
-                continue;
-            }
-            if !crate::task_verb::task_dispatch_ready(
-                self.store,
-                &rtxn,
-                record.task_ref.as_deref(),
-                now,
-            )? {
-                continue;
-            }
-            scan.candidate = Some(ClaimKindCandidate {
-                ready_key: key.to_vec(),
-                id,
-            });
-            break;
-        }
-
-        Ok(scan)
-    }
-
-    fn try_claim_scanned_kind_candidate(
-        &self,
-        kind: &str,
-        input: &ClaimAttempt,
-        scan: ClaimKindReadScan,
-    ) -> Result<ClaimKindWriteAttempt> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let mut claimed = None;
-        if let Some(candidate) = scan.candidate.as_ref() {
-            let Some(value) = self.store.attempt_ready.get(&wtxn, &candidate.ready_key)? else {
-                self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
-                wtxn.commit()?;
-                self.store.notify_attempt_observers();
-                return Ok(ClaimKindWriteAttempt::Retry);
-            };
-            let Ok(id) = AttemptId::from_bytes(&value) else {
-                self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
-                wtxn.commit()?;
-                self.store.notify_attempt_observers();
-                return Ok(ClaimKindWriteAttempt::Retry);
-            };
-            if id != candidate.id {
-                self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
-                wtxn.commit()?;
-                self.store.notify_attempt_observers();
-                return Ok(ClaimKindWriteAttempt::Retry);
-            }
-            let Some(raw_record) = self.store.attempt_records.get(&wtxn, id.as_bytes())? else {
-                self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
-                wtxn.commit()?;
-                self.store.notify_attempt_observers();
-                return Ok(ClaimKindWriteAttempt::Retry);
-            };
-            let mut record = decode_record(&raw_record, id)?;
-            if !record.state.is_ready_indexed()
-                || ready_at(&record) > input.now
-                || record.kind != kind
-                || !crate::task_verb::task_dispatch_ready(
-                    self.store,
-                    &wtxn,
-                    record.task_ref.as_deref(),
-                    input.now,
-                )?
-                || !record.accepts_worker(&input.lease_owner)
-            {
-                self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
-                wtxn.commit()?;
-                self.store.notify_attempt_observers();
-                return Ok(ClaimKindWriteAttempt::Retry);
-            }
-            crate::task_verb::acquire_task_symbols(
-                self.store,
-                &mut wtxn,
-                record.task_ref.as_deref(),
-                input.now,
-            )?;
-            lease_claimed_record(&mut record, &input.lease_owner, input.now)?;
-            claimed = Some((candidate.ready_key.clone(), id, record));
-        }
-
-        self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
-
-        let Some((ready_key, id, record)) = claimed else {
-            wtxn.commit()?;
-            self.store.notify_attempt_observers();
-            return Ok(ClaimKindWriteAttempt::Empty);
-        };
-
-        self.store.attempt_ready.delete(&mut wtxn, &ready_key)?;
-        let encoded = encode_record(&record)?;
-        self.store
-            .attempt_records
-            .put(&mut wtxn, id.as_bytes(), &encoded)?;
-        wtxn.commit()?;
-        self.store.notify_attempt_observers();
-
-        Ok(ClaimKindWriteAttempt::Claimed(record))
     }
 
     fn apply_claim_kind_read_repairs(
@@ -500,7 +368,7 @@ impl<'a> AttemptQueue<'a> {
         validate_lease_owner(&input.lease_owner)?;
 
         let mut wtxn = self.store.env.write_txn()?;
-        let outcome = self.claim_matching_in_txn(&mut wtxn, input, kind_filter)?;
+        let outcome = crate::ports::JobQueue::port_job_claim(self, &mut wtxn, kind_filter, input)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
 
@@ -512,6 +380,7 @@ impl<'a> AttemptQueue<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         input: ClaimAttempt,
         kind_filter: Option<&str>,
+        cutoff: u64,
     ) -> Result<ClaimOutcome> {
         validate_lease_owner(&input.lease_owner)?;
 
@@ -546,11 +415,11 @@ impl<'a> AttemptQueue<'a> {
             let record_ready_at = ready_at(&record);
             if record_ready_at != key_ready_at {
                 stale_ready_keys.push(key.to_vec());
-                if record_ready_at > input.now {
+                if record_ready_at > cutoff {
                     ready_replacements.push((ready_key(record_ready_at, id), id));
                     continue;
                 }
-            } else if record_ready_at > input.now {
+            } else if record_ready_at > cutoff {
                 continue;
             }
             if kind_filter.is_some_and(|kind| record.kind != kind)
@@ -599,5 +468,16 @@ impl<'a> AttemptQueue<'a> {
             .put(wtxn, id.as_bytes(), &encoded)?;
 
         Ok(ClaimOutcome::Claimed(record))
+    }
+}
+
+impl AttemptQueue<'_> {
+    pub(crate) fn claim_kind_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        kind: &str,
+        input: ClaimAttempt,
+    ) -> Result<ClaimOutcome> {
+        crate::ports::JobQueue::port_job_claim(self, txn, Some(kind), input)
     }
 }

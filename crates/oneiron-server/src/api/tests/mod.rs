@@ -22,6 +22,7 @@ mod context_pack_disclosure;
 mod context_pack_v4;
 mod contract_snapshots;
 mod conversation_rooms;
+mod conversation_dag;
 mod core_memory_conversations;
 mod mcp_memory;
 mod mcp_paging_cursors;
@@ -335,6 +336,7 @@ pub(super) fn synthetic_context_pack(result_count: usize) -> oneiron::ContextPac
                 let id = seeded_test_entity_id(0x0012_6400 + index as u128);
                 oneiron::ContextEntity {
                     source_revision_ref: None,
+                    critical: false,
                     id,
                     short_id: id.to_hex(),
                     content_hash: index as u8,
@@ -348,6 +350,8 @@ pub(super) fn synthetic_context_pack(result_count: usize) -> oneiron::ContextPac
             .collect(),
         neighbors: Vec::new(),
         stats: oneiron::PackStats {
+            critical_over_budget: false,
+            critical_count: 0,
             candidates_considered: result_count,
             signals_used: Vec::new(),
             query_time_us: 0,

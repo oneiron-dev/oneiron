@@ -207,7 +207,7 @@ pub fn write_provider_prior(
         ));
     }
 
-    let now = crate::unix_seconds_now();
+    let now = vault.store.clock.now_recorded_at();
     vault.with_write_txn(|wtxn| {
         let actor = resolve_or_create_provider_actor_in_txn(vault, wtxn, provider)?;
         let active_priors = prior_claims_for_actor_in_txn(vault, &*wtxn, &actor)?
@@ -216,7 +216,7 @@ pub fn write_provider_prior(
             .map(|(id, _)| id)
             .collect::<Vec<_>>();
 
-        let claim_id = EntityId::now();
+        let claim_id = vault.store.clock.entity_id()?;
         let mut body = ClaimBody::new(
             PREDICATE_ACTOR_CONFIDENCE_PRIOR,
             ClaimSubject::Entity(actor),
@@ -259,7 +259,8 @@ pub fn write_provider_prior(
 /// oracle seam. Not indexed — the claim references it by subject only.
 #[cfg(feature = "test-support")]
 fn mint_enriched_entity_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Result<EntityId> {
-    let id = EntityId::now();
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    let id = vault.store.clock.entity_id()?;
     let body = encode_value(&Value::Map(vec![(
         Value::from("enriched"),
         Value::Boolean(true),
@@ -273,7 +274,7 @@ fn mint_enriched_entity_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Res
             id,
             entity_type: ENTITY_TYPE_PERSON,
             occurred: TimeRange { start: 0, end: 0 },
-            learned_at: crate::unix_seconds_now(),
+            learned_at: mutation_recorded_at,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -304,10 +305,10 @@ fn mint_enriched_entity_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Res
 #[doc(hidden)]
 pub fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) -> Result<EntityId> {
     validate_provider_key(provider)?;
-    let now = crate::unix_seconds_now();
+    let now = vault.store.clock.now_recorded_at();
     vault.with_write_txn(|wtxn| {
         let enriched = mint_enriched_entity_in_txn(vault, wtxn)?;
-        let claim_id = EntityId::now();
+        let claim_id = vault.store.clock.entity_id()?;
         let mut body = ClaimBody::new(
             PREDICATE_PROVIDER_ENRICHMENT,
             ClaimSubject::Entity(enriched),

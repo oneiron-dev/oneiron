@@ -1,6 +1,5 @@
-//! Attributed NOTE records: public opinions, actor-private diaries and plugin namespaces.
-//! `plugin/brief` has a person-stamped policy contract, editable documents and citation pins.
-//! Scratchpads are Context Board blocks, never NOTE kinds.
+//! Attributed NOTE records with built-in, plugin and registered PACK kinds.
+//! Editable text and citation authority use the canonical entity-document path.
 
 use rmpv::Value;
 
@@ -14,12 +13,11 @@ pub const NOTE_BODY_KEYS: [&str; 4] = ["kind", "author_ref", "markdown", "source
 const KEY_KIND: &str = NOTE_BODY_KEYS[0];
 const KEY_AUTHOR_REF: &str = NOTE_BODY_KEYS[1];
 const KEY_MARKDOWN: &str = NOTE_BODY_KEYS[2];
-const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 
 /// The kind discriminator of a NOTE body.
 ///
-/// Closed to the implemented kinds. `parse` fails closed
-/// so an unknown wire string can never widen the enum by accident.
+/// Built-in and plugin identities retain their typed variants. PACK names are
+/// data; every write and store-aware read still checks their installed descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoteKind {
     /// An actor's attributed opinion about a subject or a claim.
@@ -28,6 +26,8 @@ pub enum NoteKind {
     Plugin(String),
     /// Private to the author. Ordinary retrieval never includes this kind.
     Diary,
+    /// A shipped or vault-registered PACK discriminator; admission checks the registry.
+    Registered(String),
 }
 
 impl NoteKind {
@@ -38,16 +38,21 @@ impl NoteKind {
             Self::OpinionTake => std::borrow::Cow::Borrowed("opinion/take"),
             Self::Diary => std::borrow::Cow::Borrowed("diary"),
             Self::Plugin(tag) => std::borrow::Cow::Owned(format!("plugin/{tag}")),
+            Self::Registered(kind) => std::borrow::Cow::Borrowed(kind),
         }
     }
 
-    /// Parses the wire literal; `None` for anything else.
+    /// Parses a shipped kind or a syntactically valid plugin namespace.
+    /// Vault-registered non-plugin kinds require the store-aware resolver.
     #[must_use]
     pub fn parse(raw: &str) -> Option<Self> {
         match raw {
             "opinion/take" => return Some(Self::OpinionTake),
             "diary" => return Some(Self::Diary),
             _ => {}
+        }
+        if kinds::is_shipped_kind(raw) {
+            return Some(Self::Registered(raw.to_owned()));
         }
         let tag = raw.strip_prefix("plugin/")?;
         (!tag.is_empty()
@@ -57,7 +62,30 @@ impl NoteKind {
                 .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)))
         .then(|| Self::Plugin(tag.to_owned()))
     }
+    /// Syntax-only decode for registry-aware callers. This never grants admission.
+    pub(crate) fn wire(raw: &str) -> Option<Self> {
+        Self::parse(raw).or_else(|| {
+            (!raw.starts_with("plugin/") && kinds::valid_name(raw))
+                .then(|| Self::Registered(raw.to_owned()))
+        })
+    }
 }
+
+pub(crate) mod documents;
+pub(crate) mod erase;
+mod kinds;
+pub(crate) mod recovery;
+pub(crate) mod storage;
+pub(crate) use kinds::validate_registered_kind;
+mod proposals;
+mod verbs;
+pub use documents::{
+    NoteAnchor, NoteDocument as NoteProgramDocument, NoteEdit as NoteProgramEdit,
+    NoteEditOutcome as NoteProgramEditOutcome, NoteVersion,
+};
+pub use kinds::{ContextDefault, ExtractionDefault, NoteKindDescriptor, RetentionDefault};
+pub use proposals::{NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict};
+const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 
 /// A decoded NOTE body.
 ///
@@ -106,9 +134,9 @@ pub struct NoteWriteEnvelope {
 /// Encodes a NOTE body to the pinned four-key MessagePack map.
 pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
     validate_markdown(&body.markdown)?;
-    if NoteKind::parse(&body.kind.as_str()).as_ref() != Some(&body.kind) {
+    if NoteKind::wire(&body.kind.as_str()).as_ref() != Some(&body.kind) {
         return Err(Error::Record(RecordError::InvalidNoteBody(
-            "invalid plugin namespace",
+            "invalid NOTE kind",
         )));
     }
     let value = Value::Map(vec![
@@ -139,6 +167,13 @@ pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
 /// MessagePack, trailing bytes, non-string or unknown or duplicate keys, an
 /// unknown kind, an unparseable actor ref, and blank markdown.
 pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
+    decode_note_body_using(bytes, NoteKind::parse)
+}
+
+pub(crate) fn decode_note_body_using(
+    bytes: &[u8],
+    resolve: impl Fn(&str) -> Option<NoteKind>,
+) -> Result<NoteBody> {
     let mut cursor = bytes;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
         Error::Record(RecordError::InvalidNoteBody(
@@ -187,9 +222,11 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
                     .ok_or(Error::Record(RecordError::InvalidNoteBody(
                         "kind must be a UTF-8 string",
                     )))?;
-                kind = Some(NoteKind::parse(raw).ok_or(Error::Record(
-                    RecordError::InvalidNoteBody("unknown NOTE kind"),
-                ))?);
+                kind = Some(
+                    resolve(raw).ok_or(Error::Record(RecordError::InvalidNoteBody(
+                        "unknown NOTE kind",
+                    )))?,
+                );
             }
             KEY_AUTHOR_REF => {
                 let raw = value
@@ -244,7 +281,7 @@ pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
     })
 }
 
-fn validate_markdown(markdown: &str) -> Result<()> {
+pub(crate) fn validate_markdown(markdown: &str) -> Result<()> {
     if markdown.trim().is_empty() {
         return Err(Error::Record(RecordError::InvalidNoteBody(
             "markdown must not be blank",
@@ -253,11 +290,29 @@ fn validate_markdown(markdown: &str) -> Result<()> {
     Ok(())
 }
 
-/// Shared admission for every NOTE-bearing read. No actor means an ordinary
-/// retrieval, which excludes diaries even when the caller owns the vault.
-pub(crate) fn note_body_readable(bytes: &[u8], actor: Option<&EntityId>) -> bool {
-    decode_note_body(bytes)
-        .is_ok_and(|body| body.kind != NoteKind::Diary || actor == Some(&body.author_ref))
+/// Registry-aware decoding for stored NOTE cores, including PACK-defined kinds.
+pub(crate) fn decode_note_body_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    bytes: &[u8],
+) -> Result<NoteBody> {
+    let body = decode_note_body_using(bytes, NoteKind::wire)?;
+    kinds::context_in_txn(store, txn, body.kind.as_str().as_ref())?;
+    Ok(body)
+}
+
+/// Shared NOTE admission. Ordinary retrieval excludes every owner-only kind.
+pub(crate) fn note_body_readable(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    bytes: &[u8],
+    actor: Option<&EntityId>,
+) -> Result<bool> {
+    let Ok(body) = decode_note_body_using(bytes, NoteKind::wire) else {
+        return Ok(false);
+    };
+    let context = kinds::context_in_txn(store, txn, body.kind.as_str().as_ref())?;
+    Ok(context != ContextDefault::OwnerOnly || actor == Some(&body.author_ref))
 }
 
 /// Ordinary retrieval's NOTE privacy floor. Unrelated entity kinds and missing
@@ -274,7 +329,12 @@ pub(crate) fn ordinary_entity_visible(
         return Ok(false);
     };
     Ok(header.entity_type != crate::registry::ENTITY_TYPE_NOTE
-        || note_body_readable(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], None))
+        || note_body_readable(
+            store,
+            txn,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            None,
+        )?)
 }
 
 #[cfg(test)]
@@ -307,19 +367,13 @@ mod id_codec;
 pub use kind_contract::{
     BriefKindContract, NoteContextDefault, NoteExtractionDefault, NoteRetentionDefault,
 };
-#[cfg(feature = "sync")]
 mod birth;
 #[cfg(feature = "sync")]
 mod brief_view;
-#[cfg(feature = "sync")]
 mod document;
-#[cfg(feature = "sync")]
 mod document_store;
-#[cfg(feature = "sync")]
 pub(crate) use birth::document_birth_in_txn;
-#[cfg(feature = "sync")]
 mod operations;
-#[cfg(feature = "sync")]
 pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt};
 #[cfg(feature = "sync")]
 mod replica;
@@ -331,5 +385,10 @@ pub(crate) use replica::{import_note_from_authority, validate_note_export};
 mod document_tests;
 #[cfg(all(test, feature = "sync"))]
 mod sync_tests;
-#[cfg(feature = "sync")]
 pub use document::{NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution};
+
+#[cfg(test)]
+mod program_tests;
+
+#[cfg(test)]
+mod adapter_tests;

@@ -5,11 +5,24 @@ use futures_util::StreamExt;
 
 #[tokio::test]
 async fn v1_core_run_tree_reads_attempt_queue_rows() {
-    let (_dir, server) = test_server_with_config(SyncServerConfig {
-        auth_secret: Some("secret".to_owned()),
-        ..Default::default()
-    });
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let clock = oneiron::store::ports::ManualClock::new(10);
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).expect("vault"));
+    assert_default_policy_manifest_fixture(vault.as_ref());
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                auth_secret: Some("secret".to_owned()),
+                ..Default::default()
+            },
+        )
+        .expect("sync server"),
+    );
     let root = enqueue_queue_attempt(server.vault.as_ref(), "api-worker", 10, "run-api");
+    clock.set(20);
     let _other = enqueue_queue_attempt(server.vault.as_ref(), "other-run", 20, "run-other");
 
     let (status, body) = core_json(

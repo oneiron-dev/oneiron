@@ -303,7 +303,7 @@ fn put_relationship_claim(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<EntityId> {
-    let id = EntityId::now();
+    let id = vault.store.clock.entity_id()?;
     vault.put_claim(
         &id,
         &ClaimBody::new(

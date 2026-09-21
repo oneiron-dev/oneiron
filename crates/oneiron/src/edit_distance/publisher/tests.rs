@@ -446,7 +446,11 @@ fn interview_digest_rides_the_ed00_and_ed01_doors() {
     use crate::edit_distance::delta::delta_from_recorded_ops;
     use crate::edit_distance::{ProposalArtifactRef, finalized_proposal_text};
 
-    let (_tmp, vault) = open_vault();
+    let clock = crate::ports::ManualClock::new(50);
+    let (_tmp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig {
+        store_clock: clock.bundle(),
+        ..crate::test_util::embedding_test_config()
+    });
     let topic = crate::test_util::entity(0x5B);
     let reviewer = {
         let id = crate::test_util::entity(0x5C);
@@ -462,8 +466,13 @@ fn interview_digest_rides_the_ed00_and_ed01_doors() {
         WriteActor::new(id, EdgeActorClass::Human)
     };
 
+    let previous_id = vault.new_entity_id().unwrap();
     let (session, mut digest) =
         open_interview(&vault, &topic, &reviewer, "the agent's draft digest").expect("open");
+    assert_eq!(
+        u128::from_be_bytes(*session.digest_artifact.as_bytes()),
+        u128::from_be_bytes(*previous_id.as_bytes()) + 1,
+    );
     assert_eq!(session.topic_ref, topic);
     assert_eq!(session.state, InterviewState::Drafting);
     assert_eq!(

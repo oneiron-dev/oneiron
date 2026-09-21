@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use std::collections::BTreeMap;
 
 use super::grant::scan_entities_by_type;
@@ -109,21 +110,16 @@ pub(super) fn identity_topology_receipts(
     rtxn: &heed::RoTxn<'_>,
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
-    let start = [crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT];
-    let end = [crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT + 1];
-    let bounds = (
-        std::ops::Bound::Included(&start[..]),
-        std::ops::Bound::Excluded(&end[..]),
-    );
     let mut receipts = Vec::new();
     for entry in vault
         .store
-        .type_index
-        .rev_range(rtxn, &bounds)?
+        .port_entity_ids_by_type_descending(
+            rtxn,
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        )?
         .take(MAX_RECEIPT_QUERY_SCAN)
     {
-        let (key, _) = entry?;
-        let event_id = crate::vault::entity_id_from_type_index_key(&key)?;
+        let event_id = entry?;
         let record = vault
             .identity_topology_event_in_txn(rtxn, &event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;

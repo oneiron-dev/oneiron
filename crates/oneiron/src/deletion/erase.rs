@@ -32,7 +32,6 @@ use crate::provenance::restamp_edge_flags;
 use crate::provenance::winner_index;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT};
 use crate::store::{GateDecisionId, Store};
-use crate::unix_seconds_now;
 
 use super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::sweep_queue::HardEraseSweepExtras;
@@ -383,10 +382,12 @@ impl Vault {
         // one transaction that destroys the evidence.
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
         crate::note::erase_citations_in_txn(self, wtxn, id)?;
+        crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
         crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
+        let note_removed = crate::note::erase::purge(self, wtxn, id)?;
         ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
         if had_graph_mutation {
             ppr::increment_graph_version(&self.store, wtxn)?;
@@ -394,7 +395,7 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
-        Ok(existed)
+        Ok(existed || note_removed)
     }
 
     pub(super) fn soft_erase_active_store_in_txn(
@@ -416,11 +417,15 @@ impl Vault {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .erase(id, self.store.env.info().last_txn_id);
+        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+        crate::ports::invalidate_source_in_txn(&self.store, wtxn, id)?;
+        crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
             deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
         if hint_had_graph_mutation {
             ppr::increment_graph_version(&self.store, wtxn)?;
         }
+        crate::note::erase::purge(self, wtxn, id)?;
         bm25::deindex_text(&self.store, wtxn, id)?;
         crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, id)?;
         delete_from_phonetic_postings(&self.store, wtxn, id)?;
@@ -451,6 +456,7 @@ impl Vault {
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
         let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        let changed = entity_record.len() > ENTITY_METADATA_HEADER_LEN;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the
@@ -482,6 +488,20 @@ impl Vault {
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+        if changed {
+            crate::ports::audit_mutation_in_txn(
+                &self.store,
+                wtxn,
+                crate::ports::MutationAudit {
+                    entity: *id,
+                    op: crate::ports::ChangeOp::Redact,
+                    actor_principal: None,
+                    occurred_at: mutation_recorded_at,
+                    input: id.as_bytes(),
+                    reason: None,
+                },
+            )?;
+        }
         Ok((true, had_vector))
     }
 
@@ -548,6 +568,7 @@ impl Vault {
     ) -> Result<ReplayedTombstoneOutcome> {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
+        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         let decoded = decode_tombstone_value(raw_value);
         // Cleanup is local visibility, never a replicated deletion intent.
         // Accepting byte 5 here would irreversibly scrub a retained archive
@@ -662,8 +683,8 @@ impl Vault {
                 );
             }
         }
-        let applied_at = unix_seconds_now();
-        let receipt_id = EntityId::now();
+        let applied_at = mutation_recorded_at;
+        let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
         scope
             .entity_ids
@@ -672,6 +693,7 @@ impl Vault {
             wtxn,
             &receipt_id,
             RedactionReceiptInput {
+                actor_principal: None,
                 request_id: decoded.receipt_request_id(),
                 scope,
                 reason: decoded.receipt_hard_reason(),
@@ -796,6 +818,9 @@ impl Vault {
             return Ok(true);
         }
 
+        if crate::note::erase::scope_exists(self, txn, id)? {
+            return Ok(true);
+        }
         vad_annotation_delete_scope_exists_in_txn(&self.store, txn, id)
     }
 }

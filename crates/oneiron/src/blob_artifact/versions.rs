@@ -9,7 +9,7 @@ use crate::claim::ClaimSubject;
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
+use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
@@ -20,9 +20,9 @@ use super::provenance::{
     validate_provenance, write_provenance_value,
 };
 use super::store_keys::{
-    BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, blob_artifact_asset_ref_key,
-    blob_artifact_head_key, blob_artifact_version_key, blob_artifact_version_prefix, encode_value,
-    entity_value, hash_from_value, read_value, require_entity_type, u64_value,
+    BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, blob_artifact_head_key,
+    blob_artifact_version_key, blob_artifact_version_prefix, encode_value, entity_value,
+    hash_from_value, read_value, require_entity_type, u64_value,
 };
 use crate::error::ArtifactError;
 
@@ -152,8 +152,7 @@ impl Vault {
             )));
         }
         let content_hash = *blake3::hash(bytes).as_bytes();
-        let asset_id = blob_artifact_asset_entity_id(&content_hash)?;
-        let claim_id = EntityId::now();
+        let claim_id = EntityId::from_bytes(self.store.clock.ulid()?)?;
 
         require_entity_type(
             &self.store,
@@ -189,8 +188,15 @@ impl Vault {
             WriteProvenance::new(write_provenance_value(provenance))?,
             provenance.approval_status(),
         );
+        crate::ports::BlobStore::port_blob_put(
+            self,
+            wtxn,
+            artifact_id,
+            bytes,
+            occurred,
+            learned_at,
+        )?;
         self.batch_in()
-            .put(&asset_id, ENTITY_TYPE_ASSET, occurred, learned_at, bytes)
             .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at)
             .apply(wtxn)?;
 
@@ -201,16 +207,28 @@ impl Vault {
             claim_id,
             created_at: learned_at,
         };
+        let recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+        crate::ports::ChangeLogStore::port_changelog_append(
+            self,
+            wtxn,
+            &crate::ports::ChangeLogRecord {
+                id: self.store.clock.ulid()?,
+                entity: *artifact_id,
+                op: crate::ports::ChangeOp::Update,
+                actor_principal: actor.entity_ref(),
+                actor_person: None,
+                occurred_at: occurred.start,
+                recorded_at,
+                input_hash: content_hash,
+                patch: None,
+                reason: Some("blob version appended".into()),
+            },
+        )?;
         let encoded = encode_blob_artifact_version_record(&record)?;
         self.store.vault_meta.put(wtxn, &version_key, &encoded)?;
         self.store
             .vault_meta
             .put(wtxn, &blob_artifact_head_key(artifact_id), &encoded)?;
-        self.store.vault_meta.put(
-            wtxn,
-            &blob_artifact_asset_ref_key(&content_hash, artifact_id),
-            &[],
-        )?;
         Ok(record)
     }
 
@@ -466,27 +484,10 @@ fn read_blob_asset_in_txn(
     rtxn: &RoTxn<'_>,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 ) -> Result<Vec<u8>> {
-    let asset_id = blob_artifact_asset_entity_id(content_hash)?;
-    let Some(raw) = vault.store.entities.get(rtxn, asset_id.as_bytes())? else {
-        return Err(Error::EntityNotFound);
-    };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-        return Err(crate::secret_custody::reject_secret_custody_byte());
-    }
-    if header.entity_type != ENTITY_TYPE_ASSET {
-        return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-            "version content hash did not resolve to an ASSET",
-        )));
-    }
-    let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-    if blake3::hash(&body).as_bytes() != content_hash {
-        return Err(Error::CorruptedIndex("blob artifact asset content hash"));
-    }
-    Ok(body)
+    crate::ports::BlobStore::port_blob_get(vault, rtxn, content_hash)?.ok_or(Error::EntityNotFound)
 }
 
-pub(super) fn blob_artifact_asset_entity_id(
+pub(crate) fn blob_artifact_asset_entity_id(
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 ) -> Result<EntityId> {
     entity_id_from_hash_material(BLOB_ARTIFACT_ASSET_ID_DOMAIN, &[content_hash])

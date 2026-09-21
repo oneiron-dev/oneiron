@@ -1,0 +1,193 @@
+{
+  "ticket": "W7-C11",
+  "validation_source": "cf9a9a46b7e0c1658366914005a44c52a797d05b",
+  "fix_commit": "cf9a9a46",
+  "manifest_sha256": "d42418d64d0c8ac8cf4a626d0592e94cc3b8ff3d322c46c41b88a7b630803c19",
+  "host": "Arch, selected by installed factory Cargo dispatcher",
+  "action_environment": {
+    "W7_CARGO_EXCLUDE_MACBOOK": "1",
+    "CARGO_TARGET_DIR": "/home/lexi/w7-build/target/W7-C11",
+    "RUST_TEST_THREADS": "4"
+  },
+  "admission": "MacBook excluded before claim; Mini rejected below 30 GiB; existing Arch 2-slot/3-job guards retained; outer Cargo commands request -j2; no force-local",
+  "unit": "w7-c11-guarded-host-recovery-01.service",
+  "terminal": {
+    "ActiveState": "inactive",
+    "SubState": "dead",
+    "Result": "success",
+    "ExecMainStatus": 0
+  },
+  "chain_log": "target/w7-logs/guarded-host-recovery-1.log",
+  "chain_log_sha256": "365eacf4c142169296db690412b8ae2ec30727047d91bbdb40e575640717b337",
+  "full_run_totals": {
+    "passed": 9154,
+    "failed": 0,
+    "ignored": 21,
+    "measured": 0,
+    "filtered": 0
+  },
+  "full_run_per_package": {
+    "oneiron": {
+      "passed": 7867,
+      "failed": 0,
+      "ignored": 16,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-android": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-bench": {
+      "passed": 295,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-driver": {
+      "passed": 85,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-napi": {
+      "passed": 22,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "oneiron-server": {
+      "passed": 884,
+      "failed": 0,
+      "ignored": 5,
+      "measured": 0,
+      "filtered": 0
+    }
+  },
+  "production_dyn_symbols": false,
+  "preexisting_ignored_set_unchanged": true,
+  "former_fixture_failures_passed": 18,
+  "prior_mac_fixture_receipt_unchanged": true,
+  "node_runtime_claim": false,
+  "android_native_proof": "Prior NDK/API36.1 proof retained unchanged, not rerun or replaced by the host Rust test",
+  "review_status": "No C11 PR exists at final paginated head lookup; original internal roots/dispositions retained; no unrelated post",
+  "claim_boundary": "Original six-package Linux Cargo test passed. Not a full scripts/verify.sh workspace run; no synthetic factory result.",
+  "commands": [
+    {
+      "name": "production-feature-graph",
+      "argv": [
+        "tree",
+        "--locked",
+        "-p",
+        "oneiron-napi",
+        "--edges",
+        "normal,build,features",
+        "--invert",
+        "napi-sys"
+      ],
+      "exit_code": 0,
+      "log": "guarded-host-production-feature-graph.log",
+      "totals": null
+    },
+    {
+      "name": "napi-rust-tests",
+      "argv": [
+        "test",
+        "--locked",
+        "--no-fail-fast",
+        "-p",
+        "oneiron-napi",
+        "--lib",
+        "-j",
+        "2",
+        "--",
+        "--test-threads=4"
+      ],
+      "exit_code": 0,
+      "log": "guarded-host-napi-rust-tests.log",
+      "totals": {
+        "passed": 22,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0
+      }
+    },
+    {
+      "name": "napi-all-target-lint",
+      "argv": [
+        "clippy",
+        "--locked",
+        "-p",
+        "oneiron-napi",
+        "--all-targets",
+        "--all-features",
+        "-j",
+        "2",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": "guarded-host-napi-all-target-lint.log",
+      "totals": null
+    },
+    {
+      "name": "napi-production-lint",
+      "argv": [
+        "clippy",
+        "--locked",
+        "-p",
+        "oneiron-napi",
+        "--lib",
+        "-j",
+        "2",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": "guarded-host-napi-production-lint.log",
+      "totals": null
+    },
+    {
+      "name": "original-six-package-tests",
+      "argv": [
+        "test",
+        "--locked",
+        "--no-fail-fast",
+        "-p",
+        "oneiron",
+        "-p",
+        "oneiron-android",
+        "-p",
+        "oneiron-bench",
+        "-p",
+        "oneiron-driver",
+        "-p",
+        "oneiron-napi",
+        "-p",
+        "oneiron-server",
+        "-j",
+        "2",
+        "--",
+        "--test-threads=4"
+      ],
+      "exit_code": 0,
+      "log": "guarded-host-original-six-package-tests.log",
+      "totals": {
+        "passed": 9154,
+        "failed": 0,
+        "ignored": 21,
+        "measured": 0,
+        "filtered": 0
+      }
+    }
+  ]
+}

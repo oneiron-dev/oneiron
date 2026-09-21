@@ -58,6 +58,7 @@
 //! host supplies the runtime and calls [`CompactionDriver::observe_serialized_pack`]
 //! after every serialized assembly.
 
+use crate::ports::EntityStoreRead;
 mod driver;
 mod epoch;
 pub mod output;
@@ -73,7 +74,6 @@ pub use epoch::{
     encode_epoch_summary_body,
 };
 
-use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{CompactionPacketError, Error, Result};
 use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
@@ -403,11 +403,11 @@ fn validate_turn_membership(
 
 /// Stored type byte of one entity, or `None` when it does not resolve.
 fn entity_type_in_txn(store: &Store, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    Ok(Some(header.entity_type))
+
+    Ok(Some(raw.entity_type))
 }
 
 /// `vault_meta` key prefix for TURN → SESSION membership rows (DREAM-008,
@@ -489,11 +489,25 @@ pub(crate) fn record_turn_session_membership_in_txn(
         return Ok(None);
     };
     if let Some(existing) = turn_session_membership_in_txn(store, &*wtxn, turn)? {
+        let reverse = [
+            b"session_turns:v1:".as_slice(),
+            existing.as_bytes(),
+            turn.as_bytes(),
+        ]
+        .concat();
+        store.vault_meta.put(wtxn, &reverse, &[1])?;
         return Ok(Some(existing));
     }
     store
         .vault_meta
         .put(wtxn, &turn_session_membership_key(turn), session.as_bytes())?;
+    let reverse = [
+        b"session_turns:v1:".as_slice(),
+        session.as_bytes(),
+        turn.as_bytes(),
+    ]
+    .concat();
+    store.vault_meta.put(wtxn, &reverse, &[1])?;
     Ok(Some(session))
 }
 

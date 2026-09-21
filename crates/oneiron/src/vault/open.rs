@@ -547,6 +547,7 @@ impl Vault {
             message_streams: Default::default(),
             #[cfg(feature = "sync")]
             entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
+            buffered_message_streams: Default::default(),
             #[cfg(feature = "sync")]
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]

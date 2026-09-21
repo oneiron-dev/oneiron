@@ -18,7 +18,9 @@
 //! reports absence; a single-source absence supersedes only that passport,
 //! never the EVENT status.
 
-use sha2::{Digest, Sha256};
+use crate::ports::EntityStoreRead;
+use sha2::Digest;
+use sha2::Sha256;
 
 use super::CalendarError;
 use super::claims::{
@@ -140,11 +142,9 @@ pub fn resolve_event_by_uid(vault: &Vault, uid: &str) -> Result<Option<EntityId>
         let mut ids = Vec::new();
         for entry in vault
             .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_EVENT])?
+            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_EVENT, None)?
         {
-            let (key, _) = entry?;
-            ids.push(crate::vault::entity_id_from_type_index_key(&key)?);
+            ids.push(entry?);
         }
         ids
     };

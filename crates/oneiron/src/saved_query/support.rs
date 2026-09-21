@@ -254,6 +254,10 @@ pub(super) fn edge_kind_from_name(value: &str) -> Option<EdgeKind> {
         // fulfillment pair here opens no write door.
         "fulfills" => EdgeKind::Fulfills,
         "discharged_by" => EdgeKind::DischargedBy,
+        "parent" => EdgeKind::Parent,
+        "spawned_by" => EdgeKind::SpawnedBy,
+        "addressed_to" => EdgeKind::AddressedTo,
+        "replies_to" => EdgeKind::RepliesTo,
         _ => return None,
     };
     Some(kind)

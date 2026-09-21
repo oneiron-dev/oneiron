@@ -19,6 +19,7 @@ impl Vault {
             authorize(self, txn, envelope.actor())?;
             let room = visibility::room_for_record_in(self, txn, trunk)?
                 .ok_or(state("summary target has no room"))?;
+            ownership::claim_in(&self.store, txn, room, ownership::Owner::Room)?;
             let sub_session_reply = if let ScopeSelector::SubSession(session) = scope {
                 let spawning = dag::peers(self, txn, *session, EdgeKind::SpawnedBy, false)?;
                 if spawning.as_slice() != [trunk] {

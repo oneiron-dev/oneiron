@@ -124,7 +124,10 @@ fn payload_visible_in_txn(
     payload: CodeMemoryPayloadRef,
 ) -> Result<bool> {
     let payload_id = payload.entity_id();
-    if let Some(raw) = store.entities.get(rtxn, payload_id.as_bytes())? {
+    if let Some(raw) = store
+        .port_entity_record(rtxn, &payload_id)?
+        .map(|row| row.encode())
+    {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == ENTITY_TYPE_CLAIM && raw.len() == ENTITY_METADATA_HEADER_LEN {

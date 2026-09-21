@@ -2,7 +2,8 @@
 use super::EMBED_PRIORITY_BACKFILL;
 #[cfg(feature = "sync")]
 use super::pending_embedding_lease_key;
-use crate::{EntityId, Error, Result};
+use crate::{Error, Result};
+use crate::ports::EntityStoreRead;
 
 /// Marker set atomically with the first model identity, consumed by cold attach.
 pub(crate) const COLD_ATTACH_PENDING_KEY: &[u8] = b"cold_attach_pending";
@@ -60,18 +61,10 @@ fn remark_claims_pending_in_txn(
     #[cfg(not(feature = "sync"))]
     let _ = (priority, replace_priority);
     let mut claims = Vec::new();
-    for row in vault.store.entities.iter(wtxn)? {
-        let (key, raw) = row?;
-        let header = crate::batch::EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            let id = EntityId::from_bytes(
-                key.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("entity id"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("entity id"))?;
-            claims.push((id, raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec()));
+    for row in vault.store.port_entity_records(wtxn)? {
+        let (id, row) = row?;
+        if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            claims.push((id, row.body));
         }
     }
     for (id, body) in &claims {

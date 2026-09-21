@@ -21,11 +21,13 @@ use crate::edge::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_MODEL;
-use crate::store::Store;
+
 use crate::temporal::TimeRange;
-use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, require_key_len};
+use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
 use heed::RwTxn;
 use rmpv::Value;
 
@@ -201,8 +203,12 @@ impl Vault {
         // The subject edge must still exist — the retraction KEEPS it and
         // only refreshes the two flag bytes.
         let subject = claim.subject;
-        let edge_key = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
-        if self.store.edges_out.get(&wtxn, &edge_key)?.is_none() {
+
+        if self
+            .store
+            .port_edge_get(&wtxn, &subject.source, subject.kind, &subject.target)?
+            .is_none()
+        {
             return Err(Error::EdgeNotFound);
         }
 
@@ -290,21 +296,13 @@ impl Vault {
         let mut existing: Option<EntityId> = None;
         for entry in self
             .store
-            .type_index
-            .prefix_iter(&wtxn, &[ENTITY_TYPE_MODEL])?
+            .port_entity_ids_by_type(&wtxn, ENTITY_TYPE_MODEL, None)?
         {
-            let (key, _) = entry?;
-            require_key_len(&key, 17, "type index key")?;
-            let id = EntityId::from_bytes(
-                key[1..17]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("type index key"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("type index key"))?;
+            let id = entry?;
             let raw = self
                 .store
-                .entities
-                .get(&wtxn, id.as_bytes())?
+                .port_entity_record(&wtxn, &id)?
+                .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("type index row without entity"))?;
             let (stored_name, stored_version) =
                 decode_model_entity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
@@ -320,7 +318,7 @@ impl Vault {
         // CREATE: engine-internal maintenance door (allow_maintenance), the
         // same admit flag the sync replay path uses for REDACTION_AUDIT —
         // public puts of the byte keep failing MaintenanceKindNotWritable.
-        let id = EntityId::now();
+        let id = self.store.clock.entity_id()?;
         let ops = vec![BatchOp::Put {
             id,
             entity_type: ENTITY_TYPE_MODEL,
@@ -507,18 +505,17 @@ impl Vault {
         // "claims are never silently deleted"). The lifecycle operations
         // (retract / supersede) are the ONLY mutators of an existing
         // provenance Claim.
-        if self
-            .store
-            .entities
-            .get(wtxn, claim_id.as_bytes())?
-            .is_some()
-        {
+        if self.store.port_entity_record(wtxn, claim_id)?.is_some() {
             return Err(Error::Claim(ClaimError::ProvenanceClaimIdInUse));
         }
 
         // Subject edge must exist — no upsert.
-        let edge_key = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
-        if self.store.edges_out.get(wtxn, &edge_key)?.is_none() {
+
+        if self
+            .store
+            .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
+            .is_none()
+        {
             return Err(Error::EdgeNotFound);
         }
 
@@ -526,12 +523,9 @@ impl Vault {
         // against its kind (D13) — never defaulted.
         let actor_raw = self
             .store
-            .entities
-            .get(wtxn, body.actor_entity_ref.as_bytes())?
+            .port_entity_record(wtxn, &body.actor_entity_ref)?
             .ok_or(Error::EntityNotFound)?;
-        let actor_header = EntityMetadataHeader::parse(&actor_raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        validate_actor_class(actor_header.entity_type, actor_class)?;
+        validate_actor_class(actor_raw.entity_type, actor_class)?;
 
         // Substrate gate (ONE-1138): a present substrate_ref must name a
         // stored MODEL (type byte 121) entity — actor = WHO, substrate =
@@ -540,8 +534,8 @@ impl Vault {
         if let Some(substrate_ref) = record.substrate_ref {
             let substrate_raw = self
                 .store
-                .entities
-                .get(wtxn, substrate_ref.as_bytes())?
+                .port_entity_record(wtxn, &substrate_ref)?
+                .map(|row| row.encode())
                 .ok_or(Error::Claim(ClaimError::InvalidModelSubstrate(
                     "substrate_ref does not name a stored entity",
                 )))?;

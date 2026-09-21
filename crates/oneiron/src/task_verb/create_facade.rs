@@ -16,7 +16,6 @@ use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
 };
 use crate::temporal::TimeRange;
-use crate::unix_seconds_now;
 
 use super::consts::{
     TASK_CREATE_PROPOSAL_PREDICATE, TASK_REALIZE_ATTEMPT_KIND, TASK_VERB_BODY_SCHEMA_VERSION,
@@ -88,8 +87,8 @@ impl Memory<'_> {
     ) -> MemoryResult<TaskCreateReceipt> {
         let verb = task_verb_contract(TasksVerb::Create);
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let now = spec.now.unwrap_or_else(unix_seconds_now);
-        let rate_now = unix_seconds_now();
+        let now = spec.now.unwrap_or_else(|| self.vault().now_recorded_at());
+        let rate_now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
         // The typed shape is settled BEFORE any write transaction opens: an
         // invalid consult never reaches the TASK write, so a rejected request
@@ -228,7 +227,7 @@ impl Memory<'_> {
         provenance: &Value,
         now: u64,
     ) -> MemoryResult<EntityId> {
-        let task_ref = EntityId::now();
+        let task_ref = self.vault().store.clock.entity_id()?;
         let body = encode_task_verb_body(TaskVerbBody {
             role: TaskRole::Task.role_byte(),
             schema_version: TASK_VERB_BODY_SCHEMA_VERSION,

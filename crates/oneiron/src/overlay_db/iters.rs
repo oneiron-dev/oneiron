@@ -2,7 +2,7 @@
 
 use heed::iteration_method::{MoveBetweenKeys, MoveOnCurrentKeyDuplicates};
 use heed::types::{Bytes, Str};
-use heed::{DefaultComparator, RoIter, RoPrefix, RoRange, RoRevIter, RoRevRange};
+use heed::{DefaultComparator, RoIter, RoPrefix, RoRange, RoRevRange};
 
 use crate::error::Result;
 
@@ -18,22 +18,6 @@ pub(crate) enum OverlayIter<'txn> {
 }
 
 impl<'txn> Iterator for OverlayIter<'txn> {
-    type Item = Result<KvPair<'txn>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Base(inner) => inner.next().map(convert_pair),
-            Self::Merged(inner) => inner.next(),
-        }
-    }
-}
-
-pub(crate) enum OverlayRevIter<'txn> {
-    Base(RoRevIter<'txn, Bytes, Bytes>),
-    Merged(Box<MergedRows<'txn, RoRevIter<'txn, Bytes, Bytes>>>),
-}
-
-impl<'txn> Iterator for OverlayRevIter<'txn> {
     type Item = Result<KvPair<'txn>>;
 
     fn next(&mut self) -> Option<Self::Item> {

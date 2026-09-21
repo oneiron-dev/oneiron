@@ -119,19 +119,13 @@ impl BranchResources<'_> {
         let mut priors = Vec::new();
         for (index, candidate) in candidates.iter().enumerate() {
             let matches = self.matching_priors(candidate, rules)?;
-            if matches.len() > 1 {
-                return Err(invalid_consolidation(
-                    "multiple admitted prior heads for one question",
-                ));
+            for (id, _) in &matches {
+                self.require_prior_write(self.scope(), *id)?;
             }
-            let prior = matches.first().copied();
-            if let Some((id, equal)) = prior {
-                self.require_prior_write(self.scope(), id)?;
-                if equal {
-                    exact.insert(index);
-                }
+            if matches.len() == 1 && matches[0].1 {
+                exact.insert(index);
             }
-            priors.push(prior);
+            priors.push(matches);
         }
         // Keep all sibling/cosine connected components. An exact member is
         // replaced by its admitted stored head as context, not sent to judge.
@@ -139,21 +133,17 @@ impl BranchResources<'_> {
             let ids: BTreeSet<_> = conflict
                 .candidate_indexes
                 .iter()
-                .filter_map(|index| priors[*index].map(|(id, _)| id))
+                .flat_map(|index| priors[*index].iter().map(|(id, _)| *id))
                 .collect();
-            if ids.len() > 1 {
-                return Err(invalid_consolidation(
-                    "judge component has multiple prior heads",
-                ));
-            }
-            conflict.prior_head = ids.first().copied();
+            conflict.prior_head = (ids.len() == 1).then(|| *ids.first().expect("one prior"));
+            conflict.prior_heads = ids.into_iter().collect();
             conflict
                 .candidate_indexes
                 .retain(|index| !exact.contains(index));
         }
         conflicts.retain(|conflict| !conflict.candidate_indexes.is_empty());
-        for (index, prior) in priors.into_iter().enumerate() {
-            if let Some((id, false)) = prior
+        for (index, matches) in priors.into_iter().enumerate() {
+            if matches.iter().any(|(_, equal)| !equal)
                 && !conflicts
                     .iter()
                     .any(|set| set.candidate_indexes.contains(&index))
@@ -161,7 +151,8 @@ impl BranchResources<'_> {
                 conflicts.push(ConflictSet {
                     identity: candidate_keys(&candidates[index], rules)?.identity,
                     candidate_indexes: vec![index],
-                    prior_head: Some(id),
+                    prior_head: (matches.len() == 1).then(|| matches[0].0),
+                    prior_heads: matches.into_iter().map(|(id, _)| id).collect(),
                 });
             }
         }

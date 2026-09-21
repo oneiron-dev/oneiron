@@ -534,6 +534,8 @@ fn render_document_pack(views: &[EntityView], format: PackFormat) -> MemoryResul
         results,
         neighbors: Vec::new(),
         stats: PackStats {
+            critical_over_budget: false,
+            critical_count: 0,
             // The caller named this set, so every document in it was resolved
             // rather than ranked: no signals were used and no query was run.
             candidates_considered: resolved,
@@ -588,6 +590,7 @@ fn document_entity(view: &EntityView) -> MemoryResult<ContextEntity> {
             .and_then(|s| s.rsplit_once('@'))
             .and_then(|(_, r)| crate::memory::RevisionRef::from_hex(r).ok())
             .map(|r| r.0),
+        critical: false,
         id: EntityId::from_hex(&view.id_hex)?,
         short_id,
         content_hash,

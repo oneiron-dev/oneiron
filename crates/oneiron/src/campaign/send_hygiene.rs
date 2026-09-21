@@ -262,7 +262,7 @@ fn replace_member_head_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     replacement: MemberHeadReplacement<'_>,
 ) -> Result<EntityId> {
-    let new_id = EntityId::now();
+    let new_id = vault.store.clock.entity_id()?;
     let mut body = ClaimBody::new(
         PREDICATE_CAMPAIGN_MEMBER,
         ClaimSubject::Entity(replacement.person_ref),
@@ -297,7 +297,7 @@ fn put_hygiene_claim_in_txn(
     {
         return Ok(existing);
     }
-    let id = EntityId::now();
+    let id = vault.store.clock.entity_id()?;
     let mut body = ClaimBody::new(
         predicate,
         ClaimSubject::Entity(input.person_ref),

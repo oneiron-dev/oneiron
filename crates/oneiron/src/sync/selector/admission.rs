@@ -80,6 +80,7 @@ pub fn admit_federated_window_update(
         &admitted.get_map("edges"),
     )?;
 
+    crate::sync::note::copy_selected(vault, &remote, &admitted)?;
     admitted.commit_with(CommitOptions::new().origin(role.origin()));
     admitted
         .export(ExportMode::all_updates())

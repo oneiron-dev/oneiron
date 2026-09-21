@@ -36,7 +36,7 @@ impl<'vault> ScopedRead<'vault> {
         if filter.deny_all {
             return Ok(false);
         }
-        let Some(raw) = self.entities().get(txn, id.as_bytes())? else {
+        let Some(raw) = self.entity_record_in(txn, id)?.map(|row| row.encode()) else {
             return Ok(false);
         };
         let header =

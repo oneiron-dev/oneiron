@@ -744,11 +744,15 @@ fn scope_agent_mismatch_is_rejected_before_transition() -> Result<()> {
 
 #[test]
 fn second_failure_input_on_failed_row_routes_nothing() -> Result<()> {
-    let (_dir, vault) = open_vault();
+    let store_clock = crate::ports::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
     let leased = leased_dispatch(&vault, agent_ref, 10)?;
     let ladder = FailureLadder::new(&vault);
     let policy = auto_policy(agent_ref);
+    store_clock.set(20);
     ladder.handle_attempt_failure(failure_input(&leased, permanent(), 20), policy.clone())?;
     let queue = AttemptQueue::new(&vault);
     let after_winner = queue.list()?.len();

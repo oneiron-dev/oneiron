@@ -53,6 +53,7 @@ pub struct SerializeConfig {
 pub(super) struct PreparedEntity {
     pub(super) entity_type: u8,
     pub(super) score: f32,
+    pub(super) critical: bool,
     pub(super) source: PreparedEntitySource,
     pub(super) source_id: [u8; 16],
     pub(super) id: String,
@@ -169,7 +170,7 @@ fn apply_projected_json_rows(
     entities: Vec<ContextEntity>,
     mut projected_rows: HashMap<[u8; 16], Vec<(String, Value)>>,
 ) -> Vec<ContextEntity> {
-    entities
+    let mut projected: Vec<_> = entities
         .into_iter()
         .filter_map(|mut entity| {
             let fields = projected_rows.remove(entity.id.as_bytes())?;
@@ -178,7 +179,14 @@ fn apply_projected_json_rows(
             }
             Some(entity)
         })
-        .collect()
+        .collect();
+    projected.sort_by(|a, b| {
+        b.critical
+            .cmp(&a.critical)
+            .then_with(|| b.score.total_cmp(&a.score))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    projected
 }
 
 pub(super) fn serialize_prepared_pack(
@@ -186,6 +194,9 @@ pub(super) fn serialize_prepared_pack(
     config: &SerializeConfig,
     mut prepared: PreparedPack,
 ) -> Vec<u8> {
+    let empty = prepared.results.is_empty()
+        && prepared.neighbors.is_empty()
+        && prepared.l2_base.is_none();
     let l2_base = prepared.l2_base.clone();
     let mut handles = super::handles::Handles::new(pack, &mut prepared);
     if !matches!(config.format, PackFormat::Json | PackFormat::Toon) {
@@ -202,7 +213,24 @@ pub(super) fn serialize_prepared_pack(
         PackFormat::Markdown => serialize_markdown(config, prepared).into_bytes(),
         PackFormat::Plaintext => serialize_plaintext(config, prepared).into_bytes(),
     };
-    super::l2_prefix::with_l2_prefix(l2_base.as_ref(), config.format, bytes)
+    let bytes = super::l2_prefix::with_l2_prefix(l2_base.as_ref(), config.format, bytes);
+    if empty
+        && !matches!(
+            config.format,
+            PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini
+        )
+        && config.budget > 0
+        && crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER
+            .count(std::str::from_utf8(&bytes).expect("serialized UTF-8"))
+            > config.budget
+    {
+        return if config.format == PackFormat::Json {
+            b"{}".to_vec()
+        } else {
+            Vec::new()
+        };
+    }
+    bytes
 }
 
 fn serialize_prepared_pack_telemetry(prepared: &PreparedPack) -> SerializedPackTelemetry {

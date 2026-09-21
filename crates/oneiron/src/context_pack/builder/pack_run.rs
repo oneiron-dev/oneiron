@@ -28,6 +28,8 @@ pub struct SerializedContextPack {
 #[derive(Clone, Copy)]
 pub(in crate::context_pack) struct HydrateOptions<'a> {
     pub(in crate::context_pack) read_mode: crate::vault::ReadMode,
+    pub(in crate::context_pack) policy: &'a crate::gate::PolicyManifestResolution,
+    pub(in crate::context_pack) criticality: Option<bool>,
     pub(in crate::context_pack) hydrate_fields: bool,
     pub(in crate::context_pack) include_edges: bool,
     pub(in crate::context_pack) include_vectors: bool,

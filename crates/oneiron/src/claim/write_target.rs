@@ -3,6 +3,7 @@
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 
@@ -19,7 +20,7 @@ pub(crate) fn validate_claim_write_target_in_txn(
     if allow_reserved {
         return Ok(());
     }
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
         return Ok(());
     };
     let header = EntityMetadataHeader::parse(&raw)

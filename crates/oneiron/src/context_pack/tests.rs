@@ -111,6 +111,8 @@ fn put_text_entity(
 
 fn empty_pack_stats() -> PackStats {
     PackStats {
+        critical_over_budget: false,
+        critical_count: 0,
         candidates_considered: 0,
         signals_used: Vec::new(),
         query_time_us: 0,
@@ -126,6 +128,7 @@ fn empty_pack_stats() -> PackStats {
 
 fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> ContextEntity {
     ContextEntity {
+        critical: false,
         id: crate::test_util::entity(seed),
         short_id: short_id.to_owned(),
         content_hash: seed,
@@ -747,6 +750,8 @@ fn hydrate_entity_rejects_present_corrupt_header() -> Result<()> {
         0.0,
         HydrateOptions {
             read_mode: crate::vault::ReadMode::Indexed,
+            policy: &crate::gate::resolve_policy_manifest(&vault.store, &rtxn).unwrap(),
+            criticality: None,
             hydrate_fields: true,
             include_edges: false,
             include_vectors: false,
@@ -2075,7 +2080,7 @@ fn pack_validation_rejects_impossible_time_ordering() -> Result<()> {
 }
 
 #[test]
-fn pack_validation_rejects_deleted_payload_reference() -> Result<()> {
+fn deleted_payload_is_excluded_before_pack_assembly() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::from_bytes([0x94; 16])?;
     put_claim_text_entity(
@@ -2095,13 +2100,12 @@ fn pack_validation_rejects_deleted_payload_reference() -> Result<()> {
         Ok(())
     })?;
 
-    let err = vault
+    let pack = vault
         .context_pack()
         .search_text("deletedreferenceneedle", 10)
-        .run()
-        .expect_err("deleted payload reference must fail pack validation");
-
-    assert_context_pack_validation(err, id, PACK_VALIDATION_DELETED_PAYLOAD);
+        .run()?;
+    assert!(pack.results.is_empty());
+    assert!(pack.neighbors.is_empty());
     Ok(())
 }
 
@@ -3640,6 +3644,7 @@ fn n12_validate_pack_disclosure_fails_a_tampered_pack() -> Result<()> {
     let ctx = absence_ctx_for_contact(&vault, contact_id);
 
     let smuggled = ContextEntity {
+        critical: false,
         id: marked,
         short_id: "tn_smuggled".to_owned(),
         content_hash: 0,
@@ -4322,3 +4327,5 @@ fn pack_vectors_follow_the_selected_indexed_frontier() -> Result<()> {
     );
     Ok(())
 }
+mod criticality;
+mod source_ranking;

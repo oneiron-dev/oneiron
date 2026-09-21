@@ -735,7 +735,7 @@ mod tests {
         let receipt = vault
             .memory(owner, oneiron::EdgeActorClass::Human)
             .author_note(&oneiron::note::NoteWriteEnvelope {
-                kind: oneiron::note::NoteKind::Diary,
+                kind: oneiron::note::NoteKind::parse("diary").expect("shipped kind"),
                 scope: oneiron::note::NoteScope::ActorPrivate { owner_ref: owner },
                 source_revision_ref: [0x75; 16],
                 markdown: "private diary canary".into(),

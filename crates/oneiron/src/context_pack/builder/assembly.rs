@@ -176,6 +176,7 @@ impl<'a> ContextPackBuilder<'a> {
             let cosine_ghosts_dampened = pipeline_output.cosine_ghosts_dampened;
 
             let rtxn = self.vault.store.env.read_txn()?;
+            let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
             let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
             let mut claim_bodies = claim_bodies;
             let quarantine_index = load_pack_quarantine_index(&self.vault.store, &rtxn)?;
@@ -236,6 +237,8 @@ impl<'a> ContextPackBuilder<'a> {
 
             let result_options = HydrateOptions {
                 read_mode: self.read_mode,
+                policy: &policy,
+                criticality: self.criticality,
                 hydrate_fields: self.hydrate,
                 include_edges: hydrate_result_edges,
                 include_vectors: self.include_vectors,
@@ -345,6 +348,8 @@ impl<'a> ContextPackBuilder<'a> {
             }
             let neighbor_options = HydrateOptions {
                 read_mode: self.read_mode,
+                policy: &policy,
+                criticality: self.criticality,
                 hydrate_fields: self.hydrate,
                 include_edges: self.include_edges,
                 include_vectors: self.include_vectors,
@@ -423,6 +428,12 @@ impl<'a> ContextPackBuilder<'a> {
             {
                 l2_base = None;
             }
+            super::super::source_ranking::apply(
+                &mut results,
+                &mut neighbors,
+                &claim_bodies,
+                &self.source_ranking,
+            )?;
             resolve_edge_short_ids(&mut results, &mut neighbors);
 
             if let Some(summary) = &l2_base {
@@ -445,6 +456,8 @@ impl<'a> ContextPackBuilder<'a> {
             let mut signals_used = self.signals_used;
             signals_used.extend(pipeline_signals.into_iter().map(pack_signal_from_retrieval));
             let stats = PackStats {
+                critical_over_budget: false,
+                critical_count: 0,
                 candidates_considered,
                 signals_used: dedupe_signals(signals_used),
                 query_time_us: started.elapsed().as_micros().min(u64::MAX as u128) as u64,

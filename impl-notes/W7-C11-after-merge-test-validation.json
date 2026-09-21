@@ -1,0 +1,184 @@
+{
+  "ticket": "W7-C11",
+  "scope": "Post-merge test failures; scoped corrective validation with reused passing six-crate results, not a new workspace-wide gate",
+  "baselineRevision": "2f1cca4321f954d2f16c3435f01c64c09a879b06",
+  "fixCommits": [
+    "d83b2f1005821ff32d542731cf3aaa1495c8507e",
+    "339f8494b8433f3a50e2d9fd6d58ab622d1de53c"
+  ],
+  "sourceSha256": {
+    "crates/oneiron/src/git_wire/tests.rs": "3b78c03e0976f3c200caf5102c5fb3dd4fcbc7d3aa7221fd5c761e3a34466280",
+    "crates/oneiron-bench/src/perf/git_sha.rs": "5955dfbe51b4a9ab6f6c6b8ea626c94e4564d802c82ba2c940ed7d1fb35e53e3"
+  },
+  "hostRouting": {
+    "dispatcher": "installed factory cargo wrapper",
+    "macbookExclusion": "existing owner-approved C11-HR-01; W7_CARGO_EXCLUDE_MACBOOK=1",
+    "probe": {
+      "sem_open_ok": false,
+      "errno": 28,
+      "error": "No space left on device"
+    },
+    "mini": "below 30 GiB reserve",
+    "selectedHost": "Arch through normal capacity/ticket guards",
+    "target": "per-ticket default target",
+    "cargoJobsMax": 3,
+    "testThreads": 4,
+    "tempDirectory": ".w7/merge-tmp via .w7/merge-env.toml"
+  },
+  "runs": [
+    {
+      "jobId": "W7-C11-after-merge-tests-v1-83dc0fbadbb3",
+      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v1-83dc0fbadbb3.terminal.json",
+      "terminalSha256": "4198a0086828b76e87c5a622f3a5e8b16d19a6dc0484023142a0183a056aef6e",
+      "logPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v1-83dc0fbadbb3.log",
+      "logSha256": "3f59ebb73bc17057c986c78a2b7ef34c4e0b74b81f21d803a93f005d7e0879f2",
+      "exitCode": 101,
+      "commands": [
+        {
+          "command": [
+            "cargo",
+            "--config",
+            ".w7/merge-env.toml",
+            "test",
+            "--no-fail-fast",
+            "--jobs",
+            "2",
+            "-p",
+            "oneiron",
+            "-p",
+            "oneiron-android",
+            "-p",
+            "oneiron-bench",
+            "-p",
+            "oneiron-driver",
+            "-p",
+            "oneiron-napi",
+            "-p",
+            "oneiron-server",
+            "--",
+            "--test-threads=4"
+          ],
+          "exitCode": 101
+        }
+      ],
+      "hosts": [
+        "arch"
+      ]
+    },
+    {
+      "jobId": "W7-C11-after-merge-tests-v2-442b363c84f9",
+      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v2-442b363c84f9.terminal.json",
+      "terminalSha256": "b4f79e63bb2e25301b9b461774a430f2d29a4a86557a1cf47908d2ee5b406caf",
+      "logPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v2-442b363c84f9.log",
+      "logSha256": "1d0640bbcf57921f488f3509382012c2055e4075fc7de8ce0322395186a77f96",
+      "exitCode": 1,
+      "commands": [
+        {
+          "command": [
+            "cargo",
+            "fmt",
+            "-p",
+            "oneiron",
+            "-p",
+            "oneiron-bench",
+            "--check"
+          ],
+          "exitCode": 1
+        }
+      ],
+      "hosts": [
+        "arch"
+      ]
+    },
+    {
+      "jobId": "W7-C11-after-merge-tests-v3-3eaea9477ee3",
+      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v3-3eaea9477ee3.terminal.json",
+      "terminalSha256": "68cef69d60742c8fc098f7b3d86cd4ab7b2c5223b918139dfdeaf36ad33fc3cd",
+      "logPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v3-3eaea9477ee3.log",
+      "logSha256": "a8b938936b94b97459109672b52ba5266a72099d3b8334bcd66c05c27c7944a7",
+      "exitCode": 0,
+      "commands": [
+        {
+          "command": [
+            "cargo",
+            "fmt",
+            "-p",
+            "oneiron",
+            "-p",
+            "oneiron-bench",
+            "--check"
+          ],
+          "exitCode": 0
+        },
+        {
+          "command": [
+            "cargo",
+            "--config",
+            ".w7/merge-env.toml",
+            "nextest",
+            "run",
+            "-p",
+            "oneiron",
+            "-p",
+            "oneiron-android",
+            "-p",
+            "oneiron-bench",
+            "-p",
+            "oneiron-driver",
+            "-p",
+            "oneiron-napi",
+            "-p",
+            "oneiron-server",
+            "--profile",
+            "full",
+            "--test-threads",
+            "4",
+            "--retries",
+            "0",
+            "--no-fail-fast",
+            "-E",
+            "test(git_wire::) | test(perf::git_sha::)"
+          ],
+          "exitCode": 0
+        },
+        {
+          "command": [
+            "cargo",
+            "--config",
+            ".w7/merge-env.toml",
+            "clippy",
+            "-p",
+            "oneiron-bench",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exitCode": 0
+        }
+      ],
+      "hosts": [
+        "arch"
+      ]
+    }
+  ],
+  "results": {
+    "sixCrateRun": {
+      "passed": 9240,
+      "failed": 2,
+      "ignored": 21,
+      "disposition": "Both failures repaired; 9,240 green cases retained."
+    },
+    "correctedFocusedRun": {
+      "passed": 44,
+      "failed": 0,
+      "skipped": 9211,
+      "retries": 0
+    },
+    "benchmarkAllTargetClippy": 0,
+    "scopedFmt": 0,
+    "codemap": "CODEMAP-OK: 2666 files mapped, 17 artifacts current",
+    "gitDiffCheck": 0
+  },
+  "publication": "Local commits only; no push."
+}

@@ -6,6 +6,7 @@ use std::io::Cursor;
 
 use heed::RoTxn;
 
+use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::companion::{
@@ -16,7 +17,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
-use crate::{Vault, le_bytes_to_f32_vec};
 
 use super::builder::HydrateOptions;
 use super::edge_walk::load_entity_edges;
@@ -41,12 +41,14 @@ pub(super) fn hydrate_entity(
     options: HydrateOptions<'_>,
     claims_suppressed: &mut usize,
 ) -> Result<Option<ContextEntity>> {
-    let Some(live_raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
-        vault,
-        rtxn,
-        &id,
-        crate::vault::ReadMode::Live,
-    )?
+    let Some(live_raw) = crate::ports::EntityStore::port_entity_get(vault, rtxn, &id)
+        .map_err(|error| match error {
+            Error::CorruptedIndex("entity header") => {
+                Error::CorruptedIndex("entity metadata header")
+            }
+            other => other,
+        })?
+        .map(|row| row.encode())
     else {
         return Ok(None);
     };
@@ -85,7 +87,12 @@ pub(super) fn hydrate_entity(
     };
 
     if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-        && !crate::note::note_body_readable(&raw[ENTITY_METADATA_HEADER_LEN..], None)
+        && !crate::note::note_body_readable(
+            &vault.store,
+            rtxn,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            None,
+        )?
     {
         return Ok(None);
     }
@@ -117,6 +124,14 @@ pub(super) fn hydrate_entity(
         }
     }
 
+    let critical = gated_claim_body.is_some_and(|body| {
+        options.policy.criticality_for_predicate(&body.predicate)
+            == crate::gate::PolicyCriticality::Critical
+    });
+    if gated_claim_body.is_some() && options.criticality.is_some_and(|tier| tier != critical) {
+        return Ok(None);
+    }
+
     let fields = if options.hydrate_fields {
         Some(match gated_claim_body {
             Some(body) => claim_fields_to_json(body),
@@ -128,7 +143,14 @@ pub(super) fn hydrate_entity(
                     header.entity_type,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                 )?;
-                decode_entity_fields(&body, header.entity_type).unwrap_or_default()
+                let mut fields = decode_entity_fields(&body, header.entity_type).unwrap_or_default();
+                if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+                    fields.insert(
+                        "markdown".to_owned(),
+                        serde_json::Value::String(vault.note_text_in_txn(rtxn, id)?),
+                    );
+                }
+                fields
             }
         })
     } else {
@@ -177,6 +199,7 @@ pub(super) fn hydrate_entity(
         source_revision_ref: source_revision.map(|revision| revision.0),
         entity_type: header.entity_type,
         score,
+        critical,
         fields,
         edges,
         vector,
@@ -403,24 +426,10 @@ pub(super) fn rmpv_to_json(value: &rmpv::Value) -> serde_json::Value {
 }
 
 fn read_short_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<(String, u8)>> {
-    // ARCH-0019 row n4: `short_ids_reverse` is the entity-id-keyed direction
-    // (entity_id -> short_id ‖ content_hash).
-    let Some(value) = store.short_ids_reverse.get(rtxn, id.as_bytes())? else {
-        return Ok(None);
-    };
-
-    if value.len() < 2 {
-        return Ok(None);
+    match crate::ports::ShortIdStoreRead::port_short_id_reference(store, rtxn, id) {
+        Err(Error::CorruptedIndex(_)) => Ok(None),
+        result => result,
     }
-
-    let Some((&hash, short_id_bytes)) = value.split_last() else {
-        return Ok(None);
-    };
-    let Ok(short_id) = std::str::from_utf8(short_id_bytes) else {
-        return Ok(None);
-    };
-
-    Ok(Some((short_id.to_owned(), hash)))
 }
 
 pub(super) fn read_vector(
@@ -428,16 +437,10 @@ pub(super) fn read_vector(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<Vec<f32>>> {
-    let Some(raw) = vault.store.vectors.get(rtxn, id.as_bytes())? else {
-        return Ok(None);
-    };
-
-    let vector = le_bytes_to_f32_vec(&raw, vault.config.dimensions)
-        .map_err(|_| Error::CorruptedIndex("entity vector"))?;
-
-    if vector.len() != vault.config.dimensions {
-        return Err(Error::CorruptedIndex("entity vector"));
-    }
-
-    Ok(Some(vector))
+    crate::ports::RetrievalIndex::port_retrieval_vector_get(vault, rtxn, id).map_err(|error| {
+        match error {
+            Error::CorruptedIndex(_) => Error::CorruptedIndex("entity vector"),
+            other => other,
+        }
+    })
 }

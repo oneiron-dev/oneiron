@@ -1,8 +1,9 @@
 //! Per-turn world authority, bound to the host's executing principal.
 
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use heed::RoTxn;
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, claim_surfaceable,
     session_claim_producer,
@@ -12,7 +13,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
-use crate::vault::{MAX_EDGE_QUERY_RESULTS, edge_kind_prefix, parse_edge_record};
+use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use crate::write_envelope::WriteActor;
 
 use super::types::{
@@ -64,12 +65,9 @@ pub(super) fn resolve_active_world_authority(
         ));
     }
     let raw = store
-        .entities
-        .get(rtxn, actor.entity_ref().as_bytes())?
+        .port_entity_record(rtxn, &actor.entity_ref())?
         .ok_or(Error::EntityNotFound)?;
-    let header = EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("executing actor entity header"))?;
-    crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())?;
+    crate::provenance::validate_actor_class(raw.entity_type, actor.actor_class())?;
     resolve_world_authority(store, rtxn, selection, at).map(Some)
 }
 
@@ -210,28 +208,30 @@ fn world_access_rows(
     agent_ref: &EntityId,
     at: u64,
 ) -> Result<Vec<WorldAccessRow>> {
-    let prefix = edge_kind_prefix(agent_ref, EdgeKind::ClaimOf);
     let mut rows = Vec::new();
     for (scanned, entry) in store
-        .edges_in
-        .prefix_iter(rtxn, prefix.as_slice())?
+        .port_edges(
+            rtxn,
+            agent_ref,
+            crate::ports::EdgeDirection::In,
+            Some(EdgeKind::ClaimOf),
+            None,
+        )?
         .enumerate()
     {
         if scanned >= MAX_EDGE_QUERY_RESULTS {
             return Err(Error::IndexOverflow("world access authority claims"));
         }
-        let (key, value) = entry?;
-        let claim_id = parse_edge_record(&key, &value)?.target;
-        let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
+        let edge_row = entry?;
+        let claim_id = edge_row.target;
+        let Some(raw) = store.port_entity_record(rtxn, &claim_id)? else {
             continue;
         };
-        let Some(header) = EntityMetadataHeader::parse(&raw) else {
-            continue;
-        };
-        if header.entity_type != ENTITY_TYPE_CLAIM {
+
+        if raw.entity_type != ENTITY_TYPE_CLAIM {
             continue;
         }
-        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        let body = crate::claim::decode_claim_body(&raw.body, true)?;
         if body.predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET
             && body.predicate != PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
         {
@@ -251,7 +251,7 @@ fn world_access_rows(
         rows.push(WorldAccessRow {
             id: claim_id,
             body,
-            learned_at: header.learned_at,
+            learned_at: raw.learned_at,
         });
     }
     Ok(rows)

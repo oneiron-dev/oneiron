@@ -1,0 +1,200 @@
+{
+  "scope": "W7-C11-NOTE",
+  "base": "a729552c5a8960600cfd1fadff1251c67e5932eb",
+  "merge_head": "9b06b0e487029e0d9eb9fea2b254e53adc7bf410",
+  "fronts": [
+    {
+      "patch": "c11-front-01-note.patch",
+      "check_rc": 0,
+      "apply_rc": 0
+    },
+    {
+      "patch": "c11-front-02-witness.patch",
+      "check_rc": 0,
+      "apply_rc": 0
+    },
+    {
+      "patch": "c11-front-03-modules.patch",
+      "check_rc": 0,
+      "apply_rc": 0
+    },
+    {
+      "patch": "c11-front-04-config.patch",
+      "check_rc": 0,
+      "apply_rc": 0
+    },
+    {
+      "patch": "c11-front-05-context.patch",
+      "check_rc": 0,
+      "apply_rc": 0
+    },
+    {
+      "patch": "c11-front-06-serialize.patch",
+      "check_rc": 0,
+      "apply_rc": 0
+    },
+    {
+      "patch": "c11-front-07-remainder.patch",
+      "check_rc": 0,
+      "apply_rc": 0
+    }
+  ],
+  "combined_front_check_rc": 0,
+  "build_host": "olety@100.124.216.116:/Volumes/Cinema/w7-build/wt/W7-C11-int",
+  "cargo_dispatch": "release factory/bin/cargo; MacBook-only host list; isolated worktree target; 3 jobs",
+  "base_compile_prerequisite": [
+    {
+      "command": "cargo check --workspace --all-targets",
+      "exit_code": 0,
+      "log": "/tmp/w7-c11-note-check-workspace-06.log"
+    },
+    {
+      "command": "cargo check -p oneiron --all-targets --no-default-features",
+      "exit_code": 0,
+      "log": "/tmp/w7-c11-note-check-nodefault-07.log"
+    }
+  ],
+  "smoke": [
+    {
+      "command": "cargo test -p oneiron --lib --features sync,test-hooks canonical_adapter -- --test-threads=1",
+      "exit_code": 0,
+      "passed": 10,
+      "failed": 0,
+      "log": "/tmp/w7-c11-note-smoke-sync-04.log"
+    },
+    {
+      "command": "cargo test -p oneiron --lib --no-default-features -- canonical_adapter late_origin_binding_preserves_source_invalidation_without_hiding_native_events trunk_session_membership_cannot_be_added_by_local_or_replayed_overwrite --test-threads=1",
+      "exit_code": 0,
+      "passed": 10,
+      "failed": 0,
+      "log": "/tmp/w7-c11-note-smoke-nodefault-06.log"
+    },
+    {
+      "command": "cargo test -p oneiron --lib --features sync,test-hooks -- canonical_adapter note:: late_origin_binding_preserves_source_invalidation_without_hiding_native_events trunk_session_membership_cannot_be_added_by_local_or_replayed_overwrite --test-threads=1",
+      "exit_code": 101,
+      "passed": 47,
+      "failed": 5,
+      "ignored": 0,
+      "log": "/tmp/w7-c11-note-smoke-retained-final-07.log"
+    }
+  ],
+  "backup": {
+    "applied_after_both_base_compile_lanes": true,
+    "bundle": "a4ec59fd68ae09e142a2e1458c74102fe8be54be",
+    "source_patch_check_rc": 0,
+    "source_patch_apply_rc": 0,
+    "source_adaptations": "C11 Vault method spellings only in replay regression",
+    "bundle_non_typos_check_rc": 0,
+    "bundle_non_typos_apply_rc": 0,
+    "typos": "additive exact exclusions/table; existing HEAD rules retained",
+    "historical_evidence_identical_to_git_object": true,
+    "semantic_changes_dropped": []
+  },
+  "lockfile": {
+    "method": "cargo checks on MacBook; rsync produced Cargo.lock back; no hand edits",
+    "sha256": "c30977d2d0823c190ba3854de6afdf47dab3fc68652c1b60a1bc1787d1e695f0",
+    "changed_from_initial_merged_lock": false
+  },
+  "pinned_unfixed": [
+    "PINNED-SOURCE-RANKING",
+    "PROVIDER-TINY-BUDGET",
+    "PINNED-NOTE-HYDRATION"
+  ],
+  "safety_audit": {
+    "local": "no introduced safety bug found",
+    "recovery": [
+      "live-core value coverage fixed",
+      "raw nested proposal history replaced with text values",
+      "pending merge/display target + orphan proposal binding fixed"
+    ]
+  },
+  "published": false,
+  "retained_test_failures": [
+    {
+      "test": "note::program_tests::five_forks_route_two_to_land_and_three_to_one_bundle_merge_keeps_concurrent_edits",
+      "at": "note/program_tests.rs:267",
+      "observed": "landed 0, expected 2",
+      "cause": "Scoped C11 note.edit grant does not supersede C12 original-author or verified-owner admission; other actors remain proposal-only."
+    },
+    {
+      "test": "note::program_tests::source_bridge_is_lazy_and_source_is_unchanged",
+      "at": "note/program_tests.rs:182",
+      "observed": "Expected empty NOTE core markdown",
+      "cause": "Canonical four-key NOTE core retains immutable birth markdown; live text is separate."
+    },
+    {
+      "test": "note::sync_tests::program::transport::already_open_window_materializes_document_only_updates",
+      "at": "note/sync_tests.rs:1136",
+      "observed": "live, expected live update",
+      "cause": "Ordinary windows carry no authenticated live NOTE document authority; document socket required."
+    },
+    {
+      "test": "note::sync_tests::program::transport::incomplete_document_is_refused_before_core_admission_and_selection_cannot_leak",
+      "at": "note/sync_tests.rs:1030",
+      "observed": "Expected whole-window refusal after removing old live documents",
+      "cause": "Canonical immutable core admission does not require a live snapshot in an ordinary window; proposal carriers are not the active document."
+    },
+    {
+      "test": "note::sync_tests::program::transport::normal_window_delivers_editable_note_edits_forks_and_head_moves",
+      "at": "note/sync_tests.rs:925",
+      "observed": "alpha, expected alpha edited",
+      "cause": "Bare window replay cannot mutate live NOTE body or install reviewed head moves."
+    }
+  ],
+  "repaired_adapter_regression": {
+    "test": "note::sync_tests::program::transport::replay_purges_notes_and_stale_window_cannot_restore_erased_sidecars",
+    "cause": "NOTE canonical replay needed the prior native pending-delete fence",
+    "repair": "writer-transaction unproven rm: gate at entity replay and edge hydration/writes",
+    "final_result": "passed",
+    "assertion_changed": false
+  },
+  "final_compile": [
+    {
+      "command": "cargo check --workspace --all-targets",
+      "exit_code": 0,
+      "log": "/tmp/w7-c11-note-check-workspace-final-08.log"
+    },
+    {
+      "command": "cargo check -p oneiron --all-targets --no-default-features",
+      "exit_code": 0,
+      "log": "/tmp/w7-c11-note-check-nodefault-final-09.log"
+    }
+  ],
+  "log_sha256": {
+    "/tmp/w7-c11-note-check-workspace-06.log": "1ec5d9257976a081dc35b70c82cd65e593e4915bdbc7cb1688a7b168d34df8e5",
+    "/tmp/w7-c11-note-check-nodefault-07.log": "e6e8ea709b0411eeec175e325e9f050e20de5e8c0a338078e5c2b009c30aa533",
+    "/tmp/w7-c11-note-check-workspace-final-08.log": "4561f10e5359505d11259dce81fe75833aed48adf4d6c0a0df26cb7f6f17baaa",
+    "/tmp/w7-c11-note-smoke-sync-04.log": "ee468bffd31af923ff0d706befe89987135da97b3db32e4c48bc01e2a53ccfac",
+    "/tmp/w7-c11-note-smoke-nodefault-06.log": "05a73664275de090d336d47a612c9244933a2422b9be7932f2b2b5a81170dcee",
+    "/tmp/w7-c11-note-smoke-retained-final-07.log": "c18f1f5c47c21cb653cc41a3049129bfec5311fd40d5f2fd81fe12233ad49426",
+    "/tmp/w7-c11-note-codemap-final-check.log": "263b36f053622576be92694287342955523edc8229b2efa45220c56c948e0fc3",
+    "/tmp/w7-c11-note-check-nodefault-final-09.log": "e3094440a55dbaf31b76cbade5897d77cfa79b0411712ac9b01d83816116196f"
+  },
+  "codemap": {
+    "generator": "python3 scripts/codemap/codemap.py",
+    "check": "python3 scripts/codemap/codemap.py --check",
+    "exit_code": 0,
+    "mapped_files": 3103,
+    "artifacts": 20,
+    "log": "/tmp/w7-c11-note-codemap-final-check.log"
+  },
+  "diff_check_rc": 0,
+  "staged_diff_check": {
+    "exit_code": 2,
+    "cause": "Five whitespace diagnostics in the immutable pinned Sudachi 0.6.11 vendor tree",
+    "incoming_vendor_bytes_unchanged": true,
+    "owned_paths_check_exit_code": 0,
+    "diagnostics": [
+      "crates/oneiron/vendor/sudachi-0.6.11/resources/char.def:8: trailing whitespace.",
+      "+# ",
+      "crates/oneiron/vendor/sudachi-0.6.11/resources/char.def:19: trailing whitespace.",
+      "+SPACE           0 1 0  ",
+      "crates/oneiron/vendor/sudachi-0.6.11/sudachi/src/config.rs:171: trailing whitespace.",
+      "+    /// Analogue to Java Implementation path Override    ",
+      "crates/oneiron/vendor/sudachi-0.6.11/sudachi/src/input_text/buffer/mod.rs:260: trailing whitespace.",
+      "+    /// Edit can borrow &str from the context with the borrow checker working correctly     ",
+      "crates/oneiron/vendor/sudachi-0.6.11/sudachi/src/input_text/buffer/mod.rs:372: trailing whitespace.",
+      "+    /// Return original data as owned, consuming itself    "
+    ]
+  }
+}

@@ -190,7 +190,7 @@ fn emit_preference_claim(
     handle: &[u8; 32],
     now: u64,
 ) -> Result<Option<EntityId>> {
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     let class = SubstitutionClass::Lexical;
     let envelope = miner_envelope(run, handle)?;
     let evidence_id = mined_evidence_record_id(handle)?;
@@ -308,7 +308,7 @@ fn emit_skill_edit(
     handle: &[u8; 32],
     now: u64,
 ) -> Result<Option<EntityId>> {
-    let proposal_id = EntityId::now();
+    let proposal_id = vault.store.clock.entity_id()?;
     let class = SubstitutionClass::Content;
     let row = encode_row(
         &StoredSkillEdit {

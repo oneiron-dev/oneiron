@@ -1,5 +1,6 @@
 //! Campaign record types, lifecycle operations, and vault storage.
 
+use crate::ports::EntityStoreRead;
 use serde_json::Value;
 
 use super::codec_json::campaign_record_to_json;
@@ -130,7 +131,7 @@ pub fn create_campaign(
     };
     validate_campaign_definition(&definition)?;
     let record = CampaignRecord {
-        campaign_ref: EntityId::now(),
+        campaign_ref: vault.store.clock.entity_id()?,
         definition,
         created_at: now,
         updated_at: now,
@@ -295,7 +296,11 @@ fn load_campaign_in_txn(
     campaign_ref: EntityId,
     kind: u8,
 ) -> Result<Option<CampaignRecord>> {
-    let Some(raw) = vault.store.entities.get(txn, campaign_ref.as_bytes())? else {
+    let Some(raw) = vault
+        .store
+        .port_entity_record(txn, &campaign_ref)?
+        .map(|row| row.encode())
+    else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {

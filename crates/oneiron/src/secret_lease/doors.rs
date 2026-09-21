@@ -19,7 +19,7 @@ use crate::credential_door::{AdmittedLease, DoorResult};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{CustodyTier, SecretCustodyFloor};
-use crate::unix_seconds_now;
+
 use crate::vault::Vault;
 
 // ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ impl Vault {
         Ok(DoorInjectionReceipt {
             secret_ref: secret_ref.to_owned(),
             effector: effector.to_owned(),
-            injected_at: unix_seconds_now(),
+            injected_at: self.store.clock.now_recorded_at(),
             value_generation: generation,
             taint_token: vec![SecretTaintRef {
                 secret_ref: secret_ref.to_owned(),
@@ -131,7 +131,7 @@ impl Vault {
             secret_ref,
             effector,
             ttl_secs,
-            VaultInstant(unix_seconds_now()),
+            VaultInstant(self.store.clock.now_recorded_at()),
             not_after.map(VaultInstant),
         )
     }
@@ -235,17 +235,21 @@ impl Vault {
         project_id: &str,
     ) -> Result<LocalRegistration> {
         let mut wtxn = self.store.env.write_txn()?;
-        let mut lease =
-            match read_live_lease_in_txn(&self.store, &mut wtxn, lease_id, unix_seconds_now()) {
-                Ok(lease) => lease,
-                Err(error) => {
-                    // A lazy-expiry flip (and its T2 teardown) lands durable
-                    // even though the use denies: the vault's observed state
-                    // converges instead of re-discovering the expiry forever.
-                    wtxn.commit()?;
-                    return Err(error);
-                }
-            };
+        let mut lease = match read_live_lease_in_txn(
+            &self.store,
+            &mut wtxn,
+            lease_id,
+            self.store.clock.now_recorded_at(),
+        ) {
+            Ok(lease) => lease,
+            Err(error) => {
+                // A lazy-expiry flip (and its T2 teardown) lands durable
+                // even though the use denies: the vault's observed state
+                // converges instead of re-discovering the expiry forever.
+                wtxn.commit()?;
+                return Err(error);
+            }
+        };
         let (id, rec) = read_record_for_ref_in_txn(&self.store, &wtxn, &lease.secret_ref)?;
         let floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
         admit_record_use(

@@ -7,6 +7,8 @@ use crate::memory::{CommitReceipt, Memory, MemoryResult};
 use crate::{EdgeActorClass, EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
 
+pub(super) const MAX_RECEIPT_PAYLOAD: usize = 8 * 1024 * 1024;
+
 /// Idempotent command carried by the canonical document frame. There is no
 /// actor field: the receiving host obtains that from its authenticated session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +126,7 @@ impl Memory<'_> {
     /// The server's only caller supplies CoreAuth's principal, class and jti.
     /// Actor/owner, token revocation, grant/member/role, scope, policy, erasure
     /// and citation checks all run in the transaction that commits the result.
+    #[cfg(feature = "sync")]
     pub fn admit_note_operation(
         &self,
         note: EntityId,
@@ -178,6 +181,7 @@ impl Memory<'_> {
             }
             self.apply_note_operation_in_txn(txn, note, operation, Some(selector.grant_id))
         })?;
+        #[cfg(feature = "sync")]
         self.vault().notify_note_document(note);
         Ok(receipt)
     }
@@ -202,17 +206,27 @@ impl Memory<'_> {
             }
             self.apply_note_operation_in_txn(txn, note, operation, None)
         })?;
+        #[cfg(feature = "sync")]
         self.vault().notify_note_document(note);
         Ok(receipt)
     }
 
-    fn apply_note_operation_in_txn(
+    pub(super) fn apply_note_operation_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         note: EntityId,
         operation: &NoteOperation,
         grant: Option<EntityId>,
     ) -> MemoryResult<NoteOperationReceipt> {
+        if self
+            .vault()
+            .store
+            .sync_state
+            .get(txn, &format!("ds:e:{}", note.to_hex()))?
+            .is_some()
+        {
+            return Err(invalid("replica NOTE edits require authenticated authority").into());
+        }
         require_note_writer(self, txn, note)?;
         let doc = load(self.vault(), txn, note)?;
         let hash = operation.hash()?;
@@ -280,13 +294,9 @@ impl Memory<'_> {
             outcome,
         };
         let payload = serde_json::to_vec(&receipt).map_err(|_| invalid("NOTE receipt encode"))?;
-        crate::sync::transport::encode_document(
-            note,
-            crate::sync::transport::document_sub_tags::NOTE_RECEIPT,
-            &payload,
-        )
-        .into_result()
-        .map_err(|_| invalid("NOTE receipt exceeds wire bound"))?;
+        if payload.len() > MAX_RECEIPT_PAYLOAD - 18 {
+            return Err(invalid("NOTE receipt exceeds wire bound").into());
+        }
         let bytes = serde_json::to_vec(&(EntityIdWire(self.actor()), &receipt))
             .map_err(|_| invalid("NOTE receipt encode"))?;
         self.vault()

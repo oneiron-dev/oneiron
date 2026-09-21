@@ -47,6 +47,7 @@ pub(super) fn calendar_event_from_engine(
     view: CalendarEventView,
 ) -> BoundaryResult<NapiCalendarEventView> {
     Ok(NapiCalendarEventView {
+        origin: view.origin,
         event_ref: view.event_ref,
         name: view.name,
         start_utc: view

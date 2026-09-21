@@ -341,7 +341,8 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         // gate. A raw link here would assert identity with no status, no
         // consent surface, and no actor — so it lands on the refusal side
         // with the rest of the structural kinds.
-        | EdgeKind::SameAs => Err(Error::InvalidClaimBody(
+        | EdgeKind::SameAs | EdgeKind::Parent | EdgeKind::SpawnedBy
+        | EdgeKind::AddressedTo | EdgeKind::RepliesTo => Err(Error::InvalidClaimBody(
             "self.memory.put_edge rejects structural edge kinds",
         )),
     }

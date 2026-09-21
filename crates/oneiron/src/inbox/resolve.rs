@@ -1,9 +1,11 @@
 //! Write-side inbox bulk bundle consent, approve-with-edit, and bundle-reopen doors.
 
-use sha2::{Digest, Sha256};
+use crate::ports::EntityStoreRead;
+use sha2::Digest;
+use sha2::Sha256;
 
 use crate::Vault;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edit_distance::delta::{
     AmendmentDelta, DeltaCaptureContext, OUTCOME_APPROVED_AMENDED, attach_amendment_deltas,
@@ -13,7 +15,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::gate_decision_receipt;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord};
 use crate::temporal::TimeRange;
 
 use super::model::{
@@ -55,7 +57,7 @@ impl Vault {
         group_key: &str,
         verb: InboxBulkVerb,
     ) -> Result<InboxBundleResolution> {
-        self.resolve_inbox_group_at(group_key, verb, None, crate::unix_seconds_now())
+        self.resolve_inbox_group_at(group_key, verb, None, self.store.clock.now_recorded_at())
     }
 
     /// Applies one bulk verb to a group: B2 RS6 bundle consent at
@@ -201,7 +203,11 @@ impl Vault {
         claim_id: &EntityId,
         amended_body: &[u8],
     ) -> Result<InboxAmendedApproval> {
-        self.approve_inbox_member_with_edit_at(claim_id, amended_body, crate::unix_seconds_now())
+        self.approve_inbox_member_with_edit_at(
+            claim_id,
+            amended_body,
+            self.store.clock.now_recorded_at(),
+        )
     }
 
     /// Testable variant of [`Vault::approve_inbox_member_with_edit`] with an
@@ -253,7 +259,7 @@ impl Vault {
     /// (`bundle:dreamer_run:<key>` or `dreamer_run:<key>`), returning the
     /// still-open remainder plus every receipt its bundles emitted.
     pub fn reopen_inbox_group(&self, door_ref: &str) -> Result<InboxGroupReopen> {
-        self.reopen_inbox_group_at(door_ref, crate::unix_seconds_now())
+        self.reopen_inbox_group_at(door_ref, self.store.clock.now_recorded_at())
     }
 
     /// Testable variant of [`Vault::reopen_inbox_group`] with an explicit
@@ -336,14 +342,14 @@ fn accept_member_with_amendment_in_txn(
     else {
         return Err(Error::CorruptedIndex("pending gate consent"));
     };
-    let Some(raw) = vault.store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(raw) = vault.store.port_entity_record(wtxn, id)? else {
         return Err(Error::CorruptedIndex("pending gate consent"));
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_CLAIM {
+
+    if raw.entity_type != ENTITY_TYPE_CLAIM {
         return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
     }
-    let reviewed = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    let reviewed = crate::claim::decode_claim_body(&raw.body, true)?;
 
     let (diff_handle, read_frontier_hash) =
         crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &reviewed)?;
@@ -375,10 +381,10 @@ fn accept_member_with_amendment_in_txn(
                 id: *id,
                 entity_type: ENTITY_TYPE_CLAIM,
                 occurred: TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
+                    start: raw.occurred.start,
+                    end: raw.occurred.end,
                 },
-                learned_at: header.learned_at,
+                learned_at: raw.learned_at,
                 data: approved,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -397,7 +403,7 @@ fn accept_member_with_amendment_in_txn(
     vault.store.delete_pending_gate_consent_in_txn(wtxn, id)?;
     let record = GateDecisionRecord {
         version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
+        decision_id: crate::store::GateDecisionId::from_bytes(vault.store.clock.ulid()?),
         created_at: now,
         outcome: if amended_approval {
             OUTCOME_APPROVED_AMENDED.to_owned()
@@ -519,7 +525,7 @@ fn append_bundle_decision_in_txn(
 
     let record = GateDecisionRecord {
         version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
+        decision_id: crate::store::GateDecisionId::from_bytes(vault.store.clock.ulid()?),
         created_at: now,
         outcome: verb.bundle_outcome().to_owned(),
         reason_codes,

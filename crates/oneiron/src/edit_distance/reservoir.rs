@@ -579,14 +579,14 @@ fn record_export(
     pairs: usize,
     content_hash: &str,
 ) -> Result<EntityId> {
-    let id = EntityId::now();
+    let id = vault.store.clock.entity_id()?;
     let row = StoredExport {
         v: ROW_VERSION,
         pairs: pairs as u64,
         content_hash: content_hash.to_owned(),
         task_classes: scope.task_classes.clone(),
         since: scope.since,
-        at: crate::unix_seconds_now(),
+        at: vault.store.clock.now_recorded_at(),
     };
     let encoded = encode_row(&row, EXPORT_RECEIPT_ROW_LABEL)?;
     let key = export_receipt_key(id);

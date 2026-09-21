@@ -2794,6 +2794,12 @@
           "cosine_ghosts_dampened": {
             "type": "integer"
           },
+          "critical_count": {
+            "type": "integer"
+          },
+          "critical_over_budget": {
+            "type": "boolean"
+          },
           "entities_hydrated": {
             "type": "integer"
           },
@@ -2818,6 +2824,8 @@
           }
         },
         "required": [
+          "critical_over_budget",
+          "critical_count",
           "candidates_considered",
           "signals_used",
           "query_time_us",
@@ -5567,6 +5575,14 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/View"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],

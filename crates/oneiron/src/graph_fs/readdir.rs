@@ -1,5 +1,7 @@
 //! Path-routing readdir, readdir_bytes, read_file and read_link, fixed pages, world, entity and claim listdir helpers, and the resolver policy helper.
 
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
@@ -21,8 +23,7 @@ use super::model::{
 use super::coreutils::{claim_matches_world_in, grant_scope_world_name, read_grant_matches_actor};
 
 use super::paging::{
-    EdgeCursor, PageBuilder, TemporalCursor, edge_cursor_from_key, edge_cursor_key,
-    format_day_shard, parse_day_shard, parse_edge_cursor, temporal_cursor_from_key,
+    EdgeCursor, PageBuilder, TemporalCursor, format_day_shard, parse_day_shard, parse_edge_cursor,
 };
 
 impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
@@ -188,8 +189,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .scoped_read
             .vault()
             .store
-            .entities
-            .get(rtxn, id.as_bytes())?
+            .port_entity_record(rtxn, id)?
+            .map(|row| row.encode())
         else {
             return Ok(None);
         };
@@ -323,27 +324,26 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut last_scanned = None;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
-        let start_key = cursor.map_or_else(Vec::new, |cursor| cursor.next_temporal_key().to_vec());
-        let lower = if start_key.is_empty() {
-            Bound::Unbounded
-        } else {
-            Bound::Included(&start_key[..])
+        let query = crate::ports::TimelineQuery {
+            after: cursor.map(TemporalCursor::port_position),
+            ..Default::default()
         };
-        let upper = Bound::Unbounded;
         for (scanned, entry) in self
             .scoped_read
             .vault()
             .store
-            .temporal_learned
-            .range(&rtxn, &(lower, upper))?
+            .port_entity_timeline(&rtxn, query)?
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
                 break;
             }
-            let (key, _) = entry?;
-            let cursor = temporal_cursor_from_key(&key)?;
+            let time = entry?;
+            let cursor = TemporalCursor {
+                learned_at: time.timestamp,
+                id: time.id,
+            };
             last_scanned = Some(cursor);
             if !self
                 .scoped_read
@@ -426,27 +426,26 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut last_scanned = None;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
-        let start_key = cursor.map_or_else(Vec::new, |cursor| cursor.next_temporal_key().to_vec());
-        let lower = if start_key.is_empty() {
-            Bound::Unbounded
-        } else {
-            Bound::Included(&start_key[..])
+        let query = crate::ports::TimelineQuery {
+            after: cursor.map(TemporalCursor::port_position),
+            ..Default::default()
         };
-        let upper = Bound::Unbounded;
         for (scanned, entry) in self
             .scoped_read
             .vault()
             .store
-            .temporal_learned
-            .range(&rtxn, &(lower, upper))?
+            .port_entity_timeline(&rtxn, query)?
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
                 break;
             }
-            let (key, _) = entry?;
-            let temporal = temporal_cursor_from_key(&key)?;
+            let time = entry?;
+            let temporal = TemporalCursor {
+                learned_at: time.timestamp,
+                id: time.id,
+            };
             last_scanned = Some(temporal);
             if !self
                 .scoped_read
@@ -483,31 +482,24 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut last_cursor = after;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
-        let prefix = target.as_bytes();
-        let start_key = after.map(|cursor| edge_cursor_key(target, cursor));
-        let lower = match &start_key {
-            Some(key) => Bound::Excluded(&key[..]),
-            None => Bound::Included(&prefix[..]),
-        };
-        let upper = Bound::Unbounded;
         for (scanned, entry) in self
             .scoped_read
             .vault()
             .store
-            .edges_in
-            .range(&rtxn, &(lower, upper))?
+            .port_edge_cursor(
+                &rtxn,
+                target,
+                crate::ports::EdgeDirection::In,
+                after.map(EdgeCursor::port_position),
+            )?
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 next_cursor = last_cursor.map(EdgeCursor::encode);
                 break;
             }
-            let (key, value) = entry?;
-            if !key.starts_with(prefix) {
-                break;
-            }
-            let cursor = edge_cursor_from_key(&key)?;
-            let edge = crate::vault::parse_edge_record(&key, &value)?;
+            let edge = entry?;
+            let cursor = EdgeCursor::from_port(&edge);
             if !self
                 .scoped_read
                 .is_entity_readable_with_policy_in(&rtxn, &policy, &edge.target)?
@@ -532,29 +524,29 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut next_cursor = None;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
-        let lower_key = after_day
-            .and_then(|day| day.checked_add(1))
-            .and_then(|day| day.checked_mul(86_400))
-            .map(u64::to_be_bytes);
-        let lower = match &lower_key {
-            Some(key) => Bound::Included(&key[..]),
-            None => Bound::Unbounded,
+        let query = crate::ports::TimelineQuery {
+            start: after_day
+                .and_then(|day| day.checked_add(1))
+                .and_then(|day| day.checked_mul(86_400))
+                .map_or(Bound::Unbounded, Bound::Included),
+            ..Default::default()
         };
-        let upper = Bound::Unbounded;
         for (scanned, entry) in self
             .scoped_read
             .vault()
             .store
-            .temporal_learned
-            .range(&rtxn, &(lower, upper))?
+            .port_entity_timeline(&rtxn, query)?
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 next_cursor = builder.last_entry_name();
                 break;
             }
-            let (key, _) = entry?;
-            let temporal = temporal_cursor_from_key(&key)?;
+            let time = entry?;
+            let temporal = TemporalCursor {
+                learned_at: time.timestamp,
+                id: time.id,
+            };
             if !self
                 .scoped_read
                 .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
@@ -594,31 +586,28 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut last_scanned = None;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
-        let start_key = cursor.map_or_else(
-            || start.to_be_bytes().to_vec(),
-            |cursor| cursor.next_temporal_key().to_vec(),
-        );
-        let end_key = end.to_be_bytes();
+        let query = crate::ports::TimelineQuery {
+            start: Bound::Included(start),
+            end: Bound::Excluded(end),
+            after: cursor.map(TemporalCursor::port_position),
+            ..Default::default()
+        };
         for (scanned, entry) in self
             .scoped_read
             .vault()
             .store
-            .temporal_learned
-            .range(
-                &rtxn,
-                &(
-                    Bound::Included(&start_key[..]),
-                    Bound::Excluded(&end_key[..]),
-                ),
-            )?
+            .port_entity_timeline(&rtxn, query)?
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
                 break;
             }
-            let (key, _) = entry?;
-            let temporal = temporal_cursor_from_key(&key)?;
+            let time = entry?;
+            let temporal = TemporalCursor {
+                learned_at: time.timestamp,
+                id: time.id,
+            };
             last_scanned = Some(temporal);
             if !self
                 .scoped_read

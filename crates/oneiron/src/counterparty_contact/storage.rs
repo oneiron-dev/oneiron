@@ -2,14 +2,15 @@
 
 use super::codec::{decode_counterparty_contact_body, normalize_counterparty};
 use super::types::CounterpartyContactRecord;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity::decode_channel_identity_body;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT};
 use crate::store::Store;
-use crate::vault::entity_id_from_type_index_key;
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+
+use sha2::Sha256;
 
 const COUNTERPARTY_CONTACT_INDEX_KEY_PREFIX: &[u8] = b"counterparty_contact.index.v1:";
 
@@ -172,16 +173,14 @@ pub(super) fn counterparty_contact_channel_class(
     txn: &heed::RoTxn<'_>,
     record: &CounterpartyContactRecord,
 ) -> Result<Option<String>> {
-    let Some(raw) = store.entities.get(txn, record.identity_ref.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, &record.identity_ref)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
-    if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+
+    if raw.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
         return Ok(None);
     }
-    let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    let identity = decode_channel_identity_body(&raw.body)?;
     Ok(Some(normalize_channel_class(&identity.channel)))
 }
 
@@ -247,12 +246,8 @@ pub(crate) fn counterparty_contacts_by_party_full_scan(
     party_ref: &str,
 ) -> Result<Vec<(EntityId, CounterpartyContactRecord)>> {
     let mut records = Vec::new();
-    for entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_COUNTERPARTY_CONTACT])?
-    {
-        let (key, _) = entry?;
-        let id = entity_id_from_type_index_key(&key)?;
+    for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)? {
+        let id = entry?;
         let Some(record) = read_counterparty_contact_in_txn(store, txn, &id)? else {
             return Err(Error::CorruptedIndex("counterparty contact entity row"));
         };
@@ -269,14 +264,14 @@ pub(crate) fn read_counterparty_contact_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<CounterpartyContactRecord>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
+
+    if raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
         return Err(Error::CorruptedIndex("counterparty contact entity type"));
     }
-    decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    decode_counterparty_contact_body(&raw.body).map(Some)
 }
 
 pub(crate) fn rebuild_checkpoint_contact_index(

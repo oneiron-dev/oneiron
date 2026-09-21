@@ -25,9 +25,9 @@ use crate::commitment::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
-use crate::vault::entity_id_from_type_index_key;
 
 /// The counterparty a ledger is drawn for: the contact row, the channel
 /// identity it is bound to, and that identity's local addressing.
@@ -132,15 +132,13 @@ impl Vault {
 
         for entry in self
             .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_CLAIM])?
+            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_CLAIM, None)?
         {
-            let (key, _) = entry?;
-            let id = entity_id_from_type_index_key(&key)?;
+            let id = entry?;
             let raw = self
                 .store
-                .entities
-                .get(&rtxn, id.as_bytes())?
+                .port_entity_record(&rtxn, &id)?
+                .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("claim type index"))?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

@@ -119,7 +119,7 @@ impl Vault {
 
     /// Resolves a stale pending ask by emitting a `let_go` receipt and removing it from the tray.
     pub fn let_go_pending_ask(&self, claim_id: &EntityId) -> Result<Option<ReceiptRecord>> {
-        self.let_go_pending_ask_at(claim_id, crate::unix_seconds_now())
+        self.let_go_pending_ask_at(claim_id, self.store.clock.now_recorded_at())
     }
 
     /// Testable variant of [`Vault::let_go_pending_ask`] with an explicit event time.

@@ -3,6 +3,7 @@
 //! Carries its own `#[cfg(test)]` scan instrumentation, which the module's tests
 //! read directly.
 
+use crate::ports::EdgeStoreRead;
 #[cfg(test)]
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -83,12 +84,12 @@ pub(super) fn scan_edges_for_entity(
 
     let mut edges = Vec::new();
 
-    for entry in store.edges_out.prefix_iter(rtxn, id.as_bytes())? {
-        let (key, value) = entry?;
+    for entry in store.port_edges(rtxn, id, crate::ports::EdgeDirection::Out, None, None)? {
+        let edge_row = entry?;
         if edges.len() >= MAX_EDGE_SCAN_RESULTS {
             return Err(Error::CorruptedIndex("edge scan exceeded bound"));
         }
-        edges.push(crate::vault::parse_edge_record(&key, &value)?);
+        edges.push(edge_row);
     }
 
     Ok(edges)
@@ -157,7 +158,13 @@ pub(super) fn walk_edges(
                 // the seed's own edge list; only the walk skips them.
                 if matches!(
                     edge.kind,
-                    EdgeKind::ChildOf | EdgeKind::AssignedTo | EdgeKind::BlockedBy
+                    EdgeKind::ChildOf
+                        | EdgeKind::AssignedTo
+                        | EdgeKind::BlockedBy
+                        | EdgeKind::Parent
+                        | EdgeKind::SpawnedBy
+                        | EdgeKind::AddressedTo
+                        | EdgeKind::RepliesTo
                 ) {
                     continue;
                 }

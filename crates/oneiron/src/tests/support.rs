@@ -363,11 +363,7 @@ impl ContractEdgeLayout {
     }
 }
 
-pub(super) const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 28] = [
-    (EdgeKind::Parent, ContractEdgeLayout::Structural),
-    (EdgeKind::SpawnedBy, ContractEdgeLayout::Structural),
-    (EdgeKind::AddressedTo, ContractEdgeLayout::Structural),
-    (EdgeKind::RepliesTo, ContractEdgeLayout::Structural),
+pub(super) const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 31] = [
     (EdgeKind::AuthoredBy, ContractEdgeLayout::Structural),
     (EdgeKind::ScopedTo, ContractEdgeLayout::Structural),
     (EdgeKind::PartOf, ContractEdgeLayout::Structural),
@@ -395,6 +391,13 @@ pub(super) const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 2
     // ONE-1541: u8 25/26 `fulfills` / `discharged_by`, structural 12 B.
     (EdgeKind::Fulfills, ContractEdgeLayout::Structural),
     (EdgeKind::DischargedBy, ContractEdgeLayout::Structural),
+    (EdgeKind::SameAs, ContractEdgeLayout::Structural),
+    (EdgeKind::MergedInto, ContractEdgeLayout::Structural),
+    (EdgeKind::SplitInto, ContractEdgeLayout::Structural),
+    (EdgeKind::Parent, ContractEdgeLayout::Structural),
+    (EdgeKind::SpawnedBy, ContractEdgeLayout::Structural),
+    (EdgeKind::AddressedTo, ContractEdgeLayout::Structural),
+    (EdgeKind::RepliesTo, ContractEdgeLayout::Structural),
 ];
 
 pub(super) fn assert_f32_exact(actual: f32, expected: f32) {

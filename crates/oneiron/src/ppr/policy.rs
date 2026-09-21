@@ -130,7 +130,12 @@ pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
         // presence cannot even reweight a node's other hops. A traversable
         // λ here — however small — would be exactly the claim pooling this
         // ticket exists to prevent.
-        EdgeKind::SameAs => None,
+        // Conversation topology is not semantic retrieval mass.
+        EdgeKind::SameAs
+        | EdgeKind::Parent
+        | EdgeKind::SpawnedBy
+        | EdgeKind::AddressedTo
+        | EdgeKind::RepliesTo => None,
     }
 }
 /// Signed zero has one identity, just as it has one production computation.

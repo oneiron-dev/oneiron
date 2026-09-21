@@ -59,11 +59,38 @@ fn update_existing_rewrites_the_event_occurrence() {
         .expect("event exists");
     assert_eq!(before.occurred_start, 1_786_024_800);
     assert_eq!(before.occurred_end, 1_786_028_400);
+    assert_eq!(
+        vault.calendar_event_origin(event).unwrap(),
+        CalendarOrigin::Imported
+    );
+    let bytes = vault.get(&event).unwrap().unwrap();
+    let body = rmpv::decode::read_value(&mut std::io::Cursor::new(bytes)).unwrap();
+    let field = |key: &str| {
+        body.as_map()
+            .unwrap()
+            .iter()
+            .find(|(k, _)| k.as_str() == Some(key))
+            .map(|(_, v)| v.clone())
+    };
+    assert_eq!(field("origin"), Some(rmpv::Value::from("imported")));
+    assert_eq!(field("externalId"), Some(rmpv::Value::from("uid-oc@x")));
+    assert!(
+        field("importSource")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .contains("uid-oc@x")
+    );
+
 
     let drifted = BodyFetcher {
         body: one_event_feed("20260807T090000Z", "20260807T093000Z"),
     };
     run_ics_feed_poll(&vault, &drifted, &config, 1_800_000_100, 7).expect("drift poll");
+    assert_eq!(
+        vault.calendar_event_origin(event).unwrap(),
+        CalendarOrigin::Imported
+    );
     let after = vault
         .read_entity_header(&event)
         .expect("header")

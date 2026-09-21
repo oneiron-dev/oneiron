@@ -1,11 +1,12 @@
 //! Per-pass attempt-executor factory trait and default implementation.
 use std::sync::Arc;
 
+use oneiron::Vault;
 use oneiron::edge::EdgeActorClass;
 use oneiron::{
     BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationExecutor,
     ConsolidationSink, DreamerAttemptExecutor, DreamerClaimAuthoringStrategy, LlmBackend, ModelId,
-    Result, Vault, WriteActor,
+    Result, WriteActor,
 };
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
 #[cfg(all(unix, feature = "voice"))]

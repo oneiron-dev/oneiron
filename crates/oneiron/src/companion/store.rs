@@ -7,8 +7,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::store::Store;
-use crate::vault::entity_id_from_type_index_key;
 
 pub(super) fn companion_record_id_for_key_in_txn(
     store: &Store,
@@ -16,13 +16,9 @@ pub(super) fn companion_record_id_for_key_in_txn(
     key: &CompanionRecordKey,
 ) -> Result<Option<EntityId>> {
     key.validate()?;
-    for index_entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
-    {
-        let (type_key, _) = index_entry?;
-        let id = entity_id_from_type_index_key(&type_key)?;
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_COMPANION_REGISTER, None)? {
+        let id = index_entry?;
+        let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
             return Err(Error::CorruptedIndex("companion register type index"));
         };
         let header =
@@ -44,13 +40,9 @@ pub(super) fn companion_record_any_id_for_key_in_txn(
     key: &CompanionRecordKey,
 ) -> Result<Option<EntityId>> {
     key.validate()?;
-    for index_entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
-    {
-        let (type_key, _) = index_entry?;
-        let id = entity_id_from_type_index_key(&type_key)?;
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_COMPANION_REGISTER, None)? {
+        let id = index_entry?;
+        let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
             return Err(Error::CorruptedIndex("companion register type index"));
         };
         let header =
@@ -81,13 +73,9 @@ pub(crate) fn companion_record_key_lookup_in_txn(
 ) -> Result<CompanionRecordKeyLookup> {
     key.validate()?;
     let mut lookup = CompanionRecordKeyLookup::default();
-    for index_entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
-    {
-        let (type_key, _) = index_entry?;
-        let id = entity_id_from_type_index_key(&type_key)?;
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_COMPANION_REGISTER, None)? {
+        let id = index_entry?;
+        let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
             return Err(Error::CorruptedIndex("companion register type index"));
         };
         let header =

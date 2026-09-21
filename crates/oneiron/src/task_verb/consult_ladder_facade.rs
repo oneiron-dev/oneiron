@@ -13,7 +13,6 @@ use crate::memory::{
 };
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::temporal::TimeRange;
-use crate::unix_seconds_now;
 
 use super::consult_result::TaskVerbBody;
 use super::create_spec::{TaskCreateRateLimit, TaskCreateSpec};
@@ -131,7 +130,7 @@ impl Memory<'_> {
             })
             .with_ttl(TaskTtl::at(deadline_at));
         let validated = validate_task_create(self.vault(), &spec, now)?;
-        let rate_now = unix_seconds_now();
+        let rate_now = self.vault().store.clock.now_recorded_at();
         let (task_ref, route) = self.with_verified_actor_write_txn(|wtxn| {
             let parent = consult_body_in_txn(self.vault(), &*wtxn, parent_task_ref)?;
             self.require_auto_ceiling_in_txn(&*wtxn)?;
@@ -183,7 +182,7 @@ impl Memory<'_> {
         counter_task_ref: EntityId,
         now: u64,
     ) -> MemoryResult<()> {
-        let result_ref = EntityId::now();
+        let result_ref = self.vault().store.clock.entity_id()?;
         let artifact = canonical_bytes(&counter_lineage_artifact_value(
             parent_ref,
             counter_task_ref,

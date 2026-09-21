@@ -1,5 +1,6 @@
 //! The `actor.*` write chokepoint, cardinality core, and TASK-lane projector.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
@@ -164,7 +165,7 @@ pub(super) fn write_actor_claim_in_txn(
         return Ok(*head_id);
     }
 
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     let mut body = ClaimBody::new(
         predicate,
         ClaimSubject::Entity(actor),
@@ -292,8 +293,8 @@ fn active_heads_in_txn(
         }
         let raw = vault
             .store
-            .entities
-            .get(rtxn, id.as_bytes())?
+            .port_entity_record(rtxn, &id)?
+            .map(|row| row.encode())
             .ok_or(Error::CorruptedIndex("actor claim entity"))?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

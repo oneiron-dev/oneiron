@@ -60,7 +60,7 @@ impl Vault {
         vet_off_record_session_ref(session_ref)?;
         self.store
             .off_record_sessions
-            .enter(session_ref, backend, budget_bytes)
+            .enter(session_ref, backend, budget_bytes, &self.store.clock)
     }
 
     /// Reads the off-record session record for `session_ref`, if any. A ref

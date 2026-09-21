@@ -165,20 +165,35 @@ impl PipelineBuilder<'_> {
                 .map_or(query.as_str(), |expansion| {
                     expansion.grounded_query.as_str()
                 });
-            let mut text_results = self.search_text_candidates(
-                rtxn,
-                inputs.bm25_config,
-                text_query,
-                if self.candidate_filter.is_some() {
-                    *limit
-                } else {
-                    text_channel_limit
-                },
-                crate::bm25::Bm25SearchOptions {
-                    recency: None,
-                    exact_posting_matches_scope: &mut exact_posting_matches_scope,
-                },
-            )?;
+            let candidate_limit = if self.candidate_filter.is_some() {
+                *limit
+            } else {
+                text_channel_limit
+            };
+            let mut text_results = if self.memory_category {
+                self.search_text_candidates(
+                    rtxn,
+                    inputs.bm25_config,
+                    text_query,
+                    candidate_limit,
+                    crate::bm25::Bm25SearchOptions {
+                        recency: None,
+                        exact_posting_matches_scope: &mut exact_posting_matches_scope,
+                    },
+                )?
+            } else {
+                crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
+                    self.vault,
+                    rtxn,
+                    crate::ports::TextQuery {
+                        query: text_query,
+                        limit: candidate_limit,
+                        rank: inputs.bm25_config,
+                        filter_all: self.candidate_filter.is_some(),
+                        matches_scope: &mut exact_posting_matches_scope,
+                    },
+                )?
+            };
             diagnostics.succeeded.push(RetrievalSignal::Text);
             if self.candidate_filter.is_none()
                 && text_channel_limit > *limit
@@ -241,20 +256,35 @@ impl PipelineBuilder<'_> {
                         &mut retry_prefix_probe_claim_gate,
                     )
                 };
-                let mut results = self.search_text_candidates(
-                    rtxn,
-                    inputs.bm25_config,
-                    query,
-                    if self.candidate_filter.is_some() {
-                        retry_channel_limit(*limit)
-                    } else {
-                        retry_text_channel_limit
-                    },
-                    crate::bm25::Bm25SearchOptions {
-                        recency: None,
-                        exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
-                    },
-                )?;
+                let candidate_limit = if self.candidate_filter.is_some() {
+                    retry_channel_limit(*limit)
+                } else {
+                    retry_text_channel_limit
+                };
+                let mut results = if self.memory_category {
+                    self.search_text_candidates(
+                        rtxn,
+                        inputs.bm25_config,
+                        query,
+                        candidate_limit,
+                        crate::bm25::Bm25SearchOptions {
+                            recency: None,
+                            exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
+                        },
+                    )?
+                } else {
+                    crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
+                        self.vault,
+                        rtxn,
+                        crate::ports::TextQuery {
+                            query,
+                            limit: candidate_limit,
+                            rank: inputs.bm25_config,
+                            filter_all: self.candidate_filter.is_some(),
+                            matches_scope: &mut retry_exact_posting_matches_scope,
+                        },
+                    )?
+                };
                 if retry_text_channel_limit > *limit && inputs.text_scope_widening_active {
                     let scoped_result_limit = if inputs.recency.is_some() {
                         limit.saturating_mul(PER_SCAN_CAP_FACTOR)

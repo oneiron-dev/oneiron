@@ -68,7 +68,13 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        self.import_skill_from_hub_with_id(hub_ref, package, EntityId::now(), occurred, learned_at)
+        self.import_skill_from_hub_with_id(
+            hub_ref,
+            package,
+            self.store.clock.entity_id()?,
+            occurred,
+            learned_at,
+        )
     }
 
     /// Fetches through an adapter and enters the same import door.
@@ -431,7 +437,7 @@ impl Vault {
                 }
             }
 
-            let proposal_id = EntityId::now();
+            let proposal_id = self.store.clock.entity_id()?;
             let mut proposal = ClaimBody::new(
                 PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
                 ClaimSubject::Entity(*entity),

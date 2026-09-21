@@ -1,11 +1,12 @@
 //! Federated multi-world partitioning and staleness annotation
 //! (ARCH-0004 / ARCH-0022 / ONE-1411).
 
+use crate::ports::EntityStoreRead;
 use std::collections::{BTreeMap, HashMap};
 
 use heed::RoTxn;
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -188,14 +189,14 @@ pub(super) fn claim_world_by_id(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<EntityId>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
-    if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() <= ENTITY_METADATA_HEADER_LEN {
+
+    if raw.entity_type != ENTITY_TYPE_CLAIM
+        || (raw.body.len() + crate::batch::ENTITY_METADATA_HEADER_LEN) <= ENTITY_METADATA_HEADER_LEN
+    {
         return Ok(None);
     }
-    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(|body| body.world)
+    crate::claim::decode_claim_body(&raw.body, true).map(|body| body.world)
 }

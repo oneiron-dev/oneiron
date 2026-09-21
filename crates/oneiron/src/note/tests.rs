@@ -11,7 +11,7 @@ fn actor(seed: u8) -> EntityId {
 
 fn take(markdown: &str) -> NoteBody {
     NoteBody {
-        kind: NoteKind::OpinionTake,
+        kind: NoteKind::parse("opinion/take").expect("shipped kind"),
         author_ref: actor(0x7a),
         markdown: markdown.to_owned(),
         source_revision_ref: [0x42; 16],
@@ -29,31 +29,44 @@ fn encode_map(entries: Vec<(Value, Value)>) -> Vec<u8> {
 #[test]
 fn opinion_kind_round_trip() {
     // The wire literal IS the ABI — pinned here, not derived.
-    assert_eq!(NoteKind::OpinionTake.as_str(), "opinion/take");
-    assert_eq!(NoteKind::parse("opinion/take"), Some(NoteKind::OpinionTake));
+    assert_eq!(
+        NoteKind::parse("opinion/take")
+            .expect("shipped kind")
+            .as_str(),
+        "opinion/take"
+    );
+    assert_eq!(
+        NoteKind::parse("opinion/take"),
+        Some(NoteKind::parse("opinion/take").expect("shipped kind"))
+    );
     assert_eq!(
         NOTE_BODY_KEYS,
         ["kind", "author_ref", "markdown", "source_revision_ref"]
     );
-    assert_eq!(NoteKind::parse("diary"), Some(NoteKind::Diary));
 
     let body = take("Disagree: the source predates the merger.");
     let decoded = decode_note_body(&encode_note_body(&body).expect("encode")).expect("decode");
     assert_eq!(decoded, body);
 
-    // Unknown kinds fail closed — the remaining ARCH-0032 kinds are not
-    // implemented, so they must not decode as anything.
-    for unknown in [
+    for unknown in ["plugin/", "OPINION/TAKE", ""] {
+        assert_eq!(NoteKind::parse(unknown), None);
+    }
+    for kind in [
         "scratchpad",
         "observation",
         "handoff",
         "research",
         "reflection",
-        "plugin/",
-        "OPINION/TAKE",
-        "",
+        "diary",
     ] {
-        assert_eq!(NoteKind::parse(unknown), None, "kind {unknown:?}");
+        let body = NoteBody {
+            kind: NoteKind::parse(kind).unwrap(),
+            ..take("birth")
+        };
+        assert_eq!(
+            decode_note_body(&encode_note_body(&body).unwrap()).unwrap(),
+            body
+        );
     }
 }
 
@@ -105,7 +118,7 @@ fn decode_rejects_every_abi_deviation() {
 
     // Unknown kind on the wire.
     let unknown_kind = encode_map(vec![
-        (Value::from("kind"), Value::from("scratchpad")),
+        (Value::from("kind"), Value::from("not_registered")),
         (Value::from("author_ref"), Value::from(author.to_hex())),
         (Value::from("markdown"), Value::from("solid")),
         (
@@ -151,8 +164,8 @@ fn decode_rejects_every_abi_deviation() {
         );
     }
 
-    // Every missing-key subset of the pinned four.
-    for omit in NOTE_BODY_KEYS {
+    // Missing keys in an inline core are rejected.
+    for omit in ["kind", "author_ref", "markdown", "source_revision_ref"] {
         let entries = vec![
             (Value::from("kind"), Value::from("opinion/take")),
             (Value::from("author_ref"), Value::from(author.to_hex())),
@@ -282,13 +295,19 @@ fn brief_kind_round_trip_is_person_stamped_and_fail_closed() {
 
 #[test]
 fn diary_round_trip_and_revision_are_required() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let readable = |bytes: &[u8], actor: Option<&EntityId>| {
+        note_body_readable(&vault.store, &txn, bytes, actor).unwrap()
+    };
     let mut diary = take("private journal");
-    diary.kind = NoteKind::Diary;
+    diary.kind = NoteKind::parse("diary").expect("shipped kind");
     let bytes = encode_note_body(&diary).expect("encode diary");
     assert_eq!(decode_note_body(&bytes).expect("decode diary"), diary);
-    assert!(!note_body_readable(&bytes, None));
-    assert!(!note_body_readable(&bytes, Some(&actor(0x7b))));
-    assert!(note_body_readable(&bytes, Some(&diary.author_ref)));
+    assert!(!readable(&bytes, None));
+    assert!(!readable(&bytes, Some(&actor(0x7b))));
+    assert!(readable(&bytes, Some(&diary.author_ref)));
     for revision in [
         Value::Nil,
         Value::Binary(vec![1; 15]),
@@ -308,6 +327,19 @@ fn diary_round_trip_and_revision_are_required() {
             decode_note_body(&bytes),
             Err(Error::Record(RecordError::InvalidNoteBody(_)))
         ));
-        assert!(!note_body_readable(&bytes, Some(&diary.author_ref)));
+        assert!(!readable(&bytes, Some(&diary.author_ref)));
     }
+}
+
+#[test]
+fn note_core_rejects_a_parallel_document_head_field() {
+    let body = take("immutable birth");
+    let bytes = encode_note_body(&body).unwrap();
+    let mut value = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap();
+    let Value::Map(fields) = &mut value else {
+        panic!("NOTE map")
+    };
+    fields.push(("document_head".into(), actor(0x43).to_hex().into()));
+    assert!(decode_note_body(&encode_map(fields.clone())).is_err());
+    assert!(encode_note_body(&take("")).is_err());
 }

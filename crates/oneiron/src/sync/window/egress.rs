@@ -215,6 +215,7 @@ pub fn export_window_updates_since(
             source,
         })
     })?;
+    crate::sync::note::refresh(vault, doc, key)?;
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let scrubbed = secret_scrubbed || claims_scrubbed;
@@ -244,6 +245,7 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<Vec<u8>> {
+    crate::sync::note::refresh(vault, doc, key)?;
     scrub_local_claim_carriers(vault, key, doc)?;
     scrub_local_only_carriers(vault, key, doc)?;
     if history_free_window_required(vault, key)? || doc.is_shallow() {

@@ -1,6 +1,7 @@
 //! Durable Dreamer milestone claims: the index doors, the F4 binding check,
 //! and the pinned claim-value shape.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
@@ -205,37 +206,26 @@ fn dreamer_milestone_attribution_is_bound(
     body: &ClaimBody,
 ) -> bool {
     let attempt_hex = bytes_to_hex_lower(attempt_id.as_bytes());
-    let raw = match store.attempt_records.get(txn, attempt_id.as_bytes()) {
-        Ok(Some(raw)) => raw,
-        Ok(None) => {
-            tracing::warn!(
-                attempt_id = %attempt_hex,
-                "milestone names an attempt with no local queue row; \
-                 refusing durable index entry",
-            );
-            return false;
-        }
-        Err(error) => {
-            tracing::warn!(
-                attempt_id = %attempt_hex,
-                %error,
-                "milestone attempt row read failed; refusing durable index entry",
-            );
-            return false;
-        }
-    };
-    // Attempt rows are one version byte + an rmp_serde body (attempt_queue.rs); a
-    // record this module cannot decode cannot be bound — fail closed.
-    let Some((_version, record_body)) = raw.split_first() else {
-        return false;
-    };
-    let Ok(record) = rmp_serde::from_slice::<AttemptRecord>(record_body) else {
-        tracing::warn!(
-            attempt_id = %attempt_hex,
-            "milestone attempt row failed to decode; refusing durable index entry",
-        );
-        return false;
-    };
+    let record =
+        match crate::attempt_queue::AttemptQueue::from_store(store).get_in_txn(txn, attempt_id) {
+            Ok(Some(record)) => record,
+            Ok(None) => {
+                tracing::warn!(
+                    attempt_id = %attempt_hex,
+                    "milestone names an attempt with no local queue row; \
+                     refusing durable index entry",
+                );
+                return false;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    attempt_id = %attempt_hex,
+                    %error,
+                    "milestone attempt row read failed; refusing durable index entry",
+                );
+                return false;
+            }
+        };
     if record.kind != DREAMER_RUNNER_ATTEMPT_KIND {
         return true;
     }
@@ -331,7 +321,10 @@ fn milestone_claim_envelope_writer_kind(
     let Some(actor_ref) = milestone_claim_envelope_actor_ref(body) else {
         return Ok(None);
     };
-    let Some(raw) = store.entities.get(txn, actor_ref.as_bytes())? else {
+    let Some(raw) = store
+        .port_entity_record(txn, &actor_ref)?
+        .map(|row| row.encode())
+    else {
         return Ok(None);
     };
     Ok(EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
@@ -421,19 +414,19 @@ fn indexed_dreamer_milestone_if_current(
     if attempt_id != expected_attempt_id {
         return Ok(None);
     }
-    let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, &claim_id)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
-    if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() == ENTITY_METADATA_HEADER_LEN {
+
+    if raw.entity_type != ENTITY_TYPE_CLAIM
+        || (raw.body.len() + crate::batch::ENTITY_METADATA_HEADER_LEN) == ENTITY_METADATA_HEADER_LEN
+    {
         return Ok(None);
     }
-    let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
+    let Ok(body) = crate::claim::decode_claim_body(&raw.body, true) else {
         return Ok(None);
     };
-    let Some(milestone) = dreamer_milestone_from_claim_body(&claim_id, &body, header.learned_at)
+    let Some(milestone) = dreamer_milestone_from_claim_body(&claim_id, &body, raw.learned_at)
     else {
         return Ok(None);
     };
@@ -454,22 +447,13 @@ fn backfill_dreamer_milestone_index(
     attempt_id: AttemptId,
 ) -> Result<Option<DreamerDurableMilestone>> {
     let mut milestones = Vec::new();
-    for row in store.entities.iter(&*wtxn)? {
-        let (key, raw) = row?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() == ENTITY_METADATA_HEADER_LEN {
+    for row in store.port_entity_records(&*wtxn)? {
+        let (claim_id, row) = row?;
+        if row.entity_type != ENTITY_TYPE_CLAIM || row.body.is_empty() {
             continue;
         }
-        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        let Ok(key_bytes) = <[u8; 16]>::try_from(key.as_ref()) else {
-            continue;
-        };
-        let Ok(claim_id) = EntityId::from_bytes(key_bytes) else {
-            continue;
-        };
-        let Some(milestone) =
-            dreamer_milestone_from_claim_body(&claim_id, &body, header.learned_at)
+        let body = crate::claim::decode_claim_body(&row.body, true)?;
+        let Some(milestone) = dreamer_milestone_from_claim_body(&claim_id, &body, row.learned_at)
         else {
             continue;
         };

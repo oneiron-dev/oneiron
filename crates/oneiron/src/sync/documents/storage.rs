@@ -1,54 +1,12 @@
 //! Snapshot-then-update recovery and transactional text-plane persistence.
 
-use crate::error::{Error, Result, SyncEngineContext, SyncProtocolValidation};
-use crate::sync::loro_support::doc_from_snapshot;
+use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::{EntityId, Vault};
-use loro::{ExportMode, LoroDoc, VersionVector};
+use loro::VersionVector;
 
-pub(crate) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<LoroDoc> {
-    crate::note::ensure_citations_ready(&vault.store, txn, id)?;
-    load_for_erasure(vault, txn, id)
-}
-
-// Only the transactional erasure rebuild may open a fenced carrier.
-pub(crate) fn load_for_erasure(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-) -> Result<LoroDoc> {
-    let hex = id.to_hex();
-    let doc = match vault.store.sync_state.get(txn, &format!("d:e:{hex}"))? {
-        Some(bytes) => doc_from_snapshot(&bytes)?,
-        None => crate::note::document_birth_in_txn(vault, txn, id)?.unwrap_or_default(),
-    };
-    let prefix = format!("u:e:{hex}:");
-    for row in vault.store.sync_state.prefix_iter(txn, &prefix)? {
-        let (key, bytes) = row?;
-        let seq = &key[prefix.len()..];
-        if seq.len() != 8 || u32::from_str_radix(seq, 16).is_err() {
-            return Err(Error::sync_protocol(
-                SyncProtocolValidation::InvalidDocumentKey,
-            ));
-        }
-        import_complete(&doc, &bytes)?;
-    }
-    Ok(doc)
-}
-
-pub(crate) fn import_complete(doc: &LoroDoc, bytes: &[u8]) -> Result<()> {
-    let status = doc.import(bytes).map_err(|source| {
-        crate::error::Error::Sync(crate::error::SyncError::CrdtDecodeError {
-            context: "entity document import",
-            source,
-        })
-    })?;
-    if status.pending.is_some() {
-        return Err(Error::sync_protocol(
-            SyncProtocolValidation::DocumentPendingUpdate,
-        ));
-    }
-    Ok(())
-}
+pub(crate) use crate::note::storage::{
+    import_complete, load, load_for_erasure, snapshot, state_copy,
+};
 
 pub(crate) fn append(
     vault: &Vault,
@@ -79,52 +37,6 @@ pub(crate) fn append(
     // Absence denotes a stale cached state vector. Recovery never trusts it.
     vault.store.sync_state.delete(txn, &format!("sv:e:{hex}"))?;
     Ok(seq)
-}
-
-pub(crate) fn snapshot(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    id: EntityId,
-    doc: &LoroDoc,
-    shallow: bool,
-) -> Result<()> {
-    let hex = id.to_hex();
-    let bytes = if shallow {
-        state_copy(doc)?
-    } else {
-        doc.export(ExportMode::Snapshot)
-            .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportSnapshot, e))?
-    };
-    vault
-        .store
-        .sync_state
-        .put(txn, &format!("d:e:{hex}"), &bytes)?;
-    vault
-        .store
-        .sync_state
-        .put(txn, &format!("sv:e:{hex}"), &doc.oplog_vv().encode())?;
-    if shallow {
-        vault
-            .store
-            .sync_state
-            .put(txn, &format!("ssv:e:{hex}"), &doc.oplog_vv().encode())?;
-    }
-    let prefix = format!("u:e:{hex}:");
-    let keys = vault
-        .store
-        .sync_state
-        .prefix_iter(txn, &prefix)?
-        .map(|r| r.map(|(k, _)| k.to_string()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for key in keys {
-        vault.store.sync_state.delete(txn, &key)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn state_copy(doc: &LoroDoc) -> Result<Vec<u8>> {
-    doc.export(ExportMode::StateOnly(None))
-        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportShallowSnapshot, e))
 }
 
 pub(crate) fn decode_vv(bytes: &[u8]) -> Result<VersionVector> {

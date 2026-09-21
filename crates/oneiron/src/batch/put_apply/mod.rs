@@ -11,7 +11,7 @@ use crate::entity_id::EntityId;
 use crate::habit::TaskRole;
 
 use self::put_entity_update::{validate_local_skill_create, validate_skill_body_overwrite};
-use self::put_staging::stage_optimizer_birth_marker_row;
+use self::put_staging::{stage_claim_projection, stage_optimizer_birth_marker_row};
 use super::agent_definition_create::validate_local_agent_definition_create;
 use super::{
     AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,

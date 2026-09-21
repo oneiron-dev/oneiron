@@ -150,6 +150,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     return;
                 }
             };
+
             let delete_protected =
                 crate::registry::is_delete_protected_engine_record(header.entity_type);
 
@@ -365,7 +366,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         vault,
                         wtxn,
                         quota::peer_key_from_redaction_pubkey(&pubkey),
-                        crate::unix_seconds_now(),
+                        vault.store.clock.now_recorded_at(),
                     )?;
                     vault
                         .batch_in()
@@ -420,7 +421,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         vault,
                         wtxn,
                         peer_key,
-                        crate::unix_seconds_now(),
+                        vault.store.clock.now_recorded_at(),
                     )?;
                     vault
                         .batch_in()
@@ -470,6 +471,18 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 })
             } else {
                 vault.with_write_txn(|wtxn| {
+                    // Moving NOTE cores onto the canonical entity pass must
+                    // retain the old native lane's pending-delete fence.
+                    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                        && quarantine::unproven_remat_marker_exists_in_txn(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            &id,
+                        )?
+                    {
+                        return Ok(false);
+                    }
                     vault
                         .batch_in()
                         .put_replicated(

@@ -86,6 +86,7 @@ impl OffRecordSessionRegistry {
         session_ref: &str,
         backend: OffRecordBackendClass,
         budget_bytes: usize,
+        clock: &crate::ports::StoreClock,
     ) -> Result<Arc<OffRecordSessionEntry>> {
         let mut sessions = self.sessions()?;
         if sessions.contains_key(session_ref) {
@@ -100,7 +101,7 @@ impl OffRecordSessionRegistry {
             session_ref: session_ref.to_owned(),
             mode: OffRecordMode::OffRecord,
             backend,
-            entered_at: crate::unix_seconds_now(),
+            entered_at: clock.now_recorded_at(),
             promoted_turns: Vec::new(),
             closing: false,
         };
@@ -116,7 +117,7 @@ impl OffRecordSessionRegistry {
                 // room. Allocating it lazily made "one shell per live
                 // session" a property of whoever touched it first; allocating
                 // it here makes it a property of entry.
-                overlay_shell: EntityId::now(),
+                overlay_shell: clock.entity_id()?,
                 overlay_shell_staged: false,
                 continuation_shell: None,
             }),

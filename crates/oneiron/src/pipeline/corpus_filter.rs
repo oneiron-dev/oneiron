@@ -30,6 +30,7 @@ impl CorpusFilter {
             authority_filter,
             candidate_filter: builder.candidate_filter,
             type_filter: builder.type_filter.as_deref(),
+            criticality: builder.criticality,
             since_filter: builder.since_filter,
             occurred_range,
             learned_range: builder.learned_range,

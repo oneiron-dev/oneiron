@@ -186,7 +186,7 @@ pub fn invoke_campaign_surface(
         )
     })?;
     let body = call.body;
-    let now = crate::unix_seconds_now();
+    let now = facade.vault().store.clock.now_recorded_at();
     let payload = match verb {
         CampaignSurfaceVerb::CampaignCreate => {
             let request = parse_create_campaign_request(&body)?;

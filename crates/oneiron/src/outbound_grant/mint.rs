@@ -11,6 +11,7 @@ use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -37,7 +38,7 @@ impl Vault {
         )?;
         let data = encode_standing_outbound_grant_body(&grant)?;
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+        if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }
         self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
@@ -111,7 +112,7 @@ impl Vault {
         )?;
         let data = encode_standing_outbound_grant_body(&grant)?;
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+        if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }
         self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
@@ -162,7 +163,7 @@ impl Vault {
         grant.validate()?;
         let data = encode_standing_outbound_grant_body(&grant)?;
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+        if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }
         self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
@@ -179,8 +180,8 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .entities
-            .get(&wtxn, id.as_bytes())?
+            .port_entity_record(&wtxn, id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -201,7 +202,11 @@ impl Vault {
         id: &EntityId,
     ) -> Result<Option<StandingOutboundGrant>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(&rtxn, id)?
+            .map(|row| row.encode())
+        else {
             return Ok(None);
         };
         let header =
@@ -222,7 +227,11 @@ impl Vault {
         let new_grant = decode_standing_outbound_grant_body(&data)?;
         let new_index_key =
             standing_outbound_grant_principal_index_key(&new_grant.principal_ref, id)?;
-        let old_index_key = if let Some(raw) = self.store.entities.get(&*wtxn, id.as_bytes())? {
+        let old_index_key = if let Some(raw) = self
+            .store
+            .port_entity_record(&*wtxn, id)?
+            .map(|row| row.encode())
+        {
             let Some(header) = EntityMetadataHeader::parse(&raw) else {
                 return Err(Error::CorruptedIndex("outbound grant entity header"));
             };
@@ -277,14 +286,14 @@ pub(crate) fn standing_outbound_grant_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<StandingOutboundGrant>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
-        return Err(Error::InvalidEntityType(header.entity_type));
+
+    if raw.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
+        return Err(Error::InvalidEntityType(raw.entity_type));
     }
-    decode_standing_outbound_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    decode_standing_outbound_grant_body(&raw.body).map(Some)
 }
 
 fn scoped_mcp_grant_binding_handle(intent: &ScopedMcpGrantMintIntent) -> Vec<u8> {

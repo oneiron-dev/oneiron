@@ -2,6 +2,7 @@
 mod body;
 mod dag;
 mod membership;
+pub(crate) mod ownership;
 mod session;
 mod summary;
 mod threads;

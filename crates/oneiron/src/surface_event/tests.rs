@@ -9,7 +9,11 @@ use crate::test_util::open_test_vault_with;
 use crate::test_util::entity;
 
 fn test_vault() -> (tempfile::TempDir, Vault) {
+    test_vault_with_clock(crate::ports::StoreClock::default())
+}
+fn test_vault_with_clock(clock: crate::ports::StoreClock) -> (tempfile::TempDir, Vault) {
     let mut cfg = VaultConfig::device();
+    cfg.store_clock = clock;
     cfg.map_size = 16 * 1024 * 1024;
     cfg.dimensions = 4;
     cfg.embedding_model = None;
@@ -506,6 +510,29 @@ fn admitting_vault(
     (dir, vault, agent_ref)
 }
 
+fn timed_admitting_vault(
+    address: &str,
+    seed: u8,
+    agent_seed: u8,
+    now: u64,
+) -> (
+    tempfile::TempDir,
+    Vault,
+    EntityId,
+    std::sync::Arc<crate::ports::ManualClock>,
+) {
+    let clock = crate::ports::ManualClock::new(now);
+    let (dir, vault) = test_vault_with_clock(clock.bundle());
+    let agent = entity(agent_seed);
+    vault
+        .create_channel_identity(
+            &entity(seed),
+            &identity(address, agent, ChannelIdentityState::Active),
+        )
+        .expect("seed active identity");
+    (dir, vault, agent, clock)
+}
+
 fn accepted(admission: SurfaceEventAdmission) -> SurfaceEventAck {
     match admission {
         SurfaceEventAdmission::Accepted(ack) => ack,
@@ -517,7 +544,8 @@ fn accepted(admission: SurfaceEventAdmission) -> SurfaceEventAck {
 
 #[test]
 fn surface_event_ack_precedes_dispatch() -> Result<()> {
-    let (_dir, vault, agent_ref) = admitting_vault("ack@example.com", 0x1A, 0x5A);
+    let (_dir, vault, agent_ref, clock) =
+        timed_admitting_vault("ack@example.com", 0x1A, 0x5A, 1_800_000_500);
     let dispatcher = FakeDispatcher::new(SurfaceEventDispatchDisposition::Complete);
 
     let ack = accepted(vault.enqueue_inbound_surface_event(
@@ -551,7 +579,14 @@ fn surface_event_ack_precedes_dispatch() -> Result<()> {
     assert_eq!(status.created_at, 1_800_000_500);
 
     // Only then does a worker claim it and reach the dispatcher.
-    let outcome = vault.dispatch_next_surface_event("test-worker", 1_800_000_600, &dispatcher)?;
+    let outcome = vault.dispatch_next_surface_event(
+        "test-worker",
+        {
+            clock.set(1_800_000_600);
+            1_800_000_600
+        },
+        &dispatcher,
+    )?;
     assert_eq!(dispatcher.calls(), 1);
     let SurfaceEventWorkerOutcome::Completed(completed) = outcome else {
         panic!("expected completion");
@@ -571,8 +606,10 @@ fn surface_event_ack_precedes_dispatch() -> Result<()> {
 
 #[test]
 fn surface_event_once_per_correlation_survives_terminal_state() -> Result<()> {
-    let (_dir, vault, _) = admitting_vault("once@example.com", 0x1B, 0x5B);
+    let (_dir, vault, _, clock) =
+        timed_admitting_vault("once@example.com", 0x1B, 0x5B, 1_800_001_000);
     let submit = |now| {
+        clock.set(now);
         vault.enqueue_inbound_surface_event(
             input(
                 "once@example.com",
@@ -597,7 +634,14 @@ fn surface_event_once_per_correlation_survives_terminal_state() -> Result<()> {
 
     // Replay after a terminal completion.
     let dispatcher = FakeDispatcher::new(SurfaceEventDispatchDisposition::Complete);
-    vault.dispatch_next_surface_event("test-worker", 1_800_001_100, &dispatcher)?;
+    vault.dispatch_next_surface_event(
+        "test-worker",
+        {
+            clock.set(1_800_001_100);
+            1_800_001_100
+        },
+        &dispatcher,
+    )?;
     let after_complete = accepted(submit(1_800_001_200)?);
     assert!(after_complete.replayed);
     assert_eq!(after_complete.attempt_ref, first.attempt_ref);
@@ -615,7 +659,14 @@ fn surface_event_once_per_correlation_survives_terminal_state() -> Result<()> {
     // A replay never re-offers the row to a worker.
     let replay_dispatcher = FakeDispatcher::new(SurfaceEventDispatchDisposition::Complete);
     assert_eq!(
-        vault.dispatch_next_surface_event("test-worker", 1_800_001_300, &replay_dispatcher)?,
+        vault.dispatch_next_surface_event(
+            "test-worker",
+            {
+                clock.set(1_800_001_300);
+                1_800_001_300
+            },
+            &replay_dispatcher
+        )?,
         SurfaceEventWorkerOutcome::Empty
     );
     assert_eq!(replay_dispatcher.calls(), 0);
@@ -663,7 +714,8 @@ fn concurrent_submissions_of_one_correlation_id_produce_one_attempt() -> Result<
 
 #[test]
 fn surface_event_failure_is_queryable() -> Result<()> {
-    let (_dir, vault, _) = admitting_vault("fail@example.com", 0x1C, 0x5C);
+    let (_dir, vault, _, clock) =
+        timed_admitting_vault("fail@example.com", 0x1C, 0x5C, 1_800_002_000);
     let ack = accepted(vault.enqueue_inbound_surface_event(
         input(
             "fail@example.com",
@@ -675,8 +727,14 @@ fn surface_event_failure_is_queryable() -> Result<()> {
     let dispatcher = FakeDispatcher::new(SurfaceEventDispatchDisposition::Fail {
         reason: "downstream refused".to_owned(),
     });
-    let SurfaceEventWorkerOutcome::Failed(failed) =
-        vault.dispatch_next_surface_event("test-worker", 1_800_002_100, &dispatcher)?
+    let SurfaceEventWorkerOutcome::Failed(failed) = vault.dispatch_next_surface_event(
+        "test-worker",
+        {
+            clock.set(1_800_002_100);
+            1_800_002_100
+        },
+        &dispatcher,
+    )?
     else {
         panic!("expected terminal failure");
     };
@@ -709,7 +767,8 @@ fn surface_event_failure_is_queryable() -> Result<()> {
 
 #[test]
 fn surface_event_retry_mints_a_fresh_attempt() -> Result<()> {
-    let (_dir, vault, _) = admitting_vault("retry@example.com", 0x1D, 0x5D);
+    let (_dir, vault, _, clock) =
+        timed_admitting_vault("retry@example.com", 0x1D, 0x5D, 1_800_003_000);
     let ack = accepted(vault.enqueue_inbound_surface_event(
         input(
             "retry@example.com",
@@ -723,8 +782,14 @@ fn surface_event_retry_mints_a_fresh_attempt() -> Result<()> {
         backoff_until: 1_800_003_050,
         reason: "downstream busy".to_owned(),
     });
-    let SurfaceEventWorkerOutcome::Retried(retried) =
-        vault.dispatch_next_surface_event("test-worker", 1_800_003_100, &retrying)?
+    let SurfaceEventWorkerOutcome::Retried(retried) = vault.dispatch_next_surface_event(
+        "test-worker",
+        {
+            clock.set(1_800_003_100);
+            1_800_003_100
+        },
+        &retrying,
+    )?
     else {
         panic!("expected retry");
     };
@@ -764,8 +829,14 @@ fn surface_event_retry_mints_a_fresh_attempt() -> Result<()> {
 
     // The second dispatch claims the Scheduled row and completes it.
     let completing = FakeDispatcher::new(SurfaceEventDispatchDisposition::Complete);
-    let SurfaceEventWorkerOutcome::Completed(completed) =
-        vault.dispatch_next_surface_event("test-worker", 1_800_003_200, &completing)?
+    let SurfaceEventWorkerOutcome::Completed(completed) = vault.dispatch_next_surface_event(
+        "test-worker",
+        {
+            clock.set(1_800_003_200);
+            1_800_003_200
+        },
+        &completing,
+    )?
     else {
         panic!("expected completion after retry");
     };

@@ -649,6 +649,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
             let expected = filter.include_stale && types.contains(&ENTITY_TYPE_CLAIM);
             let txn = vault.store.env.read_txn()?;
             let config = PipelineFilterConfig {
+                criticality: None,
                 authority_filter: &filter,
                 candidate_filter: Some(&candidate),
                 type_filter: Some(types),

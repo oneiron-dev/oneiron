@@ -148,6 +148,8 @@
           "candidates_considered": 1,
           "claims_suppressed": 0,
           "cosine_ghosts_dampened": 0,
+          "critical_count": 0,
+          "critical_over_budget": false,
           "entities_hydrated": 1,
           "items_dropped": {
             "count": 0,
@@ -300,6 +302,8 @@
             "candidates_considered": 0,
             "claims_suppressed": 0,
             "cosine_ghosts_dampened": 0,
+            "critical_count": 0,
+            "critical_over_budget": false,
             "entities_hydrated": 0,
             "items_dropped": {
               "count": 0,

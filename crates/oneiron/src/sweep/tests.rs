@@ -607,6 +607,7 @@ fn stale_finalization_echo_comparator_pins_monotone_shape() {
         blob
     };
     let input = |requested_at: u64| RedactionReceiptInput {
+        actor_principal: None,
         request_id: uuid::Uuid::now_v7().to_string(),
         scope: RedactionScope::entity(&EntityId::now()),
         reason: DeleteReason::GdprDelete,

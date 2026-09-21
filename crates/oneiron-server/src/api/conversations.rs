@@ -4,8 +4,8 @@ use super::CoreEntityWriteInput;
 use super::CoreEntityWriteResponse;
 use super::CoreListQuery;
 use super::CoreTextField;
+use super::DagTurnQuery;
 use super::SearchResponse;
-use super::ViewQuery;
 use super::collect_live_entity_page;
 use super::core_body_for_write;
 use super::core_engine_error;
@@ -349,7 +349,7 @@ pub(crate) async fn create_core_conversation_turn(
     path = "/v1/core/turns/{turn_id}",
     params(
         ("turn_id" = String, Path, description = "Hex turn id."),
-        ViewQuery
+        DagTurnQuery
     ),
     responses(
         (status = 200, description = "Projected turn entity.", body = Object, content_type = "application/json"),
@@ -364,14 +364,36 @@ pub(crate) async fn get_core_turn(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(turn_id): Path<String>,
-    query: Result<Query<ViewQuery>, QueryRejection>,
+    query: Result<Query<DagTurnQuery>, QueryRejection>,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let id = parse_entity_id_param(&turn_id, "turn_id")?;
     require_entity_type(&server, &id, ENTITY_TYPE_TURN, "turn")?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Full);
-    project_core_entity(&server.vault, &id, view)
+    if params
+        .with
+        .as_deref()
+        .is_some_and(|with| with != "reply_strip")
+    {
+        return Err(
+            crate::error::ApiError::bad_request("unknown TURN projection", Some("with")).into(),
+        );
+    }
+    let Json(mut item) = project_core_entity(&server.vault, &id, view)?;
+    if params.with.as_deref() == Some("reply_strip") {
+        let strip = server
+            .vault
+            .reply_strip(&id)
+            .map_err(|e| core_engine_error("reply strip read failed", e))?;
+        item["reply_strip"] = strip.map_or(Value::Null, |strip| {
+            serde_json::json!({
+                "record": strip.record.to_hex(), "revision": strip.revision,
+                "text": strip.text, "stale": strip.stale,
+            })
+        });
+    }
+    Ok(Json(item))
 }
 
 pub(crate) fn core_list_conversation_turns(

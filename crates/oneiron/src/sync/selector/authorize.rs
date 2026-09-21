@@ -34,7 +34,12 @@ pub fn authorize_sync_selector(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<()> {
-    authorize_sync_selector_at(vault, grant_scope, selector, crate::unix_seconds_now())
+    authorize_sync_selector_at(
+        vault,
+        grant_scope,
+        selector,
+        vault.store.clock.now_recorded_at(),
+    )
 }
 
 /// [`authorize_sync_selector`] against an explicit clock.
@@ -162,7 +167,11 @@ pub(super) fn effective_scope_for_grant(
         .reduce(|left, right| left.intersect(&right))
 }
 
-pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> Result<LoroDoc> {
+pub(super) fn strip_guest_share_metadata(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+) -> Result<LoroDoc> {
     let out = create_window_doc("guest-share", key);
     let source_entities = source.get_map("entities");
     let source_edges = source.get_map("edges");
@@ -212,6 +221,7 @@ pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> R
 
     // Tombstone rows are entity ids without type metadata. A guest-share
     // snapshot omits them to avoid leaking deleted membership/topology counts.
+    crate::sync::note::copy_selected(vault, source, &out)?;
     out.commit();
     Ok(out)
 }
@@ -233,6 +243,12 @@ pub(super) fn filter_window_doc(
     selector: &SyncSelector,
     empty: EmptyAxis,
 ) -> Result<LoroDoc> {
+    // A selector must not trigger Observer A with unselected NOTE sidecars.
+    // Refresh a detached window, then copy only owners that pass this filter.
+    let source_bytes = crate::sync::loro_support::export_snapshot(source)?;
+    let refreshed = crate::sync::loro_support::doc_from_snapshot(&source_bytes)?;
+    crate::sync::note::refresh(vault, &refreshed, key)?;
+    let source = &refreshed;
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");
     let source_edges = source.get_map("edges");
@@ -386,6 +402,7 @@ pub(super) fn filter_window_doc(
         }
     });
 
+    crate::sync::note::copy_selected(vault, source, &out)?;
     out.commit();
     Ok(out)
 }

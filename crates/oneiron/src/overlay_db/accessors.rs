@@ -11,8 +11,8 @@ use crate::error::{Error, Result};
 use crate::session_overlay::{OverlayKeyspace, OverlaySnapshot, SessionOverlay, SnapshotLookup};
 
 use super::iters::{
-    OverlayDupValues, OverlayIter, OverlayPrefix, OverlayRange, OverlayRevIter, OverlayRevRange,
-    OverlayStrIter, OverlayStrPrefix,
+    OverlayDupValues, OverlayIter, OverlayPrefix, OverlayRange, OverlayRevRange, OverlayStrIter,
+    OverlayStrPrefix,
 };
 use super::merge::{
     Direction, MergedPrefixRows, MergedRows, PrefetchedMergedRows, StrMergedRows, borrow_pair,
@@ -189,13 +189,6 @@ impl OverlayDb {
         self.iter(txn)?.next().transpose()
     }
 
-    pub(crate) fn last<'txn>(&self, txn: &'txn RoTxn<'_>) -> Result<Option<KvPair<'txn>>> {
-        if self.overlay.is_none() {
-            return Ok(self.base.last(txn)?.map(borrow_pair));
-        }
-        self.rev_iter(txn)?.next().transpose()
-    }
-
     pub(crate) fn iter<'txn>(&self, txn: &'txn RoTxn<'_>) -> Result<OverlayIter<'txn>> {
         let Some(overlay) = &self.overlay else {
             return Ok(OverlayIter::Base(self.base.iter(txn)?));
@@ -205,19 +198,6 @@ impl OverlayDb {
             Some(self.base.iter(txn)?),
             plan,
             Direction::Forward,
-            overlay.snapshot.clone(),
-        ))))
-    }
-
-    pub(crate) fn rev_iter<'txn>(&self, txn: &'txn RoTxn<'_>) -> Result<OverlayRevIter<'txn>> {
-        let Some(overlay) = &self.overlay else {
-            return Ok(OverlayRevIter::Base(self.base.rev_iter(txn)?));
-        };
-        let plan = overlay.snapshot.merge_plan(overlay.keyspace, |_| true);
-        Ok(OverlayRevIter::Merged(Box::new(MergedRows::new(
-            Some(self.base.rev_iter(txn)?),
-            plan,
-            Direction::Reverse,
             overlay.snapshot.clone(),
         ))))
     }

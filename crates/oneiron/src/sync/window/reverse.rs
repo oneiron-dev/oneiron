@@ -263,6 +263,10 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         }
     }
 
+    // NOTE text, mutable workflows and head moves change even when the
+    // entity carrier already exists. Refresh through the same export gates.
+    wrote_any |= crate::sync::note::refresh(vault, doc, window_key)?;
+
     // Commit all bridge writes with origin tag
     if wrote_any {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));

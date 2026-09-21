@@ -22,6 +22,7 @@ use crate::entity_id::EntityId;
 use crate::ingest::{
     ICS_FEED_SOURCE_ID, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
 };
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -80,7 +81,6 @@ impl PollAdmission<'_> {
             PassportDecision::CreateEvent => {
                 let event_ref = self.mint_event(event)?;
                 index_passport_uid(self.vault, &event.uid, &event_ref)?;
-                self.admit_origin(event_ref, event)?;
                 self.admit_properties(event_ref, event)?;
                 self.admit_fresh_passport(event_ref, event)?;
                 if !event.cancelled {
@@ -180,30 +180,74 @@ impl PollAdmission<'_> {
         Ok(())
     }
 
-    /// Mints the EVENT entity: structural write only, occurred from the
-    /// parsed times, `name` from SUMMARY with a UID fallback.
-    fn mint_event(&self, event: &ParsedVEvent) -> Result<EntityId, CalendarError> {
-        let event_ref = EntityId::now();
-        let occurred = self.event_occurred(event);
-        let body = encode_event_body(event_name(event))?;
-        self.vault
-            .put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, self.now, &body)?;
-        Ok(event_ref)
+    /// Birth and recorded import provenance commit together. Screening still
+    /// happens before admission; origin is a projector fact, not a proposed
+    /// semantic claim that can disappear from the live EVENT projection.
+    fn mint_event(&mut self, event: &ParsedVEvent) -> Result<EntityId, CalendarError> {
+        let id = self.vault.store.clock.entity_id()?;
+        self.mint_event_with_id(event, id)
     }
 
-    /// Re-mints the EVENT's structural row from a drifted VEVENT: the id is
-    /// stable, occurred and `name` follow the new head. Without this the
-    /// update verdict would move only the passport while the event kept
-    /// stale content — the drift detector's whole point.
+    fn mint_event_with_id(
+        &mut self,
+        event: &ParsedVEvent,
+        id: EntityId,
+    ) -> Result<EntityId, CalendarError> {
+        let body = screen_body(event);
+        let screened =
+            screen_then_claim(self.safeguard_enabled, self.screener, &body, |request| {
+                let token = verdict_token(&request.verdict);
+                let actor = ensure_ics_import_actor(self.vault, self.now)?;
+                let input = crate::calendar::origin::CalendarEventInput {
+                    origin: Some(CalendarOrigin::Imported),
+                    name: event_name(event).to_owned(),
+                    import_source: Some(self.source_record_id(event)),
+                    external_id: Some(event.uid.clone()),
+                    calendar_name: Some(self.system.to_owned()),
+                    ..Default::default()
+                };
+                let admitted = self.vault.with_write_txn(|txn| {
+                    self.vault.stage_calendar_event(
+                        txn,
+                        &input,
+                        self.event_occurred(event),
+                        WriteActor::new(actor, crate::EdgeActorClass::System),
+                        id,
+                        self.now,
+                    )?;
+                    Ok(id)
+                });
+                Ok((admitted, token))
+            })?;
+        let (admitted, token) = screened.value;
+        self.verdict_fold.record(token);
+        Ok(admitted?)
+    }
+
+    /// Drift changes the EVENT's time/name without erasing its origin or
+    /// extraction/import fields. Imported provenance follows this feed version;
+    /// a native EVENT with an attached passport remains native.
     fn rewrite_event(
         &self,
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<(), CalendarError> {
-        let occurred = self.event_occurred(event);
-        let body = encode_event_body(event_name(event))?;
-        self.vault
-            .put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, self.now, &body)?;
+        let input = crate::calendar::origin::CalendarEventInput {
+            origin: Some(CalendarOrigin::Imported),
+            name: event_name(event).to_owned(),
+            import_source: Some(self.source_record_id(event)),
+            external_id: Some(event.uid.clone()),
+            ..Default::default()
+        };
+        self.vault.with_write_txn(|txn| {
+            self.vault.update_calendar_import_in_txn(
+                txn,
+                event_ref,
+                &input,
+                self.event_occurred(event),
+                self.now,
+            )
+        })?;
         Ok(())
     }
 
@@ -218,23 +262,6 @@ impl PollAdmission<'_> {
             (Some(start), None) => TimeRange { start, end: start },
             (None, _) => TimeRange { start: 0, end: 0 },
         }
-    }
-
-    fn admit_origin(
-        &mut self,
-        event_ref: EntityId,
-        event: &ParsedVEvent,
-    ) -> Result<(), CalendarError> {
-        let body = screen_body(event);
-        let source_record_id = self.source_record_id(event);
-        self.admit_screened(
-            event_ref,
-            &body,
-            &source_record_id,
-            PREDICATE_CALENDAR_ORIGIN,
-            rmpv::Value::from(CalendarOrigin::Imported.as_str()),
-        )?;
-        Ok(())
     }
 
     /// Reconciles this source's properties, including removing its time kind
@@ -562,17 +589,6 @@ fn event_name(event: &ParsedVEvent) -> &str {
         .unwrap_or(event.uid.as_str())
 }
 
-/// The EVENT body row: a MessagePack map carrying only the name.
-fn encode_event_body(name: &str) -> Result<Vec<u8>, CalendarError> {
-    let mut body = Vec::new();
-    rmpv::encode::write_value(
-        &mut body,
-        &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
-    )
-    .map_err(|_| ingest("event body did not encode"))?;
-    Ok(body)
-}
-
 /// Admits one typed-value claim through the Gate-backed imported-evidence
 /// door and returns the new claim id. The write actor is the adapter's own
 /// MACHINE entity, ensured on first use.
@@ -585,7 +601,7 @@ pub(in crate::calendar) fn admit_calendar_import_claim(
     recorded_at: u64,
 ) -> crate::Result<EntityId> {
     let actor = ensure_ics_import_actor(vault, recorded_at)?;
-    let claim_id = EntityId::now();
+    let claim_id = vault.store.clock.entity_id()?;
     let admission = ImportedEvidenceAdmission::proposed(
         ICS_FEED_SOURCE_ID,
         claim_id,
@@ -613,7 +629,10 @@ pub fn ics_import_actor_id() -> crate::Result<EntityId> {
     derive_entity_id(ICS_IMPORT_ACTOR_ID_DOMAIN, &[])
 }
 
-pub(super) fn ensure_ics_import_actor(vault: &Vault, now: u64) -> crate::Result<EntityId> {
+pub(in crate::calendar) fn ensure_ics_import_actor(
+    vault: &Vault,
+    now: u64,
+) -> crate::Result<EntityId> {
     let id = ics_import_actor_id()?;
     if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_MACHINE) {
         let mut body = Vec::new();
@@ -644,11 +663,9 @@ fn list_event_ids(vault: &Vault) -> Result<Vec<EntityId>, CalendarError> {
     let mut ids = Vec::new();
     for entry in vault
         .store
-        .type_index
-        .prefix_iter(&rtxn, &[ENTITY_TYPE_EVENT])?
+        .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_EVENT, None)?
     {
-        let (key, _) = entry?;
-        ids.push(crate::vault::entity_id_from_type_index_key(&key)?);
+        ids.push(entry?);
     }
     Ok(ids)
 }

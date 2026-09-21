@@ -37,8 +37,15 @@ fn two_actor_divergent_takes() {
     for (receipt, author, markdown) in [(&first, ada, ada_markdown), (&second, bo, bo_markdown)] {
         let note_id = EntityId::from_hex(&receipt.id_hex).expect("note id");
         let body = note_body_of(&vault, &note_id);
-        assert_eq!(body.kind, NoteKind::OpinionTake);
-        assert_eq!(body.markdown, markdown);
+        assert_eq!(
+            body.kind,
+            NoteKind::parse("opinion/take").expect("shipped kind")
+        );
+        assert!(body.markdown.is_empty());
+        assert_eq!(
+            vault.note_document(note_id).unwrap().markdown,
+            markdown
+        );
         assert_eq!(body.author_ref, author, "takes must not cross-attribute");
 
         let edges = vault.edges_out(&note_id).expect("edges");
@@ -282,7 +289,7 @@ fn raw_note_put_is_refused_at_the_batch_door() {
     let subject = put_person(&vault, 0x7B);
 
     let forged = crate::note::encode_note_body(&crate::note::NoteBody {
-        kind: NoteKind::OpinionTake,
+        kind: NoteKind::parse("opinion/take").expect("shipped kind"),
         author_ref: impostor,
         markdown: "words the impostor never wrote".to_owned(),
         source_revision_ref: [0x42; 16],
@@ -511,7 +518,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     let revision = [0x63; 16];
     let receipt = owner_memory
         .author_note(&NoteWriteEnvelope {
-            kind: NoteKind::Diary,
+            kind: NoteKind::parse("diary").expect("shipped kind"),
             scope: NoteScope::ActorPrivate { owner_ref: owner },
             source_revision_ref: revision,
             markdown: "privatecanary journal".to_owned(),
@@ -519,7 +526,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         .expect("diary via NOTE writer");
     let id = EntityId::from_hex(&receipt.id_hex).expect("note id");
     let body = note_body_of(&vault, &id);
-    assert_eq!(body.kind, NoteKind::Diary);
+    assert_eq!(body.kind, NoteKind::parse("diary").expect("shipped kind"));
     assert_eq!(body.author_ref, owner);
     assert_eq!(body.source_revision_ref, revision);
     assert!(
@@ -733,6 +740,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         .run()
         .expect("empty pack");
     let entity = ContextEntity {
+        critical: false,
         id,
         short_id: receipt.entity_ref.clone(),
         content_hash: hash,
@@ -816,15 +824,15 @@ fn diary_note_rejects_foreign_or_public_scope_without_writing() {
     let memory = facade_for(&vault, owner);
     for (kind, scope) in [
         (
-            NoteKind::Diary,
+            NoteKind::parse("diary").expect("shipped kind"),
             NoteScope::ActorPrivate { owner_ref: other },
         ),
         (
-            NoteKind::Diary,
+            NoteKind::parse("diary").expect("shipped kind"),
             NoteScope::About(TakeTarget::Subject(owner)),
         ),
         (
-            NoteKind::OpinionTake,
+            NoteKind::parse("opinion/take").expect("shipped kind"),
             NoteScope::ActorPrivate { owner_ref: owner },
         ),
     ] {
@@ -1011,6 +1019,7 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
         source_revision_ref: Some(pin.0),
         entity_type: ENTITY_TYPE_NOTE,
         score: 1.0,
+        critical: false,
         fields: None,
         edges: None,
         vector: None,

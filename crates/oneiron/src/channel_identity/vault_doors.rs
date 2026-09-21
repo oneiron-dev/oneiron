@@ -1,6 +1,7 @@
 //! Vault doors for ChannelIdentity create, provision, transition, reads, and body apply.
 
 use crate::Vault;
+use crate::ports::EntityStoreRead;
 
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 
@@ -11,8 +12,6 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 
 use crate::temporal::TimeRange;
-
-use crate::vault::entity_id_from_type_index_key;
 
 use super::address::{AssignmentAddress, AssignmentKey, ChannelKey};
 
@@ -41,7 +40,7 @@ impl Vault {
     pub fn create_channel_identity(&self, id: &EntityId, identity: &ChannelIdentity) -> Result<()> {
         let data = encode_channel_identity_body(identity)?;
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+        if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
         }
         admit_channel_identity_transition_in_txn(
@@ -112,7 +111,7 @@ impl Vault {
         request: DelegatedProvisionRequest,
         requested_at: u64,
     ) -> Result<ChannelIdentity> {
-        if self.store.entities.get(wtxn, id.as_bytes())?.is_some() {
+        if self.store.port_entity_record(wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
         }
         // The proof borrows `wtxn`; the block ends the borrow before the write
@@ -192,8 +191,8 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .entities
-            .get(&wtxn, id.as_bytes())?
+            .port_entity_record(&wtxn, id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -225,7 +224,11 @@ impl Vault {
     /// Reads and decodes a ChannelIdentity record.
     pub fn get_channel_identity(&self, id: &EntityId) -> Result<Option<ChannelIdentity>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(&rtxn, id)?
+            .map(|row| row.encode())
+        else {
             return Ok(None);
         };
         let header =
@@ -256,17 +259,15 @@ impl Vault {
     ) -> Result<Option<(EntityId, ChannelIdentity)>> {
         let wanted = AssignmentKey::of(channel, address_or_handle);
         let rtxn = self.store.env.read_txn()?;
-        for entry in self
-            .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
+        for entry in
+            self.store
+                .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_CHANNEL_IDENTITY, None)?
         {
-            let (key, _) = entry?;
-            let id = entity_id_from_type_index_key(&key)?;
+            let id = entry?;
             let raw = self
                 .store
-                .entities
-                .get(&rtxn, id.as_bytes())?
+                .port_entity_record(&rtxn, &id)?
+                .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("type index row without entity"))?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

@@ -265,7 +265,12 @@ impl OffRecordSession<'_> {
                 "the on-record continuation shell is only reachable while on record",
             ));
         }
-        Ok(*state.continuation_shell.get_or_insert_with(EntityId::now))
+        if state.continuation_shell.is_none() {
+            state.continuation_shell = Some(self.vault.store.clock.entity_id()?);
+        }
+        state
+            .continuation_shell
+            .ok_or(Error::InvariantViolation("continuation shell allocation"))
     }
 
     /// In-room BM25 retrieval over the composed union, minting its own route.
@@ -327,6 +332,7 @@ impl OffRecordSession<'_> {
         drop(view);
 
         let record = Vault::vault_search_retrieval_run_record(
+            crate::store::RetrievalRunId::from_bytes(self.vault.store.clock.ulid()?),
             crate::store::RetrievalSignal::Text,
             search.started_at,
             search.started,
@@ -711,7 +717,7 @@ impl OffRecordSession<'_> {
                     wtxn,
                     &self.session_ref,
                     &plan,
-                    crate::unix_seconds_now(),
+                    self.vault.store.clock.now_recorded_at(),
                 )
             })?;
             // Committed. Publish the RAM state, then drop the promoted rows and

@@ -155,6 +155,12 @@ fn matches_text(view: &CalendarEventView, needle: &str) -> bool {
 
 fn project(vault: &Vault, row: &CalendarEventRow) -> Result<CalendarEventView> {
     Ok(CalendarEventView {
+        origin: row
+            .facts
+            .origin()
+            .ok_or(Error::InvalidClaimBody("withheld calendar origin"))?
+            .as_str()
+            .to_owned(),
         event_ref: row.id.to_hex(),
         name: vault.get(&row.id)?.as_deref().and_then(event_name),
         start_utc: row.occurred.map(|at| at.start),

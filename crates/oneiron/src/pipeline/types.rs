@@ -34,8 +34,6 @@ use super::support::read_entity_metadata;
 pub(crate) const DEFAULT_RESULT_LIMIT: usize = 20;
 pub(super) const DEFAULT_SIGMA_SECS: u64 = 86_400;
 pub(super) const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
-pub(super) const TEMPORAL_KEY_LEN: usize = 24;
-pub(super) const LONG_INTERVAL_VALUE_LEN: usize = 8;
 pub(super) const TEMPORAL_FLOOR: f64 = 0.05;
 
 /// A scored entity result.
@@ -165,6 +163,7 @@ pub(super) struct PipelineFilterConfig<'a> {
     pub(super) authority_filter: &'a crate::gate::ResolvedRetrievalFilter,
     pub(super) candidate_filter: Option<&'a CandidateFilter<'a>>,
     pub(super) type_filter: Option<&'a [u8]>,
+    pub(super) criticality: Option<bool>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
     pub(super) learned_range: Option<(u64, u64)>,

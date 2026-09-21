@@ -4,6 +4,7 @@ use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
 use crate::secret_custody::resolve_secret_ref_in_txn;
 use crate::temporal::TimeRange;
@@ -94,7 +95,7 @@ impl Vault {
         // connector than the key governs is rejected here, pre-write.
         record.validate()?;
 
-        let id = EntityId::now();
+        let id = self.store.clock.entity_id()?;
         let mut wtxn = self.store.env.write_txn()?;
         self.register_connector_key_in_txn(&mut wtxn, &id, &record)?;
         wtxn.commit()?;
@@ -127,7 +128,7 @@ impl Vault {
         }
 
         let data = encode_connector_key_body(record)?;
-        if self.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
+        if self.store.port_entity_record(&*wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::ConnectorKeyAlreadyExists));
         }
         let prefix = connector_key_index_prefix(&record.connector)?;
@@ -196,7 +197,7 @@ impl Vault {
         registered_at: u64,
     ) -> Result<ConnectorKeyRecord> {
         self.register_connector_key(
-            &EntityId::now(),
+            &self.store.clock.entity_id()?,
             ConnectorKeyRecord::active(connector, actor_entity_ref, Vec::new(), registered_at),
         )
     }
@@ -209,7 +210,11 @@ impl Vault {
     ) -> Result<()> {
         let new_record = decode_connector_key_body(&data)?;
         let new_index_key = connector_key_index_key(&new_record.connector, id)?;
-        let old_index_key = if let Some(raw) = self.store.entities.get(&*wtxn, id.as_bytes())? {
+        let old_index_key = if let Some(raw) = self
+            .store
+            .port_entity_record(&*wtxn, id)?
+            .map(|row| row.encode())
+        {
             let Some(header) = EntityMetadataHeader::parse(&raw) else {
                 return Err(Error::CorruptedIndex("connector key entity header"));
             };

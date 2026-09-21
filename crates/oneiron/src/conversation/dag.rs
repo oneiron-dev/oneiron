@@ -188,6 +188,7 @@ impl Vault {
         self.with_write_txn(|txn| {
             authorize(self, txn, actor)?;
             body::body_in(self, txn, conversation)?;
+            backfill_in(self, txn, conversation)?;
             require_kind(self, txn, to, ENTITY_TYPE_TURN)?;
             require_room(self, txn, to, conversation)?;
             let mut child = to;
@@ -228,9 +229,9 @@ impl Vault {
     ) -> Result<()> {
         self.with_write_txn(|txn| {
             authorize(self, txn, actor)?;
-            if visibility::room_for_record_in(self, txn, spawning_record)?.is_none() {
-                return Err(state("spawning record has no room"));
-            }
+            let room = visibility::room_for_record_in(self, txn, spawning_record)?
+                .ok_or(state("spawning record has no room"))?;
+            ownership::claim_in(&self.store, txn, room, ownership::Owner::Room)?;
             if self.store.entities.get(txn, session.as_bytes())?.is_some() {
                 return Err(state("session already exists"));
             }
@@ -260,6 +261,7 @@ impl Vault {
             let room = visibility::room_for_record_in(self, txn, session)?
                 .ok_or(state("sub-session has no room"))?;
             require_room(self, txn, record, room)?;
+            ownership::claim_in(&self.store, txn, room, ownership::Owner::Room)?;
             put_edge(self, txn, record, EdgeKind::BelongsTo, session, at)
         })
     }
@@ -403,6 +405,8 @@ pub(super) fn append_in(
 }
 
 pub(super) fn backfill_in(vault: &Vault, txn: &mut heed::RwTxn<'_>, room: EntityId) -> Result<()> {
+    ownership::claim_in(&vault.store, txn, room, ownership::Owner::Room)?;
+
     if vault
         .store
         .vault_meta
@@ -456,6 +460,15 @@ pub(super) fn resolve_in(
     scope: &ScopeSelector,
     include_forks: bool,
 ) -> Result<Vec<EntityId>> {
+    let room = match scope {
+        ScopeSelector::Canonical(room) => Some(*room),
+        ScopeSelector::Branch(record) | ScopeSelector::SubSession(record) => {
+            visibility::room_for_record_in(vault, txn, *record)?
+        }
+    };
+    if let Some(room) = room {
+        ownership::require_in(&vault.store, txn, room, ownership::Owner::Room)?;
+    }
     match scope {
         ScopeSelector::Canonical(room) => {
             body::body_in(vault, txn, *room)?;

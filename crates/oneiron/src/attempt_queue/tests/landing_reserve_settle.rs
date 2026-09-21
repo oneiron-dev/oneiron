@@ -347,7 +347,7 @@ fn the_landing_reserve_dial_is_exact_and_fails_closed_when_spent() -> Result<()>
 /// outstanding ask, and strictly separate from expiry's hard rung.
 #[test]
 fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     // Budget/quota rung.
@@ -355,7 +355,10 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
     let LandingWarningOutcome::LandingRequested(warned) =
         queue.warn_budget_pressure(WarnAttemptBudgetPressure {
             id: running.id,
-            now: 12,
+            now: {
+                clock.set(12);
+                12
+            },
         })?
     else {
         panic!("a leased worker can be warned");
@@ -373,7 +376,10 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
     assert!(matches!(
         queue.warn_budget_pressure(WarnAttemptBudgetPressure {
             id: running.id,
-            now: 13,
+            now: {
+                clock.set(13);
+                13
+            },
         })?,
         LandingWarningOutcome::AlreadyRequested(_)
     ));
@@ -389,25 +395,34 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
 
     // A pre-lease row has nobody to warn.
     let EnqueueOutcome::Enqueued(queued) =
-        queue.enqueue(enqueue("sync", Some("turn:warn-queued"), 14))?
+        queue.enqueue(enqueue("sync", Some("turn:warn-queued"), {
+            clock.set(14);
+            14
+        }))?
     else {
         panic!("enqueue");
     };
     assert!(matches!(
         queue.warn_budget_pressure(WarnAttemptBudgetPressure {
             id: queued.id,
-            now: 15,
+            now: {
+                clock.set(15);
+                15
+            },
         })?,
         LandingWarningOutcome::NotRunning(_)
     ));
 
     // Lease rung: the sweep warns inside the window and leaves the already
     // expired lease to cleanup's hard rung.
-    let (_dir_b, vault_b) = open_queue();
+    let (_dir_b, vault_b, clock_b) = open_queue_at(11);
     let queue_b = AttemptQueue::new(&vault_b);
     let inside = leased_attempt(&queue_b, "turn:lease-warning")?;
     let not_due = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
-        now: 12,
+        now: {
+            clock_b.set(12);
+            12
+        },
         lease_timeout_secs: 100,
     })?;
     assert_eq!(not_due.scanned, 1);
@@ -415,7 +430,10 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
     assert_eq!(not_due.not_due, 1);
 
     let warned = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
-        now: 100,
+        now: {
+            clock_b.set(100);
+            100
+        },
         lease_timeout_secs: 100,
     })?;
     assert_eq!(warned.warned, 1);
@@ -430,14 +448,20 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
         Some(LandingTrigger::LeaseWarning)
     );
     let repeated = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
-        now: 101,
+        now: {
+            clock_b.set(101);
+            101
+        },
         lease_timeout_secs: 100,
     })?;
     assert_eq!(repeated.warned, 0);
     assert_eq!(repeated.already_requested, 1);
 
     let expired = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
-        now: 10_000,
+        now: {
+            clock_b.set(10_000);
+            10_000
+        },
         lease_timeout_secs: 100,
     })?;
     assert_eq!(expired.warned, 0);
@@ -447,7 +471,10 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
     );
     // And cleanup still owns stale-lease recovery, unchanged.
     let cleanup = queue_b.cleanup_leases(CleanupAttemptLeases {
-        now: 10_000,
+        now: {
+            clock_b.set(10_000);
+            10_000
+        },
         lease_timeout_secs: 100,
     })?;
     assert_eq!(cleanup.stale_requeued, 1);

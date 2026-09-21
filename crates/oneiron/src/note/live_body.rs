@@ -18,18 +18,31 @@ pub(crate) fn live_body_in_txn<'b>(
         return Ok(Cow::Borrowed(body));
     }
     super::ensure_citations_ready(store, txn, *id)?;
-    let note = super::decode_note_body(body)?;
-    #[cfg(feature = "sync")]
-    if let Some(snapshot) = store
+    let note = super::decode_note_body_in_txn(store, txn, body)?;
+    let has_snapshot = store
         .sync_state
         .get(txn, &super::document_store::key(*id))?
-    {
+        .is_some();
+    let has_updates = store
+        .sync_state
+        .prefix_iter(txn, &format!("u:e:{}:", id.to_hex()))?
+        .next()
+        .transpose()?
+        .is_some();
+    if has_snapshot || has_updates {
+        let doc = super::storage::load_seeded(store, txn, *id, || {
+            Ok(super::document::NoteDocument::birth(
+                *id,
+                &note.markdown,
+                &crate::WriteActor::new(note.author_ref, crate::EdgeActorClass::Agent),
+            )?
+            .doc)
+        })?;
         let mut note = note;
-        let doc = super::document::NoteDocument::load(*id, &snapshot)?;
-        note.markdown = doc.view()?.markdown;
+        note.markdown = super::document::NoteDocument::from_loro(*id, doc)?
+            .view()?
+            .markdown;
         return super::encode_note_body(&note).map(Cow::Owned);
     }
-    #[cfg(not(feature = "sync"))]
-    let _ = (store, txn, id, note);
     Ok(Cow::Borrowed(body))
 }

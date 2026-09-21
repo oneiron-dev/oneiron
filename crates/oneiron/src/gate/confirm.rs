@@ -1,4 +1,6 @@
-use sha2::{Digest, Sha256};
+use crate::ports::EntityStoreRead;
+use sha2::Digest;
+use sha2::Sha256;
 
 use crate::authority::{CRITICAL_WRITE_CONFIRM_DOMAIN, CriticalWriteConfirmDisposition};
 
@@ -62,14 +64,12 @@ pub(super) fn put_preauthorized_claim_status_in_txn(
         .ok_or(Error::EntityNotFound)?;
     let raw = vault
         .store
-        .entities
-        .get(&*wtxn, id.as_bytes())?
+        .port_entity_record(&*wtxn, id)?
         .ok_or(Error::EntityNotFound)?;
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_CLAIM
-        || header.occurred_start != occurred.start
-        || header.occurred_end != occurred.end
-        || header.learned_at != learned_at
+    if raw.entity_type != ENTITY_TYPE_CLAIM
+        || raw.occurred.start != occurred.start
+        || raw.occurred.end != occurred.end
+        || raw.learned_at != learned_at
         || current != *expected
     {
         return Err(Error::InvariantViolation(
@@ -121,7 +121,7 @@ impl Vault {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let now = crate::unix_seconds_now();
+        let now = self.store.clock.now_recorded_at();
         const {
             assert!(
                 CRITICAL_CONFIRM_LIST_CALL_ROW_BUDGET <= 512,
@@ -187,7 +187,7 @@ impl Vault {
         &self,
         confirm_id: [u8; 32],
     ) -> Result<CriticalWriteConfirmResolution> {
-        let now = crate::unix_seconds_now();
+        let now = self.store.clock.now_recorded_at();
         self.with_write_txn(|wtxn| {
             let fold = self.authority_fold_readonly_in_txn(&*wtxn)?;
             // Confirm IDs have a dedicated exact index; unrelated calls cannot
@@ -228,8 +228,8 @@ impl Vault {
                 .ok_or(Error::EntityNotFound)?;
             let raw = self
                 .store
-                .entities
-                .get(&*wtxn, binding.claim_id.as_bytes())?
+                .port_entity_record(&*wtxn, &binding.claim_id)?
+                .map(|row| row.encode())
                 .ok_or(Error::EntityNotFound)?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -321,7 +321,7 @@ impl Vault {
     }
 
     pub(crate) fn expire_critical_write_confirms(&self) -> Result<usize> {
-        self.expire_critical_write_confirms_impl(crate::unix_seconds_now())
+        self.expire_critical_write_confirms_impl(self.store.clock.now_recorded_at())
     }
 
     #[cfg(test)]
@@ -367,11 +367,8 @@ impl Vault {
                 }
                 let raw = self
                     .store
-                    .entities
-                    .get(&*wtxn, binding.claim_id.as_bytes())?
+                    .port_entity_record(&*wtxn, &binding.claim_id)?
                     .ok_or(Error::EntityNotFound)?;
-                let header = EntityMetadataHeader::parse(&raw)
-                    .ok_or(Error::CorruptedIndex("entity header"))?;
                 put_preauthorized_claim_status_in_txn(
                     self,
                     wtxn,
@@ -379,10 +376,10 @@ impl Vault {
                     &body,
                     PreauthorizedClaimStatusGrant::TimeoutDemotion,
                     TimeRange {
-                        start: header.occurred_start,
-                        end: header.occurred_end,
+                        start: raw.occurred.start,
+                        end: raw.occurred.end,
                     },
-                    header.learned_at,
+                    raw.learned_at,
                 )?;
                 let mut timed_out = row;
                 timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];

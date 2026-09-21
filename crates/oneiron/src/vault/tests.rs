@@ -16,6 +16,7 @@ use crate::temporal::TimeRange;
 fn test_config() -> VaultConfig {
     VaultConfig {
         failure_signals: Default::default(),
+        store_clock: crate::ports::StoreClock::default(),
         ppr_vad_alpha: crate::config::PPR_VAD_ALPHA_DEFAULT,
         ppr_community: crate::config::PprCommunityConfig::default(),
         map_size: 32 * 1024 * 1024,

@@ -42,6 +42,9 @@ pub(in crate::batch) fn stage_entity_body_row(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_NOTE && !data.is_empty() {
+        crate::note::validate_registered_kind(store, wtxn, data)?;
+    }
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     payload.push(entity_type);
     payload.extend_from_slice(&occurred.start.to_be_bytes());
@@ -160,5 +163,76 @@ pub(in crate::batch) fn stage_edge_rows(
     let key_in = Store::encode_edge_key(tgt, kind, src);
     store.edges_out().put(wtxn, &key_out, value)?;
     store.edges_in().put(wtxn, &key_in, value)?;
+    if kind == EdgeKind::DerivedFrom {
+        crate::ports::record_derived_edge_in_txn(store, wtxn, src, tgt)?;
+    }
+    Ok(())
+}
+
+/// Maintains content-hash and source-message indexes beside the admitted SKILL body.
+pub(super) fn stage_skill_index_rows(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    previous: Option<&crate::skill::SkillRecord>,
+    record: &crate::skill::SkillRecord,
+) -> Result<()> {
+    crate::skill_hub::maintain_skill_content_hash_index_for_put(
+        store,
+        wtxn,
+        id,
+        previous.and_then(|previous| previous.content_hash),
+        record.content_hash,
+    )?;
+    // All put doors share this reverse index, including hub import and sync replay.
+    crate::skill_convert::maintain_skill_source_index_for_put(store, wtxn, id, previous, record)
+}
+
+/// Keeps CLAIM-derived thread and Dreamer indexes on every put/replay door.
+pub(super) fn stage_claim_projection_indexes(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    body: &crate::claim::ClaimBody,
+    learned_at: u64,
+) -> Result<()> {
+    if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
+        super::index_thread_claim_subject(store, wtxn, id, body, learned_at)?;
+    }
+    crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
+        store, wtxn, id, body, learned_at,
+    )?;
+    crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)
+}
+
+/// Validate typed storage carriers before any put effect is staged.
+pub(super) fn validate_domain_carriers(
+    store: &Store,
+    txn: &RwTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    data: &[u8],
+    replicated: bool,
+) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_TURN {
+        crate::conversation_dag::validate_session_carrier(store, txn, id, data, replicated)?;
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_EVENT {
+        crate::calendar::origin::validate_event_write(store, txn, id, data, replicated)?;
+    }
+    Ok(())
+}
+
+/// Replaces claim projection keys while the previous body is still readable.
+/// This must run before staging the replacement entity body, in the same txn.
+pub(super) fn stage_claim_projection(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: EntityId,
+    body: Option<&crate::claim::ClaimBody>,
+) -> Result<()> {
+    if let Some(body) = body {
+        crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+    }
     Ok(())
 }

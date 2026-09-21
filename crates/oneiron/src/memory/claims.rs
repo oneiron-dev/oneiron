@@ -242,7 +242,7 @@ impl Memory<'_> {
         before_txn: impl FnOnce(),
     ) -> MemoryResult<CommitReceipt> {
         let id = self.resolve_ref(claim_ref)?;
-        let now = crate::unix_seconds_now();
+        let now = self.vault.store.clock.now_recorded_at();
         before_txn();
         let (approval, consent_decision_id) = self.vault.try_with_write_txn(|wtxn| {
             verify_actor_binding_in_txn(self.vault, wtxn, self.actor, self.actor_class)?;
@@ -497,7 +497,7 @@ impl Memory<'_> {
             ));
         }
         self.verified_actor_class()?;
-        let id = id_from_optional_hex(input.id.as_deref())?;
+        let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         let subject = self.resolve_ref(&input.subject_ref)?;
         if self.vault.get_entity_type(&subject)?.is_none() {
             return Err(MemoryError::not_found(format!(
@@ -512,7 +512,7 @@ impl Memory<'_> {
             None => None,
         };
         let scope_rmpv = input.scope.as_ref().map(json_to_rmpv);
-        let now = crate::unix_seconds_now();
+        let now = self.vault.store.clock.now_recorded_at();
         let occurred_at = input.occurred_at.unwrap_or(now);
         let learned_at = input.learned_at.unwrap_or(now);
 

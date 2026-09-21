@@ -1,5 +1,6 @@
 //! Live-ceiling attenuation and deterministic attenuated-fork registration.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::agent_def::{
@@ -151,24 +152,21 @@ impl AgentDispatcher<'_> {
             ),
         ]);
 
-        if let Some(raw) = self.vault.store.entities.get(wtxn, fork_ref.as_bytes())? {
+        if let Some(raw) = self.vault.store.port_entity_record(wtxn, &fork_ref)? {
             // Deterministic id: a retried spawn finds its own fork. Anything
             // else occupying the id is a typed failure, never a silent reuse of
             // a row with foreign composition (ceiling, provenance, body).
-            let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(Error::Artifact(
-                ArtifactError::InvalidAgentDispatchInput("attenuated fork row header is malformed"),
-            ))?;
-            if header.entity_type != ENTITY_TYPE_AGENT_DEF {
+
+            if raw.entity_type != ENTITY_TYPE_AGENT_DEF {
                 return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "attenuated fork id is occupied by a foreign row",
                 )));
             }
-            let stored = decode_agent_definition(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
-                .map_err(|_| {
-                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                        "attenuated fork row does not decode",
-                    ))
-                })?;
+            let stored = decode_agent_definition(&raw.body).map_err(|_| {
+                Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "attenuated fork row does not decode",
+                ))
+            })?;
             // Idempotent reuse requires the full expected composition — matching
             // ceiling + forked_from alone must not accept a foreign body.
             if stored != fork {

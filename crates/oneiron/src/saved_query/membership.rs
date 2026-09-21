@@ -1,5 +1,7 @@
+use crate::ports::EntityStoreRead;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+use sha2::Sha256;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -215,7 +217,7 @@ pub fn commit_membership_plan(
             &keys::event(&event.query_ref, &event.entity_ref, event.epoch),
             &encoded_event,
         )?;
-        let claim_id = EntityId::now();
+        let claim_id = vault.store.clock.entity_id()?;
         vault.put_claim_in_txn(
             wtxn,
             &claim_id,
@@ -295,7 +297,11 @@ fn member_claim_in_txn(
     txn: &heed::RoTxn<'_>,
     claim_id: &EntityId,
 ) -> Result<Option<(ClaimBody, CampaignMemberValue)>> {
-    let Some(raw) = vault.store.entities.get(txn, claim_id.as_bytes())? else {
+    let Some(raw) = vault
+        .store
+        .port_entity_record(txn, claim_id)?
+        .map(|row| row.encode())
+    else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {

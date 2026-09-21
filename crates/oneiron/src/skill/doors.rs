@@ -1,5 +1,6 @@
 //! Typed Vault doors for SKILL records.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
@@ -60,7 +61,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let data = encode_skill_record(record)?;
-        if self.store.entities.get(&*wtxn, id.as_bytes())?.is_none() {
+        if self.store.port_entity_record(&*wtxn, id)?.is_none() {
             if record.lifecycle_status != SkillLifecycle::Candidate {
                 return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                     "new skills are born candidate; the admission gate activates them",
@@ -92,7 +93,11 @@ impl Vault {
                 "forkedFrom cannot name the fork itself",
             )));
         }
-        let Some(raw) = self.store.entities.get(wtxn, parent.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(wtxn, parent)?
+            .map(|row| row.encode())
+        else {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "forkedFrom parent must exist as a type-7 SKILL",
             )));
@@ -369,8 +374,8 @@ impl Vault {
     ) -> Result<SkillRecord> {
         let raw = self
             .store
-            .entities
-            .get(txn, id.as_bytes())?
+            .port_entity_record(txn, id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

@@ -8,7 +8,6 @@ use crate::memory::{
 };
 use crate::registry::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
-use crate::unix_seconds_now;
 
 use super::consts::{CONSULT_SETTLE_PAGE, TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED};
 use super::consult_payload::{ConsultPayload, ConsultRecovery};
@@ -40,7 +39,7 @@ impl Memory<'_> {
     ) -> MemoryResult<ConsultFanOutReceipt> {
         let verb = task_verb_contract(TasksVerb::Create);
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let now = input.now.unwrap_or_else(unix_seconds_now);
+        let now = input.now.unwrap_or_else(|| self.vault().now_recorded_at());
         let provenance = facade_provenance(verb);
         if input.assignees.is_empty() {
             return Err(MemoryError::bad_request(
@@ -57,7 +56,7 @@ impl Memory<'_> {
                 "fan-out assignees must be distinct peer actors",
             ));
         }
-        let correlation_ref = EntityId::now();
+        let correlation_ref = self.vault().store.clock.entity_id()?;
         let validated = assignees
             .iter()
             .map(|actor_ref| {
@@ -79,7 +78,7 @@ impl Memory<'_> {
             })
             .collect::<MemoryResult<Vec<_>>>()?;
 
-        let rate_now = unix_seconds_now();
+        let rate_now = self.vault().store.clock.now_recorded_at();
         let task_refs = self.with_verified_actor_write_txn(|wtxn| {
             let ceiling =
                 task_actor_ceiling(self.vault(), &*wtxn, self.actor(), self.actor_class())?;
@@ -275,7 +274,7 @@ impl Memory<'_> {
             if body.terminal().is_some() || body.settled_ladder_disposition().is_some() {
                 return Ok(None);
             }
-            let result_ref = EntityId::now();
+            let result_ref = self.vault().store.clock.entity_id()?;
             let artifact = canonical_bytes(&consult_expiry_artifact_value(
                 task_ref,
                 body.ttl.map_or(now, |ttl| ttl.deadline_at),

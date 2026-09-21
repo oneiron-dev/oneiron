@@ -1,7 +1,9 @@
+use crate::ports::EntityStoreRead;
+use sha2::Digest;
 use std::collections::BTreeSet;
 
 use rmpv::Value;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_session_bundle_claim_puts,
@@ -435,7 +437,7 @@ impl Vault {
 
             let record = GateDecisionRecord {
                 version: GATE_DECISION_LEDGER_VERSION,
-                decision_id: GateDecisionId::now(),
+                decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
                 created_at: now,
                 outcome: match action {
                     GateConsentBundleAction::Approve => GATE_BUNDLE_OUTCOME_APPROVED,
@@ -494,12 +496,9 @@ impl Vault {
     ) -> Result<()> {
         let actor_raw = self
             .store
-            .entities
-            .get(rtxn, actor.entity_ref().as_bytes())?
+            .port_entity_record(rtxn, &actor.entity_ref())?
             .ok_or(Error::EntityNotFound)?;
-        let actor_header = EntityMetadataHeader::parse(&actor_raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())
+        crate::provenance::validate_actor_class(actor_raw.entity_type, actor.actor_class())
     }
 }
 
@@ -667,7 +666,7 @@ fn live_claim_parts_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<(ClaimBody, EntityMetadataHeader)> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
         return Err(Error::EntityNotFound);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

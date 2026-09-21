@@ -35,16 +35,6 @@ pub struct TxnBatchBuilder<'a> {
 }
 
 impl<'a> TxnBatchBuilder<'a> {
-    /// Vector sibling of the batch door, retained in the caller's transaction.
-    pub(crate) fn vector(mut self, id: &EntityId, vector: &[f32]) -> Self {
-        self.ops.push(BatchOp::Vector {
-            id: *id,
-            vector: vector.to_vec(),
-            pending_embedding_token: None,
-        });
-        self
-    }
-
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
             vault,
@@ -56,6 +46,40 @@ impl<'a> TxnBatchBuilder<'a> {
             #[cfg(feature = "sync")]
             federated_puts: Vec::new(),
         }
+    }
+
+    /// Stages phonetic codes in the caller-owned transaction.
+    pub(crate) fn phonetic(mut self, id: &EntityId, codes: &[&str]) -> Self {
+        self.ops.push(BatchOp::Phonetic {
+            id: *id,
+            codes: codes.iter().map(|code| (*code).to_owned()).collect(),
+        });
+        self
+    }
+
+    /// Stages a vector without acquiring a second writer.
+    pub fn vector(mut self, id: &EntityId, vector: &[f32]) -> Self {
+        if self.validation_error.is_none() {
+            self.validation_error = Error::invalid_vector_component(vector);
+        }
+        self.ops.push(BatchOp::Vector {
+            id: *id,
+            vector: vector.to_vec(),
+            pending_embedding_token: None,
+        });
+        self
+    }
+
+    /// Stages lexical text in the same transaction as its owning record/document.
+    pub fn text(mut self, id: &EntityId, fields: &[(&str, &str)]) -> Self {
+        self.ops.push(BatchOp::Text {
+            id: *id,
+            fields: fields
+                .iter()
+                .map(|(f, v)| ((*f).to_owned(), (*v).to_owned()))
+                .collect(),
+        });
+        self
     }
 
     /// The off-record promotion entry (ARCH-0052 D4, ONE-1730).
@@ -577,18 +601,6 @@ impl<'a> TxnBatchBuilder<'a> {
             src: *src,
             kind,
             tgt: *tgt,
-        });
-        self
-    }
-
-    /// Index text in the same transaction as a typed record write.
-    pub fn text(mut self, id: &EntityId, fields: &[(&str, &str)]) -> Self {
-        self.ops.push(BatchOp::Text {
-            id: *id,
-            fields: fields
-                .iter()
-                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-                .collect(),
         });
         self
     }

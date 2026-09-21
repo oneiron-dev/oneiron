@@ -27,7 +27,7 @@
 //! Effort-dialed, actor-scoped retrieval with execution quality diagnostics.
 //! Quality is metadata; channel scores, admission, and backend caps are unchanged.
 
-use crate::claim::{ScopedRead, decode_claim_body};
+use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::BudgetLease;
@@ -36,9 +36,7 @@ use crate::pipeline::ScoredEntity;
 use crate::ppr::{SeedWeighting, ppr_query_scoped_in_txn_with_diagnostics};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::rerank::RerankCandidate;
-use crate::retrieval_quality::{
-    RetrievalDiagnostics, RetrievalQualityReport, classify_retrieval_quality,
-};
+use crate::retrieval_quality::{RetrievalDiagnostics, RetrievalQualityReport};
 use crate::store::RetrievalSignal;
 use crate::vault::Vault;
 
@@ -264,12 +262,11 @@ pub trait DeepSearchBackend: Send + Sync {
 /// Short refs are what a depth read cites, so this is the one place the
 /// citation form is produced for this lane.
 pub fn short_ref_or_hex(vault: &Vault, id: &EntityId) -> Result<String> {
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.short_ids_reverse.get(&rtxn, id.as_bytes())? else {
-        return Ok(id.to_hex());
-    };
-    let (short_id, content_hash) = crate::batch::parse_short_id_value(&raw)?;
-    Ok(format!("{short_id}:{content_hash:02x}"))
+    let txn = vault.store.env.read_txn()?;
+    Ok(
+        crate::ports::ShortIdStoreRead::port_short_id_reference(&vault.store, &txn, id)?
+            .map_or_else(|| id.to_hex(), |(name, hash)| format!("{name}:{hash:02x}")),
+    )
 }
 
 /// Derives the standard tier's lexical subqueries from one query.

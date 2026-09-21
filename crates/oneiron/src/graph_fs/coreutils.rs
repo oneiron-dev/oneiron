@@ -1,12 +1,12 @@
 //! grep, ls, find, cat, head and wc verbs with pushdown, walk, visibility and telemetry helpers, and the claim-grep render path.
 
+use crate::ports::EntityStoreRead;
 use std::collections::VecDeque;
 use std::ops::Bound;
 use std::time::Instant;
 
 use rmpv::Value;
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::decode_claim_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -21,7 +21,7 @@ use super::model::{
 
 use super::readdir::{normalize_path, parse_entity_id, path_components};
 
-use super::paging::{CommandOutputBuilder, TemporalCursor, temporal_cursor_from_key};
+use super::paging::{CommandOutputBuilder, TemporalCursor};
 
 impl GraphFsResolver<'_, '_> {
     pub fn grep(
@@ -32,14 +32,14 @@ impl GraphFsResolver<'_, '_> {
         cursor: Option<&str>,
     ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
-        let started_at = crate::unix_seconds_now();
+        let started_at = self.scoped_read.vault().now_recorded_at();
         let normalized = normalize_path(path)?;
         if let Some(literal) = literal_grep_pattern(pattern)
             && recursive
             && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
         {
             let (bytes, next_cursor, total) = self.grep_claims_pushdown(literal, cursor)?;
-            return Ok(self.finish_coreutils_command(
+            return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Grep,
                 started,
                 started_at,
@@ -49,12 +49,12 @@ impl GraphFsResolver<'_, '_> {
                 next_cursor,
                 vec![RetrievalSignal::Text],
                 total,
-            ));
+            );
         }
 
         let (bytes, next_cursor, total) =
             self.grep_walk(pattern, &normalized, recursive, cursor)?;
-        Ok(self.finish_coreutils_command(
+        self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Grep,
             started,
             started_at,
@@ -64,7 +64,7 @@ impl GraphFsResolver<'_, '_> {
             next_cursor,
             Vec::new(),
             total,
-        ))
+        )
     }
 
     pub fn ls(
@@ -74,11 +74,11 @@ impl GraphFsResolver<'_, '_> {
         cursor: Option<&str>,
     ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
-        let started_at = crate::unix_seconds_now();
+        let started_at = self.scoped_read.vault().now_recorded_at();
         let normalized = normalize_path(path)?;
         if sort_by_time && matches!(normalized.as_str(), "/claims" | "/claims/by-id") {
             let (bytes, next_cursor, total) = self.ls_claims_by_time_pushdown(cursor)?;
-            return Ok(self.finish_coreutils_command(
+            return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Ls,
                 started,
                 started_at,
@@ -88,7 +88,7 @@ impl GraphFsResolver<'_, '_> {
                 next_cursor,
                 vec![RetrievalSignal::Temporal],
                 total,
-            ));
+            );
         }
 
         let page = self.readdir(&normalized, cursor)?;
@@ -110,7 +110,7 @@ impl GraphFsResolver<'_, '_> {
             .map(str::to_owned)
             .or_else(|| if out.is_full() { last_name } else { None });
         let total = out.entries();
-        Ok(self.finish_coreutils_command(
+        self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Ls,
             started,
             started_at,
@@ -120,7 +120,7 @@ impl GraphFsResolver<'_, '_> {
             next_cursor,
             Vec::new(),
             total,
-        ))
+        )
     }
 
     pub fn find(
@@ -130,12 +130,12 @@ impl GraphFsResolver<'_, '_> {
         cursor: Option<&str>,
     ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
-        let started_at = crate::unix_seconds_now();
+        let started_at = self.scoped_read.vault().now_recorded_at();
         let normalized = normalize_path(path)?;
         if let Some(newer_than) = newer_than {
             let (bytes, next_cursor, total) =
                 self.find_newer_pushdown(&normalized, newer_than, cursor)?;
-            return Ok(self.finish_coreutils_command(
+            return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Find,
                 started,
                 started_at,
@@ -145,11 +145,11 @@ impl GraphFsResolver<'_, '_> {
                 next_cursor,
                 vec![RetrievalSignal::Temporal],
                 total,
-            ));
+            );
         }
 
         let (bytes, next_cursor, total) = self.find_walk(&normalized, cursor)?;
-        Ok(self.finish_coreutils_command(
+        self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Find,
             started,
             started_at,
@@ -159,12 +159,12 @@ impl GraphFsResolver<'_, '_> {
             next_cursor,
             Vec::new(),
             total,
-        ))
+        )
     }
 
     pub fn cat(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
-        let started_at = crate::unix_seconds_now();
+        let started_at = self.scoped_read.vault().now_recorded_at();
         let offset = parse_byte_cursor(cursor)?;
         let mut next_cursor = None;
         let bytes = if let Some(file) = self.read_file(path)? {
@@ -180,7 +180,7 @@ impl GraphFsResolver<'_, '_> {
         } else {
             Vec::new()
         };
-        Ok(self.finish_coreutils_command(
+        self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Cat,
             started,
             started_at,
@@ -190,12 +190,12 @@ impl GraphFsResolver<'_, '_> {
             next_cursor,
             Vec::new(),
             0,
-        ))
+        )
     }
 
     pub fn head(&self, path: &str, lines: usize) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
-        let started_at = crate::unix_seconds_now();
+        let started_at = self.scoped_read.vault().now_recorded_at();
         let mut out = CommandOutputBuilder::new(self.options);
         if let Some(file) = self.read_file(path)? {
             for line in String::from_utf8_lossy(file.bytes()).lines().take(lines) {
@@ -207,7 +207,7 @@ impl GraphFsResolver<'_, '_> {
             }
         }
         let total = out.entries();
-        Ok(self.finish_coreutils_command(
+        self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Head,
             started,
             started_at,
@@ -217,12 +217,12 @@ impl GraphFsResolver<'_, '_> {
             None,
             Vec::new(),
             total,
-        ))
+        )
     }
 
     pub fn wc(&self, path: &str) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
-        let started_at = crate::unix_seconds_now();
+        let started_at = self.scoped_read.vault().now_recorded_at();
         let bytes = if let Some(file) = self.read_file(path)? {
             let text = String::from_utf8_lossy(file.bytes());
             let lines = text.lines().count();
@@ -231,7 +231,7 @@ impl GraphFsResolver<'_, '_> {
         } else {
             format!("0 0 0 {path}\n").into_bytes()
         };
-        Ok(self.finish_coreutils_command(
+        self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Wc,
             started,
             started_at,
@@ -241,7 +241,7 @@ impl GraphFsResolver<'_, '_> {
             None,
             Vec::new(),
             0,
-        ))
+        )
     }
 
     fn grep_claims_pushdown(
@@ -328,25 +328,27 @@ impl GraphFsResolver<'_, '_> {
         let mut total = 0;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
-        let end_key = cursor.map(TemporalCursor::temporal_key);
-        let lower: Bound<&[u8]> = Bound::Unbounded;
-        let upper: Bound<&[u8]> = end_key
-            .as_ref()
-            .map_or(Bound::Unbounded, |key| Bound::Excluded(&key[..]));
+        let query = crate::ports::TimelineQuery {
+            reverse: true,
+            after: cursor.map(TemporalCursor::port_position),
+            ..Default::default()
+        };
         for (scanned, entry) in self
             .scoped_read
             .vault()
             .store
-            .temporal_learned
-            .rev_range(&rtxn, &(lower, upper))?
+            .port_entity_timeline(&rtxn, query)?
             .enumerate()
         {
             if scanned >= max_scan_rows {
                 let next_cursor = last_scanned.map(TemporalCursor::encode).or(last_emitted);
                 return Ok((out.into_bytes(), next_cursor, total));
             }
-            let (key, _) = entry?;
-            let temporal = temporal_cursor_from_key(&key)?;
+            let time = entry?;
+            let temporal = TemporalCursor {
+                learned_at: time.timestamp,
+                id: time.id,
+            };
             last_scanned = Some(temporal);
             if !self
                 .scoped_read
@@ -385,31 +387,36 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
         let cursor = TemporalCursor::parse_optional(cursor)?;
-        let start_key = cursor.map_or_else(
-            || newer_than.saturating_add(1).to_be_bytes().to_vec(),
-            |cursor| cursor.next_temporal_key().to_vec(),
-        );
         let mut last_emitted = cursor.map(TemporalCursor::encode);
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
-        let lower = Bound::Included(&start_key[..]);
-        let upper = Bound::Unbounded;
+        let query = crate::ports::TimelineQuery {
+            start: if cursor.is_some() {
+                Bound::Unbounded
+            } else {
+                Bound::Included(newer_than.saturating_add(1))
+            },
+            after: cursor.map(TemporalCursor::port_position),
+            ..Default::default()
+        };
         for (scanned, entry) in self
             .scoped_read
             .vault()
             .store
-            .temporal_learned
-            .range(&rtxn, &(lower, upper))?
+            .port_entity_timeline(&rtxn, query)?
             .enumerate()
         {
             if scanned >= max_scan_rows {
                 let next_cursor = last_scanned.map(TemporalCursor::encode).or(last_emitted);
                 return Ok((out.into_bytes(), next_cursor, total));
             }
-            let (key, _) = entry?;
-            let temporal = temporal_cursor_from_key(&key)?;
+            let time = entry?;
+            let temporal = TemporalCursor {
+                learned_at: time.timestamp,
+                id: time.id,
+            };
             last_scanned = Some(temporal);
             if !self.coreutils_entity_visible_in(&rtxn, &policy, &temporal.id)? {
                 continue;
@@ -602,8 +609,8 @@ impl GraphFsResolver<'_, '_> {
         next_cursor: Option<String>,
         signals: Vec<RetrievalSignal>,
         total_in_scope: usize,
-    ) -> GraphFsCommandOutput {
-        let run_id = RetrievalRunId::now();
+    ) -> Result<GraphFsCommandOutput> {
+        let run_id = RetrievalRunId::from_bytes(self.scoped_read.vault().store.clock.ulid()?);
         let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let telemetry_reason = format!(
             "graph_fs_coreutils:{}:{}:{}",
@@ -629,13 +636,13 @@ impl GraphFsResolver<'_, '_> {
                 "graph-fs coreutils telemetry failed"
             );
         }
-        GraphFsCommandOutput {
+        Ok(GraphFsCommandOutput {
             bytes,
             next_cursor,
             decision,
             decision_reason: decision_reason.to_owned(),
             telemetry_run_id: run_id,
-        }
+        })
     }
 }
 
@@ -781,13 +788,11 @@ pub(super) fn claim_matches_world_in(
     claim_id: &EntityId,
     world: Option<EntityId>,
 ) -> Result<bool> {
-    let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
+    let Some(row) = store.port_entity_record(rtxn, claim_id)? else {
         return Ok(false);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_CLAIM {
+    if row.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(false);
     }
-    let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-    Ok(body.world == world)
+    Ok(decode_claim_body(&row.body, true)?.world == world)
 }

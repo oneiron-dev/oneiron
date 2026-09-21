@@ -43,6 +43,7 @@ pub(super) fn prepare_pack(
         stats.items_dropped.reason = crate::context_pack::PackItemAccountingReason::ItemBudget;
         stats.items_dropped.count = stats.items_dropped.count.saturating_add(1);
     }
+    stats.critical_count = 0;
     let tokenizer = DEFAULT_CONTEXT_PACK_TOKENIZER;
 
     let mut prepared = if config.merge_neighbors {
@@ -136,6 +137,16 @@ pub(super) fn prepare_pack(
         }
     };
 
+    let kept_critical = prepared
+        .results
+        .iter()
+        .chain(&prepared.neighbors)
+        .flat_map(|(_, rows)| rows)
+        .filter(|row| row.critical)
+        .count();
+    if kept_critical < prepared.stats.critical_count {
+        prepared.stats.critical_over_budget = true;
+    }
     finalize_pack_token_stats(
         pack,
         config,
@@ -282,11 +293,24 @@ fn prepare_entities(
             let mut prepared = PreparedEntity {
                 entity_type: entity.entity_type,
                 score: entity.score,
+                critical: entity.critical,
                 source,
                 source_id: *entity.id.as_bytes(),
                 id: format_short_id(entity),
                 fields,
             };
+            if prepared.critical {
+                stats.critical_count += 1;
+                if config.max_item_tokens != 0
+                    && super::token_budget::estimate_entity_tokens_with_depth_limit(
+                        &prepared,
+                        DEFAULT_CONTEXT_PACK_TOKENIZER,
+                        value_depth_limit,
+                    ) > config.max_item_tokens
+                {
+                    stats.critical_over_budget = true;
+                }
+            }
             apply_item_budget_with_depth_limit(
                 &mut prepared,
                 config.max_item_tokens,

@@ -7,14 +7,17 @@
 //! stored counters are a function of the persisted children and of nothing
 //! else — no clock, no insertion order, no peer-supplied value.
 
+use crate::EdgeKind;
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use std::io::Cursor;
 
 use heed::RwTxn;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, child_of_prefix};
-use crate::edge::parse_strict_edge_record;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_TASK;
@@ -246,13 +249,19 @@ pub(crate) fn recompute_habit_streak_in_txn(
     habit_id: &EntityId,
 ) -> Result<HabitStreak> {
     let mut days = Vec::new();
-    for entry in store
-        .edges_in
-        .prefix_iter(wtxn, &child_of_prefix(habit_id))?
-    {
-        let (key, value) = entry?;
-        let child = parse_strict_edge_record(&key, &value)?.target;
-        let Some(raw) = store.entities.get(wtxn, child.as_bytes())? else {
+    for entry in store.port_edges(
+        wtxn,
+        habit_id,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::ChildOf),
+        None,
+    )? {
+        let edge_row = entry?;
+        let child = edge_row.target;
+        let Some(raw) = store
+            .port_entity_record(wtxn, &child)?
+            .map(|row| row.encode())
+        else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -269,26 +278,9 @@ pub(crate) fn recompute_habit_streak_in_txn(
 
     let streak = streak_from_checkin_days(days)?;
 
-    let Some(raw) = store
-        .entities
-        .get(wtxn, habit_id.as_bytes())?
-        .map(std::borrow::Cow::into_owned)
-    else {
-        return Ok(streak);
-    };
-    if raw.len() < ENTITY_METADATA_HEADER_LEN {
-        return Err(Error::CorruptedIndex("entity header"));
-    }
-    let body = rewrite_habit_streak_fields(&raw[ENTITY_METADATA_HEADER_LEN..], streak)?;
-    let mut rewritten = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-    rewritten.extend_from_slice(&raw[..ENTITY_METADATA_HEADER_LEN]);
-    rewritten.extend_from_slice(&body);
-    // Byte-idempotent: an unchanged child set stages no write at all, so the
-    // metadata header cannot drift and a replay cannot churn the row.
-    if rewritten != raw {
-        crate::vault::entity_revision::capture_entity_revision(store, wtxn, habit_id, &rewritten)?;
-        store.entities.put(wtxn, habit_id.as_bytes(), &rewritten)?;
-    }
+    crate::ports::EntityStoreMaintenance::port_habit_streak_materialize(
+        store, wtxn, habit_id, streak,
+    )?;
     Ok(streak)
 }
 
@@ -299,7 +291,7 @@ pub(crate) fn recompute_habit_streak_in_txn(
 /// appended in a fixed order, so replicas holding the same parent body and the
 /// same child set store the same bytes. Rerunning on an already-rewritten body
 /// reproduces it exactly.
-fn rewrite_habit_streak_fields(body: &[u8], streak: HabitStreak) -> Result<Vec<u8>> {
+pub(crate) fn rewrite_habit_streak_fields(body: &[u8], streak: HabitStreak) -> Result<Vec<u8>> {
     let mut entries = task_body_entries_without_streaks(body)?;
     entries.push((
         Value::from(TASK_BODY_CURRENT_STREAK_KEY),

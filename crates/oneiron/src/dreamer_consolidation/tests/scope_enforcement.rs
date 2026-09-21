@@ -239,6 +239,7 @@ fn derive_id(
         facts.world,
         facts.facet,
         facts.rel,
+        facts.topic.as_deref(),
     );
     Ok(())
 }
@@ -297,7 +298,7 @@ fn scoped_signals_preserve_ranking_and_filter_foreign_and_private_refs() -> Resu
     )?;
     let diary = EntityId::now();
     let diary_body = crate::note::encode_note_body(&crate::note::NoteBody {
-        kind: crate::note::NoteKind::Diary,
+        kind: crate::note::NoteKind::parse("diary").expect("shipped kind"),
         author_ref: author,
         markdown: "private graph evidence".to_owned(),
         source_revision_ref: [1; 16],

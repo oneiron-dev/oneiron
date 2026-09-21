@@ -8,7 +8,6 @@ use crate::error::{ClaimError, Error, RegistryError, Result};
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{StructuralKindRegistration, TypeByteZone};
 use crate::temporal::TimeRange;
-use crate::unix_seconds_now;
 
 /// A session-scoped actor binding created by [`Vault::as_actor`]
 /// (ONE-1113 ruling, session ergonomics): the handle carries
@@ -163,7 +162,7 @@ impl Vault {
     #[doc(hidden)]
     pub fn ensure_embedded_owner_actor(&self) -> crate::memory::MemoryResult<EntityId> {
         let owner = embedded_owner_actor_id()?;
-        let now = unix_seconds_now();
+        let now = self.store.clock.now_recorded_at();
         self.try_with_write_txn(|wtxn| {
             if self.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                 return Err(crate::memory::hard_deleted_refusal(&owner));
@@ -417,7 +416,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         self.filtered_edge_peers(
             &rtxn,
-            &self.store.edges_out,
+            crate::ports::EdgeDirection::Out,
             &of,
             EdgeKind::Blocks,
             None,

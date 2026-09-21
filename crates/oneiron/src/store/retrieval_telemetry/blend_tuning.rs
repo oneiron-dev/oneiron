@@ -172,7 +172,7 @@ impl Store {
         let entry = RetrievalBlendWeightTableEntry {
             version: RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION,
             weights,
-            tuned_at: crate::unix_seconds_now(),
+            tuned_at: self.clock.now_recorded_at(),
             provenance,
             data_window,
         };

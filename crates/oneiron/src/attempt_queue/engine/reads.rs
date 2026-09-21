@@ -34,7 +34,15 @@ impl AttemptQueue<'_> {
     /// Reads an attempt by id.
     pub fn get(&self, id: AttemptId) -> Result<Option<AttemptRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.attempt_records.get(&rtxn, id.as_bytes())? else {
+        self.get_in_txn(&rtxn, id)
+    }
+
+    pub(crate) fn get_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<AttemptRecord>> {
+        let Some(raw) = self.store.attempt_records.get(txn, id.as_bytes())? else {
             return Ok(None);
         };
         decode_record(&raw, id).map(Some)

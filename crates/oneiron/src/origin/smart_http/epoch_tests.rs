@@ -37,7 +37,8 @@ fn epoch_intent(
     lease: &OriginAuthorityLease,
     updates: Vec<RefUpdate>,
 ) -> EntityId {
-    let mut stamp = DoorAdmissionStamp::from_principal(&actor.to_hex(), now_secs());
+    let mut stamp =
+        DoorAdmissionStamp::from_principal(EntityId::now(), &actor.to_hex(), now_secs());
     stamp.origin_authority = Some(OriginAuthorityStamp::from_lease(lease));
     vault
         .record_receive_pack_admission(root, &stamp, DoorSeam::Landed)
@@ -493,7 +494,8 @@ fn epoch_new_host_cannot_launder_old_observer_evidence_without_an_old_permit() {
         .set_origin_authority(&repo, None, OriginResidence::LocalVault, host, false)
         .expect("epoch 1");
     let lease = vault.lease_origin_authority(&repo, host).expect("lease");
-    let mut stamp = DoorAdmissionStamp::from_principal(&actor.to_hex(), now_secs());
+    let mut stamp =
+        DoorAdmissionStamp::from_principal(EntityId::now(), &actor.to_hex(), now_secs());
     stamp.origin_authority = Some(OriginAuthorityStamp::from_lease(&lease));
     vault
         .record_receive_pack_admission(&root, &stamp, DoorSeam::Landed)

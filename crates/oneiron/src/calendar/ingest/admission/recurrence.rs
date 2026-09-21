@@ -36,9 +36,10 @@ impl PollAdmission<'_> {
             PREDICATE_CALENDAR_SERIES_EXCEPTION,
             &exception_value,
         )?;
-        self.rewrite_event(event_ref, event)?;
-        if !exists {
-            self.admit_origin(event_ref, event)?;
+        if exists {
+            self.rewrite_event(event_ref, event)?;
+        } else {
+            self.mint_event_with_id(event, event_ref)?;
         }
         self.admit_properties(event_ref, event)?;
         let mut active = false;

@@ -15,6 +15,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFilter};
 use crate::pipeline::ScoredEntity;
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, PortRows};
 use crate::registry::ENTITY_TYPE_CLAIM;
 
 mod note_visibility;
@@ -161,25 +162,30 @@ impl<'a> ScopedRead<'a> {
         self.vault
     }
 
-    /// The entity accessor this read composes over: the room's union when
-    /// opened in-session, base otherwise. Every entity read in this type goes
-    /// through here so the two cases cannot diverge site by site.
-    fn entities(&self) -> &crate::overlay_db::OverlayDb {
+    /// Both canonical and session reads use the same ports. A session adapter
+    /// composes overlay union base without changing policy admission.
+    fn entity_record_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityRecord>> {
         match self.session_view {
-            Some(view) => &view.entities,
-            None => &self.vault.store.entities,
+            Some(view) => view.port_entity_record(txn, id),
+            None => self.vault.port_entity_record(txn, id),
         }
     }
 
-    /// The out-edge accessor this read composes over: the room's union when
-    /// opened in-session, base otherwise. Mirrors [`Self::entities`] — an edge
-    /// staged in the room joins two entities the room can already see, so a
-    /// base-only edge scan would drop it from `edges_out` and from every
-    /// reachability sweep built on it.
-    fn edges_out_db(&self) -> &crate::overlay_db::OverlayDb {
+    fn out_edges_in<'t>(
+        &self,
+        txn: &'t heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: Option<EdgeKind>,
+    ) -> Result<PortRows<'t, EdgeInfo>> {
         match self.session_view {
-            Some(view) => &view.edges_out,
-            None => &self.vault.store.edges_out,
+            Some(view) => view.port_edges(txn, id, EdgeDirection::Out, kind, None),
+            None => self
+                .vault
+                .port_edges(txn, id, EdgeDirection::Out, kind, None),
         }
     }
 
@@ -301,7 +307,7 @@ impl<'a> ScopedRead<'a> {
 
     pub fn get_entity_parts(&self, id: &EntityId) -> Result<Option<(u8, u64, Vec<u8>)>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let Some(raw) = self.entities().get(&rtxn, id.as_bytes())? else {
+        let Some(raw) = self.entity_record_in(&rtxn, id)?.map(|row| row.encode()) else {
             return Ok(None);
         };
         let header =
@@ -540,7 +546,7 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
     ) -> Result<bool> {
-        let Some(raw) = self.entities().get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self.entity_record_in(rtxn, id)?.map(|row| row.encode()) else {
             return Ok(false);
         };
         let header =
@@ -685,23 +691,28 @@ impl<'a> ScopedRead<'a> {
     /// view of who may read what, decided against a graph that is not the
     /// session's.
     ///
-    /// Composes exactly as [`Self::edges_out_in`] does, over
-    /// [`Self::edges_out_db`]. Base-only on the canonical handle, so nothing
-    /// outside a session changes.
+    /// Composes through the same session-aware edge port as reachability.
     fn claim_facet_refs_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
-        crate::claim::read::facet_refs_in_db(self.edges_out_db(), rtxn, id)
+        let mut facets = Vec::new();
+        for entry in self.out_edges_in(rtxn, id, Some(EdgeKind::FacetOf))? {
+            if facets.len() >= crate::vault::MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("claim_facet_refs"));
+            }
+            facets.push(entry?.target);
+        }
+        Ok(facets)
     }
 
     fn edges_out_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Vec<EdgeInfo>> {
         const MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS: usize = 100_000;
 
         let mut edges = Vec::new();
-        for entry in self.edges_out_db().prefix_iter(rtxn, id.as_bytes())? {
-            let (key, value) = entry?;
+        for entry in self.out_edges_in(rtxn, id, None)? {
+            let edge = entry?;
             if edges.len() >= MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS {
                 return Err(Error::IndexOverflow("scoped read edge reachability"));
             }
-            edges.push(crate::vault::parse_edge_record(&key, &value)?);
+            edges.push(edge);
         }
         Ok(edges)
     }

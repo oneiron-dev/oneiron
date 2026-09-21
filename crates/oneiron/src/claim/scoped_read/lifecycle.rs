@@ -7,7 +7,7 @@ use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL};
 impl ScopedRead<'_> {
     pub(crate) fn read_set_lifecycle(&self, id: &EntityId) -> Result<Option<ServedLifecycle>> {
         let txn = self.vault.store.env.read_txn()?;
-        let Some(raw) = self.entities().get(&txn, id.as_bytes())? else {
+        let Some(raw) = self.entity_record_in(&txn, id)?.map(|row| row.encode()) else {
             return Ok(None);
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -75,7 +75,10 @@ impl ScopedRead<'_> {
             if !self.is_entity_readable_with_policy_in(&txn, &policy, &edge.target)? {
                 continue;
             }
-            let Some(raw) = self.entities().get(&txn, edge.target.as_bytes())? else {
+            let Some(raw) = self
+                .entity_record_in(&txn, &edge.target)?
+                .map(|row| row.encode())
+            else {
                 continue;
             };
             if EntityMetadataHeader::parse(&raw)

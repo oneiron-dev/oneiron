@@ -20,9 +20,9 @@ use super::{
     ProjectorRule,
 };
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 
 #[derive(Debug, Clone, Copy)]
@@ -90,7 +90,7 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
             Err(error) => return Err(error),
         }
     }
-    reconcile_comm_party_twins(vault, crate::unix_seconds_now())?;
+    reconcile_comm_party_twins(vault, vault.store.clock.now_recorded_at())?;
     Ok(())
 }
 
@@ -182,7 +182,7 @@ fn record_event(
             occurred_at,
             projected: false,
         };
-        put_comm_record_in_txn(vault, wtxn, EntityId::now(), &record)
+        put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &record)
     })
 }
 
@@ -195,14 +195,14 @@ pub(super) fn project_event(
     index: &CommProjectorIndex,
 ) -> CommResult<ProjectorIndexDelta> {
     vault.try_with_write_txn(|wtxn| {
-        let Some(raw) = vault.store.entities.get(&*wtxn, event_id.as_bytes())? else {
+        let Some(raw) = vault.store.port_entity_record(&*wtxn, &event_id)? else {
             return Ok(ProjectorIndexDelta::default());
         };
-        let header = EntityMetadataHeader::parse(&raw).ok_or(CommError::InvalidRecord)?;
-        if header.entity_type != ENTITY_TYPE_COMM_RECORD {
+
+        if raw.entity_type != ENTITY_TYPE_COMM_RECORD {
             return Err(CommError::InvalidRecord);
         }
-        let record = decode_comm_record(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let record = decode_comm_record(&raw.body)?;
         let CommRecord::Event {
             sequence,
             kind,

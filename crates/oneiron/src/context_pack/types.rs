@@ -65,6 +65,9 @@ pub struct ContextEntity {
     pub source_revision_ref: Option<[u8; 16]>,
     pub entity_type: u8,
     pub score: f32,
+    /// Predicate-class priority resolved from the vault manifest at hydration.
+    /// This never changes claim visibility, scope, or budget ceilings.
+    pub critical: bool,
     pub fields: Option<HashMap<String, serde_json::Value>>,
     pub edges: Option<Vec<EdgeInfo>>,
     pub vector: Option<Vec<f32>>,
@@ -96,6 +99,10 @@ pub struct PackStats {
     pub tokens: PackTokenStats,
     pub items_truncated: PackItemAccounting,
     pub items_dropped: PackItemAccounting,
+    /// Critical claims exceeded an item, section, or serialized allotment.
+    pub critical_over_budget: bool,
+    /// Critical claims eligible before budget truncation (not suppressed claims).
+    pub critical_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

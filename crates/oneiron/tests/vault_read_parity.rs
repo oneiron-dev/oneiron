@@ -797,6 +797,11 @@ fn in_process_is_not_privileged() {
     normalize_pack(&mut wire_pack);
     normalize_pack(&mut direct_pack);
     assert_eq!(encode(&wire_pack), encode(&direct_pack));
+    assert_eq!(direct_pack.0.results.len(), 1, "parity must not be vacuous");
+    assert_eq!(
+        direct_pack.0.results[0].score, 1.0,
+        "fixture decay is neutral"
+    );
     assert_eq!(
         direct_pack.0.results.len(),
         wire_pack.0.results.len(),

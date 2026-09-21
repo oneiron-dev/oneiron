@@ -3,6 +3,7 @@ mod locality;
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_claims_pending_in_txn};
 pub(crate) use locality::clear_embedding_locality_in_txn;
 
+use crate::ports::EntityStoreRead;
 use std::borrow::Cow;
 
 use crate::entity_id::EntityId;
@@ -621,17 +622,16 @@ fn pending_input_in_txn(
     let Some(token) = vault.store.pending_embedding_token_in_txn(wtxn, id)? else {
         return Ok(None);
     };
-    let Some(raw) = vault.store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(raw) = vault.store.port_entity_record(wtxn, id)? else {
         return Ok(None);
     };
-    let header = crate::batch::EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("entity header"))?;
-    let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+
+    let body = &raw.body;
     // RT-05 (ONE-1687): the epoch-summary keyframe is embeddable alongside
     // CLAIM, and what the embedder (and egress gate) receives is its TEXT: the
     // record's framing keys carry no retrievable meaning. The pending-embedding
     // token still commits to the whole record, so a re-mint invalidates it.
-    let payload = match header.entity_type {
+    let payload = match raw.entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => PendingEmbeddingPayload::ClaimBody(body.to_vec()),
         crate::registry::ENTITY_TYPE_SUMMARY => {
             // An ordinary witness SUMMARY shares the type byte and is not an
