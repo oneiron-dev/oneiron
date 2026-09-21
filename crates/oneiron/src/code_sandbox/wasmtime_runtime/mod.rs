@@ -215,11 +215,10 @@ fn execute_component(
             &mut store, "run-step",
         )
         .map_err(|_| failure("component run-step ABI mismatch"))?;
+    // Wasmtime performs canonical post-return inside call; either trap refuses the step.
     let (output,) = run
         .call(&mut store, (script.to_owned(),))
         .map_err(|_| failure("component execution trapped"))?;
-    run.post_return(&mut store)
-        .map_err(|_| failure("component post-return trapped"))?;
     let output = output.map_err(|_| failure("guest reported step failure"))?;
     // This runtime is the first-party lane. Proposal-only execution belongs to
     // the microVM guest; never silently turn a returned proposal into a write.

@@ -313,6 +313,39 @@ fn component_pin_and_resource_limits_fail_closed() {
 }
 
 #[test]
+fn component_post_return_trap_fails_closed() {
+    for (body, traps) in [("", false), ("unreachable", true)] {
+        let component = fixture("clock-now-unix-ms", &serde_json::Value::Null, false)
+            .replace(
+                r#"(func (export "run-step") (param i32 i32) (result i32)"#,
+                &format!(
+                    r#"(func (export "after-run") (param i32) {body})
+                    (func (export "run-step") (param i32 i32) (result i32)"#
+                ),
+            )
+            .replace(
+                r#"(canon lift (core func $main "run-step")"#,
+                r#"(canon lift (core func $main "run-step") (post-return (core func $main "after-run"))"#,
+            );
+        let mut runtime = WasmtimeComponentRuntime::from_component(
+            component.as_bytes(),
+            *blake3::hash(component.as_bytes()).as_bytes(),
+            ComponentBudget::default(),
+        )
+        .expect("component with canonical post-return");
+        let outcome = runtime.run_step(
+            step("{}", SandboxGuestTier::FirstPartyDreamer),
+            &mut NoEffects,
+        );
+        if traps {
+            assert!(outcome.is_err());
+        } else {
+            assert!(outcome.expect("successful post-return").done);
+        }
+    }
+}
+
+#[test]
 fn invalid_typed_arguments_still_consume_host_call_budget() {
     struct NoCalls;
     impl JsCodeModeHost for NoCalls {

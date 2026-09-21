@@ -121,11 +121,10 @@ fn run<T: Read + Write + 'static>(
             "run-step",
         )
         .map_err(|_| Error::Runtime("typed run-step ABI"))?;
+    // Wasmtime performs canonical post-return inside call; either trap refuses proposals.
     let (output,) = run
         .call(&mut *store, (input.source.clone(),))
         .map_err(|_| Error::Runtime("component trapped"))?;
-    run.post_return(&mut *store)
-        .map_err(|_| Error::Runtime("post-return trapped"))?;
     if store.data().poisoned {
         return Err(Error::Protocol("credential transport failed"));
     }
