@@ -64,7 +64,7 @@ impl Vault {
         // serialized by the LMDB write lock, sees the committed ledger row here
         // and rolls back with nothing appended; a crash rolls the whole settle
         // back so a retry re-appends cleanly rather than skipping the re-anchor.
-        let (version, reanchor, record) = self.with_write_txn(|wtxn| {
+        let (version, reanchor, record, stranded_proposal) = self.with_write_txn(|wtxn| {
             // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
             // a revocation serialized before this commit makes it fail here.
             self.authorize_settle_in_txn(wtxn, consent, actor)?;
@@ -75,12 +75,38 @@ impl Vault {
             // Base head read in-txn, consistent with the append below.
             let base = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
                 .ok_or(Error::EntityNotFound)?;
-            // Stale-proposal refusal: the head must still be the one the proposal
-            // was produced from. An intervening edit changes the head hash, and
-            // committing these bytes would clobber it and replay a stale manifest
-            // onto newer anchors.
-            if base.content_hash != proposal.base_content_hash {
-                return Err(Error::Artifact(ArtifactError::EditProposalStale));
+            // Retain stale output against this exact head. Consume the old ref
+            // so a retry can never accidentally apply it after another head
+            // change. Reconciliation is a new, explicitly reviewed proposal.
+            if base.content_hash != proposal.base_content_hash
+                || proposal.base_version.is_some_and(|v| v != base.version)
+            {
+                let stranded = self.retain_stale_edit_in_txn(
+                    wtxn,
+                    artifact_id,
+                    proposal,
+                    &base,
+                    actor,
+                    learned_at,
+                )?;
+                let record = SettlementRecord {
+                    proposal_ref: proposal_ref.to_owned(),
+                    outcome: SettleOutcomeKind::Proposed,
+                    settled_at: learned_at,
+                    actor_ref: Some(actor.entity_ref().to_hex()),
+                    brief_ref: consent.brief_ref().map(str::to_owned),
+                    before_version: proposal.base_version,
+                    version: Some(base.version),
+                    content_hash: Some(base.content_hash),
+                    manifest_ref: Some(manifest_hash),
+                    manifest_ops,
+                    anchors: Vec::new(),
+                    reason: Some("stale_base".to_owned()),
+                };
+                self.store
+                    .vault_meta
+                    .put(wtxn, &key, &encode_settlement_record(&record)?)?;
+                return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
             }
             let version = self.append_blob_artifact_version_in_txn(
                 wtxn,
@@ -125,11 +151,12 @@ impl Vault {
             self.store
                 .vault_meta
                 .put(wtxn, &key, &encode_settlement_record(&record)?)?;
-            Ok((version, reanchor, record))
+            Ok((version, reanchor, record, None))
         })?;
 
         let receipt = settlement_receipt_record(*artifact_id, &record)?;
         Ok(SettleSelectOutcome {
+            stranded_proposal,
             version,
             reanchor,
             receipt,

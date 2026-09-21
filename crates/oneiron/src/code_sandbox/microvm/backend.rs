@@ -45,6 +45,18 @@ pub trait MicroVmBackend: Send + Sync {
         budget: ExecutionBudget,
     ) -> Result<MicroVmExit>;
 
+    /// Runs with the adapter's host-bound credential policy. Backends without
+    /// an egress transport keep their ordinary run implementation.
+    fn run_with_proxy(
+        &self,
+        vm: &MicroVmHandle,
+        image: &GuestImage,
+        budget: ExecutionBudget,
+        _proxy: &super::credential::CredentialEgressProxy,
+    ) -> Result<MicroVmExit> {
+        self.run(vm, image, budget)
+    }
+
     /// Diffs the overlay upper against the base into write proposals.
     ///
     /// # Errors
@@ -88,6 +100,16 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
         (**self).run(vm, image, budget)
     }
 
+    fn run_with_proxy(
+        &self,
+        vm: &MicroVmHandle,
+        image: &GuestImage,
+        budget: ExecutionBudget,
+        proxy: &super::credential::CredentialEgressProxy,
+    ) -> Result<MicroVmExit> {
+        (**self).run_with_proxy(vm, image, budget, proxy)
+    }
+
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>> {
         (**self).collect_overlay_delta(vm)
     }
@@ -105,8 +127,8 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
 ///
 /// `Ok(None)` means "no microVM": first-party code runs in-process. Foreign and
 /// untrusted code either gets an isolating backend or fails closed — there is
-/// no silent no-sandbox path, and the dev reference backend is only ever
-/// reachable under `cfg(test)` / `debug_assertions` / feature `microvm-dev`.
+/// no silent no-sandbox path, including in debug and test builds. The dev
+/// reference backend is available only by explicit construction.
 ///
 /// # Errors
 ///
@@ -115,36 +137,12 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
 pub fn select_backend_for_tier(tier: SandboxGuestTier) -> Result<Option<Box<dyn MicroVmBackend>>> {
     match tier {
         SandboxGuestTier::FirstPartyDreamer => Ok(None),
-        SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => {
-            #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
-            {
-                Ok(Some(select_isolating_backend()))
-            }
-            #[cfg(not(any(test, debug_assertions, feature = "microvm-dev")))]
-            {
-                select_isolating_backend(tier).map(Some)
-            }
-        }
+        SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => firecracker_backend()
+            .map(Some)
+            .ok_or_else(|| backend_unavailable(tier)),
     }
 }
 
-#[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
-fn select_isolating_backend() -> Box<dyn MicroVmBackend> {
-    if let Some(backend) = firecracker_backend() {
-        return backend;
-    }
-    dev_backend()
-}
-
-#[cfg(not(any(test, debug_assertions, feature = "microvm-dev")))]
-fn select_isolating_backend(tier: SandboxGuestTier) -> Result<Box<dyn MicroVmBackend>> {
-    if let Some(backend) = firecracker_backend() {
-        return Ok(backend);
-    }
-    Err(backend_unavailable(tier))
-}
-
-#[cfg(any(test, all(not(debug_assertions), not(feature = "microvm-dev"))))]
 pub(super) fn backend_unavailable(tier: SandboxGuestTier) -> Error {
     Error::Code(CodeError::MicroVmBackendUnavailable {
         tier: tier.as_str(),
@@ -160,11 +158,6 @@ fn firecracker_backend() -> Option<Box<dyn MicroVmBackend>> {
 #[cfg(not(feature = "microvm-firecracker"))]
 const fn firecracker_backend() -> Option<Box<dyn MicroVmBackend>> {
     None
-}
-
-#[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
-fn dev_backend() -> Box<dyn MicroVmBackend> {
-    Box::new(DevProcessBackend::in_temp_root())
 }
 
 /// True when the dev reference backend is compiled into this build.
@@ -188,8 +181,7 @@ pub const DEV_BACKEND_NAME: &str = "dev-process-isolation";
 /// and only reach the host as proposals, credentials resolve behind the
 /// allowlist — but it is **not** a security boundary: no VMM, no kernel
 /// isolation. It is compiled only under `cfg(test)`, `debug_assertions` or the
-/// explicit `microvm-dev` feature, and [`select_backend_for_tier`] never hands
-/// it to a release build without that feature.
+/// explicit `microvm-dev` feature. [`select_backend_for_tier`] never selects it.
 #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
 pub struct DevProcessBackend {
     root: PathBuf,

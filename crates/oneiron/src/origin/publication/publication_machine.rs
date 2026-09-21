@@ -221,6 +221,20 @@ impl Vault {
         }
         let live = git.read_ref(repo, &record.ref_name)?;
         let already_applied = live.as_ref() == Some(&record.new_oid);
+        if !already_applied
+            && self
+                .require_origin_authority(repo, record.publication_id)
+                .is_err()
+        {
+            return self.refuse_origin_publication(
+                git,
+                repo,
+                record,
+                OriginPublicationStatus::Failed,
+                "origin authority epoch no longer permits this publication",
+                learned_at,
+            );
+        }
         if !already_applied && live != record.expected_old_oid {
             return self.refuse_origin_publication(
                 git,
@@ -464,6 +478,19 @@ impl Vault {
                     ))?;
                 let body = publication_claim_body(&terminal)?;
                 self.put_claim_in_txn(wtxn, &claim_id, &body, terminal.occurred, learned_at)?;
+                let change_id = self.put_origin_change_in_txn(wtxn, &terminal, learned_at)?;
+                // Transfer reachability to the durable change-index before releasing
+                // the temporary publication owner. The physical root already exists.
+                self.store.vault_meta.put(
+                    wtxn,
+                    &keep_owner_key(
+                        &terminal.repo_id,
+                        &terminal.new_oid,
+                        OriginKeepRefKind::Change,
+                        &change_id.to_hex(),
+                    ),
+                    &learned_at.to_le_bytes(),
+                )?;
                 self.store.vault_meta.put(
                     wtxn,
                     &visible_ref_key(&terminal.repo_id, &terminal.ref_name),

@@ -1,6 +1,6 @@
 //! Sandbox boundary contract for code-mode execution.
 //!
-//! This module does not start a sandbox or link a production adapter. It pins
+//! The feature-gated runtimes enforce
 //! the host/guest ABI that future runners must obey: plain JavaScript runs
 //! inside a QuickJS-class interpreter embedded as a WASM component in the
 //! existing Wasmtime/WIT boundary, guests target stable `/mnt` virtual paths,
@@ -13,6 +13,10 @@ mod contract;
 mod credential;
 mod paths;
 mod proposal;
+
+/// Host-pinned Component Model runtime for first-party code.
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub mod wasmtime_runtime;
 
 /// Firecracker-backed microVM lane (Linux; feature-gated).
 #[cfg(feature = "microvm-firecracker")]
@@ -35,8 +39,8 @@ pub use self::paths::{
     SANDBOX_WORKSPACE_ROOT, SandboxMount, SandboxMountTable, SandboxVirtualPath,
 };
 pub use self::proposal::{
-    SandboxClaimProposal, SandboxFileWriteProposal, SandboxProposalDelta, SandboxProposalKind,
-    SandboxProposalWrite,
+    SandboxClaimProposal, SandboxFileEditProposal, SandboxFileWriteProposal, SandboxProposalDelta,
+    SandboxProposalKind, SandboxProposalWrite,
 };
 
 #[cfg(test)]

@@ -1561,3 +1561,892 @@ fn repo_mutation_worktree_lifecycle_is_queued_and_logged() {
     assert_eq!(created.entry.seq, 1);
     assert_eq!(removed.entry.seq, 2);
 }
+
+fn reviewed_proposal_fixture(vault: &Vault, repo: &TempDir) -> super::proposal::RepoProposal {
+    use crate::critic::{CriticLens, LensCatalog};
+    let actor = EntityId::now();
+    let session = EntityId::now();
+    for (id, kind) in [
+        (actor, crate::registry::ENTITY_TYPE_PERSON),
+        (session, crate::registry::ENTITY_TYPE_SESSION),
+    ] {
+        vault
+            .put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, b"fixture")
+            .unwrap();
+    }
+    let request = RepoMutationRequest::new(
+        repo_ref(repo),
+        RepoMutationOperation::CommitFile {
+            path: "README.md".into(),
+            content: b"reviewed edit\n".to_vec(),
+            message: "reviewed edit".into(),
+        },
+    )
+    .with_actor_id(actor)
+    .with_session_id(session)
+    .with_provenance_claim_id(put_repo_provenance_claim(vault));
+    assert!(vault.apply_repo_mutation(request.clone()).is_err());
+    vault
+        .propose_repo_mutation(
+            request,
+            LensCatalog {
+                schema_version: 1,
+                lenses: vec![
+                    CriticLens::new(
+                        "correctness",
+                        "host supplied review contract",
+                        "critique.v1",
+                        true,
+                        "code_review",
+                    )
+                    .unwrap(),
+                ],
+            },
+        )
+        .unwrap()
+}
+fn vote_proposal(
+    vault: &Vault,
+    proposal: &super::proposal::RepoProposal,
+    verdict: crate::critic::CritiqueVerdict,
+    passed: bool,
+) {
+    use crate::critic::{CritiqueArtifact, CritiqueProvenance, CritiqueSeverity};
+    let critic = EntityId::now();
+    vault
+        .put_entity(
+            &critic,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"critic",
+        )
+        .unwrap();
+    let critique = CritiqueArtifact::new(
+        format!("review_{}", critic.to_hex()),
+        "repo_review",
+        crate::attempt_queue::AttemptId::from_bytes(proposal.id.as_bytes()).unwrap(),
+        proposal.id.to_hex(),
+        &proposal.catalog.lenses[0],
+        CritiqueProvenance::new(critic.to_hex(), "test_model", None).unwrap(),
+        verdict,
+        CritiqueSeverity::High,
+        Some(passed),
+        vec!["checked_tree".into()],
+        None,
+        2,
+    )
+    .unwrap();
+    vault
+        .review_repo_proposal(proposal.id, critic, critique)
+        .unwrap();
+}
+#[test]
+fn repository_proposed_gate_retains_split_and_hard_veto_then_applies_unanimous() {
+    use super::mount::RepoMountRef;
+    use super::proposal::RepoProposalStatus;
+    use crate::critic::CritiqueVerdict;
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let head = current_head_commit(repo.path()).unwrap();
+    let proposal = reviewed_proposal_fixture(&vault, &repo);
+    assert_eq!(
+        vault.get_claim(&proposal.id).unwrap().unwrap().approval,
+        ClaimApprovalStatus::Proposed
+    );
+    let mut forged = vault.get_claim(&proposal.id).unwrap().unwrap();
+    forged.approval = ClaimApprovalStatus::Approved;
+    assert!(
+        vault
+            .put_claim(&proposal.id, &forged, TimeRange { start: 1, end: 1 }, 1)
+            .is_err()
+    );
+
+    assert_eq!(
+        vault
+            .mount_repo_ref(
+                &repo_ref(&repo),
+                RepoMountRef::Fork(proposal.pre_action_fork_hash)
+            )
+            .unwrap()
+            .read_file("README.md")
+            .unwrap(),
+        Some(b"base\n".as_slice())
+    );
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Revise, true);
+    assert!(vault.apply_repo_proposal(proposal.id).is_err());
+    assert_eq!(
+        vault.repo_proposal(proposal.id).unwrap().unwrap().status,
+        RepoProposalStatus::Proposed
+    );
+    assert_eq!(current_head_commit(repo.path()).unwrap(), head);
+    let veto = reviewed_proposal_fixture(&vault, &repo);
+    vote_proposal(&vault, &veto, CritiqueVerdict::Accept, true);
+    vote_proposal(&vault, &veto, CritiqueVerdict::Accept, false);
+    assert_eq!(
+        vault
+            .repo_proposal(veto.id)
+            .unwrap()
+            .unwrap()
+            .triage()
+            .unwrap()
+            .verdict,
+        CritiqueVerdict::Discard
+    );
+    assert!(vault.apply_repo_proposal(veto.id).is_err());
+    let accepted = reviewed_proposal_fixture(&vault, &repo);
+    vote_proposal(&vault, &accepted, CritiqueVerdict::Accept, true);
+    vote_proposal(&vault, &accepted, CritiqueVerdict::Accept, true);
+    let receipt = vault.apply_repo_proposal(accepted.id).unwrap();
+    assert_eq!(receipt.entry.status, RepoMutationStatus::Applied);
+    assert_eq!(receipt.entry.actor_id, Some(accepted.actor));
+    assert_eq!(
+        vault.get_claim(&accepted.id).unwrap().unwrap().approval,
+        ClaimApprovalStatus::Approved
+    );
+    let mount = vault
+        .mount_repo_ref(&repo_ref(&repo), RepoMountRef::Head)
+        .unwrap();
+    assert!(mount.is_read_only());
+    assert_eq!(
+        mount.read_file("README.md").unwrap(),
+        Some(b"reviewed edit\n".as_slice())
+    );
+    assert_eq!(
+        vault.apply_repo_proposal(accepted.id).unwrap().entry.seq,
+        receipt.entry.seq
+    );
+    let claim = repo_commit_provenance(repo.path(), &current_head_commit(repo.path()).unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.claim_id, accepted.provenance_claim);
+}
+#[test]
+fn repository_proposal_crash_rolls_forward_and_stale_base_never_rebases() {
+    use crate::critic::CritiqueVerdict;
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let stale = reviewed_proposal_fixture(&vault, &repo);
+    let accepted = reviewed_proposal_fixture(&vault, &repo);
+    for proposal in [&stale, &accepted] {
+        vote_proposal(&vault, proposal, CritiqueVerdict::Accept, true);
+        vote_proposal(&vault, proposal, CritiqueVerdict::Accept, true);
+    }
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterActionBeforeApplied));
+    assert!(vault.apply_repo_proposal(accepted.id).is_err());
+    let head = current_head_commit(repo.path()).unwrap();
+    let recovered = vault.apply_repo_proposal(accepted.id).unwrap();
+    assert_eq!(recovered.entry.status, RepoMutationStatus::Applied);
+    assert_eq!(current_head_commit(repo.path()).unwrap(), head);
+    assert!(matches!(
+        vault.apply_repo_proposal(stale.id),
+        Err(Error::ConcurrentWrite(_))
+    ));
+    assert_eq!(current_head_commit(repo.path()).unwrap(), head);
+}
+
+fn stock_git(root: &std::path::Path, args: &[&str]) -> Vec<u8> {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+#[test]
+fn reconciliation_tasks_are_counted_past_the_former_quota_without_recounting_replay() {
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    create_conflicting_branches(&repo);
+    let subject = put_branch_subject(&vault);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let rate = crate::task_verb::TaskCreateRateLimit::default();
+    let started_window = crate::unix_seconds_now() / rate.window_seconds;
+    let created = rate.limit + 1;
+    let mut tasks = std::collections::BTreeSet::new();
+
+    for index in 0..created {
+        let request = RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::RecordConflict {
+                branch_subject: subject,
+                branch_name: format!("conflict-{index}"),
+                ours_ref: "left".into(),
+                theirs_ref: "right".into(),
+            },
+        );
+        let claim = vault
+            .apply_repo_mutation(request.clone())
+            .unwrap()
+            .repo_conflict_claim_id
+            .unwrap();
+        let task = vault.repo_reconciliation_task(claim).unwrap().unwrap();
+        assert!(tasks.insert(task));
+        let replay = vault
+            .apply_repo_mutation(request)
+            .unwrap()
+            .repo_conflict_claim_id
+            .unwrap();
+        assert_eq!(replay, claim);
+        assert_eq!(vault.repo_reconciliation_task(replay).unwrap(), Some(task));
+    }
+
+    let count = vault.task_create_count(owner, rate.window_seconds).unwrap();
+    let finished_window = crate::unix_seconds_now() / rate.window_seconds;
+    // The public counter covers only the current engine-clock window. A test
+    // crossing a window boundary must not expect the previous window's count.
+    if started_window == finished_window {
+        assert_eq!(count, created as u64);
+    } else {
+        assert!(count <= created as u64);
+    }
+}
+
+#[test]
+fn repository_conflict_creates_one_task_and_stock_git_clones_servable_sides() {
+    use crate::git_wire::{GitRefName, GitWire};
+    use crate::origin::conflict_tree::ConflictTreeExport;
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    create_conflicting_branches(&repo);
+    let subject = put_branch_subject(&vault);
+    let request = RepoMutationRequest::new(
+        repo_ref(&repo),
+        RepoMutationOperation::RecordConflict {
+            branch_subject: subject,
+            branch_name: "left".into(),
+            ours_ref: "left".into(),
+            theirs_ref: "right".into(),
+        },
+    );
+    let claim = vault
+        .apply_repo_mutation(request.clone())
+        .unwrap()
+        .repo_conflict_claim_id
+        .unwrap();
+    let task = vault.repo_reconciliation_task(claim).unwrap().unwrap();
+    assert_eq!(
+        vault.get_entity_type(&task).unwrap(),
+        Some(ENTITY_TYPE_TASK)
+    );
+    let raw = vault.get_raw(&task).unwrap().unwrap();
+    let body = rmpv::decode::read_value(&mut &raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
+    let entries = body.as_map().unwrap();
+    assert_eq!(
+        entries
+            .iter()
+            .find(|(k, _)| k.as_str() == Some("kind"))
+            .unwrap()
+            .1
+            .as_str(),
+        Some("reconciliation")
+    );
+    let replay = vault
+        .apply_repo_mutation(request)
+        .unwrap()
+        .repo_conflict_claim_id
+        .unwrap();
+    assert_eq!(replay, claim);
+    assert_eq!(vault.repo_reconciliation_task(replay).unwrap(), Some(task));
+    let git = GitWire::new(&vault).unwrap();
+    let handle = git.open_repo(repo_ref(&repo), repo.path()).unwrap();
+    let request = ConflictTreeExport {
+        open_claim_id: claim,
+        ref_name: GitRefName::parse_full("refs/heads/conflicted").unwrap(),
+        expected_old_oid: None,
+        actor_id: subject,
+        now: 100,
+    };
+    let receipt = vault
+        .export_repo_conflict(&git, &handle, &request, None)
+        .unwrap();
+    let replay = vault
+        .export_repo_conflict(&git, &handle, &request, None)
+        .unwrap();
+    assert_eq!(receipt.record.new_oid, replay.record.new_oid);
+    let checkout = tempfile::tempdir().unwrap();
+    stock_git(
+        checkout.path(),
+        &[
+            "clone",
+            "--branch",
+            "conflicted",
+            repo.path().to_str().unwrap(),
+            "clone",
+        ],
+    );
+    let root = checkout.path().join("clone");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join(".jjconflict/manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["claim_id"], claim.to_hex());
+    let encoded = "README.md"
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(
+        fs::read(root.join(format!(".jjconflict/{encoded}/base/file"))).unwrap(),
+        b"base\n"
+    );
+    assert_eq!(
+        fs::read(root.join(format!(".jjconflict/{encoded}/ours/file"))).unwrap(),
+        b"left branch\n"
+    );
+    assert_eq!(
+        fs::read(root.join(format!(".jjconflict/{encoded}/theirs/file"))).unwrap(),
+        b"right branch\n"
+    );
+    assert!(
+        String::from_utf8(fs::read(root.join("README.md")).unwrap())
+            .unwrap()
+            .starts_with("<<<<<<< UNRESOLVED")
+    );
+    assert_eq!(vault.repo_conflict_claims(&subject).unwrap().len(), 1);
+}
+
+#[test]
+fn engine_commit_export_stock_clone_fetch_and_hash_keyed_change_index() {
+    use crate::code_artifact::CodeArtifactBody;
+    use crate::code_revision::CodeRevision;
+    use crate::git_wire::{GitRefName, GitWire};
+    use crate::origin::export::EngineCommitExport;
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let actor = EntityId::now();
+    let session = EntityId::now();
+    vault
+        .put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &session,
+            crate::registry::ENTITY_TYPE_SESSION,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"session",
+        )
+        .unwrap();
+    let git = GitWire::new(&vault).unwrap();
+    let handle = git.open_repo(repo_ref(&repo), repo.path()).unwrap();
+    let mut parent = None;
+    let mut old_oid = None;
+    let checkout = tempfile::tempdir().unwrap();
+    for (index, content) in ["fn main() {}\n", "fn main() { let x = 1; }\n"]
+        .into_iter()
+        .enumerate()
+    {
+        let provenance = put_repo_provenance_claim(&vault);
+        let proposal = vault
+            .propose_repo_mutation(
+                RepoMutationRequest::new(
+                    repo_ref(&repo),
+                    RepoMutationOperation::CommitFile {
+                        path: "src/main.rs".into(),
+                        content: content.as_bytes().to_vec(),
+                        message: format!("reviewed {index}"),
+                    },
+                )
+                .with_actor_id(actor)
+                .with_session_id(session)
+                .with_provenance_claim_id(provenance),
+                crate::critic::LensCatalog {
+                    schema_version: 1,
+                    lenses: vec![
+                        crate::critic::CriticLens::new(
+                            "correctness",
+                            "host supplied review contract",
+                            "critique.v1",
+                            true,
+                            "code_review",
+                        )
+                        .unwrap(),
+                    ],
+                },
+            )
+            .unwrap();
+        vote_proposal(
+            &vault,
+            &proposal,
+            crate::critic::CritiqueVerdict::Accept,
+            true,
+        );
+        vote_proposal(
+            &vault,
+            &proposal,
+            crate::critic::CritiqueVerdict::Accept,
+            true,
+        );
+        vault.apply_repo_proposal(proposal.id).unwrap();
+        let edit = vault.code_file_edit_receipt(proposal.id).unwrap().unwrap();
+        let id = EntityId::now();
+        let now = 10 + index as u64;
+        vault
+            .put_code_artifact(
+                &id,
+                &CodeArtifactBody::new("fixture", [index as u8; 32], repo_ref(&repo).canonical()),
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .unwrap();
+        let revision = match parent {
+            Some(parent) => CodeRevision::commit_child(id, session, parent, now),
+            None => CodeRevision::commit(id, session, now),
+        }
+        .with_provenance_claim_id(provenance)
+        .with_commit_metadata(crate::code_revision::CodeCommitMetadata::new(
+            actor,
+            format!("engine {index}"),
+        ))
+        .with_file_frontier(edit.after);
+        vault.commit_code_revision(&revision).unwrap();
+        let request = EngineCommitExport {
+            revision_id: id,
+            ref_name: GitRefName::parse_full("refs/heads/export").unwrap(),
+            expected_old_oid: old_oid.clone(),
+        };
+        assert!(matches!(
+            vault.export_engine_commit(&git, &handle, &request, None),
+            Err(Error::InvalidClaimBody(_))
+        ));
+        assert!(vault.exported_engine_commit(&handle, id).unwrap().is_none());
+        assert_eq!(git.read_ref(&handle, &request.ref_name).unwrap(), old_oid);
+        vault.promote_code_revision(id, proposal.id).unwrap();
+        let receipt = vault
+            .export_engine_commit(&git, &handle, &request, None)
+            .unwrap();
+        let replay = vault
+            .export_engine_commit(&git, &handle, &request, None)
+            .unwrap();
+        assert_eq!(receipt.record.new_oid, replay.record.new_oid);
+        let change = vault
+            .origin_change_for_commit(receipt.record.repo_id, &receipt.record.new_oid)
+            .unwrap()
+            .unwrap();
+        assert_eq!(change.commit, receipt.record.new_oid);
+        assert_eq!(change.actor_id, actor);
+        if index == 0 {
+            stock_git(
+                checkout.path(),
+                &[
+                    "clone",
+                    "--branch",
+                    "export",
+                    repo.path().to_str().unwrap(),
+                    "clone",
+                ],
+            );
+        } else {
+            stock_git(
+                &checkout.path().join("clone"),
+                &["fetch", "origin", "refs/heads/export"],
+            );
+        }
+        let object = format!("{}:src/main.rs", receipt.record.new_oid.as_str());
+        assert_eq!(
+            stock_git(&checkout.path().join("clone"), &["show", &object]),
+            content.as_bytes()
+        );
+        if let Some(previous) = parent {
+            vault
+                .export_engine_commit(
+                    &git,
+                    &handle,
+                    &EngineCommitExport {
+                        revision_id: previous,
+                        ref_name: GitRefName::parse_full("refs/heads/historical").unwrap(),
+                        expected_old_oid: None,
+                    },
+                    None,
+                )
+                .unwrap();
+        }
+        old_oid = Some(receipt.record.new_oid);
+        parent = Some(id);
+    }
+}
+
+#[test]
+fn origin_epoch_cutover_refuses_stale_hosts_and_mirror_writes() {
+    use crate::git_wire::{GitOid, GitRefName, GitWire};
+    use crate::origin::publication::{OriginPublicationRequest, origin_publication_intent_claim};
+    use crate::origin::residence::OriginResidence;
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let git = GitWire::new(&vault).unwrap();
+    let handle = git.open_repo(repo_ref(&repo), repo.path()).unwrap();
+    let writer = EntityId::now();
+    let successor = EntityId::now();
+    let first = vault
+        .set_origin_authority(&handle, None, OriginResidence::LocalVault, writer, false)
+        .unwrap();
+    let lease = vault.lease_origin_authority(&handle, writer).unwrap();
+    assert!(vault.lease_origin_authority(&handle, successor).is_err());
+    let second = vault
+        .set_origin_authority(
+            &handle,
+            Some(first.epoch),
+            OriginResidence::CloudVault,
+            successor,
+            false,
+        )
+        .unwrap();
+    let repo_id = crate::origin::lfs::lfs_repo_id(&handle.identity().as_hex()).unwrap();
+    let new_oid = GitOid::parse_hex(current_head_commit(repo.path()).unwrap()).unwrap();
+    let request = OriginPublicationRequest {
+        repo_id,
+        repo: handle.clone(),
+        ref_name: GitRefName::parse_full("refs/imported/review").unwrap(),
+        expected_old_oid: None,
+        new_oid: new_oid.clone(),
+        required_objects: vec![new_oid],
+        required_lfs_oids: vec![],
+        provenance_claim_id: EntityId::now(),
+        actor_id: writer,
+        occurred: TimeRange { start: 1, end: 1 },
+        learned_at: 1,
+    };
+    vault
+        .put_claim(
+            &request.provenance_claim_id,
+            &origin_publication_intent_claim(&request),
+            request.occurred,
+            1,
+        )
+        .unwrap();
+    assert!(
+        vault
+            .publish_origin_ref_authorized(&git, request.clone(), &lease)
+            .is_err()
+    );
+    assert!(vault.publish_origin_ref(&git, request.clone()).is_err());
+    assert_eq!(git.read_ref(&handle, &request.ref_name).unwrap(), None);
+    let lease = vault.lease_origin_authority(&handle, successor).unwrap();
+    let result = vault
+        .publish_origin_ref_authorized(&git, request.clone(), &lease)
+        .unwrap();
+    let change = vault
+        .origin_change_for_commit(repo_id, &result.record.new_oid)
+        .unwrap()
+        .unwrap();
+    assert_eq!(change.source, "mirror_import");
+    vault
+        .set_origin_authority(
+            &handle,
+            Some(second.epoch),
+            OriginResidence::CloudVault,
+            successor,
+            true,
+        )
+        .unwrap();
+    assert!(vault.lease_origin_authority(&handle, successor).is_err());
+    assert!(
+        vault
+            .publish_origin_ref_authorized(&git, request.clone(), &lease)
+            .is_err()
+    );
+    assert!(vault.publish_origin_ref(&git, request).is_err());
+}
+
+#[test]
+fn promotion_requires_reviewed_document_frontiers_for_every_changed_file() {
+    use crate::code_artifact::CodeArtifactBody;
+    use crate::code_document::CodeFileEdit;
+    use crate::code_revision::{CodeRevision, CodeSessionRun};
+    use crate::critic::CritiqueVerdict;
+    use crate::edge::EdgeActorClass;
+    use crate::write_envelope::WriteActor;
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let proposal = reviewed_proposal_fixture(&vault, &repo);
+    let run_claim = vault
+        .record_code_session_run(
+            &CodeSessionRun {
+                session: proposal.session,
+                actor: proposal.actor,
+                model: "test-model".into(),
+                prompt_hash: [1; 32],
+                content_hash: [2; 32],
+                params_hash: [3; 32],
+                version: "v1".into(),
+                diff_lineage_receipt: Value::Map(vec![(
+                    Value::from("source"),
+                    Value::from("test"),
+                )]),
+            },
+            10,
+        )
+        .unwrap();
+    assert_eq!(
+        vault.get_claim(&run_claim).unwrap().unwrap().subject,
+        ClaimSubject::Entity(proposal.session)
+    );
+    let id = EntityId::now();
+    assert!(vault.promote_code_revision(id, proposal.id).is_err());
+    assert!(vault.code_revision_promotions(id).unwrap().is_empty());
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    vault.apply_repo_proposal(proposal.id).unwrap();
+    let edit = vault.code_file_edit_receipt(proposal.id).unwrap().unwrap();
+    vault
+        .put_code_artifact(
+            &id,
+            &CodeArtifactBody::new("fixture", [1; 32], repo_ref(&repo).canonical()),
+            TimeRange { start: 20, end: 20 },
+            20,
+        )
+        .unwrap();
+    let revision = CodeRevision::commit(id, proposal.session, 30)
+        .with_provenance_claim_id(proposal.provenance_claim)
+        .with_file_frontier(edit.after.clone());
+    vault.commit_code_revision(&revision).unwrap();
+    vault.promote_code_revision(id, proposal.id).unwrap();
+    assert_eq!(
+        vault.code_revision_promotions(id).unwrap(),
+        vec![proposal.id]
+    );
+    let mut extra = vault
+        .open_code_document(&edit.after.repo, "unreviewed.rs", "", proposal.session)
+        .unwrap();
+    let extra = vault
+        .apply_code_file_edit(
+            &mut extra,
+            &CodeFileEdit::between("unreviewed.rs", "", "fn unreviewed() {}"),
+            WriteActor::new(proposal.actor, EdgeActorClass::Agent),
+        )
+        .unwrap();
+    let child = EntityId::now();
+    vault
+        .put_code_artifact(
+            &child,
+            &CodeArtifactBody::new("fixture", [2; 32], repo_ref(&repo).canonical()),
+            TimeRange { start: 40, end: 40 },
+            40,
+        )
+        .unwrap();
+    let revision = CodeRevision::commit_child(child, proposal.session, id, 50)
+        .with_provenance_claim_id(proposal.provenance_claim)
+        .with_file_frontier(edit.after)
+        .with_file_frontier(extra.after);
+    vault.commit_code_revision(&revision).unwrap();
+    assert!(vault.promote_code_revision(child, proposal.id).is_err());
+    assert!(vault.code_revision_promotions(child).unwrap().is_empty());
+}
+
+#[test]
+fn blake3_snapshot_capture_keeps_sha256_history_recoverable() {
+    use super::oplog::{
+        decode_stored_oplog_entry, encode_oplog_entry, repo_mutation_oplog_key,
+        repo_mutation_repo_key_hash, repo_mutation_snapshot_key,
+    };
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let reference = repo_ref(&repo);
+    let (hash, raw) = super::snapshot::capture_repo_snapshot(repo.path()).unwrap();
+    assert_eq!(hash, *blake3::hash(&raw).as_bytes());
+    let landed = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            reference.clone(),
+            RepoMutationOperation::CommitFile {
+                path: "README.md".into(),
+                content: b"changed\n".to_vec(),
+                message: "change".into(),
+            },
+        ))
+        .unwrap();
+    assert_eq!(landed.entry.pre_action_fork_hash, hash);
+    let legacy = super::support::sha256_bytes(&raw);
+    assert_ne!(legacy, hash);
+    // Model one genuinely persisted pre-change row: its snapshot bytes are
+    // unchanged, but both the oplog reference and key use the old digest.
+    // The mutation door canonicalizes aliases such as macOS /var -> /private/var.
+    let key = repo_mutation_oplog_key(
+        &repo_mutation_repo_key_hash(&landed.entry.repo_ref),
+        landed.entry.seq,
+    );
+    let mut txn = vault.store.env.write_txn().unwrap();
+    let mut row =
+        decode_stored_oplog_entry(&vault.store.vault_meta.get(&txn, &key).unwrap().unwrap())
+            .unwrap();
+    row.pre_action_fork_hash = legacy;
+    let (_, post) = super::snapshot::capture_repo_snapshot(repo.path()).unwrap();
+    row.expected_post_action_fork_hash = Some(super::support::sha256_bytes(&post));
+    row.status = RepoMutationStatus::Prepared.as_str().to_owned();
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, &key, &encode_oplog_entry(&row).unwrap())
+        .unwrap();
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, &repo_mutation_snapshot_key(legacy), &raw)
+        .unwrap();
+    txn.commit().unwrap();
+    let recovered = vault.recover_prepared_repo_mutations(&reference).unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].entry.status, RepoMutationStatus::Applied);
+    vault.recover_repo_snapshot(&reference, legacy).unwrap();
+    assert_eq!(fs::read(repo.path().join("README.md")).unwrap(), b"base\n");
+}
+
+#[path = "tests/reviewed_stack.rs"]
+mod reviewed_stack;
+
+#[test]
+fn standalone_reviewed_document_crash_resumes_exact_commit_once() {
+    use crate::critic::CritiqueVerdict;
+    let (dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let proposal = reviewed_proposal_fixture(&vault, &repo);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    let old_head = current_head_commit(repo.path()).unwrap();
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterDocumentBeforeAction));
+    assert!(vault.apply_repo_proposal(proposal.id).is_err());
+    assert_eq!(current_head_commit(repo.path()).unwrap(), old_head);
+    let edit = vault.code_file_edit_receipt(proposal.id).unwrap().unwrap();
+    let pending = vault
+        .repo_mutation_oplog(&repo_ref(&repo))
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(pending.status, RepoMutationStatus::Prepared);
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let outcomes = vault
+        .recover_prepared_repo_mutations(&repo_ref(&repo))
+        .unwrap();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].entry.seq, pending.seq);
+    assert_eq!(outcomes[0].entry.status, RepoMutationStatus::Applied);
+    assert_eq!(
+        outcomes[0].entry.expected_post_action_fork_hash,
+        pending.expected_post_action_fork_hash
+    );
+    assert_eq!(
+        std::fs::read(repo.path().join("README.md")).unwrap(),
+        proposal.content
+    );
+    assert_eq!(
+        vault.code_file_edit_receipt(proposal.id).unwrap().unwrap(),
+        edit
+    );
+    let head = current_head_commit(repo.path()).unwrap();
+    assert_ne!(head, old_head);
+    assert_eq!(
+        vault.apply_repo_proposal(proposal.id).unwrap().entry.seq,
+        pending.seq
+    );
+    assert_eq!(current_head_commit(repo.path()).unwrap(), head);
+}
+
+#[test]
+fn standalone_reviewed_document_recovery_refuses_diverged_repository() {
+    use crate::critic::CritiqueVerdict;
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let proposal = reviewed_proposal_fixture(&vault, &repo);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterDocumentBeforeAction));
+    assert!(vault.apply_repo_proposal(proposal.id).is_err());
+    let edit = vault.code_file_edit_receipt(proposal.id).unwrap().unwrap();
+    std::fs::write(repo.path().join("README.md"), b"unrelated work\n").unwrap();
+    let head = current_head_commit(repo.path()).unwrap();
+    assert!(matches!(
+        vault.recover_prepared_repo_mutations(&repo_ref(&repo)),
+        Err(Error::Code(CodeError::RepoMutationRecoveryDiverged { .. }))
+    ));
+    assert_eq!(
+        std::fs::read(repo.path().join("README.md")).unwrap(),
+        b"unrelated work\n"
+    );
+    assert_eq!(current_head_commit(repo.path()).unwrap(), head);
+    assert_eq!(
+        vault.code_file_edit_receipt(proposal.id).unwrap().unwrap(),
+        edit
+    );
+    assert_eq!(
+        vault
+            .repo_mutation_oplog(&repo_ref(&repo))
+            .unwrap()
+            .last()
+            .unwrap()
+            .status,
+        RepoMutationStatus::Prepared
+    );
+}
+
+#[test]
+fn standalone_reviewed_noop_crash_resumes_pinned_commit_without_edit_receipt() {
+    use crate::critic::CritiqueVerdict;
+    let (dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let template = reviewed_proposal_fixture(&vault, &repo);
+    let mut request = template.request().unwrap();
+    request.operation = RepoMutationOperation::CommitFile {
+        // Creating an empty file changes Git but needs no text edit operation.
+        path: "EMPTY.txt".into(),
+        content: Vec::new(),
+        message: "reviewed empty file creation".into(),
+    };
+    let proposal = vault
+        .propose_repo_mutation(request, template.catalog)
+        .unwrap();
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
+    let old_head = current_head_commit(repo.path()).unwrap();
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterDocumentBeforeAction));
+    assert!(vault.apply_repo_proposal(proposal.id).is_err());
+    assert!(vault.code_file_edit_receipt(proposal.id).unwrap().is_none());
+    assert_eq!(current_head_commit(repo.path()).unwrap(), old_head);
+    let pending = vault
+        .repo_mutation_oplog(&repo_ref(&repo))
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(pending.status, RepoMutationStatus::Prepared);
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let outcomes = vault
+        .recover_prepared_repo_mutations(&repo_ref(&repo))
+        .unwrap();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].entry.seq, pending.seq);
+    assert_eq!(outcomes[0].entry.status, RepoMutationStatus::Applied);
+    assert_eq!(
+        outcomes[0].entry.expected_post_action_fork_hash,
+        pending.expected_post_action_fork_hash
+    );
+    assert_eq!(std::fs::read(repo.path().join("EMPTY.txt")).unwrap(), b"");
+    assert!(vault.code_file_edit_receipt(proposal.id).unwrap().is_none());
+    let head = current_head_commit(repo.path()).unwrap();
+    assert_ne!(head, old_head);
+    assert_eq!(
+        vault.apply_repo_proposal(proposal.id).unwrap().entry.seq,
+        pending.seq
+    );
+    assert_eq!(current_head_commit(repo.path()).unwrap(), head);
+}
+
+#[path = "tests/export_authority.rs"]
+mod export_authority;

@@ -113,6 +113,7 @@ impl Vault {
         self.validate_origin_repo(request.repo_id, &request.repo)?;
         let _guard = lock_repository(request.repo.common_dir())?;
         let publication_id = origin_publication_id(&request)?;
+        self.require_origin_authority(&request.repo, publication_id)?;
         let existing = self.origin_publication(publication_id)?;
         if existing.as_ref().is_some_and(|record| {
             record.repo_id != request.repo_id

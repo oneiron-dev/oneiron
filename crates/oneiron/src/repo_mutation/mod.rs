@@ -1,8 +1,12 @@
 mod conflict;
 mod conflict_value;
+mod document;
 mod git;
+pub mod mount;
 mod oplog;
+pub mod proposal;
 mod queue;
+mod reviewed_stack;
 mod snapshot;
 mod support;
 mod trailer;
@@ -31,6 +35,7 @@ pub use self::types::{
 };
 
 pub(crate) use self::conflict_value::validate_repo_conflict_claim_value;
+pub(crate) use self::git::canonical_mutation_scope;
 
 // The flat repo_mutation.rs module used to provide these names to the test
 // module through `use super::*`; after the directory split the seam re-imports

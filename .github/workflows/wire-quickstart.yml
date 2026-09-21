@@ -136,6 +136,11 @@ jobs:
         run: |
           cargo build --locked -p oneiron-remote -p oneiron-napi -p oneiron-py
 
+      - name: Canonical guest SDK adaptation
+        run: |
+          python3 scripts/code-sandbox/generate.py --check
+          node scripts/tests/test_sandbox_wit.mjs
+
       - name: Shared backend contract tests
         run: cargo test --locked -p oneiron-remote
 

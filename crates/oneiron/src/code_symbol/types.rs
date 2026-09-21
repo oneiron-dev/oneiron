@@ -12,6 +12,16 @@ use super::validate::{
 };
 use crate::error::CodeError;
 
+/// Ordered producing-operation chain, from the earliest operation to the writer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeProducingOperation {
+    pub operation: EntityId,
+    pub actor: EntityId,
+    pub turn: EntityId,
+    pub activity: EntityId,
+    pub intent: EntityId,
+}
+
 pub const CODE_SYMBOL_TEXT_HASH_LEN: usize = 32;
 
 pub const CODE_SYMBOL_FINGERPRINT_LEN: usize = 32;
@@ -33,6 +43,7 @@ pub struct CodeChunk {
     pub start_line: u32,
     pub end_line: u32,
     pub content_hash: [u8; CODE_SYMBOL_TEXT_HASH_LEN],
+    pub producing_operations: Vec<CodeProducingOperation>,
 }
 
 impl CodeChunk {
@@ -48,6 +59,7 @@ impl CodeChunk {
             start_line,
             end_line,
             content_hash,
+            producing_operations: Vec::new(),
         }
     }
 
@@ -132,6 +144,7 @@ pub struct CodeSymbolRevision {
     pub chunk_indexes: Vec<u32>,
     pub provenance_claim_id: Option<EntityId>,
     pub source_session: Option<String>,
+    pub producing_operations: Vec<CodeProducingOperation>,
 }
 
 impl CodeSymbolRevision {
@@ -154,6 +167,7 @@ impl CodeSymbolRevision {
             chunk_indexes,
             provenance_claim_id,
             source_session,
+            producing_operations: Vec::new(),
         }
     }
 }
@@ -209,6 +223,7 @@ pub struct CodeSymbolBlame {
     pub code_artifact_id: EntityId,
     pub provenance_claim_id: Option<EntityId>,
     pub source_session: Option<String>,
+    pub producing_operations: Vec<CodeProducingOperation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

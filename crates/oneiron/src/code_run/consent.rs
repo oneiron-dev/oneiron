@@ -1,3 +1,6 @@
+mod recipe;
+pub use recipe::CodeConsentRecipe;
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use rmpv::Value;
@@ -54,6 +57,7 @@ pub struct ReviewContext {
     reviewer_run_id: String,
     code_artifact_refs: Vec<EntityId>,
     symbol_graph: CodeSymbolGraph,
+    risk_summary: Option<String>,
 }
 
 impl ReviewContext {
@@ -74,7 +78,12 @@ impl ReviewContext {
             reviewer_run_id,
             code_artifact_refs,
             symbol_graph,
+            risk_summary: None,
         })
+    }
+    pub fn with_risk_summary(mut self, summary: String) -> Self {
+        self.risk_summary = Some(summary);
+        self
     }
     pub(super) fn as_input(&self) -> Result<ReviewContextInput<'_>> {
         ReviewContextInput::new(
@@ -83,6 +92,10 @@ impl ReviewContext {
             &self.code_artifact_refs,
             &self.symbol_graph,
         )
+        .map(|mut input| {
+            input.risk_summary = self.risk_summary.as_deref();
+            input
+        })
     }
 }
 
@@ -91,6 +104,7 @@ pub struct ReviewContextInput<'a> {
     reviewer_run_id: &'a str,
     code_artifact_refs: &'a [EntityId],
     symbol_graph: &'a CodeSymbolGraph,
+    risk_summary: Option<&'a str>,
 }
 
 impl<'a> ReviewContextInput<'a> {
@@ -114,6 +128,7 @@ impl<'a> ReviewContextInput<'a> {
             reviewer_run_id,
             code_artifact_refs,
             symbol_graph,
+            risk_summary: None,
         })
     }
 }
@@ -279,7 +294,31 @@ fn code_emission_evidence(emission_record: EntityId) -> Value {
     Value::Map(entries)
 }
 
+/// Host facts for the human consent ask. The explanation is supplied by the
+/// reviewing agent; the engine never invents a risk assessment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeConsentRequest {
+    pub blast_radius: BlastRadiusWalk,
+    pub risk_summary: Option<String>,
+}
+
+impl CodeConsentRequest {
+    /// Attach host-computed facts to a consumer-authored human question.
+    pub fn ask_human(&self, prompt: &str) -> crate::code_run::SelfAskHumanCall {
+        let facts = serde_json::json!({
+            "reached_symbols": self.blast_radius.reached_symbols,
+            "reached_entities": self.blast_radius.reached_entities,
+            "max_depth": self.blast_radius.max_depth,
+            "risk_summary": self.risk_summary,
+        });
+        crate::code_run::SelfAskHumanCall {
+            prompt: format!("{prompt}\n{facts}"),
+        }
+    }
+}
+
 pub struct CodeEmissionAdmission {
+    pub consent_request: Option<CodeConsentRequest>,
     pub lane: ConsentLane,
     pub dreamer_run_id: String,
     pub candidate_evidence: Option<Value>,
@@ -311,6 +350,7 @@ pub fn admit_code_emission(
         .filter(|id| !id.is_empty())
         .ok_or(Error::Code(CodeError::CodeEmissionMissingDreamerRunId))?;
     let lane = consent_lane_for(tier, source);
+    let mut consent_request = None;
     let candidate_evidence = match lane {
         ConsentLane::Free => emission_record.map(code_emission_evidence),
         ConsentLane::Review => {
@@ -318,13 +358,16 @@ pub fn admit_code_emission(
             if review.authoring_dreamer_run_id != dreamer_run_id {
                 return Err(Error::Code(CodeError::CodeReviewAuthoringRunIdMismatch));
             }
-            Some(
-                BlastRadiusWalk::from_touched_symbols(review.symbol_graph, touched_symbols)?
-                    .to_evidence(review.reviewer_run_id, review.code_artifact_refs),
-            )
+            let walk = BlastRadiusWalk::from_touched_symbols(review.symbol_graph, touched_symbols)?;
+            consent_request = Some(CodeConsentRequest {
+                blast_radius: walk,
+                risk_summary: review.risk_summary.map(str::to_owned),
+            });
+            Some(walk.to_evidence(review.reviewer_run_id, review.code_artifact_refs))
         }
     };
     Ok(CodeEmissionAdmission {
+        consent_request,
         lane,
         dreamer_run_id: dreamer_run_id.to_owned(),
         candidate_evidence,
@@ -521,6 +564,24 @@ mod tests {
         )
         .expect("admission");
         assert_eq!(admission.dreamer_run_id, "run-1");
+        let mut request = admission.consent_request.expect("review ask");
+        assert_eq!(
+            request.blast_radius,
+            BlastRadiusWalk {
+                reached_symbols: 4,
+                reached_entities: 4,
+                max_depth: 2,
+            }
+        );
+        assert!(request.risk_summary.is_none());
+        request.risk_summary = Some("Review downstream callers and egress before running.".into());
+        let ask = request.ask_human("Allow this change?");
+        let facts: serde_json::Value =
+            serde_json::from_str(ask.prompt.lines().last().unwrap()).unwrap();
+        assert_eq!(facts["reached_symbols"], 4);
+        assert_eq!(facts["reached_entities"], 4);
+        assert_eq!(facts["max_depth"], 2);
+        assert_eq!(facts["risk_summary"], request.risk_summary.unwrap());
         let Value::Map(entries) = admission.candidate_evidence.expect("evidence") else {
             panic!("map")
         };

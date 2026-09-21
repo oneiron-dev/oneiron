@@ -21,6 +21,7 @@ mod owner_index;
 mod presence_scan;
 mod query_facade;
 mod rate_limit;
+mod reconciliation;
 mod route_receipts;
 mod scheduling;
 mod symbol_lease;

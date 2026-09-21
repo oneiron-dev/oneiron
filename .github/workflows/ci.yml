@@ -214,6 +214,9 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_verify.py' -v
           python3 scripts/sdk/generate.py --check
           python3 -m unittest discover -s scripts/tests -p 'test_agent_sdk.py' -v
+          python3 scripts/code-sandbox/generate.py --check
+          python3 -m unittest discover -s scripts/tests -p 'test_sandbox_wit.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_microvm_artifacts.py' -v
 
       # Keep dependency artifacts when workspace cleanup is enough to meet
       # the unchanged cap. Runs after a failure too; never changes the verdict.

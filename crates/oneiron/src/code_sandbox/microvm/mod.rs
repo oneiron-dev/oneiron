@@ -33,7 +33,7 @@ pub use self::backend::{
 };
 pub use self::credential::{
     CredentialAllowlist, CredentialDestination, CredentialEgressProxy, CredentialInjection,
-    CredentialResolver, EGRESS_PROXY_NAME, SANDBOX_EGRESS_ABI_KEY_HOST,
+    CredentialReadTransport, CredentialResolver, EGRESS_PROXY_NAME, SANDBOX_EGRESS_ABI_KEY_HOST,
     SANDBOX_EGRESS_ABI_KEY_SCHEME, egress_destination_from_args,
 };
 pub use self::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle};

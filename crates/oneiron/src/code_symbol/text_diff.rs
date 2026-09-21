@@ -5,9 +5,7 @@ use std::ops::Range;
 use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
 
-use super::rust_source::{
-    derive_rust_code_chunks_from_text_diff, is_tree_sitter_rust_source, rust_code_embedding_inputs,
-};
+use super::rust_source::{is_tree_sitter_rust_source, rust_code_embedding_inputs};
 use super::types::{CodeChunk, CodeEmbeddingInput, CodeEmbeddingVector, CodeSymbolRevision};
 use super::validate::{validate_manifest_path, validate_symbol_indexes};
 use crate::error::CodeError;
@@ -17,16 +15,13 @@ pub fn derive_code_chunks_from_text_diff(
     old_text: &str,
     new_text: &str,
 ) -> Result<Vec<CodeChunk>> {
-    validate_manifest_path(path)?;
-    if old_text == new_text {
-        return Ok(Vec::new());
-    }
-
-    if is_tree_sitter_rust_source(path) {
-        return derive_rust_code_chunks_from_text_diff(path, old_text, new_text);
-    }
-
-    derive_line_diff_code_chunks(path, old_text, new_text)
+    super::semantic_diff::semantic_code_diff(path, old_text, new_text)?
+        .into_iter()
+        .filter_map(|change| change.after)
+        .map(|version| {
+            CodeChunk::from_text(path, version.start_line, version.end_line, &version.text)
+        })
+        .collect()
 }
 
 pub fn derive_code_embedding_inputs_from_text_diff(
@@ -39,7 +34,12 @@ pub fn derive_code_embedding_inputs_from_text_diff(
     if old_text == new_text || !is_tree_sitter_rust_source(path) {
         return Ok(Vec::new());
     }
-    let changed_ranges = changed_line_ranges(old_text, new_text);
+    let changed_ranges: Vec<_> =
+        super::semantic_diff::semantic_code_diff(path, old_text, new_text)?
+            .into_iter()
+            .filter_map(|change| change.after)
+            .map(|version| (version.start_line as usize - 1)..(version.end_line as usize))
+            .collect();
     rust_code_embedding_inputs(repo_ref, path, new_text, &changed_ranges)
 }
 
@@ -60,86 +60,6 @@ pub fn embed_code_chunks(
         .collect())
 }
 
-fn derive_line_diff_code_chunks(
-    path: &str,
-    old_text: &str,
-    new_text: &str,
-) -> Result<Vec<CodeChunk>> {
-    let old_lines: Vec<&str> = old_text.lines().collect();
-    let new_lines: Vec<&str> = new_text.lines().collect();
-    if old_lines.len() == new_lines.len() {
-        return changed_equal_length_chunks(path, &old_lines, &new_lines, new_text);
-    }
-
-    let mut prefix = 0;
-    let min_len = old_lines.len().min(new_lines.len());
-    while prefix < min_len && old_lines[prefix] == new_lines[prefix] {
-        prefix += 1;
-    }
-
-    let mut suffix = 0;
-    while suffix < old_lines.len().saturating_sub(prefix)
-        && suffix < new_lines.len().saturating_sub(prefix)
-        && old_lines[old_lines.len() - 1 - suffix] == new_lines[new_lines.len() - 1 - suffix]
-    {
-        suffix += 1;
-    }
-
-    let new_end = new_lines.len().saturating_sub(suffix);
-    Ok(vec![chunk_for_line_range(
-        path, &new_lines, prefix, new_end, new_text,
-    )?])
-}
-
-pub(super) fn changed_line_ranges(old_text: &str, new_text: &str) -> Vec<Range<usize>> {
-    if old_text == new_text {
-        return Vec::new();
-    }
-
-    let old_lines: Vec<&str> = old_text.lines().collect();
-    let new_lines: Vec<&str> = new_text.lines().collect();
-    if old_lines.len() == new_lines.len() {
-        let mut ranges = Vec::new();
-        let mut index = 0;
-        while index < new_lines.len() {
-            if old_lines[index] == new_lines[index] {
-                index += 1;
-                continue;
-            }
-            let start = index;
-            index += 1;
-            while index < new_lines.len() && old_lines[index] != new_lines[index] {
-                index += 1;
-            }
-            ranges.push(start..index);
-        }
-        return ranges;
-    }
-
-    let mut prefix = 0;
-    let min_len = old_lines.len().min(new_lines.len());
-    while prefix < min_len && old_lines[prefix] == new_lines[prefix] {
-        prefix += 1;
-    }
-
-    let mut suffix = 0;
-    while suffix < old_lines.len().saturating_sub(prefix)
-        && suffix < new_lines.len().saturating_sub(prefix)
-        && old_lines[old_lines.len() - 1 - suffix] == new_lines[new_lines.len() - 1 - suffix]
-    {
-        suffix += 1;
-    }
-
-    let new_end = new_lines.len().saturating_sub(suffix);
-    let mut ranges = Vec::with_capacity(1);
-    if prefix == new_end {
-        ranges.push(prefix..prefix.saturating_add(1));
-    } else {
-        ranges.push(prefix..new_end);
-    }
-    ranges
-}
-
 pub(super) fn subtract_line_range(ranges: &mut Vec<Range<usize>>, covered: Range<usize>) {
     let mut remaining = Vec::with_capacity(ranges.len());
     for range in ranges.drain(..) {
@@ -155,66 +75,6 @@ pub(super) fn subtract_line_range(ranges: &mut Vec<Range<usize>>, covered: Range
         }
     }
     *ranges = remaining;
-}
-
-pub(super) fn source_end_line(source: &str) -> Result<u32> {
-    u32::try_from(source.lines().count().max(1)).map_err(|_| {
-        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-            "line number exceeds u32",
-        ))
-    })
-}
-
-fn changed_equal_length_chunks(
-    path: &str,
-    old_lines: &[&str],
-    new_lines: &[&str],
-    new_text: &str,
-) -> Result<Vec<CodeChunk>> {
-    let mut chunks = Vec::new();
-    let mut index = 0;
-    while index < new_lines.len() {
-        if old_lines[index] == new_lines[index] {
-            index += 1;
-            continue;
-        }
-        let start = index;
-        index += 1;
-        while index < new_lines.len() && old_lines[index] != new_lines[index] {
-            index += 1;
-        }
-        chunks.push(chunk_for_line_range(
-            path, new_lines, start, index, new_text,
-        )?);
-    }
-    Ok(chunks)
-}
-
-pub(super) fn chunk_for_line_range(
-    path: &str,
-    lines: &[&str],
-    start: usize,
-    end: usize,
-    source_text: &str,
-) -> Result<CodeChunk> {
-    let line_number = u32::try_from(start + 1).map_err(|_| {
-        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-            "line number exceeds u32",
-        ))
-    })?;
-    if start == end {
-        return CodeChunk::from_text(path, line_number, line_number, "");
-    }
-    let end_line = u32::try_from(end).map_err(|_| {
-        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-            "line number exceeds u32",
-        ))
-    })?;
-    let mut text = lines[start..end].join("\n");
-    if end == lines.len() && source_text.ends_with('\n') {
-        text.push('\n');
-    }
-    CodeChunk::from_text(path, line_number, end_line, &text)
 }
 
 pub(super) fn symbol_line_range(
