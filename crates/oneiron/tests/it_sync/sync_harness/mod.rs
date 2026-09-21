@@ -243,6 +243,8 @@ pub(crate) struct TestNode {
     /// Live windows by `YYYY-MM` key (observers attached).
     pub(crate) windows: BTreeMap<String, LoadedWindow>,
     _dir: tempfile::TempDir,
+    /// Rows that predate this node's window writes. They are not in the exchanged CRDT window.
+    initial_rows: BTreeMap<EntityId, Vec<u8>>,
 }
 
 impl TestNode {
@@ -254,6 +256,12 @@ impl TestNode {
         let dir = tempfile::tempdir().unwrap();
         let vault = Arc::new(Vault::open(dir.path(), cfg).unwrap());
         clear_policy_manifests(&vault);
+        let initial_rows = vault
+            .entities_in_learned_range(0, u64::MAX)
+            .unwrap()
+            .into_iter()
+            .map(|id| (id, vault.get_raw(&id).unwrap().expect("initial entity")))
+            .collect();
         Self {
             peer_id,
             name,
@@ -261,6 +269,7 @@ impl TestNode {
             materializer: Arc::new(Materializer::new()),
             windows: BTreeMap::new(),
             _dir: dir,
+            initial_rows,
         }
     }
 
@@ -675,6 +684,25 @@ pub(crate) fn assert_converged(a: &TestNode, b: &TestNode, key: &str) {
         );
     }
 
+    // Initial local seeds are outside this window's exchange. Keep checking
+    // them against their own byte snapshot; compare every later or shared row.
+    let in_scope = |node: &TestNode, id: &EntityId| {
+        !node.initial_rows.contains_key(id)
+            || entities.contains_key(&id.to_hex())
+            || tombstones.contains_key(&id.to_hex())
+    };
+    for node in [a, b] {
+        for (id, original) in &node.initial_rows {
+            if !in_scope(node, id) {
+                assert_eq!(
+                    node.vault.get_raw(id).unwrap().as_ref(),
+                    Some(original),
+                    "unrelated initial row changed on {}: {id:?}",
+                    node.name
+                );
+            }
+        }
+    }
     // type_index membership parity.
     let mut type_bytes = BTreeSet::new();
     for id in &live_ids {
@@ -688,6 +716,8 @@ pub(crate) fn assert_converged(a: &TestNode, b: &TestNode, key: &str) {
     for t in type_bytes {
         let mut by_type_a = a.vault.entities_by_type(t).unwrap();
         let mut by_type_b = b.vault.entities_by_type(t).unwrap();
+        by_type_a.retain(|id| in_scope(a, id));
+        by_type_b.retain(|id| in_scope(b, id));
         by_type_a.sort();
         by_type_b.sort();
         assert_eq!(
@@ -699,6 +729,8 @@ pub(crate) fn assert_converged(a: &TestNode, b: &TestNode, key: &str) {
     // temporal_learned membership parity.
     let mut learned_a = a.vault.entities_in_learned_range(0, u64::MAX).unwrap();
     let mut learned_b = b.vault.entities_in_learned_range(0, u64::MAX).unwrap();
+    learned_a.retain(|id| in_scope(a, id));
+    learned_b.retain(|id| in_scope(b, id));
     learned_a.sort();
     learned_b.sort();
     assert_eq!(

@@ -37,13 +37,13 @@ pub(super) fn task_actor_ceiling(
     }))
 }
 
-pub(super) fn consume_create_rate_slot(
+pub(super) fn record_task_create(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: EntityId,
     now: u64,
     rate_limit: TaskCreateRateLimit,
-) -> Result<bool> {
+) -> Result<u64> {
     let window_seconds = rate_limit.window_seconds.max(1);
     let window = now / window_seconds;
     // One node-local key per (actor, window_seconds), overwritten each window:
@@ -66,14 +66,11 @@ pub(super) fn consume_create_rate_slot(
         }
         None => 0,
     };
-    if count >= rate_limit.limit as u64 {
-        return Ok(false);
-    }
     let mut value = [0u8; 16];
     value[..8].copy_from_slice(&window.to_le_bytes());
     value[8..].copy_from_slice(&count.saturating_add(1).to_le_bytes());
     vault.store.vault_meta.put(wtxn, key.as_slice(), &value)?;
-    Ok(true)
+    Ok(count.saturating_add(1))
 }
 
 pub(super) fn task_create_rate_key(actor: EntityId, window_seconds: u64) -> Vec<u8> {
@@ -114,4 +111,29 @@ pub(super) fn task_create_owner_in(
     Ok(vault
         .task_authority_state_in(txn, task_ref)?
         .map(|state| state.owner_ref))
+}
+
+impl Vault {
+    /// Current engine-clock window count. This is accounting, never admission.
+    pub fn task_create_count(&self, actor: EntityId, window_seconds: u64) -> Result<u64> {
+        let window_seconds = window_seconds.max(1);
+        let txn = self.store.env.read_txn()?;
+        let Some(raw) = self
+            .store
+            .vault_meta
+            .get(&txn, &task_create_rate_key(actor, window_seconds))?
+        else {
+            return Ok(0);
+        };
+        let raw: [u8; 16] = raw
+            .as_ref()
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("tasks.create.rate"))?;
+        if u64::from_le_bytes(raw[..8].try_into().expect("window"))
+            != crate::unix_seconds_now() / window_seconds
+        {
+            return Ok(0);
+        }
+        Ok(u64::from_le_bytes(raw[8..].try_into().expect("count")))
+    }
 }

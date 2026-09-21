@@ -70,6 +70,7 @@
 mod codec;
 mod engine;
 mod model;
+mod storage_codec;
 
 pub use self::codec::{linear_event_digest, linear_operation_id, linear_sync_link_key};
 pub use self::engine::LinearSyncAdapter;
@@ -95,3 +96,5 @@ mod tests;
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use std::collections::BTreeMap;
+
+pub use crate::task_verb::VaultLinearTaskStore;

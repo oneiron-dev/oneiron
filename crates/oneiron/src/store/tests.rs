@@ -1308,6 +1308,7 @@ fn delete_retrieval_run_removes_fork_index_when_run_has_no_trace() -> Result<()>
 #[test]
 fn register_structural_kind_rejects_secret_pack_before_vault_meta_write() {
     let (_dir, vault) = open_test_vault();
+    let before = vault.store.structural_kind_registrations();
 
     let error = vault
         .register_structural_kind(
@@ -1320,7 +1321,7 @@ fn register_structural_kind_rejects_secret_pack_before_vault_meta_write() {
 
     assert_secret_scan_rejected(error, "gate.secret_scan.github_token");
     assert!(vault.structural_kind_registration(65).is_none());
-    assert!(vault.store.structural_kind_registrations().is_empty());
+    assert_eq!(vault.store.structural_kind_registrations(), before);
 }
 
 #[test]
@@ -4954,10 +4955,11 @@ fn community_store_fixture_entity_ids(vault: &Vault) -> Result<BTreeSet<EntityId
 #[test]
 fn ppr_community_store_refresh_uses_vault_meta_and_only_live_outgoing_projection() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let initial_nodes = community_store_fixture_entity_ids(&vault)?.len();
     community_store_fixture(&vault)?;
     // Seeded agent definitions are live entities too, even without graph edges.
     let expected_nodes = community_store_fixture_entity_ids(&vault)?;
-    assert_eq!(expected_nodes.len(), 100 + 7);
+    assert_eq!(expected_nodes.len(), 100 + initial_nodes);
     vault.put_edge(&entity_id(3), crate::EdgeKind::Opposes, &entity_id(4), 1.0)?;
     vault.put_edge(&entity_id(250), crate::EdgeKind::About, &entity_id(1), 1.0)?;
     {
@@ -5160,11 +5162,12 @@ fn ppr_community_store_rejects_corruption_and_stale_or_torn_replacement() -> Res
 fn ppr_community_store_excludes_local_and_pending_deletion_truth_in_same_transaction() -> Result<()>
 {
     let (_dir, vault) = open_test_vault();
+    let initial_nodes = community_store_fixture_entity_ids(&vault)?.len();
     community_store_fixture(&vault)?;
     // Only the two deleted fixture rows leave the live projection; all seven
     // seeded agent definitions and the other fixture rows must remain.
     let mut expected_nodes = community_store_fixture_entity_ids(&vault)?;
-    assert_eq!(expected_nodes.len(), 100 + 7);
+    assert_eq!(expected_nodes.len(), 100 + initial_nodes);
     assert!(expected_nodes.remove(&entity_id(1)));
     assert!(expected_nodes.remove(&entity_id(2)));
     let mut txn = vault.store.env.write_txn()?;
@@ -5182,7 +5185,7 @@ fn ppr_community_store_excludes_local_and_pending_deletion_truth_in_same_transac
         42,
         &crate::PprCommunityConfig::default(),
     )?;
-    assert_eq!(snapshot.nodes.len(), 100 + 7 - 2);
+    assert_eq!(snapshot.nodes.len(), expected_nodes.len());
     assert_eq!(
         snapshot.nodes.keys().copied().collect::<BTreeSet<_>>(),
         expected_nodes

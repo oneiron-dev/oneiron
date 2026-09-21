@@ -1246,6 +1246,7 @@ fn the_swap_plan_replays_the_accumulated_tail_without_duplicating_a_message() ->
 #[test]
 fn an_empty_product_mints_nothing_and_leaves_the_compaction_in_flight() -> Result<()> {
     let (_dir, vault) = open_vault();
+    let pending_before = pending_embedding_marker_count(&vault);
     let session = mint_session(&vault, 10);
     let actor = loom_actor(&vault, 0x6D);
     let mut driver = engine_driver(1_000);
@@ -1263,7 +1264,7 @@ fn an_empty_product_mints_nothing_and_leaves_the_compaction_in_flight() -> Resul
     );
     assert_eq!(
         pending_embedding_marker_count(&vault),
-        0,
+        pending_before,
         "and no pending-embedding marker leaks for a row that never existed"
     );
 
@@ -1289,6 +1290,7 @@ fn an_empty_product_mints_nothing_and_leaves_the_compaction_in_flight() -> Resul
 #[test]
 fn a_whitespace_only_product_is_refused_exactly_like_an_empty_one() {
     let (_dir, vault) = open_vault();
+    let pending_before = pending_embedding_marker_count(&vault);
     let session = mint_session(&vault, 10);
     let actor = loom_actor(&vault, 0x6E);
     let mut driver = engine_driver(1_000);
@@ -1298,7 +1300,7 @@ fn a_whitespace_only_product_is_refused_exactly_like_an_empty_one() {
         .expect_err("whitespace is not a summary");
     invariant(refused);
     assert_eq!(summary_row_count(&vault), 0);
-    assert_eq!(pending_embedding_marker_count(&vault), 0);
+    assert_eq!(pending_embedding_marker_count(&vault), pending_before);
     assert!(driver.is_compacting());
 }
 

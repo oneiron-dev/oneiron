@@ -61,6 +61,14 @@ pub(in crate::batch) fn apply_put(
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
+    if crate::workspace_roster::is_project_type(store, entity_type) {
+        for referenced in crate::workspace_roster::validate_project_body(id, data)? {
+            reject_overlay_member_base_write(store, &referenced, origin)?;
+        }
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
+        crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
+    }
     // Publication admission reuses the write-door decode and must precede
     // gate receipts, debits, and every other write effect.
     let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {
@@ -110,68 +118,28 @@ pub(in crate::batch) fn apply_put(
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
     if let Some(body) = incoming_claim_body {
+        if let Some(prior) = store.entities.get(wtxn, id.as_bytes())?
+            && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
+        {
+            crate::blob_artifact::esign::reject_event_delete(store, wtxn, &id)?;
+        }
+        if body.predicate.starts_with("esign.") {
+            if replicated {
+                return Err(Error::InvalidClaimBody(
+                    "esign events require the local authenticated organ",
+                ));
+            }
+            if let Some(prior) = store.entities.get(wtxn, id.as_bytes())?
+                && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
+            {
+                return Err(Error::InvalidClaimBody("esign events are append-only"));
+            }
+        }
         crate::subject_model::validate_subject_model_claim_in_txn(store, wtxn, &body)?;
         crate::thread_passport::validate_thread_claim_in_txn(store, wtxn, &id, &body, replicated)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
         if is_lexical_query_hint_claim {
-            if !id
-                .as_bytes()
-                .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
-            {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint claim id must use LH prefix",
-                ));
-            }
-            let hint_value = crate::claim::decode_lexical_query_hint_value(&body.value)?;
-            let target = hint_value.target;
-            let expected_id = lexical_query_hint_claim_id(&target, &hint_value.query)?;
-            if expected_id != id {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint claim id must match target and query",
-                ));
-            }
-            if !body.stale {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint claims must be stale",
-                ));
-            }
-            if body.lifecycle != crate::claim::ClaimLifecycleStatus::Active {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint claims must be active",
-                ));
-            }
-            if target == id {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint target must not be self",
-                ));
-            }
-            if let Some(target_raw) = store.entities.get(wtxn, target.as_bytes())? {
-                let Some(target_header) = EntityMetadataHeader::parse(&target_raw) else {
-                    return Err(Error::CorruptedIndex("entity header"));
-                };
-                if target_header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-                    return Err(Error::InvalidClaimBody(
-                        "lexical query hint target must be claim",
-                    ));
-                }
-                let Ok(target_body) = crate::claim::decode_claim_body(
-                    &target_raw[ENTITY_METADATA_HEADER_LEN..],
-                    true,
-                ) else {
-                    return Err(Error::InvalidClaimBody(
-                        "lexical query hint target must be claim",
-                    ));
-                };
-                if target_body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
-                    return Err(Error::InvalidClaimBody(
-                        "lexical query hint target must not be synthetic hint",
-                    ));
-                }
-            } else if !replicated {
-                return Err(Error::InvalidClaimBody(
-                    "lexical query hint target must be claim",
-                ));
-            }
+            validate_lexical_hint_put(store, wtxn, id, &body, replicated)?;
         }
         if body.session_tag.is_some()
             && !replicated
@@ -674,6 +642,12 @@ pub(in crate::batch) fn apply_put(
         crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
     }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
+    if entity_type == ENTITY_TYPE_TASK {
+        crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
+        if body_changed {
+            crate::task_verb::note_task_write(store, wtxn, id, data)?;
+        }
+    }
     crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(
@@ -751,4 +725,71 @@ pub(in crate::batch) fn apply_put(
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })
+}
+
+fn validate_lexical_hint_put(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    body: &crate::claim::ClaimBody,
+    replicated: bool,
+) -> Result<()> {
+    if !id
+        .as_bytes()
+        .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+    {
+        return Err(Error::InvalidClaimBody(
+            "lexical query hint claim id must use LH prefix",
+        ));
+    }
+    let hint_value = crate::claim::decode_lexical_query_hint_value(&body.value)?;
+    let target = hint_value.target;
+    let expected_id = lexical_query_hint_claim_id(&target, &hint_value.query)?;
+    if expected_id != id {
+        return Err(Error::InvalidClaimBody(
+            "lexical query hint claim id must match target and query",
+        ));
+    }
+    if !body.stale {
+        return Err(Error::InvalidClaimBody(
+            "lexical query hint claims must be stale",
+        ));
+    }
+    if body.lifecycle != crate::claim::ClaimLifecycleStatus::Active {
+        return Err(Error::InvalidClaimBody(
+            "lexical query hint claims must be active",
+        ));
+    }
+    if target == id {
+        return Err(Error::InvalidClaimBody(
+            "lexical query hint target must not be self",
+        ));
+    }
+    if let Some(target_raw) = store.entities.get(txn, target.as_bytes())? {
+        let Some(target_header) = EntityMetadataHeader::parse(&target_raw) else {
+            return Err(Error::CorruptedIndex("entity header"));
+        };
+        if target_header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+            return Err(Error::InvalidClaimBody(
+                "lexical query hint target must be claim",
+            ));
+        }
+        let Ok(target_body) =
+            crate::claim::decode_claim_body(&target_raw[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
+            return Err(Error::InvalidClaimBody(
+                "lexical query hint target must be claim",
+            ));
+        };
+        if target_body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
+            return Err(Error::InvalidClaimBody(
+                "lexical query hint target must not be synthetic hint",
+            ));
+        }
+    } else if !replicated {
+        return Err(Error::InvalidClaimBody(
+            "lexical query hint target must be claim",
+        ));
+    }
+    Ok(())
 }

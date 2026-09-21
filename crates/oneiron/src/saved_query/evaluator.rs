@@ -465,6 +465,11 @@ impl SavedQueryEvaluator<'_> {
                     .map(|(_, name)| (name.clone(), edge.target))
             })
             .collect::<Vec<_>>();
+        if edge_kinds.iter().any(|kind| kind == "task_owner")
+            && let Some(owner) = self.vault.indexed_task_owner(entity_ref)?
+        {
+            targets.push(("task_owner".to_owned(), owner));
+        }
         targets.sort_unstable();
         Ok(targets)
     }

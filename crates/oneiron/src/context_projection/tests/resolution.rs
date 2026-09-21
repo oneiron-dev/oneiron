@@ -46,6 +46,9 @@ fn memory_projection_suppresses_unsurfaced_claims() {
     let (_dir, vault) = open_vault();
     // Controls first (oldest), then one claim per suppressed class as the
     // NEWER rows: suppression must not silently widen the scan.
+    let initial = resolve(&vault, ContextSpec::default())
+        .expect("initial projection")
+        .memory_sections;
     let control_a = put(
         &vault,
         0x30,
@@ -98,10 +101,11 @@ fn memory_projection_suppresses_unsurfaced_claims() {
         ),
     ];
 
-    let expected: Vec<String> = [control_b, control_a]
+    let mut expected: Vec<String> = [control_b, control_a]
         .iter()
         .map(|id| format!("health:cl_{}", id.to_hex()))
         .collect();
+    expected.extend(initial);
     // Root Default projection: exactly the two controls, newest-first;
     // no suppressed id appears anywhere.
     let root = resolve(&vault, ContextSpec::default()).expect("root resolves");

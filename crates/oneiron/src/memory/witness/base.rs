@@ -170,6 +170,16 @@ impl Memory<'_> {
                     return Ok(Some(*id));
                 }
             }
+            crate::workspace_roster::admit_room_witness(
+                self.vault,
+                wtxn,
+                self.actor,
+                self.actor_class,
+                conversation_id,
+                turn_id,
+                turn,
+                &message_ids,
+            )?;
             let mut batch = self.vault.batch_in();
             if conversation_is_new {
                 batch = batch.put(

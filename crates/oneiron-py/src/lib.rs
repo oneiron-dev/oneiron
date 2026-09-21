@@ -213,6 +213,65 @@ impl NativeClient {
         let receipts = py.detach(|| self.inner.receipts(limit)).map_err(raise)?;
         encode(&receipts)
     }
+    // BEGIN GENERATED AGENT VERBS
+    fn tasks_ask(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.ask")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.ask", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_wait(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.wait")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.wait", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.answer")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.answer", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_outcomes(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.outcomes")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.outcomes", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_messages(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.messages")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.messages", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_claim(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.claim")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.claim", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_speak(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.speak")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.speak", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+
+    // END GENERATED AGENT VERBS
 }
 
 /// The private extension module: `oneiron._native`.

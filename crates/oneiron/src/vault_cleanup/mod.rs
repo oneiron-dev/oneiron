@@ -86,6 +86,7 @@ mod cleanup_types;
 mod codec_receipts;
 mod person_provenance;
 mod proposals_archive;
+mod retention;
 mod rollout;
 mod run_record;
 mod scan;
@@ -157,3 +158,9 @@ use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY};
 use crate::vault::LiveEntityRow;
 #[cfg(test)]
 use uuid::Uuid;
+
+#[cfg(test)]
+mod retention_tests;
+
+mod attempt_retention;
+pub(crate) use attempt_retention::{attempt_is_archived, restore_task_attempts};

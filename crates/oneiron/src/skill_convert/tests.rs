@@ -404,6 +404,7 @@ fn identical_content_refuses_with_a_pointer_to_the_holder() -> Result<()> {
 #[test]
 fn an_insistent_mint_verdict_cannot_buy_a_second_holder() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let before = skill_count(&vault);
     let holder = seed_extracted_skill(&vault, "already-here", "Already here", REFINED_TREE);
     let turns = witnessed_turns(&vault, &["blinds, kettle, priorities"], 1_775_000_000);
     let refiner = StubRefiner::minting("a-brand-new-name", tree(REFINED_TREE));
@@ -412,7 +413,7 @@ fn an_insistent_mint_verdict_cannot_buy_a_second_holder() -> Result<()> {
         convert_messages_to_skill(&vault, &ConvertRequest::new(turns), &refiner, t(20), 21)?;
 
     assert_eq!(outcome, ConvertOutcome::DupPointer(holder));
-    assert_eq!(skill_count(&vault), 1);
+    assert_eq!(skill_count(&vault), before + 1);
     Ok(())
 }
 
@@ -508,6 +509,7 @@ fn a_near_duplicate_lands_a_gated_merge_proposal() -> Result<()> {
 #[test]
 fn a_merge_target_outside_the_brief_is_refused() {
     let (_tmp, vault) = temp_vault();
+    let before = skill_count(&vault);
     let unrelated = seed_extracted_skill(
         &vault,
         "invoice-chasing",
@@ -528,7 +530,11 @@ fn a_merge_target_outside_the_brief_is_refused() {
         .expect_err("an ungrounded merge target is refused");
 
     assert_eq!(error.kind(), ErrorKind::InvalidSkillBody);
-    assert_eq!(skill_count(&vault), 1, "the refusal writes nothing");
+    assert_eq!(
+        skill_count(&vault),
+        before + 1,
+        "the refusal writes nothing"
+    );
 }
 
 /// Refinement runs OUTSIDE the write transaction, so the target it diffed
@@ -597,6 +603,7 @@ fn a_target_superseded_during_refinement_is_refused_at_the_write_door() -> Resul
 #[test]
 fn live_room_refs_are_refused_before_the_refiner_runs() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let before = skill_count(&vault);
     let session = vault
         .off_record_session_vault()
         .enter("sess-convert-room", OffRecordBackendClass::Local)?;
@@ -627,7 +634,7 @@ fn live_room_refs_are_refused_before_the_refiner_runs() -> Result<()> {
         0,
         "the room's words must never reach the refinement tier"
     );
-    assert_eq!(skill_count(&vault), 0);
+    assert_eq!(skill_count(&vault), before);
     session.close()?;
     Ok(())
 }

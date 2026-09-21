@@ -314,7 +314,7 @@ impl Vault {
 /// carries decide what a facet-scoped grant authorizes. Reading base here
 /// while every other edge scan in that read reads the union would evaluate a
 /// session's grants against a graph the session cannot see.
-pub(super) fn facet_refs_in_db(
+pub(crate) fn facet_refs_in_db(
     db: &crate::overlay_db::OverlayDb,
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,

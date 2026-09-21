@@ -545,6 +545,7 @@ fn task_page_slot_in(
             Some(match assignee {
                 TaskAssignee::Human { .. } => format!("person:{handle}"),
                 TaskAssignee::Dreamer
+                | TaskAssignee::AnswerHolders
                 | TaskAssignee::AgentDef { .. }
                 | TaskAssignee::Peer { .. } => handle,
             })

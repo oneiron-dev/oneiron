@@ -139,6 +139,7 @@ pub(super) struct TaskVerbBody {
     pub(super) owner_ref: String,
     pub(super) assignee: Option<TaskAssignee>,
     pub(super) label: Option<String>,
+    pub(super) mirror_fields: Option<crate::linear_sync::MirroredTaskFields>,
     pub(super) spec: Value,
     pub(super) consult: Option<ConsultPayload>,
     pub(super) ttl: Option<TaskTtl>,

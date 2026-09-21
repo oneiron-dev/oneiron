@@ -23,6 +23,7 @@
 //! instead of collapsing into `INTERNAL_SERVER_ERROR`. `crate::error` is not
 //! edited to admit these codes; that is the whole point of the local type.
 
+mod agent_verbs;
 #[cfg(test)]
 mod tests;
 
@@ -74,6 +75,7 @@ const FACADE_DEFAULT_RECEIPTS_LIMIT: usize = 100;
 /// census a flat list a contract test can compare against the catalog.
 pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
     Router::new()
+        .merge(agent_verbs::routes())
         .route("/witness", post(facade_witness))
         .route("/claim_upsert", post(facade_claim_upsert))
         .route("/recall", post(facade_recall))

@@ -16,12 +16,17 @@ mod dormant_magistrate;
 mod entity_delta_facade;
 mod follow_up;
 mod lifecycle_facade;
+mod linear_store;
+mod owner_index;
 mod presence_scan;
 mod query_facade;
 mod rate_limit;
 mod route_receipts;
+mod scheduling;
+mod symbol_lease;
 mod terminal_state;
 mod verb_kind;
+mod wave_port;
 mod wire_decode;
 mod wire_encode;
 
@@ -55,7 +60,43 @@ pub use terminal_state::{
 pub use verb_kind::{TASKS_VERBS, TaskAssignee, TaskKind, TaskTtl, TasksVerb};
 
 pub(crate) use create_validation::{
-    reject_born_expired_task_deadline, reject_incoherent_task_terminal,
+    completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,
     settled_task_result_binding, task_human_assignee, task_is_terminal,
 };
 pub(crate) use rate_limit::task_create_owner;
+
+pub(crate) use owner_index::index_owner_fact;
+
+#[cfg(test)]
+mod owner_index_tests;
+
+pub use symbol_lease::{SymbolLease, SymbolLeaseOutcome};
+pub(crate) use symbol_lease::{acquire_symbols, symbols_ready};
+
+pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_success_in_store};
+
+#[cfg(test)]
+mod symbol_lease_tests;
+
+pub use wave_port::VaultWaveTaskPort;
+
+pub use linear_store::VaultLinearTaskStore;
+pub(crate) use linear_store::{forget_task_mirror, note_task_write};
+
+#[cfg(test)]
+mod production_ports_tests;
+
+pub(crate) use symbol_lease::forget_symbols;
+
+mod ask;
+mod ask_wait;
+pub use ask::{TaskAskAnswer, TaskAskHandle, TaskAskReceipt, TaskAskSpec};
+pub use ask_wait::TaskWaitOutcome;
+
+#[cfg(test)]
+mod ask_tests;
+
+pub mod sdk;
+
+#[cfg(test)]
+mod ask_outcome_tests;

@@ -8,6 +8,7 @@ use super::*;
 fn witness_refuses_a_human_or_agent_actor_claiming_system_authorship() {
     for actor_class in [EdgeActorClass::Human, EdgeActorClass::Agent] {
         let (_dir, vault) = open_vault();
+        let edges_before = witness_edge_count(&vault);
         let actor = put_person(&vault, 0x31);
         let facade = vault.memory(actor, actor_class);
 
@@ -33,7 +34,7 @@ fn witness_refuses_a_human_or_agent_actor_claiming_system_authorship() {
             "class {actor_class:?}",
         );
         // All-or-nothing: the LEGITIMATE user row in the same call is gone too.
-        assert_witness_left_nothing(&vault, "the owner speaks");
+        assert_witness_left_nothing(&vault, "the owner speaks", edges_before);
     }
 }
 
@@ -200,6 +201,7 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
 #[test]
 fn witness_refuses_an_arbitrary_verified_system_actor_without_ceiling_row() {
     let (_dir, vault) = open_vault();
+    let edges_before = witness_edge_count(&vault);
     let machine = put_machine(&vault, 0x5F);
     install_default_policy_manifest(&vault);
     let err = system_facade_for(&vault, machine)
@@ -222,7 +224,7 @@ fn witness_refuses_an_arbitrary_verified_system_actor_without_ceiling_row() {
             .iter()
             .any(|code| code == "gate.deny.witness_message.author_not_authorized"),
     );
-    assert_witness_left_nothing(&vault, "unapproved engine voice");
+    assert_witness_left_nothing(&vault, "unapproved engine voice", edges_before);
 }
 
 /// A proposed-only actor ceiling refuses witnessed messages because the
@@ -230,6 +232,7 @@ fn witness_refuses_an_arbitrary_verified_system_actor_without_ceiling_row() {
 #[test]
 fn witness_ceiling_row_clamping_the_actor_refuses_every_row() {
     let (_dir, vault) = open_vault();
+    let edges_before = witness_edge_count(&vault);
     let machine = put_machine(&vault, 0xA9);
     append_actor_ceiling_rows(
         &vault,
@@ -257,7 +260,7 @@ fn witness_ceiling_row_clamping_the_actor_refuses_every_row() {
             .any(|code| code == "gate.pending.actor_ceiling"),
         "the refusal must identify the actor ceiling",
     );
-    assert_witness_left_nothing(&vault, "clamped answer");
+    assert_witness_left_nothing(&vault, "clamped answer", edges_before);
 }
 
 /// The hidden/hostile-metadata case, at the write path. Neither half is enough
@@ -280,6 +283,7 @@ fn witness_refuses_a_hidden_system_row_with_hostile_metadata() {
 
     // Human actor: refused on AUTHORITY before the metadata is even reached.
     let (_dir, vault) = open_vault();
+    let edges_before = witness_edge_count(&vault);
     let facade = facade_for(&vault, put_person(&vault, 0xB1));
     let err = facade
         .witness(&WitnessTurn {
@@ -293,11 +297,12 @@ fn witness_refuses_a_hidden_system_row_with_hostile_metadata() {
         })
         .expect_err("a hidden forged system row is refused");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
-    assert_witness_left_nothing(&vault, "cover story");
+    assert_witness_left_nothing(&vault, "cover story", edges_before);
 
     // Machine actor: refused on the METADATA side channel. Authority to author
     // engine rows is not authority to smuggle a second copy of the envelope.
     let (_dir, vault) = open_vault();
+    let edges_before = witness_edge_count(&vault);
     let facade = authorized_system_facade_for(&vault, put_machine(&vault, 0xB3));
     let err = facade
         .witness(&WitnessTurn {
@@ -317,7 +322,7 @@ fn witness_refuses_a_hidden_system_row_with_hostile_metadata() {
         "got {:?}",
         err.message
     );
-    assert_witness_left_nothing(&vault, "cover story");
+    assert_witness_left_nothing(&vault, "cover story", edges_before);
 }
 
 /// Malformed envelope axes are refused at the write path, with the entire
@@ -411,6 +416,7 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
 
     for (label, hostile) in cases {
         let (_dir, vault) = open_vault();
+        let edges_before = witness_edge_count(&vault);
         let facade = facade_for(&vault, put_person(&vault, 0xB5));
         // Sharing the speaker isolates the envelope axis under test.
         let legitimate = witness_message(0, hostile.author, "legitimate half");
@@ -433,7 +439,7 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
                 .any(|code| code == "gate.deny.witness_message.malformed_envelope"),
             "{label}",
         );
-        assert_witness_left_nothing(&vault, "legitimate half");
+        assert_witness_left_nothing(&vault, "legitimate half", edges_before);
     }
 }
 
@@ -443,6 +449,7 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
 #[test]
 fn witness_refuses_out_of_range_and_colliding_message_orders() {
     let (_dir, vault) = open_vault();
+    let edges_before = witness_edge_count(&vault);
     let facade = facade_for(&vault, put_person(&vault, 0xB7));
     let conversation_hex = EntityId::from_bytes([0xB8; 16]).expect("conv").to_hex();
 
@@ -471,7 +478,7 @@ fn witness_refuses_out_of_range_and_colliding_message_orders() {
         })
         .expect_err("two messages may not claim one position");
     assert_eq!(collision.code, MEMORY_CODE_BAD_REQUEST);
-    assert_witness_left_nothing(&vault, "first claim");
+    assert_witness_left_nothing(&vault, "first claim", edges_before);
 }
 
 /// The witness interface accepts the complete legal order domain and refuses
@@ -773,10 +780,7 @@ fn witness_append_rejects_a_different_conversation_atomically() {
         "the refused call minted no fresh CONVERSATION"
     );
     assert_eq!(
-        vault
-            .entities_by_type(ENTITY_TYPE_CONVERSATION)
-            .expect("conversations")
-            .len(),
+        witness_conversations(&vault).expect("conversations").len(),
         1,
         "conversation A remains the only conversation"
     );

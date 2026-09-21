@@ -36,7 +36,7 @@ struct RematLedger {
     marked: HashSet<String>,
     healed: Vec<EntityId>,
     terminal_quarantines: Vec<EntityId>,
-    pending_subject_model_dependencies: HashSet<EntityId>,
+    pending_entity_dependencies: HashSet<EntityId>,
     count: u32,
 }
 
@@ -73,7 +73,7 @@ pub fn forward_rematerialize(
         marked,
         healed: Vec::new(),
         terminal_quarantines: Vec::new(),
-        pending_subject_model_dependencies: HashSet::new(),
+        pending_entity_dependencies: HashSet::new(),
         count: 0u32,
     };
 
@@ -89,10 +89,10 @@ pub fn forward_rematerialize(
     // still discharge it through `cleared`, with delete-safety precedence.
     ledger
         .healed
-        .retain(|id| !ledger.pending_subject_model_dependencies.contains(id));
+        .retain(|id| !ledger.pending_entity_dependencies.contains(id));
     ledger
         .terminal_quarantines
-        .retain(|id| !ledger.pending_subject_model_dependencies.contains(id));
+        .retain(|id| !ledger.pending_entity_dependencies.contains(id));
     if !tombstone_outcome.purge_failures.is_empty()
         || !tombstone_outcome.cleared.is_empty()
         || !ledger.healed.is_empty()

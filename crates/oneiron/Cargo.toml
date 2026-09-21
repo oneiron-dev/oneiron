@@ -19,6 +19,9 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
+lopdf = { version = "=0.44.0", default-features = false }
+qrcode = { version = "=0.14.1", default-features = false }
 heed = { workspace = true }
 half = "2"
 uuid = { workspace = true }
@@ -120,6 +123,8 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls-native-roots",
 ] }
 dom_smoothie = "0.18"
+# Same HTML5 parser already used by web_fetch; native template DOM, no browser.
+dom_query = "=0.28.0"
 # The bounded body is decoded by this module rather than by `Response::text`,
 # which buffers the whole body before it can be bounded. `encoding_rs` is the
 # WHATWG encoding standard's implementation and is already in the resolved
@@ -190,6 +195,9 @@ test-hooks = []
 test-support = []
 
 [dev-dependencies]
+async-trait = "0.1"
+rcgen = "0.14"
+p256 = { workspace = true, features = ["pkcs8"] }
 # Self dev-dependency that turns on `test-support` for this crate's own tests
 # (the effect-spine oracle needs the unseeded-vault opening seam). Keeps
 # nextest / CI / verify.sh flag-free — no --features needed.

@@ -20,6 +20,9 @@ use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
+use crate::sync::local_claims::{
+    claim_sync_allowed, local_claim_sync_allowed, withheld_claim_carriers,
+};
 use loro::{CommitOptions, ExportMode, LoroDoc, VersionVector};
 
 /// THE SYNC WINDOW-PACKING EGRESS DOOR (ARCH-0052 P6, owner ruling
@@ -139,6 +142,40 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
     Ok(removed)
 }
 
+/// Scrubs local-only claims without retaining their old set operations in
+/// any subsequent exported snapshot or delta.
+pub(super) fn scrub_local_claim_carriers(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<bool> {
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    let (mut keys, ids) = withheld_claim_carriers(vault, &entities, &edges)?;
+    if keys.is_empty() && ids.is_empty() {
+        return Ok(false);
+    }
+    // Pin before deleting anything: if persistence fails, a retry must not
+    // mistake an already-scrubbed live map for history that is safe to export.
+    require_history_free_window(vault, key)?;
+    map_for_each_value_bytes(&entities, |raw_key, _| {
+        if EntityId::from_hex(raw_key).is_ok_and(|id| ids.contains(&id)) {
+            keys.push(raw_key.to_owned());
+        }
+    });
+    keys.sort_unstable();
+    keys.dedup();
+    let mut removed = !keys.is_empty();
+    for raw_key in keys {
+        map_delete(&entities, &raw_key)?;
+    }
+    removed |= delete_edges_touching_entities(&edges, &ids)?;
+    if removed {
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
+    Ok(removed)
+}
+
 /// Exports a full-window response without carrying pre-scrub operation bytes.
 /// The peer VV is still decoded first so malformed-VV requests never become a
 /// full-export fallback.
@@ -154,7 +191,8 @@ pub fn export_window_updates_since(
             source,
         })
     })?;
-    let scrubbed = scrub_secret_custody_carriers(vault, key, doc)?;
+    let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
+    let scrubbed = scrub_secret_custody_carriers(vault, key, doc)? || claims_scrubbed;
     if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -181,6 +219,8 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<Vec<u8>> {
+    scrub_local_claim_carriers(vault, key, doc)?;
+    scrub_secret_custody_carriers(vault, key, doc)?;
     if history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -210,6 +250,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
     }
     drop(rtxn);
 
+    scrub_local_claim_carriers(vault, window_key, doc)?;
     let entities_map = doc.get_map("entities");
     let tombstones_map = doc.get_map("tombstones");
     let edges_map = doc.get_map("edges");
@@ -239,15 +280,11 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             continue;
         }
 
-        if is_unsyncable_secret_custody(&raw) || skip_companion_register_sync_mirror(&raw)? {
-            let mut wrote_doc = false;
-            if map_contains_binary(&entities_map, &hex_id) {
-                map_delete(&entities_map, &hex_id)?;
-                wrote_doc = true;
-            }
-            if delete_edges_touching_entities(&edges_map, &HashSet::from([*id]))? {
-                wrote_doc = true;
-            }
+        if !claim_sync_allowed(&raw)
+            || is_unsyncable_secret_custody(&raw)
+            || skip_companion_register_sync_mirror(&raw)?
+        {
+            let wrote_doc = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if wrote_doc {
                 require_history_free_window(vault, window_key)?;
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
@@ -304,7 +341,9 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 // purge). Plain containment = skip on this branch (legacy
                 // values are hard); becomes reason-aware (skip iff the
                 // tombstone decodes HARD) once tombstone v2 lands in M4-06.
-                if tombstone_map_contains_id(&tombstones_map, &edge.target) {
+                if !local_claim_sync_allowed(vault, &edge.target)?
+                    || tombstone_map_contains_id(&tombstones_map, &edge.target)
+                {
                     continue;
                 }
                 if map_contains_binary(&edges_map, &edge_key) {
@@ -354,7 +393,9 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
             // Same tombstoned-target gate as the byte-equal path above:
             // the full mirror must not re-insert edges to deleted targets.
-            if tombstone_map_contains_id(&tombstones_map, &edge.target) {
+            if !local_claim_sync_allowed(vault, &edge.target)?
+                || tombstone_map_contains_id(&tombstones_map, &edge.target)
+            {
                 continue;
             }
             let edge_val = encode_edge_value_for_crdt(

@@ -272,6 +272,9 @@ pub enum ErrorKind {
     VaultCleanupProposalNotFound,
     VaultCleanupWakeTriggerRejected,
     VaultRead,
+    InvalidProjectBody,
+    InvalidProjectRoomBody,
+    ProjectDependencyPending,
 }
 
 /// Crate error type.

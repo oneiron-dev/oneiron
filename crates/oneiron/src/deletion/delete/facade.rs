@@ -67,6 +67,11 @@ impl Vault {
                 "cleanup archives require the cleanup proposal/decision door",
             ));
         }
+        crate::blob_artifact::esign::reject_event_delete(
+            &self.store,
+            &self.store.env.read_txn()?,
+            id,
+        )?;
         let requested_at = unix_seconds_now();
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());

@@ -67,3 +67,5 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 #[cfg(test)]
 use rmpv::Value;
+
+pub mod esign;

@@ -317,7 +317,10 @@ impl Vault {
         gate: Option<&GatedDeletion<'_>>,
     ) -> Result<heed::RwTxn<'_>> {
         let mut wtxn = self.store.env.write_txn()?;
-        if let Err(refusal) = reverify_deletion_authority_before_publication(gate, &wtxn) {
+        if let Err(refusal) =
+            crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
+                .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
+        {
             self.discard_staged_deletion_gate_recovery_in_txn(&mut wtxn, id, value, gate_decision)?;
             self.withdraw_own_pending_tombstone_in_txn(&mut wtxn, window_key.as_str(), id, value)?;
             wtxn.commit()?;

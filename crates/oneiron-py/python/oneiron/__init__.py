@@ -23,6 +23,7 @@ import os
 from typing import Any, Callable, TypeVar
 
 from ._native import NativeClient as _NativeClient
+from .agent_verbs import TasksVerbs as _TasksVerbs, RoomsVerbs as _RoomsVerbs
 
 __all__ = ["Oneiron", "OneironError"]
 
@@ -111,6 +112,8 @@ class Oneiron:
     def __init__(self, client: _NativeClient) -> None:
         """Internal-only wrapper seam; use :meth:`open` or :meth:`connect`."""
         self._client = client
+        self.tasks = _TasksVerbs(self._agent_verb)
+        self.rooms = _RoomsVerbs(self._agent_verb)
 
     @classmethod
     def open(
@@ -205,3 +208,6 @@ class Oneiron:
     def receipts(self, limit: int = 100) -> list[dict[str, Any]]:
         """Governance receipts, newest first."""
         return json.loads(_translate(lambda: self._client.receipts(limit)))
+
+    def _agent_verb(self, method: str, value: object) -> Any:
+        return json.loads(_translate(lambda: getattr(self._client, method)(json.dumps(value))))

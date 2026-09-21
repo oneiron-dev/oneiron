@@ -364,6 +364,37 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
         "an in-world claim must clear the world ceiling: {in_world_read:?}"
     );
 
+    // Wait registers an actor-wide durable C9 context, even before reading its
+    // ask row. In-scope addressed rows must not bypass unscoped-call admission.
+    for (credential, scope, target) in [
+        (cred_facet_a, &facet_only_a, owned),
+        (cred_world_a, &world_only_a, in_world),
+        (cred_wide, &vault_wide, owned),
+    ] {
+        let (_, result) = route_json(
+            server.clone(),
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                credential,
+                "wait-scope",
+                "tasks.wait",
+                mcp_merge_args(
+                    mcp_scoped_envelope(actor_ref, "read_tasks", scope),
+                    json!({"arguments": {"task_ref": target.to_hex(), "key": "scoped-wait"}}),
+                ),
+            ),
+        )
+        .await;
+        if scope.is_narrow() {
+            assert_mcp_structured_error(&result, "mcp_scope_refused");
+        } else {
+            assert_ne!(
+                result["error"]["data"]["error_code"],
+                Value::from("mcp_scope_refused")
+            );
+        }
+    }
+
     // No cross WRITE: the refusal happens BEFORE the ack ever dispatches.
     let foreign_write = mcp_refusal(
         &server,

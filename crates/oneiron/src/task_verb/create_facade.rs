@@ -28,7 +28,7 @@ use super::create_validation::{
     ValidatedTaskCreate, human_route_refusal, task_create_proposal_value, task_route_dedupe_key,
     validate_task_create,
 };
-use super::rate_limit::{consume_create_rate_slot, task_actor_ceiling, task_verb_contract};
+use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
 use super::terminal_state::TaskExecutionState;
 use super::verb_kind::{TaskAssignee, TasksVerb};
@@ -61,8 +61,7 @@ impl Memory<'_> {
         self.tasks_create_with_engine_rate_limit(spec, TaskCreateRateLimit::default())
     }
 
-    /// Compatibility entry point whose quota arguments cannot override the
-    /// engine-owned default.
+    /// Accounting entry point. The former quota never limits admission.
     #[cfg(not(test))]
     pub fn tasks_create_with_rate_limit(
         &self,
@@ -72,7 +71,7 @@ impl Memory<'_> {
         self.tasks_create(spec)
     }
 
-    /// Crate-test seam for exercising exact quota boundaries.
+    /// Crate-test seam for choosing an accounting window.
     #[cfg(test)]
     pub(crate) fn tasks_create_with_rate_limit(
         &self,
@@ -95,21 +94,19 @@ impl Memory<'_> {
         // The typed shape is settled BEFORE any write transaction opens: an
         // invalid consult never reaches the TASK write, so a rejected request
         // leaves no partial entity and burns no rate slot.
+        if spec.assignee == Some(TaskAssignee::AnswerHolders) {
+            return Err(crate::memory::MemoryError::bad_request(
+                "answer-holder tasks use tasks.ask",
+            ));
+        }
         let validated = validate_task_create(self.vault(), spec, now)?;
         let direct = self.with_verified_actor_write_txn(|wtxn| {
             let ceiling =
                 task_actor_ceiling(self.vault(), &*wtxn, self.actor(), self.actor_class())?;
-            if ceiling != PolicyApprovalCeiling::Auto
-                || !consume_create_rate_slot(
-                    self.vault(),
-                    wtxn,
-                    self.actor(),
-                    rate_now,
-                    rate_limit,
-                )?
-            {
+            if ceiling != PolicyApprovalCeiling::Auto {
                 return Ok(None);
             }
+            record_task_create(self.vault(), wtxn, self.actor(), rate_now, rate_limit)?;
 
             let owner_ref = spec.owner_ref.unwrap_or_else(|| self.actor());
             let task_ref = self.mint_task_in_txn(
@@ -137,10 +134,8 @@ impl Memory<'_> {
             });
         }
 
-        // Quota overflow falls through to a proposal rather than a refusal
-        // (ONE-1696 §4, own-agent lane), so a caller retrying past quota is
-        // asking the SAME question again. It parks on the row already waiting
-        // for the owner instead of minting one row per attempt.
+        // Authority ceilings still park proposals. Accounting never changes
+        // admission: OF-520 makes this a count-with-receipt lane at every rate.
         let proposal_ref = match self.open_create_proposal_for_spec(spec, now)? {
             Some(existing) => existing,
             None => {
@@ -242,6 +237,7 @@ impl Memory<'_> {
             owner_ref: owner_ref.to_hex(),
             assignee: validated.assignee,
             label,
+            mirror_fields: None,
             spec: validated.spec.clone(),
             consult: validated.consult.clone(),
             ttl: validated.ttl,
@@ -300,6 +296,9 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<TaskRouteOutcome> {
         match validated.assignee {
+            Some(TaskAssignee::AnswerHolders) => Err(crate::memory::MemoryError::bad_request(
+                "asks have no realizing attempt",
+            )),
             // Absent assignee is the schema-v1 representation of the Dreamer
             // lane and routes identically — old rows are never rewritten.
             None | Some(TaskAssignee::Dreamer) => {

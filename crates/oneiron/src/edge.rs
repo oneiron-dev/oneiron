@@ -674,3 +674,6 @@ pub(crate) fn encode_edge_value(
 
 #[cfg(test)]
 mod tests;
+
+mod relation;
+pub(crate) use relation::parse_relation;

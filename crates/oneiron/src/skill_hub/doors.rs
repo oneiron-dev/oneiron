@@ -136,14 +136,17 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        self.import_skill_from_hub_with_scans(
+        let mut wtxn = self.store.env.write_txn()?;
+        let entity = self.import_skill_from_hub_in_txn(
+            &mut wtxn,
             hub_ref,
             package,
             preferred_id,
-            &[],
             occurred,
             learned_at,
-        )
+        )?;
+        wtxn.commit()?;
+        Ok(entity)
     }
 
     pub(super) fn import_skill_from_hub_with_scans(
@@ -152,6 +155,39 @@ impl Vault {
         package: &HubPackage,
         preferred_id: EntityId,
         scans: &[super::SkillScanReceipt],
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let entity = self.import_skill_from_hub_in_txn(
+            &mut wtxn,
+            hub_ref,
+            package,
+            preferred_id,
+            occurred,
+            learned_at,
+        )?;
+        let content_hash = package.content_hash()?;
+        for receipt in scans {
+            self.ingest_skill_scan_verdict_in_txn(
+                &mut wtxn,
+                &entity,
+                content_hash,
+                receipt,
+                occurred,
+                learned_at,
+            )?;
+        }
+        wtxn.commit()?;
+        Ok(entity)
+    }
+
+    pub(super) fn import_skill_from_hub_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        hub_ref: &HubRef,
+        package: &HubPackage,
+        preferred_id: EntityId,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
@@ -180,67 +216,67 @@ impl Vault {
             )));
         }
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let entity =
-            match self.imported_skill_entity_for_content_hash_in_txn(&wtxn, content_hash)? {
-                Some(existing) => {
-                    let existing_record = self.read_skill_record_in_txn(&wtxn, &existing)?;
-                    if existing_record.skill_id != package.record.skill_id {
-                        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                            "hub import content hash collides with a different skill id",
-                        )));
-                    }
-                    existing
+        let entity = match self.imported_skill_entity_for_content_hash_in_txn(wtxn, content_hash)? {
+            Some(existing) => {
+                let existing_record = self.read_skill_record_in_txn(wtxn, &existing)?;
+                if existing_record.skill_id != package.record.skill_id {
+                    return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                        "hub import content hash collides with a different skill id",
+                    )));
                 }
-                None => {
-                    let mut candidate = package.record.clone();
-                    candidate.lifecycle_status = SkillLifecycle::Candidate;
-                    // ONE-1892: consent is a LOCAL act, so the import door
-                    // stamps it rather than copying it. A hub package is
-                    // untrusted input all the way down — it declares its own
-                    // `approvalStatus`, and an `approved` stamp arriving that
-                    // way would be a remote party answering the owner's
-                    // question for him: the activation consult only escalates
-                    // `auto`, so a self-declared approval would walk a
-                    // credential-bearing skill into `active` with no tap. The
-                    // sync door already holds this law one line at a time
-                    // ("canonical approval/lifecycle state stays local"); the
-                    // import door is where the FIRST stamp is minted, and
-                    // `auto` — the same default a locally born candidate gets
-                    // — is the only honest one.
-                    candidate.approval_status = ClaimApprovalStatus::Auto;
-                    candidate.content_hash = Some(content_hash);
-                    self.apply_hub_import_skill_record(
-                        &mut wtxn,
-                        &preferred_id,
-                        &candidate,
-                        occurred,
-                        learned_at,
-                    )?;
-                    self.write_admitted_capability_surface_in_txn(
-                        &mut wtxn,
-                        &preferred_id,
-                        &package.capabilities,
-                    )?;
-                    preferred_id
-                }
-            };
+                existing
+            }
+            None => {
+                let mut candidate = package.record.clone();
+                candidate.lifecycle_status = SkillLifecycle::Candidate;
+                // ONE-1892: consent is a LOCAL act, so the import door
+                // stamps it rather than copying it. A hub package is
+                // untrusted input all the way down — it declares its own
+                // `approvalStatus`, and an `approved` stamp arriving that
+                // way would be a remote party answering the owner's
+                // question for him: the activation consult only escalates
+                // `auto`, so a self-declared approval would walk a
+                // credential-bearing skill into `active` with no tap. The
+                // sync door already holds this law one line at a time
+                // ("canonical approval/lifecycle state stays local"); the
+                // import door is where the FIRST stamp is minted, and
+                // `auto` — the same default a locally born candidate gets
+                // — is the only honest one.
+                candidate.approval_status = ClaimApprovalStatus::Auto;
+                candidate.content_hash = Some(content_hash);
+                self.apply_hub_import_skill_record(
+                    wtxn,
+                    &preferred_id,
+                    &candidate,
+                    occurred,
+                    learned_at,
+                )?;
+                self.write_admitted_capability_surface_in_txn(
+                    wtxn,
+                    &preferred_id,
+                    &package.capabilities,
+                )?;
+                preferred_id
+            }
+        };
 
-        match self.read_admitted_capability_surface_in_txn(&wtxn, &entity)? {
+        match self.read_admitted_capability_surface_in_txn(wtxn, &entity)? {
             Some(admitted) if admitted != package.capabilities => {
                 return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                     "matching content hash carries conflicting capabilities",
                 )));
             }
             Some(_) => {}
-            None => self.write_admitted_capability_surface_in_txn(
-                &mut wtxn,
-                &entity,
-                &package.capabilities,
-            )?,
+            None => {
+                self.write_admitted_capability_surface_in_txn(
+                    wtxn,
+                    &entity,
+                    &package.capabilities,
+                )?;
+            }
         }
         self.append_hub_provenance_in_txn(
-            &mut wtxn,
+            wtxn,
             &entity,
             content_hash,
             hub_ref,
@@ -252,24 +288,14 @@ impl Vault {
         // delegate here, so imported bytes carry a scanner receipt without any
         // caller remembering to ask for one.
         self.scan_and_ingest_on_import_in_txn(
-            &mut wtxn,
+            wtxn,
             &entity,
             content_hash,
             package,
             occurred,
             learned_at,
         )?;
-        for receipt in scans {
-            self.ingest_skill_scan_verdict_in_txn(
-                &mut wtxn,
-                &entity,
-                content_hash,
-                receipt,
-                occurred,
-                learned_at,
-            )?;
-        }
-        wtxn.commit()?;
+
         Ok(entity)
     }
 

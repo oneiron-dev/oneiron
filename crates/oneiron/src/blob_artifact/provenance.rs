@@ -23,7 +23,12 @@ const PROVENANCE_AGENT_RUN: &str = "agent_run";
 #[non_exhaustive]
 pub enum BlobVersionProvenance {
     UserUpload,
-    AgentRun { run_ref: String },
+    /// Bearer-authorized input is user-stated data, not an authenticated
+    /// owner assertion. The blob-version claim remains Proposed.
+    CapabilityUpload,
+    AgentRun {
+        run_ref: String,
+    },
 }
 
 impl BlobVersionProvenance {
@@ -31,6 +36,7 @@ impl BlobVersionProvenance {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::UserUpload => PROVENANCE_USER_UPLOAD,
+            Self::CapabilityUpload => "capability_upload",
             Self::AgentRun { .. } => PROVENANCE_AGENT_RUN,
         }
     }
@@ -38,7 +44,7 @@ impl BlobVersionProvenance {
     #[must_use]
     pub fn run_ref(&self) -> Option<&str> {
         match self {
-            Self::UserUpload => None,
+            Self::UserUpload | Self::CapabilityUpload => None,
             Self::AgentRun { run_ref } => Some(run_ref),
         }
     }
@@ -46,6 +52,7 @@ impl BlobVersionProvenance {
     pub(super) fn from_parts(kind: &str, run_ref: Option<String>) -> Result<Self> {
         match (kind, run_ref) {
             (PROVENANCE_USER_UPLOAD, None) => Ok(Self::UserUpload),
+            ("capability_upload", None) => Ok(Self::CapabilityUpload),
             (PROVENANCE_AGENT_RUN, Some(run_ref)) => Ok(Self::AgentRun { run_ref }),
             _ => Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "provenance must be user_upload without run_ref or agent_run with run_ref",
@@ -55,7 +62,7 @@ impl BlobVersionProvenance {
 
     pub(super) fn claim_source(&self) -> ClaimSource {
         match self {
-            Self::UserUpload => ClaimSource::UserStated,
+            Self::UserUpload | Self::CapabilityUpload => ClaimSource::UserStated,
             Self::AgentRun { .. } => ClaimSource::Generated,
         }
     }
@@ -66,7 +73,7 @@ impl BlobVersionProvenance {
     pub(super) fn approval_status(&self) -> ClaimApprovalStatus {
         match self {
             Self::UserUpload => ClaimApprovalStatus::Auto,
-            Self::AgentRun { .. } => ClaimApprovalStatus::Proposed,
+            Self::CapabilityUpload | Self::AgentRun { .. } => ClaimApprovalStatus::Proposed,
         }
     }
 }

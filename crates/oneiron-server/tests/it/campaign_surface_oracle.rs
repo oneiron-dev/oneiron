@@ -32,8 +32,6 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const SECRET: &str = "campaign-surface-oracle-secret";
-const CAMPAIGN_TYPE_BYTE: u8 = 107;
-const SAVED_QUERY_TYPE_BYTE: u8 = 108;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -63,7 +61,15 @@ fn seeded_id(counter: u128) -> EntityId {
 fn oracle_vault() -> (tempfile::TempDir, Arc<Vault>, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), test_vault_config()).unwrap();
-    let pack = register_crm_pack(&vault, CAMPAIGN_TYPE_BYTE, SAVED_QUERY_TYPE_BYTE).unwrap();
+    let slots: Vec<_> = (oneiron::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
+        ..=oneiron::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
+        .filter(|kind| {
+            oneiron::registry::entity_type_registry_entry(*kind).is_none()
+                && vault.structural_kind_registration(*kind).is_none()
+        })
+        .take(2)
+        .collect();
+    let pack = register_crm_pack(&vault, slots[0], slots[1]).unwrap();
     assert_eq!(pack.campaign.pack, CRM_PACK_ID);
     assert_eq!(pack.saved_query.pack, CRM_PACK_ID);
     let principal = seeded_id(0x01);
@@ -768,20 +774,15 @@ fn campaign_surface_write_uses_memory_gate() {
 
     // The refusal is admission, not arithmetic: the write never reached the
     // domain, so nothing landed.
-    assert_eq!(
-        vault
-            .entities_by_type(CAMPAIGN_TYPE_BYTE)
-            .unwrap_or_default()
-            .len(),
-        0
-    );
-    assert_eq!(
-        vault
-            .entities_by_type(SAVED_QUERY_TYPE_BYTE)
-            .unwrap_or_default()
-            .len(),
-        0
-    );
+    let kinds: Vec<_> = vault
+        .structural_kind_registrations()
+        .into_iter()
+        .filter(|kind| kind.pack == CRM_PACK_ID)
+        .collect();
+    assert_eq!(kinds.len(), 2);
+    for kind in kinds {
+        assert!(vault.entities_by_type(kind.type_byte).unwrap().is_empty());
+    }
 
     // READ verbs take the same binding check — a cohort is not enumerable from
     // an actor the store never admitted...
@@ -852,6 +853,7 @@ fn campaign_surface_write_uses_memory_gate() {
 #[tokio::test]
 async fn campaign_membership_routes_carry_the_engine_paging_contract() {
     let (_dir, vault, principal) = oracle_vault();
+    let initial_claims = vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap();
     let (addr, handle) = spawn_server(Arc::clone(&vault)).await;
     let token = owner_token(principal);
 
@@ -967,12 +969,10 @@ async fn campaign_membership_routes_carry_the_engine_paging_contract() {
         );
     }
 
-    // The claim index is still empty: paging enrolled nobody.
-    assert!(
-        vault
-            .entities_by_type(ENTITY_TYPE_CLAIM)
-            .unwrap()
-            .is_empty()
+    // Paging enrolled nobody and kept all pre-existing claims.
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap(),
+        initial_claims
     );
 
     handle.abort();

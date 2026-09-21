@@ -398,6 +398,7 @@ fn exact_context_token_budget_mints_the_unmodified_summary() -> Result<()> {
     assert!(tokens > 0);
     for split in [None, Some(ContextBudgetSplit::new(0.25, 0.125, 0.5, 0.125))] {
         let (_dir, vault) = open_vault();
+        let pending_before = pending_embedding_marker_count(&vault);
         let session = mint_session(&vault, 10);
         let actor = loom_actor(&vault, 0x60);
         let mut profile = profile(
@@ -423,7 +424,7 @@ fn exact_context_token_budget_mints_the_unmodified_summary() -> Result<()> {
         )?;
         assert_eq!(stored_summary_body(&vault, &plan.summary_id).text, text);
         assert_eq!(summary_row_count(&vault), 1);
-        assert_eq!(pending_embedding_marker_count(&vault), 1);
+        assert_eq!(pending_embedding_marker_count(&vault), pending_before + 1);
         assert_eq!(driver.margin().measured_latency_ms(), 9);
         assert!(!driver.is_compacting());
     }

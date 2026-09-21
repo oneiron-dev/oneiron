@@ -63,6 +63,12 @@ pub(super) fn scan_in_txn(
         }
         cursors.push((cursor_key, if exhausted { None } else { last }));
     }
+    cursors.push(super::attempt_retention::scan(
+        vault,
+        txn,
+        limit,
+        &mut candidates,
+    )?);
     Ok(CleanupScan {
         candidates,
         cursors,

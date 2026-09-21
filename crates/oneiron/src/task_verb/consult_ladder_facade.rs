@@ -22,7 +22,7 @@ use super::create_validation::{
 };
 use super::entity_delta_facade::counter_lineage_artifact_value;
 use super::follow_up::peer_handle_key;
-use super::rate_limit::{consume_create_rate_slot, task_actor_ceiling, task_verb_contract};
+use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::TaskCreateReceipt;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl, TasksVerb};
@@ -135,19 +135,13 @@ impl Memory<'_> {
         let (task_ref, route) = self.with_verified_actor_write_txn(|wtxn| {
             let parent = consult_body_in_txn(self.vault(), &*wtxn, parent_task_ref)?;
             self.require_auto_ceiling_in_txn(&*wtxn)?;
-            if !consume_create_rate_slot(
+            record_task_create(
                 self.vault(),
                 wtxn,
                 self.actor(),
                 rate_now,
                 TaskCreateRateLimit::default(),
-            )? {
-                return Err(consult_refusal(
-                    MEMORY_CODE_INVALID_STATE,
-                    "counter exceeds the actor's create quota for this window",
-                    "Retry the counter in the next window.",
-                ));
-            }
+            )?;
             let task_ref =
                 self.mint_task_in_txn(wtxn, &validated, None, self.actor(), &provenance, now)?;
             // A counter routes through the same one door as any other create,

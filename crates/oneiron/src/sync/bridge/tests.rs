@@ -3964,3 +3964,71 @@ fn observer_b_refuses_replicated_message_bodies_before_any_mutation() -> Result<
     }
     Ok(())
 }
+
+#[test]
+fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() {
+    let vault = test_vault();
+    let root = vault.root_project().unwrap();
+    let leader = EntityId::from_hex(&vault.project(root).unwrap().unwrap().leader).unwrap();
+    let bad = EntityId::now();
+    let good = EntityId::now();
+    let target = EntityId::now();
+    let project = crate::workspace_roster::ProjectRecord::new(bad, Some(bad), root, leader);
+    let room = EntityId::from_hex(&project.home_room).unwrap();
+    let doc = LoroDoc::new();
+    // Seed CRDT bodies before attaching Observer B. Only the edge delta below
+    // can materialize these endpoints; the entity-loop guard cannot mask it.
+    for (id, kind, body) in [
+        (
+            bad,
+            vault.project_type_byte().unwrap(),
+            rmp_serde::to_vec_named(&project).unwrap(),
+        ),
+        (good, crate::registry::ENTITY_TYPE_PERSON, b"good".to_vec()),
+        (
+            target,
+            crate::registry::ENTITY_TYPE_PERSON,
+            b"target".to_vec(),
+        ),
+    ] {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &id.to_hex(),
+            &entity_blob(kind, TimeRange { start: 1, end: 1 }, 1, &body),
+        )
+        .unwrap();
+    }
+    doc.commit();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    for id in [bad, good] {
+        map_insert_bytes(
+            &doc.get_map("edges"),
+            &format!(
+                "{}:{:02}:{}",
+                id.to_hex(),
+                EdgeKind::Mentions as u8,
+                target.to_hex()
+            ),
+            &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.5, 1, None, None).unwrap(),
+        )
+        .unwrap();
+    }
+    doc.commit();
+    assert!(vault.get(&bad).unwrap().is_none());
+    assert!(vault.get(&room).unwrap().is_none());
+    assert!(
+        !vault
+            .edge_exists(&bad, EdgeKind::Mentions, &target)
+            .unwrap()
+    );
+    assert_eq!(vault.get(&good).unwrap(), Some(b"good".to_vec()));
+    assert!(
+        vault
+            .edge_exists(&good, EdgeKind::Mentions, &target)
+            .unwrap()
+    );
+    let rejected = crate::sync::quarantine::quarantined_records(&vault).unwrap();
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected[0].1.reason_code, "InvalidProjectBody");
+}

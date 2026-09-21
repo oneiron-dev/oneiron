@@ -70,7 +70,18 @@ pub(crate) fn mcp_admit_scoped_call(
         let id = parse_entity_id_param(task_ref, "arguments.task_ref").map_err(mcp_api_error)?;
         mcp_admit_scoped_entity(server, actor, &id, "arguments.task_ref")?;
     }
-    if matches!(verb.tool.binding, crate::mcp::McpVerbBinding::TasksCreate) {
+    if matches!(
+        verb.tool.binding,
+        crate::mcp::McpVerbBinding::TasksCreate
+            | crate::mcp::McpVerbBinding::TasksOutcomes
+            | crate::mcp::McpVerbBinding::TasksAnswer
+            | crate::mcp::McpVerbBinding::TasksAsk
+            | crate::mcp::McpVerbBinding::TasksWait
+            | crate::mcp::McpVerbBinding::RoomsList
+            | crate::mcp::McpVerbBinding::RoomsMessages
+            | crate::mcp::McpVerbBinding::RoomsSpeak
+            | crate::mcp::McpVerbBinding::RoomsClaim
+    ) {
         mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.spec")?;
     }
     Ok(())

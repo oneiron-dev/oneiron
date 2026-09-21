@@ -33,48 +33,28 @@ fn own_create_effects_and_foreign_create_proposes() {
 }
 
 #[test]
-fn rate_limit_effects_n_and_proposes_every_overflow() {
+fn task_creation_is_counted_and_receipted_at_every_rate() {
     let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
-    let facade = vault.memory(own, EdgeActorClass::Agent);
-    let limit = 3;
-    let attempted = 5;
-    // The rate window is keyed on the ENGINE clock (`unix_seconds_now()`,
-    // not caller time — the codex-r1 anti-bypass fix). A single window here
-    // keeps the overflow behavior deterministic: with a finite window these
-    // creates could straddle a wall-clock boundary under load and reset the
-    // count mid-loop. (Window advancement is covered separately by
-    // `create_rate_slot_overwrites_one_key_across_windows`.)
-    let rate = TaskCreateRateLimit {
-        limit,
-        window_seconds: u64::MAX,
-    };
-    let mut results = Vec::new();
-    for _ in 0..attempted {
-        results.push(
-            facade
-                .tasks_create_with_rate_limit(&spec(120), rate)
-                .expect("create"),
-        );
+    let actor = own_agent(&vault);
+    for limit in [0, 1, 3] {
+        for _ in 0..5 {
+            let receipt = vault
+                .memory(actor, EdgeActorClass::Agent)
+                .tasks_create_with_rate_limit(
+                    &spec(120),
+                    TaskCreateRateLimit {
+                        limit,
+                        window_seconds: u64::MAX,
+                    },
+                )
+                .unwrap();
+            assert!(receipt.effected);
+            assert!(receipt.task_ref.is_some());
+            assert!(receipt.proposal_ref.is_none());
+        }
     }
-
-    assert_eq!(usize::from(results[limit - 1].effected), 1);
-    assert_eq!(results[limit - 1].approval, ClaimApprovalStatus::Auto);
-    assert_eq!(usize::from(results[limit - 1].proposal_ref.is_some()), 0);
-    assert_eq!(usize::from(results[limit].effected), 0);
-    assert_eq!(results[limit].approval, ClaimApprovalStatus::Proposed);
-    assert_eq!(usize::from(results[limit].proposal_ref.is_some()), 1);
-    assert_eq!(
-        results.iter().filter(|result| result.effected).count(),
-        limit
-    );
-    assert_eq!(
-        results
-            .iter()
-            .filter(|result| result.proposal_ref.is_some())
-            .count(),
-        attempted - limit
-    );
+    assert_eq!(vault.task_create_count(actor, u64::MAX).unwrap(), 15);
+    assert_eq!(task_entity_census(&vault), 15);
 }
 
 /// A STANDARD task with a deadline already past is born expired, so the same
@@ -313,16 +293,16 @@ fn sync_admission_takes_a_task_born_expired_and_the_board_derives_it() {
     );
 }
 
-/// Overflow past quota parks a proposal — it does not refuse — so a retry
+/// An authority ceiling under a Proposed ceiling parks a proposal — it does not refuse — so a retry
 /// loop must land on the row already waiting rather than mint one per
 /// attempt. The receipts still read as proposals every time; only the stored
 /// rows are bounded.
 #[test]
-fn repeated_overflow_creates_park_on_one_proposal_row() {
+fn repeated_proposal_creates_park_on_one_proposal_row() {
     let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
+    let own = consult_peer(&vault, 0xE2);
     let facade = vault.memory(own, EdgeActorClass::Agent);
-    let limit = 1;
+    let limit = 0;
     let retries = 6;
     let rate = TaskCreateRateLimit {
         limit,
@@ -346,7 +326,7 @@ fn repeated_overflow_creates_park_on_one_proposal_row() {
             .filter(|result| result.proposal_ref.is_some())
             .count(),
         retries - limit,
-        "every overflow still answers with a proposal"
+        "every proposal still answers with a proposal"
     );
     let proposal_refs: std::collections::BTreeSet<EntityId> = results
         .iter()
@@ -360,12 +340,12 @@ fn repeated_overflow_creates_park_on_one_proposal_row() {
     assert_eq!(open_create_proposal_census(&vault, own), 1);
 }
 
-/// A DIFFERENT ask past quota still parks its own proposal: the dedupe is on
+/// A DIFFERENT ask under a Proposed ceiling still parks its own proposal: the dedupe is on
 /// the ask, not on the actor.
 #[test]
-fn a_distinct_overflow_create_parks_its_own_proposal() {
+fn a_distinct_proposal_create_parks_its_own_proposal() {
     let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
+    let own = consult_peer(&vault, 0xE2);
     let facade = vault.memory(own, EdgeActorClass::Agent);
     let rate = TaskCreateRateLimit {
         limit: 1,
@@ -373,44 +353,38 @@ fn a_distinct_overflow_create_parks_its_own_proposal() {
     };
     facade
         .tasks_create_with_rate_limit(&spec(120), rate)
-        .expect("first create takes effect");
-    facade
-        .tasks_create_with_rate_limit(&spec(120), rate)
-        .expect("overflow parks");
+        .expect("proposal parks");
     facade
         .tasks_create_with_rate_limit(
             &TaskCreateSpec::new(Value::from("other-task"), None, None, Some(120)),
             rate,
         )
-        .expect("a different overflow parks");
+        .expect("a different proposal parks");
 
     assert_eq!(open_create_proposal_census(&vault, own), 2);
 }
 
 /// The dedupe index is claims-ABOUT-subject, so a row naming this actor may
 /// have been written by anyone. A foreign-produced proposal with an identical
-/// payload is not this caller's parked ask: the over-quota create parks its
+/// payload is not this caller's parked ask: the Proposed-ceiling create parks its
 /// own rather than answering with someone else's provenance and skipping the
 /// gate receipt it owes.
 #[test]
-fn an_over_quota_create_never_reuses_a_foreign_actors_proposal() {
+fn a_proposed_create_never_reuses_a_foreign_actors_proposal() {
     let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
+    let own = consult_peer(&vault, 0xE2);
     let stranger = consult_peer(&vault, 0xC7);
     let rate = TaskCreateRateLimit {
         limit: 1,
         window_seconds: u64::MAX,
     };
     let facade = vault.memory(own, EdgeActorClass::Agent);
-    facade
-        .tasks_create_with_rate_limit(&spec(120), rate)
-        .expect("the first create takes effect");
     let foreign = put_foreign_create_proposal(&vault, own, stranger, &spec(120), 120);
 
     let parked = facade
         .tasks_create_with_rate_limit(&spec(120), rate)
-        .expect("the over-quota create parks");
-    let proposal_ref = parked.proposal_ref.expect("the overflow parks a proposal");
+        .expect("the Proposed-ceiling create parks");
+    let proposal_ref = parked.proposal_ref.expect("the proposal parks a proposal");
     let body = vault
         .get_claim(&proposal_ref)
         .expect("claim body")
@@ -425,22 +399,19 @@ fn an_over_quota_create_never_reuses_a_foreign_actors_proposal() {
 }
 
 /// An actor carrying more inbound claims than the MATERIALIZING edge scan
-/// would admit still gets an answer past quota. The dedupe lookup streams, so
+/// would admit still gets an answer under a Proposed ceiling. The dedupe lookup streams, so
 /// there is no ceiling on this path to hit: it walks the fan-in, finds this
 /// actor has nothing of its own parked, and parks one — which is the correct
 /// answer, not a degrade.
 #[test]
 fn a_capped_claim_scan_parks_a_proposal_instead_of_hard_failing() {
     let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
+    let own = consult_peer(&vault, 0xE2);
     let rate = TaskCreateRateLimit {
         limit: 1,
         window_seconds: u64::MAX,
     };
     let facade = vault.memory(own, EdgeActorClass::Agent);
-    facade
-        .tasks_create_with_rate_limit(&spec(120), rate)
-        .expect("the first create takes effect");
     seed_capped_inbound_claim_edges(&vault, own);
 
     let parked = facade
@@ -462,15 +433,12 @@ fn a_capped_claim_scan_parks_a_proposal_instead_of_hard_failing() {
 #[test]
 fn dedupe_survives_a_claim_fan_in_past_the_materialization_cap() {
     let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
+    let own = consult_peer(&vault, 0xE2);
     let rate = TaskCreateRateLimit {
         limit: 1,
         window_seconds: u64::MAX,
     };
     let facade = vault.memory(own, EdgeActorClass::Agent);
-    facade
-        .tasks_create_with_rate_limit(&spec(120), rate)
-        .expect("the first create takes effect");
     let parked = facade
         .tasks_create_with_rate_limit(&spec(120), rate)
         .expect("the second create parks a proposal")
@@ -499,17 +467,14 @@ fn dedupe_survives_a_claim_fan_in_past_the_materialization_cap() {
 /// still reaches the caller, rather than being read as "this actor has parked
 /// nothing" and answered with a fresh proposal over an unreadable index.
 #[test]
-fn a_corrupt_claim_edge_still_fails_the_over_quota_create() {
+fn a_corrupt_claim_edge_still_fails_the_proposed_create() {
     let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
+    let own = consult_peer(&vault, 0xE2);
     let rate = TaskCreateRateLimit {
         limit: 1,
         window_seconds: u64::MAX,
     };
     let facade = vault.memory(own, EdgeActorClass::Agent);
-    facade
-        .tasks_create_with_rate_limit(&spec(120), rate)
-        .expect("the first create takes effect");
     // One unreadable inbound claim edge: the scan fails decoding its value,
     // well inside the cap.
     vault
@@ -548,13 +513,28 @@ fn create_rate_slot_overwrites_one_key_across_windows() {
     {
         let mut wtxn = vault.store.env.write_txn().expect("write txn");
         // Window 0 (now 0..9): two slots, then the third is refused.
-        assert!(consume_create_rate_slot(&vault, &mut wtxn, own, 0, rate).expect("w0 s1"));
-        assert!(consume_create_rate_slot(&vault, &mut wtxn, own, 3, rate).expect("w0 s2"));
-        assert!(!consume_create_rate_slot(&vault, &mut wtxn, own, 9, rate).expect("w0 over"));
+        assert_eq!(
+            record_task_create(&vault, &mut wtxn, own, 0, rate).expect("w0 s1"),
+            1
+        );
+        assert_eq!(
+            record_task_create(&vault, &mut wtxn, own, 3, rate).expect("w0 s2"),
+            2
+        );
+        assert_eq!(
+            record_task_create(&vault, &mut wtxn, own, 9, rate).expect("w0 over"),
+            3
+        );
         // Window 1 (now 10..): the count resets, a slot is available again.
-        assert!(consume_create_rate_slot(&vault, &mut wtxn, own, 10, rate).expect("w1 s1"));
+        assert_eq!(
+            record_task_create(&vault, &mut wtxn, own, 10, rate).expect("w1 s1"),
+            1
+        );
         // Window 2 (now 20..): still resets, still the same single key.
-        assert!(consume_create_rate_slot(&vault, &mut wtxn, own, 20, rate).expect("w2 s1"));
+        assert_eq!(
+            record_task_create(&vault, &mut wtxn, own, 20, rate).expect("w2 s1"),
+            1
+        );
         wtxn.commit().expect("commit");
     }
     // Elapsed windows overwrite the SAME key: exactly one rate key persists
@@ -586,22 +566,10 @@ fn caller_time_variation_does_not_bypass_one_engine_rate_window() {
             .expect("create")
     });
 
-    assert_eq!(
-        results.iter().filter(|result| result.effected).count(),
-        limit
-    );
-    assert_eq!(
+    assert!(
         results
             .iter()
-            .filter(|result| result.approval == ClaimApprovalStatus::Proposed)
-            .count(),
-        1
+            .all(|result| result.effected && result.proposal_ref.is_none())
     );
-    assert_eq!(
-        results
-            .iter()
-            .filter(|result| result.proposal_ref.is_some())
-            .count(),
-        1
-    );
+    assert_eq!(vault.task_create_count(own, u64::MAX).unwrap(), 4);
 }

@@ -532,6 +532,12 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
         assert_eq!(vault.get_vector(id).expect("vector read"), None);
     }
 
+    // The mock returns identical vectors, so admit the whole known corpus;
+    // this test proves the semantic door, not tie-breaking against seed rows.
+    let corpus_size = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+        .expect("claim census")
+        .len();
     let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
         .expect("slot resolves")
         .expect("an endpoint slot exists");
@@ -566,7 +572,8 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
                     .uri("/api/search/semantic")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
-                        json!({ "text": texts[1], "limit": 5, "view": "standard" }).to_string(),
+                        json!({ "text": texts[1], "limit": corpus_size, "view": "standard" })
+                            .to_string(),
                     ))
                     .expect("request"),
             )
@@ -618,9 +625,12 @@ fn attaching_a_provider_to_a_populated_vault_backfills_every_row() {
         let mut config = oneiron::VaultConfig::device();
         config.dimensions = DIMS;
         let vault = oneiron::Vault::open(dir.path(), config).expect("rung-0 vault");
-        (0..3u8)
-            .map(|index| put_claim(&vault, 0xB0 + index, &format!("rung zero claim {index}")))
-            .collect::<Vec<_>>()
+        for index in 0..3u8 {
+            put_claim(&vault, 0xB0 + index, &format!("rung zero claim {index}"));
+        }
+        vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+            .expect("all pre-existing claims")
     };
 
     let vault = test_vault(dir.path());

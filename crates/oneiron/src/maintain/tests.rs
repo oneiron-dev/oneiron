@@ -499,7 +499,7 @@ fn short_id_aliases_survive_prefix_rekey() -> Result<()> {
     ];
 
     let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open_unseeded_for_test(temp_dir.path(), test_config())?;
 
     let kinds = [
         (ENTITY_TYPE_CLAIM, entity(0x51), "cl1", "cm1"),

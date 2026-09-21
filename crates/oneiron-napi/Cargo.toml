@@ -22,6 +22,13 @@ napi-derive = "3"
 base64 = "0.22"
 serde_json = { workspace = true }
 
+# Linux libtest is not hosted by Node. Use napi-rs's supported dynamic
+# symbol loader only for Rust tests; the production addon still resolves
+# its Node-API symbols from the real importing host. These Rust tests cover
+# conversion/engine logic; JS ABI coverage remains in the Node-host tests.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+napi = { version = "3", default-features = false, features = ["dyn-symbols"] }
+
 [build-dependencies]
 napi-build = "2"
 

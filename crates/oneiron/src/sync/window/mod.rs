@@ -8,9 +8,7 @@ use std::sync::Arc;
 
 use super::bridge::{self, Materializer, ObserverAState, OutboundSink};
 use super::diagnostic_ingest;
-use super::loro_support::{
-    self, doc_from_snapshot, doc_version_vector, export_snapshot, import_doc,
-};
+use super::loro_support::{self, doc_from_snapshot, doc_version_vector, import_doc};
 use super::quarantine;
 use super::queue;
 use super::quota;
@@ -167,17 +165,10 @@ impl LoadedWindow {
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
         let subsumed_update_keys = merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
 
+        // Scrub after merging persisted updates: a raw update may carry a
+        // local-only claim even when the live doc was already clean.
+        let state = export_scrubbed_window_snapshot(vault, &self.key, &self.doc)?;
         let history_free = history_free_window_required(vault, &self.key)?;
-
-        // Once a sealed carrier has existed in this window, a normal Loro
-        // snapshot would retain its pre-delete op bytes. Persist a shallow
-        // snapshot at the latest frontier instead: identical live state and
-        // VV, but no historical body carrier.
-        let state = if history_free {
-            export_history_free_window_snapshot(&self.doc)?
-        } else {
-            export_snapshot(&self.doc)?
-        };
         let vv = doc_version_vector(&self.doc);
 
         vault.with_write_txn(|wtxn| {
@@ -408,8 +399,8 @@ use self::reverse::*;
 use super::bridge::{encode_edge_value_for_crdt, format_edge_key};
 #[cfg(test)]
 use super::loro_support::{
-    export_updates_from, map_contains_binary, map_delete, map_for_each_bytes, map_get_bytes,
-    map_insert_bytes, tombstone_map_contains_id,
+    export_snapshot, export_updates_from, map_contains_binary, map_delete, map_for_each_bytes,
+    map_get_bytes, map_insert_bytes, tombstone_map_contains_id,
 };
 #[cfg(test)]
 use super::quarantine::QuarantineContainer;

@@ -168,7 +168,7 @@ fn verb_argument_field_schema(field: &str) -> Value {
                 ],
             },
         }),
-        "task_ref" => entity_id_schema(),
+        "task_ref" | "room_ref" | "turn_ref" => entity_id_schema(),
         // The advertised ceiling IS the writer's ceiling, stated in the closed
         // schema so a caller learns the bound from `tools/list` instead of from
         // a refusal. `maxLength` counts code points, so the byte bound the

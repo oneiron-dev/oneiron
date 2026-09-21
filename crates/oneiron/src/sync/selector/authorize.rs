@@ -16,6 +16,7 @@ use crate::federation::{
 };
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::sync::bridge::parse_edge_key;
+use crate::sync::local_claims::withheld_claim_carriers;
 use crate::sync::loro_support::{
     map_for_each_tombstone_value, map_for_each_value_bytes, map_insert_bytes,
 };
@@ -245,6 +246,7 @@ pub(super) fn filter_window_doc(
         tombstoned.insert(id);
     });
 
+    let (_, claims_withheld) = withheld_claim_carriers(vault, &source_entities, &source_edges)?;
     let facet_scope = facet_scope_by_source(vault, &source_entities, &source_edges, selector)?;
     let coreference = coreference_export_context(vault, source, selector)?;
     let mut custody_ids = BTreeSet::new();
@@ -284,7 +286,10 @@ pub(super) fn filter_window_doc(
         if id.to_hex() != raw_key {
             return;
         }
-        if tombstoned.contains(&id) || custody_withheld.contains(&id) {
+        if tombstoned.contains(&id)
+            || custody_withheld.contains(&id)
+            || claims_withheld.contains(&id)
+        {
             return;
         }
         let Some(decision) = entity_selector_decision(

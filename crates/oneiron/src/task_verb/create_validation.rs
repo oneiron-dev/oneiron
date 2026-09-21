@@ -356,7 +356,10 @@ pub(crate) fn task_human_assignee(vault: &Vault, task_ref: EntityId) -> Result<O
             Some(TaskAssignee::Human { actor_ref }) => Some(actor_ref),
             None
             | Some(
-                TaskAssignee::Dreamer | TaskAssignee::AgentDef { .. } | TaskAssignee::Peer { .. },
+                TaskAssignee::Dreamer
+                | TaskAssignee::AnswerHolders
+                | TaskAssignee::AgentDef { .. }
+                | TaskAssignee::Peer { .. },
             ) => None,
         }),
     )
@@ -392,4 +395,16 @@ pub(crate) fn settled_task_result_binding(
                 .result_ref
                 .map(|result_ref| (terminal.disposition, result_ref))
         }))
+}
+
+/// Completion time used by reversible cleanup, never by erasure.
+pub(crate) fn completed_task_at_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<u64>> {
+    Ok(task_verb_body_in(vault, txn, task_ref)?
+        .and_then(|body| body.terminal().cloned())
+        .filter(|terminal| terminal.disposition == TaskTerminalDisposition::Completed)
+        .map(|terminal| terminal.finished_at))
 }

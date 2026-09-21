@@ -285,7 +285,13 @@ fn claim(subject: EntityId, text: &str, approval: ClaimApprovalStatus) -> ClaimB
 /// has no readable surface, so its caller-echoed ref must come from here.
 fn probe_short_ref(vault: &Vault, id: &EntityId) -> String {
     let prefix = oneiron::registry::short_id_prefix(ENTITY_TYPE_CLAIM).expect("claim prefix");
-    for counter in 1..=8u32 {
+    // Fresh production open seeds claims before this append-only fixture runs.
+    // With no claim deletions here, the live count bounds the per-type counter;
+    // a fixed cl1..cl8 probe would only search the bootstrap population.
+    let claim_count = vault
+        .count_entities_by_type(ENTITY_TYPE_CLAIM)
+        .expect("fixture claim count");
+    for counter in 1..=claim_count {
         let short_id = format!("{prefix}{counter}");
         for content_hash in 0..=u8::MAX {
             let hydrated = vault

@@ -220,6 +220,10 @@ pub struct McpVerbArguments {
     #[serde(default)]
     pub task_ref: Option<String>,
     #[serde(default)]
+    pub room_ref: Option<String>,
+    #[serde(default)]
+    pub turn_ref: Option<String>,
+    #[serde(default)]
     pub spec: Option<Value>,
     #[serde(default)]
     pub label: Option<String>,
@@ -255,6 +259,9 @@ pub const MCP_TASK_LABEL_MAX_BYTES: usize =
     oneiron::context_board::MAX_BOARD_ROW_BYTES - MCP_TASK_ROW_FIXED_TOKEN_BYTES;
 
 pub(super) const fn verb_argument_fields(binding: McpVerbBinding) -> &'static [&'static str] {
+    if let Some(fields) = super::surface::agent_argument_fields(binding) {
+        return fields;
+    }
     match binding {
         McpVerbBinding::BoardExpand => &["key", "frame_epoch"],
         McpVerbBinding::BoardRefresh => &["frame_epoch"],
@@ -264,10 +271,14 @@ pub(super) const fn verb_argument_fields(binding: McpVerbBinding) -> &'static [&
         }
         McpVerbBinding::TasksCheck => &[],
         McpVerbBinding::TasksCreate => &["spec", "label"],
+        _ => &[],
     }
 }
 
 pub(super) const fn verb_required_fields(binding: McpVerbBinding) -> &'static [&'static str] {
+    if let Some(fields) = super::surface::agent_required_fields(binding) {
+        return fields;
+    }
     match binding {
         McpVerbBinding::BoardExpand => &["key"],
         McpVerbBinding::BoardRefresh | McpVerbBinding::TasksCheck => &[],
@@ -276,16 +287,19 @@ pub(super) const fn verb_required_fields(binding: McpVerbBinding) -> &'static [&
             &["task_ref"]
         }
         McpVerbBinding::TasksCreate => &["spec"],
+        _ => &[],
     }
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 6] {
+    fn present_fields(&self) -> [(&'static str, bool); 8] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
             ("scopes", self.scopes.is_some()),
             ("task_ref", self.task_ref.is_some()),
+            ("room_ref", self.room_ref.is_some()),
+            ("turn_ref", self.turn_ref.is_some()),
             ("spec", self.spec.is_some()),
             ("label", self.label.is_some()),
         ]
@@ -329,6 +343,8 @@ impl McpVerbArguments {
             ));
         }
         validate_optional_entity_ref(tool, "arguments.task_ref", self.task_ref.as_deref())?;
+        validate_optional_entity_ref(tool, "arguments.room_ref", self.room_ref.as_deref())?;
+        validate_optional_entity_ref(tool, "arguments.turn_ref", self.turn_ref.as_deref())?;
         if self.scopes.as_ref().is_some_and(Vec::is_empty) {
             return Err(McpToolValidationError::field(
                 tool,

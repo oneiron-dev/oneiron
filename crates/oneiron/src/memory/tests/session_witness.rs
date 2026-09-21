@@ -519,6 +519,10 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
 #[test]
 fn a_failed_session_witness_does_not_burn_the_room_shell_claim() {
     let (_dir, vault) = open_vault();
+    let conversations_before = vault
+        .entities_by_type(ENTITY_TYPE_CONVERSATION)
+        .expect("baseline")
+        .len();
     let (session, actor) = session_witness_fixture(&vault, "sess-witness-shell-claim", 0x58);
     let facade = facade_for(&vault, actor);
 
@@ -566,7 +570,7 @@ fn a_failed_session_witness_does_not_burn_the_room_shell_claim() {
             .prefix_iter(&rtxn, &[ENTITY_TYPE_CONVERSATION])
             .expect("type scan")
             .count(),
-        1,
+        conversations_before + 1,
         "the claim stays one-shot: exactly ONE shell row per room"
     );
     drop(rtxn);
@@ -587,6 +591,10 @@ fn a_failed_session_witness_does_not_burn_the_room_shell_claim() {
 #[test]
 fn an_in_transaction_failure_releases_the_room_shell_claim() {
     let (_dir, vault) = open_vault();
+    let conversations_before = vault
+        .entities_by_type(ENTITY_TYPE_CONVERSATION)
+        .expect("baseline")
+        .len();
     let actor = put_person(&vault, 0x59);
     let facade = facade_for(&vault, actor);
     let session = vault
@@ -630,7 +638,7 @@ fn an_in_transaction_failure_releases_the_room_shell_claim() {
             .prefix_iter(&rtxn, &[ENTITY_TYPE_CONVERSATION])
             .expect("type scan")
             .count(),
-        1,
+        conversations_before + 1,
         "still one-shot: exactly ONE shell row per room"
     );
     drop(rtxn);
@@ -647,6 +655,10 @@ fn an_in_transaction_failure_releases_the_room_shell_claim() {
 #[test]
 fn session_witness_turn_carries_the_mint_contract() {
     let (_dir, vault) = open_vault();
+    let conversations_before = vault
+        .entities_by_type(ENTITY_TYPE_CONVERSATION)
+        .expect("baseline")
+        .len();
     let (session, actor) = session_witness_fixture(&vault, "sess-witness-mint-contract", 0x5D);
     let facade = facade_for(&vault, actor);
 
@@ -754,7 +766,7 @@ fn session_witness_turn_carries_the_mint_contract() {
             .prefix_iter(&rtxn, &[ENTITY_TYPE_CONVERSATION])
             .expect("conversation scan")
             .count(),
-        1,
+        conversations_before + 1,
         "the refused calls staged no shell; the witness kept the claim one-shot"
     );
     drop(rtxn);

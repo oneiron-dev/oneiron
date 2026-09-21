@@ -153,3 +153,5 @@ impl NativeClient {
             .collect()
     }
 }
+
+mod agent_verbs;

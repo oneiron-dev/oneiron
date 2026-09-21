@@ -173,9 +173,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
 
     let turns = vault.entities_by_type(ENTITY_TYPE_TURN).expect("turns");
     assert_eq!(turns.len(), 1, "turn must not be duplicated");
-    let conversations = vault
-        .entities_by_type(ENTITY_TYPE_CONVERSATION)
-        .expect("conversations");
+    let conversations = witness_conversations(&vault).expect("conversations");
     assert_eq!(
         conversations.len(),
         1,
@@ -361,8 +359,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
         "the refused mint left no MESSAGE rows"
     );
     assert!(
-        vault
-            .entities_by_type(ENTITY_TYPE_CONVERSATION)
+        witness_conversations(&vault)
             .expect("conversations")
             .is_empty(),
         "the refused mint left no CONVERSATION"

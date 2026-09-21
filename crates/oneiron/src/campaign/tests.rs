@@ -20,14 +20,17 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
 /// Panics if the requested slot leaves the band or is already claimed by a
 /// static registry row, so a future band or registry change fails loudly here
 /// instead of silently retargeting an oracle.
-fn crm_band_byte(nth: u8) -> u8 {
+fn crm_band_byte(vault: &Vault, nth: u8) -> u8 {
     // The nth byte in the compiled-product zone that no STATIC kind claims.
     // Byte-space v3 moved TASK_LIST/TASK/MACHINE/CODE_ARTIFACT/CODE_SYMBOL/
     // BLOB_ARTIFACT/NOTE into 100-106, so a fixed `start + nth` offset would
     // now land on a static row. Scanning keeps the oracle measuring dynamic
     // registration instead of tracking every future static allocation.
     (TYPE_BYTE_ZONE_COMPILED_PRODUCT_START..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
-        .filter(|byte| entity_type_registry_entry(*byte).is_none())
+        .filter(|byte| {
+            entity_type_registry_entry(*byte).is_none()
+                && vault.structural_kind_registration(*byte).is_none()
+        })
         .nth(nth as usize)
         .expect("the compiled-product zone must retain free dynamic slots")
 }
@@ -35,7 +38,7 @@ fn crm_band_byte(nth: u8) -> u8 {
 #[test]
 fn campaign_kind_registers_runtime_assigned_crm_byte() -> crate::Result<()> {
     let (_dir, vault) = open_test_vault();
-    let assigned = crm_band_byte(0);
+    let assigned = crm_band_byte(&vault, 0);
 
     let registration = register_campaign_kind(&vault, assigned)?;
 
@@ -57,10 +60,10 @@ fn campaign_kind_registers_runtime_assigned_crm_byte() -> crate::Result<()> {
 #[test]
 fn campaign_kind_registration_persists_across_reopen() -> crate::Result<()> {
     let dir = tempfile::tempdir()?;
-    let assigned = crm_band_byte(0);
-
+    let assigned;
     {
         let vault = Vault::open(dir.path(), VaultConfig::device())?;
+        assigned = crm_band_byte(&vault, 0);
         register_campaign_kind(&vault, assigned)?;
     }
 
@@ -93,6 +96,7 @@ fn campaign_kind_rejects_non_crm_assignment() {
     let (_dir, vault) = open_test_vault();
     // Companion zone: a valid byte for some pack, but not for CAMPAIGN's
     // declared `Crm` band.
+    let before = vault.structural_kind_registrations();
     let out_of_band = TYPE_BYTE_ZONE_SYSTEM_START;
     assert_ne!(zone_of(out_of_band), TypeByteZone::CompiledProduct);
 
@@ -113,17 +117,18 @@ fn campaign_kind_rejects_non_crm_assignment() {
         }
         other => panic!("expected a band violation, got {other:?}"),
     }
-    assert!(
-        vault.structural_kind_registrations().is_empty(),
-        "a refused registration must leave no row behind"
+    assert_eq!(
+        vault.structural_kind_registrations(),
+        before,
+        "a refused registration must leave no new row behind"
     );
 }
 
 #[test]
 fn campaign_kind_rejects_prefix_or_byte_collision() -> crate::Result<()> {
     let (_dir, vault) = open_test_vault();
-    let campaign_byte = crm_band_byte(0);
-    let free_byte = crm_band_byte(1);
+    let campaign_byte = crm_band_byte(&vault, 0);
+    let free_byte = crm_band_byte(&vault, 1);
 
     // Byte collision: something else already holds CAMPAIGN's assigned byte.
     vault.register_structural_kind(
@@ -164,7 +169,7 @@ fn campaign_kind_rejects_prefix_or_byte_collision() -> crate::Result<()> {
 #[test]
 fn campaign_short_id_uses_ca_prefix() -> crate::Result<()> {
     let (_dir, vault) = open_test_vault();
-    let assigned = crm_band_byte(0);
+    let assigned = crm_band_byte(&vault, 0);
     register_campaign_kind(&vault, assigned)?;
 
     let id = crate::test_util::entity(0x5C);

@@ -350,7 +350,7 @@ fn sigma_driven_discovery_for_year_granularity() -> Result<()> {
             anchor,
             TemporalGranularity::Day,
             TemporalAnchorMode::Occurred,
-            10,
+            100,
         )
         .run()?;
     assert!(!day_results.iter().any(|entry| entry.id == far));
@@ -362,7 +362,7 @@ fn sigma_driven_discovery_for_year_granularity() -> Result<()> {
             anchor,
             TemporalGranularity::Year,
             TemporalAnchorMode::Occurred,
-            10,
+            100,
         )
         .run()?;
     assert!(year_results.iter().any(|entry| entry.id == far));

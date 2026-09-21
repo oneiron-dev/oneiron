@@ -44,11 +44,33 @@ async fn context_board_hides_fresh_default_policy_manifest() {
     );
     assert_eq!(
         counts,
-        &serde_json::Map::from_iter([(
-            oneiron::registry::ENTITY_TYPE_AGENT_DEF.to_string(),
-            Value::from(7),
-        )]),
-        "a fresh vault carries only the seven seeded agent definitions"
+        &serde_json::Map::from_iter([
+            (
+                oneiron::registry::ENTITY_TYPE_CLAIM.to_string(),
+                Value::from(8)
+            ),
+            (
+                oneiron::registry::ENTITY_TYPE_SKILL_CONTENT_ANCHOR.to_string(),
+                Value::from(4)
+            ),
+            (
+                oneiron::registry::ENTITY_TYPE_AGENT_DEF.to_string(),
+                Value::from(7)
+            ),
+            (
+                oneiron::registry::ENTITY_TYPE_SKILL.to_string(),
+                Value::from(4)
+            ),
+            (
+                oneiron::registry::ENTITY_TYPE_CONVERSATION.to_string(),
+                Value::from(1)
+            ),
+            (
+                oneiron::workspace_roster::PROJECT_TYPE_BYTE.to_string(),
+                Value::from(1)
+            ),
+        ]),
+        "a fresh vault exposes its agents, bootstrap skills and root project room"
     );
     assert_eq!(body["session"]["last_activity"], Value::from(0));
 }

@@ -67,8 +67,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |
 | `src/api/entity.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/error_map.rs` | src | s | 3 crate-vis | — | Engine-to-ApiError mapping plus query/JSON rejection translators |
+| `src/api/esign.rs` | src | m | 1 crate-vis | — | Public session-less signing lens |
+| `src/api/esign/editor_budget.rs` | src | s | 3 crate-vis | — | Router-owned admission for public, capability-free editor computation |
+| `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/facade.rs` | src | m | 1 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
-| `src/api/facade/tests.rs` | test | s | — | — | — |
+| `src/api/facade/agent_verbs.rs` | src | s | 1 crate-vis | — | — |
+| `src/api/facade/tests.rs` | test | m | — | — | — |
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
 | `src/api/git_http/mod.rs` | src | s | 1 crate-vis | — | Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908) |
 | `src/api/git_http/routes.rs` | src | s | 9 crate-vis | — | Git smart-HTTP routes and per-service RPC handlers |
@@ -85,6 +89,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/lease.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 9 crate-vis | — | Tool execution dispatch across actors |
 | `src/api/mcp_gateway/admission.rs` | src | s | 4 crate-vis | — | Scoped-call admission and actor resolution |
+| `src/api/mcp_gateway/agent_verbs.rs` | src | s | 1 crate-vis | — | MCP framing over the same generated agent SDK dispatcher as every other wire |
 | `src/api/mcp_gateway/board_setup.rs` | src | m | 15 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/envelope.rs` | src | s | 14 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | m | 5 crate-vis | — | Execute-code and board-verb executors |
@@ -212,6 +217,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/state_serve.rs` | src | m | 3 struct · 20 fn · 1 type · 1 const | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/vault_gates.rs` | src | s | 3 fn · 3 const | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
 | `src/mcp/actors.rs` | src | s | 5 struct · 3 enum · 16 fn · 5 crate-vis | McpBoardSnapshot, McpConnectorActorRecord, McpConnectorActorRegistrationError, McpConnectorActorResolutionError, McpConnectorActorRevokeStatus, McpConnectorScope, McpCredentialHashKey, McpResolvedActor | MCP connector actor types: credentials, scopes, records, and resolution |
+| `src/mcp/agent_catalog.rs` | src | s | 1 enum · 3 crate-vis | McpVerbBinding | — |
 | `src/mcp/args.rs` | src | m | 17 struct · 7 enum · 7 fn | McpActorClass, McpActorMetadata, McpAskEffort, McpAskRoute, McpAskToolArgs, McpBookOperation, McpBookToolArgs, McpCalendarOperation +16 | MCP tool argument envelopes: the request shapes for every tool verb |
 | `src/mcp/codec.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | McpToolArguments | MCP argument codecs: parsed-value and raw-JSON integer normalization |
 | `src/mcp/endpoint_args.rs` | src | m | 7 struct · 1 enum · 4 fn · 2 const · 4 crate-vis | McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest, McpSetupToolArgs, McpSubscriptionScope, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload | Endpoint tool argument envelopes: setup, execute-code, paging, and verbs |
@@ -227,7 +233,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/results.rs` | src | s | 3 struct · 1 enum · 9 fn | McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError | MCP result envelopes: metadata, board keyframes, and setup payloads |
 | `src/mcp/schema_parts.rs` | src | s | 16 crate-vis | — | Shared JSON-schema fragments: actors, scopes, subjects, and envelope pieces |
 | `src/mcp/schema_tools.rs` | src | m | 16 crate-vis | — | JSON schemas for each MCP tool, including booking and calendar operations |
-| `src/mcp/surface.rs` | src | m | 3 struct · 5 enum · 14 fn · 14 const · 1 crate-vis | McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool, McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbBinding, McpVerbFamily | MCP endpoint surface: modes, verb bindings, and the registered tool listing |
+| `src/mcp/surface.rs` | src | m | 3 struct · 4 enum · 14 fn · 14 const · 1 crate-vis | McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool, McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbFamily | MCP endpoint surface: modes, verb bindings, and the registered tool listing |
 | `src/mcp/tests.rs` | test | XL | — | — | — |
 | `src/mcp/tool_catalog.rs` | src | m | 1 struct · 3 enum · 7 fn · 4 const · 6 crate-vis | McpToolName, McpToolSchema, McpToolValidationError, McpValidatedToolArgs | Retired MCP tool catalog: legacy names, schemas, and validation dispatch |
 | `src/mcp/validate.rs` | src | m | 1 fn · 3 crate-vis | — | Validation of MCP tool arguments, per-verb allow-lists, and metadata checks |

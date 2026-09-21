@@ -299,7 +299,7 @@ fn rewrite_predicates(ast: &FilterAst, renames: &BTreeMap<String, String>) -> Fi
             cmp: *cmp,
             value: value.clone(),
         },
-        FilterAst::EdgeExists { .. } => ast.clone(),
+        FilterAst::EdgeExists { .. } | FilterAst::TaskOwner { .. } => ast.clone(),
     }
 }
 

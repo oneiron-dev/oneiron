@@ -75,8 +75,9 @@ clippy, server-production clippy, strict rustdoc, full workspace nextest,
 featureless library tests, and doctests. Formatting is members-only (`cargo fmt --check`, never `--all`,
 which follows the ONE-218 heed vendor). Server clippy deliberately omits
 `--all-targets` so test-only features cannot hide production errors. Workspace
-nextest excludes `oneiron-napi` for Linux linking; doctests exclude
-`oneiron-bench`. The rustdoc stage runs
+nextest retains its `oneiron-napi` exclusion; the crate's separate Linux Rust tests now
+use a dev-only dynamic-symbol feature, while JS ABI tests still need a real Node host.
+Doctests exclude `oneiron-bench`. The rustdoc stage runs
 `env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps`
 after server clippy and before runtime tests. CI `Checks` runs the same command
 for Rust-relevant changes; documentation warnings are not a manual-only gate.

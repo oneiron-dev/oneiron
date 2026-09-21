@@ -463,7 +463,11 @@ fn fire_hot_bumps_pending_embedding_claims() -> Result<()> {
     assert!(matches!(fired, SpeculativeFireDecision::Fired { .. }));
 
     let queue = SyncQueue::new(Arc::clone(&vault))?;
-    let jobs = queue.drain_embed_jobs()?;
+    let jobs: Vec<_> = queue
+        .drain_embed_jobs()?
+        .into_iter()
+        .filter(|job| job.entity_id == claim_id)
+        .collect();
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].entity_id, claim_id);
     assert_eq!(

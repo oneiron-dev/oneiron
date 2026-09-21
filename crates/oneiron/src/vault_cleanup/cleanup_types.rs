@@ -105,6 +105,10 @@ pub enum CleanupKind {
     ClaimlessExtractionPerson,
     /// A SUMMARY row with no live members or references.
     EmptySummary,
+    /// A completed TASK older than the owner-set retention period.
+    CompletedTask,
+    /// A completed private attempt older than the retention period.
+    CompletedAttempt,
 }
 
 impl CleanupKind {
@@ -114,6 +118,8 @@ impl CleanupKind {
         match self {
             Self::ClaimlessExtractionPerson => "claimless_extraction_person",
             Self::EmptySummary => "empty_summary",
+            Self::CompletedTask => "completed_task",
+            Self::CompletedAttempt => "completed_attempt",
         }
     }
 
@@ -123,6 +129,8 @@ impl CleanupKind {
         match value {
             "claimless_extraction_person" => Some(Self::ClaimlessExtractionPerson),
             "empty_summary" => Some(Self::EmptySummary),
+            "completed_task" => Some(Self::CompletedTask),
+            "completed_attempt" => Some(Self::CompletedAttempt),
             _ => None,
         }
     }

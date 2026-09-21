@@ -28,6 +28,17 @@ fn line_push_quota() -> Value {
 pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
     vec![
         manifest(
+            "esign", "signing", "Native signing request organ.",
+            ["send_for_signature", "remind", "void"].into_iter().map(|kind| verb(
+                kind, kind, json!({"document": "artifact ref", "recipient_count": "reviewed count"}),
+                OutboundInterruptionClass::Interrupt,
+                OutboundDeliverySemanticsKind::FireAndForget, None,
+                OutboundRetryClass::IdempotentEmulated,
+                OutboundPermissionState::Conditional, false,
+                "Explicit action grant; durable delivery enqueue is distinct from delivery health.",
+            )).collect(),
+        ),
+        manifest(
             "line",
             "chat",
             "LINE Messaging API outbound schema; adapter may require channel review for narrowcast.",

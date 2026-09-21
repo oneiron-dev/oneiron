@@ -374,7 +374,7 @@ fn embedding_migration_invalidates_inflight_async_fill_token() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let mut cfg = test_config();
     cfg.embedding_model = Some("test/old@v1".to_owned());
-    let mut vault = Vault::open(temp_dir.path(), cfg)?;
+    let mut vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg)?;
     let id = EntityId::now();
     let policy_id = crate::gate::default_policy_manifest_id()?;
     vault.with_write_txn(|wtxn| {
@@ -548,7 +548,7 @@ fn embedding_migration_degrades_to_lexical_then_refills_without_mixing() -> Resu
     let temp_dir = tempfile::tempdir()?;
     let mut cfg = test_config();
     cfg.embedding_model = Some("test/old@v1".to_owned());
-    let mut vault = Vault::open(temp_dir.path(), cfg)?;
+    let mut vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg)?;
     let id = EntityId::now();
     let policy_id = crate::gate::default_policy_manifest_id()?;
     vault.with_write_txn(|wtxn| {
@@ -650,7 +650,7 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
     let temp_dir = tempfile::tempdir()?;
     let mut cfg = test_config();
     cfg.embedding_model = Some("test/old@v1".to_owned());
-    let vault = Vault::open(temp_dir.path(), cfg.clone())?;
+    let vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg.clone())?;
     let policy_id = crate::gate::default_policy_manifest_id()?;
     vault.with_write_txn(|wtxn| {
         crate::batch::deindex_entity_for_test(&vault.store, wtxn, &policy_id)?;
@@ -818,7 +818,7 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
     // A same-model migration takes the false branch and must not dirty LMDB bytes.
     // Snapshot is taken after reopen: Vault::open itself may seed system agents /
     // rebuild indexes on 7f1050ee (ONE-1869), so only the begin_* call must be byte-noop.
-    let mut reopened = Vault::open(
+    let mut reopened = Vault::open_unseeded_for_test(
         temp_dir.path(),
         VaultConfig {
             embedding_model: Some("test/new@v2".to_owned()),
@@ -831,11 +831,11 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
     assert_eq!(std::fs::read(&data_path)?, bytes_before_noop);
     drop(reopened);
     assert!(matches!(
-        Vault::open(temp_dir.path(), cfg),
+        Vault::open_unseeded_for_test(temp_dir.path(), cfg),
         Err(Error::Store(StoreError::EmbeddingModelChanged { .. }))
     ));
     assert!(
-        Vault::open(
+        Vault::open_unseeded_for_test(
             temp_dir.path(),
             VaultConfig {
                 embedding_model: Some("test/new@v2".to_owned()),
@@ -850,7 +850,7 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
     let rollback_dir = tempfile::tempdir()?;
     let mut old_cfg = test_config();
     old_cfg.embedding_model = Some("test/old@v1".to_owned());
-    let mut rollback = Vault::open(rollback_dir.path(), old_cfg)?;
+    let mut rollback = Vault::open_unseeded_for_test(rollback_dir.path(), old_cfg)?;
     let policy_id = crate::gate::default_policy_manifest_id()?;
     rollback.with_write_txn(|wtxn| {
         crate::batch::deindex_entity_for_test(&rollback.store, wtxn, &policy_id)

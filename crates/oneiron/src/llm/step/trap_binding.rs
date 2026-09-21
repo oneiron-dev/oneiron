@@ -11,7 +11,7 @@ use super::types::{
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use rmpv::Value;
 
@@ -25,6 +25,25 @@ pub(super) struct TrapBindingRow {
     pub(super) attempt_id: AttemptId,
     pub(super) step_hash: [u8; 32],
     pub(super) park_owner: String,
+}
+
+/// The existing private owner token also discriminates step-only traps from
+/// attempt-parking traps. It is not derived from a synced claim or guest input.
+pub(super) enum TrapBindingScope {
+    Attempt,
+    StepOnly,
+}
+
+impl TrapBindingScope {
+    pub(super) fn owner(&self, anchor: &EntityId) -> String {
+        match self {
+            Self::Attempt => super::trap::trap_park_owner(anchor),
+            Self::StepOnly => format!(
+                "dreamer.step_wait:{}",
+                bytes_to_hex_lower(anchor.as_bytes())
+            ),
+        }
+    }
 }
 
 fn trap_binding_key(anchor: &EntityId) -> Vec<u8> {
@@ -73,10 +92,18 @@ pub(super) fn trap_binding_read(
     anchor: &EntityId,
 ) -> Result<Option<TrapBindingRow>> {
     let rtxn = vault.store.env.read_txn()?;
+    trap_binding_read_in_txn(vault, &rtxn, anchor)
+}
+
+pub(super) fn trap_binding_read_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    anchor: &EntityId,
+) -> Result<Option<TrapBindingRow>> {
     let Some(raw) = vault
         .store
         .vault_meta
-        .get(&rtxn, &trap_binding_key(anchor))?
+        .get(rtxn, &trap_binding_key(anchor))?
     else {
         return Ok(None);
     };

@@ -372,9 +372,29 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
     ));
 
     let conversations_path = "/v1/core/conversations?view=full&limit=5&countMode=exact";
-    let (status, body) =
+    let (status, mut body) =
         core_json(server.clone(), "GET", conversations_path, "core:read", None).await;
     assert_eq!(status, StatusCode::OK);
+    let root_id = server.vault.root_project().expect("root project");
+    let root = server
+        .vault
+        .project(root_id)
+        .expect("read root")
+        .expect("root exists");
+    let home = body["items"]
+        .as_array_mut()
+        .expect("conversation items")
+        .iter_mut()
+        .find(|row| row["id"].as_str() == Some(root.home_room.as_str()))
+        .expect("house room is projected");
+    assert_eq!(home["project_id"], json!(root_id.to_hex()));
+    assert_eq!(home["memberIds"], json!(root.roster));
+    assert_eq!(home["claims_scope_ref"], json!(root.claims_scope_ref));
+    // Only the per-vault identities vary. Keep all projected fields in the snapshot.
+    home["id"] = json!("<home-room-id>");
+    home["label"] = json!("<home-room-id>");
+    home["project_id"] = json!("<root-project-id>");
+    home["claims_scope_ref"] = json!("<root-project-id>");
     exchanges.push(contract_exchange(
         "list_core_conversations",
         "GET",

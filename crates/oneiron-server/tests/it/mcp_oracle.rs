@@ -177,10 +177,11 @@ mod cb_x {
         let mut expected = oneiron::board_verb::BOARD_VERBS
             .iter()
             .chain(oneiron::task_verb::TASKS_VERBS.iter())
+            .chain(oneiron::workspace_roster::ROOMS_VERBS.iter())
             .map(|verb| (*verb).to_owned())
             .collect::<Vec<_>>();
         expected.sort();
-        assert_eq!(expected.len(), 9);
+        assert_eq!(expected.len(), 17);
         assert_eq!(variant.verb_table, expected);
         assert_eq!(variant.generated_tool_names, expected);
         assert_eq!(variant.hand_written_tools, 0);

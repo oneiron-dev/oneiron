@@ -226,59 +226,66 @@ impl Vault {
     /// [`MaintenanceError::VaultCleanupRestoreNotArchived`](crate::error::MaintenanceError::VaultCleanupRestoreNotArchived),
     /// [`MaintenanceError::VaultCleanupArchiveMarkerUndecodable`](crate::error::MaintenanceError::VaultCleanupArchiveMarkerUndecodable), storage errors.
     pub fn restore_archived(&self, entity: &EntityId) -> Result<()> {
-        self.with_write_txn(|wtxn| {
-            let Some(decoded) = self.archive_tombstone_in_txn(wtxn, entity)? else {
+        self.with_write_txn(|wtxn| self.restore_archived_in_txn(wtxn, entity))
+    }
+
+    pub(crate) fn restore_archived_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+    ) -> Result<()> {
+        let Some(decoded) = self.archive_tombstone_in_txn(wtxn, entity)? else {
+            return Err(Error::Maintenance(
+                MaintenanceError::VaultCleanupRestoreNotArchived {
+                    entity: entity.to_hex(),
+                },
+            ));
+        };
+        match decoded.reason {
+            Some(TombstoneReason::ArchivedByCleanup) => {}
+            Some(_) => {
                 return Err(Error::Maintenance(
-                    MaintenanceError::VaultCleanupRestoreNotArchived {
+                    MaintenanceError::VaultCleanupArchiveMarkerUndecodable {
                         entity: entity.to_hex(),
+                        reason: "marker carries a non-archive tombstone reason",
                     },
                 ));
-            };
-            match decoded.reason {
-                Some(TombstoneReason::ArchivedByCleanup) => {}
-                Some(_) => {
-                    return Err(Error::Maintenance(
-                        MaintenanceError::VaultCleanupArchiveMarkerUndecodable {
-                            entity: entity.to_hex(),
-                            reason: "marker carries a non-archive tombstone reason",
-                        },
-                    ));
-                }
-                None => {
-                    return Err(Error::Maintenance(
-                        MaintenanceError::VaultCleanupArchiveMarkerUndecodable {
-                            entity: entity.to_hex(),
-                            reason: "marker is legacy, reserved, unknown or malformed",
-                        },
-                    ));
-                }
             }
-            self.clear_archive_tombstone_in_txn(wtxn, entity)?;
-            let raw = self
+            None => {
+                return Err(Error::Maintenance(
+                    MaintenanceError::VaultCleanupArchiveMarkerUndecodable {
+                        entity: entity.to_hex(),
+                        reason: "marker is legacy, reserved, unknown or malformed",
+                    },
+                ));
+            }
+        }
+        self.clear_archive_tombstone_in_txn(wtxn, entity)?;
+        let raw = self
+            .store
+            .entities
+            .get(wtxn, entity.as_bytes())?
+            .ok_or_else(|| {
+                Error::Maintenance(MaintenanceError::VaultCleanupRestoreNotArchived {
+                    entity: entity.to_hex(),
+                })
+            })?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("archived entity header"))?;
+        if self.local_hard_delete_marker_exists_in_txn(wtxn, entity)?
+            || self
                 .store
-                .entities
-                .get(wtxn, entity.as_bytes())?
-                .ok_or_else(|| {
-                    Error::Maintenance(MaintenanceError::VaultCleanupRestoreNotArchived {
-                        entity: entity.to_hex(),
-                    })
-                })?;
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("archived entity header"))?;
-            if self.local_hard_delete_marker_exists_in_txn(wtxn, entity)?
-                || self
-                    .store
-                    .entity_deletion_present_in_txn(wtxn, entity, header.learned_at)?
-            {
-                // The failed transaction restores the archive marker too.
-                return Err(Error::Maintenance(
-                    MaintenanceError::VaultCleanupRestoreNotArchived {
-                        entity: entity.to_hex(),
-                    },
-                ));
-            }
-            person_provenance::clear_mint_evidence_in_txn(self, wtxn, entity)?;
-            Ok(())
-        })
+                .entity_deletion_present_in_txn(wtxn, entity, header.learned_at)?
+        {
+            // The failed transaction restores the archive marker too.
+            return Err(Error::Maintenance(
+                MaintenanceError::VaultCleanupRestoreNotArchived {
+                    entity: entity.to_hex(),
+                },
+            ));
+        }
+        person_provenance::clear_mint_evidence_in_txn(self, wtxn, entity)?;
+        super::restore_task_attempts(self, wtxn, *entity)?;
+        Ok(())
     }
 }

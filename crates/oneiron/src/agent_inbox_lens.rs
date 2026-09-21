@@ -45,6 +45,17 @@ pub struct AgentInboxLensQuery {
 }
 
 impl Vault {
+    /// The TASK lane of the inbox. The plan-view `task_owner` saved-query
+    /// operator reads this same index; neither keeps project-derived copies.
+    pub fn agent_inbox_tasks(
+        &self,
+        owner: EntityId,
+        after: Option<EntityId>,
+        limit: usize,
+    ) -> Result<Vec<EntityId>> {
+        self.tasks_by_owner(owner, after, limit)
+    }
+
     pub fn agent_inbox_lens(&self, query: AgentInboxLensQuery) -> Result<Vec<AgentInboxLensItem>> {
         if query.limit == 0 {
             return Ok(Vec::new());

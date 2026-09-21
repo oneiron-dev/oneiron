@@ -371,6 +371,10 @@ fn scope_from_json(value: &Value) -> Result<QueryScope> {
 fn filter_to_json(ast: &FilterAst) -> Value {
     let mut root = JsonMap::new();
     match ast {
+        FilterAst::TaskOwner { owner } => {
+            root.insert("op".to_owned(), Value::String("task_owner".to_owned()));
+            root.insert("owner".to_owned(), Value::String(owner.to_hex()));
+        }
         FilterAst::All { terms } | FilterAst::Any { terms } => {
             root.insert(
                 "op".to_owned(),

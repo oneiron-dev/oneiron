@@ -15,6 +15,7 @@ pub(super) fn reject_engine_authored_delete(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(());
     };
@@ -88,6 +89,14 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
 
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
+    let (room_vector, room_graph, room_neighbors) =
+        crate::workspace_roster::deindex_project_room(store, wtxn, id)?;
+    had_vector |= room_vector;
+    had_graph_mutation |= room_graph;
+    neighbors.extend(room_neighbors);
+    crate::task_verb::index_owner_fact(store, wtxn, id, None)?;
+    crate::task_verb::forget_task_mirror(store, wtxn, *id)?;
+    crate::task_verb::forget_symbols(store, wtxn, *id)?;
     crate::bm25::deindex_text(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
     crate::code_revision::delete_code_revision_lifecycle_in_txn(store, wtxn, id)?;
