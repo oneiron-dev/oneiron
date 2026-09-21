@@ -14,7 +14,7 @@ libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-wasmtime = { version = "=38.0.4", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
+wasmtime = { version = "=48.0.2", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
 wat = "1"
 
 [dev-dependencies]
