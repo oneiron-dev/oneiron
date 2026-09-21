@@ -4,6 +4,10 @@ use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
     ContentPart, LlmBackend, LlmCatalogEntry, LlmMessage, LlmMessageRole, LlmRequest, ModelId,
     ModelLocality, ModelTierRef, PinnedModelConfig, ResponseFormat, TierPrecedence,
+    llm::{
+        LlmCatalogCost,
+        registry::{ModelRegistryRow, ModelWireFormat},
+    },
 };
 use oneiron_llm_openai::{
     OpenAiCompatBackend, OpenAiCompatConfig, OpenAiCompatFuture, OpenAiCompatHttpRequest,
@@ -165,8 +169,28 @@ impl ModelSession {
                 metadata: BTreeMap::new(),
             });
         }
+        // Load only this run's pinned models through the adapter's registry door.
+        let registry_dir = tempfile::tempdir()?;
+        let registry =
+            oneiron::Vault::open(registry_dir.path(), super::util::beam_vault_config())?;
+        for mut entry in catalog {
+            let price = &config.prices.models[&entry.model];
+            entry.cost = Some(LlmCatalogCost {
+                input_per_million: price.input_per_million.to_string(),
+                output_per_million: price.output_per_million.to_string(),
+                cache_read_per_million: Some(price.cache_read_per_million.to_string()),
+                cache_write_per_million: Some(price.cache_write_per_million.to_string()),
+            });
+            registry.put_model_registry_row(&ModelRegistryRow {
+                version: 1,
+                wire: ModelWireFormat::OpenaiCompat,
+                catalog: entry,
+                scores: BTreeMap::new(),
+                fetched_at: BTreeMap::new(),
+            })?;
+        }
         let backend = OpenAiCompatBackend::new(
-            OpenAiCompatConfig::with_models(catalog),
+            OpenAiCompatConfig::from_registry(&registry)?,
             HttpTransport {
                 client,
                 endpoint: config.endpoint,
