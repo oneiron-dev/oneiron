@@ -814,6 +814,7 @@ fn world_value_must_be_16_byte_binary() {
             (Value::from("val"), Value::from("x")),
             (Value::from("conf"), Value::F32(1.0)),
         ];
+        entries.push((Value::from("rel"), Value::from("all")));
         if let Some(world) = world {
             entries.push((Value::from("world"), world));
         }
@@ -835,11 +836,14 @@ fn world_value_must_be_16_byte_binary() {
         Some(world_id)
     );
 
-    // Absent key = base reality (None), the elide-the-default pattern.
-    let base = body_with_world(None);
+    assert_matches!(
+        decode_claim_body(&body_with_world(None), false),
+        Err(Error::InvalidClaimBody(_))
+    );
+    let base = body_with_world(Some(Value::from("base")));
     assert_eq!(
         decode_claim_body(&base, false)
-            .expect("absent world passes")
+            .expect("explicit base tag")
             .world,
         None
     );

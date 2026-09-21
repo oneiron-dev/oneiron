@@ -773,7 +773,11 @@ fn stale_completion_preserves_newer_pending_job() -> Result<()> {
     assert_eq!(leased.work.len(), 1);
     put_claim(&vault, id, "new")?;
 
-    let filled = reconciler.complete_leased_work(&leased.work[0], &[1.0, 0.0, 0.0, 0.0])?;
+    let filled = reconciler.complete_leased_work(
+        &leased.work[0],
+        &[1.0, 0.0, 0.0, 0.0],
+        EmbedderLocality::OnDevice,
+    )?;
     assert!(!filled, "old-token fill must be stale");
     assert!(
         pending_token(&vault, &id)?.is_some(),

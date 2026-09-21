@@ -243,31 +243,62 @@ pub enum CalendarSyncOutcome {
 }
 
 /// Parses one remote resource and returns the VEVENT it carries for `uid`.
+pub(super) fn parse_remote_resource(
+    object: &RemoteCalendarObject,
+) -> Result<crate::calendar::ics::ParsedIcsFeed, CalendarError> {
+    let feed = parse_ics_feed(&object.ics)?;
+    let first = feed.events.first().ok_or_else(|| CalendarError::IcsParse {
+        reason: "remote calendar object carries no VEVENT".into(),
+    })?;
+    if first.properties.recurrence_id_utc.is_some() {
+        return Err(CalendarError::IcsParse {
+            reason: "remote series resource omits its master".into(),
+        });
+    }
+    if feed.events.iter().any(|event| event.uid != first.uid) {
+        return Err(CalendarError::IcsParse {
+            reason: "remote calendar resource contains multiple UIDs".into(),
+        });
+    }
+    Ok(feed)
+}
 pub(super) fn parse_remote_object(
     object: &RemoteCalendarObject,
 ) -> Result<ParsedVEvent, CalendarError> {
-    let feed = parse_ics_feed(&object.ics)?;
-    feed.events
-        .iter()
-        .find(|event| event.uid == object.uid)
-        .or_else(|| feed.events.first())
-        .cloned()
+    parse_remote_resource(object)?
+        .events
+        .into_iter()
+        .next()
         .ok_or_else(|| CalendarError::IcsParse {
-            reason: "remote calendar object carries no VEVENT".to_owned(),
+            reason: "remote calendar object carries no VEVENT".into(),
         })
 }
 
 /// The canonical content hash of a rendered VEVENT, read back through the same
 /// parser the pull side uses so a local write and its echo hash identically.
 pub(super) fn ics_content_hash(ics: &[u8], uid: &str) -> Result<[u8; 32], CalendarError> {
+    use sha2::{Digest, Sha256};
     let feed = parse_ics_feed(ics)?;
-    feed.events
+    if feed.events.is_empty() || feed.events.iter().any(|event| event.uid != uid) {
+        return Err(CalendarError::IcsParse {
+            reason: "rendered resource has no matching UID".into(),
+        });
+    }
+    if feed.events.len() == 1 {
+        return Ok(feed.events[0].content_hash);
+    }
+    let mut hashes: Vec<_> = feed
+        .events
         .iter()
-        .find(|event| event.uid == uid)
-        .map(|event| event.content_hash)
-        .ok_or_else(|| CalendarError::IcsParse {
-            reason: "rendered VEVENT did not read back".to_owned(),
-        })
+        .map(|event| (event.properties.recurrence_id_utc, event.content_hash))
+        .collect();
+    hashes.sort();
+    let mut hash = Sha256::new();
+    hash.update(b"oneiron:calendar-resource:v1");
+    for (_, value) in hashes {
+        hash.update(value);
+    }
+    Ok(hash.finalize().into())
 }
 
 /// Renders the owner-calendar `VCALENDAR` document for one EVENT.
@@ -277,6 +308,16 @@ pub(super) fn ics_content_hash(ics: &[u8], uid: &str) -> Result<[u8; 32], Calend
 /// every instant it prints crosses [`super::tz::utc_to_wall`] — the module keeps
 /// no second date library and no third-party time type.
 pub(super) fn render_owner_vevent(
+    vault: &Vault,
+    event_ref: &EntityId,
+    uid: &str,
+    sequence: u32,
+    now: u64,
+) -> Result<super::resource::RenderedResource, CalendarConnectorError> {
+    super::resource::render(vault, event_ref, uid, sequence, now)
+}
+
+pub(super) fn render_component(
     vault: &Vault,
     event_ref: &EntityId,
     uid: &str,
@@ -293,6 +334,8 @@ pub(super) fn render_owner_vevent(
         .unwrap_or_else(|| uid.to_owned());
 
     let mut transparency = CalendarBusyTransparency::Busy;
+    let mut timezone = None;
+    let mut time_kind = None;
     let mut cancelled = false;
     for claim_id in vault.claims_for_subject(event_ref)? {
         let Some(claim) = vault.get_claim(&claim_id)? else {
@@ -305,6 +348,13 @@ pub(super) fn render_owner_vevent(
             && let Ok(value) = decode_time_kind_value(&claim.value)
         {
             transparency = value.busy_transparency;
+            time_kind = Some(value.kind);
+        }
+        if claim.predicate == crate::calendar::claims::PREDICATE_CALENDAR_TZ {
+            timezone = claim.value.as_str().map(str::to_owned);
+        }
+        if claim.predicate == crate::calendar::claims::PREDICATE_CALENDAR_SERIES_MASTER {
+            timezone = Some(crate::calendar::claims::decode_series_master_value(&claim.value)?.tz);
         }
         if claim.predicate == PREDICATE_CALENDAR_STATUS
             && let Ok(value) = decode_status_value(&claim.value)
@@ -318,14 +368,34 @@ pub(super) fn render_owner_vevent(
     );
     out.push_str(&format!("UID:{}\r\n", escape_ics_text(uid)));
     out.push_str(&format!("DTSTAMP:{}\r\n", format_utc(now)?));
-    out.push_str(&format!(
-        "DTSTART:{}\r\n",
-        format_utc(header.occurred_start)?
-    ));
-    out.push_str(&format!(
-        "DTEND:{}\r\n",
-        format_utc(header.occurred_end.max(header.occurred_start))?
-    ));
+    if matches!(
+        time_kind,
+        Some(
+            crate::calendar::claims::CalendarTimeKind::Floating
+                | crate::calendar::claims::CalendarTimeKind::AllDay
+        )
+    ) {
+        return Err(ingest_error(
+            "owner write requires an anchored interval; floating or all-day duration is not stored",
+        ));
+    }
+    for (name, instant) in [
+        ("DTSTART", header.occurred_start),
+        ("DTEND", header.occurred_end.max(header.occurred_start)),
+    ] {
+        if let Some(zone) = timezone.as_deref().filter(|zone| *zone != "UTC") {
+            if zone.contains(['\r', '\n', ';', ':', '"']) {
+                return Err(ingest_error("invalid calendar timezone parameter"));
+            }
+            let wall = utc_to_wall(instant, zone)?;
+            out.push_str(&format!(
+                "{name};TZID={zone}:{:04}{:02}{:02}T{:02}{:02}{:02}\r\n",
+                wall.y, wall.mo, wall.d, wall.h, wall.mi, wall.s
+            ));
+        } else {
+            out.push_str(&format!("{name}:{}\r\n", format_utc(instant)?));
+        }
+    }
     out.push_str(&format!("SEQUENCE:{sequence}\r\n"));
     out.push_str(&format!("SUMMARY:{}\r\n", escape_ics_text(&name)));
     out.push_str(&format!(
@@ -343,7 +413,7 @@ pub(super) fn render_owner_vevent(
 }
 
 /// `YYYYMMDDTHHMMSSZ` through the CAL-01 border.
-fn format_utc(utc: u64) -> Result<String, CalendarError> {
+pub(super) fn format_utc(utc: u64) -> Result<String, CalendarError> {
     let wall = utc_to_wall(utc, "UTC")?;
     Ok(format!(
         "{:04}{:02}{:02}T{:02}{:02}{:02}Z",

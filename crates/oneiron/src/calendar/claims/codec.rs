@@ -108,38 +108,44 @@ pub(crate) fn validate_calendar_claim_structure(body: &ClaimBody) -> Result<()> 
     if !matches!(body.subject, ClaimSubject::Entity(_)) {
         return Err(invalid_claim("calendar claim subject must be an entity"));
     }
-    if !is_calendar_claim_predicate(&body.predicate) {
+    validate_calendar_claim_value(&body.predicate, &body.value)
+}
+
+/// Validates a derived value before its EVENT or any claims are written.
+pub(in crate::calendar) fn validate_calendar_claim_value(
+    predicate: &str,
+    value: &Value,
+) -> Result<()> {
+    if !is_calendar_claim_predicate(predicate) {
         return Err(invalid_claim("unknown calendar claim predicate"));
     }
-    match body.predicate.as_str() {
-        PREDICATE_CALENDAR_TIME_KIND => decode_time_kind_value(&body.value).map(|_| ()),
-        PREDICATE_CALENDAR_WALL_TIME => decode_wall_time_value(&body.value).map(|_| ()),
+    match predicate {
+        PREDICATE_CALENDAR_TIME_KIND => decode_time_kind_value(value).map(|_| ()),
+        PREDICATE_CALENDAR_WALL_TIME => decode_wall_time_value(value).map(|_| ()),
         PREDICATE_CALENDAR_TZ => {
-            validate_bounded_text(as_str(&body.value, "calendar.tz must be a string")?, "tz")
+            validate_bounded_text(as_str(value, "calendar.tz must be a string")?, "tz")
         }
         PREDICATE_CALENDAR_RRULE => {
-            let rrule = as_str(&body.value, "calendar.rrule must be a string")?;
+            let rrule = as_str(value, "calendar.rrule must be a string")?;
             validate_rrule_text(rrule)
         }
-        PREDICATE_CALENDAR_SERIES_MASTER => decode_series_master_value(&body.value).map(|_| ()),
-        PREDICATE_CALENDAR_SERIES_EXCEPTION => {
-            decode_series_exception_value(&body.value).map(|_| ())
-        }
-        PREDICATE_CALENDAR_SUCCESSOR => decode_successor_value(&body.value).map(|_| ()),
-        PREDICATE_CALENDAR_ATTENDEE => decode_attendee_value(&body.value).map(|_| ()),
+        PREDICATE_CALENDAR_SERIES_MASTER => decode_series_master_value(value).map(|_| ()),
+        PREDICATE_CALENDAR_SERIES_EXCEPTION => decode_series_exception_value(value).map(|_| ()),
+        PREDICATE_CALENDAR_SUCCESSOR => decode_successor_value(value).map(|_| ()),
+        PREDICATE_CALENDAR_ATTENDEE => decode_attendee_value(value).map(|_| ()),
         PREDICATE_CALENDAR_MEETING_LINK => {
-            let link = as_str(&body.value, "calendar.meeting_link must be a string")?;
+            let link = as_str(value, "calendar.meeting_link must be a string")?;
             validate_meeting_link(link)
         }
-        PREDICATE_CALENDAR_PASSPORT => decode_passport_value(&body.value).map(|_| ()),
+        PREDICATE_CALENDAR_PASSPORT => decode_passport_value(value).map(|_| ()),
         PREDICATE_CALENDAR_ORIGIN => {
-            let origin = as_str(&body.value, "calendar.origin must be a string")?;
+            let origin = as_str(value, "calendar.origin must be a string")?;
             CalendarOrigin::parse(origin)
                 .map(|_| ())
                 .ok_or_else(|| invalid_claim("calendar.origin is invalid"))
         }
-        PREDICATE_CALENDAR_STATUS => decode_status_value(&body.value).map(|_| ()),
-        PREDICATE_CALENDAR_EVENT_OUTCOME => decode_event_outcome_value(&body.value).map(|_| ()),
+        PREDICATE_CALENDAR_STATUS => decode_status_value(value).map(|_| ()),
+        PREDICATE_CALENDAR_EVENT_OUTCOME => decode_event_outcome_value(value).map(|_| ()),
         _ => unreachable!("predicate membership checked above"),
     }
 }

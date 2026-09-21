@@ -483,6 +483,8 @@ fn claim_body(text: &str) -> Vec<u8> {
             (rmpv::Value::from("conf"), rmpv::Value::F32(0.9)),
             (rmpv::Value::from("appr"), rmpv::Value::from("auto")),
             (rmpv::Value::from("life"), rmpv::Value::from("active")),
+            (rmpv::Value::from("world"), rmpv::Value::from("base")),
+            (rmpv::Value::from("rel"), rmpv::Value::from("all")),
         ]),
     )
     .expect("encode claim body");
@@ -517,7 +519,31 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
 
     let mock = MockEndpoint::start(MockBehaviour::Ok);
     let dir = tempfile::tempdir().expect("vault dir");
-    let vault = test_vault(dir.path());
+    let config_path = dir.path().join("oneiron.toml");
+    crate::commands::init(crate::cli::InitArgs {
+        path: dir.path().join("vault"),
+        config: Some(config_path.clone()),
+        embedder: Some(EmbedderProvider::Endpoint),
+        embedder_endpoint: Some(mock.base.clone()),
+        embedder_model_id: Some("test/model@rev".into()),
+        embedder_model_key: Some(MODEL_KEY.into()),
+        dimensions: Some(DIMS),
+        map_size: 64 * 1024 * 1024,
+        ..Default::default()
+    })
+    .unwrap();
+    let serve_config = crate::config::resolve_serve_config_with_sources(
+        &crate::config::ServeArgs {
+            config: Some(config_path),
+            ..Default::default()
+        },
+        crate::config::EnvConfig::default(),
+        None,
+    )
+    .unwrap();
+    let vault = Arc::new(
+        oneiron::Vault::open_owned(&serve_config.vault_path, serve_config.vault_config()).unwrap(),
+    );
     let texts = [
         "first claim prose",
         "second claim prose",
@@ -538,7 +564,7 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
         .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
         .expect("claim census")
         .len();
-    let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
+    let slot = EmbedderSlot::from_config(serve_config.embedder.as_ref().unwrap())
         .expect("slot resolves")
         .expect("an endpoint slot exists");
     let server = Arc::new(
@@ -634,6 +660,8 @@ fn attaching_a_provider_to_a_populated_vault_backfills_every_row() {
     };
 
     let vault = test_vault(dir.path());
+    assert_eq!(vault.cold_attach_embedder().unwrap(), ids.len());
+    assert_eq!(vault.cold_attach_embedder().unwrap(), 0);
     let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
         .expect("slot resolves")
         .expect("an endpoint slot exists");
@@ -914,4 +942,145 @@ fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
                 .all(|entry| entry.path().is_dir()),
         "a failed fetch leaves no artifact behind"
     );
+}
+
+#[test]
+fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
+    use crate::config::{
+        EmbedderLocality as Locality,
+        remote_embedder::{EgressPolicy, RemoteEmbedderConfig},
+    };
+    use oneiron::embed::{EmbedderLocality, PendingEmbeddingReconciler};
+    for locality in [Locality::OwnerServer, Locality::ThirdParty] {
+        let local = MockEndpoint::start(MockBehaviour::Ok);
+        let remote = MockEndpoint::start(MockBehaviour::Ok);
+        let dir = tempfile::tempdir().unwrap();
+        let vault = test_vault(dir.path());
+        let allow = put_claim(&vault, 0x91, "allow this row");
+        let deny = put_claim(&vault, 0x92, "deny this row");
+        let unknown = put_claim(&vault, 0x93, "no verdict row");
+        let mut config = endpoint_config(&local.base);
+        config.remote = Some(RemoteEmbedderConfig {
+            endpoint: remote.base.clone(),
+            model_key: MODEL_KEY.into(),
+            locality,
+            artifact: None,
+            api_key_env: None,
+            lease_ms: 120_000,
+            timeout_ms: 1000,
+            egress: Some(EgressPolicy {
+                allow: vec![allow.to_hex()],
+                deny: vec![deny.to_hex()],
+                allow_all: false,
+            }),
+        });
+        let primary = endpoint::HttpEmbedder::from_config(&config).unwrap();
+        let rung = build_remote_rung(&config).unwrap().unwrap();
+        assert_eq!(rung.lease_duration_ms, 120_000);
+        let reconciler = PendingEmbeddingReconciler::new(Arc::clone(&vault), primary)
+            .with_remote_rung(rung)
+            .unwrap();
+        let report = reconciler.reconcile_once().unwrap();
+        assert_eq!(
+            (
+                report.routed_remote,
+                report.egress_denied,
+                report.egress_no_verdict,
+                report.filled
+            ),
+            (1, 1, 1, 3)
+        );
+        let expected = if locality == Locality::OwnerServer {
+            EmbedderLocality::OwnerServer
+        } else {
+            EmbedderLocality::ThirdParty
+        };
+        assert_eq!(vault.embedding_locality(&allow).unwrap(), Some(expected));
+        assert_eq!(
+            vault.embedding_locality(&deny).unwrap(),
+            Some(EmbedderLocality::OnDevice)
+        );
+        assert_eq!(
+            vault.embedding_locality(&unknown).unwrap(),
+            Some(EmbedderLocality::OnDevice)
+        );
+        remote.set_behaviour(MockBehaviour::ServerError);
+        put_claim(&vault, 0x91, "updated row while remote is down");
+        let report = reconciler.reconcile_once().unwrap();
+        assert_eq!((report.remote_failed_fallback_local, report.filled), (1, 1));
+        assert_eq!(
+            vault.embedding_locality(&allow).unwrap(),
+            Some(EmbedderLocality::OnDevice)
+        );
+        assert_eq!(reconciler.reconcile_once().unwrap().filled, 0);
+    }
+}
+
+#[test]
+fn remote_endpoint_init_config_drives_egress_and_semantic_queries_without_manual_edits() {
+    use crate::config::EmbedderLocality;
+    let local = MockEndpoint::start(MockBehaviour::Ok);
+    let remote = MockEndpoint::start(MockBehaviour::Ok);
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("oneiron.toml");
+    let mut bytes = [0xA9; 16];
+    bytes[0] = 0x7e;
+    let id = oneiron::EntityId::from_bytes(bytes).unwrap();
+    crate::commands::init(crate::cli::InitArgs {
+        path: dir.path().join("vault"),
+        config: Some(config_path.clone()),
+        embedder: Some(EmbedderProvider::Endpoint),
+        embedder_endpoint: Some(remote.base.clone()),
+        embedder_locality: Some(EmbedderLocality::ThirdParty),
+        embedder_fallback_endpoint: Some(local.base.clone()),
+        embedder_egress_allow: vec![id.to_hex()],
+        embedder_model_id: Some("test/model@rev".into()),
+        embedder_model_key: Some(MODEL_KEY.into()),
+        dimensions: Some(DIMS),
+        map_size: 64 * 1024 * 1024,
+        ..Default::default()
+    })
+    .unwrap();
+    let config = crate::config::resolve_serve_config_with_sources(
+        &crate::config::ServeArgs {
+            config: Some(config_path),
+            ..Default::default()
+        },
+        crate::config::EnvConfig::default(),
+        None,
+    )
+    .unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open_owned(&config.vault_path, config.vault_config()).unwrap());
+    let allowed = put_claim(&vault, 0xA9, "remote onboarding claim");
+    assert_eq!(allowed, id);
+    let unknown = put_claim(&vault, 0xAA, "keep this claim on device");
+    let embedder = config.embedder.as_ref().unwrap();
+    let slot = EmbedderSlot::from_config(embedder).unwrap().unwrap();
+    let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        slot.ensure_ready().unwrap() as Arc<dyn oneiron::embed::Embedder>,
+    )
+    .with_remote_rung(build_remote_rung(embedder).unwrap().unwrap())
+    .unwrap();
+    let report = reconciler.reconcile_once().unwrap();
+    assert_eq!(
+        (
+            report.routed_remote,
+            report.egress_no_verdict,
+            report.filled
+        ),
+        (1, 1, 2)
+    );
+    assert_eq!(
+        vault.embedding_locality(&id).unwrap(),
+        Some(oneiron::embed::EmbedderLocality::ThirdParty)
+    );
+    assert_eq!(
+        vault.embedding_locality(&unknown).unwrap(),
+        Some(oneiron::embed::EmbedderLocality::OnDevice)
+    );
+    let query = slot.embed_query("remote onboarding claim").unwrap();
+    let hits = vault.search_vector(&query, 5).unwrap();
+    assert!(hits.iter().any(|hit| hit.id == id));
 }

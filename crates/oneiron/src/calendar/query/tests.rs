@@ -289,7 +289,7 @@ fn calendar_search_bounds_limit() {
 }
 
 #[test]
-fn calendar_selector_is_ignored_until_passport_index_lands() {
+fn calendar_selector_filters_before_limit_and_rejects_blanks() {
     let (_dir, vault) = open_calendar_vault();
     CalendarEventFixture::new(0x41, "Offsite", 1_000, 2_000).store(&vault);
 
@@ -307,7 +307,7 @@ fn calendar_selector_is_ignored_until_passport_index_lands() {
         },
     )
     .expect("search");
-    assert_eq!(selected.len(), 1);
+    assert!(selected.is_empty());
 
     assert!(
         validate_selectors(&[CalendarSel {
@@ -418,4 +418,173 @@ fn calendar_surface_admits_only_surfaceable_claims() {
         .is_none(),
         "an unapproved calendar claim is not calendar truth on any lane"
     );
+}
+
+#[test]
+fn calendar_windows_expand_series_and_honor_live_systems() {
+    use crate::calendar::claims::*;
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    let (_dir, vault) = open_calendar_vault();
+    let start = 1_786_024_800_u64;
+    let master = CalendarEventFixture::new(0x7c, "Daily review", start, start + 3599).store(&vault);
+    let put = |predicate, value| {
+        vault
+            .put_claim(
+                &EntityId::now(),
+                &ClaimBody::new(
+                    predicate,
+                    ClaimSubject::Entity(master),
+                    value,
+                    1.0,
+                    ClaimApprovalStatus::Approved,
+                    ClaimLifecycleStatus::Active,
+                ),
+                TimeRange { start: 1, end: 1 },
+                1,
+            )
+            .unwrap();
+    };
+    put(
+        PREDICATE_CALENDAR_SERIES_MASTER,
+        Value::Map(vec![
+            ("rrule".into(), "FREQ=DAILY;COUNT=3".into()),
+            ("dtstart_utc".into(), start.into()),
+            ("tz".into(), "UTC".into()),
+        ]),
+    );
+    let passport = CalendarPassportValue {
+        system: "work".into(),
+        uid: "daily@fixture".into(),
+        last_sequence: 1,
+        content_hash: [1; 32],
+        direction: CalendarPassportDirection::Inbound,
+        last_seen_at: 1,
+        presence: CalendarPassportPresence::Live,
+    };
+    put(
+        PREDICATE_CALENDAR_PASSPORT,
+        crate::calendar::passport::encode_passport_value(&passport),
+    );
+    let range = TimeRange {
+        start: start + 86_400,
+        end: start + 86_400 + 3600,
+    };
+    let selectors = vec![CalendarSel {
+        system: Some("work".into()),
+    }];
+    let busy = crate::calendar::freebusy(&vault, &selectors, range).unwrap();
+    assert_eq!(busy.len(), 1);
+    assert_eq!(busy[0].start_utc, start + 86_400);
+    let views = search_events(
+        &vault,
+        &CalendarSearchRequest {
+            calendars: selectors,
+            range: Some(CalendarRangeDto {
+                start: range.start,
+                end: range.end,
+            }),
+            text: None,
+            limit: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].start_utc, Some(start + 86_400));
+    assert!(
+        crate::calendar::freebusy(
+            &vault,
+            &[CalendarSel {
+                system: Some("other".into())
+            }],
+            range
+        )
+        .unwrap()
+        .is_empty()
+    );
+}
+
+#[test]
+fn withheld_exception_suppresses_only_its_own_series() {
+    use crate::calendar::claims::*;
+    let (_dir, vault) = open_calendar_vault();
+    let start = 1_786_024_800_u64;
+    let a = CalendarEventFixture::new(0x81, "Series A", start, start + 3599).store(&vault);
+    let b = CalendarEventFixture::new(0x82, "Series B", start + 7200, start + 10799).store(&vault);
+    for (seed, master, uid, starts) in [
+        (0x81, a, "a@fixture", start),
+        (0x82, b, "b@fixture", start + 7200),
+    ] {
+        put_family_claim(
+            &vault,
+            seed,
+            10,
+            master,
+            PREDICATE_CALENDAR_SERIES_MASTER,
+            Value::Map(vec![
+                ("rrule".into(), "FREQ=DAILY;COUNT=3".into()),
+                ("dtstart_utc".into(), starts.into()),
+                ("tz".into(), "UTC".into()),
+            ]),
+            None,
+        );
+        let passport = CalendarPassportValue {
+            system: "work".into(),
+            uid: uid.into(),
+            last_sequence: 1,
+            content_hash: [1; 32],
+            direction: CalendarPassportDirection::Inbound,
+            last_seen_at: 1,
+            presence: CalendarPassportPresence::Live,
+        };
+        put_family_claim(
+            &vault,
+            seed,
+            11,
+            master,
+            PREDICATE_CALENDAR_PASSPORT,
+            crate::calendar::passport::encode_passport_value(&passport),
+            None,
+        );
+    }
+    store_split_grant_event(
+        &vault,
+        0x83,
+        at(start + 86_400, start + 86_400 + 3599),
+        (
+            PREDICATE_CALENDAR_SERIES_EXCEPTION,
+            Value::Map(vec![
+                ("master_ref".into(), a.to_hex().into()),
+                ("uid".into(), "a@fixture".into()),
+                ("original_start_utc".into(), (start + 86_400).into()),
+            ]),
+        ),
+        Some(entity(0x92)),
+    );
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x95),
+        &scoped_read_world_manifest(SCOPED_READER, entity(0x91)),
+    )
+    .unwrap();
+    let lane = vault.scoped_read(ScopedReadActorKey::new(SCOPED_READER).unwrap());
+    let range = at(start + 86_400, start + 86_400 + 12000);
+    let busy = freebusy_scoped(&lane, &[], range).unwrap();
+    assert_eq!(busy.len(), 1);
+    assert_eq!(busy[0].source, b);
+    let events = search_events_scoped(
+        &lane,
+        &CalendarSearchRequest {
+            calendars: vec![],
+            range: Some(CalendarRangeDto {
+                start: range.start,
+                end: range.end,
+            }),
+            text: None,
+            limit: 10,
+        },
+    )
+    .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_ref, b.to_hex());
+    assert_eq!(events[0].start_utc, Some(start + 86_400 + 7200));
 }

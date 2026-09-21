@@ -1810,9 +1810,13 @@ mod plugin_fixture {
                 Value::from("world"),
                 Value::Binary(world.as_bytes().to_vec()),
             ));
+        } else {
+            entries.push((Value::from("world"), Value::from("base")));
         }
         if let Some(rel) = body.rel {
             entries.push((Value::from("rel"), Value::Binary(rel.as_bytes().to_vec())));
+        } else {
+            entries.push((Value::from("rel"), Value::from("all")));
         }
         let subject = match body.subject {
             ClaimSubject::Entity(id) => id.as_bytes().to_vec(),

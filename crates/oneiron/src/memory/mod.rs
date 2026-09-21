@@ -35,6 +35,7 @@ mod claims;
 mod dreamer;
 mod error;
 mod expression_preference;
+pub mod extraction;
 mod outbound;
 mod reads;
 mod recall;

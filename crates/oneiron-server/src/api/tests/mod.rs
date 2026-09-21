@@ -380,6 +380,8 @@ pub(super) fn seed_active_claim(
         subj: &'a [u8],
         appr: &'static str,
         life: &'static str,
+        world: &'static str,
+        rel: &'static str,
     }
 
     let body = rmp_serde::to_vec_named(&ClaimSeed {
@@ -389,6 +391,8 @@ pub(super) fn seed_active_claim(
         subj: subject.as_bytes(),
         appr: "auto",
         life: "active",
+        world: "base",
+        rel: "all",
     })
     .expect("encode claim fixture");
     server

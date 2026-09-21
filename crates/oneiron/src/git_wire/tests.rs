@@ -511,7 +511,10 @@ fn git_wire_durable_rows_carry_no_payload_secret_or_path() {
 #[test]
 fn git_wire_reads_absence_positively_and_keeps_fatal_failures_typed() {
     let (_vault_dir, vault) = open_test_vault();
-    let repo = init_repo();
+    // Discovery must never escape into a containing repository after deletion.
+    let parent = tempfile::tempdir().expect("parent repo");
+    run_git(parent.path(), &["init"]);
+    let repo = init_repo_at(tempfile::tempdir_in(parent.path()).expect("nested repo"));
     let wire = new_wire(&vault);
     let bound = open(&wire, &repo);
 
@@ -553,13 +556,16 @@ fn git_wire_cached_handle_refuses_ancestor_rediscovery_after_repository_removal(
     let inner_bound = open(&wire, &inner);
     fs::remove_dir_all(inner.path().join(".git")).expect("remove inner repository");
 
+    // The subprocess search ceiling refuses discovery before the cached
+    // binding check could observe the ancestor. This is a typed git failure,
+    // never a successful read (including an absent ref/object).
     assert!(matches!(
         wire.read_ref(&inner_bound, &outer.branch),
-        Err(crate::Error::Code(CodeError::InvalidRepoMutationRecord(_)))
+        Err(crate::Error::Code(CodeError::RepoMutationFailed(_)))
     ));
     assert!(matches!(
         wire.object_exists(&inner_bound, &outer.head),
-        Err(crate::Error::Code(CodeError::InvalidRepoMutationRecord(_)))
+        Err(crate::Error::Code(CodeError::RepoMutationFailed(_)))
     ));
     let marker = GitRefName::parse_full("refs/oneiron/test/no-ancestor-write").expect("ref");
     assert!(

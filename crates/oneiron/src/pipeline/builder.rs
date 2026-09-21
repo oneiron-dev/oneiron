@@ -63,6 +63,7 @@ pub struct PipelineBuilder<'a> {
     /// selection's caller-supplied agent id. Bare `Vault::query` has none.
     pub(super) execution_actor: Option<crate::write_envelope::WriteActor>,
     pub(super) corpus_scope: CorpusScope,
+    pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
     pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
     pub(super) result_limit: usize,
     pub(super) temporal_adaptive_default: bool,
@@ -113,6 +114,7 @@ impl<'a> PipelineBuilder<'a> {
             active_world_selection: None,
             execution_actor: None,
             corpus_scope: CorpusScope::All,
+            made_by: crate::provenance::made_by::MadeByPredicate::All,
             context_pack_budget: None,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
@@ -125,6 +127,12 @@ impl<'a> PipelineBuilder<'a> {
             skip_vector_rescore: false,
             session: None,
         }
+    }
+
+    /// Selects stated, concluded, or all claims after admission and before truncation.
+    pub fn made_by(mut self, predicate: crate::provenance::made_by::MadeByPredicate) -> Self {
+        self.made_by = predicate;
+        self
     }
 
     /// Routes this run's retrieval-run registration through a live room's

@@ -55,7 +55,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             deterministic_competitor["costs"]["offline"]["tokenSource"],
-            "fixture_declared_zero"
+            "tokenizer_count"
         );
         assert_eq!(
             deterministic_competitor["costs"]["judge"]["tokenSource"],

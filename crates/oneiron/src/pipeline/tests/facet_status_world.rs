@@ -765,6 +765,8 @@ fn claim_status_gate_fails_closed_on_undecodable_bodies() -> Result<()> {
                 rmpv::Value::Binary(vec![0x7C; 16]),
             ),
             (rmpv::Value::from("life"), rmpv::Value::from("active")),
+            (rmpv::Value::from("world"), rmpv::Value::from("base")),
+            (rmpv::Value::from("rel"), rmpv::Value::from("all")),
         ]),
     )
     .expect("msgpack encode");

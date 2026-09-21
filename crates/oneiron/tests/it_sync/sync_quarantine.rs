@@ -116,6 +116,8 @@ fn claim_body_with_bad_predicate() -> Vec<u8> {
         ),
         (rmpv::Value::from("appr"), rmpv::Value::from("auto")),
         (rmpv::Value::from("life"), rmpv::Value::from("active")),
+        (rmpv::Value::from("world"), rmpv::Value::from("base")),
+        (rmpv::Value::from("rel"), rmpv::Value::from("all")),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &body).unwrap();
@@ -184,6 +186,8 @@ fn edge_provenance_claim_body_with(
         ),
         (rmpv::Value::from("val"), val),
         (rmpv::Value::from("conf"), rmpv::Value::F32(conf)),
+        (rmpv::Value::from("world"), rmpv::Value::from("base")),
+        (rmpv::Value::from("rel"), rmpv::Value::from("all")),
     ];
     if let Some(evid) = evid {
         entries.push((rmpv::Value::from("evid"), evid));

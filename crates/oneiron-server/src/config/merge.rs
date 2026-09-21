@@ -232,6 +232,7 @@ fn validate_embedder_config(config: &ServeConfig) -> anyhow::Result<()> {
     let Some(embedder) = config.embedder.as_ref() else {
         return Ok(());
     };
+    super::remote_embedder::validate_remote(embedder)?;
     if !embedder.is_active() {
         return Ok(());
     }

@@ -33,6 +33,8 @@ fn search_response_rechecks_projected_claim_body() {
         subj: &'a [u8],
         appr: &'static str,
         life: &'static str,
+        world: &'static str,
+        rel: &'static str,
     }
 
     let dir = tempfile::tempdir().unwrap();
@@ -46,6 +48,8 @@ fn search_response_rechecks_projected_claim_body() {
         subj: subject.as_bytes(),
         appr: "proposed",
         life: "active",
+        world: "base",
+        rel: "all",
     })
     .expect("encode proposed claim");
     vault

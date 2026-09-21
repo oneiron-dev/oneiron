@@ -12,6 +12,7 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use super::scope_tag::{decode_scope_tag, encode_scope_tag};
 use super::*;
 use crate::affect::{
     AFFECT_TRIGGER_PREDICATE,
@@ -190,18 +191,16 @@ pub struct ClaimBody {
     pub valid_to: Option<u64>,
     /// `src` — optional provenance source.
     pub source: Option<ClaimSource>,
-    /// `world` — optional world scope: the 16-byte WORLD entity id this claim
-    /// is scoped to (ARCH-0004 claim world filter; ARCH-0022 world model).
-    /// ABSENT means base reality (the elide-the-default pattern, like
-    /// `stale == false`). On disk it is exactly 16 MessagePack-binary bytes;
-    /// any other shape is rejected fail-closed with [`Error::InvalidClaimBody`].
+    /// `world` — world scope. `None` encodes the explicit `base` tag;
+    /// `Some` encodes a 16-byte WORLD id. The key is mandatory on disk.
+    /// Malformed or absent tags fail with [`Error::InvalidClaimBody`].
     /// The referenced WORLD entity is NOT required to exist at write time —
     /// extraction may create claims before their world; the read side groups
     /// by id regardless.
     pub world: Option<EntityId>,
-    /// `rel` - optional relationship scope: when present, exactly one 16-byte
-    /// MessagePack Binary RELATIONSHIP [`EntityId`]; absent means core/all
-    /// relationships. The claim codec validates this on-disk shape only and
+    /// `rel` — relationship scope. `None` encodes the explicit `all` tag;
+    /// `Some` encodes one 16-byte RELATIONSHIP [`EntityId`]. The key is
+    /// mandatory. The claim codec validates this on-disk shape only and
     /// does not require the referenced relationship to exist at write time,
     /// matching `world`. Retrieval validates the active relationship's
     /// existence and type when relationship filtering executes.
@@ -303,15 +302,8 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
     if let Some(source) = body.source {
         entries.push((Value::from(KEY_SRC), Value::from(source.as_str())));
     }
-    if let Some(world) = body.world {
-        entries.push((
-            Value::from(KEY_WORLD),
-            Value::Binary(world.as_bytes().to_vec()),
-        ));
-    }
-    if let Some(rel) = body.rel {
-        entries.push((Value::from(KEY_REL), Value::Binary(rel.as_bytes().to_vec())));
-    }
+    entries.push((Value::from(KEY_WORLD), encode_scope_tag(body.world, "base")));
+    entries.push((Value::from(KEY_REL), encode_scope_tag(body.rel, "all")));
     entries.push((Value::from(KEY_SUBJ), Value::Binary(body.subject.encode())));
     if let Some(scope) = &body.scope {
         entries.push((Value::from(KEY_SCOPE), scope.clone()));
@@ -339,14 +331,14 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 ///
 /// * the body must be exactly one MessagePack map (no trailing bytes);
 /// * keys must be strings drawn from [`CLAIM_BODY_KEYS`], no duplicates;
-/// * required: `pred`, `subj`, `val`, `conf`, `appr`, `life`;
+/// * required: `pred`, `subj`, `val`, `conf`, `appr`, `life`, `world`, `rel`;
 /// * `conf` (and `sal` when present) must be finite numbers in `[0, 1]`;
 /// * `from`/`to` must be non-negative integers fitting `u64`;
 /// * `src`/`appr`/`life` must be the pinned enum strings;
 /// * `stale` must be a boolean (absent = `false`);
-/// * `world` and `rel`, when present, must each be exactly one 16-byte
-///   MessagePack Binary [`EntityId`]; their existence and entity-type
-///   validation belongs to retrieval, not this codec;
+/// * `world` and `rel` must be the explicit defaults `base` and `all`,
+///   respectively, or a 16-byte MessagePack Binary [`EntityId`]; entity
+///   existence and type validation belongs to retrieval;
 /// * `subj` must be a 16-byte entity id or 33-byte EdgeRef ([`ClaimSubject`]);
 /// * `pred` must satisfy the D17 grammar; reserved `edge.*` and `skill.*`
 ///   predicates are rejected unless `allow_reserved_predicate` is set
@@ -440,36 +432,8 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
                         ))?;
                 source = Some(parsed);
             }
-            "world" => {
-                // ARCH-0004 / ARCH-0022: a present `world` key is the
-                // 16-byte WORLD entity id. Anything that is not exactly 16
-                // MessagePack-binary bytes (a string, a 15-byte blob, …) is
-                // rejected fail-closed — the read side groups claims by this
-                // id, so a malformed value can never be silently scoped.
-                let Value::Binary(bytes) = &value else {
-                    return Err(Error::InvalidClaimBody("world must be MessagePack binary"));
-                };
-                let arr: [u8; ENTITY_ID_LEN] = bytes
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| Error::InvalidClaimBody("world must be a 16-byte world id"))?;
-                world = Some(
-                    EntityId::from_bytes(arr)
-                        .map_err(|_| Error::InvalidClaimBody("world id is reserved"))?,
-                );
-            }
-            "rel" => {
-                let Value::Binary(bytes) = &value else {
-                    return Err(Error::InvalidClaimBody("rel must be MessagePack binary"));
-                };
-                let arr: [u8; ENTITY_ID_LEN] = bytes.as_slice().try_into().map_err(|_| {
-                    Error::InvalidClaimBody("rel must be a 16-byte relationship id")
-                })?;
-                rel = Some(
-                    EntityId::from_bytes(arr)
-                        .map_err(|_| Error::InvalidClaimBody("relationship id is reserved"))?,
-                );
-            }
+            "world" => world = decode_scope_tag(&value, "base")?,
+            "rel" => rel = decode_scope_tag(&value, "all")?,
             "subj" => {
                 let Value::Binary(bytes) = &value else {
                     return Err(Error::InvalidClaimBody("subj must be MessagePack binary"));
@@ -506,6 +470,15 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
         }
     }
 
+    for key in [KEY_WORLD, KEY_REL] {
+        let index = CLAIM_BODY_KEYS
+            .iter()
+            .position(|known| *known == key)
+            .expect("pinned key");
+        if !seen[index] {
+            return Err(Error::InvalidClaimBody("missing required world or rel tag"));
+        }
+    }
     let predicate = predicate.ok_or(Error::InvalidClaimBody("missing required field pred"))?;
     validate_predicate(&predicate, allow_reserved_predicate)?;
     let subject = subject.ok_or(Error::InvalidClaimBody("missing required field subj"))?;

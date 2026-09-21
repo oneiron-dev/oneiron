@@ -126,14 +126,17 @@ impl SyncServer {
                 ))?;
             let embedder: Arc<dyn QueryEmbedder> = slot.ensure_ready()?;
             let config = slot.config();
-            // No remote rung: one embedder, its locality recorded truthfully,
-            // and no third-party route to gate, so no egress predicate is wired.
-            Ok(PendingEmbeddingReconciler::new(
+            server.vault.cold_attach_embedder()?;
+            let mut reconciler = PendingEmbeddingReconciler::new(
                 Arc::clone(server.vault()),
                 embedder as Arc<dyn Embedder>,
             )
             .with_batch_size(config.batch_size)
-            .with_lease_duration_ms(config.lease_ms))
+            .with_lease_duration_ms(config.lease_ms);
+            if let Some(remote) = crate::embedder::build_remote_rung(config)? {
+                reconciler = reconciler.with_remote_rung(remote)?;
+            }
+            Ok(reconciler)
         })
         .await
         .map_err(|_| oneiron::Error::InvariantViolation("embedder load task failed to join"))?;
@@ -197,6 +200,10 @@ impl SyncServer {
             stale_fills = report.stale_fills,
             stale_jobs = report.stale_jobs,
             active_leases = report.active_leases,
+            routed_remote = report.routed_remote,
+            egress_denied = report.egress_denied,
+            egress_no_verdict = report.egress_no_verdict,
+            remote_failed_fallback_local = report.remote_failed_fallback_local,
             truncations,
             "embedding reconcile pass"
         );

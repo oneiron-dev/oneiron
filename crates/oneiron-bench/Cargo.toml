@@ -10,6 +10,9 @@ license.workspace = true
 # materialization path, and `oneiron::sync` is feature-gated
 # (`crates/oneiron/src/lib.rs`), so the harness has to ask for it.
 oneiron = { path = "../oneiron", features = ["sync"] }
+oneiron-llm-openai = { path = "../oneiron-llm-openai" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
+tokio = { version = "1", features = ["rt", "time", "net"] }
 blake3.workspace = true
 rand = "0.8"
 rmp-serde.workspace = true

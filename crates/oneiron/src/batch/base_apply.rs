@@ -630,7 +630,9 @@ pub(super) fn apply_ops_with_origin(
 
     #[cfg(feature = "sync")]
     for (id, token) in &pending_embedding_tokens_written {
-        if store.pending_embedding_token_in_txn(wtxn, id)?.as_deref() == Some(token.as_slice()) {
+        if config.embedding_model.is_some()
+            && store.pending_embedding_token_in_txn(wtxn, id)?.as_deref() == Some(token.as_slice())
+        {
             let priority = pending_embedding_enqueue_priorities
                 .get(id)
                 .copied()

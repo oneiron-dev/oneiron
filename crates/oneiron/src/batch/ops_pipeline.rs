@@ -243,6 +243,9 @@ pub(super) fn check_claim_body_refs(
     if let Some(world) = body.world {
         check(&world)?;
     }
+    if let Some(rel) = body.rel {
+        check(&rel)?;
+    }
     Ok(())
 }
 

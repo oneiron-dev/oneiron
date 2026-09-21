@@ -36,6 +36,40 @@ impl<'a> CalendarRead<'a> {
         }
     }
 
+    pub(in crate::calendar) fn withheld_exception_series(
+        &self,
+    ) -> Result<std::collections::BTreeSet<(EntityId, String)>> {
+        let mut withheld = std::collections::BTreeSet::new();
+        if matches!(self, Self::Vault(_)) {
+            return Ok(withheld);
+        }
+        let mut after = None;
+        loop {
+            let ids = self.vault().entities_by_type_page(
+                crate::registry::ENTITY_TYPE_CLAIM,
+                after.as_ref(),
+                4096,
+            )?;
+            if ids.is_empty() {
+                return Ok(withheld);
+            }
+            for id in &ids {
+                if self.claim(id)?.is_none()
+                    && let Some(body) = self.vault().get_claim(id)?.filter(claim_surfaceable)
+                    && body.predicate
+                        == crate::calendar::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION
+                {
+                    // Only the suppression key is used internally; no hidden
+                    // exception contents reach the actor's projection.
+                    let exception =
+                        crate::calendar::claims::decode_series_exception_value(&body.value)?;
+                    withheld.insert((exception.master_ref, exception.uid));
+                }
+            }
+            after = ids.last().copied();
+        }
+    }
+
     /// Reads one claim through this lane, or `None` when the lane does not
     /// admit it.
     fn claim(&self, id: &EntityId) -> Result<Option<ClaimBody>> {
@@ -94,9 +128,45 @@ pub(in crate::calendar) struct CalendarEventFacts {
     time_kind: LaneFact<CalendarTimeKindValue>,
     status: LaneFact<CalendarStatus>,
     systems: Vec<String>,
+    uids: Vec<String>,
+    series: Option<crate::calendar::claims::CalendarSeriesMasterValue>,
+    exception: Option<crate::calendar::claims::CalendarSeriesExceptionValue>,
+    series_withheld: bool,
+    exception_withheld: bool,
 }
 
 impl CalendarEventFacts {
+    pub(in crate::calendar) fn series(
+        &self,
+    ) -> Option<&crate::calendar::claims::CalendarSeriesMasterValue> {
+        self.series.as_ref()
+    }
+    pub(in crate::calendar) fn exception(
+        &self,
+    ) -> Option<&crate::calendar::claims::CalendarSeriesExceptionValue> {
+        self.exception.as_ref()
+    }
+    pub(in crate::calendar) fn uids(&self) -> &[String] {
+        &self.uids
+    }
+    pub(in crate::calendar) fn series_withheld(&self) -> bool {
+        self.series_withheld
+    }
+    pub(in crate::calendar) fn exception_withheld(&self) -> bool {
+        self.exception_withheld
+    }
+    fn utc_anchored(&self) -> bool {
+        match self.time_kind {
+            LaneFact::Read(kind) => matches!(
+                kind.kind,
+                crate::calendar::claims::CalendarTimeKind::Absolute
+                    | crate::calendar::claims::CalendarTimeKind::Zoned
+            ),
+            LaneFact::Absent => true,
+            LaneFact::Withheld => false,
+        }
+    }
+
     /// Whether this EVENT consumes availability.
     ///
     /// CAL-00 mints `busy_transparency` on `calendar.time_kind` with `busy` as
@@ -157,6 +227,11 @@ fn event_facts(read: &CalendarRead<'_>, event: &EntityId) -> Result<Option<Calen
     let mut time_kind: Option<(EntityId, LaneFact<CalendarTimeKindValue>)> = None;
     let mut status: Option<(EntityId, LaneFact<CalendarStatus>)> = None;
     let mut systems = Vec::new();
+    let mut uids = Vec::new();
+    let mut series = None;
+    let mut exception = None;
+    let mut series_withheld = false;
+    let mut exception_withheld = false;
 
     for claim_id in read.vault().claims_for_subject(event)? {
         let Some(body) = read.claim(&claim_id)? else {
@@ -172,6 +247,12 @@ fn event_facts(read: &CalendarRead<'_>, event: &EntityId) -> Result<Option<Calen
                 }
                 Some(PREDICATE_CALENDAR_STATUS) => {
                     replace_when_lower(&mut status, claim_id, LaneFact::Withheld);
+                }
+                Some(crate::calendar::claims::PREDICATE_CALENDAR_SERIES_MASTER) => {
+                    series_withheld = true;
+                }
+                Some(crate::calendar::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION) => {
+                    exception_withheld = true;
                 }
                 _ => {}
             }
@@ -191,7 +272,21 @@ fn event_facts(read: &CalendarRead<'_>, event: &EntityId) -> Result<Option<Calen
                 replace_when_lower(&mut status, claim_id, LaneFact::Read(value.status));
             }
             PREDICATE_CALENDAR_PASSPORT => {
-                systems.push(decode_passport_value(&body.value)?.system);
+                let passport = decode_passport_value(&body.value)?;
+                if passport.presence == crate::calendar::claims::CalendarPassportPresence::Live {
+                    systems.push(passport.system);
+                    uids.push(passport.uid);
+                }
+            }
+            crate::calendar::claims::PREDICATE_CALENDAR_SERIES_MASTER if series.is_none() => {
+                series = Some(crate::calendar::claims::decode_series_master_value(
+                    &body.value,
+                )?);
+            }
+            crate::calendar::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION if exception.is_none() => {
+                exception = Some(crate::calendar::claims::decode_series_exception_value(
+                    &body.value,
+                )?);
             }
             _ => {}
         }
@@ -206,6 +301,11 @@ fn event_facts(read: &CalendarRead<'_>, event: &EntityId) -> Result<Option<Calen
         time_kind: time_kind.map_or(LaneFact::Absent, |(_, fact)| fact),
         status: status.map_or(LaneFact::Absent, |(_, fact)| fact),
         systems,
+        uids,
+        series,
+        exception,
+        series_withheld,
+        exception_withheld,
     }))
 }
 
@@ -236,7 +336,11 @@ pub(super) fn event_row(read: &CalendarRead<'_>, id: EntityId) -> Result<Option<
     };
     Ok(Some(CalendarEventRow {
         id,
-        occurred: occurred_range(&header),
+        occurred: if facts.utc_anchored() {
+            occurred_range(&header)
+        } else {
+            None
+        },
         facts,
     }))
 }

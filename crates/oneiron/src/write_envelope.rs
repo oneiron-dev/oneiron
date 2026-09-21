@@ -341,10 +341,10 @@ impl ClaimCandidate {
         self
     }
 
-    /// Adds an optional relationship axis. Absent means all relationships.
+    /// Adds a relationship scope. Without one, the writer stamps `rel:all`.
     #[must_use]
-    pub fn with_relationship(mut self, rel: EntityId) -> Self {
-        self.rel = Some(rel);
+    pub fn with_relationship(mut self, relationship: EntityId) -> Self {
+        self.rel = Some(relationship);
         self
     }
 

@@ -35,9 +35,13 @@
 //! stamp string — [`ProposalTextArtifact`] builds every stamp from the
 //! authenticated [`WriteActor`] in hand.
 
+mod receipts;
+
 use std::ops::ControlFlow;
 
-use loro::{ChangeMeta, CommitOptions, ExportMode, Frontiers, ID, IdSpan, LoroDoc, LoroText};
+#[cfg(test)]
+use loro::CommitOptions;
+use loro::{ChangeMeta, ExportMode, Frontiers, ID, IdSpan, LoroDoc, LoroText};
 
 use super::{
     FinalizedProposalText, LoroOpRef, OpAttribution, OpSpan, ProposalArtifactRef,
@@ -107,11 +111,30 @@ impl ProposalTextArtifact {
     /// recorded at mint — ED-09's off-record fence probe resolves it by
     /// entity id, so it cannot be back-filled later.
     pub fn open(
+        vault: &crate::Vault,
         initial: &str,
         actor: &WriteActor,
         source_turn_ref: Option<EntityId>,
     ) -> Result<Self> {
+        if actor.actor_class() != crate::EdgeActorClass::Human {
+            return Err(Error::InvalidConfig(
+                "generated births require a prompt and task/ask trigger".into(),
+            ));
+        }
+        Self::open_with_receipt(vault, initial, actor, source_turn_ref, None)
+    }
+
+    fn open_with_receipt(
+        vault: &crate::Vault,
+        initial: &str,
+        actor: &WriteActor,
+        source_turn_ref: Option<EntityId>,
+        receipt: Option<crate::provenance::made_by::MadeBy>,
+    ) -> Result<Self> {
         let doc = LoroDoc::new();
+        // Establish the peer's authority BEFORE the birth timestamp. Registering
+        // after open made validity depend on completing within the same second.
+        crate::edit_distance::register_peer_actor(vault, doc.peer_id(), actor)?;
         // Change timestamps are OFF by default and are runtime config, not
         // serialized — so this is re-applied on every reopen too. Attribution
         // resolves the peer's binding as of the commit instant; without
@@ -135,13 +158,13 @@ impl ProposalTextArtifact {
             .map_err(|_| {
                 Error::InvariantViolation("proposal artifact initial text insert failed")
             })?;
-        commit_stamped(&doc, StampKind::Open, actor);
-
-        Ok(Self {
+        let artifact = Self {
             doc,
             artifact_ref,
             source_turn_ref,
-        })
+        };
+        artifact.commit_receipted(StampKind::Open, actor, receipt)?;
+        Ok(artifact)
     }
 
     /// Reopens an artifact from a snapshot produced by
@@ -193,7 +216,7 @@ impl ProposalTextArtifact {
         edit: impl FnOnce(&LoroText) -> Result<()>,
     ) -> Result<()> {
         let outcome = edit(&self.doc.get_text(TEXT_CONTAINER));
-        commit_stamped(&self.doc, StampKind::Edit, actor);
+        self.commit_receipted(StampKind::Edit, actor, None)?;
         outcome
     }
 
@@ -212,6 +235,11 @@ impl ProposalTextArtifact {
     /// the record would silently make the export impossible.
     pub fn finalize(self, vault: &Vault) -> Result<FinalizedProposalText> {
         let proposed_frontiers = self.window_base()?;
+        if self.provenance(vault)?.is_none() {
+            return Err(Error::CorruptedIndex(
+                "proposal text missing authenticated commit receipt",
+            ));
+        }
         let final_frontiers = self.doc.oplog_frontiers();
 
         // The base fork doubles as the replay scratch: read the proposed text
@@ -372,10 +400,6 @@ struct WindowChange {
     lamport: u32,
     timestamp: i64,
     message: Option<String>,
-}
-
-fn commit_stamped(doc: &LoroDoc, kind: StampKind, actor: &WriteActor) {
-    doc.commit_with(CommitOptions::new().commit_msg(&stamp(kind, actor)));
 }
 
 /// The engine-written commit message for one artifact write.

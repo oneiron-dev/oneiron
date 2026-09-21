@@ -282,6 +282,10 @@ fn eval_outcome_ingest_stops_at_the_first_rejected_row_and_keeps_earlier_rows() 
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let vault = open_vault(tempdir.path());
@@ -360,6 +364,10 @@ fn eval_outcome_ingest_parses_the_stdin_and_key_flags() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_tune_persists_and_prints_the_bounded_weight_table_entry() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let vault = open_vault(tempdir.path());
@@ -395,6 +403,10 @@ fn eval_tune_persists_and_prints_the_bounded_weight_table_entry() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_tune_honors_the_max_runs_bound() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let vault = open_vault(tempdir.path());
@@ -539,6 +551,10 @@ fn seed_non_device_vault(path: &Path, runs: usize) -> Vec<RetrievalRunId> {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let run_id = seed_non_device_vault(tempdir.path(), 1)[0];
@@ -571,6 +587,10 @@ fn eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_tune_opens_a_non_device_vault_through_the_explicit_config() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let run_id = seed_non_device_vault(tempdir.path(), 1)[0];
@@ -830,6 +850,10 @@ fn custom_dict_vault_config(dict_root: &Path) -> VaultConfig {
 /// contract, both subcommands reach their intended mutation; a dictionary root
 /// that exists but is not this vault's own still fails closed.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let dict_root = trusted_dict_root(tempdir.path());
@@ -996,6 +1020,10 @@ fn eval_outcome_ingest_refuses_a_supplied_model_against_an_unstamped_vault() {
 /// existing-only door compares the manifest in every state and refuses, leaving
 /// the stored identity exactly as it was.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let dict_root = trusted_dict_root(tempdir.path());
@@ -1021,4 +1049,43 @@ fn eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index() {
 
     assert!(matches!(exit, ExitCode::FAILURE));
     assert_eq!(stored_analyzer_manifest_hash(&vault_path, &config), before);
+}
+
+/// Existing-only opens fail closed on hosts without descriptor-bound LMDB
+/// paths. Keep this refusal visible rather than weakening the production door
+/// to make the Linux success-path cases pass on macOS.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn eval_existing_vault_refuses_unsupported_platform_without_writing() {
+    use oneiron::error::{StoreError, VaultRootProblem};
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let root = tempdir.path().join("vault");
+    drop(open_vault(&root));
+    let data = std::fs::read(root.join("data.mdb")).expect("data before");
+    let lock = std::fs::read(root.join("lock.mdb")).expect("lock before");
+    let rewards_path = tempdir.path().join("rewards.jsonl");
+    std::fs::write(&rewards_path, "").expect("empty rewards");
+
+    for argv in device_argv_for_both(&root, &rewards_path) {
+        let result = match argv[0].as_str() {
+            "outcome-ingest" => run_outcome_ingest(&argv[1..]),
+            "tune" => run_tune(&argv[1..]),
+            _ => unreachable!("fixture subcommand"),
+        };
+        assert!(matches!(
+            result,
+            Err(EvalError::Oneiron(oneiron::Error::Store(
+                StoreError::VaultRootPreflight {
+                    problem: VaultRootProblem::UnsupportedPlatform {
+                        entry: VaultRootEntry::Data,
+                    },
+                    ..
+                }
+            )))
+        ));
+        assert_eq!(std::fs::read(root.join("data.mdb")).expect("data"), data);
+        assert_eq!(std::fs::read(root.join("lock.mdb")).expect("lock"), lock);
+        assert_eq!(entry_count(&root), 2);
+    }
 }

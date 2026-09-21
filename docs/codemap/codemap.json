@@ -202,7 +202,7 @@
      "path": "src/affect/consolidation.rs",
      "purpose": "Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -1609,8 +1609,25 @@
      "surface": {
       "const": 4,
       "enum": 1,
+      "mod": 1,
       "re-export": 4,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthoringStrategyPin",
+      "PromotionReceipt",
+      "SealedRefereeMeasurement"
+     ],
+     "path": "src/autoreason_campaign/beam_promotion.rs",
+     "purpose": "One-shot, one-way promotion from held-out KEEP to a sealed BEAM referee",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -4056,7 +4073,7 @@
      "path": "src/calendar/claims/codec.rs",
      "purpose": "Calendar claim validation dispatch plus MessagePack encode/decode and field helpers",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "fn": 1
      }
     },
@@ -4162,6 +4179,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/calendar/connectors/outbound/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -4177,11 +4202,21 @@
      "path": "src/calendar/connectors/remote.rs",
      "purpose": "Provider-neutral transport seam, change classification, and ICS render",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 6,
       "struct": 4,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/connectors/resource.rs",
+     "purpose": "One UID is one remote resource: master plus every live detached exception",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -4271,7 +4306,21 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1,
+      "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ParsedCalendarProperties"
+     ],
+     "path": "src/calendar/ics/parse/properties.rs",
+     "purpose": "RFC 5545 fields retained for calendar claim admission",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -4281,9 +4330,37 @@
      "path": "src/calendar/ingest/admission.rs",
      "purpose": "Diff-to-claim admission path and its test module",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 13,
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/ingest/admission/preflight.rs",
+     "purpose": "Value-only admission checks shared by feed polls and connector imports",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/ingest/admission/recurrence.rs",
+     "purpose": "Detached recurrence admission: UID still resolves the master, never the exception",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/calendar/ingest/admission/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -4313,7 +4390,7 @@
      "path": "src/calendar/ingest/mod.rs",
      "purpose": "ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "re-export": 3
      }
     },
@@ -4334,6 +4411,16 @@
       "enum": 1,
       "fn": 7,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/ingest/property_claims.rs",
+     "purpose": "Shared ICS-poll and connector property admission through their existing gates",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -4487,7 +4574,7 @@
      "purpose": "UID-first passport index and feed diff (CAL-02, ONE-1784)",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 7
      }
@@ -4565,7 +4652,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarRead"
@@ -4573,7 +4660,7 @@
      "path": "src/calendar/query/facts.rs",
      "purpose": "Lane admission and fail-closed fact reduction",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 1
      }
@@ -4585,8 +4672,18 @@
      "path": "src/calendar/query/mod.rs",
      "purpose": "Calendar EVENT query + projection core (CAL-09)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/query/occurrences.rs",
+     "purpose": "Windowed occurrences from lane-admitted calendar facts",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -4614,7 +4711,7 @@
      "path": "src/calendar/query/service.rs",
      "purpose": "Read/search entry points plus pure projection helpers",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -6196,6 +6293,16 @@
      "notable": [],
      "path": "src/claim/scope.rs",
      "purpose": "The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scope_tag.rs",
+     "purpose": "Mandatory world and relationship tags on the claim wire ABI",
      "surface": {
       "crate-vis": 2
      }
@@ -9551,7 +9658,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 2,
-      "fn": 45,
+      "fn": 47,
       "struct": 1
      }
     },
@@ -11617,7 +11724,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -12211,6 +12318,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/proposal_text/receipts.rs",
+     "purpose": "Commit-envelope writer and read-time provenance fold for authored text",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -12241,7 +12359,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -12712,11 +12830,33 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 8,
       "struct": 4,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/cold_attach.rs",
+     "purpose": "First-provider backfill, distinct from embedding-space migration",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/locality.rs",
+     "purpose": "Provenance of a filled vector, written atomically with the fill",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -13087,8 +13227,22 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "fn": 8,
-      "re-export": 1
+      "fn": 9,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Of360GoldQa",
+      "Of360QaAnswer"
+     ],
+     "path": "src/extraction_eval/qa.rs",
+     "purpose": "Gold-anchored QA lane with exact normalized-answer scoring",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 2
      }
     },
     {
@@ -17309,11 +17463,74 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/extraction/mod.rs",
+     "purpose": "Host-served extraction beside witness, followed by separately authorized atomic persistence",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/extraction/persist.rs",
+     "purpose": "One transaction composes mention, VAD and identity-proposal doors",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/extraction/shadow.rs",
+     "purpose": "Shadow execution never runs under the witness transaction or writes another row",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/extraction/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CorefLink",
+      "EncoderGolden",
+      "EncoderInput",
+      "EncoderMessage",
+      "EncoderOutput",
+      "EncoderParity",
+      "ExtractionEncoder",
+      "ExtractionReceipt",
+      "NerSpan",
+      "ShadowTrace",
+      "WitnessWithShadow"
+     ],
+     "path": "src/memory/extraction/types.rs",
+     "purpose": "Typed serving payloads and observable extraction receipts",
+     "surface": {
+      "fn": 5,
+      "struct": 10,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 6,
-      "mod": 1,
+      "mod": 2,
       "re-export": 13
      }
     },
@@ -19442,7 +19659,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 8,
-      "fn": 42,
+      "fn": 43,
       "struct": 1
      }
     },
@@ -19615,6 +19832,14 @@
      "surface": {
       "crate-vis": 8
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/pipeline/made_by_tests.rs",
+     "purpose": "Provenance slices are membership filters, never score multipliers",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -20436,6 +20661,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/provenance/entity_ref_wire.rs",
+     "purpose": "Validated hexadecimal entity references in provenance receipts",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/provenance/imported.rs",
      "purpose": "Internal imported-edge admission",
      "surface": {
@@ -20471,11 +20706,33 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "MadeBy",
+      "MadeByClass",
+      "MadeByInput",
+      "MadeByInputRole",
+      "MadeByPredicate",
+      "MadeByProcess",
+      "MadeByTrigger"
+     ],
+     "path": "src/provenance/made_by.rs",
+     "purpose": "Rule A provenance vocabulary shared by text commits and retrieval",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 4,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/provenance/mod.rs",
      "purpose": "`edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15)",
      "surface": {
       "crate-vis": 7,
+      "mod": 2,
       "re-export": 3
      }
     },
@@ -20497,6 +20754,20 @@
      "path": "src/provenance/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RowProvenance",
+      "TextCommitReceipt"
+     ],
+     "path": "src/provenance/text_commit.rs",
+     "purpose": "Durable per-commit text provenance",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
     },
     {
      "bucket": "m",
@@ -27603,7 +27874,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -27659,7 +27930,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 48,
+     "files": 56,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -27722,7 +27993,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -28037,7 +28308,7 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 59,
+     "files": 60,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -28058,8 +28329,8 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 5,
-     "impl_vault": false,
+     "files": 7,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "—"
@@ -28086,7 +28357,7 @@
      "purpose": "—"
     },
     "extraction_eval": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -28282,7 +28553,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 50,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -28366,7 +28637,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -28401,7 +28672,7 @@
      "purpose": "—"
     },
     "provenance": {
-     "files": 11,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -28795,8 +29066,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1662,
-   "test_files": 577
+   "source_files": 1681,
+   "test_files": 581
   },
   "oneiron-bench": {
    "files": [
@@ -28875,6 +29146,37 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "fixtures/edit_path/repo/src/lib.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 2,
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "fixtures/edit_path/repo/src/math.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/ablations.rs",
+     "purpose": "Two explicit cost controls: uncapped context and neutralized OF-095 decay",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -28882,6 +29184,46 @@
      "purpose": "Deterministic and vanilla arms plus adapter dispatch",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/chroma.rs",
+     "purpose": "Independent vanilla-RAG arm",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/beam/chroma/tests.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/beam/chroma/tests/support.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/citations.rs",
+     "purpose": "Evidence-backed per-number citations",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -28898,11 +29240,100 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/beam/comparability.rs",
+     "purpose": "Seven independent comparability axes and per-number publication decisions",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/corpus_clock.rs",
+     "purpose": "Dataset valid-time admission",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/edit_path.rs",
+     "purpose": "Five edit-task shapes with an independent tests-plus-contract oracle",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/beam/edit_path/tests.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 2,
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/fixture_protocol.rs",
+     "purpose": "Retrieval-only gold-span protocol",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/infra.rs",
+     "purpose": "Vector-database cost framing",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/beam/judge.rs",
      "purpose": "Pinned majority-judge substrate",
      "surface": {
       "crate-vis": 13
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/llm_host.rs",
+     "purpose": "Host-owned HTTP transport for the shipped LlmBackend adapter",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/llm_judge.rs",
+     "purpose": "The production model-scored BEAM door: pin validation, three votes, no reward feedback",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/beam/llm_judge/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -28938,6 +29369,44 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/beam/model_scaffold.rs",
+     "purpose": "Shared measured answerer scaffold",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/beam/model_scaffold/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/model_usage.rs",
+     "purpose": "Provider usage, priced by an explicit model-and-revision price table",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/nuggets.rs",
+     "purpose": "D9 dual-column scorer",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/beam/ppr_vad.rs",
      "purpose": "PPR-VAD sweep arm, sampling, and gates",
      "surface": {
@@ -28966,6 +29435,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/rung_fixture.rs",
+     "purpose": "Deterministic-arm conformance across first attach and remote rung changes",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/beam/runner.rs",
@@ -29042,6 +29521,16 @@
      "purpose": "Smoke and manifest tests",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/tiers.rs",
+     "purpose": "Dataset graduation: no-regression at the previous rung, explicit gated cells",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -29591,7 +30080,7 @@
    ],
    "modules": {
     "beam": {
-     "files": 19,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -29635,8 +30124,8 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 70,
-   "test_files": 12
+   "source_files": 87,
+   "test_files": 17
   },
   "oneiron-driver": {
    "files": [
@@ -33034,6 +33523,7 @@
       "ApiCommand",
       "Cli",
       "Command",
+      "InitArgs",
       "ProvenanceArgs",
       "RevokeArgs",
       "SkillsPackArgs",
@@ -33047,8 +33537,16 @@
      "surface": {
       "enum": 3,
       "fn": 2,
-      "struct": 8
+      "struct": 9
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/cli/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -33060,8 +33558,8 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "fn": 10,
-      "re-export": 1,
+      "fn": 9,
+      "re-export": 2,
       "struct": 1
      }
     },
@@ -33073,6 +33571,16 @@
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
       "crate-vis": 10,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/init.rs",
+     "purpose": "First-run embedder choice, using the same config and provider as serve",
+     "surface": {
       "fn": 1
      }
     },
@@ -33154,7 +33662,7 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "mod": 4,
+      "mod": 5,
       "re-export": 4
      }
     },
@@ -33173,6 +33681,20 @@
      "path": "src/config/process_env_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EgressPolicy",
+      "RemoteEmbedderConfig"
+     ],
+     "path": "src/config/remote_embedder.rs",
+     "purpose": "Host-configured remote rung and cached per-entity egress decisions",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 2
+     }
     },
     {
      "bucket": "m",
@@ -33266,7 +33788,7 @@
      "path": "src/embedder/local/mod.rs",
      "purpose": "The `local` provider: the model runs in this process, on candle",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -33314,7 +33836,17 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/remote.rs",
+     "purpose": "Builds a remote rung with a nonblocking host egress predicate",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -34630,28 +35162,28 @@
      "purpose": "Broadcast group for multi-device fan-out with echo suppression"
     },
     "cli": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "—"
     },
     "commands": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge"
     },
     "embedder": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34758,8 +35290,8 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 198,
-   "test_files": 75
+   "source_files": 201,
+   "test_files": 76
   },
   "oneiron-uniffi": {
    "files": [

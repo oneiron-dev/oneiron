@@ -842,7 +842,14 @@ fn expire_secret_leases_sweeps_past_due_leases() {
 // ---------------------------------------------------------------------------
 
 fn declared_target(tmp: &tempfile::TempDir) -> (String, PathBuf) {
-    let path = tmp.path().join(".secrets").join("api.key");
+    // macOS temp roots can contain /var -> /private/var. Resolve only the
+    // fixture root; the production door must still refuse target symlinks.
+    let path = tmp
+        .path()
+        .canonicalize()
+        .expect("canonical temp root")
+        .join(".secrets")
+        .join("api.key");
     (path.to_string_lossy().into_owned(), path)
 }
 
@@ -996,8 +1003,9 @@ fn register_local_requires_a_live_lease() {
 #[test]
 fn register_local_second_declared_path_conflicts() {
     let (tmp, vault) = temp_vault();
-    let path_a = tmp.path().join(".secrets").join("a.key");
-    let path_b = tmp.path().join(".secrets").join("b.key");
+    let root = tmp.path().canonicalize().expect("canonical temp root");
+    let path_a = root.join(".secrets").join("a.key");
+    let path_b = root.join(".secrets").join("b.key");
     std::fs::create_dir_all(path_a.parent().expect("parent")).expect("mkdir");
     let declared_a = path_a.to_string_lossy().into_owned();
     let declared_b = path_b.to_string_lossy().into_owned();
@@ -1149,7 +1157,12 @@ fn register_local_open_failure_leaves_no_file_and_no_row() {
     let (tmp, vault) = temp_vault();
     // A declared path whose parent directory does not exist: the create
     // fails, nothing lands, no row persists (SOL-1920-03).
-    let path = tmp.path().join("missing-parent").join("api.key");
+    let path = tmp
+        .path()
+        .canonicalize()
+        .expect("canonical temp root")
+        .join("missing-parent")
+        .join("api.key");
     let declared = path.to_string_lossy().into_owned();
     register(
         &vault,

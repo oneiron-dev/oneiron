@@ -92,23 +92,41 @@ fn search_events_in(
         .map(str::to_lowercase);
 
     let vault = read.vault();
-    let mut matched = Vec::new();
+    let mut rows = Vec::new();
     visit_calendar_events(read, |row| {
-        // An undated EVENT has no instant to compare, so no window can select
-        // it — least of all one that happens to contain zero.
-        if range.is_some_and(|window| !row.occurred.is_some_and(|at| intersects(at, window))) {
-            return Ok(());
+        rows.push(row);
+        Ok(())
+    })?;
+    let exceptions: Vec<_> = rows
+        .iter()
+        .filter_map(|row| row.facts.exception().cloned())
+        .collect();
+    let withheld = read.withheld_exception_series()?;
+    let mut matched = Vec::new();
+    for row in rows {
+        if !matches_selectors(row.facts.systems(), &req.calendars) {
+            continue;
         }
         let view = project(vault, &row)?;
         if needle
             .as_deref()
             .is_some_and(|needle| !matches_text(&view, needle))
         {
-            return Ok(());
+            continue;
         }
-        matched.push((page_key(row.occurred, row.id), view));
-        Ok(())
-    })?;
+        if let Some(window) = range {
+            for at in super::occurrences::occurrences(&row, window, &exceptions, &withheld)? {
+                if intersects(at, window) {
+                    let mut occurrence = view.clone();
+                    occurrence.start_utc = Some(at.start);
+                    occurrence.end_utc = Some(at.end);
+                    matched.push((page_key(Some(at), row.id), occurrence));
+                }
+            }
+        } else {
+            matched.push((page_key(row.occurred, row.id), view));
+        }
+    }
 
     matched.sort_unstable_by_key(|(key, _)| *key);
     matched.truncate(limit);
@@ -158,4 +176,17 @@ fn event_name(body: &[u8]) -> Option<String> {
             .then(|| value.as_str().map(str::to_owned))
             .flatten()
     })
+}
+
+pub(in crate::calendar) fn matches_selectors(
+    systems: &[String],
+    selectors: &[CalendarSel],
+) -> bool {
+    selectors.is_empty()
+        || selectors.iter().any(|selector| {
+            selector
+                .system
+                .as_ref()
+                .is_none_or(|system| systems.contains(system))
+        })
 }

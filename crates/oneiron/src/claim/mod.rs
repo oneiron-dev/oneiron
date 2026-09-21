@@ -61,6 +61,7 @@ pub(crate) use projection_index::{
 mod put;
 mod read;
 mod scope;
+mod scope_tag;
 mod scoped_read;
 mod source_trust;
 mod status;

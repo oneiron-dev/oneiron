@@ -35,12 +35,18 @@ pub(super) fn spawn_git(
     args: &[OsString],
     stdin_payload: Option<&[u8]>,
 ) -> Result<GitWireProcessOutput> {
+    let repo_root = repo_root.canonicalize()?;
+    // A removed repository must not fall back to an unrelated ancestor. Git
+    // excludes the ceiling itself; the working directory is still inspected.
+    let ceiling = std::env::join_paths([repo_root.parent().unwrap_or(&repo_root)])
+        .map_err(|_| super::failure::invalid("git repository ceiling is not representable"))?;
     let mut command = Command::new(process_env.git_binary.as_os_str());
-    command.arg("-C").arg(repo_root).args(args);
+    command.arg("-C").arg(&repo_root).args(args);
     command.env_clear();
     for (key, value) in child_env(process_env) {
         command.env(key, value);
     }
+    command.env("GIT_CEILING_DIRECTORIES", ceiling);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     command.stdin(if stdin_payload.is_some() {
         Stdio::piped()
@@ -140,7 +146,7 @@ fn wait_bounded(child: &mut Child, timeout: Duration) -> Result<Option<ExitStatu
     }
 }
 
-/// The complete environment of a GitWire child after `env_clear`.
+/// The fixed environment baseline; `spawn_git` adds the repository search ceiling.
 pub(super) fn child_env(process_env: &GitWireProcessEnv) -> Vec<(String, OsString)> {
     child_env_from(process_env, ambient_env)
 }

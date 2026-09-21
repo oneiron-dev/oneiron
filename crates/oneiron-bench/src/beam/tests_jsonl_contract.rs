@@ -149,7 +149,7 @@ pub(crate) mod tests {
             {
                 "id": "visible-turn",
                 "text": "The purity probe note says the visible answer is amber.",
-                "metadata": {"case": "purity"},
+                "metadata": {"case": "purity", "dataset_timestamp": 1780000000_u64},
                 "embedding": {
                     "encoding": "f32-le-base64",
                     "dimensions": 4,
@@ -332,7 +332,7 @@ pub(crate) mod tests {
             {
                 "id": "a-turn",
                 "text": "shared keyword alpha answer only in case A",
-                "metadata": {"case": "a"}
+                "metadata": {"case": "a", "dataset_timestamp": 1780000000_u64}
             }
         ]);
         let mut second = first.clone();
@@ -341,7 +341,7 @@ pub(crate) mod tests {
             {
                 "id": "b-turn",
                 "text": "shared keyword beta answer only in case B",
-                "metadata": {"case": "b"}
+                "metadata": {"case": "b", "dataset_timestamp": 1780000000_u64}
             }
         ]);
         std::fs::write(&run_jsonl_path, format!("{first}\n{second}\n")).expect("write run.jsonl");
@@ -503,6 +503,7 @@ pub(crate) mod tests {
             offline_amortized_cost: CostComponentInput::default(),
         };
         let loaded = LoadedDataset {
+            offline: crate::beam::report::not_applicable_cost(),
             ppr_vad_fixture: None,
             report: DatasetLoadReport {
                 dataset_id: "dataset".to_owned(),

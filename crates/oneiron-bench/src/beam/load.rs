@@ -35,7 +35,8 @@ pub(super) fn load_dataset(
     manifest: &RunManifest,
     fixture: Option<&BeamFixture>,
 ) -> BeamResult<LoadedDataset> {
-    match &manifest.dataset {
+    let started = std::time::Instant::now();
+    let mut loaded = match &manifest.dataset {
         DatasetSource::Fixture { fixture_id, .. } => {
             let Some(fixture) = fixture else {
                 return Err(invalid_manifest(
@@ -65,8 +66,34 @@ pub(super) fn load_dataset(
             *expected_min_results,
         ),
         source => Err(BeamError::DatasetNotReady(dataset_not_ready(source))),
-    }
+    }?;
+    let tokens = if let Some(fixture) = fixture {
+        fixture
+            .records
+            .iter()
+            .flat_map(|record| &record.text)
+            .map(|field| oneiron::count_context_pack_tokens(&field.value) as u64)
+            .sum()
+    } else {
+        loaded
+            .contract_records
+            .values()
+            .flat_map(|record| &record.corpus)
+            .map(|row| oneiron::count_context_pack_tokens(&row.text) as u64)
+            .sum()
+    };
+    loaded.offline = super::report_model::CostComponentReport {
+        token_source: super::report_model::TokenAccountingSource::TokenizerCount,
+        tokenizer_id: Some(oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.into()),
+        input_tokens: tokens,
+        output_tokens: 0,
+        target_tokens: 0,
+        elapsed_us: started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+        cost_usd: 0.0,
+    };
+    Ok(loaded)
 }
+
 pub(super) fn load_fixture_dataset(
     vault: &Vault,
     fixture: &BeamFixture,
@@ -114,6 +141,7 @@ pub(super) fn load_fixture_dataset(
     }
 
     Ok(LoadedDataset {
+        offline: super::report::not_applicable_cost(),
         ppr_vad_fixture: None,
         report: DatasetLoadReport {
             dataset_id: fixture.fixture_id.clone(),
@@ -236,6 +264,7 @@ pub(super) fn load_run_jsonl_dataset(
             }
             None => {}
         }
+        let mut recorded_at = 0_u64;
         for item in &record.corpus {
             let entity_id = contract_corpus_entity_id(&record, item)?;
             let entity_hex = entity_id.to_hex();
@@ -243,14 +272,19 @@ pub(super) fn load_run_jsonl_dataset(
             if !seen_corpus.insert((record.question_id.clone(), item.id.clone())) {
                 continue;
             }
+            let occurred_at = super::corpus_clock::occurred_at(item, path, line)?;
+            recorded_at = recorded_at.saturating_add(1).max(occurred_at);
             let fields = contract_corpus_fields(item);
             let payload = rmp_serde::to_vec_named(&fields)?;
             batch = batch
                 .put(
                     &entity_id,
                     BENCH_CONTRACT_ENTITY_TYPE,
-                    TimeRange { start: 1, end: 1 },
-                    1,
+                    TimeRange {
+                        start: occurred_at,
+                        end: occurred_at,
+                    },
+                    recorded_at,
                     &payload,
                 )
                 .text(&entity_id, &[("txt", item.text.as_str())]);
@@ -291,6 +325,58 @@ pub(super) fn load_run_jsonl_dataset(
     }
 
     batch.commit()?;
+    // Optional corpus-authored statements are inputs, never gold or extracted
+    // judge labels. Materialize through the ordinary claim door after sources.
+    for record in contract_records.values() {
+        for item in &record.corpus {
+            if let Some(predicate) = item
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("stated_claim_predicate"))
+            {
+                use sha2::{Digest, Sha256};
+                let predicate = predicate
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        invalid_run_jsonl(path, 0, "stated_claim_predicate must be a string")
+                    })?;
+                let subject = contract_corpus_entity_id(record, item)?;
+                let learned = vault.get_learned_at(&subject)?;
+                let mut body = oneiron::ClaimBody::new(
+                    predicate,
+                    oneiron::ClaimSubject::Entity(subject),
+                    rmpv::Value::from(item.text.clone()),
+                    1.0,
+                    oneiron::ClaimApprovalStatus::Auto,
+                    oneiron::ClaimLifecycleStatus::Active,
+                );
+                body.source = Some(oneiron::ClaimSource::Observed);
+                body.evidence = Some(rmpv::Value::Array(vec![rmpv::Value::Binary(
+                    subject.as_bytes().to_vec(),
+                )]));
+                let digest = Sha256::digest(format!(
+                    "oneiron:bench-corpus-statement:v1:{}",
+                    subject.to_hex()
+                ));
+                let mut raw = [0_u8; 16];
+                raw.copy_from_slice(&digest[..16]);
+                let id = oneiron::EntityId::from_bytes(raw)?;
+                let occurred = super::corpus_clock::occurred_at(item, path, 0)?;
+                vault.put_claim(
+                    &id,
+                    &body,
+                    TimeRange {
+                        start: occurred,
+                        end: occurred,
+                    },
+                    learned,
+                )?;
+                source_id_by_entity_id.insert(id.to_hex(), item.id.clone());
+                records_loaded += 1;
+            }
+        }
+    }
 
     for case_id in &manifest.case_ids {
         if !case_seen.contains(case_id.as_str()) {
@@ -306,6 +392,7 @@ pub(super) fn load_run_jsonl_dataset(
     let dataset_id = dataset_id.unwrap_or_else(|| path.display().to_string());
     let dataset_revision = dataset_revision.unwrap_or_else(|| "unknown".to_owned());
     Ok(LoadedDataset {
+        offline: super::report::not_applicable_cost(),
         ppr_vad_fixture: None,
         report: DatasetLoadReport {
             dataset_id: dataset_id.clone(),

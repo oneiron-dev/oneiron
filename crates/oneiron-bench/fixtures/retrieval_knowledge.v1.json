@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "id": "rust-ownership",
+      "source": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html",
+      "text": "Each value in Rust has an owner. There can only be one owner at a time. When the owner goes out of scope, the value will be dropped."
+    },
+    {
+      "id": "rust-borrowing",
+      "source": "https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html",
+      "text": "At any given time, you can have either one mutable reference or any number of immutable references. References must always be valid."
+    },
+    {
+      "id": "cargo-lock",
+      "source": "https://doc.rust-lang.org/cargo/guide/cargo-toml-vs-cargo-lock.html",
+      "text": "Cargo.toml describes dependencies in broad terms. Cargo.lock contains exact information about dependencies. Cargo.lock records the exact dependency versions used by a build."
+    },
+    {
+      "id": "rust-tests",
+      "source": "https://doc.rust-lang.org/book/ch11-01-writing-tests.html",
+      "text": "The cargo test command runs tests. A Rust test is a function annotated with the test attribute. A test fails when its thread panics."
+    }
+  ],
+  "spans": [
+    {
+      "id": "rust-ownership-span",
+      "document": "rust-ownership",
+      "start": 0,
+      "end": 132
+    },
+    {
+      "id": "rust-borrowing-span",
+      "document": "rust-borrowing",
+      "start": 0,
+      "end": 132
+    },
+    {
+      "id": "cargo-lock-span",
+      "document": "cargo-lock",
+      "start": 0,
+      "end": 173
+    },
+    {
+      "id": "rust-tests-span",
+      "document": "rust-tests",
+      "start": 0,
+      "end": 132
+    }
+  ],
+  "questions": [
+    {
+      "id": "owner",
+      "text": "What happens when an owner goes out of scope in Rust?",
+      "answers": [
+        "The value is dropped."
+      ],
+      "gold_spans": [
+        "rust-ownership-span"
+      ],
+      "held_out": false
+    },
+    {
+      "id": "borrows",
+      "text": "How many mutable references can exist at a given time?",
+      "answers": [
+        "One mutable reference."
+      ],
+      "gold_spans": [
+        "rust-borrowing-span"
+      ],
+      "held_out": false
+    },
+    {
+      "id": "lock",
+      "text": "Which Cargo file records exact dependency versions?",
+      "answers": [
+        "Cargo.lock"
+      ],
+      "gold_spans": [
+        "cargo-lock-span"
+      ],
+      "held_out": true
+    },
+    {
+      "id": "cross-doc",
+      "text": "How are Rust values dropped and how does a Rust test fail?",
+      "answers": [
+        "A value is dropped when its owner goes out of scope; a test fails when its thread panics."
+      ],
+      "gold_spans": [
+        "rust-ownership-span",
+        "rust-tests-span"
+      ],
+      "held_out": true
+    }
+  ]
+}

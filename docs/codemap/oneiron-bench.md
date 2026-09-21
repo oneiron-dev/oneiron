@@ -19,16 +19,37 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `benches/materializer_mutex/reporting.rs` | src | s | 11 crate-vis | — | Stable JSON rows, percentiles, calibration, and fail-closed report output |
 | `benches/materializer_mutex/worker.rs` | src | m | 16 crate-vis | — | Worker phases, entity encoding, and complete materialization evidence |
 | `build.rs` | src | s | — | — | ONE-1579: capture the settings this artifact is ACTUALLY COMPILED with |
+| `fixtures/edit_path/repo/src/lib.rs` | src | s | 2 fn · 1 mod | — | — |
+| `fixtures/edit_path/repo/src/math.rs` | src | s | 2 fn | — | — |
+| `src/beam/ablations.rs` | src | s | 2 crate-vis | — | Two explicit cost controls: uncapped context and neutralized OF-095 decay |
 | `src/beam/arms.rs` | src | m | 15 crate-vis | — | Deterministic and vanilla arms plus adapter dispatch |
+| `src/beam/chroma.rs` | src | s | 5 crate-vis | — | Independent vanilla-RAG arm |
+| `src/beam/chroma/tests.rs` | test | s | 1 crate-vis | — | — |
+| `src/beam/chroma/tests/support.rs` | test | s | 3 crate-vis | — | — |
+| `src/beam/citations.rs` | src | s | 3 crate-vis | — | Evidence-backed per-number citations |
 | `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |
+| `src/beam/comparability.rs` | src | s | 9 crate-vis | — | Seven independent comparability axes and per-number publication decisions |
+| `src/beam/corpus_clock.rs` | src | s | 1 crate-vis | — | Dataset valid-time admission |
+| `src/beam/edit_path.rs` | src | s | 6 crate-vis | — | Five edit-task shapes with an independent tests-plus-contract oracle |
+| `src/beam/edit_path/tests.rs` | test | s | 2 fn · 1 mod | — | — |
+| `src/beam/fixture_protocol.rs` | src | s | 4 crate-vis | — | Retrieval-only gold-span protocol |
+| `src/beam/infra.rs` | src | s | 4 crate-vis | — | Vector-database cost framing |
 | `src/beam/judge.rs` | src | s | 13 crate-vis | — | Pinned majority-judge substrate |
+| `src/beam/llm_host.rs` | src | m | 10 crate-vis | — | Host-owned HTTP transport for the shipped LlmBackend adapter |
+| `src/beam/llm_judge.rs` | src | s | 8 crate-vis | — | The production model-scored BEAM door: pin validation, three votes, no reward feedback |
+| `src/beam/llm_judge/tests.rs` | test | s | — | — | — |
 | `src/beam/load.rs` | src | m | 17 crate-vis | — | Dataset and contract loading |
 | `src/beam/mod.rs` | src | s | 7 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
 | `src/beam/model.rs` | src | s | 21 crate-vis | — | Fixture, manifest, and arm input types |
+| `src/beam/model_scaffold.rs` | src | m | 12 crate-vis | — | Shared measured answerer scaffold |
+| `src/beam/model_scaffold/tests.rs` | test | m | — | — | — |
+| `src/beam/model_usage.rs` | src | s | 4 crate-vis | — | Provider usage, priced by an explicit model-and-revision price table |
+| `src/beam/nuggets.rs` | src | s | 8 crate-vis | — | D9 dual-column scorer |
 | `src/beam/ppr_vad.rs` | src | m | 22 crate-vis | — | PPR-VAD sweep arm, sampling, and gates |
 | `src/beam/report.rs` | src | m | 23 crate-vis | — | Report assembly and serialization |
 | `src/beam/report_model.rs` | src | m | 40 crate-vis | — | Report and contract output types |
-| `src/beam/runner.rs` | src | s | 11 crate-vis | — | Subcommand run entry points and orchestration |
+| `src/beam/rung_fixture.rs` | src | s | 2 crate-vis | — | Deterministic-arm conformance across first attach and remote rung changes |
+| `src/beam/runner.rs` | src | m | 11 crate-vis | — | Subcommand run entry points and orchestration |
 | `src/beam/scorer.rs` | src | s | 3 crate-vis | — | BeamScorer trait and fixed scorer |
 | `src/beam/tests_community_eval004.rs` | src | m | 19 crate-vis | — | Community and EVAL-004 tests |
 | `src/beam/tests_gates.rs` | src | m | 1 crate-vis | — | Gate tests |
@@ -36,6 +57,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/tests_judge_cost.rs` | src | m | 1 crate-vis | — | Judge and cost tests |
 | `src/beam/tests_ppr_vad.rs` | src | m | 4 crate-vis | — | PPR-VAD tests |
 | `src/beam/tests_smoke_manifest.rs` | src | m | 1 crate-vis | — | Smoke and manifest tests |
+| `src/beam/tiers.rs` | src | s | 6 crate-vis | — | Dataset graduation: no-regression at the previous rung, explicit gated cells |
 | `src/beam/util.rs` | src | s | 18 crate-vis | — | Hex, hash, base64, and id-set helpers |
 | `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
