@@ -53,6 +53,8 @@ ND = "ND"
 REQUESTs = "REQUESTs"
 # PDF 1.7 spec dictionary key `DecodeParms` (byte string in blob_artifact/esign/render/streams.rs).
 DecodeParms = "DecodeParms"
+# ext4 filesystem creator tool `mke2fs`, invoked by scripts/microvm/build.py and named in its docs/tests. CI: https://github.com/oneiron-dev/oneiron/actions/runs/35562251441/job/106217236544
+mke2fs = "mke2fs"
 
 # The exact gold filename is unique to crates/oneiron/src/data/.
 # Root-walk discovery does not read nested configs; type globs match basenames.
