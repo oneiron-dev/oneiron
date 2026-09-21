@@ -102,3 +102,10 @@ pub(crate) use support::{
     verify_deletion_authority_in_txn,
 };
 pub(crate) use witness::sole_edge_target;
+
+// Read-version and citation types are available under the existing memory
+// namespace; no additional crate-root surface is required.
+pub use crate::vault::{
+    IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
+    ResolvedCitation, RevisionRef,
+};

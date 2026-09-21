@@ -210,10 +210,34 @@ async fn production_socket_reads_and_subscribes_then_receives_materialized_engin
     open(&mut socket, 7, "solar", Value::Null).await;
     let initial = app(&mut socket, TAG_SUB).await;
     assert_snapshot(&initial, 7, 1);
-    assert_eq!(
-        initial["result"][0]["short_id"],
-        witnessed.message_short_ids[0]
-    );
+    let message = f
+        .server
+        .vault()
+        .memory(
+            oneiron::EntityId::from_hex(ACTOR).unwrap(),
+            oneiron::EdgeActorClass::Human,
+        )
+        .get_entity(&witnessed.message_short_ids[0])
+        .unwrap()
+        .unwrap();
+    let message_id = oneiron::EntityId::from_hex(&message.id_hex).unwrap();
+    let revision = f
+        .server
+        .vault()
+        .indexed_revision(&message_id)
+        .unwrap()
+        .unwrap();
+    let pinned_ref = format!("{}@{}", witnessed.message_short_ids[0], revision.to_hex());
+    assert_eq!(initial["result"][0]["short_id"], pinned_ref);
+    send(
+        &mut socket,
+        TAG_RPC,
+        json!({"requestId":8,"method":"hydrate","params":{"refs":[pinned_ref]}}),
+    )
+    .await;
+    let pinned = app(&mut socket, TAG_RPC).await;
+    assert_eq!(pinned["requestId"], 8);
+    assert_eq!(pinned["result"][0]["body"], read["result"][0]["body"]);
     ack(&mut socket, 7, &initial["cursor"]).await;
     barrier(&mut socket).await;
     witness(&f.server, "solar panel update");
@@ -339,7 +363,7 @@ async fn production_sub_errors_keep_engine_codes_and_scope_refusals_are_not_clos
         )
         .recall(
             "solar",
-            Effort::Minimal,
+            Effort::Light,
             &RecallScope {
                 world_ref: None,
                 facet: Some("zz999:ff".to_owned()),
@@ -379,4 +403,107 @@ async fn production_sub_errors_keep_engine_codes_and_scope_refusals_are_not_clos
     assert_eq!(refused["error"]["code"], "FORBIDDEN");
     assert_eq!(refused["last"], true);
     assert!(refused.get("result").is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn established_socket_resumes_slim_on_work_but_not_keepalive() {
+    use oneiron::genui::{GrantMintIntent, GrantMintIntentScope};
+    use oneiron::outbound::*;
+    struct Sink {
+        socket: Socket,
+        vault: Arc<oneiron::Vault>,
+        runtime: tokio::runtime::Handle,
+    }
+    impl OutboundExecutionSink for Sink {
+        fn execute(&mut self, _: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+            self.vault
+                .shed_rebuildable_heap(oneiron::ShedCause::LongOutboundWait, 2, 1000)
+                .unwrap();
+            assert_eq!(self.vault.residency(), oneiron::VaultResidency::Slim);
+            self.runtime.block_on(async {
+                self.socket
+                    .send(Message::Ping(vec![1].into()))
+                    .await
+                    .unwrap();
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        if matches!(next(&mut self.socket).await, Message::Pong(_)) {
+                            break;
+                        }
+                    }
+                })
+                .await
+                .unwrap();
+                assert_eq!(self.vault.residency(), oneiron::VaultResidency::Slim);
+                barrier(&mut self.socket).await;
+                assert_eq!(self.vault.residency(), oneiron::VaultResidency::Full);
+            });
+            OutboundExecutionOutcome::delivered_to_channel("test-reply")
+        }
+    }
+    let f = fixture().await;
+    let socket = connect(&f, "human").await;
+    let vault = f.server.vault().clone();
+    // The outbound wait needs the seeded first-party ceiling as well as the
+    // owner grant. The socket keeps its separate ordinary human principal.
+    let actor_id = oneiron::EntityId::from_bytes([0xE1; 16]).unwrap();
+    vault
+        .put_entity(
+            &actor_id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"socket test sender",
+        )
+        .unwrap();
+    vault
+        .mint_standing_outbound_grant(
+            &oneiron::EntityId::from_bytes([0xBC; 16]).unwrap(),
+            &GrantMintIntent {
+                principal_ref: actor_id.to_hex(),
+                origin_component_id: "socket-slim-test".into(),
+                origin_action_id: "escalate_always_this_verb_class".into(),
+                origin_receipt_ref: None,
+                scope: GrantMintIntentScope::VerbClass {
+                    verb_class: "send".into(),
+                },
+            },
+            2,
+        )
+        .unwrap();
+    let runtime = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        let actor = OutboundDispatchActor::agent(actor_id);
+        let intent = OutboundIntent::from_trigger(
+            OutboundIntentDraft::new(
+                actor.actor_ref.as_deref().unwrap(),
+                "send",
+                "feedback_collector",
+                "https://example.test/feedback",
+            ),
+            OutboundIntentTrigger::agent_immediate("approval"),
+        );
+        let request = OutboundDispatchRequest::new(
+            "socket-slim",
+            "socket-slim",
+            intent,
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1000,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        );
+        let result = vault
+            .dispatch_outbound_intent(
+                request,
+                &mut Sink {
+                    socket,
+                    vault: vault.clone(),
+                    runtime,
+                },
+            )
+            .unwrap();
+        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    })
+    .await
+    .unwrap();
 }

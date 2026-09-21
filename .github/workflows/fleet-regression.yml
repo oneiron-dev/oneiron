@@ -1,0 +1,53 @@
+name: Fleet regression
+
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: Measured host whose approved floor to check
+        required: true
+        type: choice
+        options: [arch, macbook]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fleet-regression-${{ inputs.host }}
+  cancel-in-progress: false
+
+jobs:
+  fleet:
+    if: ${{ vars.CI_PAUSED != 'true' }}
+    # Schedule by capability; receipt validation still refuses a different
+    # measured host or build configuration until its floor is approved.
+    runs-on: ${{ fromJSON(inputs.host == 'arch' && '["self-hosted","linux","x64"]' || '["self-hosted","macos","arm64"]') }}
+    timeout-minutes: 180
+    env:
+      FLEET_HOST: ${{ inputs.host }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the approved measured floor
+        shell: bash
+        run: >-
+          python3 -c 'import json,os; from pathlib import Path;
+          floor=Path("docs/ops/evidence/W7-C10")/("fleet-"+os.environ["FLEET_HOST"]+"-floor.json");
+          row=json.loads(floor.read_text());
+          Path(row["baseline_receipt"]["plan"]["scratch"]).mkdir(parents=True,exist_ok=True);
+          Path(os.environ["RUNNER_TEMP"],"fleet-plan.json").write_text(json.dumps(row["baseline_receipt"]["plan"]))'
+      - name: Build the measured binary
+        run: cargo build --locked --release -p oneiron-bench
+      - name: Measure and refuse regressions
+        shell: bash
+        run: |
+          ulimit -n 65536
+          python3 scripts/fleet-regression.py ci --floor "docs/ops/evidence/W7-C10/fleet-${FLEET_HOST}-floor.json" --bench "${CARGO_TARGET_DIR:?runner target contract}/release/oneiron-bench" --plan "$RUNNER_TEMP/fleet-plan.json" --candidate "$RUNNER_TEMP/fleet-candidate.json" --out "$RUNNER_TEMP/fleet-comparison.json"
+      - name: Retain the measured result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fleet-${{ inputs.host }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/fleet-candidate.json
+            ${{ runner.temp }}/fleet-comparison.json
+          if-no-files-found: ignore

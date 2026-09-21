@@ -154,6 +154,8 @@ mod tests_judge_cost;
 #[cfg(test)]
 mod tests_ppr_vad;
 #[cfg(test)]
+mod tests_rerank_sweep;
+#[cfg(test)]
 mod tests_smoke_manifest;
 mod tiers;
 mod util;

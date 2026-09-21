@@ -101,11 +101,10 @@ fn populated_v2_analyzer_manifest_fails_closed_on_open() -> Result<()> {
     Ok(())
 }
 
-/// ONE-1168: a local body-changing re-put without a covering `BatchOp::Text`
-/// must drop the old full-text projection in the same transaction as the
-/// entity overwrite.
+/// OF-476 keeps the old indexed body/postings until idle publication. The
+/// ONE-1168 stale-posting cleanup still occurs atomically at that frontier.
 #[test]
-fn local_overwrite_changed_body_without_text_drops_stale_text_postings_same_txn() -> Result<()> {
+fn local_overwrite_changed_body_without_text_drops_stale_text_postings_at_idle() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"payload-from-old-local")?;
@@ -126,9 +125,11 @@ fn local_overwrite_changed_body_without_text_drops_stale_text_postings_same_txn(
         &raw[ENTITY_METADATA_HEADER_LEN..],
         b"payload-from-new-local"
     );
+    assert_indexed_text_body(&vault, &id, "alpha_stale_xyz", b"payload-from-old-local")?;
+    publish_text_revision_at_idle(&vault, &id)?;
     assert!(
         vault.search_text("alpha_stale_xyz", 10)?.is_empty(),
-        "old body's postings must not match searches after a local overwrite"
+        "old body's postings must not match searches after idle publication"
     );
     assert_text_rows_deindexed(&vault, &id)?;
     assert_empty_text_corpus_after_deindex(&vault)
@@ -259,6 +260,9 @@ fn local_changed_body_with_text_op_reindexes_new_terms() -> Result<()> {
         .text(&id, &[("body", "new_term_xyz")])
         .commit()?;
 
+    assert_indexed_text_body(&vault, &id, "old_term_xyz", b"body-before-text")?;
+    assert!(vault.search_text("new_term_xyz", 10)?.is_empty());
+    publish_text_revision_at_idle(&vault, &id)?;
     assert!(
         vault.search_text("old_term_xyz", 10)?.is_empty(),
         "Text op self-deindex must remove the old term"
@@ -296,6 +300,9 @@ fn batch_put_text_put_deindexes_text_from_non_final_body() -> Result<()> {
 
     let raw = vault.get_raw(&id)?.expect("entity stored");
     assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], b"payload-body-v2");
+    assert_indexed_text_body(&vault, &id, "body_v0_unique_xyz", b"payload-body-v0")?;
+    assert!(vault.search_text("body_v1_unique_xyz", 10)?.is_empty());
+    publish_text_revision_at_idle(&vault, &id)?;
     assert!(
         vault
             .search_text("body_v0_unique_xyz", 10)?
@@ -338,22 +345,13 @@ fn batch_put_text_put_deindexes_text_from_non_final_body() -> Result<()> {
     Ok(())
 }
 
-/// ONE-1141 (ARCH-0031 amendment, ratified 2026-06-13): "When an LWW
-/// replicated overwrite replaces a document, the loser document's postings
-/// must be removed in the same transaction as the overwrite — no replicated
-/// overwrite ever leaves loser postings live."
-///
-/// Directed batch-level unit for the sync replay doors (`put_replicated` →
-/// `apply_put`, replicated arm): text-index term A, replicated-overwrite the
-/// entity with body B inside ONE write txn, then assert the loser's text
-/// rows are gone at the DB level — mirroring exactly what SoftErase's
-/// `deindex_text` leaves behind (`text_forward` / `text_meta` /
-/// `text_doc_field_lengths` rows deleted under the literal id-bytes key, the
-/// posting row dropped with its last duplicate, the per-field stats row
-/// deleted at zero, and the TOTAL_DOCS sentinel row decremented back to 0).
+/// Replicated LWW writes follow the same OF-476 publication frontier as local
+/// edits. ONE-1141's complete index cleanup is preserved at idle publication:
+/// forward/meta/length/posting/stat rows and TOTAL_DOCS move together, while
+/// reads before publication still pair the retained postings with the old body.
 #[cfg(feature = "sync")]
 #[test]
-fn replicated_overwrite_changed_body_drops_loser_text_postings_same_txn() -> Result<()> {
+fn replicated_overwrite_changed_body_drops_loser_text_postings_at_idle() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"payload-from-loser")?;
@@ -367,9 +365,8 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_same_txn() -> Res
         "precondition: the loser term must be indexed and searchable"
     );
 
-    // Replicated overwrite with a CHANGED body through the Observer-B replay
-    // door (`TxnBatchBuilder::put_replicated`) — overwrite + deindex must
-    // land in the SAME externally-owned wtxn.
+    // The Observer-B replay door advances Live in its externally owned txn.
+    // It must not mix that new body with the still-published old text index.
     vault.with_write_txn(|wtxn| {
         vault
             .batch_in()
@@ -380,10 +377,12 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_same_txn() -> Res
     // The winner body is stored (header + body layout, body at offset 25)…
     let raw = vault.get_raw(&id)?.expect("entity stored");
     assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], b"payload-from-winner");
-    // …and the loser term no longer serves.
+    assert_indexed_text_body(&vault, &id, "loseronlyterm", b"payload-from-loser")?;
+    publish_text_revision_at_idle(&vault, &id)?;
+    // The old term no longer serves after publication.
     assert!(
         vault.search_text("loseronlyterm", 10)?.is_empty(),
-        "loser postings must not match searches after a replicated overwrite"
+        "loser postings must not match searches after idle publication"
     );
 
     // DB-level: identical end-state to SoftErase's deindex.
@@ -429,7 +428,7 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_same_txn() -> Res
     assert_eq!(
         vault.store.text_meta.get(&rtxn, &[0u8; 16])?.as_deref(),
         Some(&0u32.to_le_bytes()[..]),
-        "TOTAL_DOCS must be decremented in the same txn as the overwrite"
+        "TOTAL_DOCS must be decremented with idle index publication"
     );
     Ok(())
 }
@@ -441,9 +440,8 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_same_txn() -> Res
 ///   convergence exchange) must NOT touch the text index — postings keep
 ///   serving and the `text_forward` row stays byte-identical. Metadata-only
 ///   changes (occurred/learned) are NOT body changes.
-/// * ONE-1168 widens stale-posting cleanup to LOCAL body-changing overwrites
-///   that have no covering same-batch `BatchOp::Text`; same-bytes replay and
-///   metadata-only changes remain guarded by the body byte compare.
+/// * Body changes retain the old indexed projection until idle publication;
+///   same-bytes replay and metadata-only changes never invalidate its terms.
 #[cfg(feature = "sync")]
 #[test]
 fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
@@ -490,13 +488,39 @@ fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
         );
     }
 
-    // ONE-1168: a LOCAL body-changing overwrite with no Text op now deindexes
-    // stale postings while preserving the same-bytes replicated replay guard
-    // above.
+    // A subsequent local body change keeps the old index until idle. This
+    // does not relax the same-bytes replicated replay guard above.
     vault.put_entity(&id, 1, test_time_range(8, 8), 11, b"locally-edited-payload")?;
+    assert_indexed_text_body(&vault, &id, "winneronlyterm", b"stable-payload")?;
+    publish_text_revision_at_idle(&vault, &id)?;
     assert!(
         vault.search_text("winneronlyterm", 10)?.is_empty(),
-        "local body-changing overwrite without Text must deindex stale postings"
+        "idle publication of a changed body without Text must deindex stale postings"
+    );
+    Ok(())
+}
+
+fn assert_indexed_text_body(vault: &Vault, id: &EntityId, query: &str, body: &[u8]) -> Result<()> {
+    let hits = vault.search_text(query, 10)?;
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].id, *id);
+    let raw = vault
+        .get_raw_with_mode(id, crate::memory::ReadMode::Indexed)?
+        .expect("indexed body for the retained hit");
+    assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], body);
+    Ok(())
+}
+
+fn publish_text_revision_at_idle(vault: &Vault, id: &EntityId) -> Result<()> {
+    vault.set_indexed_idle_delay_ms(0)?;
+    let report = vault.refresh_staged_indexed_at_idle(u64::MAX)?;
+    assert_eq!(report.refreshed.len(), 1);
+    assert_eq!(report.refreshed[0].0, *id);
+    assert!(report.failed.is_empty());
+    assert!(report.superseded.is_empty());
+    assert_eq!(
+        vault.get_raw_with_mode(id, crate::memory::ReadMode::Indexed)?,
+        vault.get_raw_with_mode(id, crate::memory::ReadMode::Live)?,
     );
     Ok(())
 }

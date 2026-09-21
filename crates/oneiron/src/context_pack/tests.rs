@@ -129,6 +129,7 @@ fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> Contex
         id: crate::test_util::entity(seed),
         short_id: short_id.to_owned(),
         content_hash: seed,
+        source_revision_ref: None,
         entity_type,
         score,
         fields: None,
@@ -609,6 +610,9 @@ fn raw_entity_record(
 
 fn overwrite_raw_entity(vault: &Vault, id: &EntityId, raw: &[u8]) -> Result<()> {
     vault.with_write_txn(|wtxn| {
+        // These fixtures exercise live-row validation, not a torn revision ledger.
+        // Keep the forged row unversioned so indexed pin capture reaches the same bytes.
+        crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, id)?;
         vault.store.entities.put(wtxn, id.as_bytes(), raw)?;
         Ok(())
     })
@@ -738,6 +742,7 @@ fn hydrate_entity_rejects_present_corrupt_header() -> Result<()> {
         id,
         0.0,
         HydrateOptions {
+            read_mode: crate::vault::ReadMode::Indexed,
             hydrate_fields: true,
             include_edges: false,
             include_vectors: false,
@@ -1488,6 +1493,13 @@ fn status_suppressed_empty_reports_all_activated() -> Result<()> {
 
 #[test]
 fn retract_claim_end_to_end_removes_stale_text_from_context_pack() -> Result<()> {
+    struct NoWithdrawnEmbedding;
+    impl crate::memory::IndexedRevisionEmbedder for NoWithdrawnEmbedding {
+        fn embed_revision(&self, _: &crate::memory::IndexedRevisionInput) -> Result<Vec<f32>> {
+            panic!("withdrawn claims must not be reindexed at idle");
+        }
+    }
+
     let (_dir, vault) = open_test_vault();
     let id = EntityId::from_bytes([0x43; 16])?;
     put_claim_text_entity(
@@ -1506,6 +1518,13 @@ fn retract_claim_end_to_end_removes_stale_text_from_context_pack() -> Result<()>
     assert_eq!(before.results[0].id, id);
 
     vault.retract_claim(&id, 2_000)?;
+
+    vault.set_indexed_idle_delay_ms(0)?;
+    let idle = vault.refresh_indexed_at_idle(
+        crate::unix_seconds_now().saturating_mul(1000),
+        &NoWithdrawnEmbedding,
+    )?;
+    assert!(idle.refreshed.is_empty());
 
     let after = vault
         .context_pack()
@@ -1795,6 +1814,7 @@ fn pack_validation_skips_world_partition_dropped_results() -> Result<()> {
 
     let pack = vault
         .context_pack()
+        .read_mode(crate::vault::ReadMode::Live)
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
         .run()?;
 
@@ -1869,6 +1889,7 @@ fn pack_validation_rejects_missing_required_evidence() -> Result<()> {
 
     let err = vault
         .context_pack()
+        .read_mode(crate::vault::ReadMode::Live)
         .search_text("missingevidenceneedle", 10)
         .run()
         .expect_err("provenance claim without actor-class evidence must fail pack validation");
@@ -2040,6 +2061,7 @@ fn pack_validation_rejects_impossible_time_ordering() -> Result<()> {
 
     let err = vault
         .context_pack()
+        .read_mode(crate::vault::ReadMode::Live)
         .search_text("reversedtimeneedle", 10)
         .run()
         .expect_err("reversed entity envelope must fail pack validation");
@@ -2981,7 +3003,8 @@ fn context_pack_serialized_telemetry_reflects_budget_surviving_results() -> Resu
         .context_pack()
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
         .format(PackFormat::Plaintext)
-        .token_budget(24)
+        // Revision-qualified citations are longer; still admit exactly one row.
+        .token_budget(48)
         .run_serialized_with_telemetry()?;
     assert!(!serialized.value.is_empty());
     let run_id = serialized.run_id.expect("serialized telemetry run id");
@@ -3616,6 +3639,7 @@ fn n12_validate_pack_disclosure_fails_a_tampered_pack() -> Result<()> {
         id: marked,
         short_id: "tn_smuggled".to_owned(),
         content_hash: 0,
+        source_revision_ref: None,
         entity_type: ENTITY_TYPE_TURN,
         score: 1.0,
         fields: None,
@@ -4232,4 +4256,65 @@ fn retrieval_quality_old_empty_context_defaults_to_passthrough() {
         empty.retrieval_quality.confidence_adjustment,
         ConfidenceAdjustment::PASSTHROUGH
     );
+}
+
+#[test]
+fn pack_vectors_follow_the_selected_indexed_frontier() -> Result<()> {
+    use crate::vault::ReadMode;
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let old_vector = vec![1.0, 0.0, 0.0, 0.0];
+    let new_vector = vec![0.0, 1.0, 0.0, 0.0];
+    put_claim_text_entity(&vault, &id, "vectorfrontier", "test.vector", "old")?;
+    vault.put_vector(&id, &old_vector)?;
+    let old_pin = vault.pin_entity_revision(&id)?;
+    let read = |mode| {
+        vault
+            .context_pack()
+            .search_text("vectorfrontier", 10)
+            .read_mode(mode)
+            .include_vectors(true)
+            .run()
+    };
+    let original = read(ReadMode::Pinned(old_pin))?;
+    assert_eq!(original.results.len(), 1);
+    assert_eq!(original.results[0].vector.as_ref(), Some(&old_vector));
+
+    put_claim_text_entity(&vault, &id, "vectorfrontier", "test.vector", "new")?;
+    vault.put_vector(&id, &new_vector)?;
+    let new_pin = vault.pin_entity_revision(&id)?;
+    assert_ne!(old_pin, new_pin);
+    // Caller-staged input has not replaced the indexed vector yet. Historical
+    // content can still use that row; live/new-pinned content cannot.
+    assert_eq!(
+        read(ReadMode::Pinned(old_pin))?.results[0].vector.as_ref(),
+        Some(&old_vector)
+    );
+    assert!(read(ReadMode::Pinned(new_pin))?.results[0].vector.is_none());
+    assert!(read(ReadMode::Live)?.results[0].vector.is_none());
+    vault.set_indexed_idle_delay_ms(0)?;
+    assert_eq!(
+        vault.refresh_staged_indexed_at_idle(u64::MAX)?.refreshed,
+        vec![(id, new_pin)]
+    );
+    let historical = read(ReadMode::Pinned(old_pin))?;
+    assert_eq!(historical.results.len(), 1);
+    assert_eq!(historical.results[0].source_revision_ref, Some(old_pin.0));
+    assert_eq!(
+        historical.results[0].fields.as_ref().unwrap().get("val"),
+        Some(&serde_json::json!("old"))
+    );
+    assert!(historical.results[0].vector.is_none());
+    let current = read(ReadMode::Pinned(new_pin))?;
+    assert_eq!(current.results[0].source_revision_ref, Some(new_pin.0));
+    assert_eq!(current.results[0].vector.as_ref(), Some(&new_vector));
+    assert_eq!(
+        read(ReadMode::Indexed)?.results[0].vector.as_ref(),
+        Some(&new_vector)
+    );
+    assert_eq!(
+        read(ReadMode::Live)?.results[0].vector.as_ref(),
+        Some(&new_vector)
+    );
+    Ok(())
 }

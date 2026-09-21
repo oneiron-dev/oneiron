@@ -63,6 +63,13 @@ async fn app_version_and_bind_gates_precede_payload_decoding() {
 #[tokio::test]
 async fn bind_is_once_only_and_does_not_change_sync_mode() {
     let (_dir, server) = server();
+    server
+        .wire_telemetry
+        .set_thresholds(&crate::wire_telemetry::WireThresholds {
+            window_secs: u64::MAX,
+            ..Default::default()
+        })
+        .unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state(protocol::APP_TIER_PROTOCOL_VERSION_VERSION);
     handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(&token()), &tx).unwrap();
@@ -82,11 +89,30 @@ async fn bind_is_once_only_and_does_not_change_sync_mode() {
         handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(&token()), &tx),
         Err(ProtocolError::RpcNoPrincipal)
     ));
+    let window = server.wire_telemetry.snapshot().unwrap().unwrap();
+    assert_eq!(
+        window.by_verb,
+        std::collections::BTreeMap::from([("auth.bind".to_owned(), 2)])
+    );
+    assert_eq!(
+        window.by_actor,
+        std::collections::BTreeMap::from([
+            (PRINCIPAL.to_owned(), 1),
+            ("unauthenticated".to_owned(), 1),
+        ])
+    );
 }
 
 #[tokio::test]
 async fn every_invalid_bind_fails_closed() {
     let (_dir, server) = server();
+    server
+        .wire_telemetry
+        .set_thresholds(&crate::wire_telemetry::WireThresholds {
+            window_secs: u64::MAX,
+            ..Default::default()
+        })
+        .unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let malformed_mac = format!("v2.scope=core:read;principal_ref={PRINCIPAL}.bad");
     let unknown = mint_core_token_v2(
@@ -117,6 +143,29 @@ async fn every_invalid_bind_fails_closed() {
         handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(&token()), &tx),
         Err(ProtocolError::RpcNoPrincipal)
     ));
+    let missing_token = crate::livequery::test_wire::request(
+        protocol::TAG_RPC,
+        json!({"requestId": 8, "method": "auth.bind", "params": {}}),
+    );
+    assert!(matches!(
+        handle_app_message(
+            &server,
+            &mut state,
+            protocol::TAG_RPC,
+            &missing_token[1..],
+            &tx
+        ),
+        Err(ProtocolError::RpcNoPrincipal)
+    ));
+    let window = server.wire_telemetry.snapshot().unwrap().unwrap();
+    assert_eq!(
+        window.by_verb,
+        std::collections::BTreeMap::from([("auth.bind".to_owned(), 7)])
+    );
+    assert_eq!(
+        window.by_actor,
+        std::collections::BTreeMap::from([("unauthenticated".to_owned(), 7)])
+    );
 }
 
 #[tokio::test]

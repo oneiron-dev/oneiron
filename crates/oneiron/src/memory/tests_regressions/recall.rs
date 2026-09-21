@@ -153,7 +153,7 @@ fn recall_returns_versioned_pack_with_provenance() {
         })
         .expect("witness");
 
-    for effort in [Effort::Minimal, Effort::Standard] {
+    for effort in [Effort::Light, Effort::Medium] {
         let pack = facade
             .recall("aurora", effort, &RecallScope::default(), 10, None, None)
             .expect("recall");
@@ -173,7 +173,7 @@ fn recall_returns_versioned_pack_with_provenance() {
     let pack = facade
         .recall(
             "aurora",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -233,7 +233,7 @@ fn recall_scope_honesty_lists_excluded_worlds() {
     let pack = facade
         .recall(
             "atlantis",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope {
                 world_ref: Some(world_one.to_hex()),
                 facet: None,
@@ -260,7 +260,7 @@ fn recall_scope_honesty_lists_excluded_worlds() {
     let floor = facade
         .recall(
             "atlantis",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -279,7 +279,7 @@ fn recall_deep_requires_lease_and_marks_pending() {
     let err = facade
         .recall(
             "anything",
-            Effort::Deep,
+            Effort::High,
             &RecallScope::default(),
             5,
             None,
@@ -289,17 +289,17 @@ fn recall_deep_requires_lease_and_marks_pending() {
     assert_eq!(err.code, MEMORY_CODE_LEASE_REQUIRED);
 
     let lease = crate::llm::BudgetLease::for_test("recall-spike");
-    let pack = facade
+    let error = facade
         .recall(
             "anything",
-            Effort::Deep,
+            Effort::High,
             &RecallScope::default(),
             5,
             None,
             Some(&lease),
         )
-        .expect("leased deep executes as standard");
-    assert_eq!(pack.retrieval_meta.deep_pending, Some(true));
+        .expect_err("paid tier without a prepared scorer must not execute a lower tier");
+    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
 }
 
 #[test]
@@ -326,7 +326,7 @@ fn recall_and_query_verbs_respect_limits() {
         facade
             .recall(
                 "pelican",
-                Effort::Minimal,
+                Effort::Light,
                 &RecallScope::default(),
                 2,
                 None,
@@ -423,7 +423,7 @@ fn recall_confidence_is_absolute_across_candidate_sets() {
     let first = facade
         .recall(
             "quokka",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -448,7 +448,7 @@ fn recall_confidence_is_absolute_across_candidate_sets() {
     let second = facade
         .recall(
             "quokka",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -490,7 +490,7 @@ fn recall_short_ids_hydrate_and_formats_render() {
     let pack = facade
         .recall(
             "ceramic",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             Some("md"),
@@ -518,7 +518,7 @@ fn recall_short_ids_hydrate_and_formats_render() {
     let err = facade
         .recall(
             "ceramic",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             Some("docx"),
@@ -569,7 +569,7 @@ fn recall_scope_honesty_stays_bounded_on_a_large_claim_index() {
     let pack = facade
         .recall(
             "anything",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope {
                 world_ref: Some(world.to_hex()),
                 facet: None,
@@ -626,4 +626,146 @@ fn neighbors_stays_bounded_on_a_high_degree_node() {
         .expect("neighbors must not hard-fail on a high-degree node");
     assert_eq!(hits.len(), 5, "bounded by limit, not the full edge set");
     assert!(hits.iter().all(|hit| hit.direction == "out"));
+}
+
+#[test]
+fn recall_raw_deadline_cuts_graph_expansion_but_keeps_direct_hits() {
+    use crate::retrieval_depth::{RecallExecution, RetrievalDeadline};
+    use std::sync::Arc;
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x71);
+    let facade = facade_for(&vault, actor);
+    let anchor = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".into(),
+            body: serde_json::json!({"name": "deadlineanchor"}),
+            text_fields: Some(vec![TextIndexField {
+                field: "name".into(),
+                value: "deadlineanchor".into(),
+            }]),
+            edges: None,
+            occurred_at: 1,
+            learned_at: None,
+        })
+        .unwrap();
+    let neighbor = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".into(),
+            body: serde_json::json!({"name": "graphneighbor"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 1,
+            learned_at: None,
+        })
+        .unwrap();
+    let anchor_id = EntityId::from_hex(&anchor.id_hex).unwrap();
+    let neighbor_id = EntityId::from_hex(&neighbor.id_hex).unwrap();
+    vault
+        .batch()
+        .edge(&anchor_id, crate::EdgeKind::Mentions, &neighbor_id, 1.0)
+        .commit()
+        .unwrap();
+    let complete = facade
+        .recall(
+            "deadlineanchor",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(
+        complete
+            .items
+            .iter()
+            .any(|item| item.value_text.contains("graphneighbor"))
+    );
+    let deadline = Arc::new(RetrievalDeadline::at(
+        std::time::Instant::now() + std::time::Duration::from_secs(60),
+    ));
+    let cut = deadline.clone();
+    *vault.test_hooks().after_retrieval_text.lock().unwrap() = Some(Box::new(move || cut.cancel()));
+    let partial = facade
+        .recall_with_execution(
+            "deadlineanchor",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+            &RecallExecution {
+                deadline: Some(&deadline),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(partial.retrieval_meta.partial);
+    assert!(deadline.was_cut_short());
+    assert!(
+        partial
+            .items
+            .iter()
+            .any(|item| item.value_text.contains("deadlineanchor"))
+    );
+    assert!(
+        !partial
+            .items
+            .iter()
+            .any(|item| item.value_text.contains("graphneighbor"))
+    );
+}
+
+#[test]
+fn recall_sparse_reports_completed_vector_execution_in_both_paths() {
+    use crate::retrieval_depth::{RecallExecution, RetrievalDeadline};
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x71);
+    let facade = facade_for(&vault, actor);
+    let facet = EntityId::now();
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .unwrap();
+    let embedding = vec![1.0; vault.config.dimensions];
+    for facet in [None, Some(facet.to_hex())] {
+        let scope = RecallScope {
+            facet,
+            ..Default::default()
+        };
+        for mode in [0, 1, 2] {
+            let deadline = RetrievalDeadline::at(if mode == 0 {
+                std::time::Instant::now() - std::time::Duration::from_secs(1)
+            } else {
+                std::time::Instant::now() + std::time::Duration::from_secs(60)
+            });
+            if mode == 1 {
+                deadline.cancel();
+            }
+            let pack = facade
+                .recall_with_execution(
+                    "no matching text",
+                    Effort::Light,
+                    &scope,
+                    10,
+                    None,
+                    None,
+                    &RecallExecution {
+                        embedding: Some(&embedding),
+                        deadline: Some(&deadline),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(pack.retrieval_meta.sparse, Some(mode != 2));
+            assert_eq!(pack.retrieval_meta.partial, mode != 2);
+        }
+    }
 }

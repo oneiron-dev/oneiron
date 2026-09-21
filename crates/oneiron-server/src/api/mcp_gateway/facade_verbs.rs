@@ -5,9 +5,9 @@ use super::{
     mcp_text_content,
 };
 use crate::api::CORE_MAX_LIST_LIMIT;
-use crate::api::hydrate_short_id_response;
+use crate::api::hydrate_short_id_response_with_mode;
 use crate::api::parse_entity_id_param;
-use crate::api::parse_short_ref;
+use crate::api::parse_revision_short_ref;
 use crate::api::unix_seconds_now;
 use crate::mcp::McpAskToolArgs;
 use crate::mcp::McpEditToolArgs;
@@ -212,9 +212,16 @@ pub(crate) fn execute_mcp_read(
         }));
     }
     if let Some(short_ref) = args.target.short_ref.as_deref() {
-        let (short_id, content_hash) = parse_short_ref(short_ref).map_err(mcp_api_error)?;
-        let item = hydrate_short_id_response(&scoped_read, short_id, content_hash, View::Full)
-            .map_err(mcp_api_error)?;
+        let (short_id, content_hash, mode) =
+            parse_revision_short_ref(short_ref).map_err(mcp_api_error)?;
+        let item = hydrate_short_id_response_with_mode(
+            &scoped_read,
+            short_id,
+            content_hash,
+            View::Full,
+            mode,
+        )
+        .map_err(mcp_api_error)?;
         return Ok(json!({
             "content": [mcp_text_content(if item.is_some() { "short ref found" } else { "short ref not found" })],
             "structuredContent": {
@@ -703,8 +710,13 @@ fn project_nav_results(
     results
         .into_iter()
         .map(|result| {
-            crate::api::search::project_scoped_search_result(scoped, result, View::Summary)
-                .map_err(|error| mcp_engine_error("mcp nav projection failed", error))
+            crate::api::search::project_scoped_search_result(
+                scoped,
+                result,
+                View::Summary,
+                oneiron::memory::ReadMode::Indexed,
+            )
+            .map_err(|error| mcp_engine_error("mcp nav projection failed", error))
         })
         .collect::<Result<Vec<_>, _>>()
         .map(|items| items.into_iter().flatten().collect())
@@ -735,5 +747,38 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn navigation_projection_uses_indexed_body_while_live_edit_is_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+        let id = oneiron::EntityId::now();
+        for name in ["navanchor original", "unmatched replacement"] {
+            let body = rmp_serde::to_vec_named(&json!({"name": name})).unwrap();
+            vault
+                .batch()
+                .put(
+                    &id,
+                    oneiron::registry::ENTITY_TYPE_EVENT,
+                    oneiron::TimeRange { start: 1, end: 1 },
+                    1,
+                    &body,
+                )
+                .text(&id, &[("name", name)])
+                .commit()
+                .unwrap();
+        }
+        let reader =
+            vault.scoped_read(oneiron::claim::ScopedReadActorKey::new("nav-reader").unwrap());
+        let hits = reader.search_text("navanchor", 10, None).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, id);
+        let items = project_nav_results(&reader, hits).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["label"], "navanchor original");
+        let live = reader.get(&id).unwrap().unwrap();
+        let live: Value = rmp_serde::from_slice(&live).unwrap();
+        assert_eq!(live["name"], "unmatched replacement");
     }
 }

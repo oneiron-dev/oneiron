@@ -187,6 +187,7 @@ pub(super) fn touch_standing_outbound_grant_in_txn(
     payload.extend_from_slice(&header.occurred_end.to_be_bytes());
     payload.extend_from_slice(&header.learned_at.to_be_bytes());
     payload.extend_from_slice(&body);
+    crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload)?;
     store.entities.put(wtxn, id.as_bytes(), &payload)?;
     Ok(())
 }

@@ -50,6 +50,12 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn run_with_telemetry(self) -> Result<RetrievalWithTelemetry<ContextPack>> {
+        Ok(self.run_with_vector_status()?.0)
+    }
+
+    pub(crate) fn run_with_vector_status(
+        self,
+    ) -> Result<(RetrievalWithTelemetry<ContextPack>, bool)> {
         let run = self.run_unfinalized()?;
         let surfaced_result_ids: Vec<[u8; 16]> = run
             .pack
@@ -66,11 +72,14 @@ impl<'a> ContextPackBuilder<'a> {
             &surfaced_result_ids,
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
         )?;
-        Ok(RetrievalWithTelemetry {
-            retrieval_quality: run.pack.retrieval_quality.clone(),
-            value: run.pack,
-            run_id: telemetry_run_id,
-        })
+        Ok((
+            RetrievalWithTelemetry {
+                retrieval_quality: run.pack.retrieval_quality.clone(),
+                value: run.pack,
+                run_id: telemetry_run_id,
+            },
+            run.vector_completed,
+        ))
     }
 
     pub fn run_projected_json_with_telemetry(
@@ -191,6 +200,7 @@ impl<'a> ContextPackBuilder<'a> {
             let surfaced_candidate_count = scored.len();
 
             let result_options = HydrateOptions {
+                read_mode: self.read_mode,
                 hydrate_fields: self.hydrate,
                 include_edges: hydrate_result_edges,
                 include_vectors: self.include_vectors,
@@ -200,12 +210,19 @@ impl<'a> ContextPackBuilder<'a> {
             };
             let mut results = Vec::with_capacity(scored.len());
             for entry in scored.iter().copied() {
+                let mut options = result_options;
+                if options.read_mode == crate::vault::ReadMode::Indexed {
+                    let Some(revision) = pipeline_output.revisions.get(&entry.id) else {
+                        continue;
+                    };
+                    options.read_mode = crate::vault::ReadMode::Pinned(*revision);
+                }
                 let Some(entity) = hydrate_entity(
                     self.vault,
                     &rtxn,
                     entry.id,
                     entry.score,
-                    result_options,
+                    options,
                     &mut claims_suppressed,
                 )?
                 else {
@@ -292,6 +309,7 @@ impl<'a> ContextPackBuilder<'a> {
                 )?;
             }
             let neighbor_options = HydrateOptions {
+                read_mode: self.read_mode,
                 hydrate_fields: self.hydrate,
                 include_edges: self.include_edges,
                 include_vectors: self.include_vectors,
@@ -388,6 +406,7 @@ impl<'a> ContextPackBuilder<'a> {
             );
 
             Ok(ContextPackRun {
+                vector_completed: pipeline_output.vector_completed,
                 pack: ContextPack {
                     retrieval_quality,
                     results,

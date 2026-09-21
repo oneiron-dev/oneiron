@@ -112,13 +112,13 @@ export class Oneiron {
   /**
    * Recalls a memory pack.
    *
-   * `effort: "deep"` is lease-gated and returns `LEASE_REQUIRED` until a
+   * `effort: "high"`, `"xhigh"`, or `"max"` is lease-gated and returns `LEASE_REQUIRED` until a
    * lease-bearing constructor exists; this package neither mints nor
    * simulates a lease.
    */
   recall(query: string, opts: RecallOptions = {}): MemoryPack {
     return this.#call(() =>
-      this.#client.recall(query, opts.effort ?? "standard", opts.scope, opts.limit ?? 10, opts.format),
+      this.#client.recall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format),
     )
   }
 

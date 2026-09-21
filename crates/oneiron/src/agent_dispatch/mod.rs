@@ -24,6 +24,8 @@ mod attenuation;
 mod codec;
 mod context;
 mod dispatch;
+mod healer_context;
+pub(crate) use healer_context::validate as validate_healer_case;
 mod kill;
 mod types;
 

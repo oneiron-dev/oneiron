@@ -4,6 +4,14 @@ use oneiron::{EntityId, TimeRange};
 use std::io::Cursor;
 use std::path::Path;
 
+// Existing-only opens bind LMDB through /proc/self/fd on Linux. Other
+// platforms deliberately refuse rather than fall back to a racy pathname.
+const EXISTING_COMMAND_EXIT: ExitCode = if cfg!(target_os = "linux") {
+    ExitCode::SUCCESS
+} else {
+    ExitCode::FAILURE
+};
+
 /// RET-010c recency half-life for `ENTITY_TYPE_SUMMARY`. The second
 /// fixture entity is aged by exactly one half-life so the recency blend
 /// column is non-degenerate and the tuner sees blend-signal components.

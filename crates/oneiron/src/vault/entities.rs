@@ -205,7 +205,10 @@ impl Vault {
             .map(Some)
     }
 
-    /// Stores a vector for an entity.
+    /// Stores a vector for an entity. If its live revision is ahead of the
+    /// index, retains these exact bytes for atomic idle publication instead.
+    /// Model-free hosts can call [`Self::refresh_staged_indexed_at_idle`] after
+    /// configuring [`Self::set_indexed_idle_delay_ms`].
     pub fn put_vector(&self, id: &EntityId, vector: &[f32]) -> Result<()> {
         self.batch().vector(id, vector).commit()
     }

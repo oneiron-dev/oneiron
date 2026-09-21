@@ -214,6 +214,8 @@ pub(super) struct ClaimStatusGateCache {
 }
 
 pub(crate) struct PipelineOutput {
+    pub(crate) vector_completed: bool,
+    pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     pub(crate) retrieval_quality: RetrievalQualityReport,
     pub(crate) scores: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,

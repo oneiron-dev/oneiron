@@ -203,6 +203,7 @@ fn temporal_keys_for(vault: &Vault, id: &EntityId) -> Result<Vec<(&'static str, 
 /// keys would ACCUMULATE, one per cycle, all naming the same contact.
 #[test]
 fn dropping_the_cache_row_leaves_no_stale_temporal_keys() -> Result<()> {
+    use crate::vault::ReadMode;
     let (_tmp, vault) = open_vault();
     let identity = entity(0x64);
     let contact_id = entity(0x65);
@@ -218,7 +219,27 @@ fn dropping_the_cache_row_leaves_no_stale_temporal_keys() -> Result<()> {
         "the put path indexed the row under its own write stamp"
     );
 
+    let original = vault
+        .get_raw_with_mode(&contact_id, ReadMode::Live)?
+        .unwrap();
+    let original_revision = {
+        let txn = vault.store.env.read_txn()?;
+        crate::vault::entity_revision::revision_for_mode_in_txn(
+            &vault.store,
+            &txn,
+            &contact_id,
+            ReadMode::Live,
+        )?
+        .unwrap()
+    };
+    // Reading the revision identity does not materialize a document like an
+    // explicit pin would; eviction must preserve this implicit birth frontier.
     drop_contact_cache_row(&vault, &contact_id)?;
+    assert!(
+        vault
+            .get_raw_with_mode(&contact_id, ReadMode::Pinned(original_revision))?
+            .is_none()
+    );
     assert!(
         temporal_keys_for(&vault, &contact_id)?.is_empty(),
         "a dropped row is named by no temporal index"
@@ -250,6 +271,15 @@ fn dropping_the_cache_row_leaves_no_stale_temporal_keys() -> Result<()> {
         temporal_keys_for(&vault, &contact_id)?,
         vec![("learned", 400), ("occurred_start", 400)]
     );
+    assert_eq!(
+        vault.get_raw_with_mode(&contact_id, ReadMode::Pinned(original_revision))?,
+        Some(original),
+    );
+    let indexed = vault
+        .get_raw_with_mode(&contact_id, ReadMode::Indexed)?
+        .unwrap();
+    let indexed_header = crate::batch::EntityMetadataHeader::parse(&indexed).unwrap();
+    assert_eq!(indexed_header.learned_at, 400);
     // The claims were never touched, so the row is still the same row.
     assert_eq!(
         vault

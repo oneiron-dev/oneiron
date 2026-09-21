@@ -16,7 +16,7 @@ from typing import Any, Literal, NotRequired, TypedDict
 __all__ = ["Oneiron", "OneironError"]
 
 WitnessAuthor = Literal["user", "companion", "system"]
-Effort = Literal["minimal", "standard", "deep"]
+Effort = Literal["light", "medium", "high", "xhigh", "max"]
 PackFormat = Literal["json", "yaml", "toon", "md", "txt"]
 
 class WitnessMessage(TypedDict):
@@ -87,6 +87,7 @@ class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
 
 class RetrievalMeta(TypedDict):
+    partial: bool
     sparse: bool | None
     total_candidates: int
     claims_returned: int
@@ -135,7 +136,7 @@ class Oneiron:
         self,
         query: str,
         *,
-        effort: Effort = "standard",
+        effort: Effort = "medium",
         scope: RecallScope | None = None,
         limit: int = 10,
         format: PackFormat | None = None,

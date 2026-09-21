@@ -122,6 +122,9 @@ pub struct StoreCore {
     /// Serializes reward-to-weight tuning so concurrent callers cannot lose
     /// a gradient step between read, compute, and persist.
     pub(in crate::store) retrieval_blend_tuning_lock: Mutex<()>,
+    /// A telemetry storage failure disables subsequent base-ledger writes for
+    /// this vault handle. No process-global state or cross-vault kill switch.
+    pub(in crate::store) retrieval_writes_disabled: std::sync::atomic::AtomicBool,
     /// This vault's monotonic authority first-seen observation clock. It dies
     /// with the handle: a reopen re-anchors from the persisted floor, so there
     /// is no registry to release from and no cross-vault anchor to share.

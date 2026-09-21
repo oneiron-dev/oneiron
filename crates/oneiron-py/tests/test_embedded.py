@@ -101,9 +101,10 @@ def test_omitted_timestamp_is_stamped_in_unix_seconds(quickstart) -> None:
         assert abs(row["created_at"] - now) <= 300
 
 
-def test_deep_recall_is_lease_gated(memory) -> None:
+@pytest.mark.parametrize("effort", ["high", "xhigh", "max"])
+def test_paid_recall_is_lease_gated(memory, effort) -> None:
     with pytest.raises(OneironError) as caught:
-        memory.recall("window seat", effort="deep")
+        memory.recall("window seat", effort=effort)
     assert caught.value.code == "LEASE_REQUIRED"
     assert len(caught.value.suggestions) > 0
 
@@ -148,3 +149,19 @@ def test_malformed_actor_key_is_refused(memory) -> None:
         memory.as_actor("not-an-actor-key")
     assert caught.value.code
     assert len(caught.value.suggestions) > 0
+
+
+@pytest.mark.parametrize("effort", ["minimal", "standard", "deep"])
+def test_retired_retrieval_efforts_are_refused(memory, effort) -> None:
+    with pytest.raises(OneironError) as caught:
+        memory.recall("window seat", effort=effort)
+    assert caught.value.code == "BAD_REQUEST"
+
+
+def test_native_recall_default_is_a_supported_effort(tmp_path) -> None:
+    import json
+    from oneiron._native import NativeClient
+
+    native = NativeClient.open(str(tmp_path / "native-vault"), None)
+    result = json.loads(native.recall("missing"))
+    assert result["pack_version"] == 1

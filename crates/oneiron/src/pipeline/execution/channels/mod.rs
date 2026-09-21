@@ -128,7 +128,9 @@ impl PipelineBuilder<'_> {
                 || occurred_range.is_some()
                 || claim_gate_text_widening_active;
 
-            if let Some((query_vector, limit)) = &self.vector_search {
+            if let Some((query_vector, limit)) = &self.vector_search
+                && !self.deadline_reached()
+            {
                 let vector_results = self.scoped_vector_results(
                     &rtxn,
                     query_vector,
@@ -152,7 +154,9 @@ impl PipelineBuilder<'_> {
                 )?);
             }
 
-            if let Some(expansion) = hyde_expansion.as_ref() {
+            if let Some(expansion) = hyde_expansion.as_ref()
+                && !self.deadline_reached()
+            {
                 let limit = self
                     .hyde
                     .as_ref()
@@ -199,7 +203,23 @@ impl PipelineBuilder<'_> {
                 &mut claim_gate,
             )?;
 
-            if let Some(codes) = &self.phonetic_search {
+            #[cfg(test)]
+            if text_channel_index.is_some() {
+                let hook = self
+                    .vault
+                    .test_hooks()
+                    .after_retrieval_text
+                    .lock()
+                    .expect("retrieval text hook")
+                    .take();
+                if let Some(hook) = hook {
+                    hook();
+                }
+            }
+
+            if let Some(codes) = &self.phonetic_search
+                && !self.deadline_reached()
+            {
                 let phonetic_results = execute_phonetic(&self.vault.store, &rtxn, codes)?;
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
                 acc.admit_channel(
@@ -212,7 +232,9 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
-            if let Some(config) = &self.temporal_search {
+            if let Some(config) = &self.temporal_search
+                && !self.deadline_reached()
+            {
                 let mut config = config.clone();
                 if overrides.widen_channel_limits {
                     config.limit = retry_channel_limit(config.limit);
@@ -236,7 +258,9 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
-            if let Some((seeds, depth)) = &self.ppr_search {
+            if let Some((seeds, depth)) = &self.ppr_search
+                && !self.deadline_reached()
+            {
                 // ARCH-0039 Layer 2: seed specificity applies ONLY to
                 // search_ppr — seeds are weighted 1/ln(1 + passage_count)
                 // instead of uniform 1/n.
@@ -279,6 +303,7 @@ impl PipelineBuilder<'_> {
             }
             if acc.ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
+                    revisions: HashMap::new(),
                     diagnostics,
                     scores: Vec::new(),
                     pending_vectors: Vec::new(),
@@ -326,6 +351,7 @@ impl PipelineBuilder<'_> {
             // and would then compound with the application on the blend
             // the run actually returns. So the factor is deferred to that
             // single blend.
+            let expand_allowed = self.ppr_expand.is_some() && !self.deadline_reached();
             let first_blend = blended_retrieval_scores(
                 &acc.ranked_lists,
                 RetrievalChannelIndexes {
@@ -337,7 +363,7 @@ impl PipelineBuilder<'_> {
                 &mut metadata_cache,
                 &mut claim_gate,
                 RetrievalBlendConfig {
-                    access_factor_application: if self.ppr_expand.is_some() {
+                    access_factor_application: if expand_allowed {
                         AccessFactorApplication::Deferred
                     } else {
                         AccessFactorApplication::Apply
@@ -375,30 +401,32 @@ impl PipelineBuilder<'_> {
             }
             let mut blend_allowed_ids = score_id_set(&scores);
 
-            if let Some(outcome) = self.expand_ppr_stage(
-                &rtxn,
-                &scores,
-                PprExpandInputs {
-                    filter_config,
-                    blend_config,
-                    blend_weights,
-                    channel_indexes: RetrievalChannelIndexes {
-                        vector: vector_channel_index,
-                        text: text_channel_index,
+            if expand_allowed
+                && let Some(outcome) = self.expand_ppr_stage(
+                    &rtxn,
+                    &scores,
+                    PprExpandInputs {
+                        filter_config,
+                        blend_config,
+                        blend_weights,
+                        channel_indexes: RetrievalChannelIndexes {
+                            vector: vector_channel_index,
+                            text: text_channel_index,
+                        },
+                        temporal_now,
+                        codebase_scope_active,
                     },
-                    temporal_now,
-                    codebase_scope_active,
-                },
-                PprExpandState {
-                    acc: &mut acc,
-                    blend_allowed_ids: &mut blend_allowed_ids,
-                    fused_trace_scores: &mut fused_trace_scores,
-                    diagnostics: &mut diagnostics,
-                    deferred_ppr_cache_writes: &mut deferred_ppr_cache_writes,
-                },
-                &mut metadata_cache,
-                &mut claim_gate,
-            )? {
+                    PprExpandState {
+                        acc: &mut acc,
+                        blend_allowed_ids: &mut blend_allowed_ids,
+                        fused_trace_scores: &mut fused_trace_scores,
+                        diagnostics: &mut diagnostics,
+                        deferred_ppr_cache_writes: &mut deferred_ppr_cache_writes,
+                    },
+                    &mut metadata_cache,
+                    &mut claim_gate,
+                )?
+            {
                 scores = outcome.blend.scores;
                 cosine_ghosts_dampened = outcome.blend.cosine_ghosts_dampened;
                 blend_components = outcome.blend.components;
@@ -536,7 +564,14 @@ impl PipelineBuilder<'_> {
             } else {
                 None
             };
+            let mut revisions = HashMap::new();
+            for hit in &scores {
+                if let Some(revision) = self.vault.indexed_revision_in_txn(&rtxn, &hit.id)? {
+                    revisions.insert(hit.id, revision);
+                }
+            }
             Ok(RetrievalTxnOutput {
+                revisions,
                 diagnostics,
                 scores,
                 pending_vectors,

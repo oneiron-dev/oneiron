@@ -436,6 +436,13 @@ impl PendingEmbeddingReconciler {
 
         self.vault.with_write_txn(|wtxn| {
             for job in jobs {
+                if crate::vault::entity_revision::entity_has_pending_revision(
+                    &self.vault.store,
+                    wtxn,
+                    &job.entity_id,
+                )? {
+                    continue;
+                }
                 if batch.work.len() >= self.batch_size {
                     break;
                 }

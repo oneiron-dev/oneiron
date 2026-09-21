@@ -585,6 +585,51 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     let wrong_class = vault
         .scoped_read(ScopedReadActorKey::with_actor_class(owner.to_hex(), "system").expect("key"));
     assert!(wrong_class.get(&id).expect("class bound").is_none());
+    let pin = vault.pin_entity_revision(&id).expect("pin diary");
+    for mode in [
+        crate::vault::ReadMode::Live,
+        crate::vault::ReadMode::Indexed,
+        crate::vault::ReadMode::Pinned(pin),
+    ] {
+        let bytes = owner_read
+            .get_with_mode(&id, mode)
+            .expect("owner frontier read")
+            .expect("owner diary");
+        assert_eq!(crate::note::decode_note_body(&bytes).expect("note"), body);
+        assert!(
+            owner_memory
+                .get_entity_with_mode(&receipt.id_hex, mode)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            other_memory
+                .get_entity_with_mode(&receipt.id_hex, mode)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            other_memory
+                .hydrate_with_mode(std::slice::from_ref(&receipt.id_hex), mode)
+                .expect_err("private frontier cannot hydrate")
+                .code,
+            MEMORY_CODE_NOT_FOUND,
+        );
+        for reader in [&other_read, &classless, &wrong_class] {
+            assert!(
+                reader
+                    .get_with_mode(&id, mode)
+                    .expect("scoped frontier")
+                    .is_none()
+            );
+            assert!(
+                reader
+                    .hydrate_short_id_with_mode(short, hash, mode)
+                    .expect("scoped hydrate")
+                    .is_none()
+            );
+        }
+    }
 
     // A private row must stay hidden even if an index or graph nominates it.
     vault
@@ -607,7 +652,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             .is_empty()
     );
     for memory in [&owner_memory, &other_memory] {
-        for effort in [Effort::Minimal, Effort::Standard] {
+        for effort in [Effort::Light, Effort::Medium] {
             let recalled = memory
                 .recall(
                     "privatecanary",
@@ -691,6 +736,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         id,
         short_id: receipt.entity_ref.clone(),
         content_hash: hash,
+        source_revision_ref: None,
         entity_type: ENTITY_TYPE_NOTE,
         score: 1.0,
         fields: None,
@@ -873,4 +919,105 @@ fn diary_note_conjoins_actor_privacy_and_room_audience() {
             .unwrap();
         check_reads();
     }
+}
+
+#[test]
+fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
+    use crate::claim::ScopedReadActorKey;
+    use crate::context_pack::ContextEntity;
+    use crate::note::{NoteScope, NoteWriteEnvelope};
+    use crate::vault::ReadMode;
+
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x64);
+    let other = put_person(&vault, 0x65);
+    let receipt = facade_for(&vault, owner)
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::Diary,
+            scope: NoteScope::ActorPrivate { owner_ref: owner },
+            markdown: "private historic note".into(),
+            source_revision_ref: [0x66; 16],
+        })
+        .expect("private note");
+    let id = EntityId::from_hex(&receipt.id_hex).expect("id");
+    let pin = vault.pin_entity_revision(&id).expect("pin private body");
+    let private_body = note_body_of(&vault, &id);
+    let mut public_body = private_body.clone();
+    public_body.kind = NoteKind::OpinionTake;
+    public_body.markdown = "public current note".into();
+    let raw = vault
+        .get_raw_with_mode(&id, ReadMode::Live)
+        .unwrap()
+        .unwrap();
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    // Notes are append-only at the public author door. Seed a replicated
+    // revision to exercise historical admission without opening a raw writer.
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_NOTE,
+            crate::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at.checked_add(1).unwrap(),
+            &crate::note::encode_note_body(&public_body).expect("public body"),
+        )
+        .commit()
+        .expect("seed replicated public revision");
+
+    let owner_read = vault.scoped_read(
+        ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").expect("owner key"),
+    );
+    let other_read = vault.scoped_read(
+        ScopedReadActorKey::with_actor_class(other.to_hex(), "human").expect("other key"),
+    );
+    let live = other_read
+        .get_with_mode(&id, ReadMode::Live)
+        .unwrap()
+        .unwrap();
+    assert_eq!(crate::note::decode_note_body(&live).unwrap(), public_body);
+    let owner_memory = facade_for(&vault, owner);
+    let other_memory = facade_for(&vault, other);
+    for mode in [ReadMode::Indexed, ReadMode::Pinned(pin)] {
+        assert!(
+            other_memory
+                .get_entity_with_mode(&receipt.id_hex, mode)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            owner_memory
+                .get_entity_with_mode(&receipt.id_hex, mode)
+                .unwrap()
+                .is_some()
+        );
+        assert!(other_read.get_with_mode(&id, mode).unwrap().is_none());
+        let bytes = owner_read.get_with_mode(&id, mode).unwrap().unwrap();
+        assert_eq!(crate::note::decode_note_body(&bytes).unwrap(), private_body);
+    }
+
+    let (_, hash) = crate::entity_id::parse_short_ref_syntax(&receipt.entity_ref).unwrap();
+    let mut pack = vault
+        .context_pack()
+        .search_text("no-such-note-probe", 1)
+        .run()
+        .unwrap();
+    pack.results = vec![ContextEntity {
+        id,
+        short_id: receipt.entity_ref,
+        content_hash: hash,
+        source_revision_ref: Some(pin.0),
+        entity_type: ENTITY_TYPE_NOTE,
+        score: 1.0,
+        fields: None,
+        edges: None,
+        vector: None,
+    }];
+    let mut owner_pack = pack.clone();
+    owner_read.filter_context_pack(&mut owner_pack).unwrap();
+    assert_eq!(owner_pack.results.len(), 1);
+    other_read.filter_context_pack(&mut pack).unwrap();
+    assert!(pack.results.is_empty());
 }

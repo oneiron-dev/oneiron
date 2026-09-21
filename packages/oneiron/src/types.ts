@@ -93,7 +93,7 @@ export type CommitReceipt = {
 }
 
 /** Retrieval effort dial. `deep` is lease-gated and returns `LEASE_REQUIRED`. */
-export type Effort = "minimal" | "standard" | "deep"
+export type Effort = "light" | "medium" | "high" | "xhigh" | "max"
 
 /** Rendered pack formats; these are the engine's exact tokens. */
 export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
@@ -144,6 +144,7 @@ export type ScopeHonesty = {
 
 /** Retrieval accounting. */
 export type RetrievalMeta = {
+  partial: boolean
   sparse?: boolean
   totalCandidates: number
   claimsReturned: number

@@ -23,8 +23,9 @@ use crate::server::SyncServer;
 
 use super::args::{ManagedArgs, ManagedError};
 use super::ledger::{SYNC_UPGRADE_SETTLE_SECS, WakeLedger};
-use super::listener::{ManagedCtl, ServeListener, init_managed_tracing, signal_ready};
-use super::vault_gates::{open_managed_vault, read_managed_credentials};
+use super::listener::{ManagedCtl, init_managed_tracing};
+use super::vault_gates::open_managed_vault;
+use oneiron_vault_contract::host::{Host, HostLimits};
 
 /// Machine-readable tag on the refusals a frozen engine serves, so a client can
 /// match on it rather than parse prose.
@@ -123,12 +124,23 @@ pub struct ManagedState {
     vault_name: String,
     server: Arc<SyncServer>,
     frozen: AtomicBool,
+    http_mutating_in_flight: AtomicU64,
     /// Unix seconds of the most recent sync upgrade the freeze gate admitted,
     /// or 0 if none. The handshake is the last thing that gate ever sees of a
     /// sync session, so this stamp is the only record that one exists.
     last_sync_upgrade: AtomicU64,
     alarms: Mutex<Vec<ObservedAlarm>>,
     ledger: WakeLedger,
+}
+
+struct HttpMutation(Arc<ManagedState>);
+
+impl Drop for HttpMutation {
+    fn drop(&mut self) {
+        self.0
+            .http_mutating_in_flight
+            .fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl std::fmt::Debug for ManagedState {
@@ -147,10 +159,20 @@ impl ManagedState {
             vault_name,
             server,
             frozen: AtomicBool::new(false),
+            http_mutating_in_flight: AtomicU64::new(0),
             last_sync_upgrade: AtomicU64::new(0),
             alarms: Mutex::new(Vec::new()),
             ledger,
         }
+    }
+
+    fn admit_http_mutation(self: &Arc<Self>) -> Result<HttpMutation, ManagedError> {
+        // Increment BEFORE checking freeze. A concurrent freeze must either see
+        // this writer or make this admission fail; check-then-increment races.
+        self.http_mutating_in_flight.fetch_add(1, Ordering::SeqCst);
+        let admission = HttpMutation(Arc::clone(self));
+        self.guard_write()?;
+        Ok(admission)
     }
 
     pub fn vault_name(&self) -> &str {
@@ -165,15 +187,23 @@ impl ManagedState {
         self.frozen.load(Ordering::SeqCst)
     }
 
-    pub fn freeze(&self) {
+    pub fn freeze(&self) -> Result<(), ManagedError> {
         self.frozen.store(true, Ordering::SeqCst);
+        self.server
+            .wire_telemetry
+            .freeze_and_flush()
+            .map_err(|error| ManagedError::VaultMeta(error.to_string()))
     }
 
-    /// Lifts the freeze. Called by `reap_abort` and again on the shutdown
-    /// path, so a process that dies mid-reap never leaves a frozen vault
-    /// behind for the next boot to inherit.
-    pub fn unfreeze(&self) {
+    /// Lifts the process-local freeze on `reap_abort`. A new process starts
+    /// unfrozen; shutdown must not reactivate observation writes.
+    pub fn unfreeze(&self) -> Result<(), ManagedError> {
+        self.server
+            .wire_telemetry
+            .unfreeze()
+            .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
         self.frozen.store(false, Ordering::SeqCst);
+        Ok(())
     }
 
     /// The write gate a frozen vault refuses at. Typed, so a caller can tell
@@ -252,13 +282,12 @@ impl ManagedState {
                 pid: std::process::id(),
                 contract_version: CONTRACT_VERSION,
             }),
-            CtlRequest::Shed { .. } => Err(ManagedError::CtlRequestRefused {
-                reason: "shed integration is deferred; managed ctl does not invoke engine shedding"
-                    .to_owned(),
-            }),
+            CtlRequest::Shed { cause, waited_secs } => {
+                super::shed::shed(self.server.vault(), cause, waited_secs)
+            }
             CtlRequest::PrepareReap => self.prepare_reap().await,
             CtlRequest::ReapAbort => {
-                self.unfreeze();
+                self.unfreeze()?;
                 Ok(CtlResponse::Ok { ok: true })
             }
             CtlRequest::AlarmDue { id, reason_tag } => {
@@ -281,7 +310,10 @@ impl ManagedState {
     /// of those may be live this reports `false` and the supervisor reaps
     /// later rather than over a live writer.
     async fn prepare_reap(&self) -> Result<CtlResponse, ManagedError> {
-        self.freeze();
+        self.freeze()?;
+        // Check BEFORE drain/export. A writer finishing after export must not
+        // turn a stale exported ledger into a quiescent reply.
+        let http_drained = self.http_mutating_in_flight.load(Ordering::SeqCst) == 0;
         let drained = self.drain_lease_table().await;
         let (ledger_rev, next_wake) = self.ledger.export_at_freeze(&self.server).await?;
         // The reply carries the entries, so they are bounds-checked before
@@ -290,7 +322,7 @@ impl ManagedState {
             reason: error.to_string(),
         })?;
         Ok(CtlResponse::PrepareReap {
-            quiescent: drained && self.is_frozen() && !self.live_sync_writer(),
+            quiescent: http_drained && drained && self.is_frozen() && !self.live_sync_writer(),
             ledger_rev,
             next_wake,
         })
@@ -336,27 +368,40 @@ pub fn build_managed_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> R
 /// against — without it the engine keeps committing durable writes after
 /// reporting that it stopped.
 ///
-/// What it cannot see from here is a request that was already past this point
-/// when the flag flipped, and a sync session upgraded before it. The first is
-/// what graceful shutdown drains; the second is why an upgrade is itself
-/// treated as a write below, and why an upgrade this gate *admits* is recorded
-/// on the way through: refusing new sessions says nothing about the one that
-/// was already open, whose frames no middleware will ever see.
+/// Admitted mutations keep a guard through extraction and handler completion.
+/// Upgrades also leave a sync-session stamp: their subsequent frames do not
+/// pass through HTTP middleware.
 async fn refuse_frozen_writes(
     State(state): State<Arc<ManagedState>>,
     request: Request,
     next: Next,
 ) -> Response {
-    if !is_read_only(&request)
-        && let Err(error) = state.guard_write()
-    {
-        return writes_frozen_response(&error);
+    if is_read_only(&request) {
+        return run_admitted_request(state, request, next).await;
     }
+    let admission = match state.admit_http_mutation() {
+        Ok(admission) => admission,
+        Err(error) => return writes_frozen_response(&error),
+    };
+    // A dropped response waiter must not release admission while a handler's
+    // spawn_blocking write is still running. The owned task finishes the handler.
+    tokio::spawn(async move {
+        let _admission = admission;
+        run_admitted_request(state, request, next).await
+    })
+    .await
+    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+async fn run_admitted_request(state: Arc<ManagedState>, request: Request, next: Next) -> Response {
     if request.headers().contains_key(UPGRADE) {
         // Admitted, and out of sight from here on. A freeze with one of these
         // behind it is not quiescent, and `prepare_reap` is where that is
         // answered for — this gate cannot refuse a frame it never sees.
         state.admit_sync_upgrade();
+    }
+    if let Err(error) = state.server.vault().resume_from_slim_on_inbound() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
     }
     next.run(request).await
 }
@@ -422,14 +467,24 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // frame is spent and the vault — including its sealed DEK MAC — has been
     // opened. Refusing here costs nothing and consumes nothing; `bind` below
     // is still the only adoption.
-    let http = ServeListener::for_managed(&managed)?;
+    let shutdown = ManagedShutdown::new();
+    let mut host =
+        super::host::ManagedHost::new(&managed, HostLimits::unbounded(), shutdown.clone())?;
+    let http = host.listener()?;
 
     // The contract requires the credential frame to be read before the data
     // directory is opened, so a refused frame never touches storage.
-    let credentials = read_managed_credentials(managed.credentials_fd)?;
+    let credentials = oneiron_vault_contract::Credentials {
+        dek: host.secret("dek")?.as_slice().try_into()?,
+        token: host.secret("spawn_token")?.as_slice().try_into()?,
+    };
+    let mut vault_config = config.vault_config();
+    vault_config.failure_signals.deployment =
+        oneiron::config::failure_signals::DeploymentTier::Managed;
+    vault_config.failure_signals.training_opt_in = args.failure_signal_training.unwrap_or(false);
     let vault = Arc::new(open_managed_vault(
         &managed.data_dir,
-        config.vault_config(),
+        vault_config,
         &managed.vault_name,
         &credentials,
         managed.derivation_owner,
@@ -458,13 +513,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // rather than at end of scope is what keeps the DEK out of memory for the
     // rest of the process lifetime.
     drop(credentials);
+    host.clear_secrets();
     let state = Arc::new(ManagedState::new(
         managed.vault_name.clone(),
         Arc::clone(&sync_server),
         ledger,
     ));
 
-    let shutdown = ManagedShutdown::new();
     spawn_sigterm_shutdown(shutdown.clone())?;
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
@@ -475,7 +530,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Both sockets are bound, the credentials are consumed, and the open gates
     // have passed. Only now is this process something the supervisor may route
     // traffic to.
-    signal_ready(managed.ready_fd)?;
+    host.ready()?;
     tracing::info!(vault = %managed.vault_name, "managed vault ready");
 
     if let Err(error) = state.ledger().push_if_changed(&sync_server).await {
@@ -491,10 +546,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // listener closes the moment SIGTERM lands, and this resolves once the
     // requests already in the runtime have finished.
     let result = http.serve_until(app, shutdown.triggered()).await;
-
+    host.on_stop()?;
     let _ = ctl_task.await;
-    // An interrupted reap must not outlive the process that started it.
-    state.unfreeze();
+    // Drain observation writes without thawing a previously quiescent process.
+    let telemetry_drained = state.freeze();
     // No new durable background work from here on.
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
@@ -511,6 +566,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 
     final_ledger_push(&state, &sync_server).await;
     result?;
+    telemetry_drained?;
     Ok(())
 }
 
@@ -546,6 +602,7 @@ mod shed_tests {
     use super::*;
     use oneiron_vault_contract::{Credentials, DEK_LEN};
     use oneiron_vault_contract::{ShedCause, TOKEN_LEN, supports_slim};
+    use tower::ServiceExt;
 
     #[tokio::test]
     async fn ctl_shed_refusal_preserves_other_verbs() -> Result<(), Box<dyn std::error::Error>> {
@@ -568,21 +625,37 @@ mod shed_tests {
             dir.path().join("supervisor.sock"),
             &credentials,
         )?;
-        let state = ManagedState::new("ctl-test".to_owned(), server, ledger);
+        let state = Arc::new(ManagedState::new(
+            "ctl-test".to_owned(),
+            server.clone(),
+            ledger,
+        ));
+        let router = build_managed_app(server.clone(), state.clone());
+        let counter = &server.wire_telemetry;
+        counter.set_thresholds(&crate::wire_telemetry::WireThresholds {
+            window_secs: 60,
+            per_verb: 1,
+            per_actor: 1,
+        })?;
+        counter.record("rpc:test", "reader", 121)?;
+        let before_reap = counter.snapshot()?.unwrap();
         let revision = state.ledger().rev();
         for cause in [ShedCause::LongOutboundWait, ShedCause::MemoryPressure] {
             for waited_secs in [0, 1] {
-                let error = state
+                let response = state
                     .handle_request(CtlRequest::Shed { cause, waited_secs })
-                    .await
-                    .unwrap_err();
-                let ManagedError::CtlRequestRefused { reason } = error else {
-                    panic!("expected typed ctl refusal, got {error:?}");
-                };
+                    .await;
                 if waited_secs == 0 {
-                    assert_eq!(reason, "shed requires a positive waited_secs");
+                    assert!(matches!(
+                        response,
+                        Err(ManagedError::CtlRequestRefused { .. })
+                    ));
                 } else {
-                    assert!(reason.contains("shed integration is deferred"));
+                    let response = response?;
+                    response.validate()?;
+                    assert!(
+                        matches!(response, CtlResponse::Slim { slim: false, status: oneiron_vault_contract::ShedStatus::Refused, blocker: Some(blocker), .. } if blocker.kind == "no_pending_outbound_step")
+                    );
                 }
                 assert!(!state.is_frozen());
                 assert!(state.observed_alarms().await.is_empty());
@@ -610,11 +683,34 @@ mod shed_tests {
             }
         ));
         assert!(state.is_frozen());
+        assert_eq!(counter.receipt(120, 180)?, Some(before_reap.clone()));
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(axum::body::Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        counter.record("rpc:test", "reader", 122)?;
+        counter.flush_if_expired(200)?;
+        counter.flush()?;
+        assert_eq!(counter.snapshot()?, Some(before_reap.clone()));
+        assert_eq!(counter.receipt(120, 180)?, Some(before_reap));
+        assert!(counter.question(120, 180)?.is_none());
+        assert!(matches!(
+            counter.set_thresholds(&Default::default()),
+            Err(oneiron::Error::InvalidConfig(_))
+        ));
         assert!(matches!(
             state.handle_request(CtlRequest::ReapAbort).await?,
             CtlResponse::Ok { ok: true }
         ));
         assert!(!state.is_frozen());
+        counter.record("rpc:test", "reader", 123)?;
+        counter.flush()?;
+        assert_eq!(counter.receipt(120, 180)?.unwrap().by_verb["rpc:test"], 2);
+        assert!(counter.question(120, 180)?.is_some());
         assert!(matches!(
             state
                 .handle_request(CtlRequest::AlarmDue {

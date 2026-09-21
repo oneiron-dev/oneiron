@@ -327,6 +327,7 @@ pub(super) fn synthetic_context_pack(result_count: usize) -> oneiron::ContextPac
             .map(|index| {
                 let id = seeded_test_entity_id(0x0012_6400 + index as u128);
                 oneiron::ContextEntity {
+                    source_revision_ref: None,
                     id,
                     short_id: id.to_hex(),
                     content_hash: index as u8,

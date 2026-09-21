@@ -57,6 +57,9 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
         },
     };
     vault.mint_standing_outbound_grant(&grant_id, &intent, 10)?;
+    let old_pin = vault.pin_entity_revision(&grant_id)?;
+    let old_raw =
+        vault.get_raw_with_mode(&grant_id, crate::vault::entity_revision::ReadMode::Live)?;
     let policy = resolve(&vault)?;
 
     let mut effect = external_effect_gate_input("sender", "send", "line");
@@ -70,6 +73,23 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
         .get_standing_outbound_grant(&grant_id)?
         .expect("grant stored");
     assert!(grant.last_used_at.is_some());
+    let new_pin = vault.pin_entity_revision(&grant_id)?;
+    assert_ne!(old_pin, new_pin);
+    assert_eq!(vault.pin_entity_revision(&grant_id)?, new_pin);
+    assert_eq!(
+        vault.get_raw_with_mode(
+            &grant_id,
+            crate::vault::entity_revision::ReadMode::Pinned(old_pin)
+        )?,
+        old_raw
+    );
+    assert_eq!(
+        vault.get_raw_with_mode(
+            &grant_id,
+            crate::vault::entity_revision::ReadMode::Pinned(new_pin)
+        )?,
+        vault.get_raw_with_mode(&grant_id, crate::vault::entity_revision::ReadMode::Live)?
+    );
 
     let decisions = vault.store.gate_decisions(10)?;
     let grant_ref = format!("grant:{}", grant_id.to_hex());

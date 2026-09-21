@@ -60,6 +60,9 @@ pub struct ContextEntity {
     pub id: EntityId,
     pub short_id: String,
     pub content_hash: u8,
+    /// Exact document frontier which supplied these fields. A scoped consumer
+    /// must gate this revision as well as the current entity's authority.
+    pub source_revision_ref: Option<[u8; 16]>,
     pub entity_type: u8,
     pub score: f32,
     pub fields: Option<HashMap<String, serde_json::Value>>,

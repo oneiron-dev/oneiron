@@ -134,8 +134,8 @@ with `FORBIDDEN` — reconnect with a differently scoped slip instead.
 | `handle.recall(query, opts?)` | `MemoryPack` |
 | `handle.receipts(limit?)` | `FacadeReceipt[]` |
 
-`recall` options are `effort` (`"minimal" | "standard" | "deep"`, default
-`"standard"`), `scope` (`{ worldRef?, facet? }`), `limit` (default `10`) and
+`recall` options are `effort` (`"light" | "medium" | "high" | "xhigh" | "max"`, default
+`"medium"`), `scope` (`{ worldRef?, facet? }`), `limit` (default `10`) and
 `format` (`"json" | "yaml" | "toon" | "md" | "txt"`). `deep` is lease-gated and
 returns `LEASE_REQUIRED`; this package neither mints nor simulates a lease.
 
@@ -151,7 +151,7 @@ Every failure is an `OneironError` carrying the engine's own vocabulary:
 import { Oneiron, OneironError } from "oneiron"
 
 try {
-  memory.recall("window seat", { effort: "deep" })
+  memory.recall("window seat", { effort: "high" })
 } catch (error) {
   if (error instanceof OneironError) {
     console.error(error.code, error.message, error.suggestions)

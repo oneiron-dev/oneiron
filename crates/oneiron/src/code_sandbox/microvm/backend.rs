@@ -1,15 +1,18 @@
 //! The backend trait, tier-based selection, and the cfg-gated dev and Firecracker implementations.
 
+#[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
 use std::{fmt, fs, path::PathBuf};
 
+#[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
+use crate::code_sandbox::SandboxMount;
 use crate::code_sandbox::{
-    SandboxBoundaryContract, SandboxGuestTier, SandboxMount, SandboxMountTable,
-    SandboxProposalWrite,
+    SandboxBoundaryContract, SandboxGuestTier, SandboxMountTable, SandboxProposalWrite,
 };
 use crate::{Error, Result};
 
 use super::credential::CredentialResolver;
 use super::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle};
+#[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
 use super::overlay::{
     collect_overlay_writes, overlay_error, overlay_io_detail, prepare_overlay_handle,
 };

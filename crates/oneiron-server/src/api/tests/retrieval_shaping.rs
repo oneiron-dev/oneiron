@@ -156,6 +156,7 @@ fn context_pack_response_limits_scrub_stats_after_scoped_truncation() {
     let turn = seeded_test_entity_id(0x0012_6503);
     let neighbor = seeded_test_entity_id(0x0012_6504);
     let entity = |id: oneiron::EntityId, entity_type: u8| oneiron::ContextEntity {
+        source_revision_ref: None,
         id,
         short_id: id.to_hex(),
         content_hash: 0,
@@ -271,7 +272,7 @@ async fn context_pack_route_projects_json_response_controls() {
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "full" },
-                "budget": { "max_item_tokens": 48 }
+                "budget": { "max_item_tokens": 96 }
             }),
         ),
     )
@@ -496,4 +497,35 @@ fn non_empty_query_trims_and_filters_blank_values() {
         non_empty_query(Some("  recent decisions  ")),
         Some("recent decisions")
     );
+}
+
+#[test]
+fn search_summary_and_full_project_the_revision_that_produced_the_hit() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+    let id = oneiron::EntityId::now();
+    for name in ["searchanchor original", "unmatched replacement"] {
+        let body = rmp_serde::to_vec_named(&serde_json::json!({"name": name})).unwrap();
+        vault
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_EVENT,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .text(&id, &[("name", name)])
+            .commit()
+            .unwrap();
+    }
+    let scoped = vault
+        .scoped_read(oneiron::claim::ScopedReadActorKey::new("test-reader").expect("actor key"));
+    let hits = vault.query().search_text("searchanchor", 10).run().unwrap();
+    assert_eq!(hits.len(), 1);
+    for view in [View::Summary, View::Full] {
+        let response = search_response(&scoped, hits.clone(), view, 10).unwrap();
+        assert_eq!(response.len(), 1);
+        assert_eq!(response[0]["label"], "searchanchor original");
+    }
 }

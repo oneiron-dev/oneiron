@@ -56,12 +56,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/tests_jsonl_contract.rs` | src | m | 2 crate-vis | — | JSONL contract tests |
 | `src/beam/tests_judge_cost.rs` | src | m | 1 crate-vis | — | Judge and cost tests |
 | `src/beam/tests_ppr_vad.rs` | src | m | 4 crate-vis | — | PPR-VAD tests |
+| `src/beam/tests_rerank_sweep.rs` | src | s | — | — | Deterministic BEAM seam sweep; this is not a learned-model quality claim |
 | `src/beam/tests_smoke_manifest.rs` | src | m | 1 crate-vis | — | Smoke and manifest tests |
 | `src/beam/tiers.rs` | src | s | 6 crate-vis | — | Dataset graduation: no-regression at the previous rung, explicit gated cells |
 | `src/beam/util.rs` | src | s | 18 crate-vis | — | Hex, hash, base64, and id-set helpers |
 | `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `src/eval/tests.rs` | test | L | — | — | — |
+| `src/fleet/configuration.rs` | src | s | 3 crate-vis | — | Explicit fleet workload and host settings; smoke cannot masquerade as fleet scale |
+| `src/fleet/mod.rs` | src | s | 1 crate-vis | — | Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts |
+| `src/fleet/optimization.rs` | src | s | 4 crate-vis | — | Paired full recompute versus persisted depth-five resume, with identical output checks |
+| `src/fleet/report.rs` | src | s | 9 crate-vis | — | Observations, raw latency samples and run provenance, never capacity targets |
+| `src/fleet/scaling.rs` | src | s | 3 crate-vis | — | Isolated persisted-residual miss cost as graph cardinality grows |
+| `src/fleet/tests.rs` | test | s | — | — | Small falsification fixtures; smoke is never accepted as a fleet baseline |
+| `src/fleet/wire.rs` | src | s | 6 crate-vis | — | Real app-tier WebSocket client using the shipped server protocol version |
+| `src/fleet/workload.rs` | src | s | 2 crate-vis | — | Closed-loop authenticated fleet traffic against one real loopback server and vault |
 | `src/interface_bench/cli_and_pinned_config.rs` | src | m | 14 crate-vis | — | Subcommand dispatch and pinned-model config parsing |
 | `src/interface_bench/config_types.rs` | src | m | 71 crate-vis | — | Campaign, task, and report DTOs plus RunSettings |
 | `src/interface_bench/eval_run.rs` | src | m | 13 crate-vis | — | Smoke, probe, and full execution plus resume validation |

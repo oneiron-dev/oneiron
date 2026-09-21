@@ -135,7 +135,7 @@ struct FacadeRecallRequest {
 /// `POST /v1/core/facade/recall` → `Memory::recall`.
 ///
 /// The lease argument is `None` and is not a client input: no lease-issuer
-/// exists, and a bearer slip is not one. `Effort::Deep` therefore returns the
+/// exists, and a bearer slip is not one. `Effort::High` therefore returns the
 /// engine's own `LEASE_REQUIRED`, which this projection forwards as that exact
 /// code — the bindings neither mint nor simulate a lease.
 async fn facade_recall(
@@ -150,7 +150,7 @@ async fn facade_recall(
     let (actor, actor_class) = facade_actor(&auth)?;
     let pack = server.vault.memory(actor, actor_class).recall(
         &request.query,
-        request.effort.unwrap_or(Effort::Standard),
+        request.effort.unwrap_or(Effort::Medium),
         &request.scope.unwrap_or_default(),
         limit,
         request.format.as_deref(),

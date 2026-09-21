@@ -64,6 +64,7 @@ pub struct SyncServer {
     pub(crate) config: SyncServerConfig,
     /// Tenant usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
+    pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// ONE-207: the optional deep-retrieval host.
@@ -178,6 +179,7 @@ impl SyncServer {
         );
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
+            wire_telemetry: crate::wire_telemetry::WireTelemetry::new(vault.clone()),
             vault,
             root_doc,
             ephemeral_store,

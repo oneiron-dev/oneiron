@@ -189,14 +189,23 @@ pub(super) fn handle_app_message_with_connection(
             }
         })?;
         if request.method == "auth.bind" {
-            if state.bound_auth.is_some() {
-                return Err(ProtocolError::RpcNoPrincipal);
-            }
-            let token = crate::livequery::bind_token(&request.params)
-                .map_err(|_| ProtocolError::RpcNoPrincipal)?;
-            let auth = CoreAuth::from_bind_token(&token, &server.config, server.vault().as_ref())
-                .map_err(|_| ProtocolError::RpcNoPrincipal)?;
-            state.bound_auth = Some(auth);
+            let binding = (|| {
+                if state.bound_auth.is_some() {
+                    return Err(ProtocolError::RpcNoPrincipal);
+                }
+                let token = crate::livequery::bind_token(&request.params)
+                    .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+                CoreAuth::from_bind_token(&token, &server.config, server.vault().as_ref())
+                    .map_err(|_| ProtocolError::RpcNoPrincipal)
+            })();
+            let actor = binding.as_ref().map_or("unauthenticated", |auth| {
+                auth.principal_ref().unwrap_or(auth.principal())
+            });
+            let _ =
+                server
+                    .wire_telemetry
+                    .record("auth.bind", actor, oneiron_vault_contract::now_ts());
+            state.bound_auth = Some(binding?);
             for frame in crate::livequery::rpc_result(request.request_id, serde_json::Value::Null)?
             {
                 direct_tx
@@ -206,6 +215,11 @@ pub(super) fn handle_app_message_with_connection(
             return Ok(());
         }
         let auth = require_bound_app_auth(server, state)?;
+        let _ = server.wire_telemetry.record(
+            &request.method,
+            auth.principal_ref().unwrap_or(auth.principal()),
+            oneiron_vault_contract::now_ts(),
+        );
         let frames = if request.method == "ping" {
             vec![crate::livequery::ping_result(
                 request.request_id,
@@ -222,6 +236,11 @@ pub(super) fn handle_app_message_with_connection(
     } else {
         let auth = require_bound_app_auth(server, state)?;
         let request = crate::livequery::decode_sub(payload)?;
+        let _ = server.wire_telemetry.record(
+            "subscribe",
+            auth.principal_ref().unwrap_or(auth.principal()),
+            oneiron_vault_contract::now_ts(),
+        );
         let connection =
             connection.ok_or(ProtocolError::InvalidPayload("subscription owner missing"))?;
         for frame in connection.control(auth, request)? {

@@ -386,6 +386,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.allowed_origins.is_some(),
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
+    (
+        "failure-signal-export",
+        |args| args.failure_signal_export.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
     // Contract v1 has no managed privacy override: refuse instead of dropping it.
     (
         "privacy-posture",
@@ -575,6 +580,8 @@ fn reject_unmanaged_layers(args: &ServeArgs) -> Result<(), ManagedError> {
         "ONEIRON_PRIVACY_POSTURE",
         "ONEIRON_HOSTED_KMS_KEY_REF",
         "ONEIRON_CONFIG",
+        "ONEIRON_FAILURE_SIGNAL_EXPORT",
+        "ONEIRON_FAILURE_SIGNAL_TRAINING",
     ] {
         if std::env::var_os(env).is_some() {
             return Err(ManagedError::ConflictingEnvironment {

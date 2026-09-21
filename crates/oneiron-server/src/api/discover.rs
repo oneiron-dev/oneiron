@@ -633,8 +633,7 @@ pub(crate) fn outbound_capability_discovery() -> OutboundCapabilityDiscovery {
 pub(crate) fn rate_limit_status(config: &SyncServerConfig) -> RateLimitStatus {
     RateLimitStatus {
         api_enforced: false,
-        websocket_enforced: config.max_messages_per_sec > 0
-            && config.max_windows_per_connection > 0,
+        websocket_enforced: false,
         max_messages_per_sec: config.max_messages_per_sec,
         max_windows_per_connection: config.max_windows_per_connection,
         max_frame_size_bytes: config.max_frame_size,

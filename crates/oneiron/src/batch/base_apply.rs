@@ -505,19 +505,20 @@ pub(super) fn apply_ops_with_origin(
                 had_graph_mutation = true;
             }
             BatchOp::Text { id, fields } => {
-                if !text_index_trusted {
-                    return Err(Error::CorruptedIndex(
-                        "text index handshake bypassed on populated index",
-                    ));
-                }
-                if !text_manifest_checked {
-                    crate::vault::ensure_text_index_manifest_matches_wtxn(store, wtxn, analyzer)?;
-                    text_manifest_checked = true;
-                }
-                crate::bm25::index_text(store, wtxn, analyzer, &id, &fields)?;
+                apply_text_index_update(
+                    store,
+                    wtxn,
+                    analyzer,
+                    &id,
+                    &fields,
+                    text_index_trusted,
+                    &mut text_manifest_checked,
+                )?;
             }
             BatchOp::Phonetic { id, codes } => {
-                apply_phonetic(store, wtxn, id, &codes)?;
+                if !crate::vault::entity_revision::defer_phonetic(store, wtxn, &id, &codes)? {
+                    apply_phonetic(store, wtxn, id, &codes)?;
+                }
             }
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
@@ -691,4 +692,35 @@ fn take_lapse_decisions(
         decisions.entry(*id).or_default().push_back(decision_id);
     }
     decisions
+}
+
+fn apply_text_index_update(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    id: &EntityId,
+    fields: &[(String, String)],
+    text_index_trusted: bool,
+    text_manifest_checked: &mut bool,
+) -> Result<()> {
+    if !text_index_trusted {
+        return Err(Error::CorruptedIndex(
+            "text index handshake bypassed on populated index",
+        ));
+    }
+    if !*text_manifest_checked {
+        crate::vault::ensure_text_index_manifest_matches_wtxn(store, wtxn, analyzer)?;
+        *text_manifest_checked = true;
+    }
+    if !crate::vault::entity_revision::defer_index_inputs(
+        store,
+        wtxn,
+        id,
+        Some(fields),
+        None,
+        None,
+    )? {
+        crate::bm25::index_text(store, wtxn, analyzer, id, fields)?;
+    }
+    Ok(())
 }

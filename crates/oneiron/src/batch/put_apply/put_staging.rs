@@ -48,6 +48,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     payload.extend_from_slice(&occurred.end.to_be_bytes());
     payload.extend_from_slice(&learned_at.to_be_bytes());
     payload.extend_from_slice(data);
+    crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload)?;
     store.entities().put(wtxn, id.as_bytes(), &payload)?;
     Ok(())
 }

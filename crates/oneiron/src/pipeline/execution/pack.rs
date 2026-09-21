@@ -34,6 +34,8 @@ impl PipelineBuilder<'_> {
             .is_some_and(|filter| filter.deny_all)
         {
             return Ok(PipelineOutput {
+                vector_completed: false,
+                revisions: HashMap::new(),
                 // No channel ran: an authority refusal is not a cache failure.
                 retrieval_quality: Default::default(),
                 scores: Vec::new(),
@@ -52,6 +54,9 @@ impl PipelineBuilder<'_> {
         }
         if self.ppr_expand.is_some() && self.vault.config.ppr_community.beta != 0.0 {
             crate::config::validate_ppr_community(&self.vault.config.ppr_community)?;
+        }
+        if let Some(state) = &self.retrieval_state {
+            state.validate()?;
         }
         let started = Instant::now();
         let started_at = crate::unix_seconds_now();
@@ -115,6 +120,7 @@ impl PipelineBuilder<'_> {
 
         let hyde_expansion = match self.hyde.as_ref() {
             None => None,
+            Some(_) if self.deadline_reached() => None,
             Some((expander, grounding, options)) => {
                 if options.channel_limit == 0 {
                     return Err(Error::InvalidConfig(
@@ -187,6 +193,11 @@ impl PipelineBuilder<'_> {
         // Preserve the pre-HyDE no-channel fast path: it returns no run row.
         if self.hyde.is_none() && attempt.early_empty_no_telemetry {
             return Ok(PipelineOutput {
+                vector_completed: attempt
+                    .diagnostics
+                    .succeeded
+                    .contains(&RetrievalSignal::Vector),
+                revisions: HashMap::new(),
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
                 scores: Vec::new(),
                 claim_bodies: HashMap::new(),
@@ -202,6 +213,7 @@ impl PipelineBuilder<'_> {
         let mut diagnostics = attempt.diagnostics;
         let mut ppr_expand_executed = attempt.ppr_expand_executed;
         let mut scores = attempt.scores;
+        let mut revisions = attempt.revisions;
         let mut pending_vectors = attempt.pending_vectors;
         let mut claim_gate = attempt.claim_gate;
         let deferred_ppr_cache_writes = attempt.deferred_ppr_cache_writes;
@@ -230,6 +242,7 @@ impl PipelineBuilder<'_> {
         // Host assessment runs only after each read transaction has closed.
         if let (Some((expander, _, options)), Some(expansion)) =
             (self.hyde.as_ref(), hyde_expansion.as_ref())
+            && !self.deadline_reached()
         {
             let request = |scores: &[ScoredEntity], claims: &HashMap<EntityId, ClaimBody>| {
                 CompletionRequest {
@@ -247,7 +260,10 @@ impl PipelineBuilder<'_> {
             };
             let verdict = expander.assess_evidence(&request(&scores, &claim_bodies))?;
             let mut second_insufficient = false;
-            if matches!(verdict, EvidenceVerdict::Insufficient { .. }) && options.retry_once {
+            if matches!(verdict, EvidenceVerdict::Insufficient { .. })
+                && options.retry_once
+                && !self.deadline_reached()
+            {
                 // Replace every retrieval artifact with the widened fresh transaction.
                 let subqueries = normalized_subqueries(&expansion.subqueries);
                 let retry = self.run_retrieval_txn_attempt(
@@ -271,6 +287,7 @@ impl PipelineBuilder<'_> {
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
                 scores = retry.scores;
+                revisions = retry.revisions;
                 pending_vectors = retry.pending_vectors;
                 claim_gate = retry.claim_gate;
                 cosine_ghosts_dampened = retry.cosine_ghosts_dampened;
@@ -314,6 +331,21 @@ impl PipelineBuilder<'_> {
             }
         }
 
+        // The in-transaction hash covers the candidate snapshot. Only now are
+        // HyDE assessment/retry boundaries settled, so bind the final stop state
+        // once, immediately before persisting the trace.
+        if self
+            .deadline
+            .is_some_and(crate::retrieval_depth::RetrievalDeadline::was_cut_short)
+            && let Some(trace) = retrieval_trace.as_mut()
+        {
+            use sha2::{Digest, Sha256};
+            let mut hash = Sha256::new();
+            hash.update(b"oneiron.retrieval_trace.partial.v1");
+            hash.update(trace.fork_hash);
+            trace.fork_hash = hash.finalize().into();
+        }
+
         let score_breakdown = telemetry_score_breakdown(
             &scores,
             &signal_components,
@@ -342,6 +374,7 @@ impl PipelineBuilder<'_> {
             claims_suppressed,
             empty_reason.map(|reason| format!("{reason:?}")),
         )
+        .with_context(self.retrieval_state.clone(), self.retrieval_turn)
         .with_trace(retrieval_trace)
         .with_quality(&retrieval_quality);
         // ONE-1728 K10: a retrieval issued inside a room registers through the
@@ -383,6 +416,8 @@ impl PipelineBuilder<'_> {
         };
 
         Ok(PipelineOutput {
+            vector_completed: diagnostics.succeeded.contains(&RetrievalSignal::Vector),
+            revisions,
             retrieval_quality,
             scores,
             claim_bodies,

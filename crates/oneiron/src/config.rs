@@ -1,5 +1,7 @@
 //! Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` + `TextIndexOptions` + `Bm25RankProfile`.
 
+pub mod failure_signals;
+
 use std::fmt;
 use std::path::PathBuf;
 
@@ -263,6 +265,7 @@ impl Default for HnswConfig {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct VaultConfig {
+    pub failure_signals: failure_signals::FailureSignalConfig,
     /// Stored-edge VAD salience for PPR. Validated at query time in `0..=0.4`.
     /// Nonzero use requires the pinned BEAM recall and latency gate.
     pub ppr_vad_alpha: f32,
@@ -532,6 +535,7 @@ impl VaultConfig {
     #[must_use]
     pub fn device() -> Self {
         Self {
+            failure_signals: failure_signals::FailureSignalConfig::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
             ppr_community: PprCommunityConfig::default(),
             dimensions: 1024,
@@ -554,6 +558,7 @@ impl VaultConfig {
     #[must_use]
     pub fn server() -> Self {
         Self {
+            failure_signals: failure_signals::FailureSignalConfig::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
             ppr_community: PprCommunityConfig::default(),
             dimensions: 4096,

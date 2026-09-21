@@ -1,0 +1,21 @@
+{
+  "schema": "oneiron-fleet-process-v1",
+  "terminal": true,
+  "command": [
+    "target/release/oneiron-bench",
+    "fleet",
+    "ppr-scaling",
+    "--plan",
+    ".w7/fleet-mac-plan.json",
+    "--out",
+    "target/fleet-evidence/mac-scaling.json"
+  ],
+  "pid": 10946,
+  "exit_code": 0,
+  "signal": null,
+  "elapsed_seconds": 146.79841012507677,
+  "user_seconds": 1.234562,
+  "system_seconds": 2.492903,
+  "max_rss_bytes": 83738624,
+  "os": "Darwin"
+}

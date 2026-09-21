@@ -1,0 +1,21 @@
+{
+  "schema": "oneiron-fleet-v1",
+  "status": "failed",
+  "plan": {
+    "profile": "fleet20k-v1",
+    "host_label": "arch",
+    "storage_label": "worktree-filesystem",
+    "scratch": "/home/lexi/w7-build/wt/W7-C10/target/fleet-scratch",
+    "agents": 20000,
+    "listeners": 4,
+    "concurrency": 64,
+    "runtime_threads": 4,
+    "rounds": 1,
+    "hold_ms": 1000,
+    "timeout_secs": 120,
+    "map_size": 4294967296,
+    "ppr_nodes": 1024,
+    "ppr_samples": 100
+  },
+  "error": "deadline has elapsed"
+}

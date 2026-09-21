@@ -51,6 +51,8 @@ pub(crate) struct TestHooks {
     /// sync on this vault. The durability fence is what the count proves, so
     /// the reader wants an exact delta and now gets one.
     force_sync_calls: AtomicUsize,
+    /// One-shot stage boundary for deadline tests; never shared across vaults.
+    pub(crate) after_retrieval_text: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TestHooks {

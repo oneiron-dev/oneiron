@@ -84,7 +84,15 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         before_txn: impl FnOnce(),
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_with_route_and_txn_effect(turn, session_route, before_txn, |_| Ok(()))
+        self.witness_authorized(turn, session_route, false, before_txn, |_| Ok(()))
+    }
+
+    pub(crate) fn witness_host_executor(
+        &self,
+        turn: &WitnessTurn,
+        session_route: Option<&SessionWriteRoute>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.witness_authorized(turn, session_route, true, || {}, |_| Ok(()))
     }
 
     /// Stream terminal sidecars and EntityDoc birth share the canonical witness
@@ -96,6 +104,18 @@ impl Memory<'_> {
         before_txn: impl FnOnce(),
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
+        self.witness_authorized(turn, session_route, false, before_txn, effect)
+    }
+
+    fn witness_authorized(
+        &self,
+        turn: &WitnessTurn,
+        session_route: Option<&SessionWriteRoute>,
+        host_executor: bool,
+        before_txn: impl FnOnce(),
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
+        super::validate_witness_origin(turn, host_executor)?;
         if turn.messages.is_empty() {
             return Err(MemoryError::bad_request("witness turn carries no messages"));
         }

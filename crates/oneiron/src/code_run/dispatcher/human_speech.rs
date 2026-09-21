@@ -136,6 +136,17 @@ impl HostSelfDispatcher<'_> {
         }))
     }
 
+    pub(super) fn dispatch_report_blocked(
+        &self,
+        call: crate::code_run::blocked::SelfReportBlockedCall,
+        run_id: Option<EntityId>,
+    ) -> Result<SelfDispatchOutcome> {
+        let receipt =
+            self.storage
+                .witness_blocked_report(&self.run_ref, run_id, &call, self.actor)?;
+        Ok(SelfDispatchOutcome::ReportBlocked { receipt })
+    }
+
     pub(super) fn durable_wait(
         &self,
         effect: SelfEffect,

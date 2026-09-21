@@ -4508,7 +4508,7 @@ fn unrecognized_scope_entries_stay_opaque() -> Result<()> {
 ///
 /// The tier policy lives in `retrieval_depth` and is tested there. What this
 /// lane owns is the guarantee that the dial's cheapest setting is not a second
-/// read path at all: at `Effort::Minimal` the result must be, hit for hit, the
+/// read path at all: at `Effort::Light` the result must be, hit for hit, the
 /// one [`ScopedRead::search_text`] already returns for the same actor. A
 /// future tier that quietly fetched through anything else would show up here
 /// as a difference, not as a passing test with a wider read behind it.
@@ -4531,10 +4531,11 @@ fn scoped_read_search_with_effort_retrieval_depth_is_the_existing_text_door()
 
     let scoped = vault.scoped_read(ScopedReadActorKey::new("agent:reader").expect("actor key"));
     let request = crate::retrieval_depth::DepthSearchRequest {
+        deadline: None,
         probe: crate::retrieval_depth::SearchProbe::Text {
             query: "ledger".to_owned(),
         },
-        effort: crate::Effort::Minimal,
+        effort: crate::Effort::Light,
         limit: 10,
         session_scope: None,
         lease: None,

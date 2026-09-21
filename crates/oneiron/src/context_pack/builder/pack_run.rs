@@ -27,6 +27,7 @@ pub struct SerializedContextPack {
 
 #[derive(Clone, Copy)]
 pub(in crate::context_pack) struct HydrateOptions<'a> {
+    pub(in crate::context_pack) read_mode: crate::vault::ReadMode,
     pub(in crate::context_pack) hydrate_fields: bool,
     pub(in crate::context_pack) include_edges: bool,
     pub(in crate::context_pack) include_vectors: bool,
@@ -93,6 +94,7 @@ impl ContextPackTelemetry<'_> {
 }
 
 pub(in crate::context_pack) struct ContextPackRun<'a> {
+    pub(in crate::context_pack) vector_completed: bool,
     pub(in crate::context_pack) pack: ContextPack,
     pub(in crate::context_pack) telemetry_run_id: Option<RetrievalRunId>,
     pub(in crate::context_pack) telemetry: ContextPackTelemetry<'a>,

@@ -40,6 +40,8 @@ SUCCESS = {
             "quality": "passthrough", "confidenceAdjustment": -0.35,
             "sparse": True, "total_candidates": 0,
             "claims_returned": 0, "deep_pending": None,
+            # A non-default deadline flag must survive the native DTO round-trip.
+            "partial": True,
         },
         "pack_version": 1,
         "rendered": None,

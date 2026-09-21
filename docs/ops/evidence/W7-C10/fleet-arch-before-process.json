@@ -1,0 +1,21 @@
+{
+  "schema": "oneiron-fleet-process-v1",
+  "terminal": true,
+  "command": [
+    "/home/lexi/w7-build/wt/W7-C10/target/release/oneiron-bench",
+    "fleet",
+    "run",
+    "--plan",
+    "/home/lexi/w7-build/wt/W7-C10/.w7/fleet-arch-plan-retry.json",
+    "--out",
+    "/home/lexi/w7-build/wt/W7-C10/target/fleet-evidence/arch-retry.json"
+  ],
+  "pid": 1625365,
+  "exit_code": 0,
+  "signal": null,
+  "elapsed_seconds": 1626.371540663,
+  "user_seconds": 26.308925,
+  "system_seconds": 26.960024,
+  "max_rss_bytes": 5537247232,
+  "os": "Linux"
+}

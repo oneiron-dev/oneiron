@@ -49,7 +49,7 @@ mod diagnostic_codec;
 mod event;
 mod invariant_canonical;
 pub mod scheduled;
-mod untrusted_text;
+pub(crate) mod untrusted_text;
 
 pub mod healer_host;
 mod receipt_serde;

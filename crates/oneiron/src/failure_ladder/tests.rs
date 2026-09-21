@@ -157,15 +157,19 @@ fn policy_with(agent_ref: EntityId, limit: u16, mode: FailureEscalationMode) -> 
     }
 }
 
-/// A durable ONE-1686 witness MESSAGE row, standing in for a `report_blocked`
-/// receipt until 1686 lands its own receipt kind.
+/// A canonical report-blocked receipt fixture. Actual dispatch and refusal
+/// of guest-created receipts are covered by the code-run boundary tests.
 fn put_receipt_message(vault: &Vault, seed: u8, order: u32) -> Result<EntityId> {
     let id = test_id(seed);
     let body = crate::gate::canonical_witness_message_body_for_test(
-        "user",
-        "dialogue",
-        "blocked report",
-        true,
+        "companion",
+        crate::code_run::blocked::BLOCKED_REPORT_MESSAGE_TYPE,
+        &crate::code_run::blocked::BlockedReceipt::new(
+            crate::code_run::blocked::BlockedCategory::Tool,
+            "blocked report",
+        )?
+        .content()?,
+        false,
         order,
     )?;
     vault
@@ -984,5 +988,47 @@ fn healer_code_exposes_no_force_cancel_handle() -> Result<()> {
     assert_eq!(row.cancellation(), None);
     assert!(row.cancel_receipts().is_empty());
     assert_eq!(row.cancel_pressure().requests, 0);
+    Ok(())
+}
+
+#[test]
+fn malformed_healer_scope_cannot_commit_a_failure_or_case() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+    let healer = put_scope_agent(&vault, 0x32, "oneiron.agent.healer")?;
+    let leased = leased_dispatch(&vault, agent_ref, 10)?;
+    for (skill_ref, expected) in [
+        ("not-a-reference".to_owned(), crate::ErrorKind::InvalidKey),
+        (
+            "1234567890abcdef1234567890abcdef".to_uppercase(),
+            crate::ErrorKind::InvalidConfig,
+        ),
+    ] {
+        for slot in [
+            crate::agent_dispatch::HealerSlot::Reserved,
+            crate::agent_dispatch::HealerSlot::AgentDef {
+                agent_def_ref: healer.to_hex(),
+            },
+        ] {
+            let mut policy = auto_policy(agent_ref);
+            policy.healer_slot = slot;
+            policy.scope.skill_ref = Some(skill_ref.clone());
+            let error = FailureLadder::new(&vault)
+                .handle_attempt_failure(failure_input(&leased, permanent(), 20), policy)
+                .unwrap_err();
+            assert_eq!(error.kind(), expected);
+            assert_eq!(
+                AttemptQueue::new(&vault).get(leased.id)?.unwrap().state,
+                AttemptState::Leased
+            );
+            let key = [
+                b"healer:case:v1:".as_slice(),
+                failure_case_ref(leased.id).as_bytes(),
+            ]
+            .concat();
+            let txn = vault.store.env.read_txn()?;
+            assert!(vault.store.vault_meta.get(&txn, &key)?.is_none());
+        }
+    }
     Ok(())
 }

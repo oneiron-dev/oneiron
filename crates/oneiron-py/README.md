@@ -91,10 +91,10 @@ slip instead.
 | `handle.recall(query, ...)` | `MemoryPack` |
 | `handle.receipts(limit=100)` | `list[FacadeReceipt]` |
 
-`recall` keyword arguments are `effort` (`"minimal" | "standard" | "deep"`,
-default `"standard"`), `scope` (`{"world_ref": ..., "facet": ...}`), `limit`
+`recall` keyword arguments are `effort` (`"light" | "medium" | "high" | "xhigh" | "max"`,
+default `"medium"`), `scope` (`{"world_ref": ..., "facet": ...}`), `limit`
 (default `10`) and `format` (`"json" | "yaml" | "toon" | "md" | "txt"`).
-`deep` is lease-gated and raises `LEASE_REQUIRED`; this package neither mints
+`high`, `xhigh` and `max` are lease-gated and raises `LEASE_REQUIRED`; this package neither mints
 nor simulates a lease.
 
 Timestamps are Unix **seconds** everywhere and are never converted. Omitting
@@ -108,7 +108,7 @@ Every failure is an `OneironError` carrying the engine's own vocabulary:
 from oneiron import Oneiron, OneironError
 
 try:
-    memory.recall("window seat", effort="deep")
+    memory.recall("window seat", effort="high")
 except OneironError as error:
     print(error.code, error.message, error.suggestions)
 ```

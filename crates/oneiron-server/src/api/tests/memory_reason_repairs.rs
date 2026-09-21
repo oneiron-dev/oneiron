@@ -105,7 +105,7 @@ fn raw_search_request(uri: &str) -> Request<Body> {
 async fn memory_reason_text_query_text_never_retargets_the_probe() {
     let backend = Arc::new(StubReasonBackend::answering("from evidence"));
     let (_dir, server) = memory_reason_server(Some(backend));
-    for depth in ["minimal", "standard", "deep"] {
+    for depth in ["light", "medium", "high"] {
         let uri = format!("/api/search/text?query=launch&depth={depth}&view=standard");
         let (status, original) = route_json(server.clone(), raw_search_request(&uri)).await;
         assert_eq!(status, StatusCode::OK, "{original:?}");
@@ -167,7 +167,7 @@ async fn memory_reason_text_query_text_never_retargets_the_probe() {
 async fn memory_reason_standard_vector_query_text_is_not_a_lexical_probe() {
     let (_dir, server) = memory_reason_server(None);
     let probe = vec!["0.1"; oneiron::VaultConfig::device().dimensions].join(",");
-    let uri = format!("/api/search/vector?query={probe}&depth=standard&view=standard");
+    let uri = format!("/api/search/vector?query={probe}&depth=medium&view=standard");
     let (status, original) = route_json(server.clone(), raw_search_request(&uri)).await;
     assert_eq!(status, StatusCode::OK, "{original:?}");
     assert!(original["items"].as_array().unwrap().is_empty());
@@ -191,7 +191,7 @@ async fn memory_reason_deep_usage_accumulates_and_one_lease_reaches_all_stages()
             json_request(
                 "POST",
                 "/v1/companion/memory/reason",
-                json!({ "query": "launch", "depth": "deep", "tokenBudget": 17 }),
+                json!({ "query": "launch", "depth": "max", "tokenBudget": 17 }),
             ),
         )
         .await;
@@ -205,7 +205,7 @@ async fn memory_reason_deep_usage_accumulates_and_one_lease_reaches_all_stages()
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({ "query": "launch", "depth": "deep" }),
+            json!({ "query": "launch", "depth": "max" }),
         ),
     )
     .await;
@@ -244,7 +244,7 @@ async fn memory_reason_backend_errors_release_each_admitted_reservation() {
                 json_request(
                     "POST",
                     "/v1/companion/memory/reason",
-                    json!({ "query": "launch", "depth": "deep" }),
+                    json!({ "query": "launch", "depth": "max" }),
                 ),
             )
             .await;
@@ -271,11 +271,11 @@ async fn memory_reason_raw_search_errors_and_zero_pages_release_reservations() {
     for _ in 0..3 {
         for (uri, expected) in [
             (
-                "/api/search/vector?query=0.1,0.2&depth=deep&queryText=launch",
+                "/api/search/vector?query=0.1,0.2&depth=max&queryText=launch",
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
             (
-                "/api/search/text?query=launch&depth=deep&limit=0&countMode=none",
+                "/api/search/text?query=launch&depth=max&limit=0&countMode=none",
                 StatusCode::OK,
             ),
         ] {
@@ -288,7 +288,7 @@ async fn memory_reason_raw_search_errors_and_zero_pages_release_reservations() {
     // A real deep read still fits after errors and empty pages.
     let (status, body) = route_json(
         server,
-        raw_search_request("/api/search/text?query=launch&depth=deep&view=standard"),
+        raw_search_request("/api/search/text?query=launch&depth=max&view=standard"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
@@ -326,6 +326,7 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         .commit()
         .unwrap();
     let short_id = oneiron::retrieval_depth::short_ref_or_hex(&server.vault, &inside).unwrap();
+    let pinned_ref = server.vault.pinned_short_ref(&inside).unwrap();
     let scoped = scoped_read_for_legacy_api(&server.vault).unwrap();
     let unscoped = scoped.search_text("launch", 2, None).unwrap();
     assert_eq!(
@@ -339,7 +340,7 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         scoped.search_text("launch", 1, None).unwrap()[0].id,
         outside
     );
-    for depth in ["minimal", "standard", "deep"] {
+    for depth in ["light", "medium", "high"] {
         let (status, body) = route_json(
             server.clone(),
             json_request(
@@ -355,11 +356,51 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         assert_eq!(status, StatusCode::OK, "{body:?}");
         assert_eq!(
             body["sources"],
-            json!([short_id.clone()]),
+            json!([pinned_ref.clone()]),
             "{depth}: {body:?}"
         );
     }
     assert_eq!(*backend.candidates.lock().unwrap(), vec![inside]);
+    let original = server.vault.get(&inside).unwrap().unwrap();
+    let changed =
+        rmp_serde::to_vec_named(&json!({"txt": "changed", "spkr": "user", "at": 701_u64})).unwrap();
+    server
+        .vault
+        .batch()
+        .put(
+            &inside,
+            ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: 701,
+                end: 701,
+            },
+            701,
+            &changed,
+        )
+        .commit()
+        .unwrap();
+    for path in ["/v1/core/hydrate", "/v1/core/batch/shortId/hydrate"] {
+        let payload = if path.contains("/batch/") {
+            json!({"refs": [pinned_ref.clone()]})
+        } else {
+            json!({"ref": pinned_ref.clone()})
+        };
+        let (status, body) = route_json(server.clone(), json_request("POST", path, payload)).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body:?}");
+        let item = if path.contains("/batch/") {
+            &body["results"][0]["result"]["item"]
+        } else {
+            &body["item"]
+        };
+        let expected = crate::projection::project_entity_parts(
+            &inside,
+            ENTITY_TYPE_TURN,
+            700,
+            &original,
+            crate::projection::View::Full,
+        );
+        assert_eq!(item, &expected, "{path}: {body:?}");
+    }
 }
 
 #[tokio::test]
@@ -384,7 +425,7 @@ async fn memory_reason_budget_refusals_settle_actual_usage_and_stop_later_calls(
             json_request(
                 "POST",
                 "/v1/companion/memory/reason",
-                json!({ "query": "launch", "depth": "deep", "tokenBudget": budget }),
+                json!({ "query": "launch", "depth": "max", "tokenBudget": budget }),
             ),
         )
         .await;
@@ -403,7 +444,7 @@ async fn memory_reason_small_budget_does_not_call_a_host_at_model_free_tiers() {
     let guard = repair_guard(100, 17);
     let backend = Arc::new(RecordingReasonBackend::new(Some(FailingStage::Decompose)));
     let (_dir, server) = memory_reason_server_with_guard(Some(backend.clone()), guard.clone());
-    for depth in ["minimal", "standard"] {
+    for depth in ["light", "medium"] {
         let (status, body) = route_json(
             server.clone(),
             json_request(

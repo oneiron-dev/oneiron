@@ -222,6 +222,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
         SelfDispatchOutcome::Speech(value) => {
             json!({"order":value.order,"isVisible":value.is_visible})
         }
+        SelfDispatchOutcome::ReportBlocked { receipt } => {
+            json!({"receipt":receipt.to_hex()})
+        }
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }

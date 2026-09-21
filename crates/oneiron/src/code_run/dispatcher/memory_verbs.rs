@@ -49,6 +49,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
             | SelfEffect::MemoryWriteFixture
+            | SelfEffect::ReportBlocked
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),

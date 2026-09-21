@@ -260,6 +260,12 @@ pub struct ServeArgs {
     /// Defaults to `self_host_local`; hosting is opt-in.
     #[arg(long, value_parser = parse_privacy_posture)]
     pub privacy_posture: Option<HostingPrivacyPosture>,
+    /// Failure-signal participation for self-hosted deployments (default off).
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub failure_signal_export: Option<bool>,
+    /// Separate, explicit training consent (default off in every tier).
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub failure_signal_training: Option<bool>,
 
     /// Opaque host-managed KMS/HSM key reference (ARN / URI / key id), never
     /// key material. Required by `--privacy-posture hosted` and rejected by

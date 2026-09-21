@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 9] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 10] = [
     "schema_version",
     "target",
     "agent_def",
@@ -40,6 +40,7 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 9] = [
     "context_from",
     "depth_remaining",
     "scope",
+    "healer_case",
 ];
 
 pub(super) const KEY_SCHEMA_VERSION: &str = AGENT_DISPATCH_INPUT_KEYS[0];
@@ -94,6 +95,8 @@ pub enum AgentDispatchTarget {
 /// frozen at dispatch time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentDispatchInput {
+    /// Typed reference-only diagnostic context, never a prompt or task patch.
+    pub healer_case: Option<HealerCase>,
     pub target: AgentDispatchTarget,
     pub definition: AgentDefinition,
     /// Additive/defaulted. A DESCRIPTOR, resolved at dispatch — never a frozen
@@ -120,6 +123,7 @@ impl AgentDispatchInput {
         Self {
             target,
             definition,
+            healer_case: None,
             context_spec: None,
             context_from: Vec::new(),
             depth_remaining: None,
@@ -137,6 +141,7 @@ impl AgentDispatchInput {
 /// parent budget and refuses a `context_spec` that widens the parent's.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AgentSpawnContext {
+    pub healer_case: Option<HealerCase>,
     pub context_spec: Option<ContextSpec>,
     pub context_from: Vec<EntityId>,
     pub depth_remaining: Option<u8>,
@@ -249,20 +254,6 @@ pub enum KillOutcome {
     AlreadyTerminal,
     Proposed(KillProposal),
 }
-
-/// Refusal reason for the configured-healer arm (ONE-1887 §5).
-///
-/// A configured healer needs the failing case's INDIVIDUALLY DURABLE refs —
-/// the failing `attempt_id`, `evidence_ref`, `pre_fail_checkpoint_ref`, and
-/// `qa_thread_ref`. This base exposes no reference-context seam that can carry
-/// them: [`AgentDispatchInput::context_spec`] is a projection DESCRIPTOR and
-/// [`AgentDispatchInput::context_from`] admits only SETTLED sibling TASK
-/// results under the spawning parent attempt and run. Case material must never
-/// be smuggled through `dedupe_key`, `run_id`, a briefing string, or a new
-/// parallel queue payload, so the arm refuses until that seam lands rather
-/// than dispatching a healer that cannot read its own case.
-pub(super) const HEALER_REFERENCE_CONTEXT_SEAM_ABSENT: &str =
-    "healer slot dispatch requires a durable reference-context seam this base does not expose";
 
 /// Which healer a failure scope routes its cases to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

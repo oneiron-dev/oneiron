@@ -705,6 +705,7 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
     vault.put_edge(&kept_seed, EdgeKind::Mentions, &readable_neighbor, 0.9)?;
 
     let entity = |id: EntityId, entity_type: u8, score: f32| ContextEntity {
+        source_revision_ref: None,
         id,
         short_id: id.to_hex(),
         content_hash: 0,

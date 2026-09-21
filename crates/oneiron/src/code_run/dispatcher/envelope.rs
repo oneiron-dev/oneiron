@@ -248,7 +248,8 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::Context
         | SelfEffect::Speak
         | SelfEffect::Think
-        | SelfEffect::Express => false,
+        | SelfEffect::Express
+        | SelfEffect::ReportBlocked => false,
     }
 }
 

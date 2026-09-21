@@ -41,9 +41,44 @@ pub(super) fn hydrate_entity(
     options: HydrateOptions<'_>,
     claims_suppressed: &mut usize,
 ) -> Result<Option<ContextEntity>> {
-    let Some(raw) = vault.store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(live_raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
+        vault,
+        rtxn,
+        &id,
+        crate::vault::ReadMode::Live,
+    )?
+    else {
         return Ok(None);
     };
+    if let crate::vault::ReadMode::Pinned(revision) = options.read_mode
+        && !crate::vault::entity_revision::entity_owns_revision_in_txn(
+            &vault.store,
+            rtxn,
+            &id,
+            revision,
+        )?
+    {
+        return Ok(None);
+    }
+    let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
+        vault,
+        rtxn,
+        &id,
+        options.read_mode,
+    )?
+    else {
+        return Ok(None);
+    };
+    // A history pin cannot restore a claim inadmissible at the current door.
+    if raw != live_raw && live_raw[0] == ENTITY_TYPE_CLAIM {
+        match crate::claim::decode_claim_body(&live_raw[ENTITY_METADATA_HEADER_LEN..], true) {
+            Ok(body) if claim_surfaceable(&body) => {}
+            _ => {
+                *claims_suppressed += 1;
+                return Ok(None);
+            }
+        }
+    }
 
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
@@ -58,7 +93,11 @@ pub(super) fn hydrate_entity(
     let mut gated_claim_body: Option<&ClaimBody> = None;
     let decoded_here: Option<ClaimBody>;
     if header.entity_type == ENTITY_TYPE_CLAIM {
-        match options.claim_bodies.and_then(|cache| cache.get(&id)) {
+        match options
+            .claim_bodies
+            .filter(|_| raw == live_raw)
+            .and_then(|cache| cache.get(&id))
+        {
             // Pipeline-gated result: already decoded once and surfaceable.
             Some(body) => gated_claim_body = Some(body),
             None => {
@@ -87,8 +126,9 @@ pub(super) fn hydrate_entity(
         None
     };
 
-    let (short_id, content_hash) =
-        read_short_id(&vault.store, rtxn, &id)?.unwrap_or_else(|| (id.to_hex(), 0));
+    let (short_id, _) = read_short_id(&vault.store, rtxn, &id)?.unwrap_or_else(|| (id.to_hex(), 0));
+    let content_hash =
+        (xxhash_rust::xxh32::xxh32(&raw[ENTITY_METADATA_HEADER_LEN..], 0) % 256) as u8;
 
     let edges = if options.include_edges {
         Some(load_entity_edges(
@@ -102,7 +142,20 @@ pub(super) fn hydrate_entity(
         None
     };
 
-    let vector = if options.include_vectors {
+    let source_revision = match options.read_mode {
+        crate::vault::ReadMode::Pinned(revision) => Some(revision),
+        mode => {
+            crate::vault::entity_revision::revision_for_mode_in_txn(&vault.store, rtxn, &id, mode)?
+        }
+    };
+    // The single vector row belongs to the indexed frontier, not necessarily
+    // the live body or a historical pin. No revision state means an unversioned
+    // current row; explicit pins always carry a source revision here.
+    let vector = if options.include_vectors
+        && match source_revision {
+            Some(revision) => vault.indexed_revision_in_txn(rtxn, &id)? == Some(revision),
+            None => true,
+        } {
         read_vector(vault, rtxn, &id)?
     } else {
         None
@@ -112,6 +165,7 @@ pub(super) fn hydrate_entity(
         id,
         short_id,
         content_hash,
+        source_revision_ref: source_revision.map(|revision| revision.0),
         entity_type: header.entity_type,
         score,
         fields,

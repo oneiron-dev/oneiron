@@ -219,6 +219,7 @@ pub async fn call_as_step_with_fallbacks(
     // is idempotent on an already-settled lease, so the happy-path settle stays
     // a no-op once the guard is disarmed.
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
+    ctx.vault.resume_from_slim_on_inbound()?;
 
     let payload = serde_json::to_vec(&response)?;
     step_state_write(

@@ -50,6 +50,7 @@ impl PipelineBuilder<'_> {
         claim_gate_widening_probe: &mut ClaimStatusGateCache,
     ) -> Result<bool> {
         let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
+            && !self.deadline_reached()
             && *limit > 0
             && self.candidate_filter.is_none()
         {
@@ -129,7 +130,9 @@ impl PipelineBuilder<'_> {
         claim_gate: &mut ClaimStatusGateCache,
     ) -> Result<Option<usize>> {
         let mut text_channel_index = None;
-        if let Some((query, limit)) = &self.text_search {
+        if let Some((query, limit)) = &self.text_search
+            && !self.deadline_reached()
+        {
             let scoped_text_limit = scoped_text_channel_limit(
                 &self.vault.store,
                 rtxn,
@@ -217,6 +220,9 @@ impl PipelineBuilder<'_> {
                 metadata_cache,
             )?);
             for query in inputs.overrides.extra_text_queries {
+                if self.deadline_reached() {
+                    break;
+                }
                 let retry_scoped_text_limit = scoped_text_channel_limit(
                     &self.vault.store,
                     rtxn,

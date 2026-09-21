@@ -422,19 +422,7 @@ pub(in crate::batch) fn apply_put(
     let mut optimizer_birth_marker = None;
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
-        if old_type == ENTITY_TYPE_SKILL {
-            let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
-            previous_skill_record = match crate::skill::decode_skill_record(prior_body) {
-                Ok(record) => Some(record),
-                Err(error)
-                    if error.kind() == ErrorKind::InvalidSkillBody
-                        && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
-                {
-                    None
-                }
-                Err(error) => return Err(error),
-            };
-        }
+        previous_skill_record = decode_previous_skill_record(old_type, &old_record)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.
@@ -447,7 +435,18 @@ pub(in crate::batch) fn apply_put(
         // same-bytes replay must NOT touch the index, and metadata-only
         // (occurred/learned) changes are not body changes.
         body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
-        let should_deindex_stale_text = body_changed && (replicated || !has_later_covering_text_op);
+        // Retaining an indexed text revision is not permission to retain a
+        // withdrawn claim in the search index. Lifecycle/approval takes effect
+        // immediately; only still-surfaceable text edits await idle publication.
+        let withdrawn_claim = decoded_claim_body
+            .as_ref()
+            .is_some_and(|body| !crate::claim::claim_surfaceable(body));
+        let should_deindex_stale_text = body_changed
+            && (withdrawn_claim
+                || ((replicated || !has_later_covering_text_op)
+                    && !crate::vault::entity_revision::storage_manages_text(
+                        store, wtxn, &id, data,
+                    )?));
         let old_code_artifact_body =
             if old_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT && body_changed {
                 Some(old_record[ENTITY_METADATA_HEADER_LEN..].to_vec())
@@ -679,6 +678,9 @@ pub(in crate::batch) fn apply_put(
     }
     let pending_embedding_token =
         if entity_type == crate::registry::ENTITY_TYPE_CLAIM && !is_lexical_query_hint_claim {
+            // Mint the new invalidation token even while idle publication is
+            // pending. The worker skips these revisions; old completions must
+            // still observe that their token no longer owns the current body.
             let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, &id)?;
             let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
             if !body_changed && has_vector && !has_current_pending {
@@ -790,4 +792,24 @@ fn validate_witness_message_body(data: &[u8], replicated: bool) -> Result<()> {
         crate::gate::validate_canonical_witness_message_body(data)?;
     }
     Ok(())
+}
+
+fn decode_previous_skill_record(
+    old_type: u8,
+    old_record: &[u8],
+) -> Result<Option<crate::skill::SkillRecord>> {
+    if old_type != ENTITY_TYPE_SKILL {
+        return Ok(None);
+    }
+    let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+    match crate::skill::decode_skill_record(prior_body) {
+        Ok(record) => Ok(Some(record)),
+        Err(error)
+            if error.kind() == ErrorKind::InvalidSkillBody
+                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }

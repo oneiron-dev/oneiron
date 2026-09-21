@@ -68,7 +68,7 @@ fn failed_read(point: FailurePoint, first_spend: u64) -> RetrievalError {
         BudgetGuard::with_reserve_units("failed-depth", 100, 10, BudgetExhaustionPolicy::Suspend);
     let admission = guard.admit().unwrap();
     let backend = FailingBackend { point, first_spend };
-    let mut request = text_request("launch", Effort::Deep);
+    let mut request = text_request("launch", Effort::Max);
     request.lease = Some(&admission.lease);
     request.backend = Some(&backend);
     let failure = scoped.search_with_effort(&request).unwrap_err();
@@ -167,7 +167,7 @@ fn deep_narrowing_error_after_decompose_retains_spend() {
     );
     let admission = guard.admit().unwrap();
     let backend = CorruptScopeAfterDecompose { vault: &vault, id };
-    let mut request = text_request("launch", Effort::Deep);
+    let mut request = text_request("launch", Effort::Max);
     request.lease = Some(&admission.lease);
     request.backend = Some(&backend);
     request.session_scope = Some(&scope);
@@ -207,7 +207,7 @@ fn deep_request_budget_bounds_each_round_and_rerank_without_losing_spend() {
             ScriptedBackend::new(vec![vec!["checklist".to_owned()], Vec::new()]).with_spend(3, 5);
         let mut request = hosted_request(
             "launch",
-            Effort::Deep,
+            Effort::Max,
             Some(&admission.lease),
             Some(&backend),
         );

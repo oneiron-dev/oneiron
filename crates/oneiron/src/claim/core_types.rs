@@ -537,7 +537,9 @@ pub(crate) fn validate_claim_body_and_decode(
     // branch that only some claims enter.
     validate_claim_source_lineage(&body)?;
     crate::blob_artifact::esign::validate_event_claim(&body)?;
-    if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
+    if body.predicate.starts_with("world_access.") || body.predicate.starts_with("activated.") {
+        crate::context_board::validate_board_claim(&body)?;
+    } else if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
         validate_edge_provenance_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_LEXICAL_QUERY_HINT {
         lexical_query_hint_target(&body)?;
