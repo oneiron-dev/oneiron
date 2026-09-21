@@ -111,6 +111,44 @@ class FacadeReceipt(TypedDict):
     content_kind: str
     claim_ref: str | None
 
+
+class KeyValueAddress(TypedDict):
+    namespace: list[str]
+    key: str
+
+class KeyValuePut(KeyValueAddress):
+    value: dict[str, Any]
+    request_id: str
+    source: NotRequired[str]
+
+class KeyValueItem(KeyValueAddress):
+    value: dict[str, Any]
+    created_at: int
+    updated_at: int
+    revision: str
+
+class KeyValuePutReceipt(TypedDict):
+    item: KeyValueItem
+    replayed: bool
+    receipt_ref: str
+
+class KeyValueDeleteReceipt(TypedDict):
+    existed: bool
+    receipt_refs: list[str]
+
+class KeyValueSearch(TypedDict):
+    namespace_prefix: NotRequired[list[str]]
+    filter: NotRequired[dict[str, Any] | None]
+    limit: NotRequired[int]
+    offset: NotRequired[int]
+
+class KeyValueNamespaces(TypedDict):
+    prefix: NotRequired[list[str]]
+    suffix: NotRequired[list[str]]
+    max_depth: NotRequired[int | None]
+    limit: NotRequired[int]
+    offset: NotRequired[int]
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -142,3 +180,8 @@ class Oneiron:
         format: PackFormat | None = None,
     ) -> MemoryPack: ...
     def receipts(self, limit: int = 100) -> list[FacadeReceipt]: ...
+    def key_value_get(self, request: KeyValueAddress) -> KeyValueItem | None: ...
+    def key_value_put(self, request: KeyValuePut) -> KeyValuePutReceipt: ...
+    def key_value_delete(self, request: KeyValueAddress) -> KeyValueDeleteReceipt: ...
+    def key_value_search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
+    def key_value_namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...

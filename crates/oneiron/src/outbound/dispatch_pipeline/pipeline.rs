@@ -369,6 +369,7 @@ impl OutboundDispatchPipeline {
                 false,
             )?;
             wtxn.commit().map_err(Error::from)?;
+            vault.store.notify_attempt_observers();
             let gate_outcome_kind = gate_decision.outcome();
             let outcome = match gate_outcome_kind {
                 GateOutcome::Pending => OutboundDispatchOutcome::Held,

@@ -69,7 +69,7 @@ impl Memory<'_> {
     /// Diary requests are actor-private and owner-only to write. A scope/kind
     /// mismatch or a foreign owner is refused before any row is staged.
     pub fn author_note(&self, envelope: &NoteWriteEnvelope) -> MemoryResult<EntityRefReceipt> {
-        let (target_id, link, target_must_be_claim) = match (envelope.kind, envelope.scope) {
+        let (target_id, link, target_must_be_claim) = match (&envelope.kind, envelope.scope) {
             (NoteKind::OpinionTake, NoteScope::About(TakeTarget::Subject(id))) => {
                 (id, EdgeKind::About, false)
             }
@@ -88,7 +88,7 @@ impl Memory<'_> {
             }
         };
         let body = encode_note_body(&NoteBody {
-            kind: envelope.kind,
+            kind: envelope.kind.clone(),
             author_ref: self.actor,
             markdown: envelope.markdown.clone(),
             source_revision_ref: envelope.source_revision_ref,

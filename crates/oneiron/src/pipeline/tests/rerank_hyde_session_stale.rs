@@ -630,7 +630,7 @@ fn stale_stamped_world_drops_from_all_and_base_but_survives_explicit_scope() -> 
         HashSet::from([claim_base, claim_stale, claim_live]),
         "baseline: with no stamp, All spans every world"
     );
-    let unstamped_world_set = run(Some(WorldScope::WorldSet(scope_key)))?;
+    let unstamped_world_set = run(Some(WorldScope::CodebaseSet(scope_key)))?;
 
     stamp_world_stale(&vault, stale_world, FederationStaleReason::Disconnected)?;
 
@@ -655,7 +655,7 @@ fn stale_stamped_world_drops_from_all_and_base_but_survives_explicit_scope() -> 
         "an unstamped world is untouched by the stale filter"
     );
     assert_eq!(
-        run(Some(WorldScope::WorldSet(scope_key)))?,
+        run(Some(WorldScope::CodebaseSet(scope_key)))?,
         unstamped_world_set,
         "WorldSet takes no stale exclusion: identical output either side of the stamp"
     );

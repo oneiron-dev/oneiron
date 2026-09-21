@@ -189,6 +189,13 @@ pub(crate) struct CoreContextPackEvidence {
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreContextPackResponse {
+    /// Separately budgeted turn-local capability discoveries.
+    #[schema(value_type = Vec<Object>)]
+    pub(crate) capabilities: Vec<oneiron::context_board::CapabilityHit>,
+    /// Content-addressed, score-free subject evidence, before the read-time delta.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    l2_base: Option<oneiron::context_pack::L2BaseSummary>,
     /// Execution quality projected from the engine's shared report.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>)]
@@ -231,7 +238,7 @@ pub(crate) struct CoreContextPackResponse {
 }
 
 pub(crate) async fn run_context_pack_builder(
-    vault: &oneiron::Vault,
+    server: &crate::server::SyncServer,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     builder: oneiron::ContextPackBuilder<'_>,
     projection: oneiron::serialize::SerializeConfig,
@@ -246,6 +253,23 @@ pub(crate) async fn run_context_pack_builder(
     ),
     ApiError,
 > {
+    let vault = &server.vault;
+    let subjects: Vec<_> = memories
+        .as_ref()
+        .and_then(|request| request.companion.as_ref())
+        .into_iter()
+        .flat_map(|companion| {
+            [
+                companion.person_ref.as_deref(),
+                companion.persona_ref.as_deref(),
+            ]
+        })
+        .flatten()
+        .filter_map(|reference| oneiron::EntityId::from_hex(reference).ok())
+        .collect();
+    let builder = builder
+        .l2_summary_subjects(&subjects)
+        .l2_summary_reader(scoped_read);
     let mut pack = builder.run_unfinalized_with_telemetry().map_err(|error| {
         tracing::error!(error = %error, "core context-pack failed");
         core_engine_error("core context-pack failed", error)
@@ -276,13 +300,15 @@ pub(crate) async fn run_context_pack_builder(
                 )
             });
             let cursor = advance_memories_cursor(
-                vault,
+                server,
                 &request.session_scope_id,
                 &request.session_id,
                 &pack,
                 &evidence,
+                scoped_read,
             )
-            .await;
+            .await
+            .map_err(|error| core_engine_error("context-pack observations failed", error))?;
             (section, Some(cursor))
         }
         None => (None, None),
@@ -343,6 +369,8 @@ pub(crate) fn core_context_pack_response(
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
+        capabilities: pack.capabilities,
+        l2_base: pack.l2_base,
         quality: Some(pack.retrieval_quality.quality),
         degradation: (!pack.retrieval_quality.degradation.is_empty())
             .then_some(pack.retrieval_quality.degradation),
@@ -536,5 +564,24 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
         oneiron::RetrievalSignal::Rerank => "rerank",
         oneiron::RetrievalSignal::Hyde => "hyde",
         oneiron::RetrievalSignal::HydeRetry => "hyde_retry",
+    }
+}
+
+impl CoreContextPackResponse {
+    pub(super) fn observe_rows(
+        &self,
+        read: &oneiron::claim::ScopedRead<'_>,
+        session: &mut oneiron::context_board::SessionReadSet,
+    ) -> oneiron::Result<()> {
+        let mut ids = self
+            .results
+            .iter()
+            .chain(&self.neighbors)
+            .map(|row| oneiron::EntityId::from_hex(&row.id))
+            .collect::<oneiron::Result<Vec<_>>>()?;
+        if let Some(base) = &self.l2_base {
+            ids.extend_from_slice(base.evidence_ids());
+        }
+        session.observe_rows(read, &ids)
     }
 }

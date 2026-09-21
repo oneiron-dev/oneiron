@@ -60,7 +60,7 @@ pub(crate) struct ContextBoardSessionControls {
     /// Defaults to the caller's own identity.
     #[serde(default, rename = "session_id", alias = "sessionId")]
     #[schema(example = "session-123")]
-    session_id: Option<String>,
+    pub(super) session_id: Option<String>,
 }
 
 /// Companion scope that influences MEMORIES assembly.

@@ -1229,7 +1229,8 @@ fn tool_first_endpoint_is_generated_from_the_exported_verb_rows() {
         expected.len(),
         oneiron::board_verb::BOARD_VERBS.len()
             + oneiron::task_verb::TASKS_VERBS.len()
-            + oneiron::workspace_roster::ROOMS_VERBS.len(),
+            + oneiron::workspace_roster::ROOMS_VERBS.len()
+            + oneiron::code_run::vault_read::MEMORY_VERBS.len(),
     );
 
     // Every registered tool IS a projection of a row: nothing hand-written.
@@ -1286,6 +1287,18 @@ fn a_tool_registered_on_one_endpoint_is_unknown_on_the_other() {
 
 #[test]
 fn endpoint_listings_are_frozen_and_carry_no_actor_material() {
+    let credential = "very-secret-connector-key";
+    let mut actors = registry();
+    actors
+        .register(
+            credential,
+            McpConnectorActorRecord::new(
+                EntityId::from_hex(ACTOR_ID).expect("actor id"),
+                EdgeActorClass::Agent,
+                McpConnectorScope::vault_wide(),
+            ),
+        )
+        .expect("credential registers");
     for mode in McpSurfaceMode::ALL {
         let registered = registered_surface(mode);
         let frozen = serde_json::to_string(registered.listing()).expect("listing serializes");
@@ -1304,7 +1317,7 @@ fn endpoint_listings_are_frozen_and_carry_no_actor_material() {
             mode.as_str(),
         );
         assert!(
-            !frozen.contains("connector"),
+            !frozen.contains(credential),
             "{} listing echoes credential material",
             mode.as_str(),
         );
@@ -1678,7 +1691,7 @@ fn every_structured_error_code_carries_recovery_suggestions() {
         "scoped_mcp_grant_required",
         "board_render_failed",
         "verb_dispatch_failed",
-        MCP_EXECUTE_CODE_UNAVAILABLE_CODE,
+        MCP_CODE_HOST_UNBOUND_CODE,
         MCP_PAGE_CURSOR_INVALID_CODE,
         "an_error_code_no_one_has_minted_yet",
     ] {
@@ -1885,6 +1898,7 @@ fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
             json!({ "task_ref": ACTOR_ID })
         }
         McpVerbBinding::TasksCreate => json!({ "spec": { "kind": "review" } }),
+        McpVerbBinding::Memory(_) => json!({ "request": {} }),
     }
 }
 
@@ -3948,4 +3962,36 @@ fn room_history_cursor_is_optional_and_validated() {
     assert!(validate_mcp_endpoint_tool_args(tool, args.clone()).is_ok());
     args["arguments"]["turn_ref"] = json!("not-an-id");
     assert!(validate_mcp_endpoint_tool_args(tool, args).is_err());
+}
+
+#[test]
+fn memory_tool_census_keeps_native_names_schemas_and_reserved_refusals() {
+    use oneiron::code_run::vault_read::{MEMORY_VERBS, VaultReadMethod};
+    let surface = registered_surface(McpSurfaceMode::ToolFirst);
+    assert_eq!(MEMORY_VERBS.len(), VaultReadMethod::ALL.len());
+    for method in VaultReadMethod::ALL {
+        assert!(MEMORY_VERBS.contains(&method.tool_name()));
+        let tool = surface.resolve(method.tool_name()).unwrap();
+        let McpEndpointTool::Verb(verb) = tool else {
+            panic!("memory verb")
+        };
+        assert_eq!(verb.binding, McpVerbBinding::Memory(method));
+        assert_eq!(
+            tool.schema().input_schema["properties"]["arguments"]["properties"]["request"],
+            method.request_schema()
+        );
+    }
+    let query = surface.resolve("memory.query").unwrap().schema();
+    assert_eq!(
+        query.input_schema["properties"]["arguments"]["properties"]["request"]["properties"]["query"]
+            ["type"],
+        json!(["string", "null"])
+    );
+    let ask = surface.resolve("memory.ask").unwrap();
+    let mut args = endpoint_census_args(ask);
+    args["arguments"]["request"] = Value::Null;
+    assert!(validate_mcp_endpoint_tool_args(ask, args).is_ok());
+    for retired in ["oneiron.nav", "oneiron.read", "oneiron.ask"] {
+        assert!(surface.resolve(retired).is_none());
+    }
 }

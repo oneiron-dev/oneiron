@@ -220,6 +220,7 @@ pub(crate) fn execute_mcp_read(
             content_hash,
             View::Full,
             mode,
+            None,
         )
         .map_err(mcp_api_error)?;
         return Ok(json!({
@@ -715,6 +716,7 @@ fn project_nav_results(
                 result,
                 View::Summary,
                 oneiron::memory::ReadMode::Indexed,
+                None,
             )
             .map_err(|error| mcp_engine_error("mcp nav projection failed", error))
         })

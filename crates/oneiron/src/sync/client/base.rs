@@ -30,6 +30,7 @@ pub struct SyncClient {
     pub(crate) vault: Arc<Vault>,
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
+    pub(crate) note_session_bound: bool,
     pub(crate) document_updates: tokio::sync::broadcast::Receiver<Vec<u8>>,
     pub(crate) client_id: u64,
     /// This device's Ed25519 attestation key (ONE-1140, OD-2): signs the
@@ -72,6 +73,22 @@ impl SyncClient {
             ));
         }
 
+        if config.note_session.is_some() {
+            let uri: tokio_tungstenite::tungstenite::http::Uri =
+                config.server_url.parse().map_err(|_| {
+                    Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied)
+                })?;
+            let loopback = uri.host().is_some_and(|host| {
+                host.trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+            });
+            if uri.scheme_str() != Some("wss") && !(uri.scheme_str() == Some("ws") && loopback) {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::DocumentAdmissionDenied,
+                ));
+            }
+        }
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let vault = Arc::clone(manager.vault());
 
@@ -123,6 +140,7 @@ impl SyncClient {
         ));
         let document_updates = manager.documents().subscribe();
         let client = Self {
+            note_session_bound: false,
             document_updates,
             vault,
             manager,

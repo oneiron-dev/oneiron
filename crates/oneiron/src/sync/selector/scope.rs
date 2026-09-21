@@ -157,6 +157,30 @@ pub(super) fn coreference_export_context(
     })
 }
 
+/// Resolve just the candidate link from the committing document writer.
+/// The fold and consent rows use the same snapshot as its grant and append.
+pub(super) fn document_coreference_context_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    selector: &SyncSelector,
+    source: EntityId,
+    target: EntityId,
+) -> Result<CoreferenceExportContext> {
+    let Some(pact_id) = active_export_pact(fold, &selector.grant_id) else {
+        return Ok(CoreferenceExportContext::default());
+    };
+    let mut allowed_links = BTreeSet::new();
+    if crate::federation::coreference_shared_for_pact_in_txn(vault, txn, source, target, &pact_id)?
+    {
+        allowed_links.insert(normalized_coreference_pair(source, target));
+    }
+    Ok(CoreferenceExportContext {
+        pact_id: Some(pact_id),
+        allowed_links,
+    })
+}
+
 /// The id of the ACTIVE pact governing `grant_id`, or `None` when the grant is
 /// unpacted or its governing pact is not Active.
 ///

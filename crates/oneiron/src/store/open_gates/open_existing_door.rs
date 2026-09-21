@@ -118,7 +118,10 @@ impl Store {
             retrieval_blend_tuning_lock: Mutex::new(()),
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
+            l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             diagnostics: Diagnostics::default(),
+            #[cfg(feature = "sync")]
+            attempt_updates: tokio::sync::broadcast::channel(256).0,
             #[cfg(feature = "sync")]
             staged_import_admission_lock: Mutex::new(()),
             #[cfg(feature = "sync")]

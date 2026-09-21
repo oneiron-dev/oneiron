@@ -9,6 +9,7 @@ use crate::run_tree::RunTreeNode;
 pub enum AgentLane {
     Child,
     Peer,
+    Cand,
 }
 
 impl AgentLane {
@@ -18,6 +19,7 @@ impl AgentLane {
         match self {
             Self::Child => "child",
             Self::Peer => "peer",
+            Self::Cand => "cand",
         }
     }
 }

@@ -61,4 +61,5 @@ pub enum McpVerbBinding {
     RoomsMessages,
     RoomsClaim,
     RoomsSpeak,
+    Memory(VaultReadMethod),
 }

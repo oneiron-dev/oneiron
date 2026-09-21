@@ -10,7 +10,9 @@
 //!
 //! L1 ships the canonical quickstart, which is four calls: `witness` →
 //! `claim_upsert` → `recall` → `receipts`. The rest of the §HEAD-CONTRACT
-//! catalog is deliberately ABSENT rather than stubbed. A `501` stub is still a
+//! catalog is deliberately ABSENT rather than stubbed, except the five
+//! exact keyed-memory routes below and eight generated tasks/rooms routes.
+//! A `501` stub is still a
 //! registered row: it enters the route census, a client's catalog test counts
 //! it as shipped, and the only thing it proves is that somebody meant to write
 //! the verb. An absent route says the same thing without the false positive.
@@ -51,6 +53,10 @@ use oneiron::memory::{
     MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError, MemoryPack, MemoryReceipt, RecallScope,
     WitnessReceipt, WitnessTurn,
 };
+use oneiron::memory::{
+    KeyValueAddress, KeyValueDeleteReceipt, KeyValueItem, KeyValueNamespaces, KeyValuePut,
+    KeyValuePutReceipt, KeyValueSearch,
+};
 use oneiron::{EdgeActorClass, EntityId};
 
 /// Request-body ceiling for the facade nest: 64 MiB.
@@ -80,6 +86,11 @@ pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
         .route("/claim_upsert", post(facade_claim_upsert))
         .route("/recall", post(facade_recall))
         .route("/receipts", post(facade_receipts))
+        .route("/key_value_get", post(facade_key_value_get))
+        .route("/key_value_put", post(facade_key_value_put))
+        .route("/key_value_delete", post(facade_key_value_delete))
+        .route("/key_value_search", post(facade_key_value_search))
+        .route("/key_value_namespaces", post(facade_key_value_namespaces))
         .layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
 }
 
@@ -398,4 +409,89 @@ fn facade_request_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(1);
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("facade-req-{id:016x}")
+}
+
+/// Exact actor-bound keyed-memory projection, never a caller-supplied actor.
+async fn facade_key_value_get(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<KeyValueAddress>, JsonRejection>,
+) -> Result<Json<Option<KeyValueItem>>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    let request = facade_json(payload)?;
+    let (actor, actor_class) = facade_actor(&auth)?;
+    Ok(Json(
+        server
+            .vault
+            .memory(actor, actor_class)
+            .key_value_get(&request)?,
+    ))
+}
+
+/// Exact actor-bound keyed-memory projection, never a caller-supplied actor.
+async fn facade_key_value_put(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<KeyValuePut>, JsonRejection>,
+) -> Result<Json<KeyValuePutReceipt>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    let request = facade_json(payload)?;
+    let (actor, actor_class) = facade_actor(&auth)?;
+    Ok(Json(
+        server
+            .vault
+            .memory(actor, actor_class)
+            .key_value_put(&request)?,
+    ))
+}
+
+/// Exact actor-bound keyed-memory projection, never a caller-supplied actor.
+async fn facade_key_value_delete(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<KeyValueAddress>, JsonRejection>,
+) -> Result<Json<KeyValueDeleteReceipt>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    let request = facade_json(payload)?;
+    let (actor, actor_class) = facade_actor(&auth)?;
+    Ok(Json(
+        server
+            .vault
+            .memory(actor, actor_class)
+            .key_value_delete(&request)?,
+    ))
+}
+
+/// Exact actor-bound keyed-memory projection, never a caller-supplied actor.
+async fn facade_key_value_search(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<KeyValueSearch>, JsonRejection>,
+) -> Result<Json<Vec<KeyValueItem>>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    let request = facade_json(payload)?;
+    let (actor, actor_class) = facade_actor(&auth)?;
+    Ok(Json(
+        server
+            .vault
+            .memory(actor, actor_class)
+            .key_value_search(&request)?,
+    ))
+}
+
+/// Exact actor-bound keyed-memory projection, never a caller-supplied actor.
+async fn facade_key_value_namespaces(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<KeyValueNamespaces>, JsonRejection>,
+) -> Result<Json<Vec<Vec<String>>>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    let request = facade_json(payload)?;
+    let (actor, actor_class) = facade_actor(&auth)?;
+    Ok(Json(
+        server
+            .vault
+            .memory(actor, actor_class)
+            .key_value_namespaces(&request)?,
+    ))
 }

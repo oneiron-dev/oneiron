@@ -46,6 +46,8 @@ pub struct ContextPackBuilder<'a> {
     /// context-pack run cannot land on different targets.
     pub(super) session: Option<&'a crate::off_record::SessionRetrievalTelemetry<'a>>,
     pub(super) psych_profile_key: Option<PsychProfileKey>,
+    pub(super) l2_summary_subjects: Vec<EntityId>,
+    pub(super) l2_summary_reader: Option<&'a crate::claim::ScopedRead<'a>>,
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -91,6 +93,8 @@ impl<'a> ContextPackBuilder<'a> {
             disclosure: None,
             session: None,
             psych_profile_key: None,
+            l2_summary_subjects: Vec::new(),
+            l2_summary_reader: None,
         }
     }
 
@@ -128,6 +132,35 @@ impl<'a> ContextPackBuilder<'a> {
     /// is never silently omitted from the returned pack.
     pub fn psych_profile_key(mut self, key: PsychProfileKey) -> Self {
         self.psych_profile_key = Some(key);
+        if !self.l2_summary_subjects.contains(&key.person) {
+            self.l2_summary_subjects.push(key.person);
+        }
+        self
+    }
+
+    /// Adds the content-addressed L2 prefix for these explicit person/persona
+    /// subjects. Uses their ClaimOf ledger, never ranked query hits. At most
+    /// eight subjects are accepted. New non-subject hits remain in the delta.
+    pub fn l2_summary_subjects(mut self, subjects: &[EntityId]) -> Self {
+        self.l2_summary_subjects = subjects
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if let Some(key) = self.psych_profile_key
+            && !self.l2_summary_subjects.contains(&key.person)
+        {
+            self.l2_summary_subjects.push(key.person);
+        }
+        self
+    }
+
+    /// Narrows L2 evidence to the same actor's scoped-read and retrieval floor.
+    /// The reader must belong to this vault. Hosts using ScopedRead must attach
+    /// it before assembly, not only filter the rendered response afterwards.
+    pub fn l2_summary_reader(mut self, reader: &'a crate::claim::ScopedRead<'a>) -> Self {
+        self.l2_summary_reader = Some(reader);
         self
     }
 
@@ -347,7 +380,7 @@ impl<'a> ContextPackBuilder<'a> {
     /// additionally groups surviving claims by world (base section first). For
     /// [`WorldScope::Base`] / [`WorldScope::World`] the pack stays flat.
     pub fn world(mut self, scope: WorldScope) -> Self {
-        self.pipeline = self.pipeline.world(scope);
+        self.pipeline = self.pipeline.world(scope.clone());
         self.world_scope = scope;
         self
     }

@@ -74,6 +74,16 @@ pub(super) fn finalize_job(
             return Ok(None);
         }
 
+        if vault
+            .store
+            .vault_meta
+            .prefix_iter(wtxn, crate::note::PENDING_CITATION_ERASE.as_bytes())?
+            .next()
+            .transpose()?
+            .is_some()
+        {
+            return Ok(None);
+        }
         let mut finalized = 0u64;
         let mut rewrites: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         for entry in vault

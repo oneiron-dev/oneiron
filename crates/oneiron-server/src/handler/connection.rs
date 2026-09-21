@@ -344,7 +344,12 @@ async fn handle_connection(
                         .await;
                     break;
                 }
-                transport.app_jti = if app_frame {
+                let document_frame = matches!(
+                    data.first(),
+                    Some(&oneiron::sync::transport::TAG_DOCUMENT)
+                        | Some(&oneiron::sync::transport::TAG_BATCH)
+                );
+                transport.app_jti = if app_frame || document_frame {
                     conn_state
                         .bound_auth
                         .as_ref()

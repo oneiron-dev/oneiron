@@ -57,6 +57,7 @@ mod cb_a {
             run_id: None,
             parent_id: None,
             worker_kind: oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+            worker: None,
             agent_id: None,
             status: RunTreeStatus::Running,
             result_ref: None,

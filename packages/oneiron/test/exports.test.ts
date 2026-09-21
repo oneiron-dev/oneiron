@@ -9,6 +9,8 @@
 
 import { describe, expect, test } from "bun:test"
 
+import { readFileSync } from "node:fs"
+
 import * as pkg from "../src/index.js"
 
 /** The whole public runtime surface, spelled once. */
@@ -36,19 +38,29 @@ describe("export census", () => {
   })
 
   test("Oneiron has exactly the declared verb catalog", () => {
-    // The four calls of the canonical quickstart, plus the two constructors
-    // and the actor rebind. Compared as a SET so an accidental extra public
-    // method is a failing test rather than a silent surface expansion.
+    // Direct verbs live on the prototype; dotted verbs live in generated families.
+    // Assert both against the same complete facade catalog.
     const instanceMethods = Object.getOwnPropertyNames(pkg.Oneiron.prototype)
       .filter((name) => name !== "constructor")
       .sort()
-    expect(instanceMethods).toEqual([
-      "asActor",
-      "claimUpsert",
-      "recall",
-      "receipts",
-      "witness",
-    ])
+    const source = readFileSync(new URL("../../../crates/oneiron-remote/src/agent_verbs.rs", import.meta.url), "utf8")
+    const catalog = source.match(/pub const FACADE_VERB_CATALOG[^=]*=\s*\[([^\]]+)\]/)?.[1]
+    expect(catalog).toBeDefined()
+    const verbs = [...catalog!.matchAll(/"([a-z_.]+)"/g)].map((match) => match[1])
+    expect(verbs.length).toBeGreaterThan(0)
+    const jsVerbs = verbs.filter((verb) => !verb.includes(".")).map((verb) => verb.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase()))
+    expect(instanceMethods).toEqual(["asActor", ...jsVerbs].sort())
+    // connect validates configuration only; this census sends no request.
+    const instance = pkg.Oneiron.connect("http://127.0.0.1:9/", "census-unused")
+    const families = [...new Set(verbs.filter((verb) => verb.includes(".")).map((verb) => verb.split(".")[0]))]
+    expect(Object.keys(instance).sort()).toEqual([...families].sort())
+    for (const family of families) {
+      const projected = (instance as unknown as Record<string, Record<string, unknown>>)[family]
+      expect(Object.keys(projected).sort()).toEqual(
+        verbs.filter((verb) => verb.startsWith(`${family}.`)).map((verb) => verb.split(".")[1]).sort(),
+      )
+      expect(Object.values(projected).every((method) => typeof method === "function")).toBe(true)
+    }
 
     expect(typeof pkg.Oneiron.open).toBe("function")
     expect(typeof pkg.Oneiron.connect).toBe("function")

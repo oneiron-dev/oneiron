@@ -183,9 +183,21 @@ pub fn coreference_shared_for_pact(
     b: EntityId,
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
 ) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    coreference_shared_for_pact_in_txn(vault, &txn, a, b, pact_id)
+}
+
+pub(crate) fn coreference_shared_for_pact_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    a: EntityId,
+    b: EntityId,
+    pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
+) -> Result<bool> {
     for (source, target) in [(a, b), (b, a)] {
-        if vault.edge_exists(&source, EdgeKind::SameAs, &target)?
-            && coreference_consent_names_pact(vault, source, target, pact_id)?
+        let key = crate::store::Store::encode_edge_key(&source, EdgeKind::SameAs, &target);
+        if vault.store.edges_out.get(txn, &key)?.is_some()
+            && coreference_consent_names_pact(vault, txn, source, target, pact_id)?
         {
             return Ok(true);
         }
@@ -209,12 +221,13 @@ pub fn coreference_shared_for_pact(
 /// local-by-default links across the grant.
 fn coreference_consent_names_pact(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     source: EntityId,
     target: EntityId,
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
 ) -> Result<bool> {
-    for claim in vault.claims_for_subject(&source)? {
-        let Some(body) = vault.get_claim(&claim)? else {
+    for claim in vault.claims_for_subject_in_txn(txn, &source)? {
+        let Some(body) = vault.get_claim_in_txn(txn, &claim)? else {
             continue;
         };
         if body.predicate != crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT

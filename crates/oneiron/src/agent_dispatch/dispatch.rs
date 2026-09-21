@@ -102,6 +102,7 @@ impl<'a> AgentDispatcher<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.dispatch_in_txn(&mut wtxn, None, input, spawn)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 

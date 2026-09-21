@@ -210,6 +210,9 @@ impl Memory<'_> {
             let Some(body) = self.vault.get_claim(&id)? else {
                 continue;
             };
+            if !crate::claim::claim_generic_readable(&body) {
+                continue;
+            }
             if let Some(predicate) = &filter.predicate
                 && body.predicate != *predicate
             {
@@ -237,7 +240,9 @@ impl Memory<'_> {
         records.sort_by_key(|record| (record.learned_at.unwrap_or(0), record.id.to_hex()));
         let mut views = Vec::with_capacity(records.len());
         for record in records {
-            if let Some(body) = self.vault.get_claim(&record.id)? {
+            if let Some(body) = self.vault.get_claim(&record.id)?
+                && crate::claim::claim_generic_readable(&body)
+            {
                 views.push(self.claim_view(&record.id, &body)?);
             }
         }
@@ -293,14 +298,14 @@ impl Memory<'_> {
             let Some(entity_type) = self.vault.get_entity_type(&hit.id)? else {
                 continue;
             };
-            let snippet = self
-                .entity_view(&hit.id)?
-                .and_then(|view| view.body)
-                .and_then(|body| {
-                    body.get("content")
-                        .and_then(serde_json::Value::as_str)
-                        .map(|content| truncate_text(content, SNIPPET_MAX_CHARS))
-                });
+            let Some(view) = self.entity_view(&hit.id)? else {
+                continue;
+            };
+            let snippet = view.body.and_then(|body| {
+                body.get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|content| truncate_text(content, SNIPPET_MAX_CHARS))
+            });
             out.push(LexicalHit {
                 short_id: self.short_ref_or_hex(&hit.id)?,
                 kind: kind_string_for_type(entity_type),
@@ -333,9 +338,7 @@ impl Memory<'_> {
             None => None,
         };
         let id = self.resolve_ref(entity_ref)?;
-        if self.vault.get_entity_type(&id)? == Some(crate::registry::ENTITY_TYPE_NOTE)
-            && self.entity_view(&id)?.is_none()
-        {
+        if self.entity_view(&id)?.is_none() {
             return Ok(Vec::new());
         }
         let mut hits = Vec::new();
@@ -356,10 +359,7 @@ impl Memory<'_> {
                 remaining,
             )?;
             for edge in edges {
-                if self.vault.get_entity_type(&edge.target)?
-                    == Some(crate::registry::ENTITY_TYPE_NOTE)
-                    && self.entity_view(&edge.target)?.is_none()
-                {
+                if self.entity_view(&edge.target)?.is_none() {
                     continue;
                 }
                 let kind = self
@@ -387,13 +387,30 @@ impl Memory<'_> {
         id: &EntityId,
         mode: crate::vault::ReadMode,
     ) -> MemoryResult<Option<EntityView>> {
-        let Some(raw) = self.vault.get_raw_with_mode(id, mode)? else {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let Some(raw) =
+            crate::vault::entity_revision::read_entity_revision_in_txn(&self.vault, &txn, id, mode)?
+        else {
             return Ok(None);
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or_else(|| MemoryError::from(Error::CorruptedIndex("entity header")))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte().into());
+        }
+        if header.entity_type == ENTITY_TYPE_CLAIM {
+            let Some(body) = raw
+                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                .and_then(|bytes| crate::claim::decode_claim_body(bytes, true).ok())
+            else {
+                return Ok(None);
+            };
+            if !crate::claim::claim_generic_readable(&body) {
+                return Ok(None);
+            }
+        }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            self.verified_actor_class()?;
+            verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
             if !crate::note::note_body_readable(
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 Some(&self.actor),
@@ -401,8 +418,15 @@ impl Memory<'_> {
                 return Ok(None);
             }
         }
-        let body = decode_body_json(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
-        let short_ref = self.short_ref_of(id)?.map(|reference| {
+        let projected = crate::note::live_body_in_txn(
+            &self.vault.store,
+            &txn,
+            id,
+            header.entity_type,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        let body = decode_body_json(&projected);
+        let short_ref = self.short_ref_of_in_txn(&txn, id)?.map(|reference| {
             let short = reference.split(':').next().unwrap_or(&reference);
             let hash =
                 (xxhash_rust::xxh32::xxh32(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], 0)
@@ -445,7 +469,7 @@ impl Memory<'_> {
         })
     }
 
-    pub(super) fn entity_ref_receipt(&self, id: &EntityId) -> MemoryResult<EntityRefReceipt> {
+    pub(crate) fn entity_ref_receipt(&self, id: &EntityId) -> MemoryResult<EntityRefReceipt> {
         Ok(EntityRefReceipt {
             entity_ref: self.short_ref_or_hex(id)?,
             id_hex: id.to_hex(),

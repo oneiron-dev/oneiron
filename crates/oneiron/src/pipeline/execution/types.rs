@@ -17,6 +17,7 @@ use std::collections::HashMap;
 /// the pipeline's read transaction; the context pack hydrates under a fresh
 /// transaction, so reusing them keeps projection consistent with the gate
 /// decision (the same seam the score/hydration split already has).
+#[derive(Clone, Copy)]
 pub(super) struct HydeAttemptOverrides<'a> {
     pub(super) widen_channel_limits: bool,
     pub(super) extra_text_queries: &'a [String],
@@ -27,6 +28,7 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     pub(super) diagnostics: RetrievalDiagnostics,
     pub(super) scores: Vec<ScoredEntity>,
+    pub(super) capabilities: Vec<ScoredEntity>,
     pub(super) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(super) claim_gate: ClaimStatusGateCache,
     pub(super) deferred_ppr_cache_writes: Vec<crate::ppr::DeferredPprCacheWrite>,

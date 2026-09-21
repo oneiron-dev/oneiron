@@ -22,6 +22,7 @@ doctest = true
 oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
 lopdf = { version = "=0.44.0", default-features = false }
 qrcode = { version = "=0.14.1", default-features = false }
+wasmtime = { version = "=48.0.2", optional = true, default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
 heed = { workspace = true }
 half = "2"
 uuid = { workspace = true }
@@ -34,6 +35,7 @@ rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 xxhash-rust = { workspace = true }
 serde = { workspace = true }
+schemars = "=0.8.22"
 serde_json = { workspace = true }
 jsonschema = { version = "0.33", default-features = false }
 postcard = { workspace = true, optional = true }
@@ -66,7 +68,6 @@ icu_properties = { version = "2.2", default-features = false, features = ["compi
 unicode-script = "0.5"
 unicode-segmentation = "1"
 loro = "1.10"
-wasmtime = { version = "=48.0.2", optional = true, default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
 tokio = { version = "1", features = ["net", "sync", "time", "rt", "macros"], optional = true }
 tokio-tungstenite = { version = "0.26", optional = true }
 futures-util = { version = "0.3", optional = true }

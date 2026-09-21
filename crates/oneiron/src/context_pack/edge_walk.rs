@@ -190,6 +190,15 @@ pub(super) fn walk_edges(
                 {
                     continue;
                 }
+                if let Some(raw) = store.entities.get(rtxn, edge.target.as_bytes())?
+                    && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+                    && matches!(
+                        header.entity_type,
+                        crate::registry::ENTITY_TYPE_SKILL | crate::registry::ENTITY_TYPE_AGENT_DEF
+                    )
+                {
+                    continue;
+                }
                 candidates
                     .entry(edge.target)
                     .and_modify(|best_weight| {

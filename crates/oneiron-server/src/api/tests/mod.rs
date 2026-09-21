@@ -15,6 +15,7 @@ mod mcp_source_gate;
 
 mod auth_idempotency;
 mod billing_usage;
+mod board_host_events;
 mod companion;
 mod context_board_standing;
 mod context_pack_disclosure;
@@ -22,7 +23,10 @@ mod context_pack_v4;
 mod contract_snapshots;
 mod conversation_rooms;
 mod core_memory_conversations;
+mod mcp_memory;
 mod mcp_paging_cursors;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod mcp_quickjs;
 mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
@@ -162,6 +166,7 @@ pub(super) const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "CoreRunTreeInterventionEffect",
     "CoreRunTreeInterventionKind",
     "CoreRunTreeInterventionRequest",
+    "CoreAttemptPlacement",
     "CoreRunTreeInterventionResponse",
     "CoreRunTreeNode",
     "CoreRunTreeQuery",
@@ -322,6 +327,8 @@ pub(super) fn seeded_test_entity_id(counter: u128) -> oneiron::EntityId {
 
 pub(super) fn synthetic_context_pack(result_count: usize) -> oneiron::ContextPack {
     oneiron::ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: (0..result_count)
             .map(|index| {
@@ -1006,15 +1013,10 @@ pub(super) fn resolve_short_ref(server: &SyncServer, short_ref: &str) -> oneiron
 // ═══════════════════════════════════════════════════════════════════════════
 // ONE-1704 M2 — the INJECTED execute_code host SEAM
 //
-// This crate ships no `JsCodeModeRuntime`, LLM backend, or budget lease, so the
-// fixture below binds a PROVIDER into the shipped `McpEngineNativeCodeHost`
-// adapter — the seam production would use.
-//
-// ONE-1704 B2: binding it here is a NEGATIVE control, not a positive one. With a
-// host bound in this very process, a direct `execute_code` call is still refused
-// at the wire with `execute_code_unavailable` and the counter below stays at
-// zero, which is what proves the retirement is the registered surface's and not
-// an accident of a missing provider.
+// This fixture binds an unverified provider, not the shipped QuickJS runtime.
+// It is a negative control: a fixture binding alone cannot enable the wire
+// surface. Calls return code_host_unbound and the counter stays zero. The
+// separate real-QuickJS test covers the verified production binding.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════

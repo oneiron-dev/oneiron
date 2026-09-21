@@ -327,7 +327,7 @@ impl Vault {
     /// gets its own diagnostic, and non-code user/legacy truth uses the
     /// general claim-body error. Missing old `src` is protected as legacy
     /// user truth for this guard.
-    pub(super) fn require_source_trust_supersession_rights(
+    pub(crate) fn require_source_trust_supersession_rights(
         new_body: &ClaimBody,
         old_body: &ClaimBody,
     ) -> Result<()> {

@@ -11,6 +11,10 @@ mod codec;
 mod endpoint_args;
 mod endpoint_schema;
 mod exec_host;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod quickjs_provider;
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub use self::quickjs_provider::McpQuickJsProvider;
 pub mod oauth_client;
 mod paging;
 pub mod qualification;
@@ -19,6 +23,7 @@ mod results;
 mod schema_parts;
 mod schema_tools;
 mod surface;
+pub(crate) use self::surface::setup_instructions_for;
 mod tool_catalog;
 mod validate;
 mod validators;
@@ -67,8 +72,8 @@ pub(crate) use self::schema_tools::{
     booking_reschedule_input_schema,
 };
 pub use self::surface::{
-    MCP_BOARD_BUDGET_TOK, MCP_CODE_RUN_SCHEMA_VERSION, MCP_EXECUTE_CODE_TOOL,
-    MCP_EXECUTE_CODE_UNAVAILABLE_CODE, MCP_MAX_LIVE_PAGE_CONTINUATIONS, MCP_PAGE_ITEM_CAP,
+    MCP_BOARD_BUDGET_TOK, MCP_CODE_HOST_UNBOUND_CODE, MCP_CODE_RUN_SCHEMA_VERSION,
+    MCP_EXECUTE_CODE_TOOL, MCP_MAX_LIVE_PAGE_CONTINUATIONS, MCP_PAGE_ITEM_CAP,
     MCP_RESULT_CACHE_SCOPE, MCP_RESULT_META_SCHEMA_VERSION, MCP_RESULT_TTL_MS,
     MCP_SETUP_INSTRUCTIONS, MCP_SETUP_TOOL, MCP_STREAM_CONNECTION_PREFIX,
     MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool,

@@ -207,6 +207,8 @@ pub(in crate::batch) fn apply_put(
             }
         }
         decoded_claim_body = Some(body);
+    } else if entity_type == crate::registry::ENTITY_TYPE_NOTE {
+        validate_note_birth_put(store, wtxn, &id, data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
         validate_witness_message_body(data, replicated)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
@@ -700,6 +702,26 @@ pub(in crate::batch) fn apply_put(
     })
 }
 
+// The ledger is immutable birth identity, never a second text plane. This
+// shared guard covers local writes and replicated/window rematerialization.
+fn validate_note_birth_put(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    data: &[u8],
+) -> Result<()> {
+    crate::note::decode_note_body(data)?;
+    if let Some(old) = store.entities.get(txn, id.as_bytes())?
+        && old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
+    {
+        return Err(Error::Record(RecordError::InvalidNoteBody(
+            "NOTE birth body is immutable",
+        )));
+    }
+    Ok(())
+}
+
+// Keep synthetic hint identity validation separate from staging its effects.
 fn validate_lexical_hint_put(
     store: &Store,
     txn: &heed::RoTxn<'_>,

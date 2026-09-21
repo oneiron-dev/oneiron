@@ -247,11 +247,21 @@ pub(crate) fn sensitivity_band_from_value(value: &Value) -> Option<u8> {
     }
 }
 
+/// Exact-store claims have their own actor/class-bound reader. Even the owner
+/// must use that reader, not generic retrieval, hydration, or history projection.
+/// This is not a raw storage ACL: `Vault::get_claim` and batch APIs are unchanged.
+pub(crate) const KEY_VALUE_PREDICATE: &str = "core.memory.key_value";
+
+pub(crate) fn claim_generic_readable(body: &ClaimBody) -> bool {
+    body.predicate != KEY_VALUE_PREDICATE
+}
+
 /// D19 read-path status gate predicate (ARCH-0003 retrieval rule; ARCH-0004
 /// §H "Claim filtering — enumerated requirements" items 1, 2, 4): a Claim
 /// may surface on the retrieval read paths (pipeline results across all five
 /// channels, context-pack results, and context-pack neighbors) only when
 ///
+/// * not actor-owned exact-store data — read only through the keyed API;
 /// * `appr ∈ {auto, approved}` — respect consent;
 /// * `life = active` — only current beliefs;
 /// * `stale = false` — only regenerated content (absent on disk means
@@ -265,10 +275,12 @@ pub(crate) fn sensitivity_band_from_value(value: &Value) -> Option<u8> {
 /// World/facet filtering (§H item 3) is a separate unit, and
 /// deleted-revision contamination (§H item 5) is the M4/M5 sweep scope.
 pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
-    matches!(
-        body.approval,
-        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-    ) && body.lifecycle == ClaimLifecycleStatus::Active
+    claim_generic_readable(body)
+        && matches!(
+            body.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        )
+        && body.lifecycle == ClaimLifecycleStatus::Active
         && !body.stale
 }
 

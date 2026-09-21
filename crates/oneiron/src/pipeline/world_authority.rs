@@ -46,7 +46,7 @@ fn require_active_world_selection(
 pub(super) fn resolve_active_world_authority(
     store: &Store,
     rtxn: &RoTxn<'_>,
-    scope: WorldScope,
+    scope: &WorldScope,
     selection: Option<&ActiveWorldSelection>,
     execution_actor: Option<WriteActor>,
     at: u64,
@@ -95,7 +95,7 @@ pub(super) fn resolve_active_world_authority(
 /// cannot reach a wider read by adding rows of its own, because only
 /// user-stated approved rows are folded at all. A malformed value on a row
 /// that DID qualify fails the read closed rather than being skipped.
-pub(super) fn resolve_world_authority(
+pub(crate) fn resolve_world_authority(
     store: &Store,
     rtxn: &RoTxn<'_>,
     selection: &ActiveWorldSelection,

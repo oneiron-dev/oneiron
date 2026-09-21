@@ -31,9 +31,18 @@ pub(super) fn prepare_pack(
     config: &SerializeConfig,
     json_mode: bool,
 ) -> PreparedPack {
+    let l2_base = pack.l2_base.clone().filter(|summary| {
+        (config.max_item_tokens == 0
+            || crate::tokenizer::count_context_pack_tokens(&summary.body) <= config.max_item_tokens)
+            && summary.fits_field_budget(config.max_field_chars)
+    });
     let skip_budget = config.budget == 0;
     let value_depth_limit = value_depth_limit_for_format(config.format);
     let mut stats = pack.stats.clone();
+    if pack.l2_base.is_some() && l2_base.is_none() {
+        stats.items_dropped.reason = crate::context_pack::PackItemAccountingReason::ItemBudget;
+        stats.items_dropped.count = stats.items_dropped.count.saturating_add(1);
+    }
     let tokenizer = DEFAULT_CONTEXT_PACK_TOKENIZER;
 
     let mut prepared = if config.merge_neighbors {
@@ -73,6 +82,7 @@ pub(super) fn prepare_pack(
         }
 
         PreparedPack {
+            l2_base,
             merged: true,
             results: groups,
             neighbors: Vec::new(),
@@ -118,6 +128,7 @@ pub(super) fn prepare_pack(
         };
 
         PreparedPack {
+            l2_base,
             merged: false,
             results,
             neighbors,

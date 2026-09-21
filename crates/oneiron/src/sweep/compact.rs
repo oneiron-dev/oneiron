@@ -89,6 +89,9 @@ pub(super) fn compact_all_windows(
 ) -> Result<WindowSweepState> {
     use crate::sync::types::{WindowKey, parse_window_key_str};
 
+    if let Err(err) = crate::note::scrub_pending_citations(vault) {
+        return Ok(WindowSweepState::Failed(format!("{:?}", err.kind())));
+    }
     let (labels, malformed) = persisted_window_labels(vault)?;
     let mut state = if malformed {
         WindowSweepState::Failed(format!("{:?}", crate::error::ErrorKind::InvalidKey))
@@ -186,7 +189,17 @@ pub(super) fn compact_all_windows(
         let mut iter = vault.store.sync_queue.prefix_iter(&rtxn, b"q:")?;
         iter.next().transpose()?.is_some()
     };
-    if !labels.is_empty() || malformed || queue_rows_exist {
+    let pending_citations = {
+        let txn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .vault_meta
+            .prefix_iter(&txn, crate::note::PENDING_CITATION_ERASE.as_bytes())?
+            .next()
+            .transpose()?
+            .is_some()
+    };
+    if !labels.is_empty() || malformed || queue_rows_exist || pending_citations {
         tracing::error!(
             windows = labels.len(),
             "sweep: CRDT carrier rows present but the engine was built without \

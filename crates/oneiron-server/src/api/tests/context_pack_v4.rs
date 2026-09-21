@@ -682,3 +682,156 @@ fn context_pack_evidence_omits_run_id_without_finalized_telemetry() {
     assert!(evidence.result_ids.is_empty());
     assert!(evidence.scores.is_empty());
 }
+
+#[tokio::test]
+async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x236_0001);
+    let person = seeded_test_entity_id(0x236_0002);
+    let persona = seeded_test_entity_id(0x236_0003);
+    let user_claim = seeded_test_entity_id(0x236_0004);
+    let persona_claim = seeded_test_entity_id(0x236_0005);
+    let turn = seeded_test_entity_id(0x236_0006);
+    for subject in [person, persona] {
+        server
+            .vault
+            .put_entity(
+                &subject,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"subject",
+            )
+            .unwrap();
+    }
+    // Deliberately not text-indexed: L2 must not depend on ranked query hits.
+    for (id, subject, text) in [
+        (user_claim, person, "user base fact"),
+        (persona_claim, persona, "persona base fact"),
+    ] {
+        let mut body = oneiron::ClaimBody::new(
+            "profile.route_test",
+            oneiron::ClaimSubject::Entity(subject),
+            rmpv::Value::from(text),
+            0.9,
+            oneiron::ClaimApprovalStatus::Auto,
+            oneiron::ClaimLifecycleStatus::Active,
+        );
+        body.scope = Some(rmpv::Value::Map(vec![(
+            rmpv::Value::from("sensitivity"),
+            rmpv::Value::from("public"),
+        )]));
+        server
+            .vault
+            .put_claim(&id, &body, oneiron::TimeRange { start: 1, end: 1 }, 1)
+            .unwrap();
+    }
+    for (claim, subject) in [(user_claim, person), (persona_claim, persona)] {
+        server
+            .vault
+            .put_edge(&claim, oneiron::EdgeKind::ClaimOf, &subject, 1.0)
+            .unwrap();
+    }
+    let raw = rmp_serde::to_vec_named(&json!({"txt":"l2route delta"})).unwrap();
+    server
+        .vault
+        .batch()
+        .put(
+            &turn,
+            ENTITY_TYPE_TURN,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &raw,
+        )
+        .text(&turn, &[("body", "l2route")])
+        .commit()
+        .unwrap();
+    seed_counterparty_contact(
+        &server,
+        principal,
+        seeded_test_entity_id(0x236_0007),
+        "l2@example.com",
+    );
+    seed_disclosure_scope(&server, principal, vec![user_claim, persona_claim, turn]);
+    let request = json!({
+        "session":{"session_id":"l2-observed"},
+        "retrieval": {"query":"l2route", "budget":{"max_field_chars":0,"max_item_tokens":0,"token_budget":0}},
+        "companion":{"person_ref":person.to_hex(),"persona_ref":persona.to_hex()}
+    });
+    let call = || {
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-board",
+            "core:read",
+            &principal.to_hex(),
+            Some(&request),
+        )
+    };
+    let (status, first) = route_json(server.clone(), call()).await;
+    assert_eq!(status, StatusCode::OK);
+    let prefix: Value = serde_json::from_str(
+        first["pack"]["l2_base"]["body"]
+            .as_str()
+            .unwrap_or_else(|| panic!("missing L2 prefix: {first:?}")),
+    )
+    .unwrap();
+    assert_eq!(prefix.as_array().unwrap().len(), 2);
+    assert_eq!(first["pack"]["results"][0]["id"], turn.to_hex());
+    let (status, second) = route_json(server.clone(), call()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["pack"]["l2_base"], second["pack"]["l2_base"]);
+    // A computed prefix shed by the response budget was never served.
+    let mut shed_request = request.clone();
+    shed_request["session"]["session_id"] = json!("l2-shed");
+    shed_request["retrieval"]["budget"]["token_budget"] = json!(1);
+    let (status, shed) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-board",
+            "core:read",
+            &principal.to_hex(),
+            Some(&shed_request),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{shed:#}");
+    assert!(shed["pack"].get("l2_base").is_none());
+    // Allowlisting never overrides an unstamped/private evidence tier.
+    seed_active_claim(&server, user_claim, person, "now private", 1);
+    let (status, third) = route_json(server.clone(), call()).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows: Value =
+        serde_json::from_str(third["pack"]["l2_base"]["body"].as_str().unwrap()).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 1);
+    assert_eq!(rows[0]["id"], persona_claim.to_hex());
+    server.vault.retract_claim(&persona_claim, 3).unwrap();
+    for (session, expected) in [
+        (
+            "l2-observed",
+            json!([
+                "changed[1:]{id,to}:",
+                format!("{}: retracted", persona_claim.to_hex())
+            ]),
+        ),
+        ("l2-shed", json!([])),
+        ("l2-unobserved", json!([])),
+    ] {
+        let (status, board) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-board",
+                "core:read",
+                &principal.to_hex(),
+                Some(&json!({"session":{"session_id":session}})),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{board:#}");
+        assert_eq!(board["changed"], expected, "{session}");
+    }
+}

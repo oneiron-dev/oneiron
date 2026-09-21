@@ -229,6 +229,7 @@ pub(super) fn mcp_expected_generated_names() -> Vec<&'static str> {
         .iter()
         .chain(oneiron::task_verb::TASKS_VERBS.iter())
         .chain(oneiron::workspace_roster::ROOMS_VERBS.iter())
+        .chain(oneiron::code_run::vault_read::MEMORY_VERBS.iter())
         .copied()
         .collect::<Vec<_>>();
     expected.sort_unstable();

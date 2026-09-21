@@ -1,4 +1,4 @@
-//! Revocable brief read grants. Documents and rendered content stay outside the vault.
+//! Revocable brief read grants. NOTE documents live in the vault; rendered views are ephemeral.
 
 use std::collections::BTreeSet;
 
@@ -26,7 +26,7 @@ use crate::write_envelope::WriteActor;
 pub struct Share {
     /// Authenticated recipient identity required at every resolution.
     pub recipient_ref: EntityId,
-    /// Opaque rendering-layer document handle.
+    /// Vault NOTE document reference for a stored brief.
     pub brief_ref: String,
     /// Maximum permitted WORLD refs.
     pub world_refs: BTreeSet<EntityId>,
@@ -58,7 +58,7 @@ pub struct ShareViewerScope {
 pub struct ResolvedShare {
     /// AccessGrant entity id.
     pub share_id: EntityId,
-    /// Opaque rendering-layer document handle.
+    /// Vault NOTE document reference for a stored brief.
     pub brief_ref: String,
     /// Current, surfaceable claims permitted by the maximum and live read policy.
     pub visible_claim_refs: Vec<EntityId>,
@@ -433,6 +433,12 @@ fn share_viewer_actor_in_txn(
 }
 
 impl Vault {
+    /// Reads a receipted share, without granting permission to view its body.
+    pub fn get_share(&self, id: &EntityId) -> Result<Option<Share>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(read_share_in_txn(&self.store, &txn, id)?.map(|(share, _)| share))
+    }
+
     /// Creates an active share only after recording an allowing external-effect decision.
     /// The transport must derive `issuer` from the authenticated principal, not request data.
     /// Pending and denied decisions are durable but never create a grant.

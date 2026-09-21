@@ -1,6 +1,7 @@
 //! Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE, text, phonetic, temporal, and PPR channels.
 
 mod admit;
+mod categories;
 mod post_blend;
 mod ppr_expand;
 mod rerank;
@@ -19,6 +20,7 @@ use super::super::blend::{
 };
 use super::super::budget::{apply_context_pack_retrieval_budget, context_pack_evidence_abstains};
 use super::super::builder::PipelineBuilder;
+use super::super::capabilities::{memory_candidate_count, partition_capabilities};
 use super::super::channels::execute_phonetic;
 use super::super::corpus_filter::CorpusFilter;
 use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
@@ -33,6 +35,18 @@ use crate::fusion;
 use crate::query_expansion::retry_channel_limit;
 use crate::store::RetrievalSignal;
 use std::collections::HashMap;
+
+#[derive(Clone, Copy)]
+struct SnapshotInputs<'a> {
+    occurred_range: Option<(u64, u64)>,
+    bm25_config: &'a Bm25Config,
+    rerank_query: Option<&'a str>,
+    hyde_expansion: Option<&'a crate::query_expansion::HydeExpansion>,
+    temporal_now: u64,
+    recency: Option<u64>,
+    explicit_time_dependent_now: Option<u64>,
+    overrides: HydeAttemptOverrides<'a>,
+}
 
 impl PipelineBuilder<'_> {
     // Requested operations, not the legacy signal list: time filters and
@@ -51,11 +65,43 @@ impl PipelineBuilder<'_> {
         overrides: HydeAttemptOverrides<'_>,
     ) -> Result<RetrievalTxnOutput> {
         let rtxn = self.vault.store.env.read_txn()?;
+        let inputs = SnapshotInputs {
+            occurred_range,
+            bm25_config,
+            rerank_query,
+            hyde_expansion,
+            temporal_now,
+            recency,
+            explicit_time_dependent_now,
+            overrides,
+        };
+        if self.context_pack_budget.is_some() && self.result_limit > 0 {
+            self.collect_pack_categories(&rtxn, inputs)
+        } else {
+            self.run_retrieval_snapshot(&rtxn, inputs)
+        }
+    }
+
+    fn run_retrieval_snapshot(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        inputs: SnapshotInputs<'_>,
+    ) -> Result<RetrievalTxnOutput> {
+        let SnapshotInputs {
+            occurred_range,
+            bm25_config,
+            rerank_query,
+            hyde_expansion,
+            temporal_now,
+            recency,
+            explicit_time_dependent_now,
+            overrides,
+        } = inputs;
         let owner_filter;
         let authority_filter = match self.authority_filter.as_ref() {
             Some(filter) => filter,
             None => {
-                let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
+                let policy = crate::gate::resolve_policy_manifest(&self.vault.store, rtxn)?;
                 let floor: crate::gate::RetrievalPolicyFloor =
                     policy.retrieval_floor_for_actor(None);
                 owner_filter = crate::gate::narrow_retrieval_filter(&floor, None)?;
@@ -79,7 +125,7 @@ impl PipelineBuilder<'_> {
             );
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
-            let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, &rtxn)?;
+            let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, rtxn)?;
             let mut metadata_cache = EntityMetadataCache::default();
             let mut claim_gate = ClaimStatusGateCache {
                 include_stale: authority_filter.include_stale,
@@ -98,8 +144,8 @@ impl PipelineBuilder<'_> {
             // land before the query does any scoring work.
             let world_authority = resolve_active_world_authority(
                 &self.vault.store,
-                &rtxn,
-                self.world_scope,
+                rtxn,
+                &self.world_scope,
                 self.active_world_selection.as_ref(),
                 self.execution_actor,
                 temporal_now,
@@ -116,7 +162,7 @@ impl PipelineBuilder<'_> {
                 ..ClaimStatusGateCache::default()
             };
             let claim_gate_text_widening_active = self.claim_gate_text_widening_probe(
-                &rtxn,
+                rtxn,
                 bm25_config,
                 hyde_expansion,
                 filter_config,
@@ -132,7 +178,7 @@ impl PipelineBuilder<'_> {
                 && !self.deadline_reached()
             {
                 let vector_results = self.scoped_vector_results(
-                    &rtxn,
+                    rtxn,
                     query_vector,
                     if overrides.widen_channel_limits {
                         retry_channel_limit(*limit)
@@ -148,7 +194,7 @@ impl PipelineBuilder<'_> {
                     RetrievalSignal::Vector,
                     vector_results,
                     &self.vault.store,
-                    &rtxn,
+                    rtxn,
                     filter_config,
                     &mut metadata_cache,
                 )?);
@@ -164,7 +210,7 @@ impl PipelineBuilder<'_> {
                     .2
                     .channel_limit;
                 let hyde_results = self.scoped_vector_results(
-                    &rtxn,
+                    rtxn,
                     &expansion.embedding,
                     if overrides.widen_channel_limits {
                         retry_channel_limit(limit)
@@ -179,14 +225,14 @@ impl PipelineBuilder<'_> {
                     RetrievalSignal::Hyde,
                     hyde_results,
                     &self.vault.store,
-                    &rtxn,
+                    rtxn,
                     filter_config,
                     &mut metadata_cache,
                 )?;
             }
 
             let text_channel_index = self.run_text_channel(
-                &rtxn,
+                rtxn,
                 TextChannelInputs {
                     bm25_config,
                     hyde_expansion,
@@ -220,13 +266,13 @@ impl PipelineBuilder<'_> {
             if let Some(codes) = &self.phonetic_search
                 && !self.deadline_reached()
             {
-                let phonetic_results = execute_phonetic(&self.vault.store, &rtxn, codes)?;
+                let phonetic_results = execute_phonetic(&self.vault.store, rtxn, codes)?;
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
                 acc.admit_channel(
                     RetrievalSignal::Phonetic,
                     phonetic_results,
                     &self.vault.store,
-                    &rtxn,
+                    rtxn,
                     filter_config,
                     &mut metadata_cache,
                 )?;
@@ -240,7 +286,7 @@ impl PipelineBuilder<'_> {
                     config.limit = retry_channel_limit(config.limit);
                 }
                 let temporal_results = self.scoped_temporal_results(
-                    &rtxn,
+                    rtxn,
                     &config,
                     temporal_now,
                     filter_config,
@@ -252,7 +298,7 @@ impl PipelineBuilder<'_> {
                     RetrievalSignal::Temporal,
                     temporal_results,
                     &self.vault.store,
-                    &rtxn,
+                    rtxn,
                     filter_config,
                     &mut metadata_cache,
                 )?;
@@ -266,7 +312,7 @@ impl PipelineBuilder<'_> {
                 // instead of uniform 1/n.
                 let ppr = crate::ppr::ppr_query_in_txn_with_diagnostics(
                     &self.vault.store,
-                    &rtxn,
+                    rtxn,
                     seeds,
                     *depth,
                     PPR_DAMPING,
@@ -281,7 +327,7 @@ impl PipelineBuilder<'_> {
                     RetrievalSignal::Ppr,
                     ppr_results,
                     &self.vault.store,
-                    &rtxn,
+                    rtxn,
                     filter_config,
                     &mut metadata_cache,
                 )?;
@@ -293,11 +339,18 @@ impl PipelineBuilder<'_> {
             // Entity-type authority can narrow each channel before fusion.
             // CLAIM scalar constraints use the decoded post-fusion stage below.
             for scores in &mut acc.ranked_lists {
+                if self.memory_category {
+                    super::super::capabilities::retain_memory_candidates(
+                        scores,
+                        &self.vault.store,
+                        rtxn,
+                    )?;
+                }
                 super::authority::apply_types(
                     scores,
                     authority_filter,
                     &self.vault.store,
-                    &rtxn,
+                    rtxn,
                     &mut metadata_cache,
                 )?;
             }
@@ -306,6 +359,7 @@ impl PipelineBuilder<'_> {
                     revisions: HashMap::new(),
                     diagnostics,
                     scores: Vec::new(),
+                    capabilities: Vec::new(),
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
                     deferred_ppr_cache_writes: Vec::new(),
@@ -359,7 +413,7 @@ impl PipelineBuilder<'_> {
                     text: text_channel_index,
                 },
                 &self.vault.store,
-                &rtxn,
+                rtxn,
                 &mut metadata_cache,
                 &mut claim_gate,
                 RetrievalBlendConfig {
@@ -381,7 +435,11 @@ impl PipelineBuilder<'_> {
             // they always describe the run's single Apply blend.
             let mut blend_base_scores = first_blend.base_scores;
             let mut blend_access_factors = first_blend.access_factors;
-            let total_in_scope = scores.len();
+            let total_in_scope = if self.context_pack_budget.is_some() {
+                memory_candidate_count(&self.vault.store, rtxn, &scores)?
+            } else {
+                scores.len()
+            };
             let mut empty_reason = None;
 
             // D19 claim status gate, first application: covers the fused
@@ -392,7 +450,7 @@ impl PipelineBuilder<'_> {
             apply_claim_status_gate(
                 &mut scores,
                 &self.vault.store,
-                &rtxn,
+                rtxn,
                 &mut metadata_cache,
                 &mut claim_gate,
             )?;
@@ -403,7 +461,7 @@ impl PipelineBuilder<'_> {
 
             if expand_allowed
                 && let Some(outcome) = self.expand_ppr_stage(
-                    &rtxn,
+                    rtxn,
                     &scores,
                     PprExpandInputs {
                         filter_config,
@@ -442,7 +500,7 @@ impl PipelineBuilder<'_> {
                 blended_trace_scores,
                 mut empty_reason,
             } = self.apply_post_blend_filters(
-                &rtxn,
+                rtxn,
                 &mut scores,
                 empty_reason,
                 PostBlendInputs {
@@ -480,11 +538,27 @@ impl PipelineBuilder<'_> {
                 apply_relationship_filter(
                     &mut scores,
                     &self.vault.store,
-                    &rtxn,
+                    rtxn,
                     &mut metadata_cache,
                     &relationship,
                     RelMode::Demote,
                 )?;
+            }
+
+            let mut capabilities = if self.context_pack_budget.is_some() {
+                partition_capabilities(&mut scores, &self.vault.store, rtxn)?
+            } else {
+                Vec::new()
+            };
+            if !overrides.skip_ret01_abstain
+                && context_pack_evidence_abstains(
+                    &capabilities,
+                    &acc.signal_components,
+                    self.text_search.as_ref().map(|(query, _)| query.as_str()),
+                    self.vector_search.is_some(),
+                )
+            {
+                capabilities.clear();
             }
 
             // RET-01: abstention is a context-pack assembly decision, never a
@@ -510,7 +584,7 @@ impl PipelineBuilder<'_> {
                 apply_context_pack_retrieval_budget(
                     &mut scores,
                     &self.vault.store,
-                    &rtxn,
+                    rtxn,
                     &mut metadata_cache,
                     context_pack_budget,
                 )?;
@@ -535,7 +609,7 @@ impl PipelineBuilder<'_> {
             {
                 empty_reason = Some(EmptyReason::NoData);
             }
-            let pending_vectors = pending_vectors_for_scores(&self.vault.store, &rtxn, &scores)?;
+            let pending_vectors = pending_vectors_for_scores(&self.vault.store, rtxn, &scores)?;
             let retrieval_trace = if capture_retrieval_trace {
                 Some(self.assemble_retrieval_trace(TraceInputs {
                     derivation_owner: crate::federation::derivation::owner_in_txn(
@@ -574,6 +648,7 @@ impl PipelineBuilder<'_> {
                 revisions,
                 diagnostics,
                 scores,
+                capabilities,
                 pending_vectors,
                 claim_gate,
                 deferred_ppr_cache_writes,

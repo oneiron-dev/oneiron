@@ -55,6 +55,7 @@ pub trait Reranker: Send + Sync {
 }
 
 /// Per-run rerank knobs (the 1186-D2 "N knob").
+#[derive(Clone)]
 pub struct RerankOptions {
     /// Blended candidates offered to the reranker, from the top.
     pub top_n: usize,

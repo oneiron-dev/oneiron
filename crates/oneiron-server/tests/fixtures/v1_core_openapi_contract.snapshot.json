@@ -1826,8 +1826,20 @@
       },
       "ContextBoardResponse": {
         "properties": {
+          "agents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "budget": {
             "$ref": "#/components/schemas/ContextBoardBudget"
+          },
+          "changed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "cursor": {
             "$ref": "#/components/schemas/ContextBoardMemoriesCursor"
@@ -1861,6 +1873,12 @@
           "session": {
             "$ref": "#/components/schemas/ContextBoardSession"
           },
+          "skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "unprocessed": {
             "items": {
               "$ref": "#/components/schemas/ContextBoardUnprocessedItem"
@@ -1873,7 +1891,10 @@
           "notifications",
           "unprocessed",
           "budget",
-          "cursor"
+          "cursor",
+          "changed",
+          "skills",
+          "agents"
         ],
         "type": "object"
       },
@@ -2124,6 +2145,24 @@
             "format": "int64",
             "type": [
               "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CoreAttemptPlacement": {
+        "additionalProperties": false,
+        "properties": {
+          "parent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "worker": {
+            "type": [
+              "string",
               "null"
             ]
           }
@@ -2547,6 +2586,12 @@
       },
       "CoreContextPackResponse": {
         "properties": {
+          "capabilities": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
           "confidenceAdjustment": {
             "format": "float",
             "type": [
@@ -2591,6 +2636,12 @@
               "null"
             ]
           },
+          "l2_base": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "neighbors": {
             "items": {
               "$ref": "#/components/schemas/CoreContextEntity"
@@ -2621,7 +2672,8 @@
           "neighbors",
           "stats",
           "state",
-          "evidence"
+          "evidence",
+          "capabilities"
         ],
         "type": "object"
       },
@@ -3515,7 +3567,8 @@
           "cancelled",
           "interrupted",
           "abandoned",
-          "result_attached"
+          "result_attached",
+          "redirected"
         ],
         "type": "string"
       },
@@ -3538,7 +3591,9 @@
           "resumed",
           "already_resumed",
           "cancelled",
-          "already_cancelled"
+          "already_cancelled",
+          "redirected",
+          "already_redirected"
         ],
         "type": "string"
       },
@@ -3547,7 +3602,8 @@
           "interrupt",
           "pause",
           "resume",
-          "cancel"
+          "cancel",
+          "redirect"
         ],
         "type": "string"
       },
@@ -3563,6 +3619,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "placement": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreAttemptPlacement"
+              }
             ]
           }
         },
@@ -3663,6 +3729,12 @@
           },
           "timestamps": {
             "$ref": "#/components/schemas/CoreRunTreeTimestamps"
+          },
+          "worker": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "worker_kind": {
             "type": "string"
@@ -5208,10 +5280,8 @@
         "requestSchema": null,
         "responses": {
           "200": {
-            "description": "Runtime attempt queue rendered as a deterministic run tree.",
-            "schema": {
-              "$ref": "#/components/schemas/CoreRunTreeResponse"
-            }
+            "description": "Initial and changed run-scoped snapshots as server-sent events.",
+            "schema": null
           },
           "400": {
             "description": "Invalid run-tree query.",

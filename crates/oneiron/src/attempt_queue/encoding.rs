@@ -204,6 +204,9 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
         )));
     }
     validate_kind(&record.kind)?;
+    if let Some(worker) = record.placement.as_ref().and_then(|p| p.worker.as_deref()) {
+        validate_lease_owner(worker)?;
+    }
     validate_optional_dedupe(record.dedupe_key.as_deref())?;
     validate_optional_dedupe_actor_ref(record.dedupe_actor_ref.as_deref())?;
     // An actor scope with nothing to scope is a corrupted row, not a quirk:

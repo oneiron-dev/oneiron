@@ -101,6 +101,7 @@
     },
     "response": {
       "body": {
+        "capabilities": [],
         "confidenceAdjustment": -0.35,
         "evidence": {
           "result_ids": [
@@ -202,11 +203,13 @@
     },
     "response": {
       "body": {
+        "agents": [],
         "budget": {
           "tokens_limit": 0,
           "tokens_remaining": 0,
           "tokens_used": 0
         },
+        "changed": [],
         "cursor": {
           "last_result_ids": [],
           "last_retrieval_run_id": "<retrieval-run-id>",
@@ -248,6 +251,7 @@
         },
         "notifications": [],
         "pack": {
+          "capabilities": [],
           "confidenceAdjustment": -0.35,
           "disclosure": {
             "clamped_out": 1,
@@ -262,8 +266,8 @@
             "notice": null
           },
           "empty": {
-            "hint": "Try removing filters or widening the world, type, or time scope",
-            "reason": "filter_matched_none",
+            "hint": "Add data to the vault or broaden the query scope",
+            "reason": "no_data",
             "retrievalQuality": {
               "confidenceAdjustment": -0.35,
               "quality": "passthrough"
@@ -287,9 +291,9 @@
           "quality": "passthrough",
           "results": [],
           "state": {
-            "hint": "Try removing filters or widening the world, type, or time scope",
+            "hint": "Add data to the vault or broaden the query scope",
             "kind": "missing_data",
-            "reason": "filter_matched_none",
+            "reason": "no_data",
             "total_in_scope": 0
           },
           "stats": {
@@ -325,6 +329,9 @@
           },
           "last_activity": 1782357635
         },
+        "skills": [
+          "loaded: "
+        ],
         "unprocessed": []
       },
       "status": 200

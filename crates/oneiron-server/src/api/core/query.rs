@@ -6,9 +6,9 @@ use super::super::default_limit;
 use super::super::json_payload;
 use super::super::parse_entity_id_param;
 use super::super::scoped_read_for_core_auth;
+use super::super::search::search_response_with_revisions;
 use super::super::search_fetch_limit;
 use super::super::search_meta;
-use super::super::search_response;
 use super::write_shape::CORE_MAX_LIST_LIMIT;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -65,6 +65,9 @@ pub(crate) struct CoreQueryRequest {
     )]
     #[schema(example = "estimate")]
     count_mode: CountMode,
+    /// Session receiving the result. Defaults to the caller's current board session.
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 /// Query core memory through text and/or vector retrieval.
@@ -93,6 +96,9 @@ pub(crate) async fn core_query(
     let view = req.view.unwrap_or(View::Summary);
     let count_mode = req.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, req.limit);
+    let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
+    let mut observations =
+        super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let results = run_core_query(
         &scoped_read,
@@ -105,7 +111,14 @@ pub(crate) async fn core_query(
         core_engine_error("core query failed", error)
     })?;
     let total = results.len();
-    let response = search_response(&scoped_read, results, view, req.limit)?;
+    let response = search_response_with_revisions(
+        &scoped_read,
+        results,
+        None,
+        view,
+        req.limit,
+        observations.as_deref_mut(),
+    )?;
     let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))

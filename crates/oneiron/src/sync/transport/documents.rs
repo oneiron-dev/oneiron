@@ -18,6 +18,10 @@ pub mod document_sub_tags {
     pub const REQUEST: u8 = 2;
     /// Receiver VV after a durable import.
     pub const ACK: u8 = 3;
+    /// Authenticated semantic NOTE command. Actor is bound out of band.
+    pub const NOTE_OPS: u8 = 4;
+    /// Idempotent NOTE command result, sent only to the requesting connection.
+    pub const NOTE_RECEIPT: u8 = 5;
 }
 
 /// Borrowed, validated entity-document frame.
@@ -62,7 +66,9 @@ fn validate_kind(kind: u8) -> Result<(), TransportError> {
         document_sub_tags::UPDATE
         | document_sub_tags::STATE
         | document_sub_tags::REQUEST
-        | document_sub_tags::ACK => Ok(()),
+        | document_sub_tags::ACK
+        | document_sub_tags::NOTE_OPS
+        | document_sub_tags::NOTE_RECEIPT => Ok(()),
         _ => Err(TransportError::InvalidPayload("unknown document kind")),
     }
 }

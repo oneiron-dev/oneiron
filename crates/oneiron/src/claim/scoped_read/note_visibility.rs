@@ -23,7 +23,7 @@ impl ScopedRead<'_> {
         let Ok(body) = crate::note::decode_note_body(bytes) else {
             return Ok(false);
         };
-        if body.kind == crate::note::NoteKind::OpinionTake {
+        if body.kind != crate::note::NoteKind::Diary {
             return Ok(true);
         }
         let Ok(actor) = EntityId::from_hex(self.actor_key.actor_ref()) else {

@@ -94,6 +94,9 @@ impl SyncClient {
             transport::encode_chunk_full_window_protocol_hello(),
             self.lease_request_frame(),
         ];
+        if let Some(session) = &self.config.note_session {
+            messages.push(super::note_session::bind_frame(session.token())?);
+        }
         messages.extend(self.generate_phase_frames()?);
         Ok(messages)
     }

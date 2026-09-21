@@ -55,6 +55,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         self.create_companion_record_in_txn(&mut wtxn, id, record, learned_at)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(())
     }
 
@@ -127,6 +128,7 @@ impl Vault {
         let data = encode_companion_record_body(&updated)?;
         self.apply_companion_record_body(&mut wtxn, id, learned_at, data)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(updated)
     }
 
@@ -157,6 +159,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let retired = self.retire_companion_record_in_txn(&mut wtxn, id, retired_at)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(retired)
     }
 
@@ -242,6 +245,7 @@ impl Vault {
         };
 
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(EndCompanionRelationshipOutcome {
             record: ended,
             goodbye_artifact,
@@ -296,6 +300,7 @@ impl Vault {
         let data = encode_companion_record_body(&revived)?;
         self.apply_companion_record_body(&mut wtxn, revived_id, revived_at, data)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(revived)
     }
 

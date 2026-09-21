@@ -242,10 +242,14 @@ impl OffRecordSession<'_> {
         occurred: crate::TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        self.base_write_vault(route)?
+        let vault = self.base_write_vault(route)?;
+        let predicate = candidate.predicate().to_owned();
+        vault
             .batch()
             .claim_candidate(id, candidate, envelope, occurred, learned_at)
-            .commit()
+            .commit_with_target_guard(|txn| {
+                vault.validate_code_run_claim_target_in_txn(txn, id, Some(&predicate))
+            })
     }
 
     /// `self.memory.put_claim` on a session-bound run.

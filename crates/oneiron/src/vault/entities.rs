@@ -184,15 +184,28 @@ impl Vault {
             return Ok(None);
         }
         #[cfg(feature = "sync")]
-        return crate::entity_doc::resolve_record_body(
-            &self.store,
-            &rtxn,
-            id,
-            &bytes[ENTITY_METADATA_HEADER_LEN..],
-        )
-        .map(Some);
-        #[cfg(not(feature = "sync"))]
-        Ok(Some(bytes[ENTITY_METADATA_HEADER_LEN..].to_vec()))
+        if crate::entity_doc::has_record_head(&self.store, &rtxn, id)? {
+            if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+                crate::note::ensure_citations_ready(&self.store, &rtxn, *id)?;
+            }
+            return crate::entity_doc::resolve_record_body(
+                &self.store,
+                &rtxn,
+                id,
+                &bytes[ENTITY_METADATA_HEADER_LEN..],
+            )
+            .map(Some);
+        }
+        Ok(Some(
+            crate::note::live_body_in_txn(
+                &self.store,
+                &rtxn,
+                id,
+                header.entity_type,
+                &bytes[ENTITY_METADATA_HEADER_LEN..],
+            )?
+            .into_owned(),
+        ))
     }
 
     pub(crate) fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
@@ -472,7 +485,14 @@ impl Vault {
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         let entity_type = header.entity_type;
         let learned_at = header.learned_at;
-        let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        let body = crate::note::live_body_in_txn(
+            &self.store,
+            &rtxn,
+            &id,
+            entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )?
+        .into_owned();
         if self.archive_tombstone_in_txn(&rtxn, &id)?.is_some() {
             return Ok(Some(HydratedShortId {
                 id,
@@ -670,7 +690,14 @@ impl Vault {
             rows.push((
                 id,
                 header.learned_at,
-                raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+                crate::note::live_body_in_txn(
+                    &self.store,
+                    &rtxn,
+                    &id,
+                    header.entity_type,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                )?
+                .into_owned(),
             ));
             if rows.len() >= limit {
                 break;

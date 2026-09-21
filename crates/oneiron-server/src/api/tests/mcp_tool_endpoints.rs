@@ -212,12 +212,11 @@ async fn mcp_setup_returns_keyframe_grammar_instructions_and_no_carrier() {
     assert!(result.get("carrier").is_none(), "{result:?}");
 }
 
-/// ONE-1704 B2: a direct `execute_code` call is refused with ONE stable typed
-/// code on BOTH routes, under full and narrowed credentials, BEFORE any run
-/// exists — and it stays refused even with a host bound, because the retirement
-/// is at the wire and not merely a missing provider.
+/// An unverified fixture host cannot enable execution. Both endpoints refuse
+/// before creating a run, under full and narrowed credentials alike. The real
+/// QuickJS-host test separately proves verified production registration.
 #[tokio::test]
-async fn mcp_direct_execute_code_is_typed_unavailable_before_any_run() {
+async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
     bind_mcp_test_code_host();
     let (_dir, server) = test_server();
     let wide_actor = seeded_test_entity_id(0x1704_0041);
@@ -261,7 +260,7 @@ async fn mcp_direct_execute_code_is_typed_unavailable_before_any_run() {
                 ),
             )
             .await;
-            assert_mcp_structured_error(&body, "execute_code_unavailable");
+            assert_mcp_structured_error(&body, "code_host_unbound");
             assert_eq!(
                 body["error"]["data"]["field"],
                 Value::from("name"),

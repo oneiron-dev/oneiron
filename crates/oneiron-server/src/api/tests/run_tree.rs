@@ -1,6 +1,7 @@
 //! Run-tree attempt-queue reads, agent_id projection, intervene effects, unbounded-read rejection.
 
 use super::*;
+use futures_util::StreamExt;
 
 #[tokio::test]
 async fn v1_core_run_tree_reads_attempt_queue_rows() {
@@ -42,16 +43,47 @@ async fn v1_core_run_tree_reads_attempt_queue_rows() {
     );
     assert_eq!(roots[0]["children"], json!([]));
 
-    let (observe_status, observe_body) = core_json(
-        server,
-        "GET",
-        "/v1/core/run-tree/observe?run_id=run-api",
-        "core:read",
-        None,
-    )
-    .await;
-    assert_eq!(observe_status, StatusCode::OK);
-    assert_eq!(observe_body, body);
+    let response = api_routes(server.clone())
+        .oneshot(core_request(
+            "GET",
+            "/v1/core/run-tree/observe?run_id=run-api",
+            "core:read",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[CONTENT_TYPE], "text/event-stream");
+    let mut stream = response.into_body().into_data_stream();
+    let first = stream.next().await.unwrap().unwrap();
+    assert_eq!(sse_tree(&first), body);
+    // A different run does not produce a frame, and cannot hide the next
+    // relevant commit behind a polling cycle.
+    enqueue_queue_attempt(&server.vault, "other-worker", 21, "run-other");
+    let child = enqueue_queue_attempt(&server.vault, "new-worker", 22, "run-api");
+    let next = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let changed = sse_tree(&next);
+    assert_eq!(changed["roots"].as_array().unwrap().len(), 2);
+    assert_eq!(changed["roots"][1]["job_id"], attempt_id_hex(child.id));
+    oneiron::AttemptQueue::new(&server.vault)
+        .intervene(oneiron::InterveneAttempt {
+            id: root.id,
+            kind: oneiron::AttemptInterventionKind::Pause,
+            actor: "operator".into(),
+            note: None,
+            now: 23,
+        })
+        .unwrap();
+    let next = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(sse_tree(&next)["roots"][0]["status"], "paused");
 }
 
 #[tokio::test]
@@ -296,4 +328,161 @@ async fn v1_core_run_tree_rejects_unbounded_reads() {
         error_envelope(&body)["message"],
         Value::from("run_id is required; unfiltered run-tree reads are not supported")
     );
+}
+
+#[tokio::test]
+async fn v1_core_run_tree_redirect_is_durable_idempotent_and_fences_workers() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let child = enqueue_queue_attempt(&server.vault, "api-worker", 10, "redirect-run");
+    let queue = oneiron::AttemptQueue::new(&server.vault);
+    let oneiron::attempt_queue::ClaimOutcome::Claimed(old) = queue
+        .claim(oneiron::attempt_queue::ClaimAttempt {
+            lease_owner: "old-worker".into(),
+            now: 11,
+        })
+        .unwrap()
+    else {
+        panic!("claim")
+    };
+    let parent = enqueue_queue_attempt(&server.vault, "parent-worker", 12, "redirect-run");
+    let request = json!({
+        "job_id": attempt_id_hex(child.id), "kind": "redirect",
+        "placement": {"worker": "new-worker", "parent": attempt_id_hex(parent.id)},
+        "note": "move branch"
+    });
+    let (status, body) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/run-tree/intervene",
+        "core:write",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["effect"], "redirected");
+    let projected = &body["tree"]["roots"][0]["children"][0];
+    assert_eq!(projected["job_id"], attempt_id_hex(child.id));
+    assert_eq!(projected["parent_id"], attempt_id_hex(parent.id));
+    assert_eq!(projected["worker"], "new-worker");
+    assert_eq!(projected["status"], "queued");
+    assert!(
+        projected["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "redirected" && e["actor"] == "bearer")
+    );
+    let (status, again) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/run-tree/intervene",
+        "core:write",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["effect"], "already_redirected");
+    assert_eq!(again["tree"], body["tree"]);
+    assert!(
+        queue
+            .complete(oneiron::attempt_queue::CompleteAttempt {
+                id: old.id,
+                lease_owner: "old-worker".into(),
+                attempt_count: old.attempt_count,
+                now: 13,
+            })
+            .is_err()
+    );
+    assert!(matches!(
+        queue
+            .claim_kind(
+                "api-worker",
+                oneiron::attempt_queue::ClaimAttempt {
+                    lease_owner: "old-worker".into(),
+                    now: 14,
+                }
+            )
+            .unwrap(),
+        oneiron::attempt_queue::ClaimOutcome::Empty
+    ));
+    let oneiron::attempt_queue::ClaimOutcome::Claimed(new) = queue
+        .claim_kind(
+            "api-worker",
+            oneiron::attempt_queue::ClaimAttempt {
+                lease_owner: "new-worker".into(),
+                now: 15,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("new worker claim")
+    };
+    assert_eq!(new.id, child.id);
+    assert!(new.attempt_count > old.attempt_count);
+    let cycle = json!({"job_id": attempt_id_hex(parent.id), "kind": "redirect",
+        "placement": {"worker": null, "parent": attempt_id_hex(child.id)}});
+    let (status, _) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/run-tree/intervene",
+        "core:write",
+        Some(&cycle),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    queue
+        .complete(oneiron::attempt_queue::CompleteAttempt {
+            id: new.id,
+            lease_owner: "new-worker".into(),
+            attempt_count: new.attempt_count,
+            now: 16,
+        })
+        .unwrap();
+    let (status, _) = core_json(
+        server,
+        "POST",
+        "/v1/core/run-tree/intervene",
+        "core:write",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+fn sse_tree(bytes: &[u8]) -> Value {
+    let text = std::str::from_utf8(bytes).unwrap();
+    let data = text
+        .lines()
+        .find_map(|line| line.strip_prefix("data: "))
+        .unwrap();
+    serde_json::from_str(data).unwrap()
+}
+
+#[tokio::test]
+async fn v1_core_run_tree_observe_requires_read_scope_and_run_id() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    for (uri, scope, expected) in [
+        (
+            "/v1/core/run-tree/observe",
+            "core:read",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/v1/core/run-tree/observe?run_id=run",
+            "core:write",
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let response = api_routes(server.clone())
+            .oneshot(core_request("GET", uri, scope, None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
 }

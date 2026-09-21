@@ -151,6 +151,15 @@ impl<'a> ContextPackBuilder<'a> {
             Some(session) => ContextPackTelemetry::Session(session),
             None => ContextPackTelemetry::Base(&self.vault.store),
         };
+        let mut l2_base = super::super::l2_base::produce_l2_base(
+            self.vault,
+            &pipeline,
+            &self.l2_summary_subjects,
+            self.disclosure.as_ref(),
+            self.l2_summary_reader,
+            self.session.is_none(),
+        )?;
+        let l2_pipeline = l2_base.as_ref().map(|_| pipeline.clone());
         let pipeline_output = pipeline
             .context_pack_budget(retrieval_budget)
             .run_for_pack()?;
@@ -196,6 +205,32 @@ impl<'a> ContextPackBuilder<'a> {
                     }
                 }
                 scored = kept;
+            }
+            let mut capabilities = Vec::new();
+            for entry in pipeline_output.capabilities {
+                if clamp.is_some_and(|ctx| ctx.mode() != DisclosureMode::OwnerAlone)
+                    && !disclosure_admits_candidate(
+                        &self.vault.store,
+                        &rtxn,
+                        clamp.expect("checked"),
+                        &entry.id,
+                        &claim_bodies,
+                    )?
+                {
+                    continue;
+                }
+                if self
+                    .vault
+                    .archive_tombstone_in_txn(&rtxn, &entry.id)?
+                    .is_some()
+                {
+                    continue;
+                }
+                if let Some(hit) =
+                    crate::pipeline::capability_hit(&self.vault.store, &rtxn, entry.id)?
+                {
+                    capabilities.push(hit);
+                }
             }
             let surfaced_candidate_count = scored.len();
 
@@ -376,10 +411,33 @@ impl<'a> ContextPackBuilder<'a> {
             if let Some(ctx) = clamp {
                 validate_pack_disclosure(&self.vault.store, &rtxn, ctx, &results, &neighbors)?;
             }
+            if let (Some(summary), Some(pipeline)) = (&l2_base, &l2_pipeline)
+                && !super::super::l2_base::revalidate_l2_base(
+                    self.vault,
+                    pipeline,
+                    &rtxn,
+                    summary,
+                    clamp,
+                    self.l2_summary_reader,
+                )?
+            {
+                l2_base = None;
+            }
             resolve_edge_short_ids(&mut results, &mut neighbors);
 
-            let pack_is_empty = results.is_empty() && neighbors.is_empty();
-            let candidates_considered = if pack_is_empty {
+            if let Some(summary) = &l2_base {
+                let ids = summary.evidence_ids();
+                results.retain(|entity| ids.binary_search(&entity.id).is_err());
+                neighbors.retain(|entity| ids.binary_search(&entity.id).is_err());
+            }
+            let memory_is_empty = results.is_empty() && neighbors.is_empty() && l2_base.is_none();
+            let pack_is_empty = memory_is_empty && capabilities.is_empty();
+            // Discoveries keep the whole pack nonempty, but never decide the
+            // memory channel's accounting. Non-owner disclosure still reports
+            // only admitted candidates, not pre-clamp population information.
+            let candidates_considered = if memory_is_empty
+                && clamp.is_none_or(|ctx| ctx.mode() == DisclosureMode::OwnerAlone)
+            {
                 total_in_scope
             } else {
                 surfaced_candidate_count
@@ -408,6 +466,8 @@ impl<'a> ContextPackBuilder<'a> {
             Ok(ContextPackRun {
                 vector_completed: pipeline_output.vector_completed,
                 pack: ContextPack {
+                    capabilities,
+                    l2_base,
                     retrieval_quality,
                     results,
                     neighbors,

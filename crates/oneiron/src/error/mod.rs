@@ -279,6 +279,7 @@ pub enum ErrorKind {
     ConversationState,
     ConversationDenied,
     MessageStreamRecoveryFailed,
+    KeyValueWriteRequiresOwnedDoor,
 }
 
 /// Crate error type.

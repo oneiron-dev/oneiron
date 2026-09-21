@@ -528,6 +528,8 @@ fn render_document_pack(views: &[EntityView], format: PackFormat) -> MemoryResul
     }
     let resolved = results.len();
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results,
         neighbors: Vec::new(),

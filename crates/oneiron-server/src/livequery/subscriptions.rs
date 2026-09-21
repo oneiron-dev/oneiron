@@ -27,6 +27,16 @@ pub(crate) struct DerivedView {
 /// must not return raw full-window updates as app-tier data.
 pub(crate) trait LiveQuerySource: Send + Sync {
     fn derive(&self, view: &ScopedView, channel: Channel) -> Result<DerivedView, AppError>;
+    /// Probe insertions and changed memberships not yet in the served read set.
+    fn membership_changed(
+        &self,
+        _view: &ScopedView,
+        _channel: Channel,
+        _diff: &MaterializedDiffSummary,
+    ) -> Result<bool, AppError> {
+        Ok(false)
+    }
+
     /// Validate/export the scoped document's updates since this VV. `false`
     /// means the cursor is past retention and requires full-state resync.
     fn can_resume(&self, cursor: &Cursor) -> Result<bool, AppError>;
@@ -465,7 +475,6 @@ impl LiveQueries {
         for (path, diff, by) in changes {
             for (dependency, ids) in &state.index {
                 let relevant = dependency == path
-                    || (dependency == "w:" && path.starts_with("w:"))
                     || path
                         .strip_prefix(dependency.as_str())
                         .is_some_and(|tail| tail.starts_with('/'))
@@ -473,10 +482,20 @@ impl LiveQueries {
                         .strip_prefix(path.as_str())
                         .is_some_and(|tail| tail.starts_with('/'))
                     || diff.containers.iter().any(|changed| changed == dependency);
-                if !relevant {
+                let membership = dependency.starts_with("membership:");
+                if !relevant && !membership {
                     continue;
                 }
                 for id in ids {
+                    if !relevant
+                        && !self.source.membership_changed(
+                            &state.subs[id].view,
+                            state.subs[id].channel,
+                            diff,
+                        )?
+                    {
+                        continue;
+                    }
                     let own = by.conn_id == Some(state.conn_id)
                         || (by.origin.is_some() && by.origin == state.subs[id].origin);
                     affected
@@ -616,29 +635,35 @@ impl LiveQueryTee for LiveQueries {
                         .sum::<usize>()
             })
             .sum();
-        let purge_paths = if by.origin.as_deref() == Some("deletion_tombstone") {
-            diff.containers.as_slice()
-        } else {
-            &[]
-        };
+        let changed_paths = diff.containers.as_slice();
         let incoming = path.len()
             + by.origin.as_ref().map_or(0, String::len)
             + 128
-            + purge_paths
+            + changed_paths
                 .iter()
-                .map(|path| path.len() + 32)
+                .map(|path| path.len() + 32 + 66)
                 .sum::<usize>();
         if pending.len() >= LIVEQUERY_RING_CAPACITY || bytes.saturating_add(incoming) > 64 * 1024 {
             pending.clear();
             self.invalidation_gap.store(true, Ordering::Release);
             return;
         }
-        // A coarse container dependency is enough to invalidate all its
-        // descendants. Do not clone unbounded per-key delta metadata.
+        // Entity-indexed subscriptions need the key delta even on an ordinary
+        // commit. Bound it before cloning, and normalize deletion publications
+        // that still originate from the window transport.
+        let mut containers: BTreeSet<String> = changed_paths.iter().cloned().collect();
+        for changed in changed_paths {
+            if (changed.contains("/entities/") || changed.contains("/tombstones/"))
+                && let Some(id) = changed.rsplit('/').next()
+                && let Ok(id) = oneiron::EntityId::from_hex(id)
+            {
+                containers.insert(format!("e:{}", id.to_hex()));
+            }
+        }
         pending.push_back((
             path.to_owned(),
             MaterializedDiffSummary {
-                containers: purge_paths.to_vec(),
+                containers: containers.into_iter().collect(),
                 bytes: diff.bytes,
             },
             by.clone(),

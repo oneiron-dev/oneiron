@@ -175,3 +175,35 @@ export type FacadeReceipt = {
   contentKind: string
   claimRef?: string
 }
+
+/** Exact namespace/key address in the bound actor/class's WORLDLESS store. */
+export interface KeyValueAddress { namespace: string[]; key: string }
+export interface KeyValuePut extends KeyValueAddress {
+  value: Record<string, unknown>
+  /** Reuse only for an identical retry. */
+  requestId: string
+  /** Omitted means generated. The gate still decides admission. */
+  source?: string
+}
+export interface KeyValueItem extends KeyValueAddress {
+  value: Record<string, unknown>
+  createdAt: number
+  updatedAt: number
+  revision: string
+}
+export interface KeyValuePutReceipt { item: KeyValueItem; replayed: boolean; receiptRef: string }
+export interface KeyValueDeleteReceipt { existed: boolean; receiptRefs: string[] }
+export interface KeyValueSearch {
+  namespacePrefix?: string[]
+  /** Exact top-level field equality; operators are refused. */
+  filter?: Record<string, unknown> | null
+  limit?: number
+  offset?: number
+}
+export interface KeyValueNamespaces {
+  prefix?: string[]
+  suffix?: string[]
+  maxDepth?: number | null
+  limit?: number
+  offset?: number
+}

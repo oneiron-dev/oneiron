@@ -6,7 +6,7 @@ use super::paging::{
     MCP_PAGE_CURSOR_INVALID_CODE, McpPageBudget, McpRetrievalHealth, clamp_foreign_cache_ttl_ms,
 };
 use super::surface::{
-    MCP_EXECUTE_CODE_UNAVAILABLE_CODE, MCP_RESULT_CACHE_SCOPE, MCP_RESULT_META_SCHEMA_VERSION,
+    MCP_CODE_HOST_UNBOUND_CODE, MCP_RESULT_CACHE_SCOPE, MCP_RESULT_META_SCHEMA_VERSION,
     MCP_SETUP_INSTRUCTIONS, MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpGeneratedVerbTool,
     McpSurfaceConstructionError, McpSurfaceMode, generated_verb_tools,
 };
@@ -134,17 +134,18 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "this credential is narrowed to one world and facet; the target is outside it",
             "call setup_oneiron to read the effective scope back",
         ],
-        "code_host_unbound" => &[
-            "this server has no execute_code host bound; nothing ran",
-            "ask the vault owner to bind a sandbox/REPL provider, or use the tool-first endpoint",
-        ],
-        MCP_EXECUTE_CODE_UNAVAILABLE_CODE => &[
-            "this release does not ship execute_code; no run was created and none can be resumed",
-            "call setup_oneiron for the verb grammar and run the verbs on the tool-first endpoint",
+        MCP_CODE_HOST_UNBOUND_CODE => &[
+            "this server has no verified execute_code host bound; no run was created",
+            "ask the vault owner to bind McpQuickJsProvider with a backend and budget lease",
+            "use setup_oneiron and the tool-first verbs while execution is unconfigured",
         ],
         MCP_PAGE_CURSOR_INVALID_CODE => &[
             "page cursors are bound to one connector, tool, argument set, and board snapshot",
             "re-request page one with the same arguments and follow its fresh cursor",
+        ],
+        "code_run_busy" => &[
+            "this run is still active; no second worker was started",
+            "retry later with the SAME run_ref and task",
         ],
         "code_run_binding_failed" | "code_run_failed" => &[
             "retry with the SAME run_ref to re-enter the durable run",

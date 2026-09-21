@@ -384,7 +384,7 @@ pub(crate) fn search_response(
     view: View,
     page_limit: usize,
 ) -> Result<Vec<Value>, ApiError> {
-    search_response_with_revisions(scoped_read, results, None, view, page_limit)
+    search_response_with_revisions(scoped_read, results, None, view, page_limit, None)
 }
 
 fn search_depth_response(
@@ -399,16 +399,19 @@ fn search_depth_response(
         Some(&results.revisions),
         view,
         page_limit,
+        None,
     )
 }
 
-fn search_response_with_revisions(
+pub(crate) fn search_response_with_revisions(
     scoped_read: &ScopedRead<'_>,
     results: Vec<oneiron::ScoredEntity>,
     revisions: Option<&std::collections::HashMap<oneiron::EntityId, oneiron::memory::RevisionRef>>,
     view: View,
     page_limit: usize,
+    observations: Option<&mut oneiron::context_board::SessionReadSet>,
 ) -> Result<Vec<Value>, ApiError> {
+    let mut staged = observations.as_deref().cloned();
     let mut response = Vec::with_capacity(results.len().min(page_limit));
     for result in results {
         let mode = match revisions {
@@ -420,7 +423,13 @@ fn search_response_with_revisions(
             }
             None => oneiron::memory::ReadMode::Indexed,
         };
-        match project_scoped_search_result(scoped_read, result, view, mode) {
+        // Keep projection validation for overfetch hits, but observe only served rows.
+        let served_observations = if response.len() < page_limit {
+            staged.as_mut()
+        } else {
+            None
+        };
+        match project_scoped_search_result(scoped_read, result, view, mode, served_observations) {
             Ok(Some(value)) if response.len() < page_limit => response.push(value),
             Ok(Some(_)) => continue,
             Ok(None) => continue,
@@ -430,6 +439,9 @@ fn search_response_with_revisions(
             }
         }
     }
+    if let (Some(target), Some(staged)) = (observations, staged) {
+        *target = staged;
+    }
     Ok(response)
 }
 
@@ -438,13 +450,20 @@ pub(crate) fn project_scoped_search_result(
     result: oneiron::ScoredEntity,
     view: View,
     mode: oneiron::memory::ReadMode,
+    observations: Option<&mut oneiron::context_board::SessionReadSet>,
 ) -> oneiron::Result<Option<Value>> {
     let id_hex = result.id.to_hex();
     match view {
-        View::Standard => Ok(Some(json!({
-            "id": id_hex,
-            "score": result.score,
-        }))),
+        View::Standard => {
+            // observe_rows would reread live instead of the selected search frontier.
+            if let Some(observations) = observations
+                && let Some((entity_type, _, body)) =
+                    scoped_read.get_entity_parts_with_mode(&result.id, mode)?
+            {
+                observations.observe_snapshot(scoped_read, result.id, entity_type, &body, false)?;
+            }
+            Ok(Some(json!({ "id": id_hex, "score": result.score })))
+        }
         View::Summary | View::Full => {
             let Some((entity_type, learned_at, body)) =
                 scoped_read.get_entity_parts_with_mode(&result.id, mode)?
@@ -453,6 +472,15 @@ pub(crate) fn project_scoped_search_result(
             };
             let mut value =
                 projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view);
+            if let Some(observations) = observations {
+                observations.observe_snapshot(
+                    scoped_read,
+                    result.id,
+                    entity_type,
+                    &body,
+                    matches!(view, View::Full),
+                )?;
+            }
             if matches!(view, View::Full)
                 && let Value::Object(object) = &mut value
             {

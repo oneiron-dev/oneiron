@@ -161,7 +161,44 @@ pub fn admit_imported_evidence_claim_typed(
             admission.occurred,
             admission.learned_at,
         )
-        .commit()
+        .commit_with_target_guard(|txn| {
+            // Check both predicate directions in the SAME writer snapshot as the
+            // candidate write. A generic incoming predicate cannot disguise an
+            // overwrite of an existing private keyed revision.
+            let owned_door = || {
+                crate::error::Error::Claim(crate::error::ClaimError::KeyValueWriteRequiresOwnedDoor)
+            };
+            if predicate == crate::claim::KEY_VALUE_PREDICATE {
+                return Err(owned_door());
+            }
+            if vault.local_hard_delete_marker_exists_in_txn(txn, &admission.claim_id)? {
+                return Err(crate::error::Error::InvalidClaimBody(
+                    "import cannot recreate an erased claim id",
+                ));
+            }
+            if let Some(raw) = vault.get_raw_in(txn, &admission.claim_id)? {
+                let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(
+                    crate::error::Error::CorruptedIndex("import claim target header"),
+                )?;
+                if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                    // An erased body no longer identifies its predicate. Never
+                    // reuse its id through this caller-selected import door.
+                    if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN {
+                        return Err(crate::error::Error::InvalidClaimBody(
+                            "import cannot recreate an erased claim id",
+                        ));
+                    }
+                    let body = crate::claim::decode_claim_body(
+                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                        true,
+                    )?;
+                    if !crate::claim::claim_generic_readable(&body) {
+                        return Err(owned_door());
+                    }
+                }
+            }
+            Ok(())
+        })
 }
 
 /// Persists a normalized asset-text entity through the vault's normal entity

@@ -10,6 +10,7 @@ mod group_labels;
 mod handles;
 mod item_budget;
 mod json_format;
+mod l2_prefix;
 mod markdown_plaintext_format;
 mod pack_entry;
 mod pack_preparation;

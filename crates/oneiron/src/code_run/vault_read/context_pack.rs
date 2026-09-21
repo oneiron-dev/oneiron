@@ -11,7 +11,8 @@ use super::types::default_limit;
 ///
 /// The daemon-only session, companion, disclosure, policy, time, and projection
 /// controls are outside this engine contract.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CoreContextPackRequest {
     /// Optional BM25 text seed.
     #[serde(default)]
@@ -57,7 +58,8 @@ impl CoreContextPackRequest {
 }
 
 /// Nested edge-expansion depth controls.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContextPackDepthControls {
     /// Edge expansion depth for neighbor hydration.
     #[serde(default, rename = "edge_hop", alias = "edgeHop")]
@@ -68,7 +70,8 @@ pub struct ContextPackDepthControls {
 }
 
 /// Per-kind retrieval item budgets applied before final truncation.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContextPackRetrievalBudgetControls {
     /// CLAIM item budget.
     #[serde(default)]
@@ -91,7 +94,8 @@ pub struct ContextPackRetrievalBudgetControls {
 }
 
 /// Token and item budget controls.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContextPackBudgetControls {
     /// Serialized token budget.
     #[serde(default, rename = "token_budget", alias = "tokenBudget")]
@@ -302,6 +306,9 @@ pub struct CoreContextPackEmpty {
 /// Field-for-field local projection of the public `ContextPack`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreContextPackProjection {
+    /// Turn-local capability discoveries, independent of memory rows.
+    #[serde(default)]
+    pub capabilities: Vec<crate::context_board::CapabilityHit>,
     /// Primary results.
     pub results: Vec<CoreContextPackEntityRecord>,
     /// Edge-walk neighbors.

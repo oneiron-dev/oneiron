@@ -86,6 +86,11 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
+    store
+        .l2_base_cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .erase(id, store.env.info().last_txn_id);
     let mut had_vector = false;
     let mut had_graph_mutation = false;
     let mut neighbors = Vec::new();

@@ -18,6 +18,7 @@
 //! census asserts `not hasattr(oneiron, "NativeClient")`.
 
 use oneiron::memory::{ClaimInput, MemoryError, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::memory::{KeyValueAddress, KeyValueNamespaces, KeyValuePut, KeyValueSearch};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use serde::Deserialize;
@@ -272,6 +273,51 @@ impl NativeClient {
     }
 
     // END GENERATED AGENT VERBS
+
+    /// Exact actor-owned keyed-memory operation.
+    fn key_value_get(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let request: KeyValueAddress = decode(request_json, "the keyed request")?;
+        let response = py
+            .detach(|| self.inner.key_value_get(&request))
+            .map_err(raise)?;
+        encode(&response)
+    }
+
+    /// Exact actor-owned keyed-memory operation.
+    fn key_value_put(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let request: KeyValuePut = decode(request_json, "the keyed request")?;
+        let response = py
+            .detach(|| self.inner.key_value_put(&request))
+            .map_err(raise)?;
+        encode(&response)
+    }
+
+    /// Exact actor-owned keyed-memory operation.
+    fn key_value_delete(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let request: KeyValueAddress = decode(request_json, "the keyed request")?;
+        let response = py
+            .detach(|| self.inner.key_value_delete(&request))
+            .map_err(raise)?;
+        encode(&response)
+    }
+
+    /// Exact actor-owned keyed-memory operation.
+    fn key_value_search(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let request: KeyValueSearch = decode(request_json, "the keyed request")?;
+        let response = py
+            .detach(|| self.inner.key_value_search(&request))
+            .map_err(raise)?;
+        encode(&response)
+    }
+
+    /// Exact actor-owned keyed-memory operation.
+    fn key_value_namespaces(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let request: KeyValueNamespaces = decode(request_json, "the keyed request")?;
+        let response = py
+            .detach(|| self.inner.key_value_namespaces(&request))
+            .map_err(raise)?;
+        encode(&response)
+    }
 }
 
 /// The private extension module: `oneiron._native`.

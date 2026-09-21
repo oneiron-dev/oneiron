@@ -45,13 +45,16 @@ mod documents;
 mod federated;
 mod inbound;
 mod lfs;
+mod note_session;
 mod sync_frames;
 mod types;
 
 pub use self::base::SyncClient;
 pub use self::federated::ImportTier;
 pub use self::sync_frames::next_backoff;
-pub use self::types::{EphemeralChangeOrigin, SyncClientConfig, SyncEvent, SyncStatus};
+pub use self::types::{
+    EphemeralChangeOrigin, NoteSyncSession, SyncClientConfig, SyncEvent, SyncStatus,
+};
 
 #[cfg(test)]
 mod tests;

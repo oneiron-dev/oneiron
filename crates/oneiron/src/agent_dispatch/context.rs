@@ -38,7 +38,7 @@ impl AgentDispatcher<'_> {
                 ) {
                     validate_spec_narrows(&parent_spec, child_spec)?;
                 }
-                self.resolve_ancestor_projection(parent_attempt, world_scope)?
+                self.resolve_ancestor_projection(parent_attempt)?
             }
         };
         let projection = resolve_context_spec(
@@ -111,7 +111,6 @@ impl AgentDispatcher<'_> {
     fn resolve_ancestor_projection(
         &self,
         attempt: AttemptId,
-        _world_scope: crate::pipeline::WorldScope,
     ) -> Result<Option<ResolvedContextProjection>> {
         let queue = AttemptQueue::new(self.vault);
         let mut chain: Vec<(ContextSpec, crate::pipeline::WorldScope)> = Vec::new();
@@ -148,7 +147,7 @@ impl AgentDispatcher<'_> {
                     spec: spec.clone(),
                     parent: projection,
                     context_from: Vec::new(),
-                    world_scope: Some(*ancestor_scope),
+                    world_scope: Some(ancestor_scope.clone()),
                 },
             )?);
         }

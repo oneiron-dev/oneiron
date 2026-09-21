@@ -5,11 +5,21 @@ use crate::sync::loro_support::doc_from_snapshot;
 use crate::{EntityId, Vault};
 use loro::{ExportMode, LoroDoc, VersionVector};
 
-pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<LoroDoc> {
+pub(crate) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<LoroDoc> {
+    crate::note::ensure_citations_ready(&vault.store, txn, id)?;
+    load_for_erasure(vault, txn, id)
+}
+
+// Only the transactional erasure rebuild may open a fenced carrier.
+pub(crate) fn load_for_erasure(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<LoroDoc> {
     let hex = id.to_hex();
     let doc = match vault.store.sync_state.get(txn, &format!("d:e:{hex}"))? {
         Some(bytes) => doc_from_snapshot(&bytes)?,
-        None => LoroDoc::new(),
+        None => crate::note::document_birth_in_txn(vault, txn, id)?.unwrap_or_default(),
     };
     let prefix = format!("u:e:{hex}:");
     for row in vault.store.sync_state.prefix_iter(txn, &prefix)? {
@@ -25,7 +35,7 @@ pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result
     Ok(doc)
 }
 
-pub(super) fn import_complete(doc: &LoroDoc, bytes: &[u8]) -> Result<()> {
+pub(crate) fn import_complete(doc: &LoroDoc, bytes: &[u8]) -> Result<()> {
     let status = doc.import(bytes).map_err(|source| {
         crate::error::Error::Sync(crate::error::SyncError::CrdtDecodeError {
             context: "entity document import",
@@ -40,7 +50,7 @@ pub(super) fn import_complete(doc: &LoroDoc, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn append(
+pub(crate) fn append(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
@@ -71,7 +81,7 @@ pub(super) fn append(
     Ok(seq)
 }
 
-pub(super) fn snapshot(
+pub(crate) fn snapshot(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
@@ -112,12 +122,12 @@ pub(super) fn snapshot(
     Ok(())
 }
 
-pub(super) fn state_copy(doc: &LoroDoc) -> Result<Vec<u8>> {
+pub(crate) fn state_copy(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.export(ExportMode::StateOnly(None))
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportShallowSnapshot, e))
 }
 
-pub(super) fn decode_vv(bytes: &[u8]) -> Result<VersionVector> {
+pub(crate) fn decode_vv(bytes: &[u8]) -> Result<VersionVector> {
     VersionVector::decode(bytes).map_err(|source| {
         Error::Sync(crate::error::SyncError::CrdtDecodeError {
             context: "entity document version vector",
@@ -129,23 +139,16 @@ pub(super) fn decode_vv(bytes: &[u8]) -> Result<VersionVector> {
 /// A closed document is compacted under the write lock, so no stale read can overwrite an append.
 pub(crate) fn compact(vault: &Vault, id: EntityId, erased: bool) -> Result<()> {
     vault.with_write_txn(|txn| {
+        if !erased
+            && vault.get_entity_type_in_txn(txn, &id)? == Some(crate::registry::ENTITY_TYPE_NOTE)
+        {
+            // The NOTE-specific purge door owns cited-frontier retention.
+            return Ok(());
+        }
+        if erased {
+            return crate::note::delete_document_in_txn(&vault.store, txn, &id);
+        }
         let doc = load(vault, txn, id)?;
-        // An erased entity has no editable state. Drop every container, including
-        // unknown peer-authored containers, rather than scrubbing two known names.
-        let doc = if erased {
-            let keys: Vec<_> = vault
-                .store
-                .sync_state
-                .prefix_iter(txn, &format!("qd:e:{}:", id.to_hex()))?
-                .map(|row| row.map(|(key, _)| key.to_string()))
-                .collect::<std::result::Result<_, _>>()?;
-            for key in keys {
-                vault.store.sync_state.delete(txn, &key)?;
-            }
-            LoroDoc::new()
-        } else {
-            doc
-        };
         snapshot(vault, txn, id, &doc, true)
     })
 }

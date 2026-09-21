@@ -134,3 +134,6 @@ oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "test-ho
 
 [lints]
 workspace = true
+
+[features]
+code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime"]

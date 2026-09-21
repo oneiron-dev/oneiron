@@ -106,7 +106,13 @@ impl SyncConnection {
                     match frame {
                         Ok(frame) => {
                             let id = match transport::decode_document(&frame[1..]) {
-                                Ok(doc) => doc.entity,
+                                Ok(doc) => {
+                                    if client.vault.get_entity_type(&doc.entity).ok().flatten() == Some(crate::registry::ENTITY_TYPE_NOTE) {
+                                        if !matches!(doc.kind, transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::REQUEST) { continue; }
+                                        if !client.note_session_bound { continue; }
+                                    }
+                                    doc.entity
+                                },
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
                             match client.vault.sync_state_get(&format!("ds:e:{}", id.to_hex())) {

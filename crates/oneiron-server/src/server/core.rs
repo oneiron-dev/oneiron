@@ -67,6 +67,10 @@ pub struct SyncServer {
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
+    /// Vault-owned production code host. No request can replace it.
+    pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// Actor/session read observations share the server lifetime, never a process global.
+    pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
     /// ONE-207: the optional deep-retrieval host.
     ///
     /// `None` on every server [`SyncServer::new`] builds, and that is the
@@ -195,10 +199,40 @@ impl SyncServer {
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
             config,
             mcp_registry,
+            mcp_code_host: None,
+            memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             deep_retrieval: None,
             embedder: None,
             llm: None,
         })
+    }
+
+    /// Bind a readiness-verified QuickJS provider before exposing this vault's
+    /// routes. Missing components or providers keep execute_code unadvertised.
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    #[must_use]
+    pub fn with_mcp_quickjs_provider(mut self, provider: crate::mcp::McpQuickJsProvider) -> Self {
+        self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
+            Arc::new(provider),
+        )));
+        self
+    }
+
+    pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {
+        self.mcp_code_host
+            .as_ref()
+            .filter(|host| host.production_runtime_available())
+    }
+
+    pub(crate) fn mcp_surface(
+        &self,
+        mode: crate::mcp::McpSurfaceMode,
+    ) -> crate::mcp::McpRegisteredSurface {
+        crate::mcp::McpRegisteredSurface::register_with_execution(
+            mode,
+            self.code_execution_host().is_some(),
+        )
+        .expect("every exported verb projects onto an executable tool")
     }
 
     /// Attaches the ONE-207 deep-retrieval host.

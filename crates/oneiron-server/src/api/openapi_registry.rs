@@ -1,5 +1,6 @@
 //! OpenAPI ApiDoc registration for the HTTP API.
 
+use super::run_tree::CoreAttemptPlacement;
 use super::{
     __path_annotate_turn_vad, __path_booking_agent_instructions, __path_booking_availability,
     __path_booking_book, __path_booking_cancel, __path_booking_reschedule,
@@ -169,6 +170,7 @@ use utoipa::OpenApi;
         CoreBatchResponse,
         CoreRunTreeQuery,
         CoreRunTreeInterventionRequest,
+        CoreAttemptPlacement,
         CoreRunTreeInterventionKind,
         CoreRunTreeInterventionResponse,
         CoreRunTreeInterventionEffect,

@@ -252,9 +252,10 @@ fn mcp_setup_health_reads_every_board_omission_axis() {
 /// The capability vocabulary used to be derived from the retired plain-verb
 /// catalog alone, so discovery advertised names both endpoints answer
 /// `unknown_tool` for and advertised none of the names they do accept.
-#[test]
-fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
-    let flags = serde_json::to_value(feature_flags()).expect("feature flags serialize");
+#[tokio::test]
+async fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
+    let (_dir, server) = test_server();
+    let flags = serde_json::to_value(feature_flags(&server)).expect("feature flags serialize");
     let capabilities = flags["capabilities"]
         .as_array()
         .expect("capabilities is an array")
@@ -322,7 +323,7 @@ fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
         "a tool one endpoint registers is not advertised on the other",
     );
 
-    // `execute_code` is registered on neither endpoint in this release, so no
+    // `execute_code` is registered on neither endpoint without a host, so no
     // endpoint token names it.
     for mode in crate::mcp::McpSurfaceMode::ALL {
         assert!(
@@ -339,7 +340,7 @@ fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
 
     // Discovery stays deterministic: the same registrations, the same bytes.
     assert_eq!(
-        serde_json::to_value(feature_flags()).expect("feature flags serialize"),
+        serde_json::to_value(feature_flags(&server)).expect("feature flags serialize"),
         flags,
     );
 }
@@ -427,9 +428,13 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
     let payload = frame["kind"]["payload"]
         .as_array()
         .expect("the continuation delta carries rows");
-    assert_eq!(payload.len(), 1);
-    assert_eq!(payload[0]["key"], Value::from("TASKS:continuation"));
-    assert_eq!(payload[0]["line"], Value::from("queued after page one"));
+    assert_eq!(payload[0]["key"], "changed");
+    assert_eq!(payload[0]["line"], "");
+    let task = payload
+        .iter()
+        .find(|row| row["key"] == "TASKS:continuation")
+        .expect("the pending task row survives the session rider");
+    assert_eq!(task["line"], "queued after page one");
 
     {
         let mut registry = server.mcp_registry.lock().await;
@@ -505,16 +510,15 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
         Value::from("delta"),
         "result two carries the same-epoch delta: {second:?}"
     );
-    assert_eq!(
-        second_frame["kind"]["payload"][0]["key"],
-        Value::from("TASKS:0"),
-        "{second:?}"
-    );
-    assert_eq!(
-        second_frame["kind"]["payload"][0]["line"],
-        Value::from("queued"),
-        "{second:?}"
-    );
+    let rows = second_frame["kind"]["payload"]
+        .as_array()
+        .expect("delta rows");
+    assert_eq!(rows[0]["key"], "changed");
+    let task = rows
+        .iter()
+        .find(|row| row["key"] == "TASKS:0")
+        .expect("the pending task row survives the session rider");
+    assert_eq!(task["line"], "queued");
 
     // And the call after THAT carries none: nothing is replayed.
     let (_, third) = route_json(server.clone(), check("carrier-3a")).await;

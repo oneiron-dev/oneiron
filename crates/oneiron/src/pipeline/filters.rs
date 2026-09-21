@@ -92,6 +92,7 @@ pub(super) fn claim_status_gate_allows(
             raw.get(ENTITY_METADATA_HEADER_LEN..)
                 .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
         })
+        .filter(crate::claim::claim_generic_readable)
         .filter(|body| {
             claim_surfaceable(body)
                 || (gate.include_stale
@@ -342,17 +343,27 @@ pub(super) fn apply_world_filter(
     scores: &mut Vec<ScoredEntity>,
     store: &Store,
     rtxn: &RoTxn<'_>,
-    scope: WorldScope,
+    scope: &WorldScope,
     active_set: Option<&WorldAuthoritySet>,
 ) -> Result<()> {
     let target = match scope {
         WorldScope::All => return drop_stale_federated_claims(scores, store, rtxn),
         WorldScope::Base => None,
-        WorldScope::World(id) => Some(id),
-        WorldScope::WorldSet(scope_key) => {
+        WorldScope::World(id) => Some(*id),
+        WorldScope::CodebaseSet(scope_key) => {
             let mut kept = Vec::with_capacity(scores.len());
             for scored in scores.iter().copied() {
-                if codebase_candidate_matches_scope_key(store, rtxn, &scored.id, &scope_key)? {
+                if codebase_candidate_matches_scope_key(store, rtxn, &scored.id, scope_key)? {
+                    kept.push(scored);
+                }
+            }
+            *scores = kept;
+            return Ok(());
+        }
+        WorldScope::WorldSet(worlds) => {
+            let mut kept = Vec::with_capacity(scores.len());
+            for scored in scores.iter().copied() {
+                if active_set_admits(store, rtxn, &scored.id, worlds)? {
                     kept.push(scored);
                 }
             }
@@ -460,10 +471,7 @@ fn active_set_admits(
     id: &EntityId,
     active_set: &WorldAuthoritySet,
 ) -> Result<bool> {
-    Ok(match claim_world(store, rtxn, id)? {
-        None => active_set.include_base(),
-        Some(world) => active_set.worlds().contains(&world),
-    })
+    Ok(active_set.admits(claim_world(store, rtxn, id)?))
 }
 
 pub(super) fn apply_filters(
@@ -724,16 +732,17 @@ fn pipeline_candidate_matches_world_filter(
     store: &Store,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
-    scope: WorldScope,
+    scope: &WorldScope,
     active_set: Option<&WorldAuthoritySet>,
 ) -> Result<bool> {
     let target = match scope {
         WorldScope::All => return Ok(true),
         WorldScope::Base => None,
-        WorldScope::World(id) => Some(id),
-        WorldScope::WorldSet(scope_key) => {
-            return codebase_candidate_matches_scope_key(store, rtxn, id, &scope_key);
+        WorldScope::World(id) => Some(*id),
+        WorldScope::CodebaseSet(scope_key) => {
+            return codebase_candidate_matches_scope_key(store, rtxn, id, scope_key);
         }
+        WorldScope::WorldSet(worlds) => return active_set_admits(store, rtxn, id, worlds),
         // Same admission as the post-fusion arm, against the authority the run
         // resolved once. A missing set means the run reached a per-candidate
         // check under `ActiveSet` with nothing resolved, which is refused

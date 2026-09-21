@@ -13,6 +13,8 @@ mod documents;
 mod ephemeral;
 mod hello;
 mod lfs_chunks;
+#[cfg(test)]
+mod note_socket_tests;
 mod transport;
 mod window_sync;
 

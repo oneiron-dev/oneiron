@@ -36,6 +36,12 @@ roomsMessages(input: unknown): unknown
 roomsClaim(input: unknown): unknown
 roomsSpeak(input: unknown): unknown
 // END GENERATED AGENT VERBS
+
+  keyValueGet(requestJson: string): string
+  keyValuePut(requestJson: string): string
+  keyValueDelete(requestJson: string): string
+  keyValueSearch(requestJson: string): string
+  keyValueNamespaces(requestJson: string): string
   asActor(actorKey: string): NativeClient
   witness(turn: WitnessTurn): WitnessReceipt
   claimUpsert(claim: ClaimInput): CommitReceipt

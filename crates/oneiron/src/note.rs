@@ -1,4 +1,5 @@
-//! Attributed NOTE records: public opinions and actor-private diary entries.
+//! Attributed NOTE records: public opinions, actor-private diaries and plugin namespaces.
+//! `plugin/brief` has a person-stamped policy contract, editable documents and citation pins.
 //! Scratchpads are Context Board blocks, never NOTE kinds.
 
 use rmpv::Value;
@@ -19,10 +20,12 @@ const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 ///
 /// Closed to the implemented kinds. `parse` fails closed
 /// so an unknown wire string can never widen the enum by accident.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoteKind {
     /// An actor's attributed opinion about a subject or a claim.
     OpinionTake,
+    /// A pack namespace tag; only `brief` carries a blessed contract.
+    Plugin(String),
     /// Private to the author. Ordinary retrieval never includes this kind.
     Diary,
 }
@@ -30,10 +33,11 @@ pub enum NoteKind {
 impl NoteKind {
     /// The pinned wire literal. This string IS the storage ABI.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> std::borrow::Cow<'_, str> {
         match self {
-            Self::OpinionTake => "opinion/take",
-            Self::Diary => "diary",
+            Self::OpinionTake => std::borrow::Cow::Borrowed("opinion/take"),
+            Self::Diary => std::borrow::Cow::Borrowed("diary"),
+            Self::Plugin(tag) => std::borrow::Cow::Owned(format!("plugin/{tag}")),
         }
     }
 
@@ -41,10 +45,17 @@ impl NoteKind {
     #[must_use]
     pub fn parse(raw: &str) -> Option<Self> {
         match raw {
-            "opinion/take" => Some(Self::OpinionTake),
-            "diary" => Some(Self::Diary),
-            _ => None,
+            "opinion/take" => return Some(Self::OpinionTake),
+            "diary" => return Some(Self::Diary),
+            _ => {}
         }
+        let tag = raw.strip_prefix("plugin/")?;
+        (!tag.is_empty()
+            && tag.len() <= 128
+            && tag
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)))
+        .then(|| Self::Plugin(tag.to_owned()))
     }
 }
 
@@ -95,8 +106,16 @@ pub struct NoteWriteEnvelope {
 /// Encodes a NOTE body to the pinned four-key MessagePack map.
 pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
     validate_markdown(&body.markdown)?;
+    if NoteKind::parse(&body.kind.as_str()).as_ref() != Some(&body.kind) {
+        return Err(Error::Record(RecordError::InvalidNoteBody(
+            "invalid plugin namespace",
+        )));
+    }
     let value = Value::Map(vec![
-        (Value::from(KEY_KIND), Value::from(body.kind.as_str())),
+        (
+            Value::from(KEY_KIND),
+            Value::from(body.kind.as_str().as_ref()),
+        ),
         (
             Value::from(KEY_AUTHOR_REF),
             Value::from(body.author_ref.to_hex()),
@@ -238,7 +257,7 @@ fn validate_markdown(markdown: &str) -> Result<()> {
 /// retrieval, which excludes diaries even when the caller owns the vault.
 pub(crate) fn note_body_readable(bytes: &[u8], actor: Option<&EntityId>) -> bool {
     decode_note_body(bytes)
-        .is_ok_and(|body| body.kind == NoteKind::OpinionTake || actor == Some(&body.author_ref))
+        .is_ok_and(|body| body.kind != NoteKind::Diary || actor == Some(&body.author_ref))
 }
 
 /// Ordinary retrieval's NOTE privacy floor. Unrelated entity kinds and missing
@@ -260,3 +279,57 @@ pub(crate) fn ordinary_entity_visible(
 
 #[cfg(test)]
 mod tests;
+
+mod citation_erase;
+mod delete;
+mod pin_index;
+pub(crate) use citation_erase::{
+    PENDING_CITATION_ERASE, ensure_citations_ready, erase_citations_in_txn,
+};
+pub(crate) use pin_index::citation_delete_scope_exists;
+#[cfg(feature = "sync")]
+pub(crate) use pin_index::{remove_citation_request, track_citation_request};
+#[cfg(feature = "sync")]
+mod citation_scrub;
+#[cfg(feature = "sync")]
+pub(crate) use citation_erase::validate_pins as validate_citation_dependencies;
+#[cfg(feature = "sync")]
+pub(crate) use citation_scrub::scrub_pending_citations;
+#[cfg(test)]
+mod erasure_tests;
+mod live_body;
+pub(crate) use live_body::live_body_in_txn;
+mod kind_contract;
+#[cfg(all(test, feature = "sync"))]
+mod live_body_tests;
+pub(crate) use delete::delete_document_in_txn;
+mod id_codec;
+pub use kind_contract::{
+    BriefKindContract, NoteContextDefault, NoteExtractionDefault, NoteRetentionDefault,
+};
+#[cfg(feature = "sync")]
+mod birth;
+#[cfg(feature = "sync")]
+mod brief_view;
+#[cfg(feature = "sync")]
+mod document;
+#[cfg(feature = "sync")]
+mod document_store;
+#[cfg(feature = "sync")]
+pub(crate) use birth::document_birth_in_txn;
+#[cfg(feature = "sync")]
+mod operations;
+#[cfg(feature = "sync")]
+pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt};
+#[cfg(feature = "sync")]
+mod replica;
+#[cfg(feature = "sync")]
+pub use brief_view::{BriefCitationView, BriefView};
+#[cfg(feature = "sync")]
+pub(crate) use replica::{import_note_from_authority, validate_note_export};
+#[cfg(all(test, feature = "sync"))]
+mod document_tests;
+#[cfg(all(test, feature = "sync"))]
+mod sync_tests;
+#[cfg(feature = "sync")]
+pub use document::{NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution};

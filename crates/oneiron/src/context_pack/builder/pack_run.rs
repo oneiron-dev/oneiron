@@ -128,7 +128,8 @@ impl UnfinalizedContextPack<'_> {
         config: &SerializeConfig,
     ) -> RetrievalWithTelemetry<ContextPack> {
         let pre_projection_stats = self.value.stats.clone();
-        let pre_projection_had_results = !self.value.results.is_empty();
+        let pre_projection_had_results =
+            !self.value.results.is_empty() || self.value.l2_base.is_some();
         let mut pack = crate::serialize::project_pack_for_json_response(self.value, config);
         refresh_projected_empty_context(&mut pack);
         let surfaced_result_ids: Vec<[u8; 16]> = pack

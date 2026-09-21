@@ -63,6 +63,11 @@ pub(crate) fn mcp_admit_scoped_call(
         // no wire name resolves onto them at all.
         _ => return mcp_admit_unscoped_execution(actor, tool_name, "name"),
     };
+    if matches!(verb.tool.binding, crate::mcp::McpVerbBinding::Memory(_)) {
+        // Actor-scoped reads do NOT by themselves carry a connector's narrower
+        // ceiling. Never confuse the principal's grants with this credential.
+        mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.request")?;
+    }
     if let Some(scopes) = verb.payload.arguments.scopes.as_ref() {
         mcp_admit_subscription_scopes(actor, scopes)?;
     }
@@ -237,13 +242,14 @@ pub(super) fn mcp_scope_covers_entity(
 /// argument catalog still exists in this process. Nothing falls back, so no
 /// unadvertised name can reach an executor or bypass the result envelope.
 pub(super) fn mcp_validated_call_args(
+    server: &SyncServer,
     mode: McpSurfaceMode,
     params: McpToolCallParams,
     raw_arguments: Option<&str>,
 ) -> Result<McpValidatedToolArgs, McpGatewayError> {
-    let Some(tool) = crate::mcp::registered_surface(mode).resolve(&params.name) else {
+    let Some(tool) = server.mcp_surface(mode).resolve(&params.name) else {
         if params.name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
-            return Err(mcp_execute_code_unavailable());
+            return Err(mcp_code_host_unbound());
         }
         return Err(McpGatewayError::new(
             -32602,
@@ -265,26 +271,13 @@ pub(super) fn mcp_validated_call_args(
     crate::mcp::validate_mcp_endpoint_tool_args(tool, arguments).map_err(mcp_tool_validation_error)
 }
 
-/// The ONE stable typed refusal a direct `execute_code` call receives
-/// (ONE-1704 B2).
-///
-/// It is raised at the single name-resolution chokepoint both routes share, so
-/// it lands BEFORE arguments decode, before admission, and before any executor:
-/// no run is created, no durable run handle is minted, no `Waiting` is
-/// published, and no `resume` block or `terminal:false` advancement claim can
-/// reach the wire, under full or narrowed credentials on either endpoint.
-///
-/// This is the FINAL release posture, not a placeholder for a host that is
-/// about to appear: `execute_code` is not shipped in this release, and the
-/// refusal says exactly that instead of the generic `unknown_tool` a retired
-/// name would otherwise get.
-pub(super) fn mcp_execute_code_unavailable() -> McpGatewayError {
+/// Refuse an unavailable interpreter before decoding arguments or creating a run.
+pub(super) fn mcp_code_host_unbound() -> McpGatewayError {
     McpGatewayError::new(
         -32020,
-        crate::mcp::MCP_EXECUTE_CODE_UNAVAILABLE_CODE,
+        crate::mcp::MCP_CODE_HOST_UNBOUND_CODE,
         format!(
-            "{tool} is not shipped in this release: it is registered on no endpoint and no run \
-             was created",
+            "{tool} has no verified production runtime on this server; no run was created",
             tool = crate::mcp::MCP_EXECUTE_CODE_TOOL,
         ),
     )

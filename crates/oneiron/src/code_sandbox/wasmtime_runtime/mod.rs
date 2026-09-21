@@ -178,6 +178,7 @@ fn execute_component(
         .tables(8)
         .instances(16)
         .table_elements(10_000)
+        .trap_on_grow_failure(true)
         .build();
     let mut store = Store::new(
         engine,

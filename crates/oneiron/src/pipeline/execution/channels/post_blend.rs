@@ -154,7 +154,7 @@ impl PipelineBuilder<'_> {
             scores,
             &self.vault.store,
             rtxn,
-            self.world_scope,
+            &self.world_scope,
             inputs.filter_config.world_active_set,
         )?;
         if before_world > 0 && scores.is_empty() {

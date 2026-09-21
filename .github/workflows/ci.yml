@@ -225,6 +225,7 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_sandbox_wit.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_microvm_artifacts.py' -v
           python3 -m unittest discover -s scripts/audit -p 'test_*.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_quickjs_build.py' -v
 
       # Keep dependency artifacts when workspace cleanup is enough to meet
       # the unchanged cap. Runs after a failure too; never changes the verdict.
@@ -321,6 +322,19 @@ jobs:
       - name: Doctests
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo test --doc --workspace --exclude oneiron-bench --all-features
+
+      # Rust libtests do not exercise Node-API calls. Build the ordinary addon
+      # separately so dev-only napi features cannot replace the production graph.
+      - name: Node.js for the production addon test
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Production addon in a real Node host
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: |
+          cargo build -p oneiron-napi --lib
+          node crates/oneiron-napi/tests/node_host.cjs "${CARGO_TARGET_DIR:-target}/debug/liboneiron_napi.dylib"
 
       # Bound the host's persistent build cache (see ci.yml `checks`).
       - name: Compiler cache statistics

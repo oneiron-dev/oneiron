@@ -1,8 +1,24 @@
 //! Typed Context Board render projections.
 //!
-//! Sections present: MEMORIES, TASKS, AGENTS, plugin, stream. SKILLS (§8, 2026-08-28) has no producer here yet.
+//! WORLDS, MEMORIES, TASKS, AGENTS, SKILLS, session read-set riders and stream projections.
 
 mod agents;
+mod capabilities;
+mod observations;
+#[cfg(test)]
+mod observations_tests;
+mod read_set;
+mod room;
+#[cfg(test)]
+mod room_tests;
+pub(crate) use room_verbs::require_room_member_in_txn;
+mod room_verbs;
+mod worlds;
+pub use capabilities::{CapabilityHit, SkillsSection};
+pub use read_set::{ChangedLine, ServedLifecycle, SessionReadSet};
+pub use room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
+pub use room_verbs::ROOM_VERBS;
+pub use worlds::{WorldPresence, WorldsSection};
 mod frame;
 mod history;
 mod hydration;
@@ -27,6 +43,8 @@ pub use stream::{
     WakeDeliveryOutcome, WakeDeliveryReportError, WakeDispatch, WakeDispatchObservations,
     WakeReportDisposition,
 };
+#[cfg(test)]
+mod surfaces_tests;
 mod tasks;
 
 pub use agents::{
@@ -108,6 +126,7 @@ mod test_support {
             run_id: None,
             parent_id: None,
             worker_kind: worker_kind.to_owned(),
+            worker: None,
             agent_id: agent_id.map(str::to_owned),
             status,
             result_ref: None,

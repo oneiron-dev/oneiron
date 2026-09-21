@@ -487,17 +487,20 @@ fn subscribe_map_observer(
             }
             if event.origin == BRIDGE_ORIGIN {
                 // The bridge mirrors an already committed LMDB write.
-                materializer.notify_live_queries(
-                    &format!("w:{window_key}/{}", live_query.0),
-                    &MaterializedDiffSummary {
-                        containers: Vec::new(),
-                        bytes: 0,
-                    },
-                    &OriginMark {
-                        conn_id: None,
-                        origin: Some(event.origin.to_owned()),
-                    },
-                );
+                for cdiff in &event.events {
+                    if let Some(delta) = cdiff.diff.as_map() {
+                        let path = format!("w:{window_key}/{}", live_query.0);
+                        let diff = entity_document_diff(&path, live_query.0, delta);
+                        materializer.notify_live_queries(
+                            &path,
+                            &diff,
+                            &OriginMark {
+                                conn_id: None,
+                                origin: Some(event.origin.to_owned()),
+                            },
+                        );
+                    }
+                }
                 return;
             }
             let _guard = materializer.lock();
@@ -512,21 +515,7 @@ fn subscribe_map_observer(
                     );
                     if committed {
                         let path = format!("w:{window_key}/{}", live_query.0);
-                        let mut bytes = 0usize;
-                        let containers = map_delta
-                            .updated
-                            .iter()
-                            .map(|(key, value)| {
-                                bytes = bytes.saturating_add(key.len());
-                                if let Some(loro::ValueOrContainer::Value(
-                                    loro::LoroValue::Binary(blob),
-                                )) = value
-                                {
-                                    bytes = bytes.saturating_add(blob.len());
-                                }
-                                format!("{path}/{key}")
-                            })
-                            .collect();
+                        let diff = entity_document_diff(&path, live_query.0, map_delta);
                         let by = OriginMark {
                             conn_id: event
                                 .origin
@@ -534,7 +523,6 @@ fn subscribe_map_observer(
                                 .and_then(|id| id.parse().ok()),
                             origin: (!event.origin.is_empty()).then(|| event.origin.to_owned()),
                         };
-                        let diff = MaterializedDiffSummary { containers, bytes };
                         if let Some(tee) = &live_query.1 {
                             tee.on_materialized(&path, &diff, &by);
                         }
@@ -544,4 +532,32 @@ fn subscribe_map_observer(
             }
         }),
     )
+}
+
+fn entity_document_diff(
+    path: &str,
+    container: &str,
+    delta: &loro::event::MapDelta<'_>,
+) -> MaterializedDiffSummary {
+    let mut containers = std::collections::BTreeSet::new();
+    let mut bytes = 0usize;
+    for (key, value) in &delta.updated {
+        bytes = bytes.saturating_add(key.len());
+        if let Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) = value {
+            bytes = bytes.saturating_add(blob.len());
+        }
+        containers.insert(format!("{path}/{key}"));
+        if container == "edges" {
+            if let Some((source, _, target)) = super::companion_identity::parse_edge_key(key) {
+                containers.insert(format!("e:{}", source.to_hex()));
+                containers.insert(format!("e:{}", target.to_hex()));
+            }
+        } else if let Ok(id) = crate::EntityId::from_hex(key) {
+            containers.insert(format!("e:{}", id.to_hex()));
+        }
+    }
+    MaterializedDiffSummary {
+        containers: containers.into_iter().collect(),
+        bytes,
+    }
 }

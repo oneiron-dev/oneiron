@@ -50,6 +50,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_with_task_ref_in_txn(&mut wtxn, input, None)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -124,6 +125,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_consolidation_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -176,6 +178,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_skill_optimize_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -241,6 +244,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_vault_cleanup_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -472,6 +476,7 @@ impl<'a> DreamerRunnerStore<'a> {
         }
         self.vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(record)
     }
 
@@ -493,6 +498,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let resumed = self.resume_parked_in_txn(&mut wtxn, attempt_id, park_owner, now)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(resumed)
     }
 

@@ -225,6 +225,10 @@ pub struct McpVerbArguments {
     pub turn_ref: Option<String>,
     #[serde(default)]
     pub spec: Option<Value>,
+    /// One native request. A present JSON null is distinct from omission for
+    /// the runtime-reserved methods, whose native payload is opaque JSON.
+    #[serde(default, deserialize_with = "deserialize_present_request")]
+    pub request: Option<Value>,
     #[serde(default)]
     pub label: Option<String>,
 }
@@ -271,6 +275,7 @@ pub(super) const fn verb_argument_fields(binding: McpVerbBinding) -> &'static [&
         }
         McpVerbBinding::TasksCheck => &[],
         McpVerbBinding::TasksCreate => &["spec", "label"],
+        McpVerbBinding::Memory(_) => &["request"],
         _ => &[],
     }
 }
@@ -287,12 +292,13 @@ pub(super) const fn verb_required_fields(binding: McpVerbBinding) -> &'static [&
             &["task_ref"]
         }
         McpVerbBinding::TasksCreate => &["spec"],
+        McpVerbBinding::Memory(_) => &["request"],
         _ => &[],
     }
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 8] {
+    fn present_fields(&self) -> [(&'static str, bool); 9] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
@@ -301,6 +307,7 @@ impl McpVerbArguments {
             ("room_ref", self.room_ref.is_some()),
             ("turn_ref", self.turn_ref.is_some()),
             ("spec", self.spec.is_some()),
+            ("request", self.request.is_some()),
             ("label", self.label.is_some()),
         ]
     }
@@ -435,4 +442,10 @@ fn decode_endpoint_args<T: DeserializeOwned>(
         tool,
         message: error.to_string(),
     })
+}
+
+fn deserialize_present_request<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }
