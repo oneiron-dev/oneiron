@@ -53,11 +53,13 @@
 //! machine-readable RSS trace. Local typed interfaces are not a shipped wire
 //! codec or evidence that any runtime/latency/soak gate passed.
 
+mod budget;
 mod cancellation;
 mod protocol;
 mod retrieval;
 mod safeguard;
 mod session;
+pub mod soniox;
 
 pub mod tts_spikes;
 #[cfg(unix)]

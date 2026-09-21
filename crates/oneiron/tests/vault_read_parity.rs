@@ -769,7 +769,8 @@ fn cloud_structured_read_contract() {
 
 #[test]
 fn in_process_is_not_privileged() {
-    let fixture = Fixture::new();
+    // As in structured_success_parity, pin age to zero without masking scores.
+    let fixture = Fixture::with_claim_learned_at(u64::MAX);
     let wire = fixture.wire();
     // Wire FIRST, in-process second: proximity to `Vault` is never authority.
     let wire_hydrate = wire.hydrate(hydrate_request(&fixture.admitted_ref));
@@ -800,6 +801,12 @@ fn in_process_is_not_privileged() {
         direct_pack.0.results.len(),
         wire_pack.0.results.len(),
         "in-process never returns more than the wire path"
+    );
+    assert_eq!(direct_pack.0.results.len(), 1, "only the admitted claim");
+    assert_eq!(direct_pack.0.results[0].id, fixture.admitted_id.to_hex());
+    assert_eq!(
+        direct_pack.0.results[0].score, 1.0,
+        "fixture decay is neutral"
     );
 }
 

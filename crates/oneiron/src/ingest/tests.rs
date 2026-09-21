@@ -785,3 +785,243 @@ fn named_speaker_file_drop_turns_decode_to_gate_10_admissible_roles() {
         );
     }
 }
+
+#[test]
+fn provider_sources_normalize_same_conversation_at_imported_trust() {
+    let fixtures = [
+        (
+            "openai-compat",
+            serde_json::json!({"messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"}]}),
+        ),
+        (
+            "anthropic-messages",
+            serde_json::json!({"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]},{"role":"assistant","content":[{"type":"text","text":"hi"}]}]}),
+        ),
+        (
+            "gemini-api",
+            serde_json::json!({"contents":[{"role":"user","parts":[{"text":"hello"}]},{"role":"model","parts":[{"text":"hi"}]}]}),
+        ),
+    ];
+    for (source, fixture) in fixtures {
+        let batch = INGEST_SOURCE_REGISTRY
+            .normalize(source, &fixture.to_string())
+            .unwrap();
+        assert_eq!(
+            batch
+                .records
+                .iter()
+                .map(|r| r.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["hello", "hi"]
+        );
+        assert_eq!(batch.records[1].speaker.as_deref(), Some("assistant"));
+        assert!(batch.claims.is_empty());
+        let config = INGEST_SOURCE_REGISTRY.get_config(source).unwrap();
+        assert_eq!(config.trust_ceiling.claim_source, ClaimSource::Imported);
+        assert_eq!(config.default_admission, ClaimApprovalStatus::Proposed);
+        assert!(!config.trust_ceiling.permits_auto(Some(0)));
+    }
+    assert_eq!(INGEST_SOURCE_REGISTRY.entries().len(), 21);
+}
+
+#[test]
+fn provider_ingest_rejects_malformed_blocks_and_empty_system() {
+    for source in ["openai-compat", "anthropic-messages", "gemini-api"] {
+        for block in [
+            serde_json::json!({"type":"text"}),
+            serde_json::json!({"text":42}),
+            serde_json::json!({"unknown":"value"}),
+            serde_json::json!({"type":"bogus","text":"hello"}),
+            serde_json::json!({"type":"bogus","thinking":"hello"}),
+            serde_json::json!({"type":42,"text":"hello"}),
+        ] {
+            let doc = if source == "gemini-api" {
+                serde_json::json!({"contents":[{"role":"user","parts":[block]}]})
+            } else {
+                serde_json::json!({"messages":[{"role":"user","content":[block]}]})
+            };
+            assert!(
+                INGEST_SOURCE_REGISTRY
+                    .normalize(source, &doc.to_string())
+                    .is_err()
+            );
+        }
+    }
+    for system in [
+        serde_json::json!("  "),
+        serde_json::json!([{ "type":"text", "text":"\n" }]),
+    ] {
+        let doc = serde_json::json!({"system":system,"messages":[]});
+        assert!(matches!(
+            INGEST_SOURCE_REGISTRY.normalize("anthropic-messages", &doc.to_string()),
+            Err(IngestError::EmptyText { .. })
+        ));
+    }
+}
+
+#[test]
+fn provider_ingest_accepts_only_its_protocol_roles() {
+    for source in ["openai-compat", "anthropic-messages", "gemini-api"] {
+        for role in [
+            "system",
+            "developer",
+            "user",
+            "assistant",
+            "model",
+            "tool",
+            "function",
+            "unknown",
+        ] {
+            let valid = match source {
+                "openai-compat" => matches!(
+                    role,
+                    "system" | "developer" | "user" | "assistant" | "tool" | "function"
+                ),
+                "anthropic-messages" => matches!(role, "user" | "assistant"),
+                "gemini-api" => matches!(role, "user" | "model"),
+                _ => unreachable!(),
+            };
+            let doc = if source == "gemini-api" {
+                serde_json::json!({"contents":[{"role":role,"parts":[{"text":"hello"}]}]})
+            } else {
+                serde_json::json!({"messages":[{"role":role,"content":"hello"}]})
+            };
+            let result = INGEST_SOURCE_REGISTRY.normalize(source, &doc.to_string());
+            if valid {
+                let record = &result.unwrap().records[0];
+                assert_eq!(
+                    record.speaker.as_deref(),
+                    Some(if role == "model" { "assistant" } else { role })
+                );
+            } else {
+                assert!(
+                    matches!(result, Err(IngestError::InvalidDocumentField { path, .. }) if path == "role")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn provider_ingest_enforces_block_grammars_and_auxiliary_fields() {
+    use serde_json::json;
+    let blocks = [
+        (json!({"type":"text","text":"hello"}), [true, true, false]),
+        (
+            json!({"type":"thinking","thinking":"plan"}),
+            [false, true, false],
+        ),
+        (
+            json!({"type":"tool_use","id":"c","name":"f","input":{}}),
+            [false, true, false],
+        ),
+        (
+            json!({"type":"tool_result","tool_use_id":"c","content":"result"}),
+            [false, true, false],
+        ),
+        (json!({"text":"hello"}), [false, false, true]),
+        (
+            json!({"functionCall":{"name":"f","args":{}}}),
+            [false, false, true],
+        ),
+        (
+            json!({"functionResponse":{"name":"f","response":{}}}),
+            [false, false, true],
+        ),
+    ];
+    for (index, source) in ["openai-compat", "anthropic-messages", "gemini-api"]
+        .into_iter()
+        .enumerate()
+    {
+        for (block, valid) in &blocks {
+            let doc = if source == "gemini-api" {
+                json!({"contents":[{"role":"model","parts":[block]}]})
+            } else {
+                json!({"messages":[{"role":"assistant","content":[block]}]})
+            };
+            assert_eq!(
+                INGEST_SOURCE_REGISTRY
+                    .normalize(source, &doc.to_string())
+                    .is_ok(),
+                valid[index]
+            );
+        }
+        for (key, value) in [
+            ("reasoning_content", json!("plan")),
+            (
+                "tool_calls",
+                json!([{"id":"c","type":"function","function":{"name":"f","arguments":"{}"}}]),
+            ),
+        ] {
+            let mut message =
+                json!({"role":if source == "gemini-api" { "model" } else { "assistant" }});
+            message[key] = value;
+            let doc = if source == "gemini-api" {
+                json!({"contents":[message]})
+            } else {
+                json!({"messages":[message]})
+            };
+            assert_eq!(
+                INGEST_SOURCE_REGISTRY
+                    .normalize(source, &doc.to_string())
+                    .is_ok(),
+                source == "openai-compat"
+            );
+        }
+    }
+    for (key, value) in [
+        ("reasoning_content", json!(42)),
+        ("tool_calls", json!(42)),
+        (
+            "tool_calls",
+            json!([{"id":"c","type":"function","function":{"name":"f","arguments":{}}}]),
+        ),
+        (
+            "tool_calls",
+            json!([{"id":"c","type":"function","function":{"name":"f","arguments":"[]"}}]),
+        ),
+    ] {
+        let mut message = json!({"role":"assistant"});
+        message[key] = value;
+        let result = INGEST_SOURCE_REGISTRY
+            .normalize("openai-compat", &json!({"messages":[message]}).to_string());
+        assert!(
+            matches!(result, Err(IngestError::InvalidDocumentField { path, .. }) if path == key)
+        );
+    }
+}
+
+#[test]
+fn gemini_api_and_native_export_have_distinct_registry_doors() {
+    let api = r#"{"contents":[{"role":"user","parts":[{"text":"API conversation"}]}]}"#;
+    let export = r#"[{"id":"m","title":"Native export","time":"1970-01-01T00:00:12Z"}]"#;
+    let api_source = INGEST_SOURCE_REGISTRY
+        .get("gemini-api")
+        .expect("API source");
+    let export_source = INGEST_SOURCE_REGISTRY.get("gemini").expect("export source");
+    assert_eq!(
+        api_source.normalize(api).expect("API input").records[0].text,
+        "API conversation"
+    );
+    let imported = export_source
+        .parse_import(export, 100)
+        .expect("native export");
+    assert_eq!(imported.messages[0].platform_source, "gemini");
+    assert_eq!(imported.messages[0].content, "Native export");
+    assert!(api_source.normalize(export).is_err());
+    assert!(export_source.normalize(api).is_err());
+    assert_eq!(
+        INGEST_SOURCE_REGISTRY
+            .get_config("gemini-api")
+            .expect("API config")
+            .format,
+        IngestSourceFormat::Gemini
+    );
+    assert_eq!(
+        INGEST_SOURCE_REGISTRY
+            .get_config("gemini")
+            .expect("export config")
+            .format,
+        IngestSourceFormat::NativeExport
+    );
+}

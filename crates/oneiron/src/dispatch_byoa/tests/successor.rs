@@ -17,6 +17,7 @@ fn claimed_with_manifest(
 ) -> AttemptRecord {
     let dispatched = dispatcher
         .dispatch(DispatchByoa {
+            user_login: false,
             connector: ByoaConnectorSpec::CliSandbox(cli_spec()),
             task_ref: None,
             parent_attempt_id: None,
@@ -234,6 +235,7 @@ fn terminal_capture_commits_disposition_receipts_and_dedupe_release_together() {
         );
         let next = dispatcher
             .dispatch(DispatchByoa {
+                user_login: false,
                 connector: ByoaConnectorSpec::CliSandbox(cli_spec()),
                 task_ref: None,
                 parent_attempt_id: None,

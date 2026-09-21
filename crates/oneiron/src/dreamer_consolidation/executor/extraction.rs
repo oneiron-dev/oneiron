@@ -19,18 +19,23 @@ impl ConsolidationExecutor<'_> {
             envelope: CallEnvelope {
                 scope: scope.clone(),
                 purpose: CallPurpose::Extraction,
-                class: CallClass::BestEffort,
-                tier: TierPrecedence {
-                    per_call: None,
-                    vault_policy: None,
-                    purpose_default: None,
-                    global_default: ModelTierRef("consolidation".to_owned()),
+                class: CallClass::Durable {
+                    fallback: crate::llm::DeterministicFallback {
+                        name: "json_rules_v1".into(),
+                        config: Some(
+                            serde_json::json!({"version":1,"rows":[{"failure":"fatal","value":{"candidates":[],"people":[],"fallback":"model_unavailable"}}]}),
+                        ),
+                    },
                 },
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Extraction,
+                    ModelTierRef("consolidation".into()),
+                ),
                 response_format: ResponseFormat::Json {
                     schema: super::super::extracted_people::extraction_response_schema(),
                 },
                 locality: ModelLocality::OwnServer,
-            },
+            }.with_purpose_defaults(),
             messages: vec![
                 LlmMessage {
                     role: LlmMessageRole::System,

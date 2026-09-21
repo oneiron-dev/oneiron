@@ -1,7 +1,9 @@
 //! Shared fixtures for the supervisor test suites.
 use std::time::Duration;
 
-use super::{config::*, factory::*, pass::*, run::*, shutdown::*};
+use super::{config::*, factory::*};
+#[cfg(all(unix, feature = "voice"))]
+use super::{pass::*, run::*, shutdown::*};
 #[cfg(all(unix, feature = "voice"))]
 use crate::tick::PushTick;
 use crate::tick::{Tick, TickSource};
@@ -249,4 +251,72 @@ pub(super) fn admit(vault: &Vault, now: u64) -> DreamerAdmittedAttempt {
         panic!("expected an admitted micro attempt, got {outcome:?}");
     };
     *admitted
+}
+
+#[test]
+fn local_factory_requires_persisted_model_binding() {
+    use oneiron::llm::{
+        LlmCatalogCost,
+        registry::{ModelRegistryRow, ModelWireFormat},
+    };
+    use oneiron::{DreamerClaimAuthoringStrategy, ModelId, WriteActor};
+    use oneiron_llm_local::{
+        LocalAbortHandle, LocalGeneration, LocalLlmRuntime, LocalModelMetadata,
+    };
+    struct Runtime(LocalModelMetadata);
+    impl LocalLlmRuntime for Runtime {
+        fn metadata(&self) -> &LocalModelMetadata {
+            &self.0
+        }
+        fn generate<'a>(
+            &'a self,
+            _: oneiron::LlmRequest,
+            _: LocalAbortHandle,
+        ) -> oneiron::LlmResult<LocalGeneration<'a>> {
+            panic!("factory construction must not generate")
+        }
+    }
+    let (_dir, vault) = open_vault();
+    let model = ModelId::new("local/factory@1").unwrap();
+    let metadata = LocalModelMetadata::new(model.clone(), "factory", 8192);
+    let actor = WriteActor::new(
+        seed_actor(&vault, 19, oneiron::registry::ENTITY_TYPE_PERSON),
+        oneiron::edge::EdgeActorClass::Agent,
+    );
+    let make = || {
+        ConsolidationExecutorFactory::with_local_runtime(
+            &vault,
+            Runtime(metadata.clone()),
+            DreamerClaimAuthoringStrategy::SinglePass,
+            actor,
+            model.clone(),
+            Box::new(UnusedSink),
+        )
+    };
+    assert!(matches!(make(), Err(oneiron::Error::InvalidConfig(_))));
+    let mut catalog = metadata.catalog_entry();
+    catalog.cost = Some(LlmCatalogCost {
+        input_per_million: "0".into(),
+        output_per_million: "0".into(),
+        cache_read_per_million: None,
+        cache_write_per_million: None,
+    });
+    vault
+        .put_model_registry_row(&ModelRegistryRow {
+            version: 1,
+            wire: ModelWireFormat::Local,
+            catalog,
+            scores: Default::default(),
+            fetched_at: Default::default(),
+        })
+        .unwrap();
+    let mut factory = make().unwrap();
+    let guard = BudgetGuard::with_reserve_units(
+        "factory",
+        100,
+        10,
+        oneiron::BudgetExhaustionPolicy::Suspend,
+    );
+    assert!(factory.executor(&guard).is_ok());
+    assert_eq!(factory.actor(), Some(actor));
 }

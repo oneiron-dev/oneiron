@@ -7,6 +7,7 @@
 
 mod admission;
 pub mod image;
+mod provider;
 mod registry;
 mod resolution;
 mod transcripts;

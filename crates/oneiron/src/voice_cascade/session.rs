@@ -74,6 +74,7 @@ pub struct SafeguardUpdate {
 }
 
 struct Generation {
+    budget: Option<super::budget::GenerationBudget>,
     request: BrainRequest,
     llm_done: bool,
     audio_open: bool,
@@ -227,6 +228,7 @@ impl VoiceCascadeSession {
                     externally_tainted,
                 };
                 self.generation = Some(Generation {
+                    budget: None,
                     request: request.clone(),
                     llm_done: false,
                     audio_open: true,
@@ -271,8 +273,12 @@ impl VoiceCascadeSession {
                     return Err(invalid("brain done before tool results"));
                 }
                 active.llm_done = true;
+                active.budget.take();
             }
-            BrainEvent::Error(_) => active.llm_done = true,
+            BrainEvent::Error(_) => {
+                active.llm_done = true;
+                active.budget.take();
+            }
             BrainEvent::TextDelta(_) => {}
         }
         active.request.externally_tainted |= externally_tainted;
@@ -283,6 +289,57 @@ impl VoiceCascadeSession {
         } else {
             Ok(Some(event))
         }
+    }
+
+    /// Reserve for the active generation before starting its backend. The session
+    /// retains the issuing guard, so barge-in cannot settle against a foreign meter.
+    pub fn reserve_generation_budget(
+        &mut self,
+        generation: GenerationEpoch,
+        guard: Arc<crate::llm::BudgetGuard>,
+        request: &crate::llm::LlmRequest,
+    ) -> Result<crate::llm::BudgetLease> {
+        let active = self
+            .generation
+            .as_mut()
+            .filter(|active| active.request.generation == generation && !active.llm_done)
+            .ok_or_else(|| invalid("generation is not active"))?;
+        if active.budget.is_some() {
+            return Err(invalid("generation already has a budget lease"));
+        }
+        let admission = guard
+            .admit_for_request(request)
+            .map_err(|_| invalid("voice budget admission denied"))?;
+        let lease = admission.lease;
+        active.budget = Some(super::budget::GenerationBudget {
+            guard,
+            lease: lease.clone(),
+            usage: crate::llm::LlmUsage::zero(),
+        });
+        Ok(lease)
+    }
+
+    /// Absolute per-generation provider usage, including partial spend on cancel.
+    pub fn observe_generation_usage(
+        &mut self,
+        generation: GenerationEpoch,
+        usage: crate::llm::LlmUsage,
+    ) -> Result<bool> {
+        let Some(budget) = self
+            .generation
+            .as_mut()
+            .filter(|active| active.request.generation == generation)
+            .and_then(|active| active.budget.as_mut())
+        else {
+            return Ok(false);
+        };
+        if usage.input.total < budget.usage.input.total
+            || usage.output.total < budget.usage.output.total
+        {
+            return Err(invalid("voice usage cannot regress"));
+        }
+        budget.usage = usage;
+        Ok(true)
     }
 
     #[must_use]

@@ -82,6 +82,7 @@ pub struct SyncServer {
     /// construction, the same way the deep-retrieval host is: `Self::new` pins
     /// no model and downloads nothing.
     pub(crate) embedder: Option<EmbedderSlot>,
+    pub(crate) llm: Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)>,
 }
 
 impl SyncServer {
@@ -187,6 +188,7 @@ impl SyncServer {
             mcp_registry,
             deep_retrieval: None,
             embedder: None,
+            llm: None,
         })
     }
 
@@ -199,6 +201,17 @@ impl SyncServer {
     #[allow(dead_code)] // No in-tree production host yet; the tests are its only caller.
     pub(crate) fn with_deep_retrieval_host(mut self, host: Arc<DeepRetrievalHost>) -> Self {
         self.deep_retrieval = Some(host);
+        self
+    }
+
+    /// Enables owner-authenticated raw inference with a host-owned backend and budget.
+    /// Remote lease IDs are correlation only; each call needs local admission.
+    pub fn with_llm_backend(
+        mut self,
+        backend: Arc<dyn oneiron::LlmBackend>,
+        budget: oneiron::BudgetGuard,
+    ) -> Self {
+        self.llm = Some((backend, budget));
         self
     }
 

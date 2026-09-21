@@ -26,6 +26,7 @@ pub trait LocalLlmRuntime: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct LocalLlmBackend<R> {
     runtime: R,
+    catalog: LlmCatalogEntry,
 }
 
 impl<R> LocalLlmBackend<R>
@@ -33,13 +34,35 @@ where
     R: LocalLlmRuntime,
 {
     #[must_use]
+    #[cfg(test)]
     pub fn new(runtime: R) -> Self {
-        Self { runtime }
+        let catalog = runtime.metadata().catalog_entry();
+        Self { runtime, catalog }
+    }
+
+    pub fn from_registry(runtime: R, vault: &oneiron::Vault) -> oneiron::Result<Self> {
+        let metadata = runtime.metadata().catalog_entry();
+        let row = vault
+            .model_registry_row(&metadata.model)?
+            .ok_or_else(|| oneiron::Error::InvalidConfig("local model is not registered".into()))?;
+        if row.wire != oneiron::llm::registry::ModelWireFormat::Local
+            || row.catalog.locality != metadata.locality
+        {
+            return Err(oneiron::Error::InvalidConfig(
+                "local registry wire/locality mismatch".into(),
+            ));
+        }
+        let mut catalog = row.catalog;
+        catalog.capabilities.retain(|c| metadata.supports(c));
+        catalog.context_window_tokens = catalog
+            .context_window_tokens
+            .min(metadata.context_window_tokens);
+        Ok(Self { runtime, catalog })
     }
 
     #[must_use]
     pub fn descriptor(&self) -> LlmCatalogEntry {
-        self.runtime.metadata().catalog_entry()
+        self.catalog.clone()
     }
 
     pub fn stream_with_abort<'a>(
@@ -61,6 +84,11 @@ impl<R> LlmBackend for LocalLlmBackend<R>
 where
     R: LocalLlmRuntime,
 {
+    fn supports(&self, model: &oneiron::ModelId, capability: oneiron::LlmCapability) -> bool {
+        let entry = self.descriptor();
+        &entry.model == model && entry.supports(&capability)
+    }
+
     fn generate<'a>(
         &'a self,
         request: LlmRequest,

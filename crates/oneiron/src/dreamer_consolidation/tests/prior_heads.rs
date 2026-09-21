@@ -329,7 +329,9 @@ fn different_value_consults_one_prior_and_outage_leaves_original_and_open_confli
         assert!(user_text.contains("Oleksii"));
         assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&before));
         if outage {
-            assert!(matches!(result, DreamerAttemptExecution::Park { .. }));
+            // The fatal judge uses the durable escalation fallback. It completes
+            // without replacing the original or losing the open question.
+            assert!(matches!(result, DreamerAttemptExecution::Completed { .. }));
             assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
             let markers = vault
                 .claims_for_subject(&fx.subject)?

@@ -132,24 +132,24 @@ impl ConsolidationExecutorFactory {
     /// host-supplied runtime. Local on purpose — the default driver wiring
     /// must not imply network egress; hosts pick a remote adapter only by
     /// explicitly injecting one via [`Self::new`].
-    #[must_use]
     pub fn with_local_runtime<R>(
+        vault: &Vault,
         runtime: R,
         strategy: DreamerClaimAuthoringStrategy,
         actor: WriteActor,
         model: ModelId,
         sink: Box<dyn ConsolidationSink>,
-    ) -> Self
+    ) -> Result<Self>
     where
         R: LocalLlmRuntime + 'static,
     {
-        Self::new(
-            Arc::new(LocalLlmBackend::new(runtime)),
+        Ok(Self::new(
+            Arc::new(LocalLlmBackend::from_registry(runtime, vault)?),
             strategy,
             actor,
             model,
             sink,
-        )
+        ))
     }
 }
 

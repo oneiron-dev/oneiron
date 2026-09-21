@@ -39,6 +39,24 @@ pub async fn call_as_step(
     guard: &BudgetGuard,
     request: LlmRequest,
 ) -> DurableStepResult<StepOutcome> {
+    call_as_step_with_fallbacks(
+        ctx,
+        backend,
+        guard,
+        request,
+        &super::super::FallbackRegistry::standard(),
+    )
+    .await
+}
+
+/// Durable step with an explicitly owned deterministic runner registry.
+pub async fn call_as_step_with_fallbacks(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    fallbacks: &super::super::FallbackRegistry,
+) -> DurableStepResult<StepOutcome> {
     // Purity gate (ONE-1344): the FIRST executable branch, so a refused
     // request never hashes, never reads the memo index, never writes private
     // step state, never reserves budget, and never reaches the backend.
@@ -135,7 +153,7 @@ pub async fn call_as_step(
     let generated = match ctx.deadline {
         Some(deadline) => {
             match race_deadline(
-                generate_with_retry(backend, &request, &admission.lease),
+                super::schema::generate(backend, &request, &admission.lease, guard),
                 deadline,
             )
             .await
@@ -155,13 +173,40 @@ pub async fn call_as_step(
                 }
             }
         }
-        None => generate_with_retry(backend, &request, &admission.lease).await,
+        None => super::schema::generate(backend, &request, &admission.lease, guard).await,
+    };
+    let (generated, failed_usage) = match generated {
+        Err(DurableStepError::SpentLlm { source, usage }) => {
+            (Err(DurableStepError::Llm(source)), *usage)
+        }
+        result => (result, super::LlmUsage::zero()),
     };
     let response = match generated {
         Ok(response) => response,
+        Err(DurableStepError::Llm(LlmError::Fatal(error)))
+            if matches!(request.envelope.class, CallClass::Durable { .. }) =>
+        {
+            let CallClass::Durable { fallback } = &request.envelope.class else {
+                unreachable!()
+            };
+            match fallbacks.run(fallback, &request, &error) {
+                Ok(mut response) => {
+                    if let Err(error) = super::schema::validate_fallback(&request, &response) {
+                        settle_failed_usage(guard, &admission.lease, &failed_usage);
+                        return Err(error);
+                    }
+                    response.usage = failed_usage;
+                    response
+                }
+                Err(error) => {
+                    settle_failed_usage(guard, &admission.lease, &failed_usage);
+                    return Err(error.into());
+                }
+            }
+        }
         Err(error) => {
-            let _ = guard.abort(&admission.lease);
-            return Err(step_call_failure(&request, error));
+            settle_failed_usage(guard, &admission.lease, &failed_usage);
+            return Err(error);
         }
     };
 
@@ -195,6 +240,14 @@ pub async fn call_as_step(
         memoized: false,
         legibility: step_legibility(ctx, guard),
     })
+}
+
+fn settle_failed_usage(guard: &BudgetGuard, lease: &super::BudgetLease, usage: &super::LlmUsage) {
+    if usage.input.total > 0 || usage.output.total > 0 {
+        let _ = guard.settle_per_call(lease, usage);
+    } else {
+        let _ = guard.abort(lease);
+    }
 }
 
 /// The wake-pass legibility envelope for this step's outcome: Some inside
@@ -256,18 +309,6 @@ async fn race_deadline<F: Future>(
     .await
 }
 
-fn step_call_failure(request: &LlmRequest, error: LlmError) -> DurableStepError {
-    if matches!(error, LlmError::Fatal(_))
-        && let CallClass::Durable { fallback } = &request.envelope.class
-    {
-        return DurableStepError::FallbackDemanded {
-            fallback: fallback.name.clone(),
-            source: error,
-        };
-    }
-    DurableStepError::Llm(error)
-}
-
 /// RAII settlement for a durable step's reserved lease once the provider has
 /// answered. The spend is real from that point, so the lease must settle on
 /// every exit from the post-response persistence block — otherwise a
@@ -295,19 +336,19 @@ impl<'a> LeaseSettleOnDrop<'a> {
 
     fn settle(mut self) -> std::result::Result<super::BudgetSettlement, BudgetDenied> {
         self.armed = false;
-        self.guard.settle_absolute(self.lease, self.used_units)
+        self.guard.settle_usage(self.lease, self.used_units)
     }
 }
 
 impl Drop for LeaseSettleOnDrop<'_> {
     fn drop(&mut self) {
         if self.armed {
-            let _ = self.guard.settle_absolute(self.lease, self.used_units);
+            let _ = self.guard.settle_usage(self.lease, self.used_units);
         }
     }
 }
 
-async fn generate_with_retry(
+pub(super) async fn generate_with_retry(
     backend: &dyn LlmBackend,
     request: &LlmRequest,
     lease: &super::BudgetLease,

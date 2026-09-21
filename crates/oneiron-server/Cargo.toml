@@ -88,6 +88,7 @@ candle-core = { version = "=0.11.0", features = ["metal"] }
 candle-nn = { version = "=0.11.0", features = ["metal"] }
 
 [dev-dependencies]
+oneiron-remote = { path = "../oneiron-remote" }
 # Parse memory-reason YAML in quoted-scalar control-character regressions.
 serde_yaml_ng = "0.10"
 tempfile = "3"

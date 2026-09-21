@@ -63,6 +63,37 @@ impl LlmCatalogEntry {
         self.capabilities.iter().any(|entry| entry == capability)
     }
 
+    /// Shared capability/locality admission for raw wire adapters.
+    pub fn admit(&self, request: &super::LlmRequest, stream: bool) -> super::LlmResult<()> {
+        if self.model != request.model || self.locality != request.envelope.locality {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        if stream {
+            self.require(LlmCapability::Streaming)?;
+        }
+        if !request.tools.is_empty() {
+            self.require(LlmCapability::ToolCalling)?;
+        }
+        if matches!(
+            request.envelope.response_format,
+            super::ResponseFormat::Json { .. }
+        ) {
+            self.require(LlmCapability::JsonResponse)?;
+        }
+        for part in request.messages.iter().flat_map(|m| &m.content) {
+            match part {
+                super::ContentPart::ToolCall { .. } => self.require(LlmCapability::ToolCalling)?,
+                super::ContentPart::ToolResult { .. } => {
+                    self.require(LlmCapability::ToolResults)?;
+                }
+                super::ContentPart::Image { .. } => self.require(LlmCapability::ImageInput)?,
+                super::ContentPart::Reasoning { .. } => self.require(LlmCapability::Reasoning)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     pub fn require(&self, capability: LlmCapability) -> std::result::Result<(), FatalLlmError> {
         if self.supports(&capability) {
             Ok(())

@@ -158,12 +158,14 @@ fn response_fixture(text: &str) -> LlmResponse {
 struct ScriptedBackend {
     calls: AtomicUsize,
     script: Mutex<VecDeque<LlmResult<LlmResponse>>>,
+    requests: Mutex<Vec<LlmRequest>>,
 }
 
 impl ScriptedBackend {
     fn new(script: Vec<LlmResult<LlmResponse>>) -> Self {
         Self {
             calls: AtomicUsize::new(0),
+            requests: Mutex::new(Vec::new()),
             script: Mutex::new(script.into_iter().collect()),
         }
     }
@@ -176,9 +178,10 @@ impl ScriptedBackend {
 impl LlmBackend for ScriptedBackend {
     fn generate<'a>(
         &'a self,
-        _request: LlmRequest,
+        request: LlmRequest,
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
+        self.requests.lock().unwrap().push(request);
         self.calls.fetch_add(1, Ordering::SeqCst);
         let next = self
             .script
@@ -401,7 +404,7 @@ fn fatal_besteffort_fails_fast_typed() -> Result<()> {
 }
 
 #[test]
-fn durable_fatal_demands_deterministic_fallback() -> Result<()> {
+fn durable_fatal_unknown_fallback_is_typed() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fixture = step_fixture(&vault, 10)?;
     let ctx = ctx(&vault, &fixture, 10_000);
@@ -417,8 +420,8 @@ fn durable_fatal_demands_deterministic_fallback() -> Result<()> {
 
     let error =
         block_on(call_as_step(&ctx, &backend, &guard, request)).expect_err("fatal must fail");
-    let DurableStepError::FallbackDemanded { fallback, .. } = error else {
-        panic!("expected FallbackDemanded, got {error:?}");
+    let DurableStepError::Fallback(crate::llm::FallbackError::Unknown(fallback)) = error else {
+        panic!("expected unknown fallback, got {error:?}");
     };
     assert_eq!(fallback, "template_summary_v1");
     Ok(())
@@ -2190,5 +2193,632 @@ fn untrusted_active_step_claim_is_not_memo_indexed() -> Result<()> {
         step_index_lookup(&vault, fixture.attempt_id, &malformed_hash)?.is_none(),
         "an unusable model binding must not enter the memo index"
     );
+    Ok(())
+}
+
+#[test]
+fn fatal_runs_declared_rule_and_memoizes_nonempty_outcome() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into())]);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
+    let first = block_on(call_as_step(&ctx, &backend, &guard, request.clone())).expect("fallback");
+    let StepOutcome::Finished {
+        response,
+        memoized: false,
+        ..
+    } = first
+    else {
+        panic!("not finished")
+    };
+    assert_eq!(
+        response.message.content,
+        vec![ContentPart::Text {
+            text: json!({"verdict":"hold"}).to_string()
+        }]
+    );
+    assert!(
+        matches!(response.finish_reason, FinishReason::Other { name } if name.starts_with("fallback:json_rules_v1:"))
+    );
+    assert_eq!(guard.read().reserved_units, 0);
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)).expect("memo"),
+        StepOutcome::Finished { memoized: true, .. }
+    ));
+    assert_eq!(backend.calls(), 1);
+    Ok(())
+}
+
+#[test]
+fn fallback_runner_failure_is_typed_and_releases_reservation() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into())]);
+    let mut request = request_fixture();
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(json!({"version":2,"rows":[]})),
+        },
+    };
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)),
+        Err(DurableStepError::Fallback(
+            crate::llm::FallbackError::Failed { .. }
+        ))
+    ));
+    assert_eq!(guard.read().reserved_units, 0);
+    Ok(())
+}
+
+#[test]
+fn schema_correction_rechecks_budget_before_another_paid_call() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(600); // The fixture reserves 500 and spends 150 per response.
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("not json")),
+        Ok(response_fixture("{}")),
+    ]);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request.clone())),
+        Err(DurableStepError::Llm(LlmError::BudgetDenied(
+            crate::llm::BudgetDenied::Exhausted
+        )))
+    ));
+    assert_eq!(backend.calls(), 1);
+    assert_eq!(guard.read().used_units, 150);
+    assert_eq!(guard.read().reserved_units, 0);
+    // No failed/cut correction is memoized. A newly funded execution still calls the backend.
+    let funded = guard_with_limit(10_000);
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &funded, request)),
+        Ok(StepOutcome::Finished {
+            memoized: false,
+            ..
+        })
+    ));
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(funded.read().used_units, 150);
+    assert_eq!(funded.read().reserved_units, 0);
+    Ok(())
+}
+
+#[test]
+fn schema_shim_corrects_validates_and_charges_all_attempts() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object","required":["n"],"properties":{"n":{"type":"integer"}},"additionalProperties":false}),
+    };
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("{\"n\":\"4\"}")),
+        Ok(response_fixture("{\"n\":4}")),
+    ]);
+    let StepOutcome::Finished { response, .. } =
+        block_on(call_as_step(&ctx, &backend, &guard, request)).expect("corrected")
+    else {
+        panic!("not finished")
+    };
+    assert_eq!(response.usage.input.total, 200);
+    assert_eq!(response.usage.output.total, 100);
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(guard.read().used_units, 300);
+    assert_eq!(guard.read().reserved_units, 0);
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let text_json = |message: &LlmMessage| {
+        let [ContentPart::Text { text }] = message.content.as_slice() else {
+            panic!("schema message")
+        };
+        serde_json::from_str::<serde_json::Value>(text).unwrap()
+    };
+    let schema = json!({"type":"object","required":["n"],"properties":{"n":{"type":"integer"}},"additionalProperties":false});
+    assert_eq!(requests[0].envelope.response_format, ResponseFormat::Text);
+    assert_eq!(requests[0].messages[0].role, LlmMessageRole::System);
+    assert_eq!(
+        text_json(&requests[0].messages[0]),
+        json!({"response_format":{"type":"json_schema","schema":schema}})
+    );
+    assert_eq!(
+        requests[1].messages[2],
+        response_fixture("{\"n\":\"4\"}").message
+    );
+    assert_eq!(requests[1].messages[3].role, LlmMessageRole::User);
+    let feedback = text_json(&requests[1].messages[3]);
+    assert_eq!(feedback["required_schema"], schema);
+    assert!(
+        !feedback["schema_validation_errors"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn schema_shim_three_bad_responses_are_terminal_not_fallback() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "fail_closed_to_proposed".into(),
+            config: None,
+        },
+    };
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    let backend = ScriptedBackend::new(vec![Ok(response_fixture("bad")); 3]);
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)),
+        Err(DurableStepError::SchemaValidation { attempts: 3, .. })
+    ));
+    assert_eq!(backend.calls(), 3);
+    assert_eq!(guard.read().used_units, 450);
+    assert_eq!(guard.read().reserved_units, 0);
+    Ok(())
+}
+
+#[test]
+fn native_structured_output_receives_unchanged_request() -> Result<()> {
+    struct Native;
+    impl LlmBackend for Native {
+        fn supports(&self, _: &ModelId, capability: LlmCapability) -> bool {
+            capability == LlmCapability::JsonResponse
+        }
+        fn generate<'a>(
+            &'a self,
+            request: LlmRequest,
+            _: &'a BudgetLease,
+        ) -> LlmGenerateFuture<'a> {
+            assert!(matches!(
+                request.envelope.response_format,
+                ResponseFormat::Json { .. }
+            ));
+            assert_eq!(request.messages.len(), 1);
+            Box::pin(async { Ok(response_fixture("{}")) })
+        }
+        fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+            unreachable!()
+        }
+    }
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    block_on(call_as_step(&ctx, &Native, &guard, request)).expect("native");
+    Ok(())
+}
+
+#[test]
+fn boring_tags_spend_nothing_and_surprising_render_names_its_reads() -> Result<()> {
+    use crate::llm::tagger::*;
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("rendered")),
+        Ok(response_fixture("updated")),
+    ]);
+    let mut delta = InputDelta {
+        turn: fixture.subject,
+        text: "Ada".into(),
+        before: RetrievalTags::default(),
+        after: RetrievalTags::default(),
+        threshold: 0.5,
+    };
+    let skipped = block_on(render_on_delta(
+        &ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+        &delta,
+    ))
+    .expect("boring");
+    assert!(!skipped.receipt.admitted);
+    assert!(skipped.step.is_none());
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(guard.read().used_units, 0);
+    delta.after.mentions.push(MentionTag {
+        start: 0,
+        end: 3,
+        entity: fixture.subject,
+        weight: 1.0,
+    });
+    let rendered = block_on(render_on_delta(
+        &ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+        &delta,
+    ))
+    .expect("surprise");
+    assert!(rendered.receipt.admitted);
+    assert_eq!(rendered.receipt.read_refs, vec![fixture.subject]);
+    assert!(rendered.step.is_some());
+    assert_eq!(backend.calls(), 1);
+    let replayed = block_on(render_on_delta(
+        &ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+        &delta,
+    ))
+    .expect("replay");
+    assert!(matches!(
+        replayed.step,
+        Some(StepOutcome::Finished { memoized: true, .. })
+    ));
+    delta.text = "Eve".into();
+    let changed = block_on(render_on_delta(
+        &ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+        &delta,
+    ))
+    .expect("new delta");
+    assert_ne!(rendered.receipt.input_hash, changed.receipt.input_hash);
+    assert_eq!(backend.calls(), 2);
+    Ok(())
+}
+
+#[test]
+fn corrective_spend_survives_fatal_fallback_and_memo_replay() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("not json")),
+        Err(FatalLlmError::Auth.into()),
+    ]);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
+    let StepOutcome::Finished { response, .. } =
+        block_on(call_as_step(&ctx, &backend, &guard, request.clone())).expect("fallback")
+    else {
+        panic!("not finished");
+    };
+    assert_eq!(response.usage.input.total, 100);
+    assert_eq!(response.usage.output.total, 50);
+    assert_eq!(guard.read().used_units, 150);
+    assert_eq!(guard.read().reserved_units, 0);
+    let StepOutcome::Finished {
+        response: replay,
+        memoized: true,
+        ..
+    } = block_on(call_as_step(&ctx, &backend, &guard, request)).expect("replay")
+    else {
+        panic!("not memoized");
+    };
+    assert_eq!(response, replay);
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(guard.read().used_units, 150);
+    Ok(())
+}
+
+#[test]
+fn custom_fallback_empty_output_is_typed_and_not_memoized() -> Result<()> {
+    use crate::llm::{DeterministicRunner, FallbackError, FallbackRegistry};
+    struct Empty(ContentPart);
+    impl DeterministicRunner for Empty {
+        fn run(
+            &self,
+            _: &LlmRequest,
+            _: Option<&serde_json::Value>,
+            _: &FatalLlmError,
+        ) -> std::result::Result<LlmMessage, String> {
+            Ok(LlmMessage {
+                role: LlmMessageRole::Assistant,
+                content: vec![self.0.clone()],
+            })
+        }
+    }
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into()); 2]);
+    let guard = guard_with_limit(10_000);
+    let mut registry = FallbackRegistry::default();
+    registry
+        .register(
+            "empty".into(),
+            Box::new(Empty(ContentPart::Reasoning {
+                text: "".into(),
+                signature: None,
+            })),
+        )
+        .unwrap();
+    assert!(matches!(
+        registry.register(
+            "empty".into(),
+            Box::new(Empty(ContentPart::Reasoning {
+                text: "".into(),
+                signature: None
+            }))
+        ),
+        Err(FallbackError::Duplicate(_))
+    ));
+    let mut request = request_fixture();
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "empty".into(),
+            config: None,
+        },
+    };
+    for _ in 0..2 {
+        assert!(
+            matches!(block_on(call_as_step_with_fallbacks(&ctx, &backend, &guard, request.clone(), &registry)), Err(DurableStepError::Fallback(FallbackError::Empty(name))) if name == "empty")
+        );
+        assert_eq!(guard.read().reserved_units, 0);
+    }
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(guard.read().used_units, 0);
+    Ok(())
+}
+
+#[test]
+fn invalid_and_remote_reference_schemas_fail_before_backend_calls() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![]);
+    let guard = guard_with_limit(10_000);
+    for schema in [
+        json!({"type":"not-a-json-type"}),
+        json!({"$ref":"https://schema.invalid/no-fetch.json"}),
+    ] {
+        let mut request = request_fixture();
+        request.envelope.response_format = ResponseFormat::Json { schema };
+        assert!(matches!(
+            block_on(call_as_step(&ctx, &backend, &guard, request)),
+            Err(DurableStepError::SchemaValidation { attempts: 0, .. })
+        ));
+        assert_eq!(guard.read().reserved_units, 0);
+    }
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(guard.read().used_units, 0);
+    Ok(())
+}
+
+#[test]
+fn invalid_fallback_schema_is_terminal_settles_spend_and_is_not_memoized() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("not json")),
+        Err(FatalLlmError::Auth.into()),
+        Err(FatalLlmError::Auth.into()),
+    ]);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"integer"}),
+    };
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
+    for _ in 0..2 {
+        assert!(matches!(
+            block_on(call_as_step(&ctx, &backend, &guard, request.clone())),
+            Err(DurableStepError::SchemaValidation { attempts: 1, .. })
+        ));
+        assert_eq!(guard.read().reserved_units, 0);
+    }
+    assert_eq!(backend.calls(), 3);
+    assert_eq!(guard.read().used_units, 150);
+    Ok(())
+}
+
+#[test]
+fn invalid_previous_tags_refuse_before_paid_render() -> Result<()> {
+    use crate::llm::tagger::*;
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![]);
+    for case in 0..4 {
+        let mut before = RetrievalTags::default();
+        match case {
+            0 => before.mentions.push(MentionTag {
+                start: 0,
+                end: 9,
+                entity: fixture.subject,
+                weight: 1.0,
+            }),
+            1 => before.coreference.push(CoreferenceTag {
+                mention: 0,
+                antecedent: 0,
+            }),
+            2 => before.ppr_seeds.push(PprSeed {
+                entity: fixture.subject,
+                weight: f32::NAN,
+            }),
+            _ => before.affect[0] = 2.0,
+        }
+        let delta = InputDelta {
+            turn: fixture.subject,
+            text: "Ada".into(),
+            before,
+            after: RetrievalTags::default(),
+            threshold: 0.5,
+        };
+        assert!(
+            block_on(render_on_delta(
+                &ctx,
+                &backend,
+                &guard,
+                request_fixture(),
+                &delta
+            ))
+            .is_err()
+        );
+    }
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(guard.read().reserved_units, 0);
+    assert_eq!(guard.read().used_units, 0);
+    Ok(())
+}
+
+#[test]
+fn malformed_structured_fallback_is_rejected_before_memoization() -> Result<()> {
+    use crate::llm::{DeterministicRunner, FallbackError, FallbackRegistry};
+    struct Bad(ContentPart);
+    impl DeterministicRunner for Bad {
+        fn run(
+            &self,
+            _: &LlmRequest,
+            _: Option<&serde_json::Value>,
+            _: &FatalLlmError,
+        ) -> std::result::Result<LlmMessage, String> {
+            Ok(LlmMessage {
+                role: LlmMessageRole::Assistant,
+                content: vec![self.0.clone()],
+            })
+        }
+    }
+    for part in [
+        ContentPart::ToolCall {
+            call_id: "".into(),
+            name: "tool".into(),
+            input: json!([]),
+        },
+        ContentPart::ToolResult {
+            call_id: "valid-call-id".into(),
+            output: json!({"result":"not assistant output"}),
+            is_error: false,
+        },
+    ] {
+        let (_dir, vault) = open_vault();
+        let fixture = step_fixture(&vault, 10)?;
+        let ctx = ctx(&vault, &fixture, 10_000);
+        let guard = guard_with_limit(10_000);
+        let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into()); 2]);
+        let mut registry = FallbackRegistry::default();
+        registry
+            .register("bad".into(), Box::new(Bad(part)))
+            .unwrap();
+        let mut request = request_fixture();
+        request.envelope.class = CallClass::Durable {
+            fallback: DeterministicFallback {
+                name: "bad".into(),
+                config: None,
+            },
+        };
+        for _ in 0..2 {
+            assert!(matches!(
+                block_on(call_as_step_with_fallbacks(
+                    &ctx,
+                    &backend,
+                    &guard,
+                    request.clone(),
+                    &registry
+                )),
+                Err(DurableStepError::Fallback(FallbackError::Failed { .. }))
+            ));
+            assert_eq!(guard.read().reserved_units, 0);
+        }
+        assert_eq!(backend.calls(), 2);
+        assert_eq!(guard.read().used_units, 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn native_schema_validation_refuses_invalid_requests_and_unvalidated_terminals() -> Result<()> {
+    struct Native(ScriptedBackend);
+    impl LlmBackend for Native {
+        fn supports(&self, _: &ModelId, capability: LlmCapability) -> bool {
+            capability == LlmCapability::JsonResponse
+        }
+        fn generate<'a>(
+            &'a self,
+            request: LlmRequest,
+            lease: &'a BudgetLease,
+        ) -> LlmGenerateFuture<'a> {
+            self.0.generate(request, lease)
+        }
+        fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+            unreachable!()
+        }
+    }
+    for (schema, output, attempts) in [
+        (json!({"type":"not-a-type"}), "{}", 0),
+        (
+            json!({"$ref":"https://example.invalid/schema.json"}),
+            "{}",
+            0,
+        ),
+        (json!({"type":"object"}), "[]", 1),
+        (json!({"type":"object"}), "not json", 1),
+    ] {
+        let (_dir, vault) = open_vault();
+        let fixture = step_fixture(&vault, 10)?;
+        let ctx = ctx(&vault, &fixture, 10_000);
+        let guard = guard_with_limit(10_000);
+        let mut request = request_fixture();
+        request.envelope.response_format = ResponseFormat::Json { schema };
+        let hash = request.canonical_hash().unwrap();
+        let backend = Native(ScriptedBackend::new(vec![Ok(response_fixture(output))]));
+        assert!(matches!(
+            block_on(call_as_step(&ctx, &backend, &guard, request)),
+            Err(DurableStepError::SchemaValidation { attempts: actual, .. }) if actual == attempts
+        ));
+        assert_eq!(backend.0.calls(), attempts as usize);
+        assert_eq!(guard.read().used_units, u64::from(attempts) * 150);
+        assert_eq!(guard.read().reserved_units, 0);
+        assert!(step_index_lookup(&vault, fixture.attempt_id, &hash)?.is_none());
+        assert_eq!(
+            claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
+            0
+        );
+    }
     Ok(())
 }

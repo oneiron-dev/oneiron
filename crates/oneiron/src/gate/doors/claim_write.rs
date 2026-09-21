@@ -287,12 +287,15 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // ONE-1314 widens this source check to source OR lineage.
         // This only selects a checker consult; authorization still checks
         // each restricted lineage member's own permit above and below.
+        let model_manifest = crate::llm::manifest::read_manifest(store, &*wtxn)?;
+        let verdict_binding = model_manifest.as_ref().and_then(|m| m.verdict.as_ref());
         let mut checker_receipt_reasons: Vec<String> = Vec::new();
         if decision.outcome() == GateOutcome::Allow
             && !attach_critical_confirm
             && dreamer_candidate
-            && policy.auto_checker().is_some()
-            && let Some(checker) = auto_checker
+            && (policy.auto_checker().is_some() || verdict_binding.is_some())
+            && (auto_checker.is_some() || verdict_binding.is_some())
+            && preflight_decision_id.is_none()
             && let Some(source) = body.source.filter(|source| {
                 source.requires_explicit_auto_permit()
                     || lineage.is_some_and(SourceLineage::requires_explicit_auto_permit)
@@ -315,8 +318,17 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             };
             // The concrete wrapper is required at every injection boundary:
             // one capacity-bounded consult, with panic and timeout isolation.
-            match checker.check(&candidate) {
+            let outcome = auto_checker.map_or(AutoCheckOutcome::Unavailable, |checker| {
+                checker.check(&candidate)
+            });
+            let (outcome, verdict_note) =
+                crate::llm::manifest::apply_verdict_floor(verdict_binding, outcome);
+            if let Some(note) = verdict_note.and_then(checker_hold_receipt_reason) {
+                checker_receipt_reasons.push(note);
+            }
+            match outcome {
                 AutoCheckOutcome::Allow => {}
+                AutoCheckOutcome::Verdict(_) => unreachable!("floor consumes calibrated outcomes"),
                 AutoCheckOutcome::Hold { reasons } => {
                     // A host names its reasons in prose; the decision ledger's
                     // receipt field is a closed token vocabulary vetted on the

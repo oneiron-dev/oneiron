@@ -34,6 +34,11 @@
 //! is [`crate::attempt_queue::AttemptState::Abandoned`], not failed, and still
 //! points at the last exhaust it produced.
 
+mod provider;
+pub use provider::{
+    ClaudeCodeRunner, CodexRunner, DreamerProviderAdapter, DreamerProviderInput, OpenCodeRunner,
+    ProviderAdapterRegistry,
+};
 mod connector;
 mod dispatcher;
 mod error;

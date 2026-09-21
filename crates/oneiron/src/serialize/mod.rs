@@ -12,6 +12,7 @@ mod json_format;
 mod markdown_plaintext_format;
 mod pack_entry;
 mod pack_preparation;
+mod provider_codecs;
 mod token_budget;
 mod toon_format;
 mod types;
