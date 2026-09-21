@@ -587,41 +587,10 @@ pub(super) fn assert_no_erasure_audit_artifacts(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
-/// ONE-1149 RACED-TO-NOTHING construction (delete-safety), DETERMINISTIC —
-/// no timing sleep. Builds the RACED-TO-NOTHING case (scope existed at the
-/// deleter's read-probe, then raced away before its purge txn), NOT the
-/// FULLY-MISSING case (an id that never had scope). The eraser thread opens
-/// the single LMDB write txn, STAGES the scope erasure inside it but leaves
-/// it UNCOMMITTED (MVCC keeps it invisible to any read txn), then meets the
-/// deleter at a `Barrier`. After the barrier the deleter takes its read
-/// snapshot — a µs in-memory read that still sees the full scope because the
-/// erasure is uncommitted — and blocks on the held write lock, while the
-/// eraser commits (a ms-scale fsync). The read-vs-commit asymmetry makes the
-/// deleter observe the pre-erase scope every run, so its purge txn
-/// deterministically finds nothing once the eraser's commit lands. The
-/// astronomically-rare scheduling miss (the deleter is descheduled until
-/// after the commit) takes the FULLY-MISSING strict-noop path instead;
-/// callers detect it via the absent `dt:` marker and retry.
-pub(super) fn run_raced_delete<F>(
-    vault: &Vault,
-    id: &EntityId,
-    reason: DeleteReason,
-    erase_scope: F,
-) -> Result<DeleteEntityOutcome>
-where
-    F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
-{
-    run_raced_delete_inner(vault, id, reason, erase_scope, false)
-}
-
-/// ONE-1149 rendezvous variant: forces the deleter's lock-free
-/// `read_entity_header` read to complete BEFORE the eraser commits, via the
-/// vault's `#[cfg(test)]` post-header-read hook on `StoreCore::test_hooks`. The eraser `recv()`s
-/// the deleter's post-header-read signal immediately before `commit()`, so the
-/// HEADERFUL leg is exercised every run (the bare-barrier variant can rarely
-/// lose the read-vs-commit race and divert to the headerless path). Only valid
-/// for HEADERFUL deletes — the deleter MUST reach the signal after the header
-/// gate; a headerless deleter never signals and would hang the recv.
+/// Orders a headerful deleter's read before the eraser commits. The staged
+/// erasure remains invisible to the read probe until the vault-local hook
+/// signals; the held write transaction then commits before deletion continues.
+/// Only valid for headerful deletes, which reach the post-header-read hook.
 pub(super) fn run_raced_delete_rendezvous<F>(
     vault: &Vault,
     id: &EntityId,
@@ -631,60 +600,15 @@ pub(super) fn run_raced_delete_rendezvous<F>(
 where
     F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
 {
-    run_raced_delete_inner(vault, id, reason, erase_scope, true)
-}
-
-pub(super) fn run_raced_delete_inner<F>(
-    vault: &Vault,
-    id: &EntityId,
-    reason: DeleteReason,
-    erase_scope: F,
-    rendezvous: bool,
-) -> Result<DeleteEntityOutcome>
-where
-    F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
-{
-    let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
-    // ONE-1149 rendezvous: a rendezvous (`sync_channel(0)`) sender installed
-    // into the production `#[cfg(test)]` seam. The deleter sends after it
-    // proves the header `Some` (still holding no write lock); the eraser
-    // recv()s just before its commit. The seam belongs to this vault, so the
-    // deleter thread arms it there before it is released.
-    let (rendezvous_tx, rendezvous_rx) = if rendezvous {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
-    };
     std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
         let mut wtxn = vault.store.env.write_txn()?;
-        // Stage the scope erasure in the held txn but DO NOT commit yet —
-        // LMDB MVCC keeps it invisible to the deleter's read probe, so the
-        // deleter is guaranteed to pass that probe with the scope present.
         erase_scope(&mut wtxn)?;
-        let deleter_gate = std::sync::Arc::clone(&gate);
-        let deleter = scope.spawn(move || {
-            if let Some(tx) = rendezvous_tx {
-                vault.test_hooks().install_after_header_read_signal(tx);
-            }
-            deleter_gate.wait();
-            vault.delete_entity_with_reason(id, reason)
-        });
-        // Release the deleter; it reads its scope (still present) and blocks
-        // on this thread's single write lock. Committing the erasure here
-        // unblocks it into a purge txn that now deterministically finds
-        // nothing to erase.
-        gate.wait();
-        if let Some(rx) = &rendezvous_rx {
-            // Deadlock-free: the deleter reaches the post-header-read signal
-            // BEFORE it needs any write lock, so this recv() unblocks; we then
-            // commit (releasing the write lock the deleter's purge txn is
-            // waiting on). deleter reads header present -> signals -> we commit
-            // + release lock -> deleter's purge txn proceeds and finds the
-            // scope scrubbed.
-            rx.recv()
-                .expect("deleter must signal after the header read");
-        }
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        vault.test_hooks().install_after_header_read_signal(tx);
+        let deleter = scope.spawn(|| vault.delete_entity_with_reason(id, reason));
+        // The signal fires before the deleter needs the write lock held here.
+        rx.recv_timeout(std::time::Duration::from_secs(30))
+            .expect("deleter must signal after the header read");
         wtxn.commit()?;
         deleter.join().expect("deleter thread must not panic")
     })

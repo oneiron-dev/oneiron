@@ -16,7 +16,7 @@ use crate::deletion::DeleteReason;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY};
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK};
 use crate::vault::{LiveEntityRow, edge_kind_prefix, live_entity_row_in_txn};
 use uuid::Uuid;
 
@@ -62,7 +62,7 @@ type EmptinessPredicate = fn(&Vault, &heed::RoTxn<'_>, &EntityId) -> Result<bool
 /// The extension point the canon asks for. ARC_THREAD activates by adding one
 /// row here once that kind has an engine byte — no other edit, and nothing
 /// about the two shipped arms moves.
-pub(super) const CLEANUP_CHECKS: [(u8, CleanupKind, EmptinessPredicate); 2] = [
+pub(super) const CLEANUP_CHECKS: [(u8, CleanupKind, EmptinessPredicate); 3] = [
     (
         ENTITY_TYPE_PERSON,
         CleanupKind::ClaimlessExtractionPerson,
@@ -72,6 +72,11 @@ pub(super) const CLEANUP_CHECKS: [(u8, CleanupKind, EmptinessPredicate); 2] = [
         ENTITY_TYPE_SUMMARY,
         CleanupKind::EmptySummary,
         summary_is_empty,
+    ),
+    (
+        ENTITY_TYPE_TASK,
+        CleanupKind::CompletedTask,
+        super::retention::task_is_past_retention,
     ),
 ];
 
@@ -378,6 +383,14 @@ pub(super) fn apply_archives_in_txn(
     let mut archived = Vec::new();
     let mut skipped = Vec::new();
     for candidate in candidates {
+        if candidate.kind == CleanupKind::CompletedAttempt {
+            if super::attempt_retention::archive(vault, wtxn, candidate.entity)? {
+                archived.push(candidate.entity);
+            } else {
+                skipped.push(candidate.entity);
+            }
+            continue;
+        }
         let still_empty = zero_live_members_in_txn(vault, wtxn, &candidate.entity)?;
         if still_empty != Some(candidate.kind) {
             skipped.push(candidate.entity);

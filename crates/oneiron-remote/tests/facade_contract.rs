@@ -11,7 +11,20 @@ use oneiron_remote::{FACADE_VERB_CATALOG, OneironClient, OpenOptions, unix_secon
 
 /// The declared catalog, spelled once here so a silent reorder or addition in
 /// the crate fails a test rather than a downstream census.
-const EXPECTED_CATALOG: [&str; 4] = ["witness", "claim_upsert", "recall", "receipts"];
+const EXPECTED_CATALOG: [&str; 12] = [
+    "witness",
+    "claim_upsert",
+    "recall",
+    "receipts",
+    "tasks.ask",
+    "tasks.wait",
+    "tasks.answer",
+    "tasks.outcomes",
+    "rooms.list",
+    "rooms.messages",
+    "rooms.claim",
+    "rooms.speak",
+];
 
 /// §Test/Shared #1 — `facade_contract_catalog_is_exact`.
 #[test]
@@ -35,8 +48,8 @@ fn remote_route_catalog_is_total() {
             !verb.is_empty()
                 && verb
                     .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
-            "{verb:?} must match ^[a-z0-9_]+$ to be a facade path segment"
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.'),
+            "{verb:?} must match ^[a-z0-9_.]+$ to be a facade path segment"
         );
         assert!(seen.insert(verb), "{verb:?} appears twice in the catalog");
     }

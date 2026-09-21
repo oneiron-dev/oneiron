@@ -190,27 +190,58 @@ pub(super) fn mint_open_session(vault: &crate::Vault, at: u64) -> EntityId {
 /// The store as the ceiling door must leave it after a refusal: no MESSAGE,
 /// TURN or CONVERSATION row, no edge out of any message id, and no BM25
 /// posting for the refused text.
-pub(super) fn assert_witness_left_nothing(vault: &crate::Vault, refused_text: &str) {
+/// Witness assertions exclude only the known house room, not arbitrary channel rows.
+pub(super) fn witness_conversations(vault: &crate::Vault) -> crate::Result<Vec<EntityId>> {
+    let root = vault
+        .project(vault.root_project()?)?
+        .ok_or(crate::Error::EntityNotFound)?;
+    let house = EntityId::from_hex(&root.home_room)?;
+    Ok(vault
+        .entities_by_type(ENTITY_TYPE_CONVERSATION)?
+        .into_iter()
+        .filter(|id| *id != house)
+        .collect())
+}
+
+pub(super) fn witness_edge_count(vault: &crate::Vault) -> u64 {
+    (0..=u8::MAX)
+        .map(|kind| {
+            vault
+                .entities_by_type(kind)
+                .expect("entity census")
+                .into_iter()
+                .map(|id| vault.edges_out(&id).expect("public edge query").len() as u64)
+                .sum::<u64>()
+        })
+        .sum()
+}
+
+pub(super) fn assert_witness_left_nothing(
+    vault: &crate::Vault,
+    refused_text: &str,
+    expected_edge_count: u64,
+) {
     for (entity_type, label) in [
         (ENTITY_TYPE_MESSAGE, "MESSAGE"),
         (ENTITY_TYPE_TURN, "TURN"),
         (ENTITY_TYPE_CONVERSATION, "CONVERSATION"),
     ] {
+        let rows = if entity_type == ENTITY_TYPE_CONVERSATION {
+            witness_conversations(vault)
+        } else {
+            vault.entities_by_type(entity_type)
+        }
+        .expect("type scan");
         assert!(
-            vault
-                .entities_by_type(entity_type)
-                .expect("type scan")
-                .is_empty(),
+            rows.is_empty(),
             "a refused witness left a {label} row behind"
         );
     }
-    let rtxn = vault.store.env.read_txn().expect("read txn");
     assert_eq!(
-        vault.store.edges_out.len(&rtxn).expect("edge count"),
-        0,
+        witness_edge_count(vault),
+        expected_edge_count,
         "a refused witness left an edge behind"
     );
-    drop(rtxn);
     assert!(
         vault
             .search_text(refused_text, 10)

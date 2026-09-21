@@ -135,6 +135,10 @@ fn scope_to_json(scope: &QueryScope) -> Value {
 fn filter_to_json(filter: &FilterAst) -> Value {
     let mut root = JsonMap::new();
     match filter {
+        FilterAst::TaskOwner { owner } => {
+            root.insert("op".to_owned(), Value::String("task_owner".to_owned()));
+            root.insert("owner".to_owned(), Value::String(owner.to_hex()));
+        }
         FilterAst::All { terms } | FilterAst::Any { terms } => {
             let op = if matches!(filter, FilterAst::All { .. }) {
                 "all"

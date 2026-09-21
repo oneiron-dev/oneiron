@@ -73,7 +73,7 @@ pub(super) const ERR_BLANK_EVENT_ID: &str =
 pub(super) const ERR_LINK_REVISION_OVERFLOW: &str = "linear_sync link revision";
 
 /// Which way one mirror operation moved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinearSyncDirection {
     /// Engine → tracker.
     TaskToIssue,
@@ -121,7 +121,8 @@ impl LinearMirrorStatus {
 }
 
 /// The tracker-side identity of a mirrored issue.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LinearIssueRef {
     /// Opaque tracker id; the join key of the link row.
     pub issue_id: String,
@@ -132,9 +133,11 @@ pub struct LinearIssueRef {
 }
 
 /// The durable one-to-one link between a TASK and an issue.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskIssueLink {
     /// The mirrored TASK entity.
+    #[serde(with = "super::storage_codec::entity_ref")]
     pub task_ref: EntityId,
     /// The mirrored issue.
     pub issue: LinearIssueRef,
@@ -265,7 +268,8 @@ impl TaskIssueLink {
 }
 
 /// The bidirectional field set, in the engine's own vocabulary.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct MirroredTaskFields {
     /// Short title.
     pub title: String,
@@ -520,7 +524,8 @@ pub trait LinearTaskStore {
 }
 
 /// One field both sides edited since the common base.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LinearFieldConflict {
     /// The bidirectional field name.
     pub field: String,

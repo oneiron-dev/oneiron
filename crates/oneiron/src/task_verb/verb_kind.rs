@@ -2,47 +2,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 
-/// Exact agent-visible TASKS verb family in protocol sort order.
-pub const TASKS_VERBS: [&str; 5] = [
-    "tasks.ack",
-    "tasks.cancel",
-    "tasks.check",
-    "tasks.create",
-    "tasks.expand",
-];
-
-/// The five typed verbs available over the TASKS section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TasksVerb {
-    Ack,
-    Cancel,
-    Check,
-    Create,
-    Expand,
-}
-
-impl TasksVerb {
-    /// All typed TASKS verbs in protocol sort order.
-    pub const ALL: [Self; 5] = [
-        Self::Ack,
-        Self::Cancel,
-        Self::Check,
-        Self::Create,
-        Self::Expand,
-    ];
-
-    /// Stable protocol identifier for this typed verb.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Ack => "tasks.ack",
-            Self::Cancel => "tasks.cancel",
-            Self::Check => "tasks.check",
-            Self::Create => "tasks.create",
-            Self::Expand => "tasks.expand",
-        }
-    }
-}
+include!("verb_catalog.rs");
 
 /// Shape discriminator on the typed TASK body. Absent on a schema-v1 row,
 /// where it means [`TaskKind::Standard`].
@@ -82,9 +42,17 @@ impl TaskKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskAssignee {
     Dreamer,
-    AgentDef { agent_def_ref: EntityId },
-    Peer { actor_ref: EntityId },
-    Human { actor_ref: EntityId },
+    /// Immutable holder set is carried by the typed ask spec.
+    AnswerHolders,
+    AgentDef {
+        agent_def_ref: EntityId,
+    },
+    Peer {
+        actor_ref: EntityId,
+    },
+    Human {
+        actor_ref: EntityId,
+    },
 }
 
 impl TaskAssignee {
@@ -93,6 +61,7 @@ impl TaskAssignee {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Dreamer => "dreamer",
+            Self::AnswerHolders => "answer_holders",
             Self::AgentDef { .. } => "agent_def",
             Self::Peer { .. } => "peer",
             Self::Human { .. } => "human",
@@ -103,7 +72,7 @@ impl TaskAssignee {
     #[must_use]
     pub const fn entity_ref(self) -> Option<EntityId> {
         match self {
-            Self::Dreamer => None,
+            Self::Dreamer | Self::AnswerHolders => None,
             Self::AgentDef { agent_def_ref } => Some(agent_def_ref),
             Self::Peer { actor_ref } | Self::Human { actor_ref } => Some(actor_ref),
         }
@@ -121,7 +90,9 @@ impl TaskAssignee {
             Self::AgentDef { .. } => stored == Some(crate::registry::ENTITY_TYPE_AGENT_DEF),
             // A peer/human actor is whatever kind the identity plane stores it
             // as (PERSON today); existence is the assertable invariant.
-            Self::Dreamer | Self::Peer { .. } | Self::Human { .. } => stored.is_some(),
+            Self::Dreamer | Self::AnswerHolders | Self::Peer { .. } | Self::Human { .. } => {
+                stored.is_some()
+            }
         };
         if admitted {
             Ok(())

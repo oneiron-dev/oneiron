@@ -365,6 +365,15 @@ impl Memory<'_> {
         entity_ref: &str,
         reason: SafeDeleteReason,
     ) -> MemoryResult<DeleteReceipt> {
+        self.safe_delete_checked(entity_ref, reason, |_| Ok(()))
+    }
+
+    pub(super) fn safe_delete_checked(
+        &self,
+        entity_ref: &str,
+        reason: SafeDeleteReason,
+        check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<DeleteReceipt> {
         let gate = self.evaluate_deletion_gate()?;
         let id = self.resolve_ref(entity_ref)?;
         // The re-check the destructive transactions re-run against their OWN
@@ -378,14 +387,14 @@ impl Memory<'_> {
         // second, weaker vocabulary for the same refusal.
         let refusal: std::cell::RefCell<Option<MemoryError>> = std::cell::RefCell::new(None);
         let reverify = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
-            verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class).map_err(
-                |err| {
+            verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class)
+                .and_then(|()| check(txn))
+                .map_err(|err| {
                     *refusal.borrow_mut() = Some(err);
                     Error::ConcurrentWrite(
                         "deletion authority changed before the destructive commit",
                     )
-                },
-            )
+                })
         };
         let outcome = self
             .vault

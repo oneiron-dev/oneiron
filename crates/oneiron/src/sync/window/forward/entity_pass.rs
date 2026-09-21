@@ -39,7 +39,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
     let marked = &ledger.marked;
     let healed = &mut ledger.healed;
     let terminal_quarantines = &mut ledger.terminal_quarantines;
-    let pending_subject_model_dependencies = &mut ledger.pending_subject_model_dependencies;
+    let pending_entity_dependencies = &mut ledger.pending_entity_dependencies;
     let mut count = ledger.count;
 
     // Entities
@@ -494,12 +494,13 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
                 Ok(false) => {}
                 Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
-                    let subject_pending =
-                        crate::subject_model::subject_model_dependency_pending(&err);
-                    if subject_pending {
-                        pending_subject_model_dependencies.insert(id);
+                    let dependency_pending =
+                        crate::subject_model::subject_model_dependency_pending(&err)
+                            || err.kind() == crate::error::ErrorKind::ProjectDependencyPending;
+                    if dependency_pending {
+                        pending_entity_dependencies.insert(id);
                     }
-                    let retryable = subject_pending
+                    let retryable = dependency_pending
                         || matches!(
                             err,
                             Error::Sync(SyncError::MaintenanceIngestQuotaExceeded { .. })

@@ -527,3 +527,6 @@ fn topological_order(tasks: &BTreeMap<String, PlannedTask>) -> WaveResult<Vec<St
 
 #[cfg(test)]
 mod tests;
+
+/// Production vault-backed TASK port.
+pub use crate::task_verb::VaultWaveTaskPort;

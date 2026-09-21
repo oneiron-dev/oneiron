@@ -114,6 +114,7 @@ impl McpSurfaceMode {
 pub enum McpVerbFamily {
     Board,
     Tasks,
+    Rooms,
 }
 
 impl McpVerbFamily {
@@ -122,6 +123,7 @@ impl McpVerbFamily {
         match self {
             Self::Board => "board",
             Self::Tasks => "tasks",
+            Self::Rooms => "rooms",
         }
     }
 
@@ -129,6 +131,7 @@ impl McpVerbFamily {
         match prefix {
             "board" => Some(Self::Board),
             "tasks" => Some(Self::Tasks),
+            "rooms" => Some(Self::Rooms),
             _ => None,
         }
     }
@@ -140,19 +143,7 @@ impl McpVerbFamily {
 /// exported row and can never introduce a tool name of its own. A row with no
 /// binding is unprojectable and fails endpoint construction rather than
 /// listing a tool nothing can execute.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum McpVerbBinding {
-    BoardExpand,
-    BoardRefresh,
-    BoardSubscribe,
-    BoardUnsubscribe,
-    TasksAck,
-    TasksCancel,
-    TasksCheck,
-    TasksCreate,
-    TasksExpand,
-}
-
+///
 /// One tool-first tool, generated 1:1 from one exported verb row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct McpGeneratedVerbTool {
@@ -181,6 +172,7 @@ pub fn exported_verb_rows() -> Vec<&'static str> {
     let mut rows = Vec::with_capacity(BOARD_VERBS.len() + TASKS_VERBS.len());
     rows.extend_from_slice(&BOARD_VERBS);
     rows.extend_from_slice(&TASKS_VERBS);
+    rows.extend_from_slice(&oneiron::workspace_roster::ROOMS_VERBS);
     rows
 }
 
@@ -241,7 +233,12 @@ fn project_verb_row(
     })
 }
 
+include!("agent_catalog.rs");
+
 fn verb_binding(family: McpVerbFamily, verb: &str) -> Option<McpVerbBinding> {
+    if let Some(binding) = agent_binding(family, verb) {
+        return Some(binding);
+    }
     match (family, verb) {
         (McpVerbFamily::Board, "expand") => Some(McpVerbBinding::BoardExpand),
         (McpVerbFamily::Board, "refresh") => Some(McpVerbBinding::BoardRefresh),

@@ -26,7 +26,10 @@ pub use step::{
     reconcile_peer_result_signals, register_peer_result_wait, register_wait,
     send_peer_result_signal, send_trap_signal, trap_for_durable_wait, trap_park_owner,
 };
-pub(crate) use step::{deindex_dreamer_step_claim, index_dreamer_step_claim_for_put};
+pub(crate) use step::{
+    consume_step_wait_in_txn, deindex_dreamer_step_claim, index_dreamer_step_claim_for_put,
+    open_step_wait_in_txn, register_detached_step_in_txn, signal_step_wait_in_txn,
+};
 
 pub use budget::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
@@ -101,3 +104,6 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 #[cfg(test)]
 use std::time::Duration;
+
+/// Typed question and outcome contracts.
+pub mod decision;

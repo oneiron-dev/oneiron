@@ -36,6 +36,7 @@
 
 #![forbid(unsafe_code)]
 
+mod agent_verbs;
 mod caps;
 mod embedded;
 mod error;
@@ -75,7 +76,7 @@ pub const DEFAULT_RECEIPTS_LIMIT: usize = 100;
 /// exact slice, so a verb cannot appear in one surface and be forgotten in
 /// another. Every entry is also the wire path segment, which is why the
 /// spelling is the engine's snake_case verb name and not the JavaScript one.
-pub const FACADE_VERB_CATALOG: [&str; 4] = ["witness", "claim_upsert", "recall", "receipts"];
+pub use agent_verbs::FACADE_VERB_CATALOG;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
 ///

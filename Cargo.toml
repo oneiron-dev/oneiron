@@ -108,3 +108,6 @@ too_many_lines = "deny"
 [patch.crates-io]
 heed = { path = "crates/heed/vendor/heed-0.20.5" }
 paste = { path = "crates/paste/vendor/paste-1.0.15" }
+# Match .cargo/config.toml: trybuild copies manifest patches into its external
+# offline workspace, but does not copy the checkout's Cargo configuration.
+pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }

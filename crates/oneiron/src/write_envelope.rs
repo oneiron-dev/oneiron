@@ -366,6 +366,34 @@ impl ClaimCandidate {
         self
     }
 
+    /// Derived answers cannot disclose their input through a broader reader.
+    pub(crate) fn with_private_reader(mut self, principal: EntityId) -> crate::Result<Self> {
+        let mut scope = match self.scope.take() {
+            Some(Value::Map(scope)) => scope,
+            None => Vec::new(),
+            Some(_) => return Err(crate::Error::InvalidClaimBody("scope must be a map")),
+        };
+        scope.retain(|(key, _)| key.as_str() != Some("typed_question_principal"));
+        scope.push((
+            Value::from("typed_question_principal"),
+            Value::from(principal.to_hex()),
+        ));
+        self.scope = Some(Value::Map(scope));
+        Ok(self)
+    }
+
+    pub(crate) fn with_evidence_taint(mut self, taint: ClaimSource) -> crate::Result<Self> {
+        let mut entries = match self.scope.take() {
+            Some(Value::Map(entries)) => entries,
+            None => Vec::new(),
+            Some(_) => return Err(crate::Error::InvalidClaimBody("scope must be a map")),
+        };
+        entries.retain(|(key, _)| key.as_str() != Some("evidence_taint"));
+        entries.push((Value::from("evidence_taint"), Value::from(taint.as_str())));
+        self.scope = Some(Value::Map(entries));
+        Ok(self)
+    }
+
     pub(crate) const fn subject(&self) -> ClaimSubject {
         self.subject
     }

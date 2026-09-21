@@ -1455,6 +1455,7 @@ fn self_context_round_trips_the_descriptor_without_reading_the_vault() -> Result
     use crate::context_projection::{ChatProjection, ContextSpec, MemoryProjection};
 
     let (_dir, vault) = open_test_vault();
+    let claims_before = vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?;
     let actor = seed_person(&vault, 0x51);
     let dispatcher = HostSelfDispatcher::new(
         &vault,
@@ -1515,10 +1516,8 @@ fn self_context_round_trips_the_descriptor_without_reading_the_vault() -> Result
         before
     );
     assert_eq!(
-        vault
-            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
-            .len(),
-        0
+        vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?,
+        claims_before
     );
     Ok(())
 }

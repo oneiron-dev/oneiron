@@ -1466,15 +1466,20 @@ fn clear_through_prunes_malformed_update_keys() {
 fn embed_job_roundtrip() {
     let vault = test_vault();
     let queue = SyncQueue::new(vault).unwrap();
+    let initial_count = queue.drain_embed_jobs().unwrap().len();
 
     let id = EntityId::now();
     queue.push_embed_job(&id, 1).unwrap();
 
     let jobs = queue.drain_embed_jobs().unwrap();
-    assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].entity_id, id);
-    assert_eq!(jobs[0].priority, 1);
-    assert!(jobs[0].queued_at > 0);
+    assert_eq!(jobs.len(), initial_count + 1);
+    let job = jobs
+        .iter()
+        .find(|job| job.entity_id == id)
+        .expect("fixture job");
+    assert_eq!(job.entity_id, id);
+    assert_eq!(job.priority, 1);
+    assert!(job.queued_at > 0);
 }
 
 #[test]
@@ -1508,6 +1513,7 @@ fn drain_embed_jobs_prunes_corrupt_rows() {
     for (case_name, bad_key, bad_value) in &cases {
         let vault = test_vault();
         let queue = SyncQueue::new(vault).unwrap();
+        let initial_count = queue.drain_embed_jobs().unwrap().len();
 
         let valid_id = EntityId::now();
         queue.push_embed_job(&valid_id, 1).unwrap();
@@ -1522,8 +1528,16 @@ fn drain_embed_jobs_prunes_corrupt_rows() {
         wtxn.commit().unwrap();
 
         let jobs = queue.drain_embed_jobs().unwrap();
-        assert_eq!(jobs.len(), 1, "case {case_name}: should keep valid job");
-        assert_eq!(jobs[0].entity_id, valid_id, "case {case_name}");
+        assert_eq!(
+            jobs.len(),
+            initial_count + 1,
+            "case {case_name}: should keep valid job"
+        );
+        let job = jobs
+            .iter()
+            .find(|job| job.entity_id == valid_id)
+            .expect("fixture job");
+        assert_eq!(job.entity_id, valid_id, "case {case_name}");
 
         let rtxn = queue.vault.store.env.read_txn().unwrap();
         assert!(
@@ -1543,6 +1557,7 @@ fn drain_embed_jobs_prunes_corrupt_rows() {
 fn prune_malformed_rows_keeps_repaired_embed_row() {
     let vault = test_vault();
     let queue = SyncQueue::new(vault).unwrap();
+    let initial_count = queue.drain_embed_jobs().unwrap().len();
 
     let id = EntityId::now();
     let key = encode_embed_key(&id);
@@ -1587,10 +1602,14 @@ fn prune_malformed_rows_keeps_repaired_embed_row() {
     drop(rtxn);
 
     let jobs = queue.drain_embed_jobs().unwrap();
-    assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].entity_id, id);
-    assert_eq!(jobs[0].priority, 2);
-    assert_eq!(jobs[0].queued_at, 456);
+    assert_eq!(jobs.len(), initial_count + 1);
+    let job = jobs
+        .iter()
+        .find(|job| job.entity_id == id)
+        .expect("fixture job");
+    assert_eq!(job.entity_id, id);
+    assert_eq!(job.priority, 2);
+    assert_eq!(job.queued_at, 456);
 }
 
 #[test]

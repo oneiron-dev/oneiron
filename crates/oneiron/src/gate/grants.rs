@@ -32,6 +32,18 @@ pub(crate) fn scoped_read_claim_allowed(
     body: &ClaimBody,
     claim_facets: &[EntityId],
 ) -> bool {
+    // This derived-data restriction narrows even a default-open vault. The
+    // question's principal is a reader boundary, never a grant by itself.
+    if let Some(Value::Map(scope)) = &body.scope {
+        let mut readers = scope
+            .iter()
+            .filter(|(key, _)| key.as_str() == Some("typed_question_principal"));
+        if let Some((_, reader)) = readers.next()
+            && (readers.next().is_some() || reader.as_str() != Some(actor_key.actor_ref()))
+        {
+            return false;
+        }
+    }
     let diagnostics = policy.diagnostics();
     if diagnostics.loaded_manifest_forces_fail_closed() {
         return false;

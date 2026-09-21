@@ -51,3 +51,5 @@ MESSAGEs = "MESSAGEs"
 ND = "ND"
 # Prose plural of the REQUEST record type; typos splits `REQUESTs` into `REQUES` + `Ts`.
 REQUESTs = "REQUESTs"
+# PDF 1.7 spec dictionary key `DecodeParms` (byte string in blob_artifact/esign/render/streams.rs).
+DecodeParms = "DecodeParms"

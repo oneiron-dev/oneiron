@@ -535,6 +535,10 @@ impl Vault {
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
+        if matches!(seed_mode, DefaultPolicySeedMode::Required) {
+            crate::skill_hub::seed_bootstrap_skills(&vault)?;
+            crate::workspace_roster::seed_root_project(&vault)?;
+        }
         Ok(vault)
     }
 

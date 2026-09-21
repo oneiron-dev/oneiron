@@ -1688,7 +1688,7 @@ fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
                 let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
                 let cache = encode_cache_value(
                     crate::unix_seconds_now(),
-                    0,
+                    read_graph_version(&vault.store, &wtxn)?,
                     0,
                     &[ScoredEntity {
                         id: b,

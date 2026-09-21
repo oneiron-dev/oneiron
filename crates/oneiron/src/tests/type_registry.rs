@@ -241,6 +241,7 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
     use crate::registry::{TypeByteZone, entity_type_registry_entry};
 
     let (_dir, vault) = open_test_vault();
+    let initial_rows = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
 
     // Byte-space v3 narrows dynamic registration to ONE zone: compiled-product
     // 100-125. The system zone is engine-authored and the pack half belongs to
@@ -286,7 +287,7 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
         .expect_err("byte 110 is compiled-product, not system");
     assert_eq!(err.kind(), ErrorKind::StructuralKindZoneViolation);
     assert!(
-        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?.is_empty(),
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)? == initial_rows,
         "rejected zone claims must not persist registry rows"
     );
 
@@ -302,7 +303,7 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(err, Error::Registry(RegistryError::StructuralKindTypeByteCollision(byte)) if byte == ENTITY_TYPE_TASK_LIST);
     assert!(
-        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?.is_empty(),
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)? == initial_rows,
         "static-byte rejection must not persist registry rows"
     );
 
@@ -444,14 +445,16 @@ fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
     use crate::registry::TypeByteZone;
 
     let dir = tempfile::tempdir()?;
+    let before;
     {
         let vault = Vault::open(dir.path(), test_config())?;
+        before = vault.structural_kind_registrations();
         vault.register_structural_kind(110, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
 
         let key = structural_kind_registry_key(110);
         let rows = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].0, key.to_vec());
+        assert_eq!(rows.len(), before.len() + 1);
+        assert!(rows.iter().any(|row| row.0 == key));
     }
 
     let reopened = Vault::open(dir.path(), test_config())?;
@@ -462,9 +465,12 @@ fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
     assert_eq!(registration.short_id_prefix, "np");
     assert_eq!(registration.zone, TypeByteZone::CompiledProduct);
     assert_eq!(registration.pack, "notes-pack");
+    let mut expected = before;
+    expected.push(registration);
+    expected.sort_by_key(|row| row.type_byte);
     assert_eq!(
         reopened.structural_kind_registrations(),
-        vec![registration],
+        expected,
         "runtime registry must mirror persisted dynamic rows only"
     );
     Ok(())
@@ -771,7 +777,14 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     // 74 CLAIM_CLASS_DESCRIPTOR, 75 SKILL_HUB), free bytes inside
     // otherwise-live zones, the PackByteMap half (128–247), and the 255
     // sentinel.
-    for unknown in [72_u8, 74, 75, 99, 107, 125, 130, 200, 255] {
+    let free = (crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
+        ..=crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
+        .find(|kind| {
+            crate::registry::entity_type_registry_entry(*kind).is_none()
+                && vault.structural_kind_registration(*kind).is_none()
+        })
+        .unwrap();
+    for unknown in [72_u8, 74, 75, 99, free, 125, 130, 200, 255] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")

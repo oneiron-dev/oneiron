@@ -113,7 +113,7 @@ impl AttemptQueue<'_> {
     /// Reads an attempt by id inside a caller-owned write transaction.
     pub(crate) fn get_in_write_txn(
         &self,
-        wtxn: &heed::RwTxn<'_>,
+        wtxn: &heed::RoTxn<'_>,
         id: AttemptId,
     ) -> Result<Option<AttemptRecord>> {
         let Some(raw) = self.store.attempt_records.get(wtxn, id.as_bytes())? else {
@@ -147,14 +147,16 @@ impl AttemptQueue<'_> {
         Ok(records)
     }
 
-    /// Reads all persisted attempt rows in deterministic creation order.
+    /// Reads working-set attempts in creation order; archived rows remain readable by id.
     pub fn list(&self) -> Result<Vec<AttemptRecord>> {
         let rtxn = self.store.env.read_txn()?;
         let mut records = Vec::new();
         for row in self.store.attempt_records.iter(&rtxn)? {
             let (key, raw_record) = row?;
             let id = AttemptId::from_bytes(&key)?;
-            records.push(decode_record(&raw_record, id)?);
+            if !crate::vault_cleanup::attempt_is_archived(self.store, &rtxn, id, &raw_record)? {
+                records.push(decode_record(&raw_record, id)?);
+            }
         }
         records.sort_by(attempt_record_order);
         Ok(records)

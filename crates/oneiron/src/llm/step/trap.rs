@@ -7,7 +7,8 @@ use super::codec::{
 use super::peer_wait::{peer_wait_binding_delete_in_txn, peer_wait_task_for_trap};
 use super::step_claim::dreamer_runtime_envelope;
 use super::trap_binding::{
-    TrapBindingRow, trap_binding_delete_in_txn, trap_binding_put_in_txn, trap_binding_read,
+    TrapBindingRow, TrapBindingScope, trap_binding_delete_in_txn, trap_binding_put_in_txn,
+    trap_binding_read, trap_binding_read_in_txn,
 };
 use super::types::{
     DREAMER_TRAP_PREDICATE, DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION,
@@ -55,6 +56,29 @@ pub fn open_trap(
     step_hash: [u8; 32],
     note: &str,
 ) -> Result<TrapRef> {
+    vault.with_write_txn(|wtxn| {
+        open_trap_in_txn(
+            vault,
+            wtxn,
+            ctx,
+            kind,
+            step_hash,
+            note,
+            TrapBindingScope::Attempt,
+        )
+    })
+}
+
+/// Shared anchor writer for run traps and transaction-composable step waits.
+pub(super) fn open_trap_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    ctx: &DurableStepContext<'_>,
+    kind: DreamerTrapKind,
+    step_hash: [u8; 32],
+    note: &str,
+    scope: TrapBindingScope,
+) -> Result<TrapRef> {
     let claim_id = EntityId::now();
     let value = encode_trap_claim_value(&EncodedTrapClaim {
         kind,
@@ -75,22 +99,20 @@ pub fn open_trap(
         start: ctx.now_ms,
         end: ctx.now_ms,
     };
-    vault.with_write_txn(|wtxn| {
-        vault
-            .batch_in()
-            .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
-            .apply(wtxn)?;
-        trap_binding_put_in_txn(
-            vault,
-            wtxn,
-            &claim_id,
-            &TrapBindingRow {
-                attempt_id: ctx.attempt_id,
-                step_hash,
-                park_owner: trap_park_owner(&claim_id),
-            },
-        )
-    })?;
+    vault
+        .batch_in()
+        .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
+        .apply(wtxn)?;
+    trap_binding_put_in_txn(
+        vault,
+        wtxn,
+        &claim_id,
+        &TrapBindingRow {
+            attempt_id: ctx.attempt_id,
+            step_hash,
+            park_owner: scope.owner(&claim_id),
+        },
+    )?;
     Ok(TrapRef {
         trap_claim_id: claim_id,
         kind,
@@ -132,7 +154,7 @@ pub(super) fn register_wait_in_txn(
     trap: &TrapRef,
     now: u64,
 ) -> Result<DreamerTrapState> {
-    let (head_id, head) = trap_head(vault, &trap.trap_claim_id)?;
+    let (head_id, head) = trap_head_in_txn(vault, wtxn, &trap.trap_claim_id)?;
     match head.state {
         DreamerTrapState::Created => {
             append_trap_transition_in_txn(
@@ -161,14 +183,25 @@ pub fn send_trap_signal(
     step_hash: [u8; 32],
     now: u64,
 ) -> Result<EntityId> {
-    let (head_id, head) = trap_head(vault, trap_claim_id)?;
-    if head.step_hash != step_hash {
-        return Err(invalid_trap("dreamer trap signal hash mismatch"));
-    }
-    if !head.state.may_transition_to(DreamerTrapState::Sent) {
-        return Err(invalid_trap("dreamer trap signal on non-waiting trap"));
-    }
-    append_trap_transition(vault, &head_id, &head, DreamerTrapState::Sent, now, None)
+    vault.with_write_txn(|wtxn| {
+        let (head_id, head) = trap_head_in_txn(vault, wtxn, trap_claim_id)?;
+        require_attempt_scoped_signal_in_txn(vault, wtxn, trap_claim_id)?;
+        if head.step_hash != step_hash {
+            return Err(invalid_trap("dreamer trap signal hash mismatch"));
+        }
+        if !head.state.may_transition_to(DreamerTrapState::Sent) {
+            return Err(invalid_trap("dreamer trap signal on non-waiting trap"));
+        }
+        append_trap_transition_in_txn(
+            vault,
+            wtxn,
+            &head_id,
+            &head,
+            DreamerTrapState::Sent,
+            now,
+            None,
+        )
+    })
 }
 
 /// Validates and absorbs the resume signal (`→consumed`).
@@ -202,6 +235,11 @@ pub fn consume_trap_signal(
     }
     let binding = trap_binding_read(vault, &trap.trap_claim_id)?
         .ok_or(invalid_trap("dreamer trap binding missing"))?;
+    if binding.park_owner != trap_park_owner(&trap.trap_claim_id) {
+        return Err(invalid_trap(
+            "dreamer trap consume requires an attempt-scoped binding",
+        ));
+    }
     if head.step_hash != binding.step_hash
         || anchor_decoded.step_hash != binding.step_hash
         || trap.step_hash != binding.step_hash
@@ -275,6 +313,7 @@ pub(super) fn encode_trap_claim_value(claim: &EncodedTrapClaim) -> Value {
 }
 
 pub(super) struct DecodedTrapClaim {
+    pub(super) at: u64,
     pub(crate) kind: DreamerTrapKind,
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
@@ -354,9 +393,10 @@ pub(super) fn decode_trap_claim_value(value: &Value) -> Result<DecodedTrapClaim>
         ));
     }
 
-    at.ok_or(invalid_trap("missing dreamer trap value at"))?;
+    let at = at.ok_or(invalid_trap("missing dreamer trap value at"))?;
 
     Ok(DecodedTrapClaim {
+        at,
         kind: trap_kind.ok_or(invalid_trap("missing dreamer trap value trap_kind"))?,
         attempt_id: attempt_id.ok_or(invalid_trap("missing dreamer trap value job_id"))?,
         step_hash: step_hash.ok_or(invalid_trap("missing dreamer trap value step_hash"))?,
@@ -368,18 +408,23 @@ pub(super) fn decode_trap_claim_value(value: &Value) -> Result<DecodedTrapClaim>
 /// Walks forward from any claim in a trap chain to the current head by
 /// following inbound `Supersedes` edges (superseder → superseded).
 pub(super) fn trap_head(vault: &Vault, anchor: &EntityId) -> Result<(EntityId, DecodedTrapClaim)> {
+    let rtxn = vault.store.env.read_txn()?;
+    trap_head_in_txn(vault, &rtxn, anchor)
+}
+
+pub(super) fn trap_head_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    anchor: &EntityId,
+) -> Result<(EntityId, DecodedTrapClaim)> {
     let mut current = *anchor;
     for _ in 0..TRAP_CHAIN_WALK_CAP {
-        let superseder = vault
-            .edges_in(&current)?
-            .into_iter()
-            .find(|edge| edge.kind == EdgeKind::Supersedes)
-            .map(|edge| edge.target);
+        let superseder = supersedes_neighbor_in_txn(vault, rtxn, &current, true)?;
         match superseder {
             Some(next) => current = next,
             None => {
                 let body = vault
-                    .get_claim(&current)?
+                    .get_claim_in_txn(rtxn, &current)?
                     .ok_or(invalid_trap("dreamer trap record missing"))?;
                 if body.predicate != DREAMER_TRAP_PREDICATE {
                     return Err(invalid_trap("dreamer trap head is not a trap record"));
@@ -417,25 +462,9 @@ fn require_lineage_chains_to_anchor(
     Err(invalid_trap("dreamer trap supersession chain too deep"))
 }
 
-/// Appends one trap state transition: writes the next-state claim and
-/// supersedes the current head in ONE wtxn. Illegal transitions are typed
-/// rejects and write nothing.
-fn append_trap_transition(
-    vault: &Vault,
-    head_id: &EntityId,
-    head: &DecodedTrapClaim,
-    next: DreamerTrapState,
-    now: u64,
-    note_override: Option<&str>,
-) -> Result<EntityId> {
-    vault.with_write_txn(|wtxn| {
-        append_trap_transition_in_txn(vault, wtxn, head_id, head, next, now, note_override)
-    })
-}
-
-/// Transaction-composable body of [`append_trap_transition`], so the consume
-/// path can co-commit the transition with the `resume_parked` un-park.
-fn append_trap_transition_in_txn(
+/// Appends a legal C9 transition and supersedes its head in the caller's
+/// transaction. The claim read sees anchors written earlier in that transaction.
+pub(super) fn append_trap_transition_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     head_id: &EntityId,
@@ -448,7 +477,7 @@ fn append_trap_transition_in_txn(
         return Err(invalid_trap("illegal dreamer trap state transition"));
     }
     let head_body = vault
-        .get_claim(head_id)?
+        .get_claim_in_txn(wtxn, head_id)?
         .ok_or(invalid_trap("dreamer trap record missing"))?;
     let envelope = envelope_from_claim_body(&head_body)?;
     let subject = match head_body.subject {
@@ -526,4 +555,55 @@ pub(super) fn envelope_from_claim_body(body: &ClaimBody) -> Result<WriteEnvelope
         WriteProvenance::new(provenance)?,
         ClaimApprovalStatus::Proposed,
     ))
+}
+
+/// A trap chain is linear. Refuse branch/merge ambiguity rather than picking
+/// an attacker-controlled first edge in LMDB key order.
+pub(super) fn supersedes_neighbor_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    inbound: bool,
+) -> Result<Option<EntityId>> {
+    let database = if inbound {
+        &vault.store.edges_in
+    } else {
+        &vault.store.edges_out
+    };
+    let prefix = crate::vault::edge_kind_prefix(id, EdgeKind::Supersedes);
+    let mut edges = database.prefix_iter(rtxn, &prefix)?;
+    let neighbor = edges
+        .next()
+        .transpose()?
+        .map(|(key, value)| crate::vault::parse_edge_record(&key, &value).map(|edge| edge.target))
+        .transpose()?;
+    if edges.next().transpose()?.is_some() {
+        return Err(invalid_trap("step-only trap supersession chain branches"));
+    }
+    Ok(neighbor)
+}
+
+/// Generic callers may name any node in a trap chain. Walk back to the local
+/// anchor before accepting a signal, so naming the Waiting head cannot bypass
+/// a STEP-ONLY binding's transaction-bound first-answer door.
+fn require_attempt_scoped_signal_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let mut current = *id;
+    for _ in 0..TRAP_CHAIN_WALK_CAP {
+        if let Some(binding) = trap_binding_read_in_txn(vault, rtxn, &current)?
+            && binding.park_owner == TrapBindingScope::StepOnly.owner(&current)
+        {
+            return Err(invalid_trap(
+                "step-only signal requires its transaction-bound door",
+            ));
+        }
+        match supersedes_neighbor_in_txn(vault, rtxn, &current, false)? {
+            Some(previous) => current = previous,
+            None => return Ok(()),
+        }
+    }
+    Err(invalid_trap("dreamer trap supersession chain too deep"))
 }

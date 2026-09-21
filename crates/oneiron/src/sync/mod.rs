@@ -33,6 +33,7 @@ mod convergence_props_internal;
 mod diagnostic_ingest;
 pub mod documents;
 pub mod lease;
+mod local_claims;
 pub(crate) mod loro_support;
 pub mod manager;
 pub mod quarantine;

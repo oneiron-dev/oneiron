@@ -18,6 +18,7 @@ use crate::error::Result;
 use crate::federation::{FederationGrantScope, selector_range_of};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_WORLD};
 use crate::sync::bridge::parse_edge_key;
+use crate::sync::local_claims::claim_sync_allowed;
 use crate::sync::loro_support::map_for_each_value_bytes;
 
 use super::codec::{EmptyAxis, SyncSelector, SyncSelectorWorld};
@@ -408,6 +409,9 @@ pub(super) fn entity_selector_decision(
     coreference: &CoreferenceExportContext,
 ) -> Option<EntitySelectorDecision> {
     let header = EntityMetadataHeader::parse(blob)?;
+    if !claim_sync_allowed(blob) {
+        return None;
+    }
     if !coreference_claim_passes(header.entity_type, blob, coreference) {
         return None;
     }

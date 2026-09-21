@@ -355,15 +355,21 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     if companion_register_blob_is_local_only(&blob)? {
         return Ok(EndpointHydration::LocalOnly);
     }
-    if !materialize_entity_blob_in_txn(
+    // Late body/project validation can fail after staging. The edge batch
+    // quarantines remote failures and commits siblings, so hydration needs
+    // the same per-entity rollback boundary as the entity-delta observer.
+    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+    let materialized = materialize_entity_blob_in_txn(
         vault,
-        wtxn,
+        &mut savepoint,
         tombstones_map,
         window_key,
         &hex_id,
         &blob,
         lease_vault_id,
-    )? {
+    )?;
+    savepoint.commit()?;
+    if !materialized {
         return Ok(EndpointHydration::Deferred);
     }
     // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the

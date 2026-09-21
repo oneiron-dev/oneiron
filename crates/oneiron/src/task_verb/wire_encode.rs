@@ -35,7 +35,7 @@ pub(super) fn entity_ref_value(entity_ref: EntityId) -> Value {
 pub(super) fn task_assignee_value(assignee: TaskAssignee) -> Value {
     let mut entries = vec![(Value::from("kind"), Value::from(assignee.as_str()))];
     match assignee {
-        TaskAssignee::Dreamer => {}
+        TaskAssignee::Dreamer | TaskAssignee::AnswerHolders => {}
         TaskAssignee::AgentDef { agent_def_ref } => entries.push((
             Value::from("agent_def_ref"),
             entity_ref_value(agent_def_ref),
@@ -271,7 +271,12 @@ fn task_execution_state_value(state: &TaskExecutionState) -> Value {
 }
 
 pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
+    let mirror_fields = body.mirror_fields.as_ref().map_or(Value::Nil, |fields| {
+        let encoded = rmp_serde::to_vec_named(fields).expect("serializing task mirror fields");
+        rmpv::decode::read_value(&mut encoded.as_slice()).expect("typed mirror MessagePack")
+    });
     let value = Value::Map(vec![
+        (Value::from("mirror_fields"), mirror_fields),
         (Value::from("role"), Value::from(body.role)),
         (
             Value::from("schema_version"),

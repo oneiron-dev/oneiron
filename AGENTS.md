@@ -86,13 +86,15 @@ Run `--profile full` (or `scripts/verify.sh`) before claiming a VERDICT.
 
 Linux is the reference host. On macOS:
 
-- `TMPDIR` must be a real path, e.g. `mkdir -p /private/tmp/oneiron-t && export
-  TMPDIR=/private/tmp/oneiron-t`. The default `/var/folders/…` is a symlink and 10
-  `secret_lease::tests` refuse it.
-- `oneiron-napi` links its test binary on macOS: its build script passes the linker
-  `-undefined dynamic_lookup` for every link of the crate, so `cargo test -p oneiron-napi` runs
-  there. On Linux it still does not link off a Node host (ONE-1997), so Linux workspace runs
-  and `scripts/verify.sh` keep `--exclude oneiron-napi`.
+- Prefer a real `TMPDIR`, e.g. `mkdir -p /private/tmp/oneiron-t && export
+  TMPDIR=/private/tmp/oneiron-t`. Secret lease/snapshot fixtures canonicalize their temp root
+  before creating test paths, so macOS's `/var` alias does not mask their intentional symlink
+  tests. Production secret-file policy still refuses symlink ancestors.
+- `oneiron-napi` links its test binary on macOS through `-undefined dynamic_lookup`.
+  Linux Rust tests enable napi-rs `dyn-symbols` through a Linux-only dev-dependency;
+  normal production builds still resolve Node-API symbols from the importing Node host.
+  Hostless Rust tests cover conversion/engine logic, not the JS ABI. Real Node-host tests
+  remain necessary. `scripts/verify.sh` retains its existing `--exclude oneiron-napi`.
 - 7 `oneiron-bench` `eval::tests::*` cases fail on macOS with `VaultRootPreflight …
   UnsupportedPlatform` and pass on Linux. Known; ticket pending.
 - Full suite on an M4 Max (16 cores): ~8 min wall warm, ~9.5k tests across 41 binaries.
@@ -144,10 +146,11 @@ build to work around an occupied target directory.
 
 ## Landmines
 
-- `oneiron-napi` cannot link its test binary on Linux without a Node host (the `napi_*`
-  symbols come from that host). macOS links it through `-undefined dynamic_lookup`.
-  `scripts/verify.sh` excludes it on all hosts; distributed nextest legs exclude it only on
-  Linux, preserving their macOS napi coverage. macOS CI includes it too.
+- `oneiron-napi` hostless Rust tests are not JS ABI tests: Linux test builds use napi-rs
+  dynamic symbols, and macOS uses `-undefined dynamic_lookup`. Production addons still need
+  a real Node host. `scripts/verify.sh` retains its exclusion on all hosts; distributed nextest
+  legs retain their Linux exclusion. Neither exclusion is changed by the test-link repair.
+  macOS CI includes the crate too.
 - Never run `scripts/review-pr.sh` — it doesn't exist. Deleted as dead/banned/zero-referenced;
   if you find a reference to it, that reference is stale.
 - Pre-GA, no deployed vaults: don't request migrations or legacy decoders for storage-ABI

@@ -13,6 +13,7 @@ mod codec;
 mod execute;
 mod peer_wait;
 mod step_claim;
+mod step_only;
 mod step_state;
 mod trap;
 mod trap_binding;
@@ -38,8 +39,15 @@ pub use self::types::{
     DurableStepContext, DurableStepError, DurableStepResult, StepOutcome, StepProgression, TrapRef,
 };
 
+pub(crate) use self::step_only::{
+    consume_step_wait_in_txn, open_step_wait_in_txn, register_detached_step_in_txn,
+    signal_step_wait_in_txn,
+};
+
 pub(crate) use self::step_claim::{deindex_dreamer_step_claim, index_dreamer_step_claim_for_put};
 
+#[cfg(test)]
+mod step_only_tests;
 #[cfg(test)]
 mod tests;
 

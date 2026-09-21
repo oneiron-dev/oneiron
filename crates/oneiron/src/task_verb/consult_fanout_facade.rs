@@ -3,8 +3,8 @@ use rmpv::Value;
 use crate::entity_id::EntityId;
 use crate::gate::PolicyApprovalCeiling;
 use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
-    OutboundDraftInput, facade_provenance, verify_actor_binding,
+    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, OutboundDraftInput,
+    facade_provenance, verify_actor_binding,
 };
 use crate::registry::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
@@ -23,7 +23,7 @@ use super::follow_up::{
     consult_expiry_artifact_value, set_task_follow_up_marker_in_txn, task_follow_up_dedupe_key,
     task_follow_up_marker,
 };
-use super::rate_limit::{consume_create_rate_slot, task_actor_ceiling, task_verb_contract};
+use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl, TasksVerb};
 use super::wire_decode::task_verb_body;
@@ -92,21 +92,14 @@ impl Memory<'_> {
             }
             let mut task_refs = Vec::with_capacity(validated.len());
             for entry in &validated {
-                // All-or-nothing: a quota refusal mid-fan-out aborts the whole
-                // transaction rather than minting a silent subset.
-                if !consume_create_rate_slot(
+                // Count every mint; OF-520 never refuses a task for rate.
+                record_task_create(
                     self.vault(),
                     wtxn,
                     self.actor(),
                     rate_now,
                     TaskCreateRateLimit::default(),
-                )? {
-                    return Err(consult_refusal(
-                        MEMORY_CODE_INVALID_STATE,
-                        "fan-out exceeds the actor's create quota for this window",
-                        "Retry the whole fan-out in the next window.",
-                    ));
-                }
+                )?;
                 task_refs.push(self.mint_task_in_txn(
                     wtxn,
                     entry,
