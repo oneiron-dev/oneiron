@@ -246,7 +246,7 @@ fn authority_log_entity_blob(
 
 #[cfg(feature = "sync")]
 #[test]
-fn over_quota_peer_rejected() -> Result<()> {
+fn authority_peer_burst_is_observed_and_never_rejected() -> Result<()> {
     let vault = test_vault();
     quota::set_maintenance_ingest_quota_config(
         &vault,
@@ -255,64 +255,38 @@ fn over_quota_peer_rejected() -> Result<()> {
             quota_window_secs: 3_600,
         },
     )?;
+    vault.set_authority_observation_policy(crate::authority::AuthorityObservationPolicy {
+        ingest_check_threshold: 2,
+        ..Default::default()
+    })?;
     let owner = authority_test_key(31);
     let genesis = authority_genesis_fixture(31);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
     vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
-
-    let first = authority_enroll_fixture(vault_id, &genesis, &owner, 32, 1);
-    let second = authority_enroll_fixture(vault_id, &genesis, &owner, 33, 2);
-    let first_blob = authority_log_entity_blob(&first, 2)?;
-    let second_blob = authority_log_entity_blob(&second, 3)?;
     let doc = LoroDoc::new();
     let tombstones = doc.get_map("tombstones");
-
-    vault.with_write_txn(|wtxn| {
-        let wrote = materialize_entity_blob_in_txn(
-            &vault,
-            wtxn,
-            &tombstones,
-            "2026-03",
-            &crate::authority::authority_log_entity_id(&first)?.to_hex(),
-            &first_blob,
-            crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-        )?;
-        assert!(
-            wrote,
-            "first authority replay-door write should materialize"
-        );
-        Ok(())
-    })?;
-
-    let second_id = crate::authority::authority_log_entity_id(&second)?;
-    let err = vault
-        .with_write_txn(|wtxn| {
-            materialize_entity_blob_in_txn(
+    for n in 1..=5 {
+        let entry = authority_enroll_fixture(vault_id, &genesis, &owner, 32 + n as u8, n);
+        let blob = authority_log_entity_blob(&entry, n + 1)?;
+        let id = crate::authority::authority_log_entity_id(&entry)?;
+        vault.with_write_txn(|wtxn| {
+            assert!(materialize_entity_blob_in_txn(
                 &vault,
                 wtxn,
                 &tombstones,
                 "2026-03",
-                &second_id.to_hex(),
-                &second_blob,
-                crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-            )
-            .map(|_| ())
-        })
-        .expect_err("same authority signer must be capped by production replay-door quota");
-
-    assert!(matches!(
-        err,
-        Error::Sync(SyncError::MaintenanceIngestQuotaExceeded {
-            accepted_count: 1,
-            max_ops_per_peer_window: 1,
-            quota_window_secs: 3_600,
-            ..
-        })
-    ));
-    assert!(
-        vault.get_raw(&second_id)?.is_none(),
-        "over-quota authority replay-door blob must not be stored"
-    );
+                &id.to_hex(),
+                &blob,
+                crate::sync::lease::DEFAULT_LEASE_VAULT_ID
+            )?);
+            Ok(())
+        })?;
+        assert!(vault.get_raw(&id)?.is_some());
+    }
+    let checks = vault.authority_ingest_checks()?;
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].count, 3);
+    assert!(quota::maintenance_ingest_quota_snapshots(&vault)?.is_empty());
     Ok(())
 }
 

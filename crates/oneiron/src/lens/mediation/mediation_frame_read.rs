@@ -283,8 +283,9 @@ impl LensRenderFrame {
                 "lens target outside frame scope".into(),
             ));
         }
-        let Some(hydrated) =
-            scoped_read.hydrate_short_id(target.short_id(), target.content_hash())?
+        let Some(hydrated) = scoped_read
+            .hydrate_short_id(target.short_id(), target.content_hash())?
+            .value
         else {
             return Err(Error::InvalidConfig(
                 "lens backing short ref is not readable by the acting principal".to_string(),

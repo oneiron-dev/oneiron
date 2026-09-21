@@ -309,6 +309,11 @@ pub struct CoreContextPackProjection {
     /// Turn-local capability discoveries, independent of memory rows.
     #[serde(default)]
     pub capabilities: Vec<crate::context_board::CapabilityHit>,
+    /// Authorized references plus a typed withheld-data notice.
+    #[serde(flatten)]
+    pub access: crate::access_grant::GrantedData<String>,
+    /// Mandatory actor-ceiling intersection receipt.
+    pub narrowing: crate::claim::ScopedReadReceipt,
     /// Primary results.
     pub results: Vec<CoreContextPackEntityRecord>,
     /// Edge-walk neighbors.

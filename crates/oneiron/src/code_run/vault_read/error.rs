@@ -24,7 +24,7 @@ pub(super) const INTERNAL_ENGINE_CODE: &str = "INTERNAL_SERVER_ERROR";
 /// This type deliberately does NOT embed [`crate::Error`]: the crate error
 /// bridges to it with `#[from]`, and embedding would make the type recursive
 /// and non-serializable.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VaultReadError {
     /// The request failed the accepted route's own validation.
@@ -70,6 +70,9 @@ pub enum VaultReadError {
     /// The engine refused or failed the accepted operation.
     #[error("vault-read engine failure for {method:?} ({engine_code}): {message}")]
     Engine {
+        /// Present when a completed read answered absence, not on failures before a read.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        narrowing: Option<Box<crate::claim::ScopedReadReceipt>>,
         /// Method whose engine execution failed.
         method: VaultReadMethod,
         /// Stable code copied from the accepted API error vocabulary.
@@ -80,6 +83,13 @@ pub enum VaultReadError {
 }
 
 impl VaultReadError {
+    pub(super) fn with_read_receipt(mut self, receipt: crate::claim::ScopedReadReceipt) -> Self {
+        if let Self::Engine { narrowing, .. } = &mut self {
+            *narrowing = Some(Box::new(receipt));
+        }
+        self
+    }
+
     pub(super) fn method(&self) -> VaultReadMethod {
         match self {
             Self::InvalidRequest { method, .. }
@@ -108,6 +118,7 @@ pub(super) fn invalid_request(
 /// identically; the adapter never distinguishes why the route answered absence.
 pub(super) fn engine_absent(method: VaultReadMethod, field: &str) -> VaultReadError {
     VaultReadError::Engine {
+        narrowing: None,
         method,
         engine_code: NOT_FOUND_ENGINE_CODE.to_owned(),
         message: format!("{field} was not found"),
@@ -116,6 +127,7 @@ pub(super) fn engine_absent(method: VaultReadMethod, field: &str) -> VaultReadEr
 
 pub(super) fn engine_failure(method: VaultReadMethod, error: &crate::Error) -> VaultReadError {
     VaultReadError::Engine {
+        narrowing: None,
         method,
         engine_code: INTERNAL_ENGINE_CODE.to_owned(),
         message: error.to_string(),

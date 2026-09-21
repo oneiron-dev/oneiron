@@ -106,6 +106,10 @@ fn owner_notice(
 ) -> GateSystemNoticeRecord {
     let row_ref = safe_notice_row_ref(row_ref);
     let body = match (decision, row_ref.as_deref()) {
+        (PolicyClassifyDecision::Hold, _) => config.owner_hold_notice.as_deref()
+            .filter(|body| !body.trim().is_empty() && body.len() <= GATE_SYSTEM_NOTICE_BODY_MAX_LEN)
+            .unwrap_or("The policy check held this content and queued it for the human named by the matched policy row. It is not waiting for that person to be online.")
+            .to_owned(),
         (PolicyClassifyDecision::Block, Some(row_ref)) => format!(
             "Oneiron withheld this outbound content because your policy row {row_ref} asked it to."
         ),
@@ -251,6 +255,7 @@ fn safe_notice_row_ref(row_ref: &str) -> Option<String> {
 const fn notice_type_for(decision: PolicyClassifyDecision) -> &'static str {
     match decision {
         PolicyClassifyDecision::RouteToHelp => SYSTEM_NOTICE_TYPE_HELP_CARD,
+        PolicyClassifyDecision::Hold => "policy_hold",
         PolicyClassifyDecision::Block => SYSTEM_NOTICE_TYPE_BLOCK,
         PolicyClassifyDecision::Allow | PolicyClassifyDecision::Warn => SYSTEM_NOTICE_TYPE_WARN,
     }

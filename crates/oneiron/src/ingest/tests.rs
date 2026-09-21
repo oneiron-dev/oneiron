@@ -821,7 +821,7 @@ fn provider_sources_normalize_same_conversation_at_imported_trust() {
         assert_eq!(config.default_admission, ClaimApprovalStatus::Proposed);
         assert!(!config.trust_ceiling.permits_auto(Some(0)));
     }
-    assert_eq!(INGEST_SOURCE_REGISTRY.entries().len(), 21);
+    assert_eq!(INGEST_SOURCE_REGISTRY.entries().len(), 22);
 }
 
 #[test]

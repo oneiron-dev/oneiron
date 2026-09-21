@@ -17,7 +17,6 @@ use super::conn_state::ConnState;
 use super::ephemeral::encode_late_join_ephemeral_snapshot;
 use super::hello::{HelloOutcome, await_protocol_hello};
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
-use oneiron::sync::FederationQuotaConfig;
 
 use crate::auth::{RevokedTokenJtis, is_revoked_or_unreadable, require_owner_auth};
 use crate::broadcast::BroadcastSubscriber;
@@ -192,15 +191,7 @@ async fn handle_connection(
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-    let federation_quota = FederationQuotaConfig::new(
-        server.config.max_federation_windows_per_connection,
-        server.config.federation_flood_pause_secs,
-    );
-    let mut conn_state = ConnState::new(
-        server.config.max_messages_per_sec,
-        protocol_version,
-        federation_quota,
-    );
+    let mut conn_state = ConnState::new(server.config.max_messages_per_sec, protocol_version);
 
     let mut app_connection = crate::livequery::connection::Connection::new(
         crate::livequery::connection::Hub::for_server(&server),
@@ -329,8 +320,15 @@ async fn handle_connection(
                 let mut data = data;
                 let app_frame = matches!(
                     data.first().copied(),
-                    Some(protocol::TAG_RPC | protocol::TAG_SUB)
-                );
+                    Some(
+                        protocol::TAG_RPC
+                            | protocol::TAG_SUB
+                            | oneiron::sync::transport::TAG_DOCUMENT
+                            | oneiron::sync::transport::TAG_BATCH
+                    )
+                ) || (conn_state.window_sync_mode
+                    == super::conn_state::WindowSyncMode::Selector
+                    && data.first().copied() == Some(protocol::TAG_WINDOW_SYNC));
                 if app_frame
                     && conn_state.bound_auth.as_ref().is_none_or(|auth| {
                         session_credential_revoked(server.vault().as_ref(), auth.jti())
@@ -387,9 +385,25 @@ async fn handle_connection(
                 break;
             }
             Ok(WsMessage::Ping(_)) | Ok(WsMessage::Pong(_)) => {
+                if !conn_state.record_inbound_message() {
+                    tracing::warn!(
+                        conn_id,
+                        max = server.config.max_messages_per_sec,
+                        "message rate limit exceeded by control frame — closing"
+                    );
+                    break;
+                }
                 continue;
             }
             Ok(WsMessage::Text(_)) => {
+                if !conn_state.record_inbound_message() {
+                    tracing::warn!(
+                        conn_id,
+                        max = server.config.max_messages_per_sec,
+                        "message rate limit exceeded — closing"
+                    );
+                    break;
+                }
                 tracing::warn!(conn_id, "received unexpected text message");
                 continue;
             }
@@ -398,6 +412,15 @@ async fn handle_connection(
                 break;
             }
         };
+
+        if !conn_state.record_inbound_message() {
+            tracing::warn!(
+                conn_id,
+                max = server.config.max_messages_per_sec,
+                "message rate limit exceeded — closing"
+            );
+            break;
+        }
 
         // Size check
         if data.len() > server.config.max_frame_size {

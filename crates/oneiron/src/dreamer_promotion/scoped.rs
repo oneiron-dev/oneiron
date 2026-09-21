@@ -28,8 +28,9 @@ pub fn promote_scoped_consolidation(
     for mut candidate in write.candidates {
         candidate.evidence_meet = write.fence.evidence_source(&candidate)?;
         let id = candidate.claim_id;
-        match promote_one(vault, run, candidate, checker, Some(&write.fence)) {
+        match promote_one(vault, run, candidate, checker, false, Some(&write.fence)) {
             Ok(ClaimApprovalStatus::Auto) => outcome.landed.push(id),
+            Ok(ClaimApprovalStatus::Proposed) => outcome.pended.push(id),
             Ok(_) => outcome
                 .rejected
                 .push((id, "scoped promotion was not Auto".into())),

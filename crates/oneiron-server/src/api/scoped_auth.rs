@@ -21,7 +21,15 @@ pub(super) fn scoped_read_for_core_auth<'a>(
     auth: &CoreAuth,
 ) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
     let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
-    scoped_read_for_actor_ref(vault, actor_ref)
+    let mut key = oneiron::claim::ScopedReadActorKey::new(actor_ref)
+        .ok_or_else(|| ApiError::internal_server_error("scoped read actor key is empty"))?;
+    if !auth.is_owner_grade() {
+        key = key.require_access_grants(
+            auth.principal_ref()
+                .and_then(|id| oneiron::EntityId::from_hex(id).ok()),
+        );
+    }
+    Ok(vault.scoped_read(key))
 }
 
 pub(super) fn scoped_read_for_legacy_api(

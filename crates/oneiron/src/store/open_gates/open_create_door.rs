@@ -323,6 +323,7 @@ impl Store {
             let temporal_learned = OverlayDb::canonical(raw.temporal_learned);
             seed_default_policy_manifest_in_txn(
                 &entities,
+                &crate::overlay_db::OverlayStrDb::canonical(raw.sync_state),
                 &type_index,
                 &temporal_occurred_start,
                 &temporal_learned,

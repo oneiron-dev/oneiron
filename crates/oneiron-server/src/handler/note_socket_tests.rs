@@ -345,11 +345,7 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
         ..Default::default()
     };
     let server = SyncServer::new(vault.clone(), config).unwrap();
-    let mut state = ConnState::new(
-        100,
-        transport::PROTOCOL_VERSION,
-        oneiron::sync::FederationQuotaConfig::default(),
-    );
+    let mut state = ConnState::new(100, transport::PROTOCOL_VERSION);
     let (direct, mut responses) = tokio::sync::mpsc::unbounded_channel();
     let request =
         oneiron::sync::encode_selector_vv_request(&selector, &loro::VersionVector::new().encode())
@@ -602,11 +598,7 @@ async fn document_socket_update_cannot_use_a_downgraded_subscription() {
     oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
-    let mut state = ConnState::new(
-        100,
-        transport::PROTOCOL_VERSION,
-        oneiron::sync::FederationQuotaConfig::default(),
-    );
+    let mut state = ConnState::new(100, transport::PROTOCOL_VERSION);
     let (direct, _responses) = tokio::sync::mpsc::unbounded_channel();
     let request =
         oneiron::sync::encode_selector_vv_request(&selector, &loro::VersionVector::new().encode())

@@ -470,6 +470,7 @@ impl Drop for StoreOwner {
 
 pub(super) fn seed_default_policy_manifest_in_txn(
     entities: &OverlayDb,
+    sync_state: &OverlayStrDb,
     type_index: &OverlayDb,
     temporal_occurred_start: &OverlayDb,
     temporal_learned: &OverlayDb,
@@ -490,6 +491,11 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     payload.extend_from_slice(&timestamp.to_be_bytes());
     payload.extend_from_slice(&body);
     entities.put(wtxn, id.as_bytes(), &payload)?;
+    sync_state.put(
+        wtxn,
+        &crate::gate::trusted_manifest_key(id),
+        blake3::hash(&body).as_bytes(),
+    )?;
     type_index.put(
         wtxn,
         &Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, id),

@@ -106,6 +106,10 @@ impl Memory<'_> {
         }
         distinct_message_orders(&turn.messages)?;
         let route = session.write_route()?;
+        // WitnessReceipt promises materialized turns and messages. Anonymous
+        // sessions cannot fulfill that promise, so refuse before shell
+        // reservation, transaction acquisition, or policy receipt creation.
+        route.require_recording(session.session_ref())?;
         if route.target() == RouteTarget::Base {
             // Post-flip: the room is on record, so the witness takes the
             // ordinary base apply under the continuation shell. It never

@@ -26,8 +26,11 @@ mod fork_quarantine;
 mod fork_resolution;
 mod fork_scoping;
 mod foundations;
+mod observation_safety;
 mod peer_roster;
 mod readonly_fold;
 mod revoke_freeze_bypass;
 mod support;
 mod widen_veto;
+
+mod door_slip;

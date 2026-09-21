@@ -276,9 +276,15 @@ fn entity_quarantine_reasons(vault: &Vault) -> Vec<String> {
 }
 
 #[test]
-fn known_key_flood_quarantines_excess_and_bounds_authority_log_growth() {
+fn authority_flood_is_admitted_with_one_typed_check() {
     let (_dir, vault) = test_vault();
     set_quota(&vault, 2, 60 * 60);
+    vault
+        .set_authority_observation_policy(oneiron::authority::AuthorityObservationPolicy {
+            ingest_check_threshold: 2,
+            ..Default::default()
+        })
+        .unwrap();
     let materializer = Materializer::new();
     let window_key = WindowKey::new(WINDOW);
     let doc = create_window_doc("user", &window_key);
@@ -297,27 +303,36 @@ fn known_key_flood_quarantines_excess_and_bounds_authority_log_growth() {
     doc.commit();
 
     let accepted = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert_eq!(accepted, 2);
+    assert_eq!(accepted, 5);
     assert_eq!(
         vault
             .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
             .unwrap(),
-        before + 2
+        before + 5
     );
-    assert_eq!(quota_quarantine_count(&vault), 3);
+    assert_eq!(quota_quarantine_count(&vault), 0);
 
     let snapshots = maintenance_ingest_quota_snapshots(&vault).unwrap();
-    assert_eq!(snapshots.len(), 1);
-    assert_eq!(snapshots[0].accepted_count, 2);
-    assert_eq!(snapshots[0].max_ops_per_peer_window, 2);
+    assert!(snapshots.is_empty());
+    let checks = vault.authority_ingest_checks().unwrap();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].count, 3);
+    assert_eq!(checks[0].threshold, 2);
+    assert_eq!(
+        checks[0].peer_id,
+        oneiron::authority::AuthorityIngestCheck::peer_id_for_signer(&authority_key_from_ed(
+            &owner_key
+        ))
+    );
 
     let accepted_again = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
     assert_eq!(accepted_again, 0);
+    assert_eq!(vault.authority_ingest_checks().unwrap(), checks);
     assert_eq!(
         vault
             .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
             .unwrap(),
-        before + 2
+        before + 5
     );
 }
 
@@ -394,7 +409,7 @@ fn foreign_authority_log_is_quarantined_not_batch_abort_on_replay_doors() {
 }
 
 #[test]
-fn same_vault_unknown_signers_share_fallback_bucket() {
+fn same_vault_unknown_signers_are_admitted_without_rate_refusal() {
     let (_dir, vault) = test_vault();
     set_quota(&vault, 1, 60 * 60);
     let materializer = Materializer::new();
@@ -417,31 +432,24 @@ fn same_vault_unknown_signers_share_fallback_bucket() {
 
     assert_eq!(
         forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap(),
-        2
+        4
     );
     assert_eq!(
         vault
             .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
             .unwrap(),
-        before + 2
+        before + 4
     );
     assert_eq!(
         invalid_authority_log_quarantine_count(&vault),
         0,
-        "same-vault unknown signers are bounded by a shared quota bucket, not terminally rejected"
+        "same-vault unknown signers are retained for the authority fold"
     );
-    assert_eq!(
-        quota_quarantine_count(&vault),
-        2,
-        "fresh signer rotation must not create independent quota buckets"
-    );
-
-    let snapshots = maintenance_ingest_quota_snapshots(&vault).unwrap();
-    assert_eq!(snapshots.len(), 2);
+    assert_eq!(quota_quarantine_count(&vault), 0);
     assert!(
-        snapshots
-            .iter()
-            .all(|snapshot| snapshot.accepted_count == 1)
+        maintenance_ingest_quota_snapshots(&vault)
+            .unwrap()
+            .is_empty()
     );
 }
 
@@ -496,7 +504,7 @@ fn newly_enrolled_signer_entry_can_replay_before_enrollment() {
 }
 
 #[test]
-fn under_quota_peer_is_unaffected_by_another_peer_flood() {
+fn authority_replay_admits_both_peers_without_rate_refusal() {
     let (_dir, vault) = test_vault();
     set_quota(&vault, 1, 60 * 60);
     let materializer = Materializer::new();
@@ -550,33 +558,28 @@ fn under_quota_peer_is_unaffected_by_another_peer_flood() {
     doc.commit();
 
     let accepted = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert_eq!(accepted, 2);
+    assert_eq!(accepted, 3);
     assert_eq!(
         vault
             .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
             .unwrap(),
-        before + 2
+        before + 3
     );
-    assert_eq!(quota_quarantine_count(&vault), 1);
+    assert_eq!(quota_quarantine_count(&vault), 0);
     assert!(
         vault
             .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
             .unwrap()
             .contains(&peer_id),
-        "peer below its own quota must still materialize"
+        "both peers must still materialize"
     );
 
     let snapshots = maintenance_ingest_quota_snapshots(&vault).unwrap();
-    assert_eq!(snapshots.len(), 2);
-    assert!(
-        snapshots
-            .iter()
-            .all(|snapshot| snapshot.accepted_count == 1)
-    );
+    assert!(snapshots.is_empty());
 }
 
 #[test]
-fn honest_burst_quarantines_then_lazily_readmits_once_under_quota() {
+fn authority_burst_needs_no_quota_raise_or_deferred_replay() {
     let (_dir, vault) = test_vault();
     set_quota(&vault, 2, u64::MAX);
     let materializer = Materializer::new();
@@ -597,23 +600,19 @@ fn honest_burst_quarantines_then_lazily_readmits_once_under_quota() {
     doc.commit();
 
     let first = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert_eq!(first, 2);
-    assert_eq!(quota_quarantine_count(&vault), 2);
-    assert_eq!(
-        pending_remat_windows(&vault).unwrap(),
-        vec![WINDOW.to_owned()],
-        "quota overflow must keep a replay marker for lazy re-admission"
-    );
+    assert_eq!(first, 4);
+    assert_eq!(quota_quarantine_count(&vault), 0);
+    assert!(pending_remat_windows(&vault).unwrap().is_empty());
     assert_eq!(
         vault
             .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
             .unwrap(),
-        before + 2
+        before + 4
     );
 
     set_quota(&vault, 4, u64::MAX);
     let second = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert_eq!(second, 2);
+    assert_eq!(second, 0);
     assert_eq!(
         vault
             .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
@@ -622,26 +621,18 @@ fn honest_burst_quarantines_then_lazily_readmits_once_under_quota() {
     );
 
     let snapshots = maintenance_ingest_quota_snapshots(&vault).unwrap();
-    assert_eq!(snapshots.len(), 1);
-    assert_eq!(snapshots[0].accepted_count, 4);
+    assert!(snapshots.is_empty());
     assert!(
         pending_remat_windows(&vault).unwrap().is_empty(),
-        "successful lazy re-admission must clear the replay marker"
+        "authority replay creates no rate-deferral marker"
     );
 }
 
-/// The named rollback path is the POST-DEBIT one: the row must clear the
-/// replicated authority door (which is what debits quota) and then be
-/// rejected by `apply_put`'s envelope time-range gate. That only happens when
-/// the blob sits at its own CONTENT-DERIVED store key — a caller-chosen id
-/// rejects as `AuthorityLogStoreKeyMismatch` inside the door, BEFORE the
-/// debit, and would silently retire the coverage this test is named for.
-///
-/// The derived key also carries a cross-type occupant, so the assertions
-/// cover the ONE-1604-D1 dominance side effect on the same rejection: a
-/// rejected row rolls back its quota debit AND leaves the squatter in place.
+/// Invalid envelopes retain the existing occupant; valid retries displace it.
+/// Neither outcome consumes an authority ingest quota.
+
 #[test]
-fn observer_b_rolls_back_quota_when_replicated_apply_rejects() {
+fn observer_b_invalid_envelope_leaves_no_quota_trace_and_retry_admits() {
     let (_dir, vault) = test_vault();
     let vault = Arc::new(vault);
     set_quota(&vault, 1, 60 * 60);
@@ -679,7 +670,7 @@ fn observer_b_rolls_back_quota_when_replicated_apply_rejects() {
     assert_eq!(
         entity_quarantine_reasons(&vault),
         vec!["InvalidTimeRange".to_owned()],
-        "the rejection must be the post-debit envelope gate, not a pre-debit key mismatch"
+        "the rejection must be the envelope gate, not a key mismatch"
     );
     assert_eq!(
         vault
@@ -692,7 +683,7 @@ fn observer_b_rolls_back_quota_when_replicated_apply_rejects() {
         maintenance_ingest_quota_snapshots(&vault)
             .unwrap()
             .is_empty(),
-        "remote apply rejection must roll back the quota debit"
+        "authority ingest never debits a rate quota"
     );
     assert_eq!(
         vault.get_raw(&bad_id).unwrap(),
@@ -701,9 +692,7 @@ fn observer_b_rolls_back_quota_when_replicated_apply_rejects() {
     );
 
     // Same entry, well-formed envelope. Signing is deterministic, so this
-    // re-lands on `bad_id` — the rejected row's rollback must have left both
-    // the quota budget AND the key's occupant exactly as the retry found
-    // them.
+    // re-lands on `bad_id`; the rejected row must have left its occupant intact.
     let valid_entry = set_tier_floor_entry(vault_id, parent_hash, &owner_key, 1);
     let valid_id = insert_authority_entry(&doc, &valid_entry);
     assert_eq!(valid_id, bad_id, "content addressing must reuse the key");
@@ -714,7 +703,7 @@ fn observer_b_rolls_back_quota_when_replicated_apply_rejects() {
             .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
             .unwrap(),
         before + 1,
-        "valid sibling must still have the peer quota available"
+        "a valid retry must materialize"
     );
     // The dominance side effect belongs to the ACCEPTED row, not the rejected
     // one: only now does the squatter go.
@@ -724,14 +713,19 @@ fn observer_b_rolls_back_quota_when_replicated_apply_rejects() {
         "the admitted row must displace the squatter and own its derived key"
     );
     let snapshots = maintenance_ingest_quota_snapshots(&vault).unwrap();
-    assert_eq!(snapshots.len(), 1);
-    assert_eq!(snapshots[0].accepted_count, 1);
+    assert!(snapshots.is_empty());
 }
 
 #[test]
-fn quota_state_and_config_never_cross_sync_boundary() {
+fn authority_observation_and_quota_config_never_cross_sync_boundary() {
     let (_dir_a, vault_a) = test_vault();
     set_quota(&vault_a, 1, 60 * 60);
+    vault_a
+        .set_authority_observation_policy(oneiron::authority::AuthorityObservationPolicy {
+            ingest_check_threshold: 0,
+            ..Default::default()
+        })
+        .unwrap();
     let materializer_a = Materializer::new();
     let window_key = WindowKey::new(WINDOW);
     let doc_a = create_window_doc("user", &window_key);
@@ -749,10 +743,12 @@ fn quota_state_and_config_never_cross_sync_boundary() {
         forward_rematerialize(&vault_a, &doc_a, &materializer_a, &window_key).unwrap(),
         1
     );
-    assert_eq!(
-        maintenance_ingest_quota_snapshots(&vault_a).unwrap()[0].max_ops_per_peer_window,
-        1
+    assert!(
+        maintenance_ingest_quota_snapshots(&vault_a)
+            .unwrap()
+            .is_empty()
     );
+    assert_eq!(vault_a.authority_ingest_checks().unwrap().len(), 1);
 
     let snapshot = doc_a.export(ExportMode::Snapshot).unwrap();
     let imported_doc = LoroDoc::from_snapshot(&snapshot).unwrap();
@@ -786,10 +782,10 @@ fn quota_state_and_config_never_cross_sync_boundary() {
         1
     );
     let snapshots_b = maintenance_ingest_quota_snapshots(&vault_b).unwrap();
-    assert_eq!(snapshots_b.len(), 1);
-    assert_eq!(snapshots_b[0].accepted_count, 1);
+    assert!(snapshots_b.is_empty());
+    assert!(vault_b.authority_ingest_checks().unwrap().is_empty());
     assert_eq!(
-        snapshots_b[0].max_ops_per_peer_window,
-        DEFAULT_MAINTENANCE_INGEST_MAX_OPS_PER_PEER_WINDOW
+        vault_b.authority_observation_policy().unwrap(),
+        Default::default()
     );
 }

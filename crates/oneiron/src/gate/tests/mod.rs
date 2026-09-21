@@ -57,6 +57,7 @@ mod evaluator_core;
 mod external_effect_grants;
 mod gate_door;
 mod isolation_persona;
+mod manifest_authenticity;
 mod manifest_auto;
 mod policy_inputs;
 mod posture_override;
@@ -68,6 +69,7 @@ mod vad_vetting;
 mod witness_message;
 
 mod auto_signals;
+mod burst_retired;
 
 use charter_ceiling::scoped_capability_connector;
 use connector_budget::{

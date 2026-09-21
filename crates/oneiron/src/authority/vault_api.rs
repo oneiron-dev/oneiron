@@ -284,6 +284,7 @@ impl Vault {
         }
         let peer_consent_roots =
             crate::federation::admitted_peer_consent_roots_in_txn(self, &rtxn)?;
+        let observations = authority_local_observations_in_txn(&self.store, &rtxn, &entries)?;
         drop(rtxn);
         let now_secs = self.with_write_txn(|wtxn| {
             let previous_floor = self
@@ -305,11 +306,12 @@ impl Vault {
             }
             Ok(now_secs)
         })?;
-        Ok(fold_authority_log_with_peer_consent_roots(
+        Ok(fold_authority_log_with_local_observations(
             &entries,
             &first_seen_at_secs,
             now_secs,
             &peer_consent_roots,
+            &observations,
         ))
     }
 
@@ -398,11 +400,13 @@ impl Vault {
         // used for truth: omitting them here would silently reject a lifecycle
         // entry the full fold accepts.
         let peer_consent_roots = crate::federation::admitted_peer_consent_roots_in_txn(self, txn)?;
-        let fold = fold_authority_log_with_peer_consent_roots(
+        let observations = authority_local_observations_in_txn(&self.store, txn, &entries)?;
+        let fold = fold_authority_log_with_local_observations(
             &entries,
             &first_seen_at_secs,
             now_secs,
             &peer_consent_roots,
+            &observations,
         );
         // An indeterminate row is only a problem where its delay actually
         // decides something. `now_secs` is the maximum-delay assumption, so any

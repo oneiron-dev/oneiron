@@ -48,6 +48,8 @@
 
 mod core_types;
 mod decay;
+mod deferred;
+mod demotion;
 mod expression_preference;
 mod lexical_query_hint;
 mod lifecycle;
@@ -65,6 +67,7 @@ mod scope_tag;
 mod scoped_read;
 mod source_trust;
 mod status;
+mod supersession_provenance;
 mod write_target;
 
 pub use core_types::*;

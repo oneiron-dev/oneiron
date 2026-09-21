@@ -42,6 +42,8 @@ impl GitWireEffectClass {
 /// keys carry, so it is stable across releases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitWireOperation {
+    ReadConfig,
+    ConfigureCheckout,
     ReadRefs,
     ObjectInfo,
     ReachableObjects,
@@ -66,7 +68,9 @@ pub enum GitWireOperation {
     WorktreePrune,
 }
 
-pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 19] = [
+pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 21] = [
+    GitWireOperation::ReadConfig,
+    GitWireOperation::ConfigureCheckout,
     GitWireOperation::ReadRefs,
     GitWireOperation::ObjectInfo,
     GitWireOperation::ReachableObjects,
@@ -92,6 +96,8 @@ impl GitWireOperation {
     /// Stable wire name recorded on durable rows and hashed into keys.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ReadConfig => "read_config",
+            Self::ConfigureCheckout => "configure_checkout",
             Self::ReadRefs => "read_refs",
             Self::ObjectInfo => "object_info",
             Self::ReachableObjects => "reachable_objects",
@@ -117,7 +123,8 @@ impl GitWireOperation {
     /// The single effect class of this operation.
     pub const fn effect_class(self) -> GitWireEffectClass {
         match self {
-            Self::ReadRefs
+            Self::ReadConfig
+            | Self::ReadRefs
             | Self::ObjectInfo
             | Self::ReachableObjects
             | Self::ReadTree
@@ -133,9 +140,10 @@ impl GitWireOperation {
             }
             Self::NotesAdd => GitWireEffectClass::ObjectAndRefWrite,
             Self::PublishRefs => GitWireEffectClass::RefWrite,
-            Self::WorktreeAdd | Self::WorktreeRemove | Self::WorktreePrune => {
-                GitWireEffectClass::WorktreeWrite
-            }
+            Self::ConfigureCheckout
+            | Self::WorktreeAdd
+            | Self::WorktreeRemove
+            | Self::WorktreePrune => GitWireEffectClass::WorktreeWrite,
         }
     }
 

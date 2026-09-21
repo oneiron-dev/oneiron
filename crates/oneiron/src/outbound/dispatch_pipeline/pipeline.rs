@@ -73,7 +73,7 @@ impl OutboundDispatchPipeline {
         // floor below still classifies every real egress.
         if let Some(session_ref) = request.originating_session_ref.as_deref()
             && let Some(session) = vault.off_record_session(session_ref)?
-            && session.mode == crate::off_record::OffRecordMode::OffRecord
+            && session.mode != crate::off_record::OffRecordMode::OnRecord
         {
             return Err(OutboundDispatchError::Engine(Error::OffRecord(
                 OffRecordError::OffRecordTalkOnly {

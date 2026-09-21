@@ -24,6 +24,19 @@ pub(super) type VaultMetaCounterComponents = (Option<Vec<u8>>, Option<Vec<u8>>);
 pub enum OffRecordMode {
     OffRecord,
     OnRecord,
+    /// No transcript, derived memory, telemetry, or receipts are retained.
+    /// Entry is explicit; this mode cannot be changed or promoted.
+    Anonymous,
+}
+
+impl OffRecordMode {
+    pub(crate) const fn write_target(self) -> crate::session_overlay::RouteTarget {
+        match self {
+            Self::OffRecord => crate::session_overlay::RouteTarget::Overlay,
+            Self::OnRecord => crate::session_overlay::RouteTarget::Base,
+            Self::Anonymous => crate::session_overlay::RouteTarget::Discard,
+        }
+    }
 }
 
 /// Backend class the disclosure-honesty line is relative to (OF-326

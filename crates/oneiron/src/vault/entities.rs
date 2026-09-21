@@ -378,7 +378,16 @@ impl Vault {
         content_hash: u8,
     ) -> Result<Option<HydratedShortId>> {
         let rtxn = self.store.env.read_txn()?;
-        crate::ports::ShortIdStore::port_short_id_resolve(self, &rtxn, short_id, content_hash)
+        self.hydrate_short_id_in(&rtxn, short_id, content_hash)
+    }
+
+    pub(crate) fn hydrate_short_id_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        short_id: &str,
+        content_hash: u8,
+    ) -> Result<Option<HydratedShortId>> {
+        crate::ports::ShortIdStore::port_short_id_resolve(self, rtxn, short_id, content_hash)
     }
 
     /// Returns true when an entity row is a soft-delete shell, not a live

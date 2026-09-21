@@ -219,7 +219,7 @@ fn persisted_seen_time_ignores_forward_wall_clock_jumps_after_first_observation(
 }
 
 #[test]
-fn reopened_authority_clock_advances_wall_time_past_stored_floor() {
+fn reopened_authority_clock_resumes_floor_without_wall_time_aging() {
     let mut clock = AuthorityLocalClock::default();
     let now = Instant::now();
     let observed = clock.observation_secs_at(1_000, 2_500, now);
@@ -227,7 +227,7 @@ fn reopened_authority_clock_advances_wall_time_past_stored_floor() {
     // elapsed monotonic seconds may legitimately advance it past this floor.
     let backward = clock.observation_secs_at(observed, 10, now);
 
-    assert_eq!(observed, 2_500);
+    assert_eq!(observed, 1_000);
     assert_eq!(
         backward, observed,
         "wall-clock rollback after reopening must not move the floor backward"
@@ -239,16 +239,16 @@ fn reopened_authority_clock_rollback_does_not_freeze_elapsed_time() {
     let mut clock = AuthorityLocalClock::default();
     let now = Instant::now();
     let observed = clock.observation_secs_at(1_000, 2_500, now);
-    assert_eq!(observed, 2_500);
+    assert_eq!(observed, 1_000);
 
     assert_eq!(
         clock.observation_secs_at(observed, 10, now + Duration::from_millis(999)),
-        2_500,
+        1_000,
         "rollback must not advance the observation before a whole second elapses"
     );
     assert_eq!(
         clock.observation_secs_at(observed, 10, now + Duration::from_secs(1)),
-        2_501,
+        1_001,
         "rollback must not freeze monotonic progress at the persisted floor"
     );
 }
@@ -502,6 +502,8 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
     let owner_key = authority_key_from_ed(&owner);
     let zero_key = authority_key_from_ed(&zero);
     let state = FoldState {
+        door_slips: BTreeMap::new(),
+        spent_door_slips: BTreeSet::new(),
         vault_id: [40; 32],
         roster: BTreeMap::from([
             (

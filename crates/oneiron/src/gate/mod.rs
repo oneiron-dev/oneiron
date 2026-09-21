@@ -6,6 +6,10 @@
 mod auto_signals;
 mod bundle;
 mod ceiling;
+pub(crate) mod manifest_authenticity;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use manifest_authenticity::stamp_manifest_origin;
+pub(crate) use manifest_authenticity::trusted_manifest_key;
 mod confirm;
 mod constants;
 mod decision;
@@ -15,6 +19,7 @@ mod definition_ceiling;
 mod doors;
 mod dreamer_precommit;
 mod effect;
+mod foreign_agent;
 mod grants;
 mod input;
 mod repair;
@@ -61,10 +66,9 @@ pub(crate) use self::definition_ceiling::first_party_connector_actor_ref;
 #[cfg(feature = "sync")]
 pub(crate) use self::doors::check_federated_claim_admission;
 pub(crate) use self::doors::{
-    ClaimGateWrite, GateWriteMode, RecordedClaimGateDecision, apply_staged_claim_gate_in_txn,
-    check_claim_policy_for_write, check_claim_policy_for_write_with_preflight_decision,
-    check_claim_policy_for_write_with_record, check_edge_provenance_claim_policy,
-    check_reserved_claim_policy, claim_consent_binding_parts,
+    ClaimGateWrite, GateWriteMode, RecordedClaimGateDecision, check_claim_policy_for_write,
+    check_claim_policy_for_write_with_preflight_decision, check_claim_policy_for_write_with_record,
+    check_edge_provenance_claim_policy, check_reserved_claim_policy, claim_consent_binding_parts,
     standing_outbound_grant_binding_parts, validate_write_envelope,
 };
 // The validator itself is reached through the write door; the direct

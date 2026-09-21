@@ -95,10 +95,6 @@ impl BatchBuilder<'_> {
             return Err(err);
         }
 
-        // Enforce the verdicts recorded by this same transaction, once per
-        // operation receipt. Retain the records for post-commit metrics.
-        let staged_claim_gate = staged_claim_gate_outcomes(&staged_gate_decisions);
-
         let pending_vad_ids =
             super::vad_postcommit::pending_dreamer_vad_approvals(self.vault, &wtxn, &self.ops)?;
 
@@ -114,8 +110,7 @@ impl BatchBuilder<'_> {
             self.ops,
             text_index_trusted,
             ApplyOpsGateMode::new(false, true)
-                .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
-                .with_staged_claim_gate(staged_claim_gate),
+                .with_preflight_gate_decision_ids(preflight_gate_decision_ids),
         )?;
         after_apply(&mut wtxn)?;
         let approved_vad_ids = self

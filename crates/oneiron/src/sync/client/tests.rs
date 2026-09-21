@@ -29,6 +29,20 @@ fn test_client(manager: &Arc<WindowManager>) -> (SyncClient, mpsc::UnboundedRece
     SyncClient::new(Arc::clone(manager), SyncClientConfig::default()).unwrap()
 }
 
+fn test_federated_client(
+    manager: &Arc<WindowManager>,
+) -> (SyncClient, mpsc::UnboundedReceiver<SyncEvent>) {
+    let peer = crate::sync::federation_burst::tests::test_peer(manager.vault());
+    SyncClient::new(
+        Arc::clone(manager),
+        SyncClientConfig {
+            federation_peer: Some(peer),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
 /// Builds a simulated server-side window doc with the schema containers.
 fn server_window_doc() -> LoroDoc {
     let doc = LoroDoc::new();
@@ -662,7 +676,7 @@ fn import_queued_update_applies_ops_and_rejects_garbage() {
 fn federated_import_seam_restamps_before_observed_import() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_client(&manager);
+    let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
     put_policy_manifest_bytes(
         &vault,
@@ -700,7 +714,7 @@ fn federated_import_seam_restamps_before_observed_import() {
 fn federated_generated_auto_claim_restamps_but_stays_non_consolidatable() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_client(&manager);
+    let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
     put_policy_manifest_bytes(
         &vault,
@@ -738,7 +752,7 @@ fn federated_generated_auto_claim_restamps_but_stays_non_consolidatable() {
 fn federated_selector_member_response_enters_admission_once() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_client(&manager);
+    let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
     put_policy_manifest_bytes(
         &vault,
@@ -781,7 +795,10 @@ fn federated_selector_member_response_enters_admission_once() {
             .into_result()
             .expect("ordinary full-window update encodes");
 
-    client
+    // Own-device replay uses its unbound connection; a bound federation lane
+    // must never treat a later UPDATE as trust-blind.
+    let (mut ordinary_client, _) = test_client(&manager);
+    ordinary_client
         .handle_server_message(&ordinary_response)
         .expect("ordinary full-window update should remain trust-blind after selector import");
 
@@ -802,7 +819,7 @@ fn federated_selector_member_response_enters_admission_once() {
 fn federated_selector_member_stale_claim_is_restamped_and_retained() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_client(&manager);
+    let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
     put_policy_manifest_bytes(
         &vault,
@@ -842,7 +859,7 @@ fn federated_selector_member_stale_claim_is_restamped_and_retained() {
 fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_client(&manager);
+    let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
     put_policy_manifest_bytes(
         &vault,
@@ -941,7 +958,7 @@ fn selector_request_builder_does_not_reclassify_next_update() {
 fn federated_import_seam_denies_before_window_import_with_reason() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_client(&manager);
+    let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
     let id = test_entity_id(0x8C);
     let remote_body = source_trust_claim(ClaimSource::ToolOutput);
@@ -969,7 +986,7 @@ fn federated_import_seam_denies_before_window_import_with_reason() {
 fn federated_import_seam_denies_preapproved_untrusted_claim() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_client(&manager);
+    let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
     let id = test_entity_id(0x92);
     let mut remote_body = source_trust_claim(ClaimSource::ToolOutput);
@@ -999,7 +1016,7 @@ fn federated_import_seam_denies_preapproved_untrusted_claim() {
 fn federated_import_seam_denial_preserves_open_durable_window() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_client(&manager);
+    let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
     let window = client.ensure_window(key).expect("open window");
     let local_id = test_entity_id(0x8F);
@@ -1067,7 +1084,7 @@ fn federated_import_seam_denial_preserves_open_durable_window() {
 fn federated_import_seam_rejects_tombstone_updates_until_delete_admission() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_client(&manager);
+    let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
     let tombstoned = test_entity_id(0x91);
     let update = federated_tombstone_update(&tombstoned);
@@ -1096,7 +1113,7 @@ fn federated_import_seam_rejects_tombstone_updates_until_delete_admission() {
 #[test]
 fn federated_import_seam_rejects_oversized_update_before_window_open() {
     let manager = test_manager();
-    let (mut client, _rx) = test_client(&manager);
+    let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
     let update = vec![0u8; MAX_DECODED_PAYLOAD_BYTES + 1];
 
@@ -2381,4 +2398,206 @@ fn confirm_revalidates_policy_tightened_after_stage() {
     let body = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false)
         .expect("decode admitted claim");
     assert_eq!(body.source, Some(ClaimSource::Imported));
+}
+
+#[test]
+fn bound_wire_federation_burst_is_durable_before_import_and_replays_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let peer = crate::sync::federation_burst::tests::test_peer(&vault);
+    let config = SyncClientConfig {
+        federation_peer: Some(peer),
+        ..Default::default()
+    };
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "burst",
+    ));
+    let (mut client, mut rx) = SyncClient::new(Arc::clone(&manager), config.clone()).unwrap();
+    let key = "2026-01";
+    let remote = server_window_doc();
+    let ids: Vec<_> = (0..16).map(|_| EntityId::now()).collect();
+    for id in &ids {
+        remote
+            .get_map("entities")
+            .insert(
+                id.to_hex().as_str(),
+                entity_blob(
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"person",
+                )
+                .as_slice(),
+            )
+            .unwrap();
+    }
+    remote.commit();
+    let update = remote.export(ExportMode::all_updates()).unwrap();
+    let frame = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
+        .into_result()
+        .unwrap();
+    client.handle_server_message(&frame).unwrap();
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        SyncEvent::FederationDeferred { .. }
+    ));
+    assert!(client.window(key).is_none());
+    assert!(ids.iter().all(|id| vault.get_raw(id).unwrap().is_none()));
+    assert!(vault.sync_state_keys_with_prefix("rm:").unwrap().is_empty());
+    drop(client);
+    drop(manager);
+    drop(vault);
+    let vault = Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "burst",
+    ));
+    let (mut client, _) = SyncClient::new(manager, config).unwrap();
+    assert!(ids.iter().all(|id| vault.get_raw(id).unwrap().is_some()));
+    assert!(!client.replay_deferred_federation_update().unwrap());
+    // Same CRDT operation identities on duplicate receive; no pending marker
+    // or human approval is needed to make a completed burst converge.
+    client.handle_server_message(&frame).unwrap();
+    client.replay_deferred_federation_update().unwrap();
+    assert!(ids.iter().all(|id| vault.get_raw(id).unwrap().is_some()));
+}
+
+#[test]
+fn malformed_federation_update_is_not_queued_and_streak_reaches_the_next_decision() {
+    let manager = test_manager();
+    let (mut client, mut rx) = test_federated_client(&manager);
+    let key = "2026-01";
+    assert!(matches!(
+        client.import_federated_window_update(key, b"bad loro", FederationAdmissionRole::Guest),
+        Err(TransportError::InvalidPayload(_))
+    ));
+    assert!(!client.replay_deferred_federation_update().unwrap());
+    let remote = server_window_doc();
+    // Derive enough work from this fixture's actual seeded vault size. With
+    // no failure this is within baseline; one structural failure defers it.
+    let size = {
+        let txn = manager.vault().store.env.read_txn().unwrap();
+        manager.vault().store.entities.len(&txn).unwrap()
+    };
+    let work = (((size + 1) as f64).sqrt() / 2.0).floor() as usize + 1;
+    let ids: Vec<_> = (0..work).map(|_| EntityId::now()).collect();
+    for id in &ids {
+        remote
+            .get_map("entities")
+            .insert(
+                id.to_hex().as_str(),
+                entity_blob(
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"person",
+                )
+                .as_slice(),
+            )
+            .unwrap();
+    }
+    remote.commit();
+    client
+        .import_federated_window_update(
+            key,
+            &remote.export(ExportMode::all_updates()).unwrap(),
+            FederationAdmissionRole::Guest,
+        )
+        .unwrap();
+    let SyncEvent::FederationDeferred { inputs, .. } = rx.try_recv().unwrap() else {
+        panic!("expected durable defer")
+    };
+    assert_eq!(inputs.streak, 1);
+    assert!(
+        ids.iter()
+            .all(|id| manager.vault().get_raw(id).unwrap().is_none())
+    );
+    assert!(client.replay_deferred_federation_update().unwrap());
+    assert!(
+        ids.iter()
+            .all(|id| manager.vault().get_raw(id).unwrap().is_some())
+    );
+}
+
+#[test]
+fn selector_defer_wire_response_generates_an_automatic_retry() {
+    let manager = test_manager();
+    let (mut client, _) = test_client(&manager);
+    let selector = SyncSelector::new(
+        EntityId::now(),
+        EntityId::now(),
+        crate::sync::SyncSelectorWorld::All,
+        vec![],
+        vec![],
+    );
+    let request =
+        crate::sync::encode_selector_vv_request(&selector, &VersionVector::new().encode()).unwrap();
+    let mut deferred = vec![42; 32];
+    deferred.extend_from_slice(&request);
+    let frame =
+        transport::encode_window_sync("2026-01", window_sub_tags::SELECTOR_DEFERRED, &deferred)
+            .into_result()
+            .unwrap();
+    let replies = client.handle_server_message(&frame).unwrap();
+    assert_eq!(replies.len(), 1);
+    let (key, tag, payload) = transport::decode_window_sync(&replies[0][1..]).unwrap();
+    assert_eq!(key, "2026-01");
+    assert_eq!(tag, window_sub_tags::SELECTOR_RETRY);
+    assert_eq!(payload, deferred.as_slice());
+}
+
+#[test]
+fn bound_federation_lane_refuses_full_window_receive_bypasses() {
+    let manager = test_manager();
+    let (mut client, _) = test_federated_client(&manager);
+    for tag in [window_sub_tags::VV_REQUEST, window_sub_tags::VV_RESPONSE] {
+        let frame = transport::encode_window_sync("2026-01", tag, &VersionVector::new().encode())
+            .into_result()
+            .unwrap();
+        assert!(matches!(
+            client.handle_server_message(&frame),
+            Err(TransportError::InvalidPayload(_))
+        ));
+    }
+    assert!(matches!(
+        client.handle_server_message(&[crate::sync::TAG_BULK_TRANSFER]),
+        Err(TransportError::InvalidPayload(_))
+    ));
+    assert!(matches!(
+        client.handle_server_message(&[crate::sync::TAG_BULK_TRANSFER_DONE]),
+        Err(TransportError::InvalidPayload(_))
+    ));
+    assert!(client.window("2026-01").is_none());
+}
+
+#[test]
+fn federation_import_needs_authenticated_principal_not_an_auth_token_string() {
+    let manager = test_manager();
+    let (mut client, _) = SyncClient::new(
+        manager,
+        SyncClientConfig {
+            auth_token: "shared-secret-is-not-a-peer".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let remote = server_window_doc();
+    let update = remote.export(ExportMode::all_updates()).unwrap();
+    assert!(matches!(
+        client.import_federated_window_update("2026-01", &update, FederationAdmissionRole::Guest),
+        Err(TransportError::InvalidPayload(_))
+    ));
+    assert!(matches!(
+        client.import_window_update(
+            "2026-01",
+            &update,
+            ImportTier::Federated(FederationAdmissionRole::Guest),
+        ),
+        Err(TransportError::InvalidPayload(_))
+    ));
+    assert!(!client.replay_deferred_federation_update().unwrap());
+    assert!(client.window("2026-01").is_none());
 }

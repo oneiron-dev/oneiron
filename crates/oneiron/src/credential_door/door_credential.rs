@@ -22,7 +22,7 @@ use crate::secret_lease::VaultInstant;
 pub(crate) struct DoorCredential {
     slip_id: String,
     holder_ref: String,
-    verbs: BTreeSet<String>,
+    verb_class: String,
     pub(super) records: BTreeSet<String>,
     pub(super) channels: BTreeSet<String>,
     issued_at: u64,
@@ -47,7 +47,7 @@ impl DoorCredential {
         Self {
             slip_id: slip_id.into(),
             holder_ref: holder_ref.into(),
-            verbs: BTreeSet::new(),
+            verb_class: "door.none".to_owned(),
             records: BTreeSet::new(),
             channels: BTreeSet::new(),
             issued_at,
@@ -59,13 +59,65 @@ impl DoorCredential {
     }
 
     /// Verbs the slip grants.
+    #[cfg(test)]
     pub(super) fn with_verbs<I, S>(mut self, verbs: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.verbs = verbs.into_iter().map(Into::into).collect();
+        self.verb_class =
+            super::verb_class::fixture_class(&verbs.into_iter().map(Into::into).collect());
         self
+    }
+
+    pub(super) fn with_verb_class(mut self, class: impl Into<String>) -> Self {
+        self.verb_class = class.into();
+        self
+    }
+
+    pub(super) fn from_mint(hash: &[u8; 32], scope: &crate::authority::AuthorityDoorSlip) -> Self {
+        let mut credential = Self::verified(
+            hash.iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+            scope.holder_ref.clone(),
+            scope.issued_at,
+            scope.expires_at,
+        )
+        .with_verb_class(scope.verb_class.clone())
+        .with_records(scope.records.clone())
+        .with_channels(scope.channels.clone());
+        credential.single_use = scope.single_use;
+        credential
+    }
+
+    pub(super) fn mint_hash(&self) -> DoorResult<[u8; 32]> {
+        if self.slip_id.len() != 64
+            || !self
+                .slip_id
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(CredentialDoorError::AuthorityRejected);
+        }
+        let mut hash = [0; 32];
+        for (i, byte) in hash.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&self.slip_id[2 * i..2 * i + 2], 16)
+                .map_err(|_| CredentialDoorError::AuthorityRejected)?;
+        }
+        Ok(hash)
+    }
+
+    /// Compares *every* caller-carried bound against the signed mint. A
+    /// reconstructed handle is not permission to expand a mint's authority.
+    pub(super) fn matches_mint(&self, scope: &crate::authority::AuthorityDoorSlip) -> bool {
+        self.holder_ref == scope.holder_ref
+            && self.verb_class == scope.verb_class
+            && self.records == scope.records
+            && self.channels == scope.channels
+            && self.issued_at == scope.issued_at
+            && self.expires_at == scope.expires_at
+            && self.single_use == scope.single_use
     }
 
     /// Records (repositories, secret names) the slip bounds.
@@ -205,14 +257,17 @@ impl DoorCredential {
         if now_secs < self.issued_at || now_secs >= self.expires_at {
             return deny(DoorDenyReason::Expired);
         }
-        if !self.verbs.contains(verb) {
-            return deny(DoorDenyReason::VerbNotInSlip);
-        }
         if record.is_empty() || !self.records.contains(record) {
             return deny(DoorDenyReason::RecordOutsideSlip);
         }
         if channel.is_empty() || !self.channels.contains(channel) {
             return deny(DoorDenyReason::ChannelOutsideSlip);
+        }
+        let Some(members) = super::verb_class::verb_class_members(&self.verb_class) else {
+            return deny(DoorDenyReason::UnknownVerbClass);
+        };
+        if !members.contains(&verb) {
+            return deny(DoorDenyReason::VerbNotInSlip);
         }
         Ok(())
     }
@@ -220,9 +275,7 @@ impl DoorCredential {
     /// A slip may not reach a floor either. Verbs, records and channels are
     /// lattice tokens; floors are not in the lattice.
     fn reject_floor_naming(&self) -> DoorResult<()> {
-        let tokens = self
-            .verbs
-            .iter()
+        let tokens = std::iter::once(&self.verb_class)
             .chain(self.records.iter())
             .chain(self.channels.iter());
         for token in tokens {

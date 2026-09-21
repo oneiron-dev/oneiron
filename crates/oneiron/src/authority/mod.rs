@@ -27,18 +27,27 @@
 //! `fork_resolution` and `entry_transition` are mutually recursive and must be
 //! read together for any fork or quorum correctness work.
 
+pub use crate::gate::manifest_authenticity::ManifestContribution;
+
 mod confirm;
 mod constants;
 mod crypto;
 mod device;
+mod door_append;
+mod door_slip;
 mod entry_transition;
 mod federation_pact;
 mod first_seen_clock;
 mod fold_engine;
 mod fold_state;
 mod fork_resolution;
+mod ingest_observation;
 mod log_entry_op;
+mod observation_policy;
 mod op_apply;
+mod sequence_ancestry;
+mod sequence_observation;
+mod stale_roster;
 mod vault_api;
 mod wire_decode;
 mod wire_encode;
@@ -60,15 +69,24 @@ pub use device::*;
 pub use federation_pact::*;
 pub use fold_engine::*;
 pub use fold_state::*;
+pub use ingest_observation::*;
 pub use log_entry_op::*;
+pub use observation_policy::*;
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.
 pub(crate) use first_seen_clock::*;
+pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.
 use entry_transition::*;
 use fork_resolution::*;
+use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;
+use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};
+use stale_roster::apply_stale_roster_window;
 use wire_decode::*;
 use wire_encode::*;
+
+use self::door_slip::apply_door_slip;
+pub use self::door_slip::{AuthorityDoorSlip, FoldedDoorSlip};

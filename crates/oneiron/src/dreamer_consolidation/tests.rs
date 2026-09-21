@@ -23,6 +23,7 @@ use crate::{
 
 use super::*;
 
+mod contradictions;
 mod persistent_conflicts;
 mod person_extraction;
 mod prior_heads;
@@ -1872,18 +1873,37 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         assert_eq!(guard.read().reserved_units, 0);
         assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
 
-        // Contradictions never land silently: nothing sinks, the gap row exists
-        // (a re-upsert of the same identity refreshes rather than creates).
+        // The fenced marker writer persists the open question directly. The
+        // ordinary belief sink must not receive any conflicting candidate.
         assert!(sink.accepted.is_empty());
-        let marker_count = vault
+        let claims = vault
             .claims_for_subject(&subject)?
             .into_iter()
-            .filter_map(|id| vault.get_claim(&id).transpose())
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .filter(|body| body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN)
-            .count();
-        assert_eq!(marker_count, 1);
+            .map(|id| {
+                vault
+                    .get_claim(&id)
+                    .map(|body| (id, body.expect("stored claim")))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        assert!(
+            claims
+                .iter()
+                .all(|(_, body)| body.predicate != "profile.name")
+        );
+        let markers = claims
+            .iter()
+            .filter(|(_, body)| body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN)
+            .collect::<Vec<_>>();
+        let [(marker_id, marker)] = markers.as_slice() else {
+            panic!("exactly one durable open question");
+        };
+        assert_eq!(marker.approval, crate::ClaimApprovalStatus::Proposed);
+        assert!(
+            vault
+                .edges_out(marker_id)?
+                .iter()
+                .all(|edge| edge.kind != EdgeKind::Supersedes)
+        );
         let probe = ReflectionGap {
             kind: ReflectionGapKind::ContradictionLeftStanding,
             subject,

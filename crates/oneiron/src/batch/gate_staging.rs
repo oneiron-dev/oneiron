@@ -6,48 +6,6 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
 
-/// One preflight verdict, bound to its operation receipt inside the same transaction.
-#[derive(Debug, Clone)]
-pub(crate) struct StagedClaimGateOutcome {
-    pub(crate) decision_id: crate::store::GateDecisionId,
-    pub(crate) outcome: crate::gate::GateOutcome,
-    pub(crate) reason_codes: Vec<crate::gate::GateReasonCode>,
-    pub(crate) diff_handle: Vec<u8>,
-    pub(crate) read_frontier_hash: [u8; 32],
-    pub(crate) created_at: u64,
-}
-
-/// Bind preflight outcomes to receipt identities, not claim IDs. Phase 2 takes
-/// the identity from its per-claim operation FIFO, including empty slots, so
-/// repeated IDs cannot borrow another operation's verdict.
-pub(super) fn staged_claim_gate_outcomes(
-    staged_decisions: &[crate::gate::RecordedClaimGateDecision],
-) -> HashMap<crate::store::GateDecisionId, StagedClaimGateOutcome> {
-    let mut staged = HashMap::new();
-    for decision in staged_decisions {
-        let record = decision.record();
-        if record
-            .receipt_reasons
-            .iter()
-            .any(|reason| reason == crate::gate::GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED)
-        {
-            continue;
-        }
-        staged.insert(
-            record.decision_id,
-            StagedClaimGateOutcome {
-                decision_id: record.decision_id,
-                outcome: decision.decision().outcome(),
-                reason_codes: decision.decision().reason_codes().to_vec(),
-                diff_handle: record.diff_handle.clone(),
-                read_frontier_hash: record.read_frontier_hash,
-                created_at: record.created_at,
-            },
-        );
-    }
-    staged
-}
-
 /// Books ONE preflight-eligible write's gate decision and, on a refusal,
 /// preserves exactly its denial receipt while discarding the transaction's
 /// earlier allow receipts.
@@ -87,7 +45,7 @@ pub(super) fn stage_preflight_decision(
                 Some(decision.decision_id()) == decision_id && decision.outcome() != "allow"
             })
             .map(crate::gate::RecordedClaimGateDecision::decision_id);
-        for decision in staged_decisions.iter().rev() {
+        for decision in staged_decisions.iter() {
             if Some(decision.decision_id()) != preserved_denial_id {
                 store.delete_gate_decision_in_txn(wtxn, decision.decision_id())?;
             }

@@ -42,10 +42,7 @@ fn two_actor_divergent_takes() {
             NoteKind::parse("opinion/take").expect("shipped kind")
         );
         assert!(body.markdown.is_empty());
-        assert_eq!(
-            vault.note_document(note_id).unwrap().markdown,
-            markdown
-        );
+        assert_eq!(vault.note_document(note_id).unwrap().markdown, markdown);
         assert_eq!(body.author_ref, author, "takes must not cross-attribute");
 
         let edges = vault.edges_out(&note_id).expect("edges");
@@ -399,10 +396,20 @@ fn facade_stale_upsert_rolls_back_new_claim() {
     let winner_short_ref = std::cell::RefCell::new(String::new());
     let err = facade
         .claim_upsert_with_pre_txn_hook(&replacement, || {
-            let receipt = facade_for(&vault, actor)
+            facade_for(&vault, actor)
                 .claim_upsert(&winner)
                 .expect("the concurrent revision wins the race");
-            *winner_short_ref.borrow_mut() = receipt.claim_short_id;
+            let body = vault.get_claim(&winner_id).unwrap().unwrap();
+            vault
+                .approve_inbox_member_with_edit_at(
+                    &winner_id,
+                    &crate::claim::encode_claim_body(&body).unwrap(),
+                    crate::unix_seconds_now(),
+                )
+                .expect("owner confirms concurrent winner");
+            *winner_short_ref.borrow_mut() = facade_for(&vault, actor)
+                .short_ref_or_hex(&winner_id)
+                .unwrap();
         })
         .expect_err("the advisory prior moved before the transaction");
 
@@ -469,7 +476,17 @@ fn facade_stale_retract_exposes_invalid_state_and_successor() {
     replacement.id = Some(replacement_id.to_hex());
     let replacement_receipt = facade
         .claim_upsert(&replacement)
-        .expect("replacement supersedes the first");
+        .expect("replacement is proposed");
+    assert_eq!(replacement_receipt.approval, "proposed");
+    let body = vault.get_claim(&replacement_id).unwrap().unwrap();
+    vault
+        .approve_inbox_member_with_edit_at(
+            &replacement_id,
+            &crate::claim::encode_claim_body(&body).unwrap(),
+            crate::unix_seconds_now(),
+        )
+        .expect("owner confirms replacement");
+    let replacement_short_ref = facade.short_ref_or_hex(&replacement_id).unwrap();
 
     // By hex id: the prior's short ref rotated its content-hash suffix when
     // the supersession rewrote its body, and a client holding the pre-close
@@ -480,7 +497,7 @@ fn facade_stale_retract_exposes_invalid_state_and_successor() {
     assert_eq!(err.code, MEMORY_CODE_INVALID_STATE);
     assert_eq!(
         err.successor_short_id.as_deref(),
-        Some(replacement_receipt.claim_short_id.as_str())
+        Some(replacement_short_ref.as_str())
     );
 
     // Never retargeted, never silently no-opped: the successor stays live and
@@ -559,7 +576,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     let other_read = vault
         .scoped_read(ScopedReadActorKey::with_actor_class(other.to_hex(), "human").expect("key"));
     assert_eq!(
-        crate::note::decode_note_body(&owner_read.get(&id).expect("read").expect("body"))
+        crate::note::decode_note_body(&owner_read.get(&id).expect("read").value.expect("body"))
             .expect("decode"),
         body
     );
@@ -898,7 +915,9 @@ fn diary_note_conjoins_actor_privacy_and_room_audience() {
                     ScopedReadActorKey::with_actor_class(reader.to_hex(), "human").unwrap(),
                 )
                 .for_audience(&audience);
-            assert_eq!(read.get(&id).unwrap().is_some(), allowed);
+            let point = read.get(&id).unwrap();
+            assert_eq!(point.value.is_some(), allowed);
+            assert_eq!(point.receipt.suppressed_count, usize::from(!allowed));
             assert_eq!(read.is_entity_readable(&id).unwrap(), allowed);
             assert_eq!(
                 read.hydrate_short_id(short, hash).unwrap().is_some(),
@@ -1002,6 +1021,23 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
                 .is_some()
         );
         assert!(other_read.get_with_mode(&id, mode).unwrap().is_none());
+        let denied = other_read
+            .get_entities_parts_with_modes_with_receipt(&[(id, mode)], None)
+            .unwrap();
+        assert!(denied.value[0].is_none());
+        assert_eq!(denied.receipt.suppressed_count, 1);
+        assert!(
+            denied
+                .receipt
+                .narrowed_axes
+                .iter()
+                .any(|axis| axis == "row_authority")
+        );
+        let permitted = owner_read
+            .get_entities_parts_with_modes_with_receipt(&[(id, mode)], None)
+            .unwrap();
+        assert!(permitted.value[0].is_some());
+        assert_eq!(permitted.receipt.suppressed_count, 0);
         let bytes = owner_read.get_with_mode(&id, mode).unwrap().unwrap();
         assert_eq!(crate::note::decode_note_body(&bytes).unwrap(), private_body);
     }

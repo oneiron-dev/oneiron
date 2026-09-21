@@ -361,16 +361,24 @@ impl GraphFsCoreutilsDecision {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GraphFsCommandOutput {
     pub(super) bytes: Vec<u8>,
     pub(super) next_cursor: Option<String>,
     pub(super) decision: GraphFsCoreutilsDecision,
     pub(super) decision_reason: String,
     pub(super) telemetry_run_id: RetrievalRunId,
+    pub(super) search_receipt: Option<crate::claim::ScopedReadReceipt>,
 }
 
 impl GraphFsCommandOutput {
+    /// Receipt for the indexed search and final hydration used by claim grep.
+    /// Walk-only commands do not run that search and return `None`.
+    #[must_use]
+    pub fn search_receipt(&self) -> Option<&crate::claim::ScopedReadReceipt> {
+        self.search_receipt.as_ref()
+    }
+
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes

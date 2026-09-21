@@ -7,6 +7,7 @@ use super::*;
 /// Ordered, deduplicated merge of every channel a read ran.
 #[derive(Default)]
 pub(super) struct DepthAccumulator {
+    pub(super) narrowing: Vec<crate::claim::ScopedReadReceipt>,
     /// Entity ids in first-seen order; the read's ranking before any rerank.
     pub(super) order: Vec<EntityId>,
     /// Best engine score seen for each id, across channels.
@@ -112,24 +113,44 @@ impl DepthAccumulator {
     /// actor-keyed door the hits came from, so a rerank cannot see a body the
     /// ranking itself was not allowed to.
     pub(super) fn candidate_claim_bodies(
-        &self,
+        &mut self,
         scoped: &ScopedRead<'_>,
     ) -> Result<Vec<Option<crate::claim::ClaimBody>>> {
+        let refs: Vec<_> = self
+            .order
+            .iter()
+            .filter_map(|id| {
+                self.revisions
+                    .get(id)
+                    .map(|revision| (*id, crate::vault::ReadMode::Pinned(*revision)))
+            })
+            .collect();
+        let requested = self.applied_filter();
+        let read = scoped.get_entities_parts_with_modes_with_receipt(&refs, requested.as_ref())?;
+        self.narrowing.push(read.receipt);
+        let mut projected = read.value.into_iter();
         let mut bodies = Vec::with_capacity(self.order.len());
         for id in &self.order {
-            let Some(revision) = self.revisions.get(id) else {
+            if !self.revisions.contains_key(id) {
                 bodies.push(None);
                 continue;
-            };
-            let decoded = match scoped
-                .get_entity_parts_with_mode(id, crate::vault::ReadMode::Pinned(*revision))?
-            {
+            }
+            bodies.push(match projected.next().flatten() {
                 Some((ENTITY_TYPE_CLAIM, _, body)) => Some(decode_claim_body(&body, true)?),
                 _ => None,
-            };
-            bodies.push(decoded);
+            });
         }
         Ok(bodies)
+    }
+
+    /// Later snapshots can tighten, but cannot widen any executed channel's floor.
+    fn applied_filter(&self) -> Option<crate::gate::RetrievalFilter> {
+        let mut receipts = self.narrowing.iter();
+        let mut combined = receipts.next()?.clone();
+        for receipt in receipts {
+            combined.restrict_with(receipt);
+        }
+        Some(combined.applied.as_filter())
     }
 
     pub(super) fn rerank_candidates<'a>(
@@ -169,6 +190,38 @@ impl DepthAccumulator {
         }
     }
 
+    pub(super) fn finish_scoped(
+        self,
+        scoped: &ScopedRead<'_>,
+        limit: usize,
+    ) -> Result<DepthSearchResult> {
+        let requested = self.applied_filter();
+        let mut result = self.finish(limit);
+        // Preserve the captured frontier and all channel receipts. Final admission
+        // reads pinned bodies and current authority together, never a live replacement.
+        let refs: Vec<_> = result
+            .hits
+            .iter()
+            .filter_map(|hit| {
+                result
+                    .revisions
+                    .get(&hit.id)
+                    .map(|revision| (hit.id, crate::vault::ReadMode::Pinned(*revision)))
+            })
+            .collect();
+        let filtered =
+            scoped.get_entities_parts_with_modes_with_receipt(&refs, requested.as_ref())?;
+        let admitted: std::collections::HashSet<_> = refs
+            .into_iter()
+            .zip(filtered.value)
+            .filter_map(|((id, _), parts)| parts.map(|_| id))
+            .collect();
+        result.narrowing.push(filtered.receipt);
+        result.hits.retain(|hit| admitted.contains(&hit.id));
+        result.revisions.retain(|id, _| admitted.contains(id));
+        Ok(result)
+    }
+
     pub(super) fn finish(self, limit: usize) -> DepthSearchResult {
         let hits: Vec<_> = self
             .order
@@ -189,6 +242,7 @@ impl DepthAccumulator {
             })
             .collect();
         DepthSearchResult {
+            narrowing: self.narrowing,
             hits,
             revisions,
             partial: self.partial,
@@ -200,5 +254,74 @@ impl DepthAccumulator {
             retrieval_diagnostics: self.retrieval_diagnostics,
             retrieval_quality,
         }
+    }
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+    use crate::claim::ScopedReadActorKey;
+
+    #[test]
+    fn finish_scoped_keeps_channel_receipts_on_an_empty_result() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+        let scoped = vault.scoped_read(ScopedReadActorKey::new("receipt-reader").unwrap());
+        let channel = scoped.read_receipt(None, 3)?;
+        let mut acc = DepthAccumulator::default();
+        acc.narrowing.push(channel.clone());
+        let result = acc.finish_scoped(&scoped, 10)?;
+        assert!(result.hits.is_empty());
+        assert_eq!(result.narrowing.len(), 2);
+        assert_eq!(result.narrowing[0], channel);
+        assert_eq!(result.narrowing[1].suppressed_count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn finish_scoped_preserves_a_receipted_channel_revision_after_an_edit() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+        let id = EntityId::now();
+        let range = crate::TimeRange { start: 1, end: 1 };
+        vault
+            .batch()
+            .put(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                range,
+                1,
+                b"original",
+            )
+            .text(&id, &[("body", "original")])
+            .commit()?;
+        let scoped = vault.scoped_read(ScopedReadActorKey::new("receipt-reader").unwrap());
+        let channel = scoped.search_text_revisioned("original", 10, None)?;
+        assert_eq!(channel.hits.len(), 1);
+        let revision = channel.revisions[&id];
+        let receipt = channel.receipt.clone();
+        let mut acc = DepthAccumulator::default();
+        acc.narrowing.push(channel.receipt);
+        acc.merge_revisioned(channel.hits, channel.revisions);
+        vault
+            .batch()
+            .put(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                range,
+                1,
+                b"replacement",
+            )
+            .text(&id, &[("body", "replacement")])
+            .commit()?;
+        vault.refresh_staged_indexed_at_idle(u64::MAX)?;
+        let result = acc.finish_scoped(&scoped, 10)?;
+        assert_eq!(result.hits.len(), 1);
+        assert_eq!(result.revisions[&id], revision);
+        assert_eq!(result.narrowing.len(), 2);
+        assert_eq!(result.narrowing[0], receipt);
+        assert_eq!(
+            scoped.get_with_mode(&id, crate::vault::ReadMode::Pinned(revision))?,
+            Some(b"original".to_vec())
+        );
+        Ok(())
     }
 }

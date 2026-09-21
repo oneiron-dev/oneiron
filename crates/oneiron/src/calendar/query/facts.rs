@@ -78,6 +78,7 @@ impl<'a> CalendarRead<'a> {
             Self::Vault(vault) => Ok(vault.get_claim(id)?.filter(claim_surfaceable)),
             Self::Scoped(read) => read
                 .get(id)?
+                .value
                 .map(|raw| decode_claim_body(&raw, true))
                 .transpose(),
         }

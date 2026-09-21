@@ -21,6 +21,11 @@ pub(super) fn hash_policy_frontier_v0(
     hash_bytes(hasher, b"oneiron.gate.policy_frontier.v0");
     hash_diagnostics(hasher, resolution.diagnostics);
     hash_source_trust(hasher, &resolution.source_trust);
+    hash_str(hasher, "single_valued_predicates");
+    hash_len(hasher, resolution.single_valued_predicates.len());
+    for predicate in &resolution.single_valued_predicates {
+        hash_str(hasher, predicate);
+    }
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
     // The RESOLVED posture, beside its budget sibling: it decides whether an
     // opted-out send holds or ships, so flipping it must move the frontier and
@@ -174,6 +179,7 @@ fn hash_owner_policy_row(hasher: &mut Sha256, row: &PolicyOwnerPolicyRow) {
     hash_bool(hasher, row.active);
     hash_opt_str(hasher, row.world_ref.as_deref());
     hash_str(hasher, row.action.as_str());
+    hash_opt_str(hasher, row.human.as_deref());
 }
 
 fn hash_axes(hasher: &mut Sha256, axes: PolicyAxes) {

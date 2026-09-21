@@ -47,8 +47,10 @@ pub enum AuthorityFoldIssue {
     InvalidAncestry(AuthorityEntryHash),
     /// Entry signer was not valid in its own ancestry.
     SignerNotInAncestry(AuthorityEntryHash),
-    /// Entry sequence was not strictly greater than that signer's ancestry high-water mark.
+    /// Entry sequence did not exceed its ancestry or persisted first-observation high-water mark.
     NonMonotonicSeq(AuthorityEntryHash),
+    /// Approval outlived the local first-seen window after a participant was revoked.
+    StaleRosterApproval(AuthorityEntryHash),
     /// Entry binds the wrong vault id.
     WrongVault(AuthorityEntryHash),
     /// The fold contains more than one independently rooted vault id.
@@ -165,6 +167,10 @@ impl AuthorityForkAlarm {
 /// Deterministic authority fold output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityFold {
+    /// Immutable signed mints; consult live_door_slip before authorizing.
+    pub door_slips: BTreeMap<AuthorityEntryHash, FoldedDoorSlip>,
+    /// Monotone spend/revoke tombstones.
+    pub spent_door_slips: BTreeSet<AuthorityEntryHash>,
     /// Derived vault id.
     pub vault_id: Option<AuthorityVaultId>,
     /// Valid entry hashes.
@@ -290,6 +296,8 @@ impl AuthorityFold {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FoldState {
+    pub(super) door_slips: BTreeMap<AuthorityEntryHash, FoldedDoorSlip>,
+    pub(super) spent_door_slips: BTreeSet<AuthorityEntryHash>,
     pub(super) vault_id: AuthorityVaultId,
     pub(super) roster: BTreeMap<AuthorityKey, FoldedDevice>,
     pub(super) tier_floor: AuthorityTier,
@@ -432,6 +440,15 @@ fn folded_binding_key_still_qualifies(
 pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     debug_assert_eq!(left.vault_id, right.vault_id);
     let mut merged = left.clone();
+    merged.door_slips.extend(
+        right
+            .door_slips
+            .iter()
+            .map(|(key, value)| (*key, value.clone())),
+    );
+    merged
+        .spent_door_slips
+        .extend(right.spent_door_slips.iter().copied());
     merged
         .consumed_critical_write_confirm_nonces
         .extend(right.consumed_critical_write_confirm_nonces.iter().copied());

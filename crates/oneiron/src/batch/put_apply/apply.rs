@@ -7,7 +7,7 @@ use heed::RwTxn;
 use super::{
     AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
-    StagedClaimGateOutcome, apply_short_id_plan, authority_observation_secs_for_write,
+    apply_short_id_plan, authority_observation_secs_for_write,
     check_authority_log_store_key, delete_short_id_rows_for_id,
     evict_authority_log_store_key_squatter, lexical_query_hint_claim_id, parse_entity_metadata,
     plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
@@ -56,7 +56,6 @@ pub(in crate::batch) fn apply_put(
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
-    staged_claim_gate: Option<&StagedClaimGateOutcome>,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
@@ -81,19 +80,19 @@ pub(in crate::batch) fn apply_put(
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     // Publication admission reuses the write-door decode and must precede
     // gate receipts, debits, and every other write effect.
-    let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {
-        Some(crate::claim::validate_claim_body_and_decode(
-            data,
-            allow_reserved_predicate,
-        )?)
-    } else {
-        None
-    };
-    crate::booking::publication::guard_publication_put(
+    let incoming_claim_body = super::claim_admission::admit_claim_put(
         store,
         wtxn,
         id,
-        incoming_claim_body.as_ref(),
+        super::claim_admission::ClaimPutAdmission {
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            allow_reserved_predicate,
+            write_envelope,
+            replicated,
+        },
     )?;
     // ARCH-0052 D2: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A base row
@@ -123,6 +122,7 @@ pub(in crate::batch) fn apply_put(
     let mut task_body_without_streaks = None;
     let mut decoded_claim_body = None;
     let mut authority_entry_hash_pin: Option<crate::authority::AuthorityEntryHash> = None;
+    let mut authority_entry_observation = None;
     // ONE-1604-D1 dominance VERDICT, recorded by the AUTHORITY_LOG arm below
     // and acted on only at the pre-write site: see the eviction comment there
     // for why the mutation cannot ride along with the check.
@@ -169,25 +169,7 @@ pub(in crate::batch) fn apply_put(
             let policy = write_policy.ok_or(Error::InvariantViolation(
                 "local claim write policy snapshot missing",
             ))?;
-            if let Some(staged) = staged_claim_gate {
-                // Enforce this operation's preflight verdict without a second debit.
-                crate::gate::apply_staged_claim_gate_in_txn(
-                    store,
-                    wtxn,
-                    &id,
-                    &body,
-                    write_envelope,
-                    policy,
-                    staged,
-                    crate::gate::GateWriteMode {
-                        record_decision: record_gate_decisions,
-                        persist_pending_consent: persist_gate_pending_consent,
-                        resolve_pending: true,
-                        can_resolve_pending_consent,
-                        include_source_in_gate_input,
-                    },
-                )?;
-            } else if allow_reserved_predicate {
+            if allow_reserved_predicate {
                 crate::gate::check_reserved_claim_policy(&body, write_envelope, policy)?;
             } else {
                 crate::gate::check_claim_policy_for_write_with_preflight_decision(
@@ -233,6 +215,7 @@ pub(in crate::batch) fn apply_put(
             check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?
                 == AuthorityLogKeyOccupant::CrossTypeSquatter;
         authority_entry_hash_pin = Some(entry_hash);
+        authority_entry_observation = Some(entry);
     } else if entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
         crate::federation::validate_federation_grant_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
@@ -623,6 +606,15 @@ pub(in crate::batch) fn apply_put(
             envelope: write_envelope,
         },
     )?;
+    crate::gate::manifest_authenticity::update_manifest_origin(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        replicated,
+    )?;
+    crate::ingest::invalidate_blob_fingerprint(store, wtxn, &id)?;
     stage_claim_projection(store, wtxn, id, decoded_claim_body.as_ref())?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if entity_type == ENTITY_TYPE_TASK {
@@ -648,12 +640,15 @@ pub(in crate::batch) fn apply_put(
         super::put_staging::stage_claim_projection_indexes(store, wtxn, &id, body, learned_at)?;
     }
     if let Some(key) = authority_first_seen_key {
-        let observed_secs =
-            authority_observation_secs_for_write(store, wtxn, mutation_recorded_at)?;
-        if store.sync_state.get(wtxn, key.as_str())?.is_none() {
-            let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
-            store.sync_state.put(wtxn, key.as_str(), &first_seen)?;
-        }
+        observe_authority_put(
+            store,
+            wtxn,
+            &key,
+            authority_entry_observation.as_ref(),
+            authority_entry_hash_pin.as_ref(),
+            replicated,
+            mutation_recorded_at,
+        )?;
     }
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
@@ -827,4 +822,35 @@ fn decode_previous_skill_record(
         }
         Err(error) => Err(error),
     }
+}
+/// Keep first observation, signer maximum and replay advisory in the same put transaction.
+fn observe_authority_put(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    key: &str,
+    entry: Option<&crate::authority::AuthorityLogEntry>,
+    hash: Option<&crate::authority::AuthorityEntryHash>,
+    replicated: bool,
+    mutation_recorded_at: u64,
+) -> Result<()> {
+    let observed_secs =
+        authority_observation_secs_for_write(store, wtxn, mutation_recorded_at)?;
+    if store.sync_state.get(wtxn, key)?.is_none() {
+        let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
+        store.sync_state.put(wtxn, key, &first_seen)?;
+    }
+    if let (Some(entry), Some(hash)) = (entry, hash) {
+        let first_observation = crate::authority::record_authority_sequence_observation_in_txn(
+            store, wtxn, entry, hash,
+        )?;
+        if replicated && first_observation {
+            crate::authority::observe_authority_replay_in_txn(
+                store,
+                wtxn,
+                &entry.signer.public_key,
+                observed_secs,
+            )?;
+        }
+    }
+    Ok(())
 }

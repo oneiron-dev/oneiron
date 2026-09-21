@@ -200,6 +200,9 @@ impl SyncConnection {
                 // Loro's Rust EphemeralStore has no internal timer.
                 _ = ephemeral_housekeeping.tick() => {
                     client.remove_outdated_ephemeral();
+                    if let Err(error) = client.replay_deferred_federation_update() {
+                        return LoopExit::Disconnected(format!("federation replay: {error}"));
+                    }
                     match self.manager.vault().pump_message_streams() {
                         Ok(report) => for (_, error) in report.refused {
                             let _ = event_tx.send(SyncEvent::Error(format!("Stream idle finalize refused: {error}")));

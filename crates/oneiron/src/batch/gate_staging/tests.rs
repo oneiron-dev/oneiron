@@ -4,7 +4,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::edge::EdgeActorClass;
-use crate::gate::{ClaimGateWrite, GateOutcome, GateWriteMode};
+use crate::gate::{ClaimGateWrite, GateWriteMode};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use crate::test_util::{entity, put_policy_manifest_bytes};
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
@@ -29,7 +29,7 @@ fn fixture() -> Result<(tempfile::TempDir, crate::Vault, ClaimBody, WriteEnvelop
         Ok(())
     })?;
     let manifest = serde_json::json!({
-        "schema_version": "1.1", "pack_id": "preflight-rollback", "pack_version": "1",
+        "schema_version": "1.1", "pack_id": "receipt-rollback", "pack_version": "1",
         "min_engine_version": env!("CARGO_PKG_VERSION"),
         "defaults": { "criticality": "normal", "sensitivity": "normal" },
         "rules": [],
@@ -81,11 +81,89 @@ fn fixture() -> Result<(tempfile::TempDir, crate::Vault, ClaimBody, WriteEnvelop
                 Value::from("runner"),
                 Value::from(crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND),
             ),
-            (Value::from("run_id"), Value::from("preflight-late-error")),
+            (Value::from("run_id"), Value::from("receipt-late-error")),
         ]))?,
         ClaimApprovalStatus::Auto,
     );
     Ok((dir, vault, body, envelope))
+}
+
+#[test]
+fn a_structural_refusal_preserves_only_its_receipt_and_no_candidate_rows() -> Result<()> {
+    let (_dir, vault, body, envelope) = fixture()?;
+    let mut wtxn = vault.store.env.write_txn()?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+    let mut staged = Vec::new();
+    let mut ids = HashMap::new();
+    for (index, claim) in [entity(0x30), entity(0x31)].into_iter().enumerate() {
+        let mut candidate = body.clone();
+        if index == 1 {
+            candidate.value = Value::from("");
+        }
+        let mut recorded = None;
+        let result = crate::gate::check_claim_policy_for_write_with_record(
+            &vault.store,
+            &mut wtxn,
+            &claim,
+            ClaimGateWrite {
+                body: &candidate,
+                envelope: Some(&envelope),
+                auto_checker: None,
+                defer_metrics_until_commit: true,
+            },
+            &policy,
+            GateWriteMode {
+                record_decision: true,
+                persist_pending_consent: false,
+                resolve_pending: false,
+                can_resolve_pending_consent: true,
+                include_source_in_gate_input: false,
+            },
+            &mut recorded,
+        );
+        let staged_result = stage_preflight_decision(
+            &vault.store,
+            &mut wtxn,
+            &claim,
+            recorded,
+            result,
+            &mut staged,
+            &mut ids,
+        );
+        if index == 0 {
+            staged_result?;
+        } else {
+            let error = staged_result.expect_err("empty output is refused");
+            assert_eq!(
+                error
+                    .gate_denial()
+                    .expect("typed denial")
+                    .outcome()
+                    .as_str(),
+                "deny"
+            );
+        }
+    }
+    wtxn.commit()?;
+    let decisions = vault.store.gate_decisions(256)?;
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(decisions[0].claim_id, Some(*entity(0x31).as_bytes()));
+    assert_eq!(decisions[0].outcome, "deny");
+    assert_eq!(
+        decisions[0].reason_codes,
+        ["gate.deny.dreamer_precommit.degenerate_output"]
+    );
+    for claim in [entity(0x30), entity(0x31)] {
+        assert!(vault.get_raw(&claim)?.is_none());
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .pending_gate_consent_in_txn(&rtxn, &claim)?
+                .is_none()
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -132,10 +210,7 @@ fn late_refusal_preserves_only_its_receipt() -> Result<()> {
             &mut recorded,
         )?;
         if index == 0 {
-            assert_eq!(
-                recorded.as_ref().unwrap().decision().outcome(),
-                GateOutcome::Allow
-            );
+            assert_eq!(recorded.as_ref().unwrap().outcome(), "allow");
             stage_preflight_decision(
                 &vault.store,
                 &mut txn,
@@ -146,10 +221,7 @@ fn late_refusal_preserves_only_its_receipt() -> Result<()> {
                 &mut ids,
             )?;
         } else {
-            assert_eq!(
-                recorded.as_ref().unwrap().decision().outcome(),
-                GateOutcome::Pending
-            );
+            assert_eq!(recorded.as_ref().unwrap().outcome(), "pending");
             let error = crate::Error::Gate(crate::error::GateError::SourceNotTrustedForAuto {
                 claim_source: "generated",
             });

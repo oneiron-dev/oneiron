@@ -1,10 +1,7 @@
 //! Turning vault-side records into the contract's response shapes.
 
-use std::io::Cursor;
-
 use serde_json::Value;
 
-use crate::companion::companion_value_to_json;
 use crate::context_pack::{
     ContextEntity, ContextPack, EmptyContext, EmptyReason, PackItemAccounting,
     PackItemAccountingReason, PackStats, PackTokenStats,
@@ -30,13 +27,7 @@ use super::types::{
 /// Decodes already-clamped entity bytes into the public JSON projection.
 /// Opaque bodies use the accepted server's lossless `bodyBytes` representation.
 fn decode_scoped_body(body: &[u8]) -> Value {
-    let mut cursor = Cursor::new(body);
-    if let Ok(value) = rmpv::decode::read_value(&mut cursor)
-        && cursor.position() == body.len() as u64
-    {
-        return companion_value_to_json(&value);
-    }
-    serde_json::json!({ "bodyBytes": body })
+    crate::batch::export::redacted_memory_body(body)
 }
 
 pub(super) fn entity_record_from_parts(
@@ -153,9 +144,13 @@ fn project_context_entity(entity: &ContextEntity) -> CoreContextPackEntityRecord
         entity_type: entity.entity_type,
         score: entity.score,
         fields: entity.fields.as_ref().map(|fields| {
-            fields
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone()))
+            let mut value = Value::Object(fields.clone().into_iter().collect());
+            crate::batch::export::redact_credentials(&mut value);
+            value
+                .as_object()
+                .expect("redactor preserves object")
+                .clone()
+                .into_iter()
                 .collect()
         }),
         edges: entity
@@ -181,9 +176,21 @@ fn project_empty_context(empty: &EmptyContext) -> CoreContextPackEmpty {
 
 /// Consumes the already-filtered pack and copies every public field into the
 /// local serializable projection. No facade helper is involved.
-pub(super) fn project_context_pack(pack: &ContextPack) -> CoreContextPackProjection {
+pub(super) fn project_context_pack(
+    pack: &ContextPack,
+    narrowing: crate::claim::ScopedReadReceipt,
+) -> CoreContextPackProjection {
     CoreContextPackProjection {
         capabilities: pack.capabilities.clone(),
+        access: crate::access_grant::GrantedData::new(
+            pack.results
+                .iter()
+                .chain(&pack.neighbors)
+                .map(|row| row.id.to_hex())
+                .collect(),
+            narrowing.suppressed_count,
+        ),
+        narrowing,
         results: pack.results.iter().map(project_context_entity).collect(),
         neighbors: pack.neighbors.iter().map(project_context_entity).collect(),
         stats: project_pack_stats(&pack.stats),
@@ -206,8 +213,11 @@ fn project_timeline_record(record: &MemoryTimelineRecord) -> CoreMemoryTimelineR
     }
 }
 
-pub(super) fn project_memory_timeline(timeline: &MemoryTimeline) -> CoreMemoryTimelineResponse {
+pub(super) fn project_memory_timeline(
+    timeline: &crate::claim::ScopedReadResult<MemoryTimeline>,
+) -> CoreMemoryTimelineResponse {
     CoreMemoryTimelineResponse {
+        narrowing: timeline.receipt.clone(),
         anchor_id: timeline.anchor.to_hex(),
         records: timeline
             .records

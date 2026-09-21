@@ -236,7 +236,7 @@ impl<'a> ExecutorStorage<'a> {
     pub(in crate::code_run) fn off_record_policy_active(&self) -> Result<bool> {
         match self {
             Self::Canonical(_) => Ok(false),
-            Self::Session(binding) => Ok(binding.session.mode()? == OffRecordMode::OffRecord),
+            Self::Session(binding) => Ok(binding.session.mode()? != OffRecordMode::OnRecord),
         }
     }
 

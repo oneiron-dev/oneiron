@@ -13,6 +13,7 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
     let turn_a = seeded_test_entity_id(0x0012_6301);
     let turn_b = seeded_test_entity_id(0x0012_6302);
     let summary = seeded_test_entity_id(0x0012_6303);
+    let space = seeded_test_entity_id(0x0012_6304);
     let body_a = rmp_serde::to_vec_named(&json!({
         "txt": "eiri v4 needle alpha",
         "spkr": "user",
@@ -26,7 +27,8 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
     }))
     .expect("encode turn body");
     let summary_body = rmp_serde::to_vec_named(&json!({
-        "txt": "eiri v4 needle summary"
+        "txt": "eiri v4 needle summary",
+        "rel": space.to_hex()
     }))
     .expect("encode summary body");
 
@@ -78,6 +80,23 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
         "eiri-session-api@example.com",
     );
     seed_disclosure_scope(&server, principal_id, vec![turn_a, turn_b, summary]);
+    // Disclosure is not an access grant. This delegated reader gets only the
+    // summary's declared relationship space, not arbitrary unscoped summaries.
+    server
+        .vault
+        .create_access_grant(
+            &seeded_test_entity_id(0x0012_6305),
+            &oneiron::access_grant::AccessGrant {
+                principal_ref: principal_id,
+                scope: oneiron::access_grant::AccessGrantScope::Summaries { space_ref: space },
+                capability: oneiron::access_grant::AccessGrantCapability::SummariesRead,
+                status: oneiron::access_grant::AccessGrantStatus::Active,
+                created_at: 1,
+                revoked_at: None,
+                expires_at: None,
+            },
+        )
+        .expect("grant the summary scope");
 
     let persona_ref = seeded_test_entity_id(0x1324_0001).to_hex();
     let request = json!({
@@ -481,6 +500,8 @@ fn memories_budget_default_other_matches_retrieval_budget() {
 
     let split = memories_budget(
         Some(&ContextBoardMemoriesControls {
+            pinned_refs: Vec::new(),
+            shared_total: None,
             enabled: None,
             slots: Some(ContextBoardMemoriesSlotControls {
                 companions: Some(2),
@@ -834,4 +855,76 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
         assert_eq!(status, StatusCode::OK, "{board:#}");
         assert_eq!(board["changed"], expected, "{session}");
     }
+}
+
+#[tokio::test]
+async fn pinned_memories_bypass_query_scope_but_not_audience_disclosure() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x1742_0001);
+    let pinned = seeded_test_entity_id(0x1742_0002);
+    let contact = seeded_test_entity_id(0x1742_0003);
+    let bytes = rmp_serde::to_vec_named(&json!({"name":"pin needle"})).unwrap();
+    server
+        .vault
+        .batch()
+        .put(
+            &pinned,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &bytes,
+        )
+        .text(&pinned, &[("name", "pin needle")])
+        .commit()
+        .unwrap();
+    let pack = server
+        .vault
+        .context_pack()
+        .search_text("pin needle", 10)
+        .run()
+        .unwrap();
+    let row = pack.results.iter().find(|row| row.id == pinned).unwrap();
+    let reference = format!("{}:{:02x}", row.short_id, row.content_hash);
+    seed_counterparty_contact(&server, principal, contact, "pin-reader@example.com");
+    seed_disclosure_scope(&server, principal, Vec::new());
+    let request = json!({
+        "retrieval": {"query":"unrelated empty query", "limit":1},
+        "memories": {"shared_total":0, "pinned_refs":[reference]},
+        "session": {"session_id":principal.to_hex()}
+    });
+    let read = || {
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-board",
+            "core:read",
+            &principal.to_hex(),
+            Some(&request),
+        )
+    };
+    let (status, denied) = route_json(server.clone(), read()).await;
+    assert_eq!(status, StatusCode::OK, "{denied}");
+    assert!(denied["memories"]["rows"].as_array().unwrap().is_empty());
+    assert_eq!(denied["pack"]["pin_narrowing"][0]["suppressed_count"], 1);
+    assert!(
+        !denied["rendered_memories"]
+            .as_str()
+            .unwrap()
+            .contains(&reference)
+    );
+    seed_disclosure_scope(&server, principal, vec![pinned]);
+    let (status, allowed) = route_json(server, read()).await;
+    assert_eq!(status, StatusCode::OK, "{allowed}");
+    assert!(allowed["pack"]["results"].as_array().unwrap().is_empty());
+    assert_eq!(allowed["memories"]["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(allowed["memories"]["rows"][0]["tier"], "pinned");
+    assert_eq!(allowed["pack"]["pin_narrowing"][0]["suppressed_count"], 0);
+    assert!(
+        allowed["rendered_memories"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("{reference} trust=unknown tier=PINNED"))
+    );
 }

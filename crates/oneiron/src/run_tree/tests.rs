@@ -1241,3 +1241,29 @@ fn failure_marker_does_not_change_status_or_events() {
         "\"paused\"",
     );
 }
+
+#[test]
+fn run_projection_serializes_only_attempt_state_not_write_velocity() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let root = enqueue(&runner, "root", None, 10, "rate-input-run")?;
+    enqueue(
+        &runner,
+        "child",
+        Some(root.attempt.id),
+        20,
+        "rate-input-run",
+    )?;
+    let tree = RunTreeAdapter::new(&vault).read_run("rate-input-run")?;
+    let wire = serde_json::to_value(&tree).expect("serialize tree");
+    assert_eq!(wire["roots"][0]["status"], "queued");
+    assert!(wire["roots"][0].get("gate_breaker_paused").is_none());
+    assert!(
+        wire["roots"][0]["children"][0]
+            .get("gate_breaker_paused")
+            .is_none()
+    );
+    let round_trip: crate::run_tree::RunTree = serde_json::from_value(wire).expect("decode tree");
+    assert_eq!(round_trip, tree);
+    Ok(())
+}

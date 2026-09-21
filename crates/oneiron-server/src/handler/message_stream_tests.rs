@@ -31,14 +31,7 @@ async fn message_stream_presence_canonical_fanout_and_late_join_never_persist_te
         ),
     );
     let config = SyncServerConfig::default();
-    let mut state = ConnState::new(
-        config.max_messages_per_sec,
-        protocol::PROTOCOL_VERSION,
-        FederationQuotaConfig::new(
-            config.max_federation_windows_per_connection,
-            config.federation_flood_pause_secs,
-        ),
-    );
+    let mut state = ConnState::new(config.max_messages_per_sec, protocol::PROTOCOL_VERSION);
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut fanout = server.broadcast_tx.subscribe();
     handle_sync_message(

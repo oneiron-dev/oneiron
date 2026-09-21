@@ -48,7 +48,6 @@ impl PolicyApprovalCeiling {
 }
 
 #[must_use]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn foreign_agent_effective_ceiling(
     confirmed_scope: PolicyApprovalCeiling,
     introducer_ceiling: PolicyApprovalCeiling,
@@ -212,7 +211,6 @@ pub(super) struct ActorCeiling {
 }
 
 #[must_use]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn foreign_agent_ceiling_after_widen_request(
     current_ceiling: PolicyApprovalCeiling,
     requested_ceiling: PolicyApprovalCeiling,
@@ -270,6 +268,7 @@ pub(crate) struct PolicyOwnerPolicyRow {
     pub(crate) text: String,
     pub(crate) active: bool,
     pub(crate) world_ref: Option<String>,
+    pub(crate) human: Option<String>,
     pub(crate) action: OwnerRowAction,
 }
 
@@ -395,6 +394,24 @@ impl SourceTrustCeiling {
             ClaimSource::Generated,
         ] {
             if let Some(row) = other.row(source) {
+                self.set_row(source, row);
+            }
+        }
+    }
+
+    pub(super) fn restrict_only(&mut self, other: Self) {
+        self.malformed_manifest_seen |= other.malformed_manifest_seen;
+        for source in [
+            ClaimSource::UserStated,
+            ClaimSource::Observed,
+            ClaimSource::Inferred,
+            ClaimSource::Imported,
+            ClaimSource::ToolOutput,
+            ClaimSource::Generated,
+        ] {
+            if self.row(source).is_some()
+                && let Some(row) = other.row(source)
+            {
                 self.set_row(source, row);
             }
         }

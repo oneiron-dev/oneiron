@@ -4,8 +4,8 @@
 
 use futures_util::{SinkExt, StreamExt};
 use oneiron::sync::transport::{
-    LEGACY_SELECTOR_PROTOCOL_VERSION, PROTOCOL_VERSION, TAG_PROTOCOL_HELLO, TAG_RPC, TAG_SUB,
-    TAG_VERSION_VECTOR,
+    APP_TIER_PROTOCOL_VERSION_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION, PROTOCOL_VERSION,
+    TAG_PROTOCOL_HELLO, TAG_RPC, TAG_SUB, TAG_VERSION_VECTOR,
 };
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde::{Deserialize, Serialize};
@@ -168,7 +168,7 @@ async fn close_code(socket: &mut Socket) -> u16 {
 #[tokio::test]
 async fn old_version_syncs_but_app_tag_closes_4007_before_json_decode() {
     let fixture = fixture().await;
-    const { assert!(LEGACY_SELECTOR_PROTOCOL_VERSION < PROTOCOL_VERSION) };
+    const { assert!(LEGACY_SELECTOR_PROTOCOL_VERSION < APP_TIER_PROTOCOL_VERSION_VERSION) };
     let mut socket = connect(&fixture, LEGACY_SELECTOR_PROTOCOL_VERSION).await;
     let mut vv = vec![TAG_VERSION_VECTOR];
     vv.extend_from_slice(&loro::VersionVector::default().encode());

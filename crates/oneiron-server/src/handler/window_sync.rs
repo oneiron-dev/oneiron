@@ -1,10 +1,9 @@
 //! WindowSync sub-tag dispatcher with selector and VV paths.
 
-use loro::{ExportMode, VersionVector};
+use loro::VersionVector;
 
 use oneiron::sync::{
-    AllowBlock, SelectorVvRequest, WindowKey, authorize_sync_selector, decode_selector_vv_request,
-    filtered_window_doc,
+    SelectorVvRequest, WindowKey, authorize_sync_selector, decode_selector_vv_request,
 };
 
 use super::conn_state::{ConnState, WindowSyncMode};
@@ -45,46 +44,21 @@ pub(super) async fn handle_window_sync(
         });
     }
 
-    match sub_tag {
-        window_sub_tags::SELECTOR_VV_REQUEST => {
-            conn_state.bind_window_sync_mode(WindowSyncMode::Selector)?;
-            match conn_state.allow_federation_window(&key) {
-                AllowBlock::Allow => {}
-                AllowBlock::Pause(reason) => {
-                    let state = conn_state.federation_quota_snapshot();
-                    tracing::warn!(
-                        conn_id,
-                        window_key,
-                        ?reason,
-                        ?state,
-                        "federation selector connection paused"
-                    );
-                    return Ok(());
-                }
-                AllowBlock::Block(reason) => {
-                    tracing::warn!(
-                        conn_id,
-                        window_key,
-                        ?reason,
-                        "federation selector connection blocked"
-                    );
-                    return Err(ProtocolError::InvalidPayload(
-                        "federation selector quota blocked",
-                    ));
-                }
-            }
-        }
-        window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE | window_sub_tags::UPDATE => {
-            conn_state.bind_window_sync_mode(WindowSyncMode::FullWindow)?;
-        }
-        _ => {}
+    if matches!(
+        sub_tag,
+        window_sub_tags::SELECTOR_VV_REQUEST | window_sub_tags::SELECTOR_RETRY
+    ) {
+        return super::federation::handle_selector_fetch(
+            server, &key, sub_tag, payload, direct_tx, conn_state,
+        )
+        .await;
     }
-
-    let selector_request = if sub_tag == window_sub_tags::SELECTOR_VV_REQUEST {
-        Some(decode_and_authorize_selector_request(server, payload)?)
-    } else {
-        None
-    };
+    if matches!(
+        sub_tag,
+        window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE | window_sub_tags::UPDATE
+    ) {
+        conn_state.bind_window_sync_mode(WindowSyncMode::FullWindow)?;
+    }
 
     // Count distinct, valid window keys per connection before any load/create.
     // The default cap is generous so legitimate historical-window tombstone
@@ -130,31 +104,6 @@ pub(super) async fn handle_window_sync(
             .into_result()
             .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
             let _ = direct_tx.send(vv_response);
-        }
-        window_sub_tags::SELECTOR_VV_REQUEST => {
-            // Grant-backed closed-subgraph fetch. The full-window VV path
-            // above stays byte-for-byte compatible; selected sync exports
-            // from a synthetic doc so unauthorized entries are never present
-            // in the outbound Loro update bytes.
-            let request = selector_request.ok_or(ProtocolError::InvalidPayload(
-                "missing sync selector request",
-            ))?;
-            let filtered = filtered_window_doc(
-                server.vault.as_ref(),
-                &doc,
-                &key,
-                selector_grant_scope(),
-                &request.selector,
-            )
-            .map_err(map_selector_filter_err)?;
-            let delta = filtered
-                .export(ExportMode::all_updates())
-                .map_err(|e| ProtocolError::LoroImport(e.to_string()))?;
-            let response =
-                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
-                    .into_result()
-                    .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
-            let _ = direct_tx.send(response);
         }
         window_sub_tags::UPDATE => {
             // Admission runs on an isolated document before Observer B or
@@ -222,7 +171,7 @@ pub(super) async fn handle_window_sync(
     Ok(())
 }
 
-fn decode_and_authorize_selector_request(
+pub(super) fn decode_and_authorize_selector_request(
     server: &SyncServer,
     payload: &[u8],
 ) -> Result<SelectorVvRequest, ProtocolError> {
@@ -260,7 +209,7 @@ fn map_delta_export_err(e: oneiron::Error) -> ProtocolError {
     }
 }
 
-fn map_selector_filter_err(e: oneiron::Error) -> ProtocolError {
+pub(super) fn map_selector_filter_err(e: oneiron::Error) -> ProtocolError {
     if matches!(
         e,
         oneiron::Error::Sync(oneiron::error::SyncError::SyncProtocolError { .. })

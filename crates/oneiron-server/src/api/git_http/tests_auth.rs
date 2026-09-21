@@ -469,4 +469,160 @@ mod tests {
             StatusCode::FORBIDDEN
         );
     }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lease_checkout_stock_git_push_authenticates_at_the_real_door_route() {
+        use oneiron::checkout::lease::*;
+        struct Facts;
+        impl CheckoutFactSink for Facts {
+            fn apply_checkout_fact(&mut self, _: CheckoutFactMutation) -> CheckoutResult<()> {
+                Ok(())
+            }
+        }
+        #[derive(Default)]
+        struct Liveness(Option<CheckoutLivenessPulse>);
+        impl CheckoutLiveness for Liveness {
+            fn publish(&mut self, pulse: CheckoutLivenessPulse) -> CheckoutResult<()> {
+                self.0 = Some(pulse);
+                Ok(())
+            }
+            fn current(&self, _: CheckoutId) -> CheckoutResult<Option<CheckoutLivenessPulse>> {
+                Ok(self.0.clone())
+            }
+            fn clear(&mut self, _: CheckoutId, _: u64) -> CheckoutResult<()> {
+                self.0 = None;
+                Ok(())
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+        let config = secret_config();
+        let pusher = principal();
+        let token = scoped_token(&config, "core:read,core:write", Some(&pusher));
+        let server = Arc::new(SyncServer::new(Arc::clone(&vault), config).unwrap());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/git", listener.local_addr().unwrap());
+        let serving = tokio::spawn(async move {
+            axum::serve(listener, git_http_routes().with_state(server))
+                .await
+                .unwrap();
+        });
+        let checked = tokio::task::spawn_blocking(move || {
+            let source = tempfile::tempdir().unwrap();
+            stock_git(source.path(), &["init", "--initial-branch=main"]);
+            std::fs::write(source.path().join("README.md"), "lease route\n").unwrap();
+            stock_git(source.path(), &["add", "README.md"]);
+            stock_git(
+                source.path(),
+                &[
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "-m",
+                    "initial",
+                ],
+            );
+            let oid = stock_git(source.path(), &["rev-parse", "HEAD"]);
+            let root = smart_http::origin_serving_root(&vault).unwrap();
+            stock_git(
+                &root,
+                &[
+                    "clone",
+                    "--bare",
+                    source.path().to_str().unwrap(),
+                    "demo.git",
+                ],
+            );
+            let repo_dir = root.join("demo.git");
+            stock_git(&repo_dir, &["remote", "remove", "origin"]);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let mut leases = CheckoutLeaseService::new(vault.as_ref(), Facts, Liveness::default());
+            let grant = leases
+                .claim(CheckoutClaimRequest {
+                    checkout_id: CheckoutId::from_bytes(*oneiron::EntityId::now().as_bytes())
+                        .unwrap(),
+                    task_ref: oneiron::EntityId::now(),
+                    repo_ref: oneiron::codebase::RepoRef::LocalFolder {
+                        path: repo_dir.to_string_lossy().into_owned(),
+                        commit: oid.clone(),
+                    },
+                    holder_ref: pusher.clone(),
+                    task_class: CheckoutTaskClass::Build,
+                    ttl_secs: Some(600),
+                    now,
+                })
+                .unwrap();
+            let lease = leases.get(grant.checkout_id).unwrap().unwrap();
+            let wire = oneiron::git_wire::GitWire::new(&vault)
+                .unwrap()
+                .with_checkout_door(&base)
+                .unwrap();
+            wire.materialize(&lease).unwrap();
+            let tree = wire.checkout_worktree_path(&lease).unwrap();
+            let url = stock_git(&tree, &["remote", "get-url", "origin"]);
+            assert_eq!(
+                url,
+                format!(
+                    "{base}/lease/{}.{}/demo.git",
+                    grant.checkout_id, grant.epoch
+                )
+            );
+            let unauthenticated = std::process::Command::new("git")
+                .current_dir(&tree)
+                .args(["push", "origin", "HEAD:refs/heads/lease"])
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .unwrap();
+            assert!(!unauthenticated.status.success());
+            // A lease never substitutes for the registered actor's signed bearer.
+            let auth = format!("http.extraHeader=Authorization: Bearer {token}");
+            stock_git(
+                &tree,
+                &["-c", &auth, "push", "origin", "HEAD:refs/heads/lease"],
+            );
+            assert_eq!(
+                stock_git(&repo_dir, &["rev-parse", "refs/heads/lease"]),
+                oid
+            );
+            let ids = vault.origin_publication_ids(None).unwrap();
+            assert_eq!(ids.len(), 1);
+            let row = vault.origin_publication(ids[0]).unwrap().unwrap();
+            let outcome = vault.get_claim(&row.provenance_claim_id).unwrap().unwrap();
+            let fields = outcome.value.as_map().unwrap();
+            let op = fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("operation_id"))
+                .unwrap()
+                .1
+                .as_str()
+                .unwrap();
+            let admission = vault
+                .get_claim(&oneiron::EntityId::from_hex(op).unwrap())
+                .unwrap()
+                .unwrap();
+            assert!(admission.value.as_map().unwrap().contains(&(
+                rmpv::Value::from("method"),
+                rmpv::Value::from("door-credential+registered-principal")
+            )));
+            assert!(!stock_git(&tree, &["config", "--list"]).contains(&token));
+            leases
+                .reclaim_idempotent(grant.checkout_id, principal(), now + 601)
+                .unwrap();
+            let stale = std::process::Command::new("git")
+                .current_dir(&tree)
+                .args(["-c", &auth, "push", "origin", "HEAD:refs/heads/stale"])
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .unwrap();
+            assert!(!stale.status.success());
+        })
+        .await;
+        serving.abort();
+        checked.unwrap();
+    }
 }

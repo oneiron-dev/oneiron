@@ -382,6 +382,7 @@ const fn decision_severity(decision: PolicyClassifyDecision) -> u8 {
         PolicyClassifyDecision::Allow => 0,
         PolicyClassifyDecision::Warn => 1,
         PolicyClassifyDecision::RouteToHelp => 2,
+        PolicyClassifyDecision::Hold => 4,
         PolicyClassifyDecision::Block => 3,
     }
 }

@@ -435,6 +435,13 @@ impl Vault {
                     .load(std::sync::atomic::Ordering::Acquire),
             )?;
 
+            for id in &member_claim_ids {
+                if action == GateConsentBundleAction::Approve {
+                    self.complete_deferred_claim_in_txn(wtxn, id, false, now)?;
+                } else {
+                    self.cancel_deferred_claim_in_txn(wtxn, id)?;
+                }
+            }
             let record = GateDecisionRecord {
                 version: GATE_DECISION_LEDGER_VERSION,
                 decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
@@ -703,11 +710,6 @@ fn replay_gate_consent_bundle_member(
         body.approval,
     );
     let mut recorded_decision = None;
-    // ONE-1453: the owner-bundle-replay seam. An owner resolving this bundle
-    // is authorizing exactly these writes, so the replay neither counts
-    // against nor is demoted by the run's burst budget. The exemption is a
-    // private function on this internal path — no public argument, no
-    // callable bypass.
     let gate_result = check_claim_policy_for_write_with_record(
         &vault.store,
         wtxn,

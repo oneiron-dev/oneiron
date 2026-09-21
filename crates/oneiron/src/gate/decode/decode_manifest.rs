@@ -40,6 +40,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) actor_ceilings: Vec<ActorCeiling>,
     pub(in crate::gate) delegated_grants: Vec<DelegationGrantRecord>,
     pub(in crate::gate) source_trust: SourceTrustCeiling,
+    pub(in crate::gate) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(in crate::gate) scoped_grants: Vec<PolicyScopedGrant>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
@@ -83,6 +84,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_ACTOR_CEILINGS_KEY
                 | POLICY_DELEGATED_GRANTS_KEY
                 | POLICY_SOURCE_TRUST_KEY
+                | "single_valued_predicates"
                 | POLICY_SCOPED_GRANTS_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_ENABLED_KEY
@@ -129,6 +131,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => {
             parse_source_trust(value).unwrap_or_else(SourceTrustCeiling::malformed)
         }
+    };
+    let single_valued_predicates = match single_map_value(&entries, "single_valued_predicates") {
+        MapValue::Missing => std::collections::BTreeSet::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_single_valued_predicates(value)?,
     };
     let scoped_grants = match single_map_value(&entries, POLICY_SCOPED_GRANTS_KEY) {
         MapValue::Missing => Vec::new(),
@@ -238,6 +245,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         delegated_grants,
         source_trust,
         scoped_grants,
+        single_valued_predicates,
         owner_policy_rows,
         owner_policy_rows_dropped,
         owner_policy_enabled,
@@ -281,4 +289,19 @@ pub(super) fn nonblank_bounded_string(value: &Value, max_len: usize) -> Option<S
         return None;
     }
     Some(value.to_owned())
+}
+
+fn parse_single_valued_predicates(value: &Value) -> Option<std::collections::BTreeSet<String>> {
+    let Value::Array(values) = value else {
+        return None;
+    };
+    let mut predicates = std::collections::BTreeSet::new();
+    for value in values {
+        let predicate = value.as_str()?;
+        crate::claim::validate_predicate(predicate, false).ok()?;
+        if !predicates.insert(predicate.to_owned()) {
+            return None;
+        }
+    }
+    Some(predicates)
 }

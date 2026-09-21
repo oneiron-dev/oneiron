@@ -13,6 +13,7 @@ use super::*;
 pub(super) struct FoldContext<'a> {
     pub(super) first_seen_at_secs: &'a BTreeMap<AuthorityEntryHash, u64>,
     pub(super) now_secs: Option<u64>,
+    pub(super) sequence_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
     pub(super) enforce_seen_time_delay: bool,
     pub(super) vetoed_widens: &'a BTreeSet<AuthorityEntryHash>,
     pub(super) authority_forks: &'a BTreeMap<(AuthorityKey, u64), AuthorityFork>,
@@ -59,6 +60,7 @@ pub fn fold_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         true,
         &peer_consent_roots,
         folded_device_can_authority_consent,
+        None,
     )
 }
 
@@ -75,6 +77,7 @@ pub(super) fn fold_authority_log_without_seen_time_delay(
         false,
         &peer_consent_roots,
         folded_device_can_authority_consent,
+        None,
     )
 }
 
@@ -116,6 +119,7 @@ pub(crate) fn fold_authority_log_with_peer_consent_roots(
         true,
         peer_consent_roots,
         folded_device_can_authority_consent,
+        None,
     )
 }
 
@@ -140,6 +144,25 @@ pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         false,
         &peer_consent_roots,
         folded_peer_device_is_consent_root,
+        None,
+    )
+}
+
+pub(super) fn fold_authority_log_with_local_observations(
+    entries: &[AuthorityLogEntry],
+    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: u64,
+    peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+    observations: &AuthorityLocalObservations,
+) -> AuthorityFold {
+    fold_authority_log_inner(
+        entries,
+        first_seen_at_secs,
+        Some(now_secs),
+        true,
+        peer_consent_roots,
+        folded_device_can_authority_consent,
+        Some(observations),
     )
 }
 
@@ -150,8 +173,13 @@ fn fold_authority_log_inner(
     enforce_seen_time_delay: bool,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     consent_arm: fn(&FoldedDevice) -> bool,
+    observations: Option<&AuthorityLocalObservations>,
 ) -> AuthorityFold {
     let mut vetoed_widens = BTreeSet::new();
+    let sequence_floors = observations.map(|local| &local.sequence_floors);
+    let stale_roster_window_secs = observations.map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
+        local.policy.stale_roster_window_secs
+    });
     let mut authority_forks = BTreeMap::new();
     let mut authority_fork_vault_ids = BTreeMap::new();
     let empty_equivocation_groups = BTreeMap::new();
@@ -161,6 +189,7 @@ fn fold_authority_log_inner(
         FoldContext {
             first_seen_at_secs,
             now_secs,
+            sequence_floors,
             enforce_seen_time_delay,
             vetoed_widens: &vetoed_widens,
             authority_forks: &authority_forks,
@@ -195,7 +224,13 @@ fn fold_authority_log_inner(
             && next_authority_forks == authority_forks
             && next_authority_fork_vault_ids == authority_fork_vault_ids
         {
-            return fold;
+            return apply_stale_roster_window(
+                entries,
+                fold,
+                first_seen_at_secs,
+                now_secs,
+                stale_roster_window_secs,
+            );
         }
         vetoed_widens = fold.vetoed_widens.clone();
         authority_forks = next_authority_forks;
@@ -205,6 +240,7 @@ fn fold_authority_log_inner(
             FoldContext {
                 first_seen_at_secs,
                 now_secs,
+                sequence_floors,
                 enforce_seen_time_delay,
                 vetoed_widens: &vetoed_widens,
                 authority_forks: &authority_forks,
@@ -218,7 +254,13 @@ fn fold_authority_log_inner(
             },
         );
     }
-    fold
+    apply_stale_roster_window(
+        entries,
+        fold,
+        first_seen_at_secs,
+        now_secs,
+        stale_roster_window_secs,
+    )
 }
 
 fn fold_authority_log_once(
@@ -245,6 +287,13 @@ fn fold_authority_log_once(
         }
     }
     let entry_ancestors = entry_ancestor_index(&by_hash);
+    let causal_floors =
+        super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
+    let context = FoldContext {
+        sequence_floors: causal_floors.as_ref(),
+        ..context
+    };
+
     let mut equivocation_groups =
         BTreeMap::<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>::new();
     let mut equivocation_by_hash = BTreeMap::<AuthorityEntryHash, (AuthorityKey, u64)>::new();
@@ -447,6 +496,8 @@ fn fold_authority_log_once(
                 conflicted_critical_write_confirms: BTreeSet::new(),
                 federation_grant_bindings: BTreeMap::new(),
                 actor_bindings: BTreeMap::new(),
+                door_slips: BTreeMap::new(),
+                spent_door_slips: BTreeSet::new(),
                 issues,
             },
             authority_fork_vault_ids,
@@ -527,6 +578,12 @@ fn fold_authority_log_once(
                 state.federation_grant_bindings.clone()
             }),
             actor_bindings,
+            door_slips: merged
+                .as_ref()
+                .map_or_else(BTreeMap::new, |state| state.door_slips.clone()),
+            spent_door_slips: merged
+                .as_ref()
+                .map_or_else(BTreeSet::new, |state| state.spent_door_slips.clone()),
             issues,
         },
         authority_fork_vault_ids,

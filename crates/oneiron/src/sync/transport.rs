@@ -83,8 +83,10 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 /// v7 = Loro-native ephemeral tag 1 payloads for selector-capable clients,
 /// kept distinct from v6 for broadcast filtering.
 /// v8 = in-band bound app-tier RPC and subscription frames.
-/// v9 = entity-document frames, document batches and manifest-scoped chunk tags.
-/// Selector connections remain distinct from the owner/full-window v10 lane.
+/// v9 = authenticated selector peers, durable selector defer/retry,
+/// entity-document frames, document batches and manifest-scoped chunk tags
+/// (ARCH-0023b/0044). Selector connections remain distinct from the
+/// owner/full-window v10 lane.
 pub const PROTOCOL_VERSION: u8 = 9;
 /// Content-addressed chunk negotiation, outside the Loro op stream.
 pub const TAG_LFS_CHUNK_SYNC: u8 = 22;
@@ -135,6 +137,11 @@ pub mod window_sub_tags {
     /// selected subgraph. Full-window `VV_REQUEST`/`VV_RESPONSE` remain
     /// unchanged and backward compatible.
     pub const SELECTOR_VV_REQUEST: u8 = 4;
+    /// Durable selector deferral. Payload is the 32-byte request identity.
+    pub const SELECTOR_DEFERRED: u8 = 5;
+    /// Retry a durable selector request under the currently bound principal.
+    /// Payload is the 32-byte identity from `SELECTOR_DEFERRED`.
+    pub const SELECTOR_RETRY: u8 = 6;
 }
 
 /// Maximum window key length (YYYY-MM = 7 bytes).

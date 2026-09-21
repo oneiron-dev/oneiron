@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::entity_id::EntityId;
 
-use super::{ClaimMaterialization, StagedClaimGateOutcome};
+use super::ClaimMaterialization;
 
 #[derive(Debug)]
 pub(crate) struct ApplyOpsGateMode {
@@ -13,10 +13,6 @@ pub(crate) struct ApplyOpsGateMode {
     pub(super) claim_materializations: VecDeque<ClaimMaterialization>,
     pub(super) preflight_gate_decision_ids:
         HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
-    /// The gate verdicts this transaction's preflight already recorded,
-    /// keyed by operation receipt identity.
-    pub(super) staged_claim_gate:
-        Option<HashMap<crate::store::GateDecisionId, StagedClaimGateOutcome>>,
 }
 
 impl ApplyOpsGateMode {
@@ -28,7 +24,6 @@ impl ApplyOpsGateMode {
             claim_gate_prechecked: false,
             claim_materializations: VecDeque::new(),
             preflight_gate_decision_ids: HashMap::new(),
-            staged_claim_gate: None,
         }
     }
 
@@ -65,20 +60,6 @@ impl ApplyOpsGateMode {
         >,
     ) -> Self {
         self.preflight_gate_decision_ids = preflight_gate_decision_ids;
-        self
-    }
-
-    /// Binds the gate verdicts this transaction's preflight already recorded
-    /// for local claims, without a second auto-checker consult.
-    ///
-    /// Not a general gate bypass: the map is crate-private, `BatchBuilder`
-    /// builds it only from decisions IT staged in THIS transaction, and the
-    /// door that consumes it enforces rather than re-evaluates.
-    pub(super) fn with_staged_claim_gate(
-        mut self,
-        staged_claim_gate: HashMap<crate::store::GateDecisionId, StagedClaimGateOutcome>,
-    ) -> Self {
-        self.staged_claim_gate = Some(staged_claim_gate);
         self
     }
 }

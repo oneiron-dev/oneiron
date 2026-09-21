@@ -139,7 +139,7 @@ impl SyncClient {
             },
         ));
         let document_updates = manager.documents().subscribe();
-        let client = Self {
+        let mut client = Self {
             note_session_bound: false,
             document_updates,
             vault,
@@ -158,6 +158,9 @@ impl SyncClient {
             event_tx,
         };
 
+        client
+            .replay_deferred_federation_update()
+            .map_err(|e| Error::sync_engine(SyncEngineContext::FederationReplayStartup, e))?;
         Ok((client, event_rx))
     }
 

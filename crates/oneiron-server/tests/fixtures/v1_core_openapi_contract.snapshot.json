@@ -1,6 +1,21 @@
 {
   "components": {
     "schemas": {
+      "AccessLimitedSchema": {
+        "properties": {
+          "requiredAction": {
+            "type": "string"
+          },
+          "suppressedCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "suppressedCount",
+          "requiredAction"
+        ],
+        "type": "object"
+      },
       "ApiError": {
         "additionalProperties": false,
         "properties": {
@@ -23,6 +38,8 @@
               "INVALID_HEADER",
               "UNSUPPORTED_CAPABILITY",
               "DEEP_RETRIEVAL_UNAVAILABLE",
+              "EMBEDDER_UNAVAILABLE",
+              "PAYLOAD_TOO_LARGE",
               "4001",
               "4002",
               "4003",
@@ -365,6 +382,42 @@
                 },
                 "required": [
                   "code"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "const": "EMBEDDER_UNAVAILABLE"
+                  }
+                },
+                "required": [
+                  "code"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "const": "PAYLOAD_TOO_LARGE"
+                  },
+                  "field": {
+                    "type": "string"
+                  },
+                  "maxBytes": {
+                    "type": "integer"
+                  },
+                  "receivedBytes": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "code",
+                  "field",
+                  "maxBytes",
+                  "receivedBytes"
                 ],
                 "type": "object"
               },
@@ -858,6 +911,46 @@
             "properties": {
               "code": {
                 "enum": [
+                  "EMBEDDER_UNAVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "enum": [
+                  "PAYLOAD_TOO_LARGE"
+                ],
+                "type": "string"
+              },
+              "field": {
+                "type": "string"
+              },
+              "maxBytes": {
+                "type": "integer"
+              },
+              "receivedBytes": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "field",
+              "maxBytes",
+              "receivedBytes",
+              "code"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "enum": [
                   "4001"
                 ],
                 "type": "string"
@@ -984,6 +1077,8 @@
                   "INVALID_HEADER",
                   "UNSUPPORTED_CAPABILITY",
                   "DEEP_RETRIEVAL_UNAVAILABLE",
+                  "EMBEDDER_UNAVAILABLE",
+                  "PAYLOAD_TOO_LARGE",
                   "4001",
                   "4002",
                   "4003",
@@ -1333,6 +1428,42 @@
                     "additionalProperties": false,
                     "properties": {
                       "code": {
+                        "const": "EMBEDDER_UNAVAILABLE"
+                      }
+                    },
+                    "required": [
+                      "code"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "code": {
+                        "const": "PAYLOAD_TOO_LARGE"
+                      },
+                      "field": {
+                        "type": "string"
+                      },
+                      "maxBytes": {
+                        "type": "integer"
+                      },
+                      "receivedBytes": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "field",
+                      "maxBytes",
+                      "receivedBytes"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "code": {
                         "const": "4001"
                       }
                     },
@@ -1442,6 +1573,9 @@
               "suggestions"
             ],
             "type": "object"
+          },
+          "narrowing": {
+            "$ref": "#/components/schemas/ReadReceiptSchema"
           }
         },
         "required": [
@@ -1581,6 +1715,12 @@
           "other": {
             "type": "integer"
           },
+          "shared_total": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "summaries": {
             "type": "integer"
           },
@@ -1603,6 +1743,18 @@
           "enabled": {
             "type": [
               "boolean",
+              "null"
+            ]
+          },
+          "pinned_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "shared_total": {
+            "type": [
+              "integer",
               "null"
             ]
           },
@@ -1702,6 +1854,12 @@
               "null"
             ]
           },
+          "claim_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "content_hash": {
             "type": "string"
           },
@@ -1725,8 +1883,23 @@
           "slot": {
             "$ref": "#/components/schemas/ContextBoardMemorySlot"
           },
+          "snippet": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "source": {
             "$ref": "#/components/schemas/ContextBoardMemorySource"
+          },
+          "tier": {
+            "type": "string"
+          },
+          "world": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1737,7 +1910,8 @@
           "short_id",
           "content_hash",
           "entity_type",
-          "score"
+          "score",
+          "tier"
         ],
         "type": "object"
       },
@@ -1868,6 +2042,12 @@
               {
                 "$ref": "#/components/schemas/CoreContextPackResponse"
               }
+            ]
+          },
+          "rendered_memories": {
+            "type": [
+              "string",
+              "null"
             ]
           },
           "session": {
@@ -2327,6 +2507,9 @@
       },
       "CoreBatchShortIdHydrateResponse": {
         "properties": {
+          "narrowing": {
+            "$ref": "#/components/schemas/ReadReceiptSchema"
+          },
           "results": {
             "items": {
               "$ref": "#/components/schemas/CoreBatchShortIdHydrateItem"
@@ -2335,6 +2518,7 @@
           }
         },
         "required": [
+          "narrowing",
           "results"
         ],
         "type": "object"
@@ -2585,97 +2769,114 @@
         "type": "object"
       },
       "CoreContextPackResponse": {
-        "properties": {
-          "capabilities": {
-            "items": {
-              "type": "object"
-            },
-            "type": "array"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/GrantedDataSchema"
           },
-          "confidenceAdjustment": {
-            "format": "float",
-            "type": [
-              "number",
-              "null"
-            ]
-          },
-          "degradation": {
-            "items": {
-              "type": "string"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "disclosure": {
-            "oneOf": [
-              {
-                "type": "null"
+          {
+            "properties": {
+              "capabilities": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
               },
-              {
-                "$ref": "#/components/schemas/CoreDisclosureAssembly"
+              "confidenceAdjustment": {
+                "format": "float",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "degradation": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "disclosure": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CoreDisclosureAssembly"
+                  }
+                ]
+              },
+              "empty": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "evidence": {
+                "$ref": "#/components/schemas/CoreContextPackEvidence"
+              },
+              "interlocutors": {
+                "items": {
+                  "$ref": "#/components/schemas/CoreInterlocutorStamp"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "narrowing": {
+                "$ref": "#/components/schemas/ReadReceiptSchema"
+              },
+              "neighbors": {
+                "items": {
+                  "$ref": "#/components/schemas/CoreContextEntity"
+                },
+                "type": "array"
+              },
+              "pin_narrowing": {
+                "items": {
+                  "$ref": "#/components/schemas/ReadReceiptSchema"
+                },
+                "type": "array"
+              },
+              "quality": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "results": {
+                "items": {
+                  "$ref": "#/components/schemas/CoreContextEntity"
+                },
+                "type": "array"
+              },
+              "state": {
+                "$ref": "#/components/schemas/CoreContextPackState"
+              },
+              "stats": {
+                "$ref": "#/components/schemas/CoreContextPackStats"
+              },
+              "l2_base": {
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
-            ]
-          },
-          "empty": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "evidence": {
-            "$ref": "#/components/schemas/CoreContextPackEvidence"
-          },
-          "interlocutors": {
-            "items": {
-              "$ref": "#/components/schemas/CoreInterlocutorStamp"
             },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "l2_base": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "neighbors": {
-            "items": {
-              "$ref": "#/components/schemas/CoreContextEntity"
-            },
-            "type": "array"
-          },
-          "quality": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/CoreContextEntity"
-            },
-            "type": "array"
-          },
-          "state": {
-            "$ref": "#/components/schemas/CoreContextPackState"
-          },
-          "stats": {
-            "$ref": "#/components/schemas/CoreContextPackStats"
+            "required": [
+              "narrowing",
+              "results",
+              "neighbors",
+              "stats",
+              "state",
+              "evidence",
+              "capabilities"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "results",
-          "neighbors",
-          "stats",
-          "state",
-          "evidence",
-          "capabilities"
-        ],
-        "type": "object"
+        ]
       },
       "CoreContextPackScoreComponent": {
         "properties": {
@@ -3103,6 +3304,9 @@
               "null"
             ]
           },
+          "narrowing": {
+            "$ref": "#/components/schemas/ReadReceiptSchema"
+          },
           "short_id": {
             "type": "string"
           },
@@ -3111,6 +3315,7 @@
           }
         },
         "required": [
+          "narrowing",
           "status",
           "short_id",
           "content_hash"
@@ -3332,6 +3537,9 @@
           "anchor_id": {
             "type": "string"
           },
+          "narrowing": {
+            "$ref": "#/components/schemas/ReadReceiptSchema"
+          },
           "records": {
             "items": {
               "$ref": "#/components/schemas/CoreMemoryTimelineRecord"
@@ -3340,6 +3548,7 @@
           }
         },
         "required": [
+          "narrowing",
           "anchor_id",
           "records"
         ],
@@ -3867,6 +4076,27 @@
         ],
         "type": "object"
       },
+      "CoreScopedQueryResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/GrantedDataSchema"
+          },
+          {
+            "$ref": "#/components/schemas/PaginatedResponse"
+          },
+          {
+            "properties": {
+              "narrowing": {
+                "$ref": "#/components/schemas/ReadReceiptSchema"
+              }
+            },
+            "required": [
+              "narrowing"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "CoreShortIdHydrateError": {
         "properties": {
           "field": {
@@ -3946,6 +4176,8 @@
           "INVALID_HEADER",
           "UNSUPPORTED_CAPABILITY",
           "DEEP_RETRIEVAL_UNAVAILABLE",
+          "EMBEDDER_UNAVAILABLE",
+          "PAYLOAD_TOO_LARGE",
           "4001",
           "4002",
           "4003",
@@ -3953,6 +4185,107 @@
           "4006"
         ],
         "type": "string"
+      },
+      "GrantedDataSchema": {
+        "properties": {
+          "accessLimited": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AccessLimitedSchema"
+              }
+            ]
+          },
+          "grantedData": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "grantedData"
+        ],
+        "type": "object"
+      },
+      "ReadReceiptSchema": {
+        "properties": {
+          "actor_ceiling": {
+            "$ref": "#/components/schemas/ReadScopeSchema"
+          },
+          "applied": {
+            "$ref": "#/components/schemas/ReadScopeSchema"
+          },
+          "narrowed_axes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "replan_hint": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "requested": {
+            "$ref": "#/components/schemas/ReadScopeSchema"
+          },
+          "suppressed_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "requested",
+          "actor_ceiling",
+          "applied",
+          "narrowed_axes",
+          "suppressed_count",
+          "replan_hint"
+        ],
+        "type": "object"
+      },
+      "ReadScopeSchema": {
+        "properties": {
+          "deny_all": {
+            "type": "boolean"
+          },
+          "entity_types": {
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "include_stale": {
+            "type": "boolean"
+          },
+          "max_sensitivity_band": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "min_confidence": {
+            "format": "float",
+            "type": "number"
+          },
+          "min_salience": {
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "required": [
+          "max_sensitivity_band",
+          "include_stale",
+          "min_confidence",
+          "min_salience",
+          "deny_all"
+        ],
+        "type": "object"
       },
       "ResponseMeta": {
         "properties": {
@@ -5138,7 +5471,7 @@
           "200": {
             "description": "Projected query results.",
             "schema": {
-              "type": "object"
+              "$ref": "#/components/schemas/CoreScopedQueryResponse"
             }
           },
           "400": {

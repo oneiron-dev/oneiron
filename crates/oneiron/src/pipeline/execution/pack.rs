@@ -43,6 +43,7 @@ impl PipelineBuilder<'_> {
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
                 claims_suppressed: 0,
+                read_suppressed: 0,
                 cosine_ghosts_dampened: 0,
                 total_in_scope: 0,
                 empty_reason: Some(EmptyReason::FilterMatchedNone),
@@ -205,6 +206,7 @@ impl PipelineBuilder<'_> {
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
                 claims_suppressed: 0,
+                read_suppressed: 0,
                 cosine_ghosts_dampened: 0,
                 total_in_scope: 0,
                 empty_reason: None,
@@ -219,6 +221,7 @@ impl PipelineBuilder<'_> {
         let mut capabilities = attempt.capabilities;
         let mut pending_vectors = attempt.pending_vectors;
         let mut claim_gate = attempt.claim_gate;
+        let mut read_suppressed = attempt.read_suppressed;
         let deferred_ppr_cache_writes = attempt.deferred_ppr_cache_writes;
         let mut cosine_ghosts_dampened = attempt.cosine_ghosts_dampened;
         let mut total_in_scope = attempt.total_in_scope;
@@ -229,7 +232,15 @@ impl PipelineBuilder<'_> {
         let mut rerank_merged_components = attempt.rerank_merged_components;
         let mut retrieval_trace = attempt.retrieval_trace;
 
-        crate::ppr::flush_deferred_ppr_cache_writes(&self.vault.store, &deferred_ppr_cache_writes)?;
+        if !self
+            .session
+            .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes)
+        {
+            crate::ppr::flush_deferred_ppr_cache_writes(
+                &self.vault.store,
+                &deferred_ppr_cache_writes,
+            )?;
+        }
 
         let mut claim_bodies = HashMap::new();
         let mut claims_suppressed = 0_usize;
@@ -283,10 +294,15 @@ impl PipelineBuilder<'_> {
                         skip_ret01_abstain: true,
                     },
                 )?;
-                crate::ppr::flush_deferred_ppr_cache_writes(
-                    &self.vault.store,
-                    &retry.deferred_ppr_cache_writes,
-                )?;
+                if !self
+                    .session
+                    .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes)
+                {
+                    crate::ppr::flush_deferred_ppr_cache_writes(
+                        &self.vault.store,
+                        &retry.deferred_ppr_cache_writes,
+                    )?;
+                }
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
                 scores = retry.scores;
@@ -294,6 +310,7 @@ impl PipelineBuilder<'_> {
                 capabilities = retry.capabilities;
                 pending_vectors = retry.pending_vectors;
                 claim_gate = retry.claim_gate;
+                read_suppressed = retry.read_suppressed;
                 cosine_ghosts_dampened = retry.cosine_ghosts_dampened;
                 total_in_scope = retry.total_in_scope;
                 empty_reason = retry.empty_reason;
@@ -398,6 +415,13 @@ impl PipelineBuilder<'_> {
             None => self.vault.store.record_retrieval_run(&run_record),
         };
         let telemetry_run_id = match write_result {
+            Ok(())
+                if self
+                    .session
+                    .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes) =>
+            {
+                None
+            }
             Ok(()) => Some(run_id),
             // A retrieval the caller declared to be INSIDE a room owns its
             // registration. Off record the run row is what close consumes, so
@@ -428,6 +452,7 @@ impl PipelineBuilder<'_> {
             claim_bodies,
             pending_vectors,
             claims_suppressed,
+            read_suppressed,
             cosine_ghosts_dampened,
             total_in_scope,
             empty_reason,

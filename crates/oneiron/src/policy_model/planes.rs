@@ -283,7 +283,11 @@ pub(super) fn owner_rubric_rows(
             // Owner rows share one plane label; the model answers in `row_ref`,
             // which is the only vocabulary that tells two owner rows apart.
             category: OWNER_POLICY_CATEGORY.to_owned(),
-            action: owner_row_decision(row.action),
+            action: if row.human.is_some() {
+                PolicyClassifyDecision::Hold
+            } else {
+                owner_row_decision(row.action)
+            },
             text: row.text.clone(),
         })
         .collect()

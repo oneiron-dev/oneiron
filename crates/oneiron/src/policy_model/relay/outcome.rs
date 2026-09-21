@@ -288,7 +288,9 @@ impl RelayBoundaryPass {
             Self::Classified(pass) => {
                 matches!(
                     pass.verdict.decision,
-                    PolicyClassifyDecision::Block | PolicyClassifyDecision::RouteToHelp
+                    PolicyClassifyDecision::Block
+                        | PolicyClassifyDecision::RouteToHelp
+                        | PolicyClassifyDecision::Hold
                 ) || (pass.degrade_halts && pass.hosted_policy_in_play)
             }
             Self::TrustedVaultSide | Self::NotRelayedByUs => false,

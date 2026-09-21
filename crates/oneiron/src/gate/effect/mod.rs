@@ -182,6 +182,19 @@ pub(crate) fn evaluate_external_effect_policy(
     let consent =
         external_effect_consent_context(&hydrated_effect, approve_once.as_ref(), &consent_grants);
     let mut input = hydrated_effect.gate_input(agent_definition_ceiling, consent);
+    // Resolve by audited identity, regardless of the caller's actor-class spelling.
+    input.foreign_agent_ceiling = hydrated_effect
+        .provenance
+        .actor_entity_ref
+        .map(|actor| {
+            super::foreign_agent::resolve(
+                store,
+                &*wtxn,
+                crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Agent),
+            )
+        })
+        .transpose()?
+        .flatten();
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
         // ONE-1752: the same post-conversion seam. Hydration cannot reach a

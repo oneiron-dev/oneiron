@@ -109,24 +109,24 @@
 //! transport adapter; this module ships the seam and its fail-closed
 //! evaluation.
 //!
-//! # The one-shot mint STOP
+//! # The one-shot authority
 //!
-//! There is no landed authority-log surface that admits slip-mint bodies, and
-//! inventing an `AuthorityOp` variant or a door-local ledger is forbidden. So
-//! [`CredentialDoorService::mint_one_shot`] exists for API closure and fails
-//! closed with [`CredentialDoorError::MintUnavailable`]. Redemption is the
-//! landed half: it consumes the credential by move, refuses a single-use
-//! caveat it cannot witness against the authority log, and writes no ledger
-//! of its own.
+//! Signed mints and spends live in AUTHORITY_LOG. Only the minting enrolled
+//! device can spend. Issuance and consumption re-fold under the write lock;
+//! an unreachable log or rejected append never releases a secret.
 // The door is created before its first production consumer: the transport
 // adapter that calls these surfaces is a later ticket, and until it lands the
 // module's own tests are what exercise them.
 #![cfg_attr(not(test), allow(dead_code))]
 
+mod checkout_ticket;
+mod door_authority;
+mod door_consent;
 mod door_credential;
 mod door_policy;
 mod door_service;
 mod door_types;
+mod verb_class;
 
 pub(crate) use self::door_credential::DoorCredential;
 pub(crate) use self::door_service::{AdmittedLease, CredentialDoorService};
@@ -197,3 +197,6 @@ mod authority_log_fault_hook {
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use door_types::{DOOR_ONE_SHOT_MAX_LIFETIME_SECS, log_unreachable, names_a_floor};
+pub(crate) use verb_class::verb_class_members;

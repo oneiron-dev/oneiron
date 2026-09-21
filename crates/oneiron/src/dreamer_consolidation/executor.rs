@@ -184,6 +184,10 @@ impl ConsolidationExecutor<'_> {
         let assembled = super::assembly::assemble(ctx.vault, resources, candidates, ctx.now_ms)?;
         let candidates = assembled.candidates;
         let conflicts = assembled.conflicts;
+        let policy = {
+            let txn = ctx.vault.store.env.read_txn().map_err(crate::Error::from)?;
+            crate::gate::resolve_policy_manifest(&ctx.vault.store, &txn)?
+        };
         if conflicts.is_empty() {
             return Ok(if assembled.held {
                 PartitionRun::Held {
@@ -210,6 +214,17 @@ impl ConsolidationExecutor<'_> {
                 .iter()
                 .map(|index| &candidates[*index])
                 .collect();
+            let prior = conflict
+                .prior_head
+                .map(|id| resources.prior(id))
+                .transpose()?;
+            if super::judge_context::fast_path(&policy, conflict, &members, prior) {
+                let mut candidate = (*members[0]).clone();
+                candidate.supersedes = conflict.prior_head;
+                dropped.extend(conflict.candidate_indexes.iter().copied());
+                merged.push(candidate);
+                continue;
+            }
             let prior_heads = conflict
                 .prior_heads
                 .iter()
@@ -235,11 +250,30 @@ impl ConsolidationExecutor<'_> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
-            let outcome = match call_as_step(&step_ctx, self.backend, self.guard, request).await {
-                Ok(outcome) => outcome,
+            let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
+            let response = match outcome {
+                Ok(StepOutcome::Finished { response, .. }) => {
+                    spent = spent.saturating_add(
+                        response
+                            .usage
+                            .input
+                            .total
+                            .saturating_add(response.usage.output.total),
+                    );
+                    response
+                }
+                Ok(StepOutcome::Trapped(_)) => {
+                    // Suspended mid-merge: the attempt is parked. STOP and surface
+                    // the trap. Writing a contradiction gap here would fabricate
+                    // a `ContradictionLeftStanding` for a merge that never
+                    // decided (#485-2); accepting partial survivors would drop
+                    // the rest as done. On resume the memoized steps replay and
+                    // this merge re-runs to a real resolution.
+                    return Ok(PartitionRun::Trapped);
+                }
                 Err(error) => {
-                    // Budget/consent traps are StepOutcome, not judge outages.
-                    // A failed admitted judge leaves an observable open question.
+                    // Park the attempt, with a durable Proposed marker. The
+                    // marker and every source pin share the write transaction.
                     resources.require_output(resources.scope())?;
                     super::open_conflict::park_open_conflict(
                         ctx.vault,
@@ -253,29 +287,8 @@ impl ConsolidationExecutor<'_> {
                     return Err(error);
                 }
             };
-            let response = match outcome {
-                StepOutcome::Finished { response, .. } => {
-                    spent = spent.saturating_add(
-                        response
-                            .usage
-                            .input
-                            .total
-                            .saturating_add(response.usage.output.total),
-                    );
-                    response
-                }
-                StepOutcome::Trapped(_) => {
-                    // Suspended mid-merge: the attempt is parked. STOP and surface
-                    // the trap. Writing a contradiction gap here would fabricate
-                    // a `ContradictionLeftStanding` for a merge that never
-                    // decided (#485-2); accepting partial survivors would drop
-                    // the rest as done. On resume the memoized steps replay and
-                    // this merge re-runs to a real resolution.
-                    return Ok(PartitionRun::Trapped);
-                }
-            };
 
-            match decode_merge_resolution(&response)? {
+            match decode_merge_resolution(&response).unwrap_or(MergeResolution::Escalate) {
                 MergeResolution::Accumulate => {} // keep every member
                 MergeResolution::Merge {
                     value,
@@ -373,12 +386,14 @@ impl ConsolidationExecutor<'_> {
     ) -> Result<LlmRequest> {
         let mut lines = String::new();
         for prior in prior_heads {
-            lines.push_str(&format!(
-                "prior_head: {} predicate: {} value: {}\n",
-                prior.claim_id.to_hex(),
-                prior.body.predicate,
-                serde_json::to_string(&rmpv_to_json(&prior.body.value)).unwrap_or_default(),
-            ));
+            lines.push_str(
+                &serde_json::json!({"prior_head": prior.claim_id.to_hex(),
+                "predicate": prior.body.predicate,
+                "source": prior.body.source.map(crate::claim::ClaimSource::as_str),
+                "value": rmpv_to_json(&prior.body.value)})
+                .to_string(),
+            );
+            lines.push('\n');
         }
         for member in members {
             let facts = candidate_facts(&member.candidate)?;

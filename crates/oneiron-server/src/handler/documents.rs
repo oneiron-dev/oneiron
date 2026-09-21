@@ -1,5 +1,8 @@
 //! Per-entity selector admission and scope-filtered document delivery on the sync socket.
-use super::{conn_state::ConnState, window_sync::selector_grant_scope};
+use super::{
+    app_tier::require_bound_app_auth, conn_state::ConnState, window_sync::selector_grant_scope,
+};
+use crate::auth::CoreScope;
 use crate::{protocol::ProtocolError, server::SyncServer};
 use oneiron::EntityId;
 use oneiron::sync::{
@@ -29,6 +32,17 @@ pub(super) fn handle_document(
             max: server.config.max_update_payload,
         });
     }
+    let principal = document_principal(server, state)?;
+    if kind == document_sub_tags::UPDATE {
+        require_bound_app_auth(server, state)?
+            .require(CoreScope::Write)
+            .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    }
+    if let Some(request) = state.documents.get(&entity)
+        && request.selector.member_ref != principal
+    {
+        return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
+    }
     match kind {
         document_sub_tags::REQUEST => {
             if !state.documents.contains_key(&entity)
@@ -39,6 +53,9 @@ pub(super) fn handle_document(
                 ));
             }
             let request = decode_selector_vv_request(payload).map_err(storage_error)?;
+            if request.selector.member_ref != principal {
+                return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
+            }
             if is_note(server, entity)? {
                 require_note_auth(server, state, &request.selector, false)?;
             }
@@ -171,10 +188,16 @@ pub(super) fn document_delivery(
             .collect(),
         _ => return Ok(Vec::new()),
     };
+    if state.documents.is_empty() {
+        return Ok(Vec::new());
+    }
+    let principal = document_principal(server, state)?;
     let mut out = Vec::new();
     for doc in docs {
         let doc = doc.map_err(|_| ProtocolError::InvalidPayload("invalid document notice"))?;
-        if let Some(request) = state.documents.get(&doc.entity) {
+        if let Some(request) = state.documents.get(&doc.entity)
+            && request.selector.member_ref == principal
+        {
             if is_note(server, doc.entity)?
                 && require_note_auth(server, state, &request.selector, false).is_err()
             {
@@ -225,6 +248,17 @@ pub(super) fn document_delivery(
         }
     }
     Ok(out)
+}
+
+fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId, ProtocolError> {
+    let auth = require_bound_app_auth(server, state)?;
+    auth.require(CoreScope::Read)
+        .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    EntityId::from_hex(
+        auth.require_registered_principal()
+            .map_err(|_| ProtocolError::RpcNoPrincipal)?,
+    )
+    .map_err(|_| ProtocolError::RpcNoPrincipal)
 }
 
 fn storage_error(error: oneiron::Error) -> ProtocolError {

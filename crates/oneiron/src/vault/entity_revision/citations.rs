@@ -155,7 +155,16 @@ impl Vault {
         revision: RevisionRef,
     ) -> Result<Option<EntityId>> {
         let txn = self.store.env.read_txn()?;
-        resolve_reference(self, &txn, reference, revision)
+        self.resolve_pinned_entity_reference_in(&txn, reference, revision)
+    }
+
+    pub(crate) fn resolve_pinned_entity_reference_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reference: &str,
+        revision: RevisionRef,
+    ) -> Result<Option<EntityId>> {
+        resolve_reference(self, txn, reference, revision)
     }
 }
 

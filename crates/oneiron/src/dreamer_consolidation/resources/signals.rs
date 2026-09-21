@@ -115,7 +115,11 @@ impl BranchResources<'_> {
                 if scope.relationship.is_some() && !pinned {
                     return Ok(false);
                 }
-                let Some(edges) = self.read.edges_out(id)? else {
+                let edges = self.read.edges_out(id)?;
+                if edges.receipt.suppressed_count != 0 {
+                    return Ok(false);
+                }
+                let Some(edges) = edges.value else {
                     return Ok(false);
                 };
                 let parents: Vec<_> = edges

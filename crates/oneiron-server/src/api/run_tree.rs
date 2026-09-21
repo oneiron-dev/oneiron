@@ -627,3 +627,7 @@ pub(crate) fn parse_attempt_id_param(
         )
     })
 }
+
+#[cfg(test)]
+#[path = "run_tree/rate_projection_tests.rs"]
+mod rate_projection_tests;

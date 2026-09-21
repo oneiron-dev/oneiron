@@ -39,6 +39,16 @@ impl HostSelfDispatcher<'_> {
     /// The match is exhaustive so a new effect cannot default into either
     /// answer — it has to be ruled on here.
     pub(super) fn enforce_off_record_effect_policy(&self, effect: SelfEffect) -> Result<()> {
+        // Anonymous permits only effects with no transcript or mandatory
+        // audit. Do not execute destructive/outbound/approval effects while
+        // silently dropping the evidence their ordinary doors require.
+        if !matches!(effect, SelfEffect::MemorySearch | SelfEffect::Context)
+            && let ExecutorStorage::Session(binding) = &self.storage
+        {
+            binding
+                .route
+                .require_recording(binding.session.session_ref())?;
+        }
         if !self.storage.off_record_policy_active()? {
             return Ok(());
         }

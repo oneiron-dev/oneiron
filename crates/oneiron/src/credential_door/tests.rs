@@ -184,22 +184,93 @@ fn long_lived_push_credential(now: VaultInstant) -> DoorCredential {
 
 /// A verified one-shot: single-use caveat, one named secret, one named
 /// effector, 120s of life from `issued_at`.
-fn one_shot_credential_from(issued_at: u64) -> DoorCredential {
-    DoorCredential::verified(
-        "slip-one-shot-1",
-        "holder:tester",
-        issued_at,
-        issued_at + 120,
-    )
-    .with_verbs([DOOR_VERB_REDEEM])
-    .with_records([DOOR_SECRET])
-    .with_channels([EFFECTOR])
-    .with_single_use_caveat()
+fn ensure_door_authority(vault: &Vault) {
+    use crate::authority::*;
+    use ed25519_dalek::Signer;
+    if vault.authority_fold().unwrap().vault_id.is_some() {
+        return;
+    }
+    let mut txn = vault.store.env.write_txn().unwrap();
+    let identity = crate::identity::ensure_device_identity_in_txn(vault, &mut txn).unwrap();
+    let key = AuthorityKey::Ed25519(identity.signing_key.verifying_key().to_bytes());
+    let mut genesis = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: None,
+        seq: 0,
+        parent_hashes: vec![],
+        op: AuthorityOp::Genesis {
+            device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [0; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".into(),
+                    evidence: vec![1],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER,
+            },
+            genesis_nonce: [53; 32],
+            tier_floor: AuthorityTier::Software,
+            pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
+        },
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: vec![],
+        ts: 0,
+    };
+    genesis.signer.signature = identity
+        .signing_key
+        .sign(&authority_transcript(&genesis).unwrap())
+        .to_bytes()
+        .to_vec();
+    vault
+        .put_authority_log_entries_in_txn(
+            &mut txn,
+            &[(genesis, crate::TimeRange { start: 1, end: 1 }, 1)],
+        )
+        .unwrap();
+    txn.commit().unwrap();
 }
 
-/// The same, issued at the vault's witnessed instant.
-fn one_shot_credential(now: VaultInstant) -> DoorCredential {
-    one_shot_credential_from(now.secs())
+fn signed_credential(
+    vault: &Vault,
+    class: &str,
+    issued_at: u64,
+    lifetime: u64,
+    single_use: bool,
+) -> DoorCredential {
+    ensure_door_authority(vault);
+    let scope = crate::authority::AuthorityDoorSlip {
+        holder_ref: "holder:tester".into(),
+        verb_class: class.into(),
+        records: [DOOR_SECRET.to_owned()].into(),
+        channels: [EFFECTOR.to_owned()].into(),
+        parent: None,
+        pact: None,
+        issued_at,
+        expires_at: issued_at + lifetime,
+        single_use,
+    };
+    let mut txn = vault.store.env.write_txn().unwrap();
+    let hash = vault
+        .append_local_door_op_in_txn(
+            &mut txn,
+            crate::authority::AuthorityOp::MintDoorSlip(scope.clone()),
+        )
+        .unwrap();
+    txn.commit().unwrap();
+    DoorCredential::from_mint(&hash, &scope)
+}
+
+fn one_shot_credential_from(vault: &Vault, issued_at: u64) -> DoorCredential {
+    signed_credential(vault, "door.redeem", issued_at, 120, true)
+}
+
+fn one_shot_credential(vault: &Vault, now: VaultInstant) -> DoorCredential {
+    one_shot_credential_from(vault, now.secs())
 }
 
 fn blob(path: &str, lines: &[&[u8]]) -> PushedBlob {
@@ -301,11 +372,6 @@ fn vault_meta_rows(vault: &Vault) -> u64 {
     vault.store.vault_meta.len(&rtxn).expect("vault_meta len")
 }
 
-fn entity_rows(vault: &Vault) -> u64 {
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    vault.store.entities.len(&rtxn).expect("entities len")
-}
-
 fn prefix_rows(vault: &Vault, prefix: &str) -> usize {
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let rows = vault
@@ -343,7 +409,8 @@ fn receipt_rows(vault: &Vault) -> usize {
 
 fn deny_reason(err: CredentialDoorError) -> DoorDenyReason {
     match err {
-        CredentialDoorError::UnauthorizedPrincipal { reason } => reason,
+        CredentialDoorError::UnauthorizedPrincipal { reason }
+        | CredentialDoorError::Ask { reason, .. } => reason,
         other => panic!("expected a default-deny refusal, got {other:?}"),
     }
 }
@@ -1060,7 +1127,7 @@ fn a_one_shot_redeemed_after_the_vault_clock_advances_is_clamped_by_its_expiry()
     // rather than 120s after the stamp.
     let (_tmp, vault, door) = door_fixture();
     let issued_at = witnessed(&door).secs();
-    let one_shot = one_shot_credential_from(issued_at);
+    let one_shot = one_shot_credential_from(door.vault(), issued_at);
 
     pin_vault_instant_at(&vault, issued_at + 60);
     let ticket = door
@@ -1735,29 +1802,28 @@ fn a_scanner_failure_is_a_rejection() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_one_shot_redeems_once_by_move_and_writes_no_ledger() {
+fn a_one_shot_redeems_once_against_the_authority_log() {
     let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let meta_before = vault_meta_rows(&vault);
-    let entities_before = entity_rows(&vault);
-
-    let ticket = door
-        .redeem_one_shot(one_shot_credential(now))
-        .expect("a live one-shot redeems");
-
+    let one_shot = one_shot_credential(&vault, witnessed(&door));
+    let hash = one_shot.mint_hash().unwrap();
+    let replay = door
+        .credential_for_principal(&hash, "holder:tester")
+        .unwrap();
+    let ticket = door.redeem_one_shot(one_shot).unwrap();
     assert_eq!(ticket.lease.secret_ref, DOOR_SECRET);
-    assert_eq!(ticket.lease.binding_effector, EFFECTOR);
     assert_eq!(ticket.value.as_slice(), SECRET_VALUE);
-    // Exactly two new rows — the landed lease and its landed receipt. No burn
-    // ledger, no token registry, no hash-at-rest store, and no new entity (so
-    // no authority-log append) appeared behind the redemption.
-    assert_eq!(vault_meta_rows(&vault) - meta_before, 2);
-    assert_eq!(entity_rows(&vault), entities_before);
+    assert!(
+        vault
+            .authority_fold()
+            .unwrap()
+            .spent_door_slips
+            .contains(&hash)
+    );
+    assert!(matches!(
+        door.redeem_one_shot(replay),
+        Err(CredentialDoorError::AuthorityRejected)
+    ));
     assert_eq!(lease_rows(&vault), 1);
-    assert_eq!(receipt_rows(&vault), 1);
-    // The credential was moved into the call and dropped there, so a second
-    // redemption of it cannot even be written: that IS the single-use
-    // guarantee this ticket ships.
 }
 
 #[test]
@@ -1767,7 +1833,7 @@ fn a_one_shot_lease_never_outlives_the_one_shot_cap() {
     let now = instant.secs();
 
     let ticket = door
-        .redeem_one_shot(one_shot_credential(instant))
+        .redeem_one_shot(one_shot_credential(door.vault(), instant))
         .expect("redeem");
     // The one-shot's own absolute expiry is the ticket's, exactly: the
     // redemption asks for its whole remaining bound and the vault's instant
@@ -1807,7 +1873,7 @@ fn a_redeemed_one_shot_ticket_dies_with_its_one_shot() {
     let issued_at = now - 90;
 
     let ticket = door
-        .redeem_one_shot(one_shot_credential_from(issued_at))
+        .redeem_one_shot(one_shot_credential_from(door.vault(), issued_at))
         .expect("a live one-shot redeems late");
     assert_eq!(ticket.lease.expires_at, issued_at + 120);
     assert!(ticket.lease.expires_at - ticket.lease.granted_at <= 30);
@@ -1838,11 +1904,7 @@ fn a_one_shot_needs_the_caveat_the_verb_and_one_named_scope() {
         .expect_err("a one-shot names exactly one secret");
     assert!(is_scope_refusal(&err));
 
-    let wrong_verb = DoorCredential::verified("slip-verb", "holder:t", now, now + 120)
-        .with_verbs([DOOR_VERB_LEASE])
-        .with_records([DOOR_SECRET])
-        .with_channels([EFFECTOR])
-        .with_single_use_caveat();
+    let wrong_verb = signed_credential(door.vault(), "door.lease", now, 120, true);
     let err = door
         .redeem_one_shot(wrong_verb)
         .expect_err("redemption needs the redeem verb");
@@ -1853,30 +1915,52 @@ fn a_one_shot_needs_the_caveat_the_verb_and_one_named_scope() {
 fn a_verifier_that_cannot_reach_the_log_refuses_the_caveat() {
     let (_tmp, vault, door) = door_fixture();
     let now = witnessed(&door);
+    let one_shot = one_shot_credential(door.vault(), now);
     let meta_before = vault_meta_rows(&vault);
-
     authority_log_fault_hook::arm_log_unreachable();
     let err = door
-        .redeem_one_shot(one_shot_credential(now))
+        .redeem_one_shot(one_shot)
         .expect_err("an unwitnessable single-use caveat is refused");
     assert!(is_log_unreachable(&err));
     assert_eq!(vault_meta_rows(&vault), meta_before);
 }
 
 #[test]
-fn the_one_shot_mint_arm_stops_closed() {
+fn one_shot_mint_and_redemption_fail_closed_without_authority_log() {
     let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door).secs();
-    let meta_before = vault_meta_rows(&vault);
-    let entities_before = entity_rows(&vault);
-
-    let err = door
-        .mint_one_shot(DOOR_SECRET, EFFECTOR, 120, now)
-        .expect_err("no landed surface admits slip-mint bodies");
-    assert!(matches!(err, CredentialDoorError::MintUnavailable));
-    // The stop is a stop: nothing was persisted in its place.
-    assert_eq!(vault_meta_rows(&vault), meta_before);
-    assert_eq!(entity_rows(&vault), entities_before);
+    let root = signed_credential(&vault, "door.delegate", witnessed(&door).secs(), 600, false);
+    authority_log_fault_hook::arm_log_unreachable();
+    assert!(matches!(
+        door.mint_one_shot(&root, DOOR_SECRET, EFFECTOR, 120),
+        Err(CredentialDoorError::AuthorityLogUnreachable)
+    ));
+    let minted = door
+        .mint_one_shot(&root, DOOR_SECRET, EFFECTOR, 120)
+        .unwrap();
+    let hash = minted.mint_hash().unwrap();
+    let replay = door
+        .credential_for_principal(&hash, "holder:tester")
+        .unwrap();
+    authority_log_fault_hook::arm_log_unreachable();
+    assert!(matches!(
+        door.redeem_one_shot(minted),
+        Err(CredentialDoorError::AuthorityLogUnreachable)
+    ));
+    assert!(
+        vault
+            .authority_fold()
+            .unwrap()
+            .live_door_slip(&hash)
+            .is_some()
+    );
+    assert_eq!(
+        door.redeem_one_shot(replay).unwrap().value.as_slice(),
+        SECRET_VALUE
+    );
+    assert!(matches!(
+        door.mint_one_shot(&root, DOOR_SECRET, EFFECTOR, 301),
+        Err(CredentialDoorError::OneShotLifetimeDenied { .. })
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -1901,7 +1985,7 @@ fn door_refusals_and_credentials_print_no_secret_material() {
         CredentialDoorError::UnauthorizedPrincipal {
             reason: DoorDenyReason::Revoked,
         },
-        CredentialDoorError::MintUnavailable,
+        CredentialDoorError::AuthorityRejected,
         // The in-transaction re-admission's refusal carries the door's own
         // effector CONSTANT, so it is safe to print by construction.
         CredentialDoorError::DialMovedUnderStamp {
@@ -1918,3 +2002,5 @@ fn door_refusals_and_credentials_print_no_secret_material() {
         assert!(!rendered.contains("ghp_"));
     }
 }
+
+mod authority;

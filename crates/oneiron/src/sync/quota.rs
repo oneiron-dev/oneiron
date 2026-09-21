@@ -1,10 +1,7 @@
-//! Per-connection federation quota and maintenance ingest quota decisions.
+//! Device-local maintenance ingest security bounds.
 
-use std::collections::HashSet;
-use std::time::{Duration, Instant};
-
-use super::types::WindowKey;
-use crate::authority::{AuthorityKey, AuthorityVaultId};
+#[cfg(test)]
+use crate::authority::AuthorityKey;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::SyncError;
 use crate::{Error, Result, Vault};
@@ -20,161 +17,6 @@ const MAINTENANCE_INGEST_QUOTA_PEER_DOMAIN: &[u8] = b"oneiron/maintenance-ingest
 pub const DEFAULT_MAINTENANCE_INGEST_MAX_OPS_PER_PEER_WINDOW: u32 = 4096;
 /// Default maintenance-band replay quota window length, in seconds.
 pub const DEFAULT_MAINTENANCE_INGEST_QUOTA_WINDOW_SECS: u64 = 60 * 60;
-
-/// Default distinct-window cap for one federated selector connection.
-pub const DEFAULT_MAX_FEDERATION_WINDOWS_PER_CONNECTION: usize = 64;
-/// Default pause after a federated connection exceeds its quota.
-pub const DEFAULT_FEDERATION_FLOOD_PAUSE_SECS: u64 = 30;
-
-/// Decision returned by the federation quota gate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AllowBlock {
-    /// The request may proceed.
-    Allow,
-    /// The request is temporarily paused for this connection.
-    Pause(FederationPauseReason),
-    /// The request is permanently blocked by configuration.
-    Block(FederationBlockReason),
-}
-
-/// Reason a federated connection entered or remains in pause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FederationPauseReason {
-    /// A new window would exceed the connection's distinct-window quota.
-    WindowQuotaExceeded,
-    /// A previous quota decision is still within its pause interval.
-    FloodPauseActive,
-}
-
-/// Reason a federated connection is blocked rather than paused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FederationBlockReason {
-    /// The configured per-connection federated window quota is zero.
-    WindowQuotaDisabled,
-}
-
-/// Tunables for one federated connection's quota state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FederationQuotaConfig {
-    /// Maximum distinct valid window keys one federated connection may touch.
-    pub max_windows_per_connection: usize,
-    /// Pause duration after quota overflow.
-    pub flood_pause: Duration,
-}
-
-impl FederationQuotaConfig {
-    /// Builds quota tunables from server config values.
-    #[must_use]
-    pub fn new(max_windows_per_connection: usize, flood_pause_secs: u64) -> Self {
-        Self {
-            max_windows_per_connection,
-            flood_pause: Duration::from_secs(flood_pause_secs),
-        }
-    }
-}
-
-impl Default for FederationQuotaConfig {
-    fn default() -> Self {
-        Self::new(
-            DEFAULT_MAX_FEDERATION_WINDOWS_PER_CONNECTION,
-            DEFAULT_FEDERATION_FLOOD_PAUSE_SECS,
-        )
-    }
-}
-
-/// Observable snapshot of a federated connection's quota state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FederationQuotaSnapshot {
-    /// Number of distinct windows accepted on this connection.
-    pub windows_touched: usize,
-    /// Configured distinct-window cap.
-    pub max_windows_per_connection: usize,
-    /// Current allow/pause/block decision at the snapshot time.
-    pub decision: AllowBlock,
-    /// Remaining pause duration when paused.
-    pub pause_remaining: Option<Duration>,
-}
-
-/// Mutable quota state for one federated selector connection.
-#[derive(Debug, Clone)]
-pub struct FederationConnectionQuota {
-    config: FederationQuotaConfig,
-    windows_touched: HashSet<WindowKey>,
-    paused_until: Option<Instant>,
-    last_decision: AllowBlock,
-}
-
-impl FederationConnectionQuota {
-    /// Creates empty quota state for a single connection.
-    #[must_use]
-    pub fn new(config: FederationQuotaConfig) -> Self {
-        Self {
-            config,
-            windows_touched: HashSet::new(),
-            paused_until: None,
-            last_decision: AllowBlock::Allow,
-        }
-    }
-
-    /// Evaluates whether this connection may touch `key` at `now`.
-    pub fn allow_window(&mut self, key: &WindowKey, now: Instant) -> AllowBlock {
-        if self.config.max_windows_per_connection == 0 {
-            return self.record(AllowBlock::Block(
-                FederationBlockReason::WindowQuotaDisabled,
-            ));
-        }
-
-        if self.pause_remaining(now).is_some() {
-            return self.record(AllowBlock::Pause(FederationPauseReason::FloodPauseActive));
-        }
-        self.paused_until = None;
-
-        if self.windows_touched.contains(key) {
-            return self.record(AllowBlock::Allow);
-        }
-
-        if self.windows_touched.len() >= self.config.max_windows_per_connection {
-            self.paused_until = now.checked_add(self.config.flood_pause).or(Some(now));
-            return self.record(AllowBlock::Pause(
-                FederationPauseReason::WindowQuotaExceeded,
-            ));
-        }
-
-        self.windows_touched.insert(key.clone());
-        self.record(AllowBlock::Allow)
-    }
-
-    /// Returns a snapshot suitable for logs, health surfaces, and tests.
-    #[must_use]
-    pub fn snapshot(&self, now: Instant) -> FederationQuotaSnapshot {
-        let pause_remaining = self.pause_remaining(now);
-        let decision = if self.config.max_windows_per_connection == 0 {
-            AllowBlock::Block(FederationBlockReason::WindowQuotaDisabled)
-        } else if pause_remaining.is_some() {
-            AllowBlock::Pause(FederationPauseReason::FloodPauseActive)
-        } else {
-            self.last_decision
-        };
-
-        FederationQuotaSnapshot {
-            windows_touched: self.windows_touched.len(),
-            max_windows_per_connection: self.config.max_windows_per_connection,
-            decision,
-            pause_remaining,
-        }
-    }
-
-    fn record(&mut self, decision: AllowBlock) -> AllowBlock {
-        self.last_decision = decision;
-        decision
-    }
-
-    fn pause_remaining(&self, now: Instant) -> Option<Duration> {
-        self.paused_until
-            .and_then(|until| until.checked_duration_since(now))
-            .filter(|remaining| !remaining.is_zero())
-    }
-}
 
 /// Owner-visible snapshot of one local maintenance-ingest quota bucket.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -347,6 +189,7 @@ pub fn set_maintenance_ingest_quota_config(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn peer_key_from_authority_key(key: &AuthorityKey) -> MaintenanceIngestPeerKey {
     match key {
         AuthorityKey::Ed25519(bytes) => peer_key_from_signature_key(b"ed25519", bytes),
@@ -356,12 +199,6 @@ pub(super) fn peer_key_from_authority_key(key: &AuthorityKey) -> MaintenanceInge
 
 pub(super) fn peer_key_from_redaction_pubkey(pubkey: &[u8; 32]) -> MaintenanceIngestPeerKey {
     peer_key_from_signature_key(b"ed25519", pubkey)
-}
-
-pub(super) fn peer_key_from_unknown_authority_signer(
-    vault_id: AuthorityVaultId,
-) -> MaintenanceIngestPeerKey {
-    peer_key_from_signature_key(b"authority-unknown-vault", &vault_id)
 }
 
 /// Quota bucket for replicated type-76 identity-topology events. The

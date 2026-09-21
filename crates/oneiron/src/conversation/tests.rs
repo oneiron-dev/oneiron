@@ -405,6 +405,7 @@ fn assembled_context_and_edge_peers_share_the_audience_predicate() {
         !read
             .edges_out(&late.id)
             .unwrap()
+            .value
             .unwrap()
             .iter()
             .any(|e| e.target == early.id)

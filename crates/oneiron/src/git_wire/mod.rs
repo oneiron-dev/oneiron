@@ -27,6 +27,7 @@
 mod argv;
 mod bridge;
 mod checkout;
+mod checkout_remote;
 mod config;
 mod env;
 mod failure;

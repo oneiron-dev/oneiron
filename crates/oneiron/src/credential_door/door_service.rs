@@ -9,7 +9,7 @@ use super::door_types::{
     CredentialDoorError, DOOR_MAX_OID_BYTES, DOOR_MAX_PATH_BYTES, DOOR_ONE_SHOT_MAX_LIFETIME_SECS,
     DOOR_RECEIVE_PACK_EFFECTOR, DOOR_VERB_INJECT, DOOR_VERB_LEASE, DOOR_VERB_RECEIVE_PACK,
     DOOR_VERB_REDEEM, DoorDenyReason, DoorResult, DoorScanVerdict, PushedBlob, SecretLiftProposal,
-    TtlCeiling, UNUSABLE_PATH, custody, log_unreachable, repo_record,
+    TtlCeiling, UNUSABLE_PATH, custody, repo_record,
 };
 use crate::batch::secret_scan::scan_file_content;
 use crate::codebase::RepoRef;
@@ -17,8 +17,6 @@ use crate::secret_lease::{DoorInjectionReceipt, SecretLeaseMaterialization, Vaul
 use crate::store::Store;
 use crate::vault::Vault;
 
-#[cfg(test)]
-use super::authority_log_fault_hook;
 #[cfg(test)]
 use super::scan_fault_hook;
 
@@ -291,8 +289,8 @@ impl CredentialDoorService {
         };
         let now = self.door_instant()?;
         let admitted = self.admit_scope(DOOR_RECEIVE_PACK_EFFECTOR, now)?;
-        self.witness_single_use(credential)?;
-        credential.evaluate(
+        self.authorize(
+            credential,
             DOOR_VERB_RECEIVE_PACK,
             &repo_record(repo),
             admitted.effector().as_str(),
@@ -338,8 +336,8 @@ impl CredentialDoorService {
     ) -> DoorResult<DoorInjectionReceipt> {
         let now = self.door_instant()?;
         let admitted = self.admit_scope(effector, now)?;
-        self.witness_single_use(presented)?;
-        presented.evaluate(
+        self.authorize(
+            presented,
             DOOR_VERB_INJECT,
             secret_ref,
             admitted.effector().as_str(),
@@ -398,8 +396,8 @@ impl CredentialDoorService {
     ) -> DoorResult<SecretLeaseMaterialization> {
         let now = self.door_instant()?;
         let admitted = self.admit_scope(effector, now)?;
-        self.witness_single_use(presented)?;
-        presented.evaluate(
+        self.authorize(
+            presented,
             DOOR_VERB_LEASE,
             secret_ref,
             admitted.effector().as_str(),
@@ -418,16 +416,8 @@ impl CredentialDoorService {
         vault.materialize_admitted_lease(&admitted.into_lease(secret_ref, ttl_secs, not_after))
     }
 
-    /// Redeems a one-shot credential, consuming it BY MOVE.
-    ///
-    /// Single use is structural here: `one_shot` is moved in and dropped
-    /// before this returns, and [`DoorCredential`] is not `Clone`, so a second
-    /// redemption of the same credential cannot be written. That is the whole
-    /// enforcement — there is no door-local burn ledger, no token registry,
-    /// and no new authority-log entry, because no landed surface licenses one.
-    /// What the door CAN do it does: it refuses a single-use caveat it cannot
-    /// witness against the authority log, and it never hands back a ticket
-    /// that outlives the one-shot it was redeemed from.
+    /// Redeems a one-shot. The authority log, not move semantics, enforces
+    /// single use even after a handle is reconstructed or the vault reopens.
     pub(super) fn redeem_one_shot(
         &self,
         one_shot: DoorCredential,
@@ -437,7 +427,6 @@ impl CredentialDoorService {
                 reason: DoorDenyReason::SingleUseCaveatAbsent,
             });
         }
-        self.witness_single_use(&one_shot)?;
 
         let lifetime = one_shot.lifetime_secs();
         if lifetime == 0 || lifetime > DOOR_ONE_SHOT_MAX_LIFETIME_SECS {
@@ -463,7 +452,8 @@ impl CredentialDoorService {
 
         let now = self.door_instant()?;
         let admitted = self.admit_scope(effector, now)?;
-        one_shot.evaluate(
+        self.authorize(
+            &one_shot,
             DOOR_VERB_REDEEM,
             secret_ref,
             admitted.effector().as_str(),
@@ -490,54 +480,6 @@ impl CredentialDoorService {
         let not_after = now.after(one_shot.remaining_secs(now));
         vault.materialize_admitted_lease(&admitted.into_lease(secret_ref, ttl, not_after))
         // `one_shot` drops here: the credential is spent.
-    }
-
-    /// The one-shot MINT arm — a recorded stop, not a feature.
-    ///
-    /// Minting a slip is an authority-log act, and this tree exposes no landed
-    /// append surface that admits slip-mint bodies. Inventing an operation
-    /// variant, a door-local ledger, or a hash-at-rest token store to fake one
-    /// is exactly the shortcut that must not be taken, so this fails closed
-    /// and says why. Redemption above works today with a verified one-shot the
-    /// verifier hands over.
-    ///
-    /// `_now` survives the typed-instant migration deliberately: this arm
-    /// authorizes nothing and reads nothing, so it has no clock seam to move
-    /// onto. When the mint surface lands it will read its instant the same way
-    /// every other door operation does.
-    pub(super) fn mint_one_shot(
-        &self,
-        _secret_ref: &str,
-        _effector: &str,
-        _lifetime_secs: u64,
-        _now: u64,
-    ) -> DoorResult<DoorCredential> {
-        Err(CredentialDoorError::MintUnavailable)
-    }
-
-    /// A single-use caveat is only meaningful against the log that records
-    /// mints and revocations. A verifier that cannot READ that log refuses the
-    /// caveat rather than assuming the credential is still live.
-    ///
-    /// Read-only: the fold is taken through the landed read-side face inside a
-    /// read transaction, and nothing is appended here or anywhere else in this
-    /// module.
-    fn witness_single_use(&self, credential: &DoorCredential) -> DoorResult<()> {
-        if !credential.single_use {
-            return Ok(());
-        }
-        #[cfg(test)]
-        {
-            if authority_log_fault_hook::take_log_unreachable() {
-                return Err(CredentialDoorError::AuthorityLogUnreachable);
-            }
-        }
-        let vault = &self.vault;
-        let rtxn = vault.store.env.read_txn().map_err(log_unreachable)?;
-        vault
-            .authority_fold_readonly_in_txn(&rtxn)
-            .map_err(log_unreachable)?;
-        Ok(())
     }
 }
 

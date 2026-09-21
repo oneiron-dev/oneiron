@@ -793,6 +793,7 @@ pub(super) fn gate_evaluator_input(
         },
         external_effect: None,
         agent_definition_ceiling: None,
+        foreign_agent_ceiling: None,
         consent: None,
     }
 }
@@ -886,7 +887,7 @@ pub(super) fn assert_gate_rejected(
 ) {
     let typed = err
         .gate_denial()
-        .expect("GateWriteRejected must expose typed denial taxonomy");
+        .unwrap_or_else(|| panic!("GateWriteRejected must expose typed denial taxonomy: {err:?}"));
     assert_eq!(typed.outcome().as_str(), outcome);
     let typed_reason_codes = typed
         .reason_codes()

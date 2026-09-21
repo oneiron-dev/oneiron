@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use serde_json::Value as JsonValue;
 
+use super::burst_inputs::NormalizedBurstInputs;
 use super::model_id::dynamic_model_id;
 use super::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, LlmMessage,
@@ -73,7 +74,7 @@ pub struct AutoCheckSignals {
 
 /// One candidate write presented to a host checker, borrowed from the write
 /// door's own state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AutoCheckCandidate<'a> {
     pub predicate: &'a str,
     pub value_preview: &'a str,
@@ -84,6 +85,9 @@ pub struct AutoCheckCandidate<'a> {
     pub lineage: Option<&'a SourceLineage>,
     pub actor_class: &'a str,
     pub sensitivity_band: Option<u8>,
+    /// Native peer-relative observations, absent at doors with no write history.
+    /// These are verdict inputs and never an engine-side clamp.
+    pub burst: Option<NormalizedBurstInputs>,
     pub signals: AutoCheckSignals,
 }
 
@@ -92,7 +96,7 @@ pub struct AutoCheckCandidate<'a> {
 /// [`BoundedAutoChecker`] hands this — not the borrowed form — to the host, so
 /// the host's answer can outlive the gate's deadline without the gate having
 /// to keep anything alive for it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AutoCheckCandidateOwned {
     pub predicate: String,
     pub value_preview: String,
@@ -102,6 +106,9 @@ pub struct AutoCheckCandidateOwned {
     pub lineage: Option<SourceLineage>,
     pub actor_class: String,
     pub sensitivity_band: Option<u8>,
+    /// Native peer-relative observations, absent at doors with no write history.
+    /// These are verdict inputs and never an engine-side clamp.
+    pub burst: Option<NormalizedBurstInputs>,
     pub signals: AutoCheckSignals,
 }
 
@@ -116,6 +123,7 @@ impl AutoCheckCandidateOwned {
             lineage: self.lineage.as_ref(),
             actor_class: &self.actor_class,
             sensitivity_band: self.sensitivity_band,
+            burst: self.burst,
             signals: self.signals,
         }
     }
@@ -130,6 +138,7 @@ impl From<&AutoCheckCandidate<'_>> for AutoCheckCandidateOwned {
             lineage: candidate.lineage.cloned(),
             actor_class: candidate.actor_class.to_owned(),
             sensitivity_band: candidate.sensitivity_band,
+            burst: candidate.burst,
             signals: candidate.signals,
         }
     }
@@ -378,8 +387,12 @@ fn auto_check_candidate_text(candidate: &AutoCheckCandidate<'_>) -> String {
         Some(band) => band.to_string(),
         None => "unstamped".to_owned(),
     };
+    let burst = match candidate.burst {
+        Some(burst) => format!("rate_ratio: {}\nstreak: {}", burst.rate_ratio, burst.streak),
+        None => "rate_ratio: unavailable\nstreak: unavailable".to_owned(),
+    };
     format!(
-        "predicate: {}\nsource: {}\nlineage: {}\nactor_class: {}\nsensitivity_band: {}\nrecent_writes: {}\nwindow_secs: {}\nfailure_streak: {}\nvalue_preview: {}",
+        "predicate: {}\nsource: {}\nlineage: {}\nactor_class: {}\nsensitivity_band: {}\nrecent_writes: {}\nwindow_secs: {}\nfailure_streak: {}\n{}\nvalue_preview: {}",
         candidate.predicate,
         candidate.source.as_str(),
         lineage,
@@ -388,6 +401,7 @@ fn auto_check_candidate_text(candidate: &AutoCheckCandidate<'_>) -> String {
         candidate.signals.recent_writes,
         candidate.signals.window_secs,
         candidate.signals.failure_streak,
+        burst,
         candidate.value_preview,
     )
 }

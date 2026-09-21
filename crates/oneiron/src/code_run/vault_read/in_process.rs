@@ -34,8 +34,8 @@ use super::validate::{
 
 /// Embedded-host adapter. It stores an actor-keyed [`ScopedRead`] binding,
 /// never a naked vault convenience client: proximity to `Vault` is never
-/// authority. Each dispatch opens a fresh reader so its policy memo lasts only
-/// for that request, not for the lifetime of the adapter.
+/// authority. Each read resolves policy in its body snapshot. Dispatches also
+/// open a fresh reader so request-local audience state is never retained.
 pub struct InProcessVaultReadAdapter<'v> {
     scoped_read: ScopedRead<'v>,
 }
@@ -55,12 +55,17 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         query: Option<&str>,
         vector: Option<&[f32]>,
         limit: usize,
-    ) -> VaultReadResult<Vec<ScoredEntity>> {
+    ) -> VaultReadResult<crate::claim::ScopedReadResult<Vec<ScoredEntity>>> {
         let results = match (query, vector) {
             (Some(query), Some(vector)) => self.scoped_read.search(query, vector, limit, None),
             (Some(query), None) => self.scoped_read.search_text(query, limit, None),
             (None, Some(vector)) => self.scoped_read.search_vector(vector, limit, None),
-            (None, None) => Ok(Vec::new()),
+            (None, None) => self.scoped_read.read_receipt(None, 0).map(|receipt| {
+                crate::claim::ScopedReadResult {
+                    value: Vec::new(),
+                    receipt,
+                }
+            }),
         };
         results.map_err(|error| engine_failure(VaultReadMethod::Query, &error))
     }
@@ -76,16 +81,29 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             request.query_vector.as_deref(),
             fetch_limit,
         )?;
-        let total = admitted.len();
+        let mut narrowing = admitted.receipt;
+        let projected = self
+            .scoped_read
+            .get_entities_parts_with_modes_with_receipt(
+                &admitted
+                    .value
+                    .iter()
+                    .map(|result| (result.id, crate::vault::ReadMode::Indexed))
+                    .collect::<Vec<_>>(),
+                Some(&narrowing.applied.as_filter()),
+            )
+            .map_err(|error| engine_failure(METHOD, &error))?;
+        narrowing.restrict_with(&projected.receipt);
+        let total = projected
+            .value
+            .iter()
+            .filter(|parts| parts.is_some())
+            .count();
         let mut items = Vec::with_capacity(total.min(request.limit));
-        for result in admitted {
+        for (result, parts) in admitted.value.into_iter().zip(projected.value) {
             if items.len() >= request.limit {
                 break;
             }
-            let parts = self
-                .scoped_read
-                .get_entity_parts(&result.id)
-                .map_err(|error| engine_failure(METHOD, &error))?;
             let Some((entity_type, learned_at, body)) = parts else {
                 continue;
             };
@@ -99,6 +117,11 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             ));
         }
         Ok(CoreQueryResponse {
+            access: crate::access_grant::GrantedData::new(
+                items.iter().map(|item| item.id.clone()).collect(),
+                narrowing.suppressed_count,
+            ),
+            narrowing,
             items,
             next_cursor: None,
             meta: CoreQueryMeta {
@@ -162,7 +185,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         // door, and nothing leaves this method unfiltered. A failed filter
         // discards the provisional row before the error returns, so a refused
         // read leaves no residue behind it.
-        self.scoped_read
+        let narrowing = self
+            .scoped_read
             .filter_context_pack(&mut pack.value)
             .map_err(|error| {
                 pack.discard_telemetry();
@@ -183,7 +207,10 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let pack = pack
             .finish_post_filter()
             .map_err(|error| engine_failure(METHOD, &error))?;
-        Ok(CoreContextPackResponse(project_context_pack(&pack.value)))
+        Ok(CoreContextPackResponse(project_context_pack(
+            &pack.value,
+            narrowing,
+        )))
     }
 
     /// Hydrates ONE short ref for `method` — the CALLING method, which is the
@@ -202,6 +229,25 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .scoped_read
             .hydrate_short_id(&short_id, content_hash)
             .map_err(|error| engine_failure(method, &error))?;
+        self.project_hydrate(
+            method,
+            short_id,
+            content_hash,
+            view,
+            hydrated.value,
+            &hydrated.receipt,
+        )
+    }
+
+    fn project_hydrate(
+        &self,
+        method: VaultReadMethod,
+        short_id: String,
+        content_hash: u8,
+        view: View,
+        hydrated: Option<HydratedShortId>,
+        narrowing: &crate::claim::ScopedReadReceipt,
+    ) -> VaultReadResult<CoreHydrateResponse> {
         // A missing row and a clamp-denied claim are the SAME answer here. The
         // adapter never probes the naked vault to tell them apart.
         let Some(HydratedShortId {
@@ -212,11 +258,12 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             body,
         }) = hydrated
         else {
-            return Err(engine_absent(method, "short_id"));
+            return Err(engine_absent(method, "short_id").with_read_receipt(narrowing.clone()));
         };
         let content_hash = format!("{content_hash:02x}");
         let Some(body) = body else {
             return Ok(CoreHydrateResponse {
+                narrowing: narrowing.clone(),
                 status: CoreHydrateStatus::Deleted,
                 short_id,
                 content_hash,
@@ -228,6 +275,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         };
         let item = entity_record_from_parts(&id, entity_type, learned_at, None, &body, view);
         Ok(CoreHydrateResponse {
+            narrowing: narrowing.clone(),
             status: CoreHydrateStatus::Live,
             short_id,
             content_hash,
@@ -248,36 +296,50 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         )
     }
 
-    fn hydrate_batch_item(
-        &self,
-        reference: &str,
-        view: View,
-    ) -> VaultReadResult<CoreBatchShortIdHydrateItem> {
-        const METHOD: VaultReadMethod = VaultReadMethod::HydrateMany;
-
-        let Ok((short_id, content_hash)) = parse_short_ref(METHOD, reference) else {
-            return Ok(CoreBatchShortIdHydrateItem {
-                reference: reference.to_owned(),
-                outcome: CoreShortIdHydrateOutcome::MalformedShortId,
-                result: None,
-            });
-        };
-        batch_item_from_result(
-            reference.to_owned(),
-            self.hydrate_ref(METHOD, short_id, content_hash, view),
-        )
-    }
-
     fn hydrate_many_op(
         &self,
         request: &CoreBatchShortIdHydrateRequest,
     ) -> VaultReadResult<CoreBatchShortIdHydrateResponse> {
+        const METHOD: VaultReadMethod = VaultReadMethod::HydrateMany;
         let view = request.view.unwrap_or(View::Full);
+        let parsed: Vec<_> = request
+            .refs
+            .iter()
+            .map(|reference| parse_short_ref(METHOD, reference).ok())
+            .collect();
+        let refs: Vec<_> = parsed
+            .iter()
+            .flatten()
+            .map(|(id, hash)| (id.as_str(), *hash))
+            .collect();
+        let hydrated = self
+            .scoped_read
+            .hydrate_short_ids(&refs)
+            .map_err(|error| engine_failure(METHOD, &error))?;
+        let narrowing = hydrated.receipt;
+        let mut values = hydrated.value.into_iter();
         let mut results = Vec::with_capacity(request.refs.len());
-        for reference in &request.refs {
-            results.push(self.hydrate_batch_item(reference, view)?);
+        for (reference, parsed) in request.refs.iter().zip(parsed) {
+            let Some((short_id, content_hash)) = parsed else {
+                results.push(CoreBatchShortIdHydrateItem {
+                    reference: reference.clone(),
+                    outcome: CoreShortIdHydrateOutcome::MalformedShortId,
+                    result: None,
+                });
+                continue;
+            };
+            // The batch receipt covers every item in the same authority txn.
+            let result = self.project_hydrate(
+                METHOD,
+                short_id,
+                content_hash,
+                view,
+                values.next().flatten(),
+                &narrowing,
+            );
+            results.push(batch_item_from_result(reference.clone(), result)?);
         }
-        Ok(CoreBatchShortIdHydrateResponse { results })
+        Ok(CoreBatchShortIdHydrateResponse { narrowing, results })
     }
 
     fn memory_timeline_op(
@@ -292,7 +354,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .memory_timeline(&anchor)
             .map_err(|error| engine_failure(METHOD, &error))?;
         if timeline_is_absent(&timeline) {
-            return Err(engine_absent(METHOD, "entity"));
+            return Err(engine_absent(METHOD, "entity").with_read_receipt(timeline.receipt));
         }
         Ok(project_memory_timeline(&timeline))
     }
@@ -429,8 +491,8 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
         &self,
         request: sealed::ValidatedVaultReadRequest,
     ) -> VaultReadResult<VaultReadResponse> {
-        // Policy is memoized by ScopedRead. Never execute through the retained
-        // binding: a grant may have been revoked or narrowed since the last call.
+        // Keep request-local reader state isolated. Policy is re-resolved in
+        // each body snapshot, so a retained actor binding is not retained authority.
         let reader = Self::new(
             self.scoped_read.vault(),
             self.scoped_read.actor_key().clone(),

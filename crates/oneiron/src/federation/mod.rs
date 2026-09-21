@@ -11,6 +11,14 @@ pub mod derivation;
 #[cfg(feature = "sync")]
 pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 mod grant;
+mod ruling_integrity;
+mod rulings;
+pub(crate) use ruling_integrity::{
+    guard_ruling_overwrite, reject_ruling_delete, validate_ruling_claim,
+};
+mod shared_creation;
+pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
+pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
 mod guest;
 mod pact_scope;
 mod peer_authority;
@@ -73,6 +81,8 @@ pub(crate) use self::stale::federation_stale_key;
 #[cfg(test)]
 use self::stale::register_foreign_world_for_pact;
 
+#[cfg(test)]
+mod shared_creation_tests;
 #[cfg(test)]
 mod tests;
 

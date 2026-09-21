@@ -164,7 +164,7 @@ fn graph_expansion_uses_configured_vad_alpha_at_each_effort() -> TestResult {
             let request = hosted_request("date", effort, Some(&lease), Some(&backend));
             let result = scoped.search_with_effort(&request)?;
             if effort == Effort::Light {
-                assert_eq!(result.hits, direct);
+                assert_eq!(result.hits, direct.value);
                 assert!(!result.signals_used.contains(&"ppr".to_owned()));
             } else {
                 let hit = result

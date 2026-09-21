@@ -42,7 +42,7 @@ impl ArousalReranker {
     ) -> Result<Self> {
         let mut affect: BTreeMap<EntityId, Vad> = BTreeMap::new();
         for source in sources {
-            for edge in scoped.edges_out(source)?.unwrap_or_default() {
+            for edge in scoped.edges_out(source)?.value.unwrap_or_default() {
                 if let Some(vad) = edge.vad {
                     vad.validate()?;
                     let entry = affect.entry(edge.target).or_insert(vad);

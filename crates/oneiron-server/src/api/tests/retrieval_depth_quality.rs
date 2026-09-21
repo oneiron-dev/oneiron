@@ -463,11 +463,22 @@ fn retrieval_quality_response_meta_is_additive_and_keeps_eq_and_wire_numbers() {
 
 #[test]
 fn retrieval_quality_openapi_fields_are_optional_and_use_decimal_number_schema() {
+    fn property_owner<'a>(schema: &'a Value, field: &str) -> Option<&'a Value> {
+        if schema["properties"].get(field).is_some() {
+            return Some(schema);
+        }
+        schema["allOf"]
+            .as_array()?
+            .iter()
+            .find_map(|part| property_owner(part, field))
+    }
     let spec = generated_spec();
     let expected = retrieval_quality_schema_properties();
     for name in ["ResponseMeta", "CoreContextPackResponse"] {
         let schema = openapi_component_schema(&spec, name);
         for field in ["quality", "degradation", "confidenceAdjustment"] {
+            let schema =
+                property_owner(schema, field).expect("quality property in composed schema");
             assert_eq!(
                 openapi_schema_contract(&schema["properties"][field]),
                 expected[field]
@@ -479,7 +490,7 @@ fn retrieval_quality_openapi_fields_are_optional_and_use_decimal_number_schema()
                     .contains(&Value::from(field))
             );
         }
-        assert!(schema["properties"].get("confidence_adjustment").is_none());
+        assert!(property_owner(schema, "confidence_adjustment").is_none());
     }
 }
 
@@ -579,7 +590,12 @@ fn retrieval_quality_server_scope_projection_preserves_degradation() {
     );
     let (_dir, server) = test_server();
     let evidence = core_context_pack_evidence(&server.vault, None).expect("empty evidence");
-    let response = core_context_pack_response(pack, evidence, None);
+    let receipt = server
+        .vault
+        .scoped_read(oneiron::claim::ScopedReadActorKey::new("quality").unwrap())
+        .read_receipt(None, 0)
+        .unwrap();
+    let response = core_context_pack_response(pack, evidence, None, receipt);
     let wire = serde_json::to_value(response).expect("context JSON");
     assert_eq!(wire["quality"], "degraded");
     assert_eq!(wire["degradation"], json!(["ppr_cache_miss"]));

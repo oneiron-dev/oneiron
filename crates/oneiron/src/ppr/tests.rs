@@ -2527,12 +2527,37 @@ fn scoped_ppr_fails_closed_when_the_visibility_predicate_errors() -> Result<()> 
 /// while a `core:read` grant exists, which is the landed denial arm of
 /// `gate::scoped_read_claim_allowed` — so one manifest gives the fixture both
 /// a permitted reader and a denied one.
-fn single_reader_policy_manifest(actor_ref: &str) -> Vec<u8> {
-    let grant = Value::Map(vec![
-        (Value::from("actor_ref"), Value::from(actor_ref)),
-        (Value::from("effector"), Value::from("core:read")),
-        (Value::from("receipt_required"), Value::Boolean(false)),
-    ]);
+fn bridge_reader_policy_manifest(reader: &str, restricted_reader: &str) -> Vec<u8> {
+    let grant = |actor_ref: &str, entity_types: Option<Vec<u8>>| {
+        let mut fields = vec![
+            (Value::from("actor_ref"), Value::from(actor_ref)),
+            (Value::from("effector"), Value::from("core:read")),
+            (Value::from("receipt_required"), Value::Boolean(false)),
+        ];
+        if let Some(types) = entity_types {
+            fields.push((
+                Value::from("scope"),
+                Value::Map(vec![(
+                    Value::from("entity_types"),
+                    Value::Array(types.into_iter().map(Value::from).collect()),
+                )]),
+            ));
+        }
+        Value::Map(fields)
+    };
+    // The restricted reader has authority for the code symbols and notes,
+    // but never for the CLAIM nodes that bridge them. A missing grant would
+    // deny the entire walk, not prove that unreadable bridges stop ranking.
+    let grants = vec![
+        grant(reader, None),
+        grant(
+            restricted_reader,
+            Some(vec![
+                crate::registry::ENTITY_TYPE_CODE_SYMBOL,
+                crate::registry::ENTITY_TYPE_NOTE,
+            ]),
+        ),
+    ];
     let manifest = Value::Map(vec![
         (Value::from("schema_version"), Value::from("1.1")),
         (Value::from("pack_id"), Value::from("code-memory-scoped")),
@@ -2541,7 +2566,7 @@ fn single_reader_policy_manifest(actor_ref: &str) -> Vec<u8> {
         (Value::from("defaults"), Value::Map(Vec::new())),
         (Value::from("rules"), Value::Array(Vec::new())),
         (Value::from("actor_ceilings"), Value::Array(Vec::new())),
-        (Value::from("scoped_grants"), Value::Array(vec![grant])),
+        (Value::from("scoped_grants"), Value::Array(grants)),
     ]);
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("manifest encodes");
@@ -2687,7 +2712,7 @@ fn pull_code_memory_does_not_rank_across_a_denied_claim_bridge() -> Result<()> {
     let fixture = build_denied_claim_bridge(&vault)?;
     // Installed LAST: every fixture write above predates the manifest, so this
     // grant governs reads only.
-    let manifest = single_reader_policy_manifest("code-memory-reader");
+    let manifest = bridge_reader_policy_manifest("code-memory-reader", "code-memory-intruder");
     put_policy_manifest_bytes(&vault, entity(0x69), &manifest)?;
 
     let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;

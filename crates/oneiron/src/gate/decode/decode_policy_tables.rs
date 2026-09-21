@@ -238,7 +238,8 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
                 | POLICY_ROW_TEXT_KEY
                 | POLICY_ROW_ACTIVE_KEY
                 | POLICY_ROW_WORLD_REF_KEY
-                | POLICY_ROW_ACTION_KEY => {}
+                | POLICY_ROW_ACTION_KEY
+                | "human" => {}
                 _ => return None,
             }
         }
@@ -246,6 +247,10 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
         let text = required_nonempty_string(entries, POLICY_ROW_TEXT_KEY)?;
         let active = optional_bool_default(entries, POLICY_ROW_ACTIVE_KEY, true)?;
         let world_ref = optional_string(entries, POLICY_ROW_WORLD_REF_KEY)?;
+        let human = optional_string(entries, "human")?;
+        if human.as_ref().is_some_and(|name| name.trim().is_empty()) {
+            return None;
+        }
         let action = match optional_string(entries, POLICY_ROW_ACTION_KEY)? {
             // A row that names no action only wants to be told about, so the
             // gentlest arm is the default: content still ships unchanged.
@@ -272,6 +277,7 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
             text,
             active,
             world_ref,
+            human,
             action,
         });
     }

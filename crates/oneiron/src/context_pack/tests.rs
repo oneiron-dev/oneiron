@@ -188,6 +188,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
             },
             "rows": [
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 0,
                     "slot": "claims",
                     "source": "result",
@@ -198,6 +202,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
                     "score": 1.0
                 },
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 1,
                     "slot": "claims",
                     "source": "result",
@@ -208,6 +216,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
                     "score": 0.50
                 },
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 2,
                     "slot": "turns",
                     "source": "result",
@@ -218,6 +230,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
                     "score": 0.25
                 },
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 3,
                     "slot": "companions",
                     "source": "result",
@@ -4329,3 +4345,72 @@ fn pack_vectors_follow_the_selected_indexed_frontier() -> Result<()> {
 }
 mod criticality;
 mod source_ranking;
+
+#[test]
+fn live_memories_keep_foreign_world_fences_without_edges() -> Result<()> {
+    use crate::context_board::{BoardBlockHeader, BoardBudgetRequest, MemoryTier};
+
+    let (_dir, vault) = open_test_vault();
+    let world = crate::test_util::entity(0xF1);
+    let guest = crate::test_util::entity(0x71);
+    let home = crate::test_util::entity(0x61);
+    put_world_claim(&vault, guest, [1.0, 0.0, 0.0, 0.0], Some(world))?;
+    put_world_claim(&vault, home, [0.8, 0.2, 0.0, 0.0], None)?;
+    let mut pack = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .non_base_world_claim_fraction(1.0)
+        .run()?;
+    assert_eq!(pack.results.len(), 2);
+    assert!(pack.results.iter().all(|entity| entity.edges.is_none()));
+    // Exercise both projection lanes with genuinely hydrated claim fields.
+    for neighbor in [false, true] {
+        if neighbor {
+            let index = pack
+                .results
+                .iter()
+                .position(|entity| entity.id == guest)
+                .unwrap();
+            pack.neighbors.push(pack.results.remove(index));
+        }
+        let section = vault.project_memories_section(
+            &pack,
+            MemoriesBudget::new(2, 0, 0, 0, 0, 0),
+            None,
+            None,
+            &Default::default(),
+        )?;
+        assert_eq!(section.rows.len(), 2);
+        assert_eq!(section.rows[0].id, home.to_hex());
+        assert_eq!(section.rows[0].tier, MemoryTier::Snippet);
+        assert_eq!(section.rows[0].snippet.as_deref(), Some("\"v\""));
+        let row = &section.rows[1];
+        assert_eq!(row.id, guest.to_hex());
+        assert_eq!(row.world.as_deref(), Some(world.to_hex().as_str()));
+        assert_eq!(row.tier, MemoryTier::IndexOnly);
+        assert_eq!(row.snippet, None);
+        let rendered = section
+            .render_board(
+                &BoardBlockHeader {
+                    epoch: 1,
+                    scope: "all".into(),
+                },
+                BoardBudgetRequest {
+                    harness_default_tok: 4096,
+                    caller_limit_tok: None,
+                    explicit_override_tok: None,
+                },
+            )
+            .unwrap()
+            .text;
+        let (home_text, guest_text) = rendered.split_once("</memory>\n").unwrap();
+        assert!(home_text.contains(&section.rows[0].short_id));
+        assert!(guest_text.starts_with(&format!(
+            "<evidence role=\"guest\" host=\"{world}\" consolidatable=\"false\">",
+            world = world.to_hex(),
+        )));
+        assert!(guest_text.contains("tier=index-only"));
+        assert!(!guest_text.contains("\"v\""));
+    }
+    Ok(())
+}

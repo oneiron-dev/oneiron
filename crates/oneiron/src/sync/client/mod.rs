@@ -43,6 +43,7 @@
 mod base;
 mod documents;
 mod federated;
+mod federation_replay;
 mod inbound;
 mod lfs;
 mod note_session;

@@ -1,5 +1,6 @@
 //! Claim write entry seams plus the phase-ordered inner executor.
 
+use super::burst_inputs::claim_burst_inputs;
 use super::consent::{
     GateConsentBinding, claim_gate_input, enforce_claim_gate_decision_with_consent,
     gate_decision_matches_pending_candidate, reject_gate_decision,
@@ -12,7 +13,7 @@ use super::peripheral::{
     ClaimGateWrite, GateWriteMode, auto_check_value_preview, edge_actor_class_str,
     local_write_actor_entity_ref, validate_write_envelope, write_envelope_actor_ref,
 };
-use super::staged_claim_gate::RecordedClaimGateDecision;
+use super::recorded::RecordedClaimGateDecision;
 use crate::claim::{ClaimApprovalStatus, claim_sensitivity_band, dreamer_isolation_class};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -120,8 +121,11 @@ pub(crate) fn check_claim_policy_for_write_with_record(
 // The inner executor carries the outer record seam's axis tuple plus the
 // preflight identity exactly once; a parameter struct would only rename the
 // same boundary.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn check_claim_policy_for_write_with_record_inner(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the record seam carries the preflight receipt identity and explicit write mode"
+)]
+fn check_claim_policy_for_write_with_record_inner(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
@@ -208,7 +212,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 None,
             )
         };
-        let input = claim_gate_input(
+        let mut input = claim_gate_input(
             body,
             policy,
             actor,
@@ -229,6 +233,10 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // A pre-commit failure REPLACES the policy verdict: the recording,
         // pending and enforcement paths below then run unchanged, and the
         // Deny aborts the caller's batch op before any claim-side write lands.
+        input.foreign_agent_ceiling = envelope
+            .map(|envelope| crate::gate::foreign_agent::resolve(store, &*wtxn, envelope.actor()))
+            .transpose()?
+            .flatten();
         let mut decision = match precommit_denial {
             Some(reason_code) => GateDecision::deny(reason_code),
             None => policy.evaluate_gate_with_lineage(&input, lineage),
@@ -316,6 +324,13 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 lineage,
                 actor_class: &input.actor.actor_class,
                 sensitivity_band: claim_sensitivity_band(body),
+                burst: input
+                    .provenance
+                    .actor_entity_ref
+                    .map(|actor| {
+                        claim_burst_inputs(store, &*wtxn, &actor, crate::unix_seconds_now())
+                    })
+                    .transpose()?,
             };
             // The concrete wrapper is required at every injection boundary:
             // one capacity-bounded consult, with panic and timeout isolation.
@@ -365,8 +380,6 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
         let created_at = mutation_recorded_at;
 
-        let effective_approval = body.approval;
-
         let mut decision_record = GateDecisionRecord {
             version: 0,
             decision_id,
@@ -408,11 +421,9 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             );
         }
         if mode.record_decision {
-            if attach_critical_confirm {
-                store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
-            } else {
-                store.append_gate_decision_in_txn(wtxn, &decision_record)?;
-            }
+            // A structural streak follows durable append order, including
+            // ordinary receipts created within the same clock millisecond.
+            store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
             let recorded = RecordedClaimGateDecision {
                 record: decision_record.clone(),
                 decision: decision.clone(),
@@ -425,7 +436,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
 
         if mode.persist_pending_consent
             && ((decision.outcome() == GateOutcome::Pending
-                && effective_approval == ClaimApprovalStatus::Proposed)
+                && body.approval == ClaimApprovalStatus::Proposed)
                 || (attach_critical_confirm && body.approval == ClaimApprovalStatus::Auto))
         {
             let pending_decision = if mode.record_decision {
@@ -478,7 +489,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             wtxn,
             id,
             &decision,
-            effective_approval,
+            body.approval,
             &binding,
             GateWriteMode {
                 resolve_pending: mode.resolve_pending && !attach_critical_confirm,

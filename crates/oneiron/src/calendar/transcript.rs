@@ -374,6 +374,7 @@ pub fn seed_file_drop_machine_fixture(
     raw.extend_from_slice(&at.to_be_bytes());
     raw.extend_from_slice(&body);
     vault.with_write_txn(|wtxn| {
+        crate::gate::stamp_manifest_origin(&vault.store, wtxn, &id, &body, false)?;
         vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
         vault.store.type_index.put(
             wtxn,
@@ -443,6 +444,7 @@ pub fn permit_imported_calendar_source_for_test(
     raw.extend_from_slice(&at.to_be_bytes());
     raw.extend_from_slice(&body);
     vault.with_write_txn(|wtxn| {
+        crate::gate::stamp_manifest_origin(&vault.store, wtxn, &id, &body, false)?;
         vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
         vault.store.type_index.put(
             wtxn,

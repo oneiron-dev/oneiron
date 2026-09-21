@@ -94,7 +94,18 @@ pub fn evaluate_entity_resolution_waterfall(
     candidates: &[EntityResolutionCandidate],
     high_collision_mention: bool,
 ) -> crate::Result<EntityResolutionWaterfallDecision> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn(|txn| {
+        evaluate_entity_resolution_waterfall_in_txn(vault, txn, candidates, high_collision_mention)
+    })
+}
+
+pub(super) fn evaluate_entity_resolution_waterfall_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    candidates: &[EntityResolutionCandidate],
+    high_collision_mention: bool,
+) -> crate::Result<EntityResolutionWaterfallDecision> {
+    let (mut ranked, claims_suppressed) = {
         // Topology cannot change during scoring. Fold the zero-head-shell
         // witness once, not once for each candidate and claim subject.
         let zero_head_shells = vault.zero_head_split_shells_in_txn(&*wtxn)?;
@@ -161,7 +172,8 @@ pub fn evaluate_entity_resolution_waterfall(
                 effective_confidence,
             });
         }
-        let mut ranked = scored;
+        (scored, claims_suppressed)
+    };
 
         // Total and deterministic: effective confidence descending, then subject
         // ascending, then claim id ascending. The tiebreakers are what make two
@@ -219,7 +231,6 @@ pub fn evaluate_entity_resolution_waterfall(
             route,
             requires_async_verification,
         })
-    })
 }
 
 fn canonical_waterfall_subject_in_txn(

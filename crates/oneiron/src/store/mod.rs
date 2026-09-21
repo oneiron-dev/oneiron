@@ -118,6 +118,8 @@ mod diagnostics;
 mod gate_decision;
 mod handle;
 mod key_encoding;
+mod local_queue_budget;
+pub(crate) use local_queue_budget::check_queue_capacity;
 mod open_gates;
 mod outbound_send_receipt;
 mod pending_embedding;

@@ -71,6 +71,8 @@ pub(crate) struct GateEvaluatorInput {
     /// bound (owner writes, connectors, non-definition agent actors) —
     /// preserves pre-AGENT-2 behavior at every existing construction site.
     pub(crate) agent_definition_ceiling: Option<PolicyApprovalCeiling>,
+    /// Independent foreign-authority cap; scoped MCP grants cannot dissolve it.
+    pub(crate) foreign_agent_ceiling: Option<PolicyApprovalCeiling>,
     /// The DEC-0006 consent context, when the caller composed one. `None` =
     /// this door has not been moved onto the unified consent path yet and
     /// keeps its pre-DEC-0006 criticality behaviour.
@@ -274,6 +276,7 @@ impl ExternalEffectGateInput {
             policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
             provenance: self.provenance.clone(),
             agent_definition_ceiling,
+            foreign_agent_ceiling: None,
             consent,
             external_effect: Some(ExternalEffectGateContext {
                 verb: self.verb.clone(),

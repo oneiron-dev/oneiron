@@ -118,6 +118,8 @@ fn wire_adapter(reply: Value) -> (Arc<ScriptedTransport>, WireTransportVaultRead
 fn empty_projection() -> CoreContextPackProjection {
     CoreContextPackProjection {
         capabilities: Vec::new(),
+        access: crate::access_grant::GrantedData::new(Vec::new(), 0),
+        narrowing: read_receipt_fixture(),
         results: Vec::new(),
         neighbors: Vec::new(),
         stats: CoreContextPackStats {
@@ -150,6 +152,8 @@ fn empty_projection() -> CoreContextPackProjection {
 fn canned_response(method: VaultReadMethod) -> VaultReadResponse {
     match method {
         VaultReadMethod::Query => VaultReadResponse::Query(CoreQueryResponse {
+            access: crate::access_grant::GrantedData::new(Vec::new(), 0),
+            narrowing: read_receipt_fixture(),
             items: Vec::new(),
             next_cursor: None,
             meta: CoreQueryMeta {
@@ -163,11 +167,13 @@ fn canned_response(method: VaultReadMethod) -> VaultReadResponse {
         VaultReadMethod::Hydrate => VaultReadResponse::Hydrate(hydrate_response()),
         VaultReadMethod::HydrateMany => {
             VaultReadResponse::HydrateMany(CoreBatchShortIdHydrateResponse {
+                narrowing: read_receipt_fixture(),
                 results: Vec::new(),
             })
         }
         VaultReadMethod::MemoryTimeline => {
             VaultReadResponse::MemoryTimeline(CoreMemoryTimelineResponse {
+                narrowing: read_receipt_fixture(),
                 anchor_id: String::new(),
                 records: Vec::new(),
             })
@@ -184,6 +190,7 @@ fn canned_response(method: VaultReadMethod) -> VaultReadResponse {
 
 fn hydrate_response() -> CoreHydrateResponse {
     CoreHydrateResponse {
+        narrowing: read_receipt_fixture(),
         status: CoreHydrateStatus::Live,
         short_id: "cl1".to_owned(),
         content_hash: "a7".to_owned(),
@@ -476,6 +483,7 @@ fn wrong_op_ok_envelope_is_protocol_mismatch() {
 #[test]
 fn bare_response_dto_is_protocol_mismatch() {
     let bare = CoreBatchShortIdHydrateResponse {
+        narrowing: read_receipt_fixture(),
         results: Vec::new(),
     };
     let (_transport, adapter) = wire_adapter(serde_json::to_value(bare).expect("bare dto"));
@@ -491,6 +499,8 @@ fn bare_response_dto_is_protocol_mismatch() {
 #[test]
 fn envelope_with_ok_and_err_is_protocol_mismatch() {
     let arm = VaultReadResponse::Query(CoreQueryResponse {
+        access: crate::access_grant::GrantedData::new(Vec::new(), 0),
+        narrowing: read_receipt_fixture(),
         items: Vec::new(),
         next_cursor: None,
         meta: CoreQueryMeta {
@@ -520,6 +530,8 @@ fn envelope_without_ok_or_err_is_protocol_mismatch() {
 #[test]
 fn envelope_with_extra_key_is_protocol_mismatch() {
     let arm = VaultReadResponse::Query(CoreQueryResponse {
+        access: crate::access_grant::GrantedData::new(Vec::new(), 0),
+        narrowing: read_receipt_fixture(),
         items: Vec::new(),
         next_cursor: None,
         meta: CoreQueryMeta {
@@ -537,6 +549,7 @@ fn envelope_with_extra_key_is_protocol_mismatch() {
 #[test]
 fn err_envelope_forwards_error_untranslated() {
     let forwarded = VaultReadError::Engine {
+        narrowing: Some(Box::new(read_receipt_fixture())),
         method: VaultReadMethod::Hydrate,
         engine_code: NOT_FOUND_ENGINE_CODE.to_owned(),
         message: "short_id was not found".to_owned(),
@@ -556,6 +569,7 @@ fn err_envelope_forwards_error_untranslated() {
 fn wire_request_body_is_the_inner_dto_not_the_tagged_envelope() {
     let anchor = entity(0x5A);
     let reply = VaultReadResponse::MemoryTimeline(CoreMemoryTimelineResponse {
+        narrowing: read_receipt_fixture(),
         anchor_id: anchor.to_hex(),
         records: Vec::new(),
     });
@@ -844,6 +858,7 @@ fn batch_absence_conversion_is_narrow() {
     assert!(live.result.is_some());
 
     let engine = VaultReadError::Engine {
+        narrowing: None,
         method: VaultReadMethod::Hydrate,
         engine_code: INTERNAL_ENGINE_CODE.to_owned(),
         message: "corrupted index".to_owned(),
@@ -1010,12 +1025,11 @@ fn scoped_grant_denial_reads_as_absence() {
     let missing = adapter
         .hydrate(hydrate_request(missing_ref))
         .expect_err("missing ref reads as absence");
-    assert_eq!(denied, missing);
-    assert_eq!(
-        denied,
-        engine_absent(VaultReadMethod::Hydrate, "short_id"),
-        "denied and missing normalize to the same accepted absence"
-    );
+    for (error, suppressed) in [(&denied, 1), (&missing, 0)] {
+        assert!(matches!(error,
+            VaultReadError::Engine { method: VaultReadMethod::Hydrate, engine_code, narrowing: Some(receipt), .. }
+                if engine_code == NOT_FOUND_ENGINE_CODE && receipt.suppressed_count == suppressed));
+    }
 
     adapter
         .hydrate(hydrate_request(&admitted_ref))
@@ -1533,4 +1547,126 @@ fn structured_requests_reject_unknown_fields_before_dispatch() {
             "{op} accepted an undeclared request field"
         );
     }
+}
+fn read_receipt_fixture() -> crate::claim::ScopedReadReceipt {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new("fixture").unwrap())
+        .read_receipt(None, 0)
+        .unwrap()
+}
+
+#[test]
+fn wire_read_response_without_narrowing_receipt_fails_closed() {
+    for method in [
+        VaultReadMethod::Query,
+        VaultReadMethod::ContextPack,
+        VaultReadMethod::Hydrate,
+        VaultReadMethod::HydrateMany,
+        VaultReadMethod::MemoryTimeline,
+    ] {
+        let mut value = serde_json::to_value(canned_response(method)).expect("valid fixture");
+        assert!(serde_json::from_value::<VaultReadResponse>(value.clone()).is_ok());
+        assert!(
+            value["response"]
+                .as_object_mut()
+                .unwrap()
+                .remove("narrowing")
+                .is_some()
+        );
+        assert!(
+            serde_json::from_value::<VaultReadResponse>(value).is_err(),
+            "{method:?}"
+        );
+    }
+}
+
+#[test]
+fn hydrate_batch_counts_withheld_rows_not_missing_or_malformed_refs() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (admitted, denied) = seed_scoped_pack_vault(&vault);
+    let reader = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
+    let denied_ref = short_ref(&vault, &denied);
+    let (short_id, hash) = parse_short_ref(VaultReadMethod::Hydrate, &denied_ref).unwrap();
+    let withheld = reader.hydrate_short_id(&short_id, hash).unwrap();
+    assert!(withheld.value.is_none());
+    assert_eq!(withheld.receipt.suppressed_count, 1);
+    let missing = reader.hydrate_short_id("cl999999", 0).unwrap();
+    assert!(missing.value.is_none());
+    assert_eq!(missing.receipt.suppressed_count, 0);
+    let adapter =
+        InProcessVaultReadAdapter::new(&vault, ScopedReadActorKey::new("reader").unwrap());
+    let batch = adapter
+        .hydrate_many(CoreBatchShortIdHydrateRequest {
+            refs: vec![
+                short_ref(&vault, &admitted),
+                denied_ref,
+                "cl999999:00".to_owned(),
+                "bad".to_owned(),
+            ],
+            view: Some(View::Full),
+        })
+        .unwrap();
+    assert_eq!(batch.narrowing.suppressed_count, 1);
+    assert_eq!(
+        batch
+            .results
+            .iter()
+            .map(|item| item.outcome)
+            .collect::<Vec<_>>(),
+        vec![
+            CoreShortIdHydrateOutcome::Live,
+            CoreShortIdHydrateOutcome::NotFound,
+            CoreShortIdHydrateOutcome::NotFound,
+            CoreShortIdHydrateOutcome::MalformedShortId
+        ]
+    );
+}
+
+#[test]
+fn wire_hydrate_absence_without_its_receipt_fails_closed() {
+    let response = json!({"err": {
+        "kind": "engine", "method": "hydrate", "engine_code": "NOT_FOUND", "message": "absent"
+    }});
+    let (_, adapter) = wire_adapter(response);
+    assert!(matches!(
+        adapter.hydrate(hydrate_request("cl999999:00")),
+        Err(VaultReadError::ProtocolMismatch { .. })
+    ));
+}
+
+#[test]
+fn timeline_receipts_survive_success_absence_and_wire_transport() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (visible, hidden) = seed_scoped_pack_vault(&vault);
+    let adapter =
+        InProcessVaultReadAdapter::new(&vault, ScopedReadActorKey::new("reader").unwrap());
+    let request = |id: EntityId| CoreMemoryTimelineRequest {
+        id: id.to_hex(),
+        view: None,
+    };
+    let response = adapter
+        .memory_timeline(request(visible))
+        .expect("visible timeline");
+    assert_eq!(response.narrowing.suppressed_count, 0);
+    let (_, remote) =
+        wire_adapter(json!({"ok": VaultReadResponse::MemoryTimeline(response.clone())}));
+    assert_eq!(remote.memory_timeline(request(visible)).unwrap(), response);
+    let error = adapter
+        .memory_timeline(request(hidden))
+        .expect_err("hidden timeline");
+    assert!(
+        matches!(&error, VaultReadError::Engine { narrowing: Some(receipt), .. }
+        if receipt.suppressed_count > 0)
+    );
+    let (_, remote) = wire_adapter(json!({"err": error}));
+    assert_eq!(remote.memory_timeline(request(hidden)).unwrap_err(), error);
+    let mut stripped = serde_json::to_value(&error).unwrap();
+    stripped.as_object_mut().unwrap().remove("narrowing");
+    let (_, remote) = wire_adapter(json!({"err": stripped}));
+    assert!(matches!(
+        remote.memory_timeline(request(hidden)),
+        Err(VaultReadError::ProtocolMismatch { .. })
+    ));
 }

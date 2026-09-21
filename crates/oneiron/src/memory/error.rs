@@ -207,6 +207,11 @@ impl From<Error> for MemoryError {
                     "Use the actor-bound key_value API for keyed facts; generic claims and imports cannot overwrite keyed revisions.",
                 ],
             ),
+            ErrorKind::OffRecordTalkOnly => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["This session cannot retain this action. Start a separate on-record session."],
+            ),
             ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => Self::new(
                 MEMORY_CODE_NOT_FOUND,
                 message,

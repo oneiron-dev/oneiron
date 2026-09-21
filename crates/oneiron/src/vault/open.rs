@@ -324,6 +324,20 @@ impl Vault {
     #[cfg(feature = "test-support")]
     #[doc(hidden)]
     pub fn install_generated_source_permit_for_test(&self, actor: EntityId) -> Result<()> {
+        self.install_fixture_source_permits(actor, false)
+    }
+
+    /// TEST-SUPPORT ONLY: bind Generated and ToolOutput to one fixture actor
+    /// at the unstamped peer-evidence floor (band 2). Refuses customized policy;
+    /// all other policy axes and the normal write/confirmation gates stay intact.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn install_peer_source_permits_for_test(&self, actor: EntityId) -> Result<()> {
+        self.install_fixture_source_permits(actor, true)
+    }
+
+    #[cfg(feature = "test-support")]
+    fn install_fixture_source_permits(&self, actor: EntityId, peer_sources: bool) -> Result<()> {
         use crate::batch::{BatchOp, apply_ops};
         use crate::claim::ClaimSource;
         use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
@@ -362,6 +376,24 @@ impl Vault {
             ));
         };
         *actor_ref = Value::from(actor.to_hex());
+        if peer_sources {
+            for source in [ClaimSource::Generated, ClaimSource::ToolOutput] {
+                let row = rows
+                    .iter_mut()
+                    .find_map(|(key, value)| {
+                        (key.as_str() == Some(source.as_str())).then_some(value)
+                    })
+                    .ok_or(Error::InvariantViolation(
+                        "default test policy has no peer source",
+                    ))?;
+                *row = Value::Map(vec![
+                    (Value::from("actor_ref"), Value::from(actor.to_hex())),
+                    (Value::from("max_auto_sensitivity"), Value::from(2_u8)),
+                    (Value::from("receipted"), Value::Boolean(true)),
+                    (Value::from("warned"), Value::Boolean(true)),
+                ]);
+            }
+        }
         let mut data = Vec::new();
         rmpv::encode::write_value(&mut data, &manifest)
             .map_err(|_| Error::InvariantViolation("encode Generated test policy"))?;

@@ -9,7 +9,6 @@ use std::{collections::HashSet, sync::Mutex};
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_pack::{ContextEntity, ContextPack, EmptyContext, EmptyReason};
-use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState};
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -18,56 +17,18 @@ use crate::pipeline::ScoredEntity;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, PortRows};
 use crate::registry::ENTITY_TYPE_CLAIM;
 
+mod graph_reads;
 mod note_visibility;
+mod pinned_reads;
+mod point_reads;
+mod receipt;
 mod retrieval_visibility;
 mod versions;
+pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
 
-/// Actor key bound to a scoped read lane over the `core:read` surface.
-///
-/// The fields are private and construction rejects blank actor refs, so a
-/// [`ScopedRead`] cannot be built as an unkeyed bulk read handle.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScopedReadActorKey {
-    actor_ref: String,
-    actor_class: Option<String>,
-}
-
-impl ScopedReadActorKey {
-    #[must_use]
-    pub fn new(actor_ref: impl Into<String>) -> Option<Self> {
-        Self::from_parts(actor_ref.into(), None)
-    }
-
-    #[must_use]
-    pub fn with_actor_class(
-        actor_ref: impl Into<String>,
-        actor_class: impl Into<String>,
-    ) -> Option<Self> {
-        Self::from_parts(actor_ref.into(), Some(actor_class.into()))
-    }
-
-    fn from_parts(actor_ref: String, actor_class: Option<String>) -> Option<Self> {
-        if actor_ref.trim().is_empty() {
-            return None;
-        }
-        let actor_class = actor_class
-            .and_then(|class| (!class.trim().is_empty()).then(|| class.trim().to_owned()));
-        Some(Self {
-            actor_ref: actor_ref.trim().to_owned(),
-            actor_class,
-        })
-    }
-
-    #[must_use]
-    pub fn actor_ref(&self) -> &str {
-        &self.actor_ref
-    }
-
-    #[must_use]
-    pub fn actor_class(&self) -> Option<&str> {
-        self.actor_class.as_deref()
-    }
-}
+mod access_gate;
+mod actor_key;
+pub use actor_key::ScopedReadActorKey;
 
 /// Actor-keyed read lane for the core read surface.
 ///
@@ -76,7 +37,6 @@ impl ScopedReadActorKey {
 pub struct ScopedRead<'a> {
     vault: &'a crate::vault::Vault,
     actor_key: ScopedReadActorKey,
-    policy: Mutex<Option<PolicyManifestResolution>>,
     audience: Option<Vec<EntityId>>,
     audience_cache: Mutex<crate::conversation::AudienceCache>,
     /// Session composition (ONE-1728 §7). `None` on the canonical handle,
@@ -94,7 +54,6 @@ impl crate::vault::Vault {
         ScopedRead {
             vault: self,
             actor_key,
-            policy: Mutex::new(None),
             audience: None,
             audience_cache: Mutex::new(Default::default()),
             session_view: None,
@@ -118,7 +77,6 @@ impl crate::vault::Vault {
         ScopedRead {
             vault: self,
             actor_key,
-            policy: Mutex::new(None),
             audience: None,
             audience_cache: Mutex::new(Default::default()),
             session_view: Some(view),
@@ -201,10 +159,13 @@ impl<'a> ScopedRead<'a> {
         vector: &[f32],
         limit: usize,
         requested: Option<&RetrievalFilter>,
-    ) -> Result<Vec<ScoredEntity>> {
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
-            return Ok(Vec::new());
+            return Ok(ScopedReadResult {
+                value: Vec::new(),
+                receipt: self.receipt_for(requested, &policy, &filter, 0),
+            });
         }
         let fetch_limit = self
             .vault
@@ -214,8 +175,16 @@ impl<'a> ScopedRead<'a> {
             .query()
             .authority_filter(filter.clone())
             .search(query, vector, None, fetch_limit)
-            .run()?;
-        self.filter_search_results(results, limit, &filter, &policy)
+            .run_for_pack()?;
+        self.filter_search_results(
+            results.scores,
+            limit,
+            requested,
+            &filter,
+            &policy,
+            results.read_suppressed,
+            &results.revisions,
+        )
     }
 
     pub fn search_text(
@@ -223,8 +192,12 @@ impl<'a> ScopedRead<'a> {
         query: &str,
         limit: usize,
         requested: Option<&RetrievalFilter>,
-    ) -> Result<Vec<ScoredEntity>> {
-        Ok(self.search_text_revisioned(query, limit, requested)?.hits)
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        let result = self.search_text_revisioned(query, limit, requested)?;
+        Ok(ScopedReadResult {
+            value: result.hits,
+            receipt: result.receipt,
+        })
     }
 
     pub fn search_vector(
@@ -232,8 +205,12 @@ impl<'a> ScopedRead<'a> {
         query: &[f32],
         limit: usize,
         requested: Option<&RetrievalFilter>,
-    ) -> Result<Vec<ScoredEntity>> {
-        Ok(self.search_vector_revisioned(query, limit, requested)?.hits)
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        let result = self.search_vector_revisioned(query, limit, requested)?;
+        Ok(ScopedReadResult {
+            value: result.hits,
+            receipt: result.receipt,
+        })
     }
 
     fn resolve_retrieval_filter(
@@ -257,24 +234,67 @@ impl<'a> ScopedRead<'a> {
         Ok((filter, policy))
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "final scoring admission conjoins plan authority, fresh authority and source frontiers"
+    )]
     fn filter_search_results(
         &self,
         results: Vec<ScoredEntity>,
         limit: usize,
+        requested: Option<&RetrievalFilter>,
         filter: &ResolvedRetrievalFilter,
         policy: &PolicyManifestResolution,
-    ) -> Result<Vec<ScoredEntity>> {
+        previously_suppressed: usize,
+        revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let txn = self.vault.store.env.read_txn()?;
-        let mut kept = Vec::new();
+        // The scoring txn may have completed before a revocation. The final
+        // read must satisfy BOTH the plan authority and this fresh snapshot.
+        let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        let mut value = Vec::new();
+        let mut suppressed = 0;
         for result in results {
-            if kept.len() >= limit {
-                break;
-            }
-            if self.is_entity_retrievable_with_policy_in(&txn, policy, filter, &result.id)? {
-                kept.push(result);
+            if self.is_entity_retrievable_with_policy_in(&txn, policy, filter, &result.id)?
+                && self.is_entity_retrievable_with_policy_in(
+                    &txn,
+                    &fresh_policy,
+                    &fresh_filter,
+                    &result.id,
+                )?
+                && match revisions.get(&result.id) {
+                    Some(revision) => {
+                        let mode = crate::vault::ReadMode::Pinned(*revision);
+                        self.entity_raw_with_mode_in(&txn, policy, filter, &result.id, mode)?
+                            .is_some()
+                            && self
+                                .entity_raw_with_mode_in(
+                                    &txn,
+                                    &fresh_policy,
+                                    &fresh_filter,
+                                    &result.id,
+                                    mode,
+                                )?
+                                .is_some()
+                    }
+                    None => true,
+                }
+            {
+                if value.len() < limit {
+                    value.push(result);
+                }
+            } else if self.entity_record_in(&txn, &result.id)?.is_some() {
+                suppressed += 1;
             }
         }
-        Ok(kept)
+        let mut receipt = self.receipt_for(requested, policy, filter, previously_suppressed);
+        receipt.restrict_with(&self.receipt_for(
+            requested,
+            &fresh_policy,
+            &fresh_filter,
+            suppressed,
+        ));
+        Ok(ScopedReadResult { value, receipt })
     }
 
     /// ONE-207: the effort-dialed read.
@@ -299,129 +319,6 @@ impl<'a> ScopedRead<'a> {
         request: &crate::retrieval_depth::DepthSearchRequest<'_>,
     ) -> crate::retrieval_depth::RetrievalResult<crate::retrieval_depth::DepthSearchResult> {
         crate::retrieval_depth::execute(self, request)
-    }
-
-    pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
-        Ok(self.get_entity_parts(id)?.map(|(_, _, body)| body))
-    }
-
-    pub fn get_entity_parts(&self, id: &EntityId) -> Result<Option<(u8, u64, Vec<u8>)>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        let Some(raw) = self.entity_record_in(&rtxn, id)?.map(|row| row.encode()) else {
-            return Ok(None);
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if self.vault.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
-            return Ok(None);
-        }
-        #[cfg(feature = "sync")]
-        let resolved_body = crate::entity_doc::resolve_record_body(
-            &self.vault.store,
-            &rtxn,
-            id,
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-        )?;
-        #[cfg(feature = "sync")]
-        let body = resolved_body.as_slice();
-        #[cfg(not(feature = "sync"))]
-        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        if !self.audience_readable_in(&rtxn, id)? {
-            return Ok(None);
-        }
-        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-            && !self.note_readable_in(&rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?
-        {
-            return Ok(None);
-        }
-        if header.entity_type != ENTITY_TYPE_CLAIM {
-            let body = crate::note::live_body_in_txn(
-                &self.vault.store,
-                &rtxn,
-                id,
-                header.entity_type,
-                body,
-            )?;
-            return Ok(Some((
-                header.entity_type,
-                header.learned_at,
-                body.into_owned(),
-            )));
-        }
-        if !self.is_claim_raw_readable_in(&rtxn, id, &raw)? {
-            return Ok(None);
-        }
-        Ok(Some((header.entity_type, header.learned_at, body.to_vec())))
-    }
-
-    pub fn hydrate_short_id(
-        &self,
-        short_id: &str,
-        content_hash: u8,
-    ) -> Result<Option<crate::HydratedShortId>> {
-        let Some(result) = self.vault.hydrate_short_id(short_id, content_hash)? else {
-            return Ok(None);
-        };
-        if result.body.is_some() && !self.is_entity_readable(&result.id)? {
-            return Ok(None);
-        }
-        if result.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            let txn = self.vault.store.env.read_txn()?;
-            return match result.body.as_deref() {
-                Some(body) if self.note_readable_in(&txn, &result.id, body)? => Ok(Some(result)),
-                _ => Ok(None),
-            };
-        }
-        if result.body.is_none() {
-            if result.deletion.is_some() {
-                return Ok(Some(result));
-            }
-            return if result.entity_type == ENTITY_TYPE_CLAIM {
-                Ok(None)
-            } else {
-                Ok(Some(result))
-            };
-        }
-        if result.entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(Some(result));
-        }
-        let Some(body) = result.body.as_deref() else {
-            return Ok(None);
-        };
-        let body = decode_claim_body(body, true)?;
-        if self.is_claim_readable_with_body(&result.id, &body)? {
-            Ok(Some(result))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
-        if !self.is_entity_readable(anchor)? {
-            return Ok(MemoryTimeline {
-                anchor: *anchor,
-                records: Vec::new(),
-            });
-        }
-        let mut timeline = self.vault.memory_timeline(anchor)?;
-        timeline.records = self.filter_memory_timeline_records(timeline.records)?;
-        Ok(timeline)
-    }
-
-    pub fn edges_out(&self, id: &EntityId) -> Result<Option<Vec<EdgeInfo>>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        let policy = self.policy_manifest_in(&rtxn)?;
-        if !self.is_entity_readable_with_policy_in(&rtxn, &policy, id)? {
-            return Ok(None);
-        }
-        let edges = self.edges_out_in(&rtxn, id)?;
-        let mut kept = Vec::with_capacity(edges.len());
-        for edge in edges {
-            if self.is_entity_readable_with_policy_in(&rtxn, &policy, &edge.target)? {
-                kept.push(edge);
-            }
-        }
-        Ok(Some(kept))
     }
 
     pub fn search_candidate_limit(
@@ -449,38 +346,47 @@ impl<'a> ScopedRead<'a> {
             .scoped_read_search_candidate_limit(requested, include_text, include_vector)
     }
 
-    pub fn filter_scored_entities(&self, results: Vec<ScoredEntity>) -> Result<Vec<ScoredEntity>> {
-        self.filter_scored_entities_to_limit(results, usize::MAX)
-    }
-
-    fn filter_scored_entities_to_limit(
+    pub fn filter_scored_entities(
         &self,
         results: Vec<ScoredEntity>,
-        limit: usize,
-    ) -> Result<Vec<ScoredEntity>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        let policy = self.policy_manifest_in(&rtxn)?;
-        let mut kept = Vec::with_capacity(results.len());
-        for result in results {
-            if self.is_entity_readable_with_policy_in(&rtxn, &policy, &result.id)? {
-                kept.push(result);
-                if kept.len() == limit {
-                    break;
-                }
-            }
-        }
-        Ok(kept)
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        self.filter_scored_entities_requested(results, None)
     }
 
-    pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<()> {
+    pub(crate) fn filter_scored_entities_requested(
+        &self,
+        results: Vec<ScoredEntity>,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        let before = results.len();
+        let txn = self.vault.store.env.read_txn()?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        let mut value = Vec::with_capacity(before);
+        let mut suppressed = 0;
+        for result in results {
+            if self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &result.id)? {
+                value.push(result);
+            } else if self.entity_record_in(&txn, &result.id)?.is_some() {
+                suppressed += 1;
+            }
+        }
+        let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
+        Ok(ScopedReadResult { value, receipt })
+    }
+
+    pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<ScopedReadReceipt> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let policy = self.policy_manifest_in(&rtxn)?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(&rtxn, None)?;
+        let had_l2_base = pack.l2_base.is_some();
+        let mut auxiliary_suppressed = 0;
         if let Some(summary) = pack.l2_base.as_ref() {
             let visibility = self.retrieval_visibility_in(&rtxn, None)?;
             let mut admitted = true;
             for id in summary.evidence_ids() {
                 if !crate::ppr::PprNodeVisibility::ppr_node_visible(&visibility, &rtxn, id)? {
                     admitted = false;
+                    auxiliary_suppressed +=
+                        usize::from(self.entity_record_in(&rtxn, id)?.is_some());
                     break;
                 }
             }
@@ -491,30 +397,49 @@ impl<'a> ScopedRead<'a> {
         let had_capabilities = !pack.capabilities.is_empty();
         let mut capabilities = Vec::new();
         for hit in std::mem::take(&mut pack.capabilities) {
-            if self.is_entity_readable_with_policy_in(&rtxn, &policy, &hit.id)?
+            if self.is_entity_retrievable_with_policy_in(&rtxn, &policy, &filter, &hit.id)?
                 && let Some(current) =
                     crate::pipeline::capability_hit(&self.vault.store, &rtxn, hit.id)?
             {
                 capabilities.push(current);
+            } else if self.entity_record_in(&rtxn, &hit.id)?.is_some() {
+                auxiliary_suppressed += 1;
             }
         }
         pack.capabilities = capabilities;
-        let previous_count = pack.results.len() + pack.neighbors.len();
-        let (results, result_suppressed) =
-            self.filter_context_entities(&rtxn, &policy, std::mem::take(&mut pack.results))?;
-        let (mut neighbors, neighbor_suppressed) =
-            self.filter_context_entities(&rtxn, &policy, std::mem::take(&mut pack.neighbors))?;
-        let reachability_suppressed = if result_suppressed > 0 {
+        let previously_suppressed = pack.stats.claims_suppressed;
+        let previous_results = pack.results.len();
+        let previous_count = previous_results + pack.neighbors.len();
+        let (results, result_suppressed, result_rows_suppressed) = self.filter_context_entities(
+            &rtxn,
+            &policy,
+            &filter,
+            std::mem::take(&mut pack.results),
+        )?;
+        let (mut neighbors, neighbor_suppressed, neighbor_rows_suppressed) = self
+            .filter_context_entities(
+                &rtxn,
+                &policy,
+                &filter,
+                std::mem::take(&mut pack.neighbors),
+            )?;
+        let readable_neighbors = neighbors.len();
+        let reachability_suppressed = if results.len() < previous_results {
             self.retain_neighbors_reachable_from_results(&rtxn, &mut neighbors, &results)?
         } else {
             0
         };
+        let suppressed = previously_suppressed
+            .saturating_add(auxiliary_suppressed)
+            .saturating_add(result_rows_suppressed)
+            .saturating_add(neighbor_rows_suppressed)
+            .saturating_add(readable_neighbors.saturating_sub(neighbors.len()));
         pack.results = results;
         pack.neighbors = neighbors;
         pack.stats.claims_suppressed +=
             result_suppressed + neighbor_suppressed + reachability_suppressed;
 
-        if (previous_count > 0 || had_capabilities)
+        if (previous_count > 0 || had_capabilities || had_l2_base)
             && pack.capabilities.is_empty()
             && pack.results.is_empty()
             && pack.neighbors.is_empty()
@@ -527,7 +452,7 @@ impl<'a> ScopedRead<'a> {
                 hint: "scoped_read returned no actor-readable entities".to_owned(),
             });
         }
-        Ok(())
+        Ok(self.receipt_for(None, &policy, &filter, suppressed))
     }
 
     pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {
@@ -546,12 +471,72 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
     ) -> Result<bool> {
+        let filter = crate::gate::narrow_retrieval_filter(
+            &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
+            None,
+        )?;
+        self.is_entity_retrievable_with_policy_in(rtxn, policy, &filter, id)
+    }
+
+    fn is_entity_readable_with_filter_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        filter: &ResolvedRetrievalFilter,
+    ) -> Result<bool> {
         let Some(raw) = self.entity_record_in(rtxn, id)?.map(|row| row.encode()) else {
             return Ok(false);
         };
+        self.is_entity_raw_readable_with_filter_in(rtxn, policy, id, &raw, filter)
+    }
+
+    fn is_entity_raw_readable_with_filter_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        raw: &[u8],
+        filter: &ResolvedRetrievalFilter,
+    ) -> Result<bool> {
         let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some() {
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if filter.deny_all
+            || self
+                .vault
+                .store
+                .validate_entity_type(header.entity_type)
+                .is_err()
+            || filter
+                .entity_types
+                .as_ref()
+                .is_some_and(|types| !types.contains(&header.entity_type))
+        {
+            return Ok(false);
+        }
+        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte());
+        }
+        let deletion = match self.session_view {
+            Some(view) => crate::ports::TombstoneStoreRead::port_deletion_state(view, rtxn, id)?,
+            None => crate::ports::TombstoneStoreRead::port_deletion_state(self.vault, rtxn, id)?,
+        };
+        if deletion.deleted
+            || deletion.stale
+            || self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some()
+            || (raw.len() == ENTITY_METADATA_HEADER_LEN
+                && self
+                    .vault
+                    .store
+                    .entity_deletion_present_in_txn(rtxn, id, header.learned_at)?)
+        {
+            return Ok(false);
+        }
+        if !self.relationship_raw_allowed_in(
+            rtxn,
+            header.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )? {
             return Ok(false);
         }
         if !self.audience_readable_in(rtxn, id)? {
@@ -561,7 +546,7 @@ impl<'a> ScopedRead<'a> {
             return self.note_readable_in(rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..]);
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
-            self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw)
+            self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw, filter)
         } else {
             Ok(true)
         }
@@ -573,8 +558,8 @@ impl<'a> ScopedRead<'a> {
         id: &EntityId,
         raw: &[u8],
     ) -> Result<bool> {
-        let policy = self.policy_manifest_in(rtxn)?;
-        self.is_claim_raw_readable_with_policy_in(rtxn, &policy, id, raw)
+        let (filter, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
+        self.is_entity_raw_readable_with_filter_in(rtxn, &policy, id, raw, &filter)
     }
 
     fn is_claim_raw_readable_with_policy_in(
@@ -583,27 +568,21 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         raw: &[u8],
+        filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
-        if raw.len() == ENTITY_METADATA_HEADER_LEN && self.vault.is_deleted_shell(id)? {
+        if raw.len() == ENTITY_METADATA_HEADER_LEN
+            && self.vault.store.entity_deletion_present_in_txn(
+                rtxn,
+                id,
+                EntityMetadataHeader::parse(raw)
+                    .ok_or(Error::CorruptedIndex("entity header"))?
+                    .learned_at,
+            )?
+        {
             return Ok(false);
         }
         let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, &body)
-    }
-
-    fn is_claim_readable_with_body(&self, id: &EntityId, body: &ClaimBody) -> Result<bool> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        self.is_claim_readable_with_body_in(&rtxn, id, body)
-    }
-
-    fn is_claim_readable_with_body_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        id: &EntityId,
-        body: &ClaimBody,
-    ) -> Result<bool> {
-        let policy = self.policy_manifest_in(rtxn)?;
-        self.is_claim_readable_with_body_and_policy_in(rtxn, &policy, id, body)
+        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, &body, filter)
     }
 
     fn is_claim_readable_with_body_and_policy_in(
@@ -612,8 +591,13 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         body: &ClaimBody,
+        filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
-        if !claim_surfaceable(body) || !self.audience_readable_in(rtxn, id)? {
+        let admitted = crate::pipeline::retrieval_claim_allowed(filter, body);
+        if !admitted
+            || !self.audience_readable_in(rtxn, id)?
+            || !self.relationship_claim_allowed_in(rtxn, body)?
+        {
             return Ok(false);
         }
         let claim_facets = self.claim_facet_refs_in(rtxn, id)?;
@@ -629,21 +613,26 @@ impl<'a> ScopedRead<'a> {
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
         entities: Vec<ContextEntity>,
-    ) -> Result<(Vec<ContextEntity>, usize)> {
+    ) -> Result<(Vec<ContextEntity>, usize, usize)> {
         let mut kept = Vec::with_capacity(entities.len());
         let mut claims_suppressed = 0;
+        let mut suppressed = 0;
         for mut entity in entities {
-            if self.is_entity_readable_with_policy_in(rtxn, policy, &entity.id)?
-                && self.context_entity_revision_is_readable_in(rtxn, policy, &entity)?
+            if self.is_entity_retrievable_with_policy_in(rtxn, policy, filter, &entity.id)?
+                && self.context_entity_revision_is_readable_in(rtxn, policy, filter, &entity)?
             {
-                self.filter_context_entity_edges(rtxn, policy, &mut entity)?;
+                self.filter_context_entity_edges(rtxn, policy, filter, &mut entity)?;
                 kept.push(entity);
-            } else {
-                claims_suppressed += 1;
+            } else if self.entity_record_in(rtxn, &entity.id)?.is_some() {
+                suppressed += 1;
+                if entity.entity_type == ENTITY_TYPE_CLAIM {
+                    claims_suppressed += 1;
+                }
             }
         }
-        Ok((kept, claims_suppressed))
+        Ok((kept, claims_suppressed, suppressed))
     }
 
     fn retain_neighbors_reachable_from_results(
@@ -721,6 +710,7 @@ impl<'a> ScopedRead<'a> {
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
         entity: &mut ContextEntity,
     ) -> Result<()> {
         let Some(edges) = entity.edges.as_mut() else {
@@ -728,7 +718,7 @@ impl<'a> ScopedRead<'a> {
         };
         let mut kept = Vec::with_capacity(edges.len());
         for edge in edges.drain(..) {
-            if self.is_entity_readable_with_policy_in(rtxn, policy, &edge.target)? {
+            if self.is_entity_retrievable_with_policy_in(rtxn, policy, filter, &edge.target)? {
                 kept.push(edge);
             }
         }
@@ -736,52 +726,11 @@ impl<'a> ScopedRead<'a> {
         Ok(())
     }
 
-    fn filter_memory_timeline_records(
-        &self,
-        records: Vec<MemoryTimelineRecord>,
-    ) -> Result<Vec<MemoryTimelineRecord>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        let policy = self.policy_manifest_in(&rtxn)?;
-        let mut kept = Vec::with_capacity(records.len());
-        for record in records {
-            let readable = match (record.state, record.entity_type) {
-                (MemoryTimelineRecordState::Missing, _) => false,
-                (_, Some(ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE)) => {
-                    self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
-                }
-                (_, Some(_)) => self.audience_readable_in(&rtxn, &record.id)?,
-                (_, None) => false,
-            };
-            if readable {
-                kept.push(record);
-            }
-        }
-        let kept_ids: HashSet<EntityId> = kept.iter().map(|record| record.id).collect();
-        for record in &mut kept {
-            record.supersedes.retain(|id| kept_ids.contains(id));
-            record.superseded_by.retain(|id| kept_ids.contains(id));
-        }
-        Ok(kept)
-    }
-
     pub(crate) fn policy_manifest_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
     ) -> Result<PolicyManifestResolution> {
-        let cached_policy = self
-            .policy
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        if let Some(policy) = cached_policy {
-            return Ok(policy);
-        }
-        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, rtxn)?;
-        *self
-            .policy
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(policy.clone());
-        Ok(policy)
+        crate::gate::resolve_policy_manifest(&self.vault.store, rtxn)
     }
 }
 
@@ -793,11 +742,11 @@ impl<'a> ScopedRead<'a> {
 /// can neither widen nor narrow what this lane already admits: a CLAIM is
 /// traversable exactly when this actor could read it, and an entity kind that
 /// carries no CLAIM clamp stays visible exactly as everywhere else. The
-/// manifest resolution is memoized on `self`, so one walk resolves it once.
+/// authority is resolved in the caller's snapshot, never cached across reads.
 ///
 /// IN THE CALLER'S TRANSACTION, deliberately: the walk hands over the `RoTxn`
 /// it is already reading from, matching
-/// [`ScopedRead::filter_scored_entities_to_limit`] and
+/// [`ScopedRead::filter_scored_entities`] and
 /// [`ScopedRead::filter_context_pack`]. That is why this is not
 /// `get_entity_parts`, which opens a transaction of its own.
 impl crate::ppr::PprNodeVisibility for ScopedRead<'_> {

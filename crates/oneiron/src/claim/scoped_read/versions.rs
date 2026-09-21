@@ -3,9 +3,9 @@
 use super::*;
 use crate::vault::ReadMode;
 
-#[derive(Default)]
 pub(crate) struct RevisionedHits {
     pub(crate) hits: Vec<ScoredEntity>,
+    pub(crate) receipt: ScopedReadReceipt,
     pub(crate) revisions: std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
 }
 
@@ -18,7 +18,11 @@ impl ScopedRead<'_> {
     ) -> Result<RevisionedHits> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
-            return Ok(RevisionedHits::default());
+            return Ok(RevisionedHits {
+                hits: Vec::new(),
+                revisions: Default::default(),
+                receipt: self.receipt_for(requested, &policy, &filter, 0),
+            });
         }
         let fetch_limit = self
             .vault
@@ -30,9 +34,22 @@ impl ScopedRead<'_> {
             .search_vector(query, fetch_limit)
             .limit(fetch_limit)
             .run_for_pack()?;
+        let filtered = self.filter_search_results(
+            results.scores,
+            limit,
+            requested,
+            &filter,
+            &policy,
+            results.read_suppressed,
+            &results.revisions,
+        )?;
+        let mut revisions = results.revisions;
+        let ids: HashSet<_> = filtered.value.iter().map(|hit| hit.id).collect();
+        revisions.retain(|id, _| ids.contains(id));
         Ok(RevisionedHits {
-            hits: self.filter_search_results(results.scores, limit, &filter, &policy)?,
-            revisions: results.revisions,
+            hits: filtered.value,
+            receipt: filtered.receipt,
+            revisions,
         })
     }
 
@@ -44,7 +61,11 @@ impl ScopedRead<'_> {
     ) -> Result<RevisionedHits> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
-            return Ok(RevisionedHits::default());
+            return Ok(RevisionedHits {
+                hits: Vec::new(),
+                revisions: Default::default(),
+                receipt: self.receipt_for(requested, &policy, &filter, 0),
+            });
         }
         let fetch_limit = self
             .vault
@@ -56,139 +77,121 @@ impl ScopedRead<'_> {
             .search_text(query, fetch_limit)
             .limit(fetch_limit)
             .run_for_pack()?;
+        let filtered = self.filter_search_results(
+            results.scores,
+            limit,
+            requested,
+            &filter,
+            &policy,
+            results.read_suppressed,
+            &results.revisions,
+        )?;
+        let mut revisions = results.revisions;
+        let ids: HashSet<_> = filtered.value.iter().map(|hit| hit.id).collect();
+        revisions.retain(|id, _| ids.contains(id));
         Ok(RevisionedHits {
-            hits: self.filter_search_results(results.scores, limit, &filter, &policy)?,
-            revisions: results.revisions,
+            hits: filtered.value,
+            receipt: filtered.receipt,
+            revisions,
         })
     }
 
-    /// Exact historical reads retain both current and historical claim gates.
+    /// Exact historical reads retain both current and historical authority.
+    /// Consumer projections use the receipted variant of this door.
     pub fn get_with_mode(&self, id: &EntityId, mode: ReadMode) -> Result<Option<Vec<u8>>> {
         Ok(self
             .get_entity_parts_with_mode(id, mode)?
             .map(|(_, _, body)| body))
     }
 
-    /// Reads metadata and body from one frontier in one read transaction.
     pub fn get_entity_parts_with_mode(
         &self,
         id: &EntityId,
         mode: ReadMode,
     ) -> Result<Option<(u8, u64, Vec<u8>)>> {
-        let txn = self.vault.store.env.read_txn()?;
-        let Some(live) = self.entity_record_in(&txn, id)?.map(|row| row.encode()) else {
+        Ok(self
+            .get_entity_parts_with_mode_with_receipt(id, mode, None)?
+            .value)
+    }
+
+    /// Historical bytes never inherit a later live body's authority, or vice versa.
+    pub(super) fn entity_raw_with_mode_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+        mode: ReadMode,
+    ) -> Result<Option<Vec<u8>>> {
+        if !self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)? {
             return Ok(None);
-        };
-        let header =
-            EntityMetadataHeader::parse(&live).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
-        }
-        if self.vault.archive_tombstone_in_txn(&txn, id)?.is_some() {
-            return Ok(None);
-        }
-        if (header.entity_type == ENTITY_TYPE_CLAIM
-            && !self.is_claim_raw_readable_in(&txn, id, &live)?)
-            || (header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-                && !self.note_readable_in(&txn, id, &live[ENTITY_METADATA_HEADER_LEN..])?)
-        {
-            return Ok(None);
-        }
-        if mode == ReadMode::Live {
-            return Ok(Some((
-                header.entity_type,
-                header.learned_at,
-                live[ENTITY_METADATA_HEADER_LEN..].to_vec(),
-            )));
         }
         let raw = match self.session_view {
             Some(view) => crate::vault::entity_revision::read_entity_revision_from_store_in_txn(
-                self.vault, view, &txn, id, mode,
+                self.vault, view, txn, id, mode,
             )?,
             None => crate::vault::entity_revision::read_entity_revision_in_txn(
-                self.vault, &txn, id, mode,
+                self.vault, txn, id, mode,
             )?,
         };
-        let Some(raw) = raw else {
-            return Ok(None);
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if (header.entity_type == ENTITY_TYPE_CLAIM
-            && !self.is_claim_raw_readable_in(&txn, id, &raw)?)
-            || (header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-                && !self.note_readable_in(&txn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?)
-        {
+        let Some(mut raw) = raw else { return Ok(None) };
+        if !self.is_entity_raw_readable_with_filter_in(txn, policy, id, &raw, filter)? {
             return Ok(None);
         }
-        Ok(Some((
-            header.entity_type,
-            header.learned_at,
-            raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
-        )))
+        if mode == ReadMode::Live {
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            #[cfg(feature = "sync")]
+            let resolved = crate::entity_doc::resolve_record_body(
+                &self.vault.store,
+                txn,
+                id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            #[cfg(feature = "sync")]
+            let body = resolved.as_slice();
+            #[cfg(not(feature = "sync"))]
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            let body = crate::note::live_body_in_txn(
+                &self.vault.store,
+                txn,
+                id,
+                header.entity_type,
+                body,
+            )?
+            .into_owned();
+            raw.truncate(ENTITY_METADATA_HEADER_LEN);
+            raw.extend_from_slice(&body);
+        }
+        Ok(Some(raw))
     }
 
-    /// Short-ref resolution at a pin, followed by the same scoped admission.
     pub fn hydrate_short_id_with_mode(
         &self,
         short_id: &str,
         content_hash: u8,
         mode: ReadMode,
     ) -> Result<Option<crate::HydratedShortId>> {
-        let id = if let ReadMode::Pinned(revision) = mode {
-            let Some(id) = self.vault.resolve_pinned_entity_reference(
-                &format!("{short_id}:{content_hash:02x}"),
-                revision,
-            )?
-            else {
-                return Ok(None);
-            };
-            id
-        } else {
-            let Some(value) = self.hydrate_short_id(short_id, content_hash)? else {
-                return Ok(None);
-            };
-            value.id
-        };
-        let Some((entity_type, learned_at, body)) = self.get_entity_parts_with_mode(&id, mode)?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(crate::HydratedShortId {
-            id,
-            entity_type,
-            learned_at,
-            deletion: None,
-            body: Some(body),
-        }))
+        Ok(self
+            .hydrate_short_id_with_mode_with_receipt(short_id, content_hash, mode)?
+            .value)
     }
+
     pub(super) fn context_entity_revision_is_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
         entity: &ContextEntity,
     ) -> Result<bool> {
-        let Some(revision) = entity.source_revision_ref else {
-            return Ok(true);
-        };
-        let mode = ReadMode::Pinned(crate::vault::RevisionRef(revision));
-        let raw = match self.session_view {
-            Some(view) => crate::vault::entity_revision::read_entity_revision_from_store_in_txn(
-                self.vault, view, txn, &entity.id, mode,
-            )?,
-            None => crate::vault::entity_revision::read_entity_revision_in_txn(
-                self.vault, txn, &entity.id, mode,
-            )?,
-        };
-        let Some(raw) = raw else {
+        let mode = entity
+            .source_revision_ref
+            .map_or(ReadMode::Live, |revision| {
+                ReadMode::Pinned(crate::vault::RevisionRef(revision))
+            });
+        let Some(raw) = self.entity_raw_with_mode_in(txn, policy, filter, &entity.id, mode)? else {
             return Ok(false);
         };
-        if raw[0] == crate::registry::ENTITY_TYPE_NOTE {
-            return self.note_readable_in(txn, &entity.id, &raw[ENTITY_METADATA_HEADER_LEN..]);
-        }
-        if raw[0] != ENTITY_TYPE_CLAIM {
-            return Ok(true);
-        }
-        self.is_claim_raw_readable_with_policy_in(txn, policy, &entity.id, &raw)
+        crate::context_pack::context_entity_matches_read_snapshot(self.vault, txn, entity, &raw)
     }
 }

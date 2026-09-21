@@ -155,6 +155,9 @@ pub struct DepthSearchRequest<'a> {
 /// The result of one effort-dialed read, plus what it cost to produce.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DepthSearchResult {
+    /// In-memory receipts for executed channels and the final restrictive read.
+    /// Counts are per evaluation; the same row can be excluded by two channels.
+    pub narrowing: Vec<crate::claim::ScopedReadReceipt>,
     /// Admitted hits, best first, at most `limit` of them.
     pub hits: Vec<ScoredEntity>,
     /// Exact indexed frontier captured in each hit's ranking transaction.
@@ -343,7 +346,7 @@ pub(crate) fn execute(
         run_direct_channel(scoped, request, &mut acc)?;
     }
     if request.effort == Effort::Light || acc.partial {
-        return Ok(acc.finish(request.limit));
+        return acc.finish_scoped(scoped, request.limit).map_err(Into::into);
     }
     run_subquery_channels(scoped, request, &mut acc)?;
     if !request.deadline_reached(&mut acc) {
@@ -351,7 +354,7 @@ pub(crate) fn execute(
     }
     acc.fuse();
     if request.effort == Effort::Medium || acc.partial {
-        return Ok(acc.finish(request.limit));
+        return acc.finish_scoped(scoped, request.limit).map_err(Into::into);
     }
     let backend = request.backend.expect("validated backend");
     let query = deep_query(request)?.to_owned();
@@ -368,7 +371,7 @@ pub(crate) fn execute(
             failure.tokens_used = failure.tokens_used.saturating_add(acc.tokens_used);
             failure
         })?;
-    Ok(acc.finish(request.limit))
+    acc.finish_scoped(scoped, request.limit).map_err(Into::into)
 }
 
 impl DepthSearchRequest<'_> {
@@ -426,6 +429,7 @@ fn run_direct_channel(
             acc.attempt(RetrievalSignal::Text);
             let hits =
                 scoped.search_text_revisioned(query, request.channel_limit(scoped, true)?, None)?;
+            acc.narrowing.push(hits.receipt);
             acc.merge_revisioned(
                 request.narrow_hits(scoped, hits.hits, &hits.revisions)?,
                 hits.revisions,
@@ -441,6 +445,7 @@ fn run_direct_channel(
                 request.channel_limit(scoped, false)?,
                 None,
             )?;
+            acc.narrowing.push(hits.receipt);
             acc.merge_revisioned(
                 request.narrow_hits(scoped, hits.hits, &hits.revisions)?,
                 hits.revisions,
@@ -479,6 +484,7 @@ fn run_subquery_channels(
         acc.attempt(RetrievalSignal::Text);
         let hits =
             scoped.search_text_revisioned(&subquery, request.channel_limit(scoped, true)?, None)?;
+        acc.narrowing.push(hits.receipt);
         acc.merge_revisioned(
             request.narrow_hits(scoped, hits.hits, &hits.revisions)?,
             hits.revisions,
@@ -583,6 +589,7 @@ fn run_deep_rounds(
                 request.channel_limit(scoped, true)?,
                 None,
             )?;
+            acc.narrowing.push(hits.receipt);
             acc.merge_revisioned(
                 request.narrow_hits(scoped, hits.hits, &hits.revisions)?,
                 hits.revisions,

@@ -330,11 +330,10 @@ fn retract_and_delete_enforce_actor_authority() {
     assert!(receipt.existed);
 }
 
-/// F3: the replacement write and the supersession are one transaction — a
-/// refused supersession (generated-origin claim over user-stated truth)
-/// rolls the replacement back instead of leaving an orphan revision.
+/// A contradiction proposal may persist, but a refused destructive closure
+/// never changes the user-stated head.
 #[test]
-fn refused_supersession_rolls_back_the_replacement() {
+fn generated_supersession_is_proposed_and_cannot_close_user_truth() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x4B);
     let subject = put_person(&vault, 0x4C);
@@ -362,17 +361,20 @@ fn refused_supersession_rolls_back_the_replacement() {
     generated.id = Some(replacement_id.to_hex());
     generated.occurred_at = Some(200);
     generated.learned_at = Some(200);
-    let err = facade
+    let receipt = facade
         .claim_upsert(&generated)
-        .expect_err("generated must not supersede user-stated");
-    assert!(!err.suggestions.is_empty());
-
-    assert!(
-        vault
-            .get_claim(&replacement_id)
-            .expect("read back")
-            .is_none(),
-        "refused supersession must not leave the replacement persisted"
+        .expect("proposed contradiction");
+    assert_eq!(receipt.approval, "proposed");
+    assert!(receipt.superseded_short_id.is_none());
+    let prior = facade.resolve_ref(&first.claim_short_id).expect("prior");
+    assert!(vault.supersede_claim(&replacement_id, &prior, 201).is_err());
+    assert_eq!(
+        vault.get_claim(&prior).unwrap().unwrap().lifecycle,
+        crate::ClaimLifecycleStatus::Active
+    );
+    assert_eq!(
+        vault.get_claim(&replacement_id).unwrap().unwrap().approval,
+        crate::claim::ClaimApprovalStatus::Proposed
     );
     let survivors = facade
         .claim_list(&ClaimListFilter {
@@ -384,13 +386,8 @@ fn refused_supersession_rolls_back_the_replacement() {
         .expect("list");
     assert_eq!(
         survivors.len(),
-        1,
-        "the prior truth stays the only active claim"
-    );
-    assert_eq!(
-        short_id_part(&survivors[0].short_ref.clone().unwrap_or_default()),
-        short_id_part(&first.claim_short_id),
-        "prior claim untouched"
+        2,
+        "the candidate is stored but cannot displace truth"
     );
 }
 

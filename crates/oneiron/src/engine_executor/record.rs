@@ -245,6 +245,7 @@ fn executor_config_hash(storage: &ExecutorStorage<'_>, config: &EngineExecutorCo
             match target {
                 RouteTarget::Overlay => CONFIG_ROUTE_OVERLAY_TAG,
                 RouteTarget::Base => CONFIG_ROUTE_BASE_TAG,
+                RouteTarget::Discard => b"discard",
             },
         );
     }

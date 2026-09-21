@@ -163,12 +163,13 @@ pub(crate) fn execute_mcp_nav(
             let results = scoped_read
                 .search_text(query, limit, None)
                 .map_err(|error| mcp_engine_error("mcp nav search failed", error))?;
-            let items = project_nav_results(&scoped_read, results)?;
+            let (items, narrowing) = project_nav_results(&scoped_read, results)?;
             Ok(json!({
                 "content": [mcp_text_content(format!("{} result(s)", items.len()))],
                 "structuredContent": {
                     "tool": McpToolName::Nav.as_str(),
                     "mode": "search",
+                    "narrowing": narrowing,
                     "items": items,
                 },
                 "isError": false,
@@ -194,17 +195,18 @@ pub(crate) fn execute_mcp_read(
     let scoped_read = mcp_scoped_read(&server.vault, actor)?;
     if let Some(entity_ref) = args.target.entity_ref.as_deref() {
         let id = parse_entity_id_param(entity_ref, "target.entity_ref").map_err(mcp_api_error)?;
-        let item = scoped_read
-            .get_entity_parts(&id)
-            .map_err(|error| mcp_engine_error("mcp read failed", error))?
-            .map(|(entity_type, learned_at, body)| {
-                projection::project_entity_parts(&id, entity_type, learned_at, &body, View::Full)
-            });
+        let read = scoped_read
+            .get_entity_parts_with_receipt(&id, None)
+            .map_err(|error| mcp_engine_error("mcp read failed", error))?;
+        let item = read.value.map(|(entity_type, learned_at, body)| {
+            projection::project_entity_parts(&id, entity_type, learned_at, &body, View::Full)
+        });
         return Ok(json!({
             "content": [mcp_text_content(if item.is_some() { "entity found" } else { "entity not found" })],
             "structuredContent": {
                 "tool": McpToolName::Read.as_str(),
                 "target": { "entity_ref": entity_ref },
+                "narrowing": read.receipt,
                 "found": item.is_some(),
                 "item": item,
             },
@@ -214,7 +216,7 @@ pub(crate) fn execute_mcp_read(
     if let Some(short_ref) = args.target.short_ref.as_deref() {
         let (short_id, content_hash, mode) =
             parse_revision_short_ref(short_ref).map_err(mcp_api_error)?;
-        let item = hydrate_short_id_response_with_mode(
+        let read = hydrate_short_id_response_with_mode(
             &scoped_read,
             short_id,
             content_hash,
@@ -223,11 +225,13 @@ pub(crate) fn execute_mcp_read(
             None,
         )
         .map_err(mcp_api_error)?;
+        let item = read.value;
         return Ok(json!({
             "content": [mcp_text_content(if item.is_some() { "short ref found" } else { "short ref not found" })],
             "structuredContent": {
                 "tool": McpToolName::Read.as_str(),
                 "target": { "short_ref": short_ref },
+                "narrowing": read.receipt,
                 "found": item.is_some(),
                 "item": item,
             },
@@ -705,23 +709,37 @@ pub(crate) fn mcp_routed_ask_result(args: McpRoutedAskToolArgs, actor: &McpResol
 }
 
 fn project_nav_results(
-    scoped: &oneiron::claim::ScopedRead<'_>,
-    results: Vec<oneiron::ScoredEntity>,
-) -> Result<Vec<Value>, McpGatewayError> {
-    results
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    results: oneiron::claim::ScopedReadResult<Vec<oneiron::ScoredEntity>>,
+) -> Result<(Vec<Value>, oneiron::claim::ScopedReadReceipt), McpGatewayError> {
+    let mut narrowing = results.receipt;
+    let projected = scoped_read
+        .get_entities_parts_with_modes_with_receipt(
+            &results
+                .value
+                .iter()
+                .map(|row| (row.id, oneiron::memory::ReadMode::Indexed))
+                .collect::<Vec<_>>(),
+            Some(&narrowing.applied.as_filter()),
+        )
+        .map_err(|error| mcp_engine_error("mcp nav projection failed", error))?;
+    narrowing.restrict_with(&projected.receipt);
+    let items = results
+        .value
         .into_iter()
-        .map(|result| {
-            crate::api::search::project_scoped_search_result(
-                scoped,
-                result,
+        .zip(projected.value)
+        .filter_map(|(row, parts)| {
+            let (kind, learned_at, body) = parts?;
+            Some(projection::project_entity_parts(
+                &row.id,
+                kind,
+                learned_at,
+                &body,
                 View::Summary,
-                oneiron::memory::ReadMode::Indexed,
-                None,
-            )
-            .map_err(|error| mcp_engine_error("mcp nav projection failed", error))
+            ))
         })
-        .collect::<Result<Vec<_>, _>>()
-        .map(|items| items.into_iter().flatten().collect())
+        .collect::<Vec<_>>();
+    Ok((items, narrowing))
 }
 
 #[cfg(test)]
@@ -744,11 +762,12 @@ mod tests {
         let id = oneiron::EntityId::from_hex(&receipt.id_hex).unwrap();
         let reader =
             vault.scoped_read(oneiron::claim::ScopedReadActorKey::new(owner.to_hex()).unwrap());
-        assert!(
-            project_nav_results(&reader, vec![oneiron::ScoredEntity { id, score: 1.0 }])
-                .unwrap()
-                .is_empty()
-        );
+        let mut results = reader.search_text("private diary", 10, None).unwrap();
+        // Even a stale or overbroad nomination cannot bypass final projection.
+        results.value = vec![oneiron::ScoredEntity { id, score: 1.0 }];
+        let (items, receipt) = project_nav_results(&reader, results).unwrap();
+        assert!(items.is_empty());
+        assert!(receipt.suppressed_count > 0);
     }
 
     #[test]
@@ -776,10 +795,10 @@ mod tests {
         let hits = reader.search_text("navanchor", 10, None).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, id);
-        let items = project_nav_results(&reader, hits).unwrap();
+        let (items, _receipt) = project_nav_results(&reader, hits).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["label"], "navanchor original");
-        let live = reader.get(&id).unwrap().unwrap();
+        let live = reader.get(&id).unwrap().value.unwrap();
         let live: Value = rmp_serde::from_slice(&live).unwrap();
         assert_eq!(live["name"], "unmatched replacement");
     }

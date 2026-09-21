@@ -103,7 +103,7 @@ pub struct CodeMemoryPullResult {
 ///
 /// [`ScopedRead::ppr_node_visible`] is the canonical readability predicate —
 /// literally `ScopedRead::is_entity_readable_with_policy_in`, the same
-/// admission [`ScopedRead::get_entity_parts`] applies — and it answers in the
+/// admission `ScopedRead::get_entity_parts` applies — and it answers in the
 /// transaction it is handed. That is what lets this module decide a candidate
 /// and MATERIALIZE it against one coherent view.
 ///
@@ -258,7 +258,7 @@ fn collect_pull_candidates(
 /// 6. label everything `Data`.
 ///
 /// ONE SNAPSHOT DECIDES ADMISSION AND THE RESULT. There is deliberately no
-/// second, later clamp: re-asking [`ScopedRead::get_entity_parts`] after this
+/// second, later clamp: re-asking `ScopedRead::get_entity_parts` after this
 /// transaction closed would ask a NEWER snapshot, and a candidate that had
 /// already consumed one of the caller's `limit` places could then be dropped
 /// by that newer answer — a concurrent delete or policy change would make the

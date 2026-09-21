@@ -84,6 +84,9 @@ pub(crate) struct ContextBoardResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<ContextBoardMemories>)]
     memories: Option<oneiron::MemoriesSection>,
+    /// One-way renderer: foreign worlds are guest-attributed evidence, never first-party memory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rendered_memories: Option<String>,
     /// The context pack retrieval produced; absent when retrieval was skipped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pack: Option<CoreContextPackResponse>,
@@ -265,6 +268,28 @@ pub(crate) async fn context_board_hydrate(
         None => current_memories_cursor(&server, caller).await,
     };
 
+    let rendered_memories = memories
+        .as_ref()
+        .map(|memories| {
+            memories.render_board(
+                &oneiron::context_board::BoardBlockHeader {
+                    epoch: cursor.revision,
+                    scope: caller.to_owned(),
+                },
+                oneiron::context_board::BoardBudgetRequest {
+                    harness_default_tok: usize::try_from(budget.tokens_remaining)
+                        .unwrap_or(usize::MAX),
+                    caller_limit_tok: None,
+                    explicit_override_tok: None,
+                },
+            )
+        })
+        .transpose()
+        .map_err(|_| {
+            crate::error::ApiError::bad_request("memory board render failed", Some("memories"))
+        })?
+        .map(|render| render.text);
+
     let response = ContextBoardResponse {
         standing,
         session,
@@ -273,6 +298,7 @@ pub(crate) async fn context_board_hydrate(
         budget,
         cursor,
         memories,
+        rendered_memories,
         pack,
         changed,
         skills,

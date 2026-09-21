@@ -1113,3 +1113,321 @@ fn flip_back_to_off_record_makes_new_emits_deletable_again() {
     assert_eq!(outcome.emit_receipts_deleted, 1);
     assert_eq!(outcome.emit_receipts_retained, vec![r1]);
 }
+
+// Inspect stored rows, not internal counters: even an in-place overwrite or a
+// row written under an unknown generated id must fail the no-retention law.
+type AnonymousRows = Vec<(Vec<u8>, Vec<u8>)>;
+
+fn anonymous_base_rows(vault: &Vault) -> Result<Vec<AnonymousRows>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut tables = Vec::new();
+    for db in [
+        &vault.store.entities,
+        &vault.store.edges_out,
+        &vault.store.edges_in,
+        &vault.store.vectors,
+        &vault.store.hnsw_neighbors,
+        &vault.store.hnsw_meta,
+        &vault.store.text_postings,
+        &vault.store.text_meta,
+        &vault.store.text_forward,
+        &vault.store.text_bm25_field_stats,
+        &vault.store.text_doc_field_lengths,
+        &vault.store.vault_meta,
+        &vault.store.ppr_cache,
+        &vault.store.ppr_cache_deps,
+        &vault.store.type_index,
+        &vault.store.temporal_occurred_start,
+        &vault.store.temporal_occurred_end,
+        &vault.store.temporal_learned,
+        &vault.store.temporal_long_intervals,
+        &vault.store.phonetic_index,
+        &vault.store.phonetic_forward,
+        &vault.store.short_ids,
+        &vault.store.short_ids_reverse,
+        &vault.store.sync_queue,
+        &vault.store.attempt_records,
+        &vault.store.attempt_ready,
+        &vault.store.attempt_dedupe,
+    ] {
+        let mut rows = Vec::new();
+        for row in db.iter(&txn)? {
+            let (key, value) = row?;
+            rows.push((key.to_vec(), value.to_vec()));
+        }
+        tables.push(rows);
+    }
+    let mut sync_rows = Vec::new();
+    for row in vault.store.sync_state.iter(&txn)? {
+        let (key, value) = row?;
+        sync_rows.push((key.as_bytes().to_vec(), value.to_vec()));
+    }
+    tables.push(sync_rows);
+    Ok(tables)
+}
+
+#[test]
+fn anonymous_witness_read_and_close_retain_no_rows_or_receipts() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = seed_recallable_base_turn(&vault, "anonymousbaseneedle");
+    let before = anonymous_base_rows(&vault)?;
+    let session = vault
+        .off_record_session_vault()
+        .enter_anonymous("sess-anonymous", OffRecordBackendClass::Local)?;
+    assert_eq!(session.mode()?, OffRecordMode::Anonymous);
+    let facade = vault.memory(actor, EdgeActorClass::Human);
+    let message = EntityId::now();
+    let turn = EntityId::now();
+    let error = facade
+        .witness_into_session(
+            &session,
+            &crate::memory::WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: Some(turn.to_hex()),
+                messages: vec![crate::memory::WitnessMessage {
+                    id: Some(message.to_hex()),
+                    author: crate::memory::WitnessAuthor::User,
+                    message_type: "dialogue".to_owned(),
+                    content: "anonymousprivateneedle".to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: 1600,
+            },
+            Some("anonymous private summary"),
+        )
+        .expect_err("anonymous cannot promise a materialized witness");
+    assert_eq!(error.code, crate::memory::MEMORY_CODE_FORBIDDEN);
+    assert!(session.get_raw(&message)?.is_none());
+    assert!(session.get_raw(&turn)?.is_none());
+    assert!(
+        session
+            .search_text("anonymousprivateneedle", 10)?
+            .is_empty()
+    );
+    assert!(!session.search_text("anonymousbaseneedle", 10)?.is_empty());
+
+    let route = session.write_route()?;
+    let telemetry = session.retrieval_telemetry(&route)?;
+    // Exercise the durable-cache and embed-enqueue paths as well as telemetry.
+    let retrieved = vault
+        .query()
+        .search_ppr(&[actor], 2)
+        .in_session(&telemetry)
+        .run_with_pending_vectors()?;
+    assert!(!retrieved.value.is_empty());
+    assert!(retrieved.run_id.is_none());
+    let pack = facade
+        .recall_in_session(
+            &session,
+            "anonymousbaseneedle",
+            crate::memory::Effort::Standard,
+            &crate::memory::RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("anonymous read can return base context without retaining it");
+    assert!(!pack.items.is_empty());
+    assert_eq!(anonymous_base_rows(&vault)?, before);
+
+    // The mode is immutable in both directions, not merely unpromotable.
+    for mode in [OffRecordMode::OnRecord, OffRecordMode::OffRecord] {
+        assert_eq!(
+            vault
+                .set_off_record_session_mode(session.session_ref(), mode)
+                .expect_err("anonymous cannot switch to retention")
+                .kind(),
+            ErrorKind::OffRecordTalkOnly
+        );
+    }
+    assert_eq!(
+        session
+            .promote_turn(&turn)
+            .expect_err("cannot promote")
+            .kind(),
+        ErrorKind::OffRecordTalkOnly
+    );
+    assert!(vault.off_record_promote_receipt(&turn)?.is_none());
+    assert_eq!(
+        vault
+            .off_record_receipt_log(session.session_ref())
+            .expect_err("anonymous has no receipt log")
+            .kind(),
+        ErrorKind::OffRecordTalkOnly
+    );
+    let receipt = crate::receipt::outbound_intent_receipt(
+        "anonymous-emit",
+        "anonymous-intent",
+        &talk_only_request(session.session_ref()).intent,
+        1600,
+        "delivered_to_channel",
+    );
+    assert_eq!(
+        session
+            .record_emit_receipt(receipt)
+            .expect_err("anonymous cannot retain an emit receipt")
+            .kind(),
+        ErrorKind::OffRecordTalkOnly
+    );
+    assert_eq!(
+        session
+            .vault_meta_put_routed(&route, b"anon:raw", b"private")
+            .expect_err("no raw output")
+            .kind(),
+        ErrorKind::OffRecordTalkOnly
+    );
+    assert_eq!(
+        session
+            .vault_meta_compare_and_put_routed(&route, b"anon:replay", b"private", |_| Ok(()),)
+            .expect_err("no replay")
+            .kind(),
+        ErrorKind::OffRecordTalkOnly
+    );
+    assert_eq!(
+        session
+            .vault_meta_compare_and_put_with_counter_routed(
+                &route,
+                b"anon:replay",
+                b"private",
+                |_| Ok(()),
+                b"anon:heal",
+                |_, _, _| Ok((1_u64.to_be_bytes().to_vec(), 1)),
+            )
+            .expect_err("no heal count")
+            .kind(),
+        ErrorKind::OffRecordTalkOnly
+    );
+    let outcome = session.close()?;
+    assert_eq!(outcome.turns_deleted, 0);
+    assert_eq!(outcome.context_receipts_deleted, 0);
+    assert_eq!(outcome.emit_receipts_deleted, 0);
+    assert_eq!(outcome.promoted_turns_kept, 0);
+    assert!(outcome.emit_receipts_retained.is_empty());
+    assert!(vault.off_record_session("sess-anonymous")?.is_none());
+    assert_eq!(anonymous_base_rows(&vault)?, before);
+    Ok(())
+}
+
+#[test]
+fn anonymous_telemetry_never_falls_back_to_base_even_for_existing_run_ids() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    seed_recallable_base_turn(&vault, "anonymousledgerneedle");
+    let existing = vault
+        .query()
+        .search_text("anonymousledgerneedle", 10)
+        .run_with_telemetry()?
+        .run_id
+        .expect("canonical run persists");
+    let before = vault.retrieval_run(existing)?.expect("base run");
+    let session = vault
+        .off_record_session_vault()
+        .enter_anonymous("sess-anonymous-ledger", OffRecordBackendClass::Local)?;
+    let route = session.write_route()?;
+    let telemetry = session.retrieval_telemetry(&route)?;
+    let mut candidate = before.clone();
+    candidate.elapsed_us += 1;
+    telemetry.register_run(&candidate, true)?;
+    telemetry.finalize_run(crate::store::RetrievalRunFinalize {
+        run_id: existing,
+        elapsed_us: 999,
+        total_in_scope: 0,
+        claims_suppressed: 0,
+        surfaced_result_ids: &[],
+        empty_reason: None,
+    })?;
+    telemetry.discard_run(existing)?;
+    assert_eq!(vault.retrieval_run(existing)?, Some(before));
+    candidate.run_id = crate::store::RetrievalRunId::now();
+    telemetry.register_run(&candidate, false)?;
+    telemetry.register_run(&candidate, true)?;
+    assert!(vault.retrieval_run(candidate.run_id)?.is_none());
+    {
+        let view = session.read_view()?;
+        let txn = vault.store.env.read_txn()?;
+        assert!(
+            view.retrieval_runs_in_txn(&txn, 64)?
+                .iter()
+                .all(|run| run.run_id != candidate.run_id)
+        );
+    }
+    let outcome = session.close()?;
+    assert_eq!(outcome.context_receipts_deleted, 0);
+    Ok(())
+}
+
+#[test]
+fn anonymous_audited_effects_refuse_before_creating_floor_receipts() -> Result<()> {
+    use crate::code_run::{
+        HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDispatcher, SelfFixtureEffectCall,
+        SelfSpeechCall,
+    };
+    let (_tmp, vault) = temp_vault();
+    let actor = seed_recallable_base_turn(&vault, "anonymousauditneedle");
+    let before = anonymous_base_rows(&vault)?;
+    let gates_before = vault.gate_decisions(64)?;
+    let audits_before = vault.entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)?;
+    let session = vault.off_record_session_vault().enter_anonymous(
+        "sess-anonymous-audit",
+        OffRecordBackendClass::RemoteProvider,
+    )?;
+    let dispatcher = HostSelfDispatcher::for_off_record_session(
+        &session,
+        crate::WriteActor::new(actor, EdgeActorClass::Human),
+        "anonymous-run",
+    )?;
+    for call in [
+        SelfCall::AskHuman(SelfAskHumanCall::new("private prompt")),
+        SelfCall::DestructiveFixture(SelfFixtureEffectCall {
+            label: "private deletion".to_owned(),
+        }),
+        SelfCall::OutboundFixture(SelfFixtureEffectCall {
+            label: "private outbound".to_owned(),
+        }),
+        SelfCall::Speak(SelfSpeechCall::new("private speech")),
+    ] {
+        assert_eq!(
+            dispatcher
+                .dispatch(call)
+                .expect_err("mandatory retention refuses")
+                .kind(),
+            ErrorKind::OffRecordTalkOnly
+        );
+    }
+    let error = OutboundDispatchPipeline
+        .dispatch(
+            &vault,
+            talk_only_request(session.session_ref()),
+            &mut PanicSink,
+        )
+        .expect_err("no audited egress in anonymous mode");
+    assert!(matches!(
+        error,
+        OutboundDispatchError::Engine(Error::OffRecord(OffRecordError::OffRecordTalkOnly { .. }))
+    ));
+    assert_eq!(vault.gate_decisions(64)?, gates_before);
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)?,
+        audits_before
+    );
+    assert_eq!(anonymous_base_rows(&vault)?, before);
+    drop(dispatcher);
+    session.close()?;
+    assert_eq!(anonymous_base_rows(&vault)?, before);
+
+    let ordinary = vault.off_record_session_vault().enter(
+        "sess-ordinary-cannot-be-anonymous",
+        OffRecordBackendClass::Local,
+    )?;
+    assert_eq!(
+        vault
+            .set_off_record_session_mode(ordinary.session_ref(), OffRecordMode::Anonymous)
+            .expect_err("cannot relabel an existing session anonymous")
+            .kind(),
+        ErrorKind::OffRecordTalkOnly
+    );
+    assert_eq!(ordinary.mode()?, OffRecordMode::OffRecord);
+    ordinary.close()?;
+    Ok(())
+}

@@ -11,6 +11,7 @@ mod conn_state;
 mod connection;
 mod documents;
 mod ephemeral;
+mod federation;
 mod hello;
 mod lfs_chunks;
 #[cfg(test)]
@@ -49,7 +50,7 @@ use futures_util::StreamExt;
 #[cfg(test)]
 use loro::VersionVector;
 #[cfg(test)]
-use oneiron::sync::{AllowBlock, FederationQuotaConfig, WindowKey};
+use oneiron::sync::WindowKey;
 #[cfg(test)]
 use std::sync::Arc;
 #[cfg(test)]

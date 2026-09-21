@@ -190,6 +190,8 @@ pub(super) struct PipelineFilterConfig<'a> {
 #[derive(Default)]
 pub(super) struct EntityMetadataCache {
     entries: HashMap<EntityId, Option<EntityMetadata>>,
+    /// Unique evaluated candidates rejected by read authority or D19. Not telemetry.
+    pub(super) read_suppressed: std::collections::HashSet<EntityId>,
     // Counts D19 body lookups across all gates sharing this run cache, including
     // probes whose decoded bodies are discarded rather than imported.
     #[cfg(test)]
@@ -221,6 +223,7 @@ pub(crate) struct PipelineOutput {
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
     pub(crate) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(crate) claims_suppressed: usize,
+    pub(crate) read_suppressed: usize,
     pub(crate) cosine_ghosts_dampened: usize,
     pub(crate) total_in_scope: usize,
     pub(crate) empty_reason: Option<EmptyReason>,

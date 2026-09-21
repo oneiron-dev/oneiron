@@ -161,8 +161,13 @@ impl Vault {
             ENTITY_TYPE_BLOB_ARTIFACT,
             "append target must be a BLOB_ARTIFACT entity",
         )?;
+        let fingerprint =
+            crate::ingest::prepare_blob_artifact_birth(&self.store, wtxn, artifact_id, bytes)?;
         let next_version = match read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)? {
-            Some(head) if head.content_hash == content_hash => return Ok(head),
+            Some(head) if head.content_hash == content_hash => {
+                fingerprint.persist(&self.store, wtxn, artifact_id)?;
+                return Ok(head);
+            }
             Some(head) => head
                 .version
                 .checked_add(1)
@@ -229,6 +234,7 @@ impl Vault {
         self.store
             .vault_meta
             .put(wtxn, &blob_artifact_head_key(artifact_id), &encoded)?;
+        fingerprint.persist(&self.store, wtxn, artifact_id)?;
         Ok(record)
     }
 

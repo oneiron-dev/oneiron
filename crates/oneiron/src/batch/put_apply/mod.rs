@@ -1,6 +1,7 @@
 //! Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers.
 
 mod apply;
+mod claim_admission;
 mod owned_body;
 mod put_entity_update;
 mod put_staging;
@@ -16,11 +17,10 @@ use super::agent_definition_create::validate_local_agent_definition_create;
 use super::{
     AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
-    StagedClaimGateOutcome, apply_short_id_plan, authority_observation_secs_for_write,
-    check_authority_log_store_key, delete_short_id_rows_for_id,
-    evict_authority_log_store_key_squatter, index_thread_claim_subject,
-    lexical_query_hint_claim_id, parse_entity_metadata, plan_short_id_update,
-    reject_overlay_member_base_write, validate_companion_register_put,
+    apply_short_id_plan, authority_observation_secs_for_write, check_authority_log_store_key,
+    delete_short_id_rows_for_id, evict_authority_log_store_key_squatter,
+    index_thread_claim_subject, lexical_query_hint_claim_id, parse_entity_metadata,
+    plan_short_id_update, reject_overlay_member_base_write, validate_companion_register_put,
     validate_replicated_authority_log_for_local_vault, validate_task_checkin_immutable,
 };
 

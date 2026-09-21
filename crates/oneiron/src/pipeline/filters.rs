@@ -61,6 +61,7 @@ pub(super) fn claim_status_gate_allows(
     gate: &mut ClaimStatusGateCache,
 ) -> Result<bool> {
     if crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)? {
+        metadata_cache.read_suppressed.insert(*id);
         return Ok(false);
     }
     // Entities without a parseable envelope are not a claim-status
@@ -107,6 +108,9 @@ pub(super) fn claim_status_gate_allows(
                     && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
         });
     let allowed = decision.is_some();
+    if !allowed {
+        metadata_cache.read_suppressed.insert(*id);
+    }
     gate.decisions.insert(*id, decision);
     Ok(allowed)
 }
@@ -492,6 +496,7 @@ pub(super) fn apply_filters(
         };
 
         if !super::authority::type_allowed(filters.authority_filter, store, meta.entity_type) {
+            metadata_cache.read_suppressed.insert(scored.id);
             continue;
         }
         if let Some(types) = filters.type_filter
@@ -573,6 +578,7 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     };
 
     if !super::authority::type_allowed(filters.authority_filter, store, meta.entity_type) {
+        metadata_cache.read_suppressed.insert(*id);
         return Ok(false);
     }
     if let Some(types) = filters.type_filter
@@ -622,6 +628,7 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     if let Some(Some(body)) = claim_gate.decisions.get(id)
         && !super::authority::claim_allowed(filters.authority_filter, body)
     {
+        metadata_cache.read_suppressed.insert(*id);
         return Ok(false);
     }
 

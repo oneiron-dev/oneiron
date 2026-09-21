@@ -1,6 +1,6 @@
 //! ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1).
 //! This module deliberately does not redesign the OAuth surface or add authority types.
-use crate::auth::CoreAuth;
+use crate::auth::{CoreAuth, CoreScope};
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
@@ -246,12 +246,19 @@ pub(crate) fn verify_oauth_relay_token(
     validation.set_audience(&[resource]);
     let data = decode::<OAuthRelayClaims>(token, &key, &validation)
         .map_err(|_| ApiError::unauthorized())?;
-    if !data
+    // Only these host-trusted capabilities cross the relay leg. Write/auth
+    // claims never become authority, even when a host token names them.
+    let scopes = data
         .claims
         .scope
         .split_whitespace()
-        .any(|v| v == "read" || v == "core:read")
-    {
+        .filter_map(|scope| match scope {
+            "read" | "core:read" => Some(CoreScope::Read),
+            "propose" | "core:propose" => Some(CoreScope::Propose),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    if scopes.is_empty() {
         return unauthorized();
     }
     let subject = match data.claims.act {
@@ -265,7 +272,7 @@ pub(crate) fn verify_oauth_relay_token(
         }
         None => data.claims.sub,
     };
-    Ok(CoreAuth::from_oauth_relay(subject))
+    Ok(CoreAuth::from_oauth_relay(subject, scopes))
 }
 
 #[cfg(test)]
@@ -339,6 +346,103 @@ mod tests {
         assert!(auth.require(CoreScope::Write).is_err());
         assert!(!auth.is_owner_grade());
     }
+    #[test]
+    fn relay_propose_is_explicit_non_owner_and_never_widens() {
+        let config = config();
+        cache_jwks(&config);
+        for scopes in ["propose", "read core:propose write core:auth"] {
+            let auth = verify_oauth_relay_token(
+                &token("https://issuer.example", "https://api.example", scopes),
+                &config,
+            )
+            .unwrap();
+            assert!(auth.require(CoreScope::Propose).is_ok());
+            assert!(auth.require(CoreScope::Write).is_err());
+            assert!(auth.require(CoreScope::Auth).is_err());
+            assert!(!auth.is_owner_grade());
+        }
+        let auth = verify_oauth_relay_token(
+            &token("https://issuer.example", "https://api.example", "read"),
+            &config,
+        )
+        .unwrap();
+        assert!(auth.require(CoreScope::Propose).is_err());
+    }
+
+    #[tokio::test]
+    async fn signed_relay_can_only_create_proposed_claims_through_the_http_door() {
+        use axum::{
+            body::{Body, to_bytes},
+            http::{Request, StatusCode},
+        };
+        use tower::ServiceExt;
+        let cfg = config();
+        cache_jwks(&cfg);
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let subject = oneiron::EntityId::now();
+        vault
+            .put_entity(
+                &subject,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"proposal target",
+            )
+            .unwrap();
+        let server = Arc::new(crate::server::SyncServer::new(vault.clone(), cfg).unwrap());
+        for (scope, path, payload, expected) in [
+            (
+                "read",
+                "/v1/core/propose",
+                serde_json::json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"A"}),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "propose",
+                "/v1/core/propose",
+                serde_json::json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"A"}),
+                StatusCode::OK,
+            ),
+            (
+                "propose",
+                "/v1/core/batch",
+                serde_json::json!({"entities":[]}),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "propose",
+                "/v1/core/propose",
+                serde_json::json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"A","approval":"auto"}),
+                StatusCode::BAD_REQUEST,
+            ),
+        ] {
+            let jwt = token("https://issuer.example", "https://api.example", scope);
+            let response = crate::api::api_routes(server.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header(AUTHORIZATION, format!("Bearer {jwt}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(payload.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            if expected == StatusCode::OK {
+                let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+                let wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                let id = oneiron::EntityId::from_hex(wire["id"].as_str().unwrap()).unwrap();
+                let claim = vault.get_claim(&id).unwrap().unwrap();
+                assert_eq!(claim.approval, oneiron::ClaimApprovalStatus::Proposed);
+                assert_eq!(claim.source, Some(oneiron::ClaimSource::ToolOutput));
+            }
+        }
+    }
+
     #[test]
     fn config_absent_inert() {
         let headers = {

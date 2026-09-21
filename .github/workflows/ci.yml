@@ -159,6 +159,8 @@ jobs:
           cargo --version
           cargo fmt --version
           cargo clippy --version
+      - name: Secret blocklist is a policy superset
+        run: python3 scripts/check-secret-blocklist.py
       - name: Code map is current
         if: ${{ !cancelled() }}
         run: scripts/codemap/check.sh
@@ -226,6 +228,7 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_microvm_artifacts.py' -v
           python3 -m unittest discover -s scripts/audit -p 'test_*.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_quickjs_build.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_federation_burst_audit.py' -v
 
       # Keep dependency artifacts when workspace cleanup is enough to meet
       # the unchanged cap. Runs after a failure too; never changes the verdict.

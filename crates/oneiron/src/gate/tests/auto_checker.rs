@@ -439,7 +439,7 @@ fn either_manifest_key_rejects_malformed_values_and_duplicates() -> Result<()> {
 
 // Independent preimage for the small frontier fixture below: landed main
 // a56c0398edbecd8126ffebac525871444b629fd8's hash_policy_frontier_v0,
-// plus ONE-1453's intentional breaker-presence byte. Posture still follows
+// with the single-valued predicate domain and no retired breaker byte. Posture follows
 // budget exhaustion even WITHOUT a checker; an absent checker adds no bytes.
 fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     use sha2::{Digest, Sha256};
@@ -467,6 +467,8 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
         text(&mut bytes, source);
         bytes.push(0); // no source-trust row
     }
+    text(&mut bytes, "single_valued_predicates");
+    len(&mut bytes, 0);
     text(&mut bytes, "suspend");
     text(&mut bytes, posture);
     len(&mut bytes, 0); // budget-policy rows
@@ -1094,6 +1096,7 @@ fn source_aware_checker_holds_tool_output_history_with_observed_declaration() ->
         lineage: Some(&observed_lineage),
         actor_class: "agent",
         sensitivity_band: Some(0),
+        burst: None,
     };
     assert_eq!(checker.check(&observed), AutoCheckOutcome::Allow);
     Ok(())
@@ -1357,6 +1360,43 @@ fn checker_reasons(reasons: &[String]) -> Vec<String> {
         .filter(|reason| !reason.starts_with("tripwire_normal_"))
         .cloned()
         .collect()
+}
+
+
+#[test]
+fn native_checker_observes_structural_streak_outage_neutrality_and_success_reset() -> Result<()> {
+    let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+    let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+    let mut invalid = body.clone();
+    invalid.evidence = None;
+    let checker = Arc::new(RecordingAutoChecker::allow());
+    let bounded_checker = BoundedAutoChecker::new(checker.clone());
+    let error =
+        attempt_checked_candidate_write(&vault, &test_id(0x60), &invalid, Some(&bounded_checker))
+            .expect_err("structural refusal");
+    assert_gate_rejected(error, "deny", &["gate.deny.dreamer_precommit.no_evidence"]);
+    // A checker outage is not structural evidence against the writer.
+    let unavailable = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Unavailable));
+    let error = attempt_checked_candidate_write(&vault, &test_id(0x61), &body, Some(&unavailable))
+        .expect_err("unavailable checker parks auto");
+    assert_gate_rejected(error, "pending", &["gate.pending.checker.unavailable"]);
+    attempt_checked_candidate_write(&vault, &test_id(0x62), &body, Some(&bounded_checker))?;
+    attempt_checked_candidate_write(&vault, &test_id(0x63), &body, Some(&bounded_checker))?;
+    let seen = checker.seen();
+    assert_eq!(seen.len(), 2);
+    let first = seen[0].burst.expect("native burst observations");
+    assert!(first.rate_ratio.is_finite() && first.rate_ratio > 0.0);
+    assert_eq!(first.streak, 1);
+    assert_eq!(seen[1].burst.expect("native burst observations").streak, 0);
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x62))?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x63))?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
 }
 
 struct RateAndStreakChecker {

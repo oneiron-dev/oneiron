@@ -23,6 +23,7 @@ pub(crate) fn resolve_policy_manifest(
     txn: &heed::RoTxn<'_>,
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
+    let mut untrusted_source_rows = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
@@ -48,9 +49,27 @@ pub(crate) fn resolve_policy_manifest(
             continue;
         }
 
-        match decode_policy_manifest(&raw.body) {
+        let body = &raw.body;
+        if crate::gate::manifest_authenticity::manifest_is_quarantined(store, txn, &id, body)? {
+            continue;
+        }
+        let trusted =
+            crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)?;
+        match decode_policy_manifest(body) {
             Some(decoded) => {
                 resolution.diagnostics.manifest_count += 1;
+                if !trusted {
+                    untrusted_source_rows.push(decoded.source_trust);
+                    continue;
+                }
+                // Only trusted packs can authorize the no-LLM lane. Each must agree.
+                if resolution.packs.is_empty() {
+                    resolution.single_valued_predicates = decoded.single_valued_predicates;
+                } else {
+                    resolution
+                        .single_valued_predicates
+                        .retain(|p| decoded.single_valued_predicates.contains(p));
+                }
                 resolution.diagnostics.malformed_manifest_seen |=
                     decoded.source_trust.malformed_manifest_seen;
                 resolution.diagnostics.unsupported_schema_seen |= decoded.unsupported_schema;
@@ -133,6 +152,10 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.malformed_manifest_seen = true;
             }
         }
+    }
+
+    for contribution in untrusted_source_rows {
+        resolution.source_trust.restrict_only(contribution);
     }
 
     // Duplicate owner rows are refused per manifest by

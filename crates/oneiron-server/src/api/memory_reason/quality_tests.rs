@@ -122,7 +122,7 @@ fn evidence_keeps_the_ranked_revision_when_idle_publication_wins_the_race() {
     let before = vault.indexed_revision(&id).unwrap().unwrap();
     let actor = oneiron::claim::ScopedReadActorKey::new("revision-race-reader").unwrap();
     let scoped = vault.scoped_read(actor);
-    let retrieved = scoped
+    let mut retrieved = scoped
         .search_with_effort(&DepthSearchRequest {
             probe: SearchProbe::Text {
                 query: "zebra".into(),
@@ -149,7 +149,7 @@ fn evidence_keeps_the_ranked_revision_when_idle_publication_wins_the_race() {
         1
     );
     assert_ne!(vault.indexed_revision(&id).unwrap(), Some(before));
-    let evidence = collect_evidence(&vault, &scoped, &retrieved).unwrap();
+    let evidence = collect_evidence(&vault, &scoped, &mut retrieved).unwrap();
     assert_eq!(evidence.len(), 1);
     assert_eq!(evidence[0].text, "ranked zebra");
     assert_eq!(

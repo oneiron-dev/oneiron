@@ -80,6 +80,19 @@ impl Vault {
     ) -> Result<String> {
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
+        let mut reason_codes = reason_codes;
+        if verdict.decision == super::PolicyClassifyDecision::Hold {
+            let queue_ref = self.queue_policy_hold_in_txn(
+                wtxn,
+                request,
+                verdict,
+                format!("gate:{}", decision_id.to_hex()),
+            )?;
+            reason_codes.push(format!(
+                "gate.policy_model.hold_queued.{}",
+                queue_ref.rsplit(':').next().expect("queue token")
+            ));
+        }
         self.store.append_gate_decision_in_txn(
             wtxn,
             &GateDecisionRecord {

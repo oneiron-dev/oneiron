@@ -19,9 +19,7 @@ use crate::companion::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
-use crate::registry::{
-    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SECRET_CUSTODY,
-};
+use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::sync::local_claims::{claim_sync_allowed, local_claim_sync_allowed};
 use loro::{CommitOptions, LoroDoc, LoroMap};
 
@@ -71,9 +69,6 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let Some(raw) = vault.get_raw_unsealed(&id)? else {
             continue;
         };
-        if reverse_remat_skip_policy_manifest_mirror(&raw) {
-            continue;
-        }
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
@@ -131,14 +126,13 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         };
 
-        if reverse_remat_skip_policy_manifest_mirror(&raw) {
-            continue;
-        }
-
-        // Excluded credentials have no live carrier or incident edge. If a
-        // local dial narrowed an existing portable row, ordinary history must
-        // not carry its old value after the live-map scrub.
-        if !claim_sync_allowed(&raw) || is_unsyncable_secret_custody(&raw) {
+        // Excluded credentials and the local default manifest have no live
+        // carrier or incident edge. Scrub history as well as the live map when
+        // a local dial narrows an existing portable credential.
+        if !claim_sync_allowed(&raw)
+            || is_unsyncable_secret_custody(&raw)
+            || *id == crate::gate::default_policy_manifest_id()?
+        {
             let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if removed {
                 super::egress::require_history_free_window(vault, window_key)?;
@@ -389,11 +383,6 @@ pub(super) fn delete_edges_touching_entities(
         map_delete(edges_map, key)?;
     }
     Ok(!edge_keys.is_empty())
-}
-
-fn reverse_remat_skip_policy_manifest_mirror(raw: &[u8]) -> bool {
-    EntityMetadataHeader::parse(raw)
-        .is_some_and(|header| header.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
 }
 
 /// ONE-1604-D1 dominance on the outbound door: `true` when the LOCAL row is a

@@ -9,7 +9,11 @@ use super::*;
 use serde::{Deserialize, Serialize};
 
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
-use crate::companion::companion_value_to_json;
+fn companion_value_to_json(value: &rmpv::Value) -> serde_json::Value {
+    let mut value = crate::companion::companion_value_to_json(value);
+    crate::batch::export::redact_credentials(&mut value);
+    value
+}
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;

@@ -63,6 +63,9 @@ pub(crate) enum CoreHydrateStatus {
 /// Short-id hydrate response.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreHydrateResponse {
+    /// Mandatory narrowing receipt.
+    #[schema(value_type = super::read_receipt::ReadReceiptSchema)]
+    narrowing: oneiron::claim::ScopedReadReceipt,
     /// Hydrate state for the resolved short ref.
     status: CoreHydrateStatus,
     /// Requested short id without content hash.
@@ -163,6 +166,9 @@ pub(crate) struct CoreBatchShortIdHydrateRequest {
 /// Batch short-id hydrate response.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreBatchShortIdHydrateResponse {
+    /// Mandatory narrowing receipt.
+    #[schema(value_type = super::read_receipt::ReadReceiptSchema)]
+    narrowing: oneiron::claim::ScopedReadReceipt,
     /// Per-input hydrate result or typed error.
     results: Vec<CoreBatchShortIdHydrateItem>,
 }
@@ -242,20 +248,20 @@ pub(crate) async fn core_hydrate(
     let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
     let mut observations =
         super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
-    let Some(response) = hydrate_short_id_response_with_mode(
+    let read = hydrate_short_id_response_with_mode(
         &scoped_read,
         short_id.clone(),
         content_hash,
         view,
         mode,
         observations.as_deref_mut(),
-    )?
-    else {
-        return Err(ApiError::not_found(
+    )?;
+    let Some(response) = read.value else {
+        return Err(EnvelopedApiError::from(ApiError::not_found(
             "short_id",
             Some(&format!("{short_id}:{content_hash_hex}")),
-        )
-        .into());
+        ))
+        .with_read_receipt(read.receipt));
     };
 
     Ok(Json(response))
@@ -298,16 +304,32 @@ pub(crate) async fn core_batch_short_id_hydrate(
     let mut observations =
         super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
     let mut staged_observations = observations.as_deref().cloned();
+    let parsed: Vec<_> = req
+        .refs
+        .iter()
+        .map(|reference| parse_revision_short_ref(reference))
+        .collect();
+    let valid_refs: Vec<_> = parsed
+        .iter()
+        .filter_map(|item| item.as_ref().ok())
+        .map(|(id, hash, mode)| (id.as_str(), *hash, *mode))
+        .collect();
+    let hydrated = scoped_read
+        .hydrate_short_ids_with_modes(&valid_refs)
+        .map_err(|error| core_engine_error("batch hydrate failed", error))?;
+    let narrowing = hydrated.receipt;
+    let mut values = hydrated.value.into_iter();
     let mut results = Vec::with_capacity(req.refs.len());
-    for reference in req.refs {
-        let item = match parse_revision_short_ref(&reference) {
-            Ok((short_id, content_hash, mode)) => {
-                match hydrate_short_id_response_with_mode(
+    for (reference, parsed) in req.refs.into_iter().zip(parsed) {
+        let item = match parsed {
+            Ok((short_id, content_hash, _)) => {
+                match project_hydrated_short_id(
                     &scoped_read,
                     short_id,
                     content_hash,
                     view,
-                    mode,
+                    values.next().flatten(),
+                    narrowing.clone(),
                     staged_observations.as_mut(),
                 )? {
                     Some(result) => CoreBatchShortIdHydrateItem {
@@ -351,7 +373,7 @@ pub(crate) async fn core_batch_short_id_hydrate(
     if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged_observations) {
         *target = staged;
     }
-    Ok(Json(CoreBatchShortIdHydrateResponse { results }))
+    Ok(Json(CoreBatchShortIdHydrateResponse { narrowing, results }))
 }
 
 pub(crate) fn hydrate_short_id_response_with_mode(
@@ -361,33 +383,49 @@ pub(crate) fn hydrate_short_id_response_with_mode(
     view: View,
     mode: oneiron::memory::ReadMode,
     observations: Option<&mut oneiron::context_board::SessionReadSet>,
+) -> Result<oneiron::claim::ScopedReadResult<Option<CoreHydrateResponse>>, ApiError> {
+    // The live door keeps deletion metadata. The mode-aware door preserves pins.
+    let read = scoped_read
+        .hydrate_short_id_with_mode_with_receipt(&short_id, content_hash, mode)
+        .map_err(|error| core_engine_error("core short hydrate failed", error))?;
+    let value = project_hydrated_short_id(
+        scoped_read,
+        short_id,
+        content_hash,
+        view,
+        read.value,
+        read.receipt.clone(),
+        observations,
+    )?;
+    Ok(oneiron::claim::ScopedReadResult {
+        value,
+        receipt: read.receipt,
+    })
+}
+
+pub(crate) fn project_hydrated_short_id(
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    short_id: String,
+    content_hash: u8,
+    view: View,
+    hydrated: Option<oneiron::HydratedShortId>,
+    narrowing: oneiron::claim::ScopedReadReceipt,
+    observations: Option<&mut oneiron::context_board::SessionReadSet>,
 ) -> Result<Option<CoreHydrateResponse>, ApiError> {
     let content_hash_hex = format!("{content_hash:02x}");
-    // Keep legacy deletion metadata; historical reads use the revision-aware
-    // scoped door, which checks both current and pinned claim admission.
-    let result = if mode == oneiron::memory::ReadMode::Live {
-        scoped_read.hydrate_short_id(&short_id, content_hash)
-    } else {
-        scoped_read.hydrate_short_id_with_mode(&short_id, content_hash, mode)
-    }
-        .map_err(|error| {
-            tracing::error!(error = %error, short_id, content_hash = content_hash_hex, "core short hydrate failed");
-            core_engine_error("core short hydrate failed", error)
-        })?;
-
     let Some(oneiron::HydratedShortId {
         id,
         entity_type,
         learned_at,
         deletion,
         body,
-    }) = result
+    }) = hydrated
     else {
         return Ok(None);
     };
-
     let Some(body) = body else {
         return Ok(Some(CoreHydrateResponse {
+            narrowing,
             status: CoreHydrateStatus::Deleted,
             short_id,
             content_hash: content_hash_hex,
@@ -397,7 +435,6 @@ pub(crate) fn hydrate_short_id_response_with_mode(
             item: None,
         }));
     };
-
     if let Some(observations) = observations {
         observations
             .observe_snapshot(
@@ -411,6 +448,7 @@ pub(crate) fn hydrate_short_id_response_with_mode(
     }
     let item = projection::project_entity_parts(&id, entity_type, learned_at, &body, view);
     Ok(Some(CoreHydrateResponse {
+        narrowing,
         status: CoreHydrateStatus::Live,
         short_id,
         content_hash: content_hash_hex,

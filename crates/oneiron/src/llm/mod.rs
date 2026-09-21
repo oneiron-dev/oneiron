@@ -13,6 +13,7 @@ mod subscribers;
 pub use bus::{LlmEventBus, StreamSubscription, TerminalSink};
 pub use subscribers::{ProgressSnapshot, ProgressSubscriber, VoiceChunker};
 mod budget;
+mod burst_inputs;
 mod call;
 mod defaults;
 #[cfg(test)]
@@ -60,6 +61,8 @@ pub use budget::{
     BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS,
 };
 pub(crate) use budget::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
+
+pub use self::burst_inputs::{NormalizedBurstInputs, normalized_burst_inputs};
 
 pub(crate) use self::autocheck::truncate_on_char_boundary;
 pub use self::autocheck::{

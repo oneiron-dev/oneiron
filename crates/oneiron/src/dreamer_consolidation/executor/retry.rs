@@ -31,6 +31,7 @@ pub(super) fn refreshed_input(
     );
     let parent = read
         .get(&partition.conversation_ref)?
+        .value
         .ok_or(crate::Error::EntityNotFound)?;
     let parent = decode_turn_body(&parent);
     let original: BTreeSet<EntityId> = original.into_iter().collect();

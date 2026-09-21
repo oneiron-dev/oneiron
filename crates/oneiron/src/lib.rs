@@ -739,6 +739,9 @@ pub(crate) mod test_util {
             data,
         );
         vault.with_write_txn(|wtxn| {
+            // This fixture represents local authoring, not replay. Preserve that
+            // origin even though it bypasses batch to isolate the tested gate.
+            crate::gate::stamp_manifest_origin(&vault.store, wtxn, &id, data, false)?;
             vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
             let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
             vault.store.type_index.put(wtxn, &type_key, &[])?;

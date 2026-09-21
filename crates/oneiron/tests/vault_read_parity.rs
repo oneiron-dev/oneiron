@@ -485,7 +485,7 @@ fn structured_success_parity() {
 // ─── 2. Denial is absence ────────────────────────────────────────────────────
 
 #[test]
-fn scope_denial_is_indistinguishable_from_absence() {
+fn scope_denial_preserves_not_found_and_reports_withholding() {
     let fixture = Fixture::new();
     let in_process = fixture.in_process();
     let wire = fixture.wire();
@@ -509,8 +509,24 @@ fn scope_denial_is_indistinguishable_from_absence() {
             format!("engine:{:?}:NOT_FOUND", VaultReadMethod::Hydrate)
         );
     }
-    assert_eq!(denied_direct, missing_direct);
-    assert_eq!(denied_wire, missing_wire);
+    assert_eq!(denied_direct, denied_wire);
+    assert_eq!(missing_direct, missing_wire);
+    // Both adapters keep NOT_FOUND; mandatory receipts distinguish policy
+    // exclusions from refs which never resolved, without returning row data.
+    for (error, expected) in [(&denied_direct, 1), (&missing_direct, 0)] {
+        let VaultReadError::Engine {
+            narrowing: Some(receipt),
+            ..
+        } = error
+        else {
+            panic!("every resolved read needs a narrowing receipt")
+        };
+        assert_eq!(receipt.suppressed_count, expected);
+        assert_eq!(
+            receipt.replan_hint.contains(&"row_authority".to_owned()),
+            expected > 0
+        );
+    }
 
     let batch = |reference: &str| CoreBatchShortIdHydrateRequest {
         refs: vec![reference.to_owned()],
@@ -875,6 +891,7 @@ fn serialization_round_trip() {
     let envelope = VaultReadResponse::Query(query_response);
     assert_eq!(round_trip(&envelope), envelope);
     let error = VaultReadError::Engine {
+        narrowing: None,
         method: VaultReadMethod::Hydrate,
         engine_code: "NOT_FOUND".to_owned(),
         message: "short_id was not found".to_owned(),

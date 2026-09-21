@@ -100,6 +100,8 @@ pub use self::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 #[cfg(test)]
 mod advertise_tests;
 #[cfg(test)]
+mod checkout_tests;
+#[cfg(test)]
 mod door_serve_tests;
 #[cfg(test)]
 mod epoch_tests;

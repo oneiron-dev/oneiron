@@ -8,7 +8,14 @@ use tokio::sync::mpsc;
 fn test_server() -> (tempfile::TempDir, SyncServer) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
+    let server = SyncServer::new(
+        vault,
+        SyncServerConfig {
+            auth_secret: Some("federation-test-root".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     (dir, server)
 }
 
@@ -51,23 +58,12 @@ fn test_legacy_conn_state() -> ConnState {
     ConnState::new(
         config.max_messages_per_sec,
         protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
-        FederationQuotaConfig::new(
-            config.max_federation_windows_per_connection,
-            config.federation_flood_pause_secs,
-        ),
     )
 }
 
 fn test_selector_conn_state() -> ConnState {
     let config = SyncServerConfig::default();
-    ConnState::new(
-        config.max_messages_per_sec,
-        protocol::PROTOCOL_VERSION,
-        FederationQuotaConfig::new(
-            config.max_federation_windows_per_connection,
-            config.federation_flood_pause_secs,
-        ),
-    )
+    ConnState::new(config.max_messages_per_sec, protocol::PROTOCOL_VERSION)
 }
 
 #[test]
@@ -92,15 +88,18 @@ fn oversized_late_join_ephemeral_snapshot_is_skipped() {
     );
 }
 
-fn test_selector_conn_state_with_config(config: &SyncServerConfig) -> ConnState {
-    ConnState::new(
-        config.max_messages_per_sec,
-        protocol::PROTOCOL_VERSION,
-        FederationQuotaConfig::new(
-            config.max_federation_windows_per_connection,
-            config.federation_flood_pause_secs,
-        ),
-    )
+fn bind_selector_test_auth(server: &SyncServer, state: &mut ConnState, member: oneiron::EntityId) {
+    let token = crate::auth::mint_core_token_v2(
+        server.config.auth_secret.as_deref().unwrap(),
+        &format!("scope=core:read;principal_ref={}", member.to_hex()),
+    );
+    let payload = crate::livequery::test_wire::request(
+        protocol::TAG_RPC,
+        serde_json::json!({"requestId": 1, "method": "auth.bind", "params": {"token": token}}),
+    );
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    handle_app_message(server, state, protocol::TAG_RPC, &payload[1..], &tx).unwrap();
+    assert!(rx.try_recv().is_ok());
 }
 
 fn entity_id(byte: u8) -> oneiron::EntityId {
@@ -859,6 +858,7 @@ async fn selector_vv_request_sends_filtered_update_only() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut conn_state, member);
     handle_window_sync(
         &server,
         1,
@@ -886,80 +886,6 @@ async fn selector_vv_request_sends_filtered_update_only() {
     assert!(entities.get(person.to_hex().as_str()).is_some());
     assert!(entities.get(claim_denied.to_hex().as_str()).is_none());
     assert!(entities.get(facet_denied.to_hex().as_str()).is_none());
-}
-
-#[tokio::test]
-async fn federated_selector_window_quota_exceeded_pauses_connection() {
-    let config = SyncServerConfig {
-        max_federation_windows_per_connection: 1,
-        federation_flood_pause_secs: 30,
-        ..Default::default()
-    };
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let server = SyncServer::new(vault, config.clone()).unwrap();
-
-    let member = entity_id(0x45);
-    let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::federation::FederationGrant::new(
-        test_selector_scope(),
-        member,
-        oneiron::federation::FederationGrantRole::Viewer,
-        oneiron::federation::FederationGrantPreset::ReadOnly,
-    );
-    oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
-        .unwrap();
-    let selector = oneiron::sync::SyncSelector::new(
-        grant_id,
-        member,
-        oneiron::sync::SyncSelectorWorld::All,
-        vec![],
-        vec![],
-    );
-    let payload =
-        oneiron::sync::encode_selector_vv_request(&selector, &VersionVector::new().encode())
-            .unwrap();
-
-    let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-    let mut conn_state = test_selector_conn_state_with_config(&config);
-    handle_window_sync(
-        &server,
-        1,
-        "2026-03",
-        window_sub_tags::SELECTOR_VV_REQUEST,
-        &payload,
-        &direct_tx,
-        &mut conn_state,
-    )
-    .await
-    .unwrap();
-    let _ = direct_rx
-        .try_recv()
-        .expect("first selector request replies");
-
-    handle_window_sync(
-        &server,
-        1,
-        "2026-04",
-        window_sub_tags::SELECTOR_VV_REQUEST,
-        &payload,
-        &direct_tx,
-        &mut conn_state,
-    )
-    .await
-    .unwrap();
-
-    assert!(
-        direct_rx.try_recv().is_err(),
-        "paused selector connection must not load or reply for the churned window"
-    );
-    let snapshot = conn_state.federation_quota_snapshot();
-    assert_eq!(
-        snapshot.decision,
-        AllowBlock::Pause(oneiron::sync::FederationPauseReason::FloodPauseActive)
-    );
-    assert_eq!(snapshot.windows_touched, 1);
-    assert!(snapshot.pause_remaining.is_some());
 }
 
 #[tokio::test]
@@ -1090,6 +1016,7 @@ async fn selector_connection_rejects_full_window_bypass() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut conn_state, member);
     handle_window_sync(
         &server,
         1,
@@ -1239,6 +1166,7 @@ async fn selector_request_authorizes_before_window_creation() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut conn_state, member);
     let result = handle_window_sync(
         &server,
         1,
@@ -1323,6 +1251,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut conn_state, member);
     handle_window_sync(
         &server,
         1,
@@ -2456,6 +2385,7 @@ fn protocol_hello_validation_literals() {
         Ok(protocol::LEGACY_SELECTOR_PROTOCOL_VERSION)
     );
     assert_eq!(
+
         validate_protocol_hello(&[3, 9]),
         Ok(protocol::PROTOCOL_VERSION)
     );
@@ -2464,6 +2394,10 @@ fn protocol_hello_validation_literals() {
         Ok(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
     );
 
+    assert_eq!(
+        validate_protocol_hello(&[3, 7]),
+        Ok(protocol::LEGACY_SELECTOR_PROTOCOL_VERSION)
+    );
     let cases: &[(&str, &[u8])] = &[
         ("v1_peer", &[3, 1]),
         ("old_full_window_v2_peer", &[3, 2]),
@@ -3568,6 +3502,131 @@ async fn a_silent_peer_gets_re_consulted_on_the_tick_during_the_pre_handover_dra
 }
 
 #[tokio::test]
+async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause() {
+    let (_dir, server) = test_server();
+    let member = entity_id(0x45);
+    let grant_id = oneiron::EntityId::now();
+    let grant = oneiron::federation::FederationGrant::new(
+        test_selector_scope(),
+        member,
+        oneiron::federation::FederationGrantRole::Viewer,
+        oneiron::federation::FederationGrantPreset::ReadOnly,
+    );
+    oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
+        .unwrap();
+    let selector = oneiron::sync::SyncSelector::new(
+        grant_id,
+        member,
+        oneiron::sync::SyncSelectorWorld::All,
+        vec![],
+        vec![],
+    );
+    let payload =
+        oneiron::sync::encode_selector_vv_request(&selector, &VersionVector::new().encode())
+            .unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut state = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut state, member);
+    let mut saw_defer = false;
+    // More than the retired 64-window quota. Every valid request completes,
+    // either immediately or by redeeming its durable response identity.
+    for index in 0..70 {
+        let key = format!("{:04}-{:02}", 2020 + index / 12, 1 + index % 12);
+        handle_window_sync(
+            &server,
+            1,
+            &key,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &payload,
+            &tx,
+            &mut state,
+        )
+        .await
+        .unwrap();
+        let (response_key, tag, bytes) = expect_window_sync(&rx.try_recv().unwrap());
+        assert_eq!(response_key, key);
+        if tag == window_sub_tags::SELECTOR_DEFERRED {
+            saw_defer = true;
+            assert_eq!(&bytes[32..], payload.as_slice());
+            assert!(
+                server
+                    .vault
+                    .sync_state_get(&format!("d:w:{key}"))
+                    .unwrap()
+                    .is_none()
+            );
+            // Same credential can reconnect. A different principal cannot
+            // redeem this ticket even if it knows the request and its id.
+            let mut impostor = test_selector_conn_state();
+            bind_selector_test_auth(&server, &mut impostor, entity_id(0x46));
+            assert!(matches!(
+                handle_window_sync(
+                    &server,
+                    2,
+                    &key,
+                    window_sub_tags::SELECTOR_RETRY,
+                    &bytes,
+                    &tx,
+                    &mut impostor
+                )
+                .await,
+                Err(ProtocolError::InvalidPayload(_))
+            ));
+            assert!(rx.try_recv().is_err());
+            let mut reconnected = test_selector_conn_state();
+            bind_selector_test_auth(&server, &mut reconnected, member);
+            handle_window_sync(
+                &server,
+                3,
+                &key,
+                window_sub_tags::SELECTOR_RETRY,
+                &bytes,
+                &tx,
+                &mut reconnected,
+            )
+            .await
+            .unwrap();
+            let (replayed_key, replayed_tag, update) = expect_window_sync(&rx.try_recv().unwrap());
+            assert_eq!(replayed_key, key);
+            assert_eq!(replayed_tag, window_sub_tags::UPDATE);
+            client_window_doc().import(&update).unwrap();
+        } else {
+            assert_eq!(tag, window_sub_tags::UPDATE);
+            client_window_doc().import(&bytes).unwrap();
+        }
+    }
+    assert!(saw_defer);
+}
+
+#[tokio::test]
+async fn selector_shared_secret_without_bound_principal_never_creates_a_request() {
+    let (_dir, server) = test_server();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut state = test_selector_conn_state();
+    assert!(matches!(
+        handle_window_sync(
+            &server,
+            1,
+            "2026-01",
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            b"malformed",
+            &tx,
+            &mut state
+        )
+        .await,
+        Err(ProtocolError::RpcNoPrincipal)
+    ));
+    assert!(rx.try_recv().is_err());
+    assert!(
+        server
+            .vault
+            .sync_state_get("d:w:2026-01")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn document_batch_socket_admission_edit_ack_and_revocation() {
     document_batch_exchange(protocol::PROTOCOL_VERSION).await;
 }
@@ -3622,13 +3681,33 @@ async fn document_batch_exchange(version: u8) {
         vec![],
     );
     let source = server.reassert_manager.documents().open(id).unwrap();
-    source.edit_text(0, 0, "shared").unwrap();
+    let notice = source.edit_text(0, 0, "shared").unwrap();
+    for state in [test_legacy_conn_state(), test_selector_conn_state()] {
+        assert!(
+            super::documents::document_delivery(&server, &state, &notice)
+                .unwrap()
+                .is_empty()
+        );
+    }
     manager.documents().subscribe_entity(id, &selector).unwrap();
     let requests = manager.documents().request_frames().unwrap();
     let batch = encode_document_batch(&requests).into_result().unwrap();
     let (direct, mut replies) = mpsc::unbounded_channel();
     let mut state = test_selector_conn_state();
     state.protocol_version = version;
+    bind_selector_test_auth(&server, &mut state, member);
+    assert!(matches!(
+        handle_sync_message(
+            &server,
+            1,
+            protocol::parse_message(&batch).unwrap(),
+            &direct,
+            &mut state,
+        )
+        .await,
+        Err(ProtocolError::RpcNoPrincipal)
+    ));
+    assert!(replies.try_recv().is_err());
     handle_sync_message(
         &server,
         1,
@@ -3658,6 +3737,29 @@ async fn document_batch_exchange(version: u8) {
     assert_eq!(local.text().unwrap(), "shared");
     let edit = local.edit_text(6, 0, " edit").unwrap();
     assert_eq!(local.pending_frames().unwrap().len(), 1);
+    assert!(matches!(
+        handle_sync_message(
+            &server,
+            1,
+            protocol::parse_message(&edit).unwrap(),
+            &direct,
+            &mut state,
+        )
+        .await,
+        Err(ProtocolError::RpcNoPrincipal)
+    ));
+    assert_eq!(source.text().unwrap(), "shared");
+    let token = crate::auth::mint_core_token_v2(
+        server.config.auth_secret.as_deref().unwrap(),
+        &format!(
+            "scope=core:read,core:write;principal_ref={}",
+            member.to_hex()
+        ),
+    );
+    state.bound_auth = Some(
+        crate::auth::CoreAuth::from_bind_token(&token, &server.config, server.vault().as_ref())
+            .unwrap(),
+    );
     handle_sync_message(
         &server,
         1,

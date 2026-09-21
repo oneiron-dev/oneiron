@@ -134,6 +134,15 @@ impl Fixture {
             .memory(id(0x77), EdgeActorClass::Human)
             .claim_upsert(&input)
             .expect("normal owner publication write");
+        if receipt.approval == "proposed" {
+            return self
+                .server
+                .vault
+                .memory(id(0x77), EdgeActorClass::Human)
+                .confirm_booking_publication(&receipt.claim_short_id, now_secs().expect("clock"))
+                .expect("owner confirms staged publication revision")
+                .claim_id;
+        }
         assert_eq!(receipt.approval, "auto");
         receipt.claim_short_id
     }

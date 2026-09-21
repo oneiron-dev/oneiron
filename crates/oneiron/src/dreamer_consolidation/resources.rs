@@ -182,9 +182,12 @@ impl<'a> BranchResources<'a> {
         let (_, conversation) = self.source(scope, &self.partition.conversation_ref)?;
         let facts = decode_turn_body(&body);
         let parent = decode_turn_body(&conversation);
-        let edges = self
-            .read
-            .edges_out(id)?
+        let edges = self.read.edges_out(id)?;
+        if edges.receipt.suppressed_count != 0 {
+            return Err(invalid_consolidation("branch turn graph is incomplete"));
+        }
+        let edges = edges
+            .value
             .ok_or_else(|| invalid_consolidation("branch turn is not readable"))?;
         let parents: Vec<_> = edges
             .iter()

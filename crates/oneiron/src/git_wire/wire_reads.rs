@@ -21,6 +21,7 @@ use crate::error::{Error, Result};
 pub struct GitWire<'a> {
     pub(super) vault: &'a Vault,
     pub(super) process_env: GitWireProcessEnv,
+    pub(super) checkout_door: Option<String>,
 }
 
 impl<'a> GitWire<'a> {
@@ -29,12 +30,17 @@ impl<'a> GitWire<'a> {
         Ok(Self {
             vault,
             process_env: GitWireProcessEnv::capture()?,
+            checkout_door: None,
         })
     }
 
     /// Opens the wire with an explicit process baseline.
     pub fn with_process_env(vault: &'a Vault, process_env: GitWireProcessEnv) -> Self {
-        Self { vault, process_env }
+        Self {
+            vault,
+            process_env,
+            checkout_door: None,
+        }
     }
 }
 
