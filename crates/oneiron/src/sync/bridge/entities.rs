@@ -16,6 +16,7 @@ use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::sync::loro_support::tombstone_map_contains_id;
+use crate::sync::pack_sync;
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
 };
@@ -288,7 +289,7 @@ pub(super) fn committed_entity_state_matches(vault: &Vault, id: &EntityId, blob:
     };
     matches!(
         vault.store.entities.get(&rtxn, id.as_bytes()),
-        Ok(Some(existing)) if *existing == *blob
+        Ok(Some(existing)) if *existing == *blob || pack_sync::pack_echo_equal(&existing, blob)
     )
 }
 
@@ -534,6 +535,31 @@ pub(super) fn materialize_entity_blob_in_txn(
         None
     };
 
+    // Pack remote preflight: a malformed REMOTE envelope is a typed remote
+    // rejection here, before the name-based remap reads the local map. The
+    // caller quarantines it via `remote_rejection_reason`; a later
+    // `InvalidPackByteMap` from the remap is LOCAL corruption and fails
+    // closed (the classifier never remote-maps it).
+    if pack_sync::is_pack_handle(header.entity_type)
+        && let Some(remote_err) = pack_sync::remote_pack_envelope_error(data)
+    {
+        quarantine_rejected_op_in_txn(
+            vault,
+            wtxn,
+            window_key,
+            QuarantineContainer::Entities,
+            key,
+            &remote_err,
+            blob,
+        )?;
+        return Ok(false);
+    }
+    if pack_sync::is_pack_handle(header.entity_type)
+        && let Some(existing) = vault.store.entities.get(wtxn, id.as_bytes())?
+        && pack_sync::pack_echo_equal(&existing, blob)
+    {
+        return Ok(false);
+    }
     // Replicated put: Observer B mirrors whatever the unfiltered CRDT
     // entities map holds, including the engine-authored maintenance band
     // (REDACTION_AUDIT = 120) and reserved-predicate `edge.provenance`

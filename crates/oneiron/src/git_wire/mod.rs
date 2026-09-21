@@ -30,6 +30,7 @@ mod checkout;
 mod config;
 mod env;
 mod failure;
+mod hub_read;
 mod ids;
 mod objects;
 mod operation;
@@ -97,3 +98,5 @@ use std::ffi::OsString;
 use std::path::Path;
 #[cfg(test)]
 use std::time::Duration;
+
+pub(crate) use hub_read::read_hub_git;

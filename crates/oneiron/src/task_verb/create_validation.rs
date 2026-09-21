@@ -180,7 +180,12 @@ pub(super) fn validate_task_create(
         (
             TaskKind::Consult,
             Some(payload),
-            Some(assignee @ TaskAssignee::Peer { .. }),
+            Some(
+                assignee @ (TaskAssignee::Peer { .. }
+                | TaskAssignee::Child { .. }
+                | TaskAssignee::Human { .. }
+                | TaskAssignee::Dreamer),
+            ),
             Some(ttl),
         ) if spec.spec == Value::Nil => {
             if ttl.deadline_at <= now {
@@ -359,7 +364,8 @@ pub(crate) fn task_human_assignee(vault: &Vault, task_ref: EntityId) -> Result<O
                 TaskAssignee::Dreamer
                 | TaskAssignee::AnswerHolders
                 | TaskAssignee::AgentDef { .. }
-                | TaskAssignee::Peer { .. },
+                | TaskAssignee::Peer { .. }
+                | TaskAssignee::Child { .. },
             ) => None,
         }),
     )
@@ -369,6 +375,9 @@ pub(crate) fn task_human_assignee(vault: &Vault, task_ref: EntityId) -> Result<O
 /// it as its no-early-resume guard: a queued or working delegation has nothing
 /// to resume on.
 pub(crate) fn task_is_terminal(vault: &Vault, task_ref: EntityId) -> Result<bool> {
+    if let Some(terminal) = super::ask_record::ask_is_terminal(vault, task_ref)? {
+        return Ok(terminal);
+    }
     Ok(task_verb_body(vault, task_ref)?
         .and_then(|body| body.state)
         .is_some_and(|state| state.terminal().is_some()))

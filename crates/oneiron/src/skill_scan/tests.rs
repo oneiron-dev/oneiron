@@ -63,6 +63,17 @@ fn row_text<'a>(body: &'a crate::claim::ClaimBody, key: &str) -> Option<&'a str>
         .and_then(|(_, value)| value.as_str())
 }
 
+fn authored_scan_candidate(vault: &Vault, package: &HubPackage, at: u64) -> Result<EntityId> {
+    let id = EntityId::now();
+    let mut record = package.record.clone();
+    record.source = ClaimSource::UserStated;
+    record.approval_status = ClaimApprovalStatus::Auto;
+    vault.put_skill_record(&id, &record, t(at), at)?;
+    let scan = run_static_skill_scan(package, at)?;
+    vault.ingest_skill_scan_verdict(&id, package.content_hash()?, &scan, t(at), at)?;
+    Ok(id)
+}
+
 // ═══ the static pass ════════════════════════════════════════════════════════
 
 #[test]
@@ -255,9 +266,9 @@ fn activation_escalates_auto_to_proposed_without_refusing() -> Result<()> {
         body.as_bytes(),
         SkillCapabilitySurface::default(),
     );
-    let entity = vault.import_skill_from_hub(&hub_ref(), &package, t(1), 2)?;
+    let entity = authored_scan_candidate(&vault, &package, 1)?;
 
-    let mut active = vault.get_skill_record(&entity)?.expect("imported skill");
+    let mut active = vault.get_skill_record(&entity)?.expect("authored skill");
     active.lifecycle_status = SkillLifecycle::Active;
     active.approval_status = ClaimApprovalStatus::Auto;
     vault.update_skill_record(&entity, &active, t(3), 4)?;
@@ -281,10 +292,10 @@ fn activation_leaves_clean_skills_and_owner_approvals_alone() -> Result<()> {
         b"# clean skill\n",
         SkillCapabilitySurface::default(),
     );
-    let clean_entity = vault.import_skill_from_hub(&hub_ref(), &clean, t(1), 2)?;
+    let clean_entity = authored_scan_candidate(&vault, &clean, 1)?;
     let mut active = vault
         .get_skill_record(&clean_entity)?
-        .expect("imported skill");
+        .expect("authored skill");
     active.lifecycle_status = SkillLifecycle::Active;
     active.approval_status = ClaimApprovalStatus::Auto;
     vault.update_skill_record(&clean_entity, &active, t(3), 4)?;
@@ -304,10 +315,10 @@ fn activation_leaves_clean_skills_and_owner_approvals_alone() -> Result<()> {
         body.as_bytes(),
         SkillCapabilitySurface::default(),
     );
-    let risky_entity = vault.import_skill_from_hub(&hub_ref(), &risky, t(5), 6)?;
+    let risky_entity = authored_scan_candidate(&vault, &risky, 5)?;
     let mut approved = vault
         .get_skill_record(&risky_entity)?
-        .expect("imported skill");
+        .expect("authored skill");
     approved.lifecycle_status = SkillLifecycle::Active;
     approved.approval_status = ClaimApprovalStatus::Approved;
     vault.update_skill_record(&risky_entity, &approved, t(7), 8)?;
@@ -343,16 +354,21 @@ fn a_hub_package_cannot_declare_its_own_approval_past_the_gate() -> Result<()> {
         "consent is a local act; the import door stamps it rather than copying it"
     );
 
-    // Activate exactly as the hub shipped it — only the lifecycle moves.
     let mut active = imported;
     active.lifecycle_status = SkillLifecycle::Active;
-    vault.update_skill_record(&entity, &active, t(3), 4)?;
+    assert_eq!(
+        vault
+            .update_skill_record(&entity, &active, t(3), 4)
+            .expect_err("publisher approval cannot bypass local admission")
+            .kind(),
+        crate::error::ErrorKind::InvalidSkillBody
+    );
     assert_eq!(
         vault
             .get_skill_record(&entity)?
-            .expect("activated skill")
-            .approval_status,
-        ClaimApprovalStatus::Proposed
+            .expect("candidate")
+            .lifecycle_status,
+        SkillLifecycle::Candidate
     );
     Ok(())
 }
@@ -366,12 +382,12 @@ fn a_raw_entity_put_cannot_activate_around_the_scan_gate() -> Result<()> {
         body.as_bytes(),
         SkillCapabilitySurface::default(),
     );
-    let entity = vault.import_skill_from_hub(&hub_ref(), &package, t(1), 2)?;
+    let entity = authored_scan_candidate(&vault, &package, 1)?;
 
     // `put_entity` and `batch().put` are update doors of their own: they reach
     // a SKILL body without passing the typed update door, so the consult has
     // to live where they converge.
-    let mut active = vault.get_skill_record(&entity)?.expect("imported skill");
+    let mut active = vault.get_skill_record(&entity)?.expect("authored skill");
     active.lifecycle_status = SkillLifecycle::Active;
     active.approval_status = ClaimApprovalStatus::Auto;
     let data = encode_skill_record(&active)?;

@@ -275,6 +275,9 @@ pub enum ErrorKind {
     InvalidProjectBody,
     InvalidProjectRoomBody,
     ProjectDependencyPending,
+    PackKindNameCollision,
+    PackKindNotInstalled,
+    InvalidPackByteMap,
 }
 
 /// Crate error type.

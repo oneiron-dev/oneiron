@@ -38,7 +38,10 @@
 
 use rmpv::Value;
 
+mod archive;
 mod validation;
+pub use archive::SubjectRestoreReview;
+pub(crate) use archive::{imported_subject_body, is_subject_model_predicate};
 
 #[cfg(feature = "sync")]
 pub(crate) use validation::subject_model_dependency_pending;

@@ -49,6 +49,9 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
             | SelfEffect::MemoryWriteFixture
+            | SelfEffect::AgentsSpawn
+            | SelfEffect::TasksAsk
+            | SelfEffect::TasksWait
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
@@ -101,15 +104,13 @@ impl HostSelfDispatcher<'_> {
         let envelope = self.write_envelope(SelfEffect::MemoryWriteFixture, admission.as_ref())?;
         match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
-                .batch()
-                .claim_candidate(
+                .put_claim_candidate_without_lexical_query_reconcile(
                     &call.id,
                     candidate,
                     &envelope,
                     call.occurred,
                     call.learned_at,
-                )
-                .commit()?,
+                )?,
             ExecutorStorage::Session(binding) => {
                 binding.session.executor_batch_claim_candidate(
                     &binding.route,

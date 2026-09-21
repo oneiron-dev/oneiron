@@ -244,6 +244,12 @@ pub(super) fn decode_task_assignee(value: &Value) -> Result<TaskAssignee> {
                 "tasks.body.assignee",
             )?,
         }),
+        "child" => Ok(TaskAssignee::Child {
+            actor_ref: decode_entity_ref(
+                task_body_field(entries, "actor_ref")?,
+                "tasks.body.assignee",
+            )?,
+        }),
         "human" => Ok(TaskAssignee::Human {
             actor_ref: decode_entity_ref(
                 task_body_field(entries, "actor_ref")?,

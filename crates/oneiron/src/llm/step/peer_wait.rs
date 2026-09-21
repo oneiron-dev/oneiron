@@ -42,7 +42,10 @@ pub fn register_peer_result_wait(
     if trap.kind != DreamerTrapKind::PeerResult {
         return Err(invalid_trap("peer-result wait requires a peer_result trap"));
     }
-    vault.with_write_txn(|wtxn| {
+    if trap_head(vault, &trap.trap_claim_id)?.1.step_hash != trap.step_hash {
+        return Err(invalid_trap("peer-result wait step hash mismatch"));
+    }
+    let state = vault.with_write_txn(|wtxn| {
         let state = register_wait_in_txn(vault, wtxn, trap, now)?;
         peer_wait_binding_put_in_txn(
             vault,
@@ -55,7 +58,14 @@ pub fn register_peer_result_wait(
             },
         )?;
         Ok(state)
-    })
+    })?;
+    // Result-before-wait and the terminal-write/signal crash window both
+    // reconcile AFTER the binding commits. The canonical trap consumes once.
+    send_peer_result_signal(vault, task_ref, now)?;
+    if state == DreamerTrapState::Sent {
+        return Ok(state);
+    }
+    Ok(trap_head(vault, &trap.trap_claim_id)?.1.state)
 }
 
 /// Performs `Waiting→Sent` for a peer-assigned TASK that has reached a terminal
@@ -71,20 +81,29 @@ pub fn send_peer_result_signal(
     task_ref: EntityId,
     now: u64,
 ) -> Result<Option<EntityId>> {
-    let Some(binding) = peer_wait_binding_read(vault, &task_ref)? else {
-        return Ok(None);
-    };
     if !crate::task_verb::task_is_terminal(vault, task_ref)? {
         return Ok(None);
     }
-    let (_, head) = trap_head(vault, &binding.trap_claim_id)?;
-    if matches!(
-        head.state,
-        DreamerTrapState::Sent | DreamerTrapState::Consumed
-    ) {
-        return Ok(None);
+    let mut first = None;
+    let mut prefix = DREAMER_PRIVATE_PEER_WAIT_PREFIX.to_vec();
+    prefix.extend_from_slice(task_ref.as_bytes());
+    for binding in peer_wait_bindings_at(vault, &prefix)? {
+        let (_, head) = trap_head(vault, &binding.trap_claim_id)?;
+        if matches!(
+            head.state,
+            DreamerTrapState::Sent | DreamerTrapState::Consumed
+        ) {
+            continue;
+        }
+        let signal = send_trap_signal(
+            vault,
+            &binding.trap_claim_id,
+            binding.step_hash,
+            now.max(head.at),
+        )?;
+        first.get_or_insert(signal);
     }
-    send_trap_signal(vault, &binding.trap_claim_id, binding.step_hash, now).map(Some)
+    Ok(first)
 }
 
 /// Replays the terminal-write→signal edge for every local delegation binding
@@ -93,18 +112,18 @@ pub fn send_peer_result_signal(
 /// writer ran at all.
 ///
 /// It walks the small binding index, never the TASK index, and returns how many
-/// signals it sent.
+/// handles it signaled (one handle may wake several steps).
 ///
-/// NOT YET WIRED: the intended host call sites are Dreamer admission/startup
-/// and the tail of a TASK sync apply, both of which live in files ONE-1700 does
-/// not claim (`dreamer_wake.rs` is ONE-1708's; sync apply is unclaimed). Until
-/// one of those lanes calls this, a crash in the terminal-write→signal gap is
-/// recoverable but not automatically recovered. Banked as a PACKET_AMEND
-/// candidate; the behavior itself is covered by the crash-replay test.
+/// Wired at Dreamer wake-pass admission. The host may also call it after a
+/// sync batch; a missing immediate call is recovered by the next wake pass.
 pub fn reconcile_peer_result_signals(vault: &Vault, now: u64) -> Result<usize> {
     let mut sent = 0;
-    for binding in peer_wait_bindings(vault)? {
-        if send_peer_result_signal(vault, binding.task_ref, now)?.is_some() {
+    let handles: std::collections::BTreeSet<_> = peer_wait_bindings(vault)?
+        .into_iter()
+        .map(|binding| binding.task_ref)
+        .collect();
+    for handle in handles {
+        if send_peer_result_signal(vault, handle, now)?.is_some() {
             sent += 1;
         }
     }
@@ -116,10 +135,11 @@ pub fn reconcile_peer_result_signals(vault: &Vault, now: u64) -> Result<usize> {
 // task→trap so a landing result finds its trap, and trap→task so consume can
 // retire the binding without knowing which task opened it.
 // ---------------------------------------------------------------------------
-fn peer_wait_key(task_ref: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DREAMER_PRIVATE_PEER_WAIT_PREFIX.len() + 16);
+fn peer_wait_key(task_ref: &EntityId, trap_ref: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(DREAMER_PRIVATE_PEER_WAIT_PREFIX.len() + 32);
     key.extend_from_slice(DREAMER_PRIVATE_PEER_WAIT_PREFIX);
     key.extend_from_slice(task_ref.as_bytes());
+    key.extend_from_slice(trap_ref.as_bytes());
     key
 }
 
@@ -135,6 +155,23 @@ fn peer_wait_binding_put_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     binding: &PeerResultWaitBinding,
 ) -> Result<()> {
+    if let Some(existing) = vault
+        .store
+        .vault_meta
+        .get(&*wtxn, &peer_wait_trap_key(&binding.trap_claim_id))?
+        && existing.as_ref() != binding.task_ref.as_bytes()
+    {
+        return Err(invalid_trap("peer-result trap already binds another task"));
+    }
+    if let Some(existing) = vault.store.vault_meta.get(
+        &*wtxn,
+        &peer_wait_key(&binding.task_ref, &binding.trap_claim_id),
+    )? {
+        let existing = decode_peer_wait_binding(binding.task_ref, existing.as_ref())?;
+        if existing.step_hash != binding.step_hash {
+            return Err(invalid_trap("peer-result wait binding hash mismatch"));
+        }
+    }
     let entries = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -153,10 +190,11 @@ fn peer_wait_binding_put_in_txn(
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, &Value::Map(entries))
         .map_err(|_| invalid_trap("peer-result wait binding MessagePack encode failed"))?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &peer_wait_key(&binding.task_ref), &encoded)?;
+    vault.store.vault_meta.put(
+        wtxn,
+        &peer_wait_key(&binding.task_ref, &binding.trap_claim_id),
+        &encoded,
+    )?;
     vault.store.vault_meta.put(
         wtxn,
         &peer_wait_trap_key(&binding.trap_claim_id),
@@ -243,35 +281,23 @@ fn decode_peer_wait_binding(task_ref: EntityId, raw: &[u8]) -> Result<PeerResult
     })
 }
 
-pub(super) fn peer_wait_binding_read(
-    vault: &Vault,
-    task_ref: &EntityId,
-) -> Result<Option<PeerResultWaitBinding>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &peer_wait_key(task_ref))?
-    else {
-        return Ok(None);
-    };
-    decode_peer_wait_binding(*task_ref, &raw).map(Some)
-}
-
 /// Every live delegation binding on this device, in key order.
 pub(super) fn peer_wait_bindings(vault: &Vault) -> Result<Vec<PeerResultWaitBinding>> {
+    peer_wait_bindings_at(vault, DREAMER_PRIVATE_PEER_WAIT_PREFIX)
+}
+
+fn peer_wait_bindings_at(vault: &Vault, prefix: &[u8]) -> Result<Vec<PeerResultWaitBinding>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut bindings = Vec::new();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, DREAMER_PRIVATE_PEER_WAIT_PREFIX)?
-    {
+    for row in vault.store.vault_meta.prefix_iter(&rtxn, prefix)? {
         let (key, raw) = row?;
         let suffix = key
             .get(DREAMER_PRIVATE_PEER_WAIT_PREFIX.len()..)
             .ok_or(invalid_trap("peer-result wait binding key is truncated"))?;
-        let task_bytes: [u8; 16] = suffix
+        if suffix.len() != 32 {
+            return Err(invalid_trap("peer-result wait key length"));
+        }
+        let task_bytes: [u8; 16] = suffix[..16]
             .try_into()
             .map_err(|_| invalid_trap("peer-result wait binding key is not a task ref"))?;
         bindings.push(decode_peer_wait_binding(
@@ -311,10 +337,95 @@ pub(super) fn peer_wait_binding_delete_in_txn(
     vault
         .store
         .vault_meta
-        .delete(wtxn, &peer_wait_key(task_ref))?;
+        .delete(wtxn, &peer_wait_key(task_ref, trap_claim_id))?;
     vault
         .store
         .vault_meta
         .delete(wtxn, &peer_wait_trap_key(trap_claim_id))?;
     Ok(())
+}
+
+/// Opens the trap, binds the handle, and parks ONLY this attempt atomically.
+/// A restart reuses its binding. The caller owns idle scheduling; this door is
+/// invoked by tasks.wait, never by tasks.ask. Timestamps on trap claims are ms.
+pub fn park_peer_result_step(
+    ctx: &super::types::DurableStepContext<'_>,
+    task_ref: EntityId,
+    step_hash: [u8; 32],
+) -> Result<TrapRef> {
+    let vault = ctx.vault;
+    let runner = crate::dreamer_runner::DreamerRunnerStore::new(vault);
+    for binding in peer_wait_bindings(vault)? {
+        if binding.task_ref != task_ref || binding.step_hash != step_hash {
+            continue;
+        }
+        let (_, head) = trap_head(vault, &binding.trap_claim_id)?;
+        if head.attempt_id != ctx.attempt_id {
+            continue;
+        }
+        let trap = TrapRef {
+            trap_claim_id: binding.trap_claim_id,
+            kind: DreamerTrapKind::PeerResult,
+            step_hash,
+        };
+        register_peer_result_wait(vault, &trap, task_ref, ctx.now_ms)?;
+        return Ok(trap);
+    }
+    let trap = vault.with_write_txn(|txn| {
+        let trap = super::trap::open_trap_in_txn(
+            vault,
+            txn,
+            ctx,
+            DreamerTrapKind::PeerResult,
+            step_hash,
+            "tasks.wait",
+            super::trap_binding::TrapBindingScope::Attempt,
+        )?;
+        peer_wait_binding_put_in_txn(
+            vault,
+            txn,
+            &PeerResultWaitBinding {
+                task_ref,
+                trap_claim_id: trap.trap_claim_id,
+                step_hash,
+                created_at: ctx.now_ms,
+            },
+        )?;
+        runner.park_attempt_in_txn(
+            txn,
+            crate::dreamer_runner::ParkDreamerAttempt {
+                attempt_id: ctx.attempt_id,
+                reason: "tasks.wait".to_owned(),
+                park_owner: super::trap::trap_park_owner(&trap.trap_claim_id),
+                now: ctx.now_s(),
+            },
+        )?;
+        Ok(trap)
+    })?;
+    register_peer_result_wait(vault, &trap, task_ref, ctx.now_ms)?;
+    Ok(trap)
+}
+
+/// Wake-pass recovery for committed handle bindings. Sending and consuming may
+/// straddle a crash; both are idempotent through the trap chain and owner row.
+pub(crate) fn resume_peer_result_steps(vault: &Vault, now_ms: u64) -> Result<usize> {
+    reconcile_peer_result_signals(vault, now_ms)?;
+    let runner = crate::dreamer_runner::DreamerRunnerStore::new(vault);
+    let mut resumed = 0;
+    for binding in peer_wait_bindings(vault)? {
+        let (_, head) = trap_head(vault, &binding.trap_claim_id)?;
+        if head.state != DreamerTrapState::Sent
+            || !crate::task_verb::task_is_terminal(vault, binding.task_ref)?
+        {
+            continue;
+        }
+        let trap = TrapRef {
+            trap_claim_id: binding.trap_claim_id,
+            kind: DreamerTrapKind::PeerResult,
+            step_hash: binding.step_hash,
+        };
+        super::trap::consume_trap_signal(vault, &runner, &trap, now_ms.max(head.at))?;
+        resumed += 1;
+    }
+    Ok(resumed)
 }

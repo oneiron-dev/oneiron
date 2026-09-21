@@ -250,15 +250,19 @@ fn prepare_entities(
             if let Some(map) = entity.fields.as_ref() {
                 let field_keys = field_keys(entity.entity_type, config.profile, map);
                 for key in field_keys {
+                    if crate::batch::secret_scan::scan_file_content("", key.as_bytes()).is_some() {
+                        continue;
+                    }
                     let Some(value) = map.get(&key) else {
                         continue;
                     };
                     if !should_include_projected_field(entity.entity_type, &key, value) {
                         continue;
                     }
+                    let safe_value = super::credential_nulling::null_credentials(&key, value);
                     let value = normalize_value(
                         &key,
-                        value,
+                        &safe_value,
                         json_mode,
                         now,
                         config.max_field_chars,

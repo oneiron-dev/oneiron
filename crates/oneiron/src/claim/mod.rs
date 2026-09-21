@@ -48,6 +48,7 @@
 
 mod core_types;
 mod decay;
+mod expression_archive;
 mod expression_preference;
 mod lexical_query_hint;
 mod lifecycle;
@@ -68,6 +69,7 @@ mod write_target;
 
 pub use core_types::*;
 pub use decay::*;
+pub(crate) use expression_archive::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
 pub use lexical_query_hint::*;
 pub use predicate_grammar::*;
 pub use predicate_validators::*;

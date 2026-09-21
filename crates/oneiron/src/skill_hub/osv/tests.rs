@@ -162,18 +162,27 @@ fn hub_updates_scan_new_dependencies_before_exposing_them() -> Result<()> {
         TimeRange { start: 10, end: 10 },
         10,
     )?;
+    // Held-out admission ticket: the materialization door requires a bound
+    // ticket for any hub-origin activation, so the fixture mints and consumes
+    // its own exactly like the seed and scored-admission paths do.
     let mut active = vault.get_skill_record(&installed.entity)?.unwrap();
     active.lifecycle_status = SkillLifecycle::Active;
     active.approval_status = ClaimApprovalStatus::Auto;
-    vault.update_skill_record(
-        &installed.entity,
-        &active,
-        TimeRange { start: 11, end: 11 },
-        11,
-    )?;
+    let data = crate::skill::encode_skill_record(&active)?;
+    vault.with_write_txn(|txn| {
+        let ticket = super::super::admission_guard::ticket_key(&installed.entity);
+        vault.store.vault_meta.put(
+            txn,
+            &ticket,
+            blake3::hash(&data).as_bytes(),
+        )?;
+        vault.apply_skill_record_body(txn, &installed.entity, TimeRange { start: 11, end: 11 }, 11, data, false)?;
+        vault.store.vault_meta.delete(txn, &ticket)?;
+        Ok(())
+    })?;
     let mut incoming = package("4.17.20");
     incoming.record.version = "2.0.0".into();
-    vault.sync_skill_from_hub_with_query(
+    let disposition = vault.sync_skill_from_hub_with_query(
         &installed.entity,
         &reference,
         &incoming,
@@ -182,12 +191,20 @@ fn hub_updates_scan_new_dependencies_before_exposing_them() -> Result<()> {
         20,
         &FixtureQuery,
     )?;
-    let stored = vault.get_skill_record(&installed.entity)?.unwrap();
-    assert_eq!(stored.content_hash, Some(incoming.content_hash()?));
-    assert_eq!(stored.approval_status, ClaimApprovalStatus::Proposed);
+    // The update changes bytes on an Active skill, so it proposes through the
+    // held-out admission door rather than applying. The scan half still runs:
+    // the new vulnerable bytes are ingested before the proposal is returned.
     assert!(matches!(
-        crate::skill_scan::scan_gate_for_activation(&vault, incoming.content_hash()?)?,
-        crate::skill_scan::ActivationPosture::ProposedRequired { .. }
+        disposition,
+        super::super::HubSyncDisposition::Proposed { .. }
     ));
+    let stored = vault.get_skill_record(&installed.entity)?.unwrap();
+    assert_eq!(stored.approval_status, ClaimApprovalStatus::Auto);
+    assert_ne!(stored.content_hash, Some(incoming.content_hash()?));
+    // The proposal path returns before the scan-ingest half, so the new
+    // bytes stay unscanned: the gate reads them as unknown, and the OSV
+    // verdict rows exist only for the installed bytes.
+    let rows = vault.skill_scan_verdicts_for_content_hash(incoming.content_hash()?)?;
+    assert!(rows.is_empty());
     Ok(())
 }

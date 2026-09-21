@@ -6,13 +6,12 @@ use heed::RwTxn;
 
 use super::{
     AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,
-    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
-    StagedClaimGateOutcome, apply_short_id_plan, authority_observation_secs_for_write,
-    check_authority_log_store_key, delete_short_id_rows_for_id,
-    evict_authority_log_store_key_squatter, index_thread_claim_subject,
-    lexical_query_hint_claim_id, parse_entity_metadata, plan_short_id_update,
-    reject_overlay_member_base_write, stage_entity_body_row, stage_entity_index_rows,
-    stage_optimizer_birth_marker_row, validate_companion_register_put,
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, StagedClaimGateOutcome, apply_short_id_plan,
+    authority_observation_secs_for_write, check_authority_log_store_key,
+    delete_short_id_rows_for_id, evict_authority_log_store_key_squatter,
+    index_thread_claim_subject, lexical_query_hint_claim_id, parse_entity_metadata,
+    plan_short_id_update, reject_overlay_member_base_write, stage_entity_body_row,
+    stage_entity_index_rows, stage_optimizer_birth_marker_row, validate_companion_register_put,
     validate_local_agent_definition_create, validate_local_skill_create,
     validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
     validate_task_checkin_immutable,
@@ -20,7 +19,7 @@ use super::{
 use crate::claim::ClaimApprovalStatus;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Error, ErrorKind, RecordError, RegistryError, Result};
+use crate::error::{ArtifactError, Error, RecordError, RegistryError, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_DIAGNOSTIC,
@@ -69,6 +68,13 @@ pub(in crate::batch) fn apply_put(
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
         crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
     }
+    crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
+    crate::skill_hub::validate_hub_source_carrier_put(store, wtxn, &id, entity_type, data)?;
+    crate::agent_def::validate_birth_source_put(store, wtxn, &id, entity_type, data)?;
+    crate::receipt::validate_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
+    let mut portable_agent_source = None;
+    store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
+    store.guard_pack_instance_identity_in_txn(wtxn, &id, entity_type, data)?;
     // Publication admission reuses the write-door decode and must precede
     // gate receipts, debits, and every other write effect.
     let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {
@@ -107,6 +113,7 @@ pub(in crate::batch) fn apply_put(
         plan_replicated_name_index(store, wtxn, &id, entity_type, data, replicated)?;
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
+    let mut hub_origin_marker = None;
     let mut new_agent_definition = None;
     // STO-03: `Some` only when the incoming TASK body named a derived streak
     // counter, i.e. only on the sync door — the body that gets stored instead.
@@ -279,8 +286,13 @@ pub(in crate::batch) fn apply_put(
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
+    } else if entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
+        crate::skill_hub::decode_skill_hub_record(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
-        new_skill_record = Some(crate::skill::decode_skill_record(data)?);
+        let decoded = crate::skill::decode_skill_record(data)?;
+        hub_origin_marker =
+            crate::skill_hub::check_hub_skill_put(store, &*wtxn, &id, &decoded, hub_sync_imported)?;
+        new_skill_record = Some(decoded);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {
         let decoded = crate::agent_def::decode_agent_definition(data)?;
         // ONE-1890 `sys.*` reservation, at the one arm that holds both the
@@ -288,6 +300,8 @@ pub(in crate::batch) fn apply_put(
         // SKILL's decode-site capture of `new_skill_record`.
         crate::agent_def::validate_reserved_logical_id(&id, &decoded)?;
         new_agent_definition = Some(decoded);
+    } else if entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
+        crate::agent_def::workflow::validate_workflow_put(store, wtxn, &id, data, replicated)?;
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     } else if entity_type == ENTITY_TYPE_TASK {
@@ -424,6 +438,8 @@ pub(in crate::batch) fn apply_put(
     // fail with `InvalidEntityType` on the missing prefix.
     let short_id_prefix = if is_lexical_query_hint_claim {
         None
+    } else if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
+        Some(store.pack_short_id_prefix_in_txn(wtxn, entity_type, data)?)
     } else {
         store.short_id_prefix(entity_type).ok()
     };
@@ -453,16 +469,8 @@ pub(in crate::batch) fn apply_put(
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
         if old_type == ENTITY_TYPE_SKILL {
             let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
-            previous_skill_record = match crate::skill::decode_skill_record(prior_body) {
-                Ok(record) => Some(record),
-                Err(error)
-                    if error.kind() == ErrorKind::InvalidSkillBody
-                        && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
-                {
-                    None
-                }
-                Err(error) => return Err(error),
-            };
+            previous_skill_record =
+                super::put_entity_update::decode_previous_skill_record(prior_body)?;
         }
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
@@ -562,29 +570,15 @@ pub(in crate::batch) fn apply_put(
             crate::bm25::deindex_text(store, wtxn, &id)?;
         }
 
-        if old_occurred.end.saturating_sub(old_occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
-            let old_long_interval_key = Store::encode_temporal_key(old_occurred.end, &id);
-            store
-                .temporal_long_intervals
-                .delete(wtxn, &old_long_interval_key)?;
-        }
-
-        if old_occurred.start != occurred.start {
-            let old_start_key = Store::encode_temporal_key(old_occurred.start, &id);
-            store.temporal_occurred_start.delete(wtxn, &old_start_key)?;
-        }
-
-        let old_is_range = old_occurred.start != old_occurred.end;
-        let new_is_range = occurred.start != occurred.end;
-        if old_is_range && (!new_is_range || old_occurred.end != occurred.end) {
-            let old_end_key = Store::encode_temporal_key(old_occurred.end, &id);
-            store.temporal_occurred_end.delete(wtxn, &old_end_key)?;
-        }
-
-        if old_learned != learned_at {
-            let old_learned_key = Store::encode_temporal_key(old_learned, &id);
-            store.temporal_learned.delete(wtxn, &old_learned_key)?;
-        }
+        super::put_staging::remove_prior_temporal_index_rows(
+            store,
+            wtxn,
+            &id,
+            old_occurred,
+            old_learned,
+            occurred,
+            learned_at,
+        )?;
     } else if entity_type == ENTITY_TYPE_AGENT_DEF && !replicated {
         // ONE-1890 mirror of the SKILL create gate below, one entity type
         // over: LOCAL creates only, so genuine creates are gated and updates
@@ -599,6 +593,8 @@ pub(in crate::batch) fn apply_put(
                 "validated AGENT_DEF record missing",
             ))?;
         validate_local_agent_definition_create(store, wtxn, &id, created)?;
+        portable_agent_source =
+            crate::agent_def::bind_agent_birth_in_txn(store, wtxn, &id, created)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let created = new_skill_record
             .as_ref()
@@ -641,6 +637,18 @@ pub(in crate::batch) fn apply_put(
     if let Some(body) = decoded_claim_body.as_ref() {
         crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
     }
+    if let Some((key, value)) = hub_origin_marker {
+        store.vault_meta.put(wtxn, &key, &value)?;
+    }
+    crate::skill_hub::stage_source_custody_put(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        previous_skill_record.as_ref(),
+        new_skill_record.as_ref(),
+    )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if entity_type == ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
@@ -650,26 +658,7 @@ pub(in crate::batch) fn apply_put(
     }
     crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {
-        crate::skill_hub::maintain_skill_content_hash_index_for_put(
-            store,
-            wtxn,
-            &id,
-            previous_skill_record
-                .as_ref()
-                .and_then(|previous| previous.content_hash),
-            record.content_hash,
-        )?;
-        // ONE-1447: the reverse "which skills cite this message" index, kept at
-        // the same chokepoint as the content-hash index so every road that can
-        // land a SKILL body — typed doors, hub import, sync remat — maintains
-        // it without a call site of its own.
-        crate::skill_convert::maintain_skill_source_index_for_put(
-            store,
-            wtxn,
-            &id,
-            previous_skill_record.as_ref(),
-            record,
-        )?;
+        maintain_skill_indices(store, wtxn, &id, previous_skill_record.as_ref(), record)?;
     }
     if let Some(body) = decoded_claim_body.as_ref() {
         // Thread readers reuse ClaimOf, not a private unsynchronized cache.
@@ -692,6 +681,8 @@ pub(in crate::batch) fn apply_put(
     }
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
+    crate::agent_def::stage_birth_custody_put(store, wtxn, &id, entity_type, data)?;
+    crate::receipt::stage_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;
@@ -719,6 +710,7 @@ pub(in crate::batch) fn apply_put(
             None
         };
     Ok(AppliedPut {
+        portable_agent_source,
         pending_embedding_token,
         cleared_pending_embedding,
         had_vector_mutation,
@@ -792,4 +784,22 @@ fn validate_lexical_hint_put(
         ));
     }
     Ok(())
+}
+
+fn maintain_skill_indices(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    previous: Option<&crate::skill::SkillRecord>,
+    record: &crate::skill::SkillRecord,
+) -> crate::error::Result<()> {
+    crate::skill_hub::maintain_skill_content_hash_index_for_put(
+        store,
+        txn,
+        id,
+        previous.and_then(|previous| previous.content_hash),
+        record.content_hash,
+    )?;
+    // Keep both indices at the same materialization door for every write path.
+    crate::skill_convert::maintain_skill_source_index_for_put(store, txn, id, previous, record)
 }

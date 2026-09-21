@@ -200,15 +200,23 @@ impl Vault {
         owner: &AuthenticatedOwner,
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
-        let mut wtxn = self.store.env.write_txn()?;
+        self.with_write_txn(|wtxn| self.approve_once_in_txn(wtxn, owner, effect_digest))
+    }
+
+    /// Composes the exact consent receipt with the effect it authorizes.
+    pub(crate) fn approve_once_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        effect_digest: EffectDigest,
+    ) -> Result<ConsentReceipt> {
         let decision_id = GateDecisionId::now();
-        self.claim_approve_once_in_txn(&mut wtxn, &effect_digest, decision_id)?;
+        self.claim_approve_once_in_txn(wtxn, &effect_digest, decision_id)?;
         let receipt = ConsentReceipt::Approved {
             decision_id,
             grant: ConsentGrant::ApproveOnce(effect_digest),
         };
-        self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
-        wtxn.commit()?;
+        self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
         Ok(receipt)
     }
 
@@ -364,10 +372,18 @@ impl Vault {
     /// Reads one standing consent-grant row.
     pub fn consent_grant(&self, grant_ref: &str) -> Result<Option<ConsentGrantRow>> {
         let rtxn = self.store.env.read_txn()?;
+        self.consent_grant_in_txn(&rtxn, grant_ref)
+    }
+
+    pub(crate) fn consent_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: &str,
+    ) -> Result<Option<ConsentGrantRow>> {
         let Some(raw) = self
             .store
             .vault_meta
-            .get(&rtxn, &consent_grant_key(grant_ref))?
+            .get(txn, &consent_grant_key(grant_ref))?
         else {
             return Ok(None);
         };

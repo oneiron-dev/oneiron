@@ -1,9 +1,11 @@
 //! Typed, actor-bound verbs over the Context Board TASKS section.
 //!
-//! Directory module: this file holds declarations and re-exports only. Each
-//! sibling file owns one concern; the `crate::task_verb::*` surface below
-//! reproduces the pre-split flat-module surface verbatim.
+//! Directory module: declarations, re-exports, and the typed ask entry point.
+//! Sibling files own each ask implementation and its existing admission rules.
 
+mod ask_facade;
+mod ask_record;
+mod ask_types;
 mod consts;
 mod consult_fanout_facade;
 mod consult_ladder_facade;
@@ -100,3 +102,59 @@ pub mod sdk;
 
 #[cfg(test)]
 mod ask_outcome_tests;
+
+// Scope asks retain their own payload and group identity. They are not holder-list asks.
+pub use ask_types::{
+    AskAuthorityScope, TaskAskAnswer as ScopeTaskAskAnswer, TaskAskHandle as ScopeTaskAskHandle,
+    TaskAskHoldReason, TaskAskReceipt as ScopeTaskAskReceipt, TaskAskSpec as ScopeTaskAskSpec,
+    TaskAskStatus, TaskAskTarget, TaskAskWait,
+};
+
+mod ask_request_sealed {
+    pub trait Sealed {}
+}
+
+/// One admitted ask request family, with its matching receipt type.
+///
+/// This trait is sealed. It does not let callers add a new authority lane.
+pub trait TaskAskRequest: ask_request_sealed::Sealed {
+    type Receipt;
+
+    #[doc(hidden)]
+    fn submit(&self, memory: &crate::memory::Memory<'_>)
+    -> crate::memory::MemoryResult<Self::Receipt>;
+}
+
+impl ask_request_sealed::Sealed for TaskAskSpec {}
+impl TaskAskRequest for TaskAskSpec {
+    type Receipt = TaskAskReceipt;
+
+    fn submit(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+    ) -> crate::memory::MemoryResult<Self::Receipt> {
+        memory.tasks_ask_holders(self)
+    }
+}
+
+impl ask_request_sealed::Sealed for ScopeTaskAskSpec {}
+impl TaskAskRequest for ScopeTaskAskSpec {
+    type Receipt = ScopeTaskAskReceipt;
+
+    fn submit(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+    ) -> crate::memory::MemoryResult<Self::Receipt> {
+        memory.tasks_ask_scope(self)
+    }
+}
+
+impl crate::memory::Memory<'_> {
+    /// Admit an ask and return its handle immediately, without waiting.
+    pub fn tasks_ask<S: TaskAskRequest>(
+        &self,
+        spec: &S,
+    ) -> crate::memory::MemoryResult<S::Receipt> {
+        spec.submit(self)
+    }
+}

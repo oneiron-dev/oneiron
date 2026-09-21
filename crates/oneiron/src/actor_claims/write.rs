@@ -287,7 +287,11 @@ fn active_heads_in_txn(
         let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
             continue;
         };
-        if body.predicate != predicate || body.lifecycle != ClaimLifecycleStatus::Active {
+        if body.predicate != predicate
+            || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.source != Some(ClaimSource::Observed)
+            || body.approval != ClaimApprovalStatus::Auto
+        {
             continue;
         }
         let raw = vault

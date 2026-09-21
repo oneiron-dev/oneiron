@@ -5,6 +5,7 @@
 //! before it is written; `json_format`, `toon_format`, `markdown_plaintext_format`
 //! and `yaml_format` are the writers.
 
+mod credential_nulling;
 mod field_profile_table;
 mod group_labels;
 mod item_budget;
@@ -33,3 +34,22 @@ pub(crate) use item_budget::is_critical_claim_predicate;
 pub(crate) use pack_entry::{SerializedPackTelemetry, serialize_pack_with_telemetry};
 
 pub(crate) mod entity_ref;
+mod export_value;
+mod vault_document;
+pub use export_value::{ExportBody, ExportValue};
+pub(crate) use vault_document::serialize_vault_snapshot;
+
+mod source_tree;
+pub(crate) use source_tree::export_source_tree;
+
+mod vault_bundles;
+
+pub(crate) use vault_bundles::populate_agent_bundles;
+
+mod pack_archive;
+pub use pack_archive::ExportPackInstance;
+
+mod hub_source_archive;
+pub use hub_source_archive::ExportHubSource;
+
+mod export_actor_references;

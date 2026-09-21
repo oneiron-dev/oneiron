@@ -200,6 +200,7 @@ impl Memory<'_> {
                     "Read the settled ladder record; a settled ladder is immutable, and the follow-on task carries the case.",
                 ));
             }
+            super::ask_record::record_answer(self.vault(), wtxn, task_ref, &body, self.actor(), landed, at)?;
             body.state = Some(TaskExecutionState::Terminal(landed.clone()));
             let encoded = encode_task_verb_body(body);
             self.put_task_body_in_txn(wtxn, task_ref, &encoded, at)?;
@@ -215,6 +216,9 @@ impl Memory<'_> {
         // crash in this gap loses nothing: `reconcile_peer_result_signals`
         // replays the edge from the local binding index.
         send_peer_result_signal(self.vault(), task_ref, at)?;
+        // A sibling's answer settles the HANDLE, without rewriting siblings.
+        // The local wait index is also re-driven at registration/startup.
+        crate::llm::reconcile_peer_result_signals(self.vault(), at)?;
 
         Ok(TaskResultReceipt {
             task_ref,

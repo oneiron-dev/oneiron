@@ -7,6 +7,7 @@
 
 mod admission;
 pub mod image;
+pub mod meeting_audio;
 mod registry;
 mod resolution;
 mod transcripts;
@@ -18,6 +19,7 @@ pub use image::{
     parse_exif_evidence, register_image_caption_recognizer, register_image_text_recognizer,
 };
 
+pub(crate) use self::admission::admit_imported_evidence_claim_for_memory;
 pub use self::admission::{
     ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, admit_imported_entity,
     admit_imported_evidence_claim, admit_imported_evidence_claim_typed,

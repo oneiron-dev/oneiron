@@ -1,0 +1,5 @@
+{"stage": "setup", "status": "complete", "unix_time": 1789838934.130628, "e1_e3_qualified": false, "mode": "moss", "profile_sha256": "f92dfc04130be8784c25b82809a5e6ba2850fc5dc224f30af04288b64ccfbca7", "model_execution": false}
+{"stage": "decode", "status": "started", "unix_time": 1789838934.132388, "e1_e3_qualified": false, "input_sha256": "0401d5626fa0a5e6401da721f62479033358d9b3dc2db6a19c889913d4c0d089"}
+{"stage": "decode", "status": "complete", "unix_time": 1789838934.266725, "e1_e3_qualified": false, "pcm_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d", "samples": 190218}
+{"stage": "native-model", "status": "started", "unix_time": 1789838934.2668512, "e1_e3_qualified": false, "mode": "moss", "fixture": "public-synthetic-no-timing-or-speaker-truth"}
+{"stage": "native-model", "status": "complete", "unix_time": 1789838943.373352, "e1_e3_qualified": false, "output_sha256": "69326925106b93adbcfaa7e10c6b758ab44d281150e924ba0d966ba6524ddf84", "native_execution_completed": true}

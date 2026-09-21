@@ -219,6 +219,8 @@ pub struct AttemptEvent {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ManifestKind {
+    /// The tier-1 skill dependency index included in the dispatched composition.
+    SkillIndex,
     /// A SKILL pulled into the attempt's pack (`skill_id` + version).
     Skill,
     /// An `actor.*` claim row loaded into the attempt's pack.
@@ -230,6 +232,7 @@ impl ManifestKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::SkillIndex => "skill_index",
             Self::Skill => "skill",
             Self::ActorClaim => "actor_claim",
         }

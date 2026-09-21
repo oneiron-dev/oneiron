@@ -431,13 +431,59 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
         return Ok(());
     }
 
+    let erased_hex: std::collections::HashSet<[u8; 32]> = erased
+        .iter()
+        .map(|id| {
+            let mut hex = [0; 32];
+            hex.copy_from_slice(id.to_hex().as_bytes());
+            hex
+        })
+        .collect();
     let entities = doc.get_map("entities");
-    let mut doomed_entities: Vec<String> = Vec::new();
+    let mut source_ids = BTreeSet::new();
+    let mut doomed_entities = BTreeSet::new();
+    crate::sync::loro_support::map_for_each_bytes(&entities, |key, bytes| {
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(bytes) else {
+            return;
+        };
+        if header.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+            return;
+        }
+        let body = &bytes[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+        let skill_holder = crate::skill_hub::source_carrier_holder(body);
+        let agent_holder = crate::agent_def::birth_source_holder(body);
+        let receipt_holder = crate::receipt::receipt_archive_holder(body);
+        let holder = skill_holder.or(agent_holder).or(receipt_holder);
+        let holder_erased = holder.is_some_and(|holder| erased.contains(&holder));
+        let copied_input_erased = agent_holder.is_some_and(|child| {
+            crate::agent_def::birth_source_id(&child).is_ok_and(|id| erased.contains(&id))
+                || birth_payload_contains_erased_id(body, &erased_hex)
+        });
+        let archived_receipt_copy_erased = crate::receipt::is_receipt_archive_source(body)
+            && birth_payload_contains_erased_id(body, &erased_hex);
+        if holder_erased || copied_input_erased || archived_receipt_copy_erased {
+            // Payload copies are scrubbed even at forged keys. Only actual
+            // erased-holder ownership can widen the graph erase set; a copied
+            // reference or arbitrary text in an unadmitted payload cannot.
+            doomed_entities.insert(key.to_owned());
+            if holder_erased
+                && let Ok(id) = EntityId::from_hex(key)
+                && (crate::skill_hub::source_carrier_matches_id(body, &id)
+                    || crate::receipt::receipt_archive_matches_id(body, &id)
+                    || agent_holder.is_some_and(|child| {
+                        crate::agent_def::birth_source_matches_id(&child, &id)
+                    }))
+            {
+                source_ids.insert(id);
+            }
+        }
+    });
+    let erased = erased.union(&source_ids).copied().collect::<BTreeSet<_>>();
     entities.for_each(|key, _| {
         // ANY value shape under an erased id's key is residue (fail
         // closed) — including non-binary values a crafted update planted.
         if EntityId::from_hex(key).is_ok_and(|id| erased.contains(&id)) {
-            doomed_entities.push(key.to_owned());
+            doomed_entities.insert(key.to_owned());
         }
     });
 
@@ -462,4 +508,23 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
     }
     doc.commit();
     Ok(())
+}
+
+/// Deletion-only scan of the already-recognized birth-source namespace. It
+/// also covers truncated historical payloads; it never grants graph erasure.
+#[cfg(feature = "sync")]
+fn birth_payload_contains_erased_id(
+    body: &[u8],
+    erased: &std::collections::HashSet<[u8; 32]>,
+) -> bool {
+    body.windows(32).any(|window| {
+        if !window.iter().all(u8::is_ascii_hexdigit) {
+            return false;
+        }
+        let mut lower = [0; 32];
+        for (dst, src) in lower.iter_mut().zip(window) {
+            *dst = src.to_ascii_lowercase();
+        }
+        erased.contains(&lower)
+    })
 }

@@ -47,6 +47,7 @@
 //! ([`ReanchorOp`]) is a MINIMAL local representation — see its docs for the
 //! ARTL-3 reconciliation seam.
 mod codec;
+mod conversation;
 mod model;
 mod reanchor;
 mod threads;
@@ -86,3 +87,5 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 #[cfg(test)]
 use rmpv::Value;
+
+pub use conversation::{AnnotationCollaborationState, AnnotationConversationNode};

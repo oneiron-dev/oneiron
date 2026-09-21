@@ -2,6 +2,7 @@ mod annotation;
 mod claim_vad;
 mod consolidation;
 pub mod coping;
+pub mod state_index;
 mod trigger;
 mod vad;
 

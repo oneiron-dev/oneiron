@@ -41,6 +41,9 @@ pub const ENTITY_TYPE_NOTIFICATION: u8 = 16;
 /// shape, so it is a CORE StructuralKind. Short-ID prefix `ag`.
 pub const ENTITY_TYPE_AGENT_DEF: u8 = 17;
 
+/// OF-334 saved ordered agent composition; inert configuration, short prefix `wf`.
+pub const ENTITY_TYPE_WORKFLOW: u8 = 18;
+
 pub const ENTITY_TYPE_TASK_LIST: u8 = 100;
 
 pub const ENTITY_TYPE_TASK: u8 = 101;
@@ -120,8 +123,8 @@ pub const ENTITY_TYPE_FEDERATION_GRANT: u8 = 68;
 /// live.
 pub const ENTITY_TYPE_DIAGNOSTIC: u8 = 69;
 
-// Byte 72 SUSPICIOUS_WAKE, byte 74 CLAIM_CLASS_DESCRIPTOR and byte 75
-// SKILL_HUB are canon-reserved system bytes with no engine substrate yet. They
+// Byte 72 SUSPICIOUS_WAKE and byte 74 CLAIM_CLASS_DESCRIPTOR
+// are canon-reserved system bytes with no engine substrate yet. They
 // stay deliberately unregistered — present in the canon conformance census as
 // reserves, rejected with `InvalidEntityType` on every write path — rather
 // than disappearing from the record.
@@ -172,3 +175,6 @@ pub const ENTITY_TYPE_COMM_RECORD: u8 = 83;
 /// two nodes ingesting the same bytes converge on one anchor. Public puts of
 /// this byte are rejected with `MaintenanceKindNotWritable`.
 pub const ENTITY_TYPE_SKILL_CONTENT_ANCHOR: u8 = 84;
+
+/// Configured, owner-authored skill source (ARCH-0053). Canon-reserved system byte 75.
+pub const ENTITY_TYPE_SKILL_HUB: u8 = 75;

@@ -867,3 +867,81 @@ fn persisted_brief_transcript_is_stable_after_later_comment() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn anchored_thread_binds_existing_room_message_without_copy_or_head_mutation() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let human = put_actor(&vault, 10);
+    let agent = put_agent_actor(&vault, 10);
+    let artifact = put_workbook(&vault, human, 10);
+    let one = vault.open_annotation_thread(
+        &xlsx_anchor(artifact, 1, "Sheet1", "A1"),
+        human,
+        "one",
+        test_time(11),
+        11,
+    )?;
+    let two = vault.open_annotation_thread(
+        &xlsx_anchor(artifact, 1, "Sheet1", "B1"),
+        human,
+        "two",
+        test_time(11),
+        11,
+    )?;
+    let room = EntityId::now();
+    let message = EntityId::now();
+    vault
+        .memory(human.entity_ref(), human.actor_class())
+        .witness(&crate::memory::WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: None,
+            occurred_at: 12,
+            messages: vec![crate::memory::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: crate::memory::WitnessAuthor::User,
+                message_type: "text".to_owned(),
+                content: "node".to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+        })
+        .expect("witness room node");
+    let node = AnnotationConversationNode {
+        conversation_ref: room,
+        message_ref: message,
+    };
+    vault.bind_annotation_conversation_node(artifact, one.thread_id, node, human, 13)?;
+    assert_eq!(
+        vault.annotation_conversation_node(artifact, one.thread_id)?,
+        Some(node)
+    );
+    assert_eq!(
+        vault.annotation_conversation_node(artifact, two.thread_id)?,
+        None
+    );
+    vault.add_annotation_comment(&artifact, &one.thread_id, agent, "reply", test_time(14), 14)?;
+    // An unapproved agent claim does not rewrite a human head or silently
+    // become an admitted answer. The other thread is independent.
+    assert_eq!(
+        vault.annotation_collaboration_state(artifact, two.thread_id)?,
+        AnnotationCollaborationState::Open
+    );
+    vault.set_annotation_thread_state(
+        &artifact,
+        &one.thread_id,
+        ThreadState::Resolved,
+        human,
+        test_time(15),
+        15,
+    )?;
+    assert_eq!(
+        vault.annotation_collaboration_state(artifact, one.thread_id)?,
+        AnnotationCollaborationState::Resolved
+    );
+    assert_eq!(
+        vault.annotation_conversation_node(artifact, one.thread_id)?,
+        Some(node)
+    );
+    Ok(())
+}

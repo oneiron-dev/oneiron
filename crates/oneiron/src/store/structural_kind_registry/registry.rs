@@ -86,6 +86,10 @@ impl Store {
     /// or forged — cannot make this gate (or any public write riding it) pass,
     /// because the zone is consulted before the registry, not after.
     pub(crate) fn validate_entity_type(&self, entity_type: u8) -> Result<()> {
+        if zone_of(entity_type) == TypeByteZone::PackHandle {
+            let txn = self.env.read_txn()?;
+            return self.validate_pack_handle_in_txn(&txn, entity_type);
+        }
         if validate_static_entity_type(entity_type).is_ok() {
             return Ok(());
         }
@@ -105,6 +109,8 @@ impl Store {
     }
 
     pub(crate) fn short_id_prefix(&self, entity_type: u8) -> Result<String> {
+        // Runtime kinds (including shared overflow handles) need their named
+        // body to choose a prefix. A byte-only lookup cannot identify one.
         if let Ok(prefix) = short_id_prefix(entity_type) {
             return Ok(prefix.to_owned());
         }

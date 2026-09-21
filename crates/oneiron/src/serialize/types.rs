@@ -34,6 +34,8 @@ pub(super) enum GroupKey {
     Kind(u8),
     /// Every kind without a labelled section, merged into one bucket.
     Other,
+    /// Whole-vault document section, never an entity-type allocation.
+    ExportSection(&'static str),
 }
 // Bound native TOON recursion for user/vault-provided JSON field values.
 pub(super) const TOON_MAX_DEPTH: usize = 128;

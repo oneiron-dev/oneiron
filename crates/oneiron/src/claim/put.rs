@@ -173,6 +173,7 @@ impl Vault {
         // covered by the one check because both arrive through this door.
         crate::batch::reject_family_owned_candidate(&candidate)?;
         let mut wtxn = self.store.env.write_txn()?;
+        crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
         apply_ops_with_gate_mode(
             &self.store,
             &self.config,
@@ -220,6 +221,25 @@ impl Vault {
         // target is not a policy question the gate ever gets to answer, and a
         // rejected code-run supersession must leave no receipt behind.
         let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&wtxn, old_id)?;
+        crate::memory::require_claim_self_grant_in_txn(
+            self,
+            &wtxn,
+            envelope.actor(),
+            *old_id,
+            &old_body,
+            "memory.claim.supersede",
+        )?;
+        let new_body = self
+            .get_claim_in_txn(&wtxn, new_id)?
+            .ok_or(Error::EntityNotFound)?;
+        crate::memory::require_claim_self_grant_in_txn(
+            self,
+            &wtxn,
+            envelope.actor(),
+            *new_id,
+            &new_body,
+            "memory.claim.edit",
+        )?;
 
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         // Both bodies are host-typed synthetic effect bodies for ONE memory

@@ -71,7 +71,7 @@ fn first_answer_and_both_wait_orders_resume_only_the_calling_step_once() -> Resu
                 TaskWaitOutcome::Pending { .. }
             ));
             let TaskWaitOutcome::Pending { trap_ref } =
-                facade.tasks_wait(&receipt.handle, &ctx, hash)?
+                facade.tasks_wait_in_step(&receipt.handle, &ctx, hash)?
             else {
                 panic!("unanswered ask must wait");
             };
@@ -123,11 +123,11 @@ fn first_answer_and_both_wait_orders_resume_only_the_calling_step_once() -> Resu
         assert_eq!(terminal.disposition, TaskTerminalDisposition::Completed);
         assert_eq!(terminal.result_ref, Some(one));
         assert_eq!(
-            facade.tasks_wait(&receipt.handle, &ctx, hash)?,
+            facade.tasks_wait_in_step(&receipt.handle, &ctx, hash)?,
             TaskWaitOutcome::Ready(winner.clone())
         );
         assert_eq!(
-            facade.tasks_wait(&receipt.handle, &ctx, hash)?,
+            facade.tasks_wait_in_step(&receipt.handle, &ctx, hash)?,
             TaskWaitOutcome::AlreadyResumed(winner)
         );
         assert_eq!(
@@ -325,7 +325,7 @@ fn unanswered_terminal_ask_refuses_both_wait_doors_without_a_trap() -> Result<()
             deadline: None,
             now_ms: now * 1000,
         };
-        assert!(facade.tasks_wait(&handle, &ctx, [9; 32]).is_err());
+        assert!(facade.tasks_wait_in_step(&handle, &ctx, [9; 32]).is_err());
         assert!(
             facade
                 .tasks_wait_external(&handle, "cancelled-step")

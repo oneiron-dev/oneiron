@@ -243,9 +243,9 @@ impl OffRecordSession<'_> {
         learned_at: u64,
     ) -> Result<()> {
         self.base_write_vault(route)?
-            .batch()
-            .claim_candidate(id, candidate, envelope, occurred, learned_at)
-            .commit()
+            .put_claim_candidate_without_lexical_query_reconcile(
+                id, candidate, envelope, occurred, learned_at,
+            )
     }
 
     /// `self.memory.put_claim` on a session-bound run.

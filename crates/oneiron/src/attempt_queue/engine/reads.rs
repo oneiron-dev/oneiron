@@ -116,7 +116,16 @@ impl AttemptQueue<'_> {
         wtxn: &heed::RoTxn<'_>,
         id: AttemptId,
     ) -> Result<Option<AttemptRecord>> {
-        let Some(raw) = self.store.attempt_records.get(wtxn, id.as_bytes())? else {
+        self.get_in_txn(wtxn, id)
+    }
+
+    /// Reads a queue row in the caller's snapshot without nesting an LMDB reader.
+    pub(crate) fn get_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<AttemptRecord>> {
+        let Some(raw) = self.store.attempt_records.get(txn, id.as_bytes())? else {
             return Ok(None);
         };
         decode_record(&raw, id).map(Some)
@@ -156,6 +165,28 @@ impl AttemptQueue<'_> {
             let id = AttemptId::from_bytes(&key)?;
             if !crate::vault_cleanup::attempt_is_archived(self.store, &rtxn, id, &raw_record)? {
                 records.push(decode_record(&raw_record, id)?);
+            }
+        }
+        records.sort_by(attempt_record_order);
+        Ok(records)
+    }
+
+    /// Complete kind view for a projection that must not silently truncate.
+    pub(crate) fn list_kind_bounded(
+        &self,
+        kind: &str,
+        max_scanned: usize,
+    ) -> Result<Vec<AttemptRecord>> {
+        let txn = self.store.env.read_txn()?;
+        let mut records = Vec::new();
+        for (scanned, row) in self.store.attempt_records.iter(&txn)?.enumerate() {
+            if scanned >= max_scanned {
+                return Err(Error::IndexOverflow("attempt kind projection"));
+            }
+            let (key, raw) = row?;
+            let record = decode_record(&raw, AttemptId::from_bytes(&key)?)?;
+            if record.kind == kind {
+                records.push(record);
             }
         }
         records.sort_by(attempt_record_order);

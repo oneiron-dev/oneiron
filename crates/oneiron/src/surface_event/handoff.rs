@@ -31,6 +31,8 @@ pub struct SurfaceEventAttemptPayload {
     pub route: SurfaceEventDispatchRoute,
     /// Downstream idempotency key. Exactly the public correlation id.
     pub dispatch_idempotency_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_ref: Option<String>,
 }
 
 /// Public reference to the durable attempt backing one admitted event.
@@ -156,6 +158,7 @@ pub struct SurfaceEventDispatchRequest<'a> {
     pub agent_ref: &'a str,
     pub correlation_id: &'a str,
     pub idempotency_key: &'a str,
+    pub thread_ref: Option<&'a str>,
 }
 
 /// What a dispatcher decided about one leased attempt.
@@ -258,6 +261,7 @@ impl Vault {
             agent_ref: &payload.event.actor_ref,
             correlation_id: &payload.event.correlation_id,
             idempotency_key: &payload.dispatch_idempotency_key,
+            thread_ref: payload.thread_ref.as_deref(),
         });
 
         let correlation_id = payload.event.correlation_id.as_str();
@@ -312,9 +316,9 @@ impl Vault {
 }
 
 /// The one durable row an admitted correlation id resolves to.
-struct AdmittedSurfaceEvent {
-    attempt: AttemptRecord,
-    replayed: bool,
+pub(super) struct AdmittedSurfaceEvent {
+    pub(super) attempt: AttemptRecord,
+    pub(super) replayed: bool,
 }
 
 /// Commits at most one attempt per public correlation id.
@@ -327,22 +331,56 @@ fn admit_surface_event_once(
     event: &SurfaceEvent,
     now: u64,
 ) -> Result<AdmittedSurfaceEvent> {
+    vault.with_write_txn(|txn| admit_surface_event_once_in_txn(vault, txn, event, None, now))
+}
+
+pub(super) fn admit_surface_event_once_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    event: &SurfaceEvent,
+    thread_ref: Option<&str>,
+    now: u64,
+) -> Result<AdmittedSurfaceEvent> {
     let run_id = surface_event_run_id(&event.correlation_id);
     let payload = encode_surface_event_attempt_payload(&SurfaceEventAttemptPayload {
         event: event.clone(),
-        route: event.dispatch_route(),
+        route: if thread_ref.is_some() {
+            SurfaceEventDispatchRoute::ProposeConfirm
+        } else {
+            event.dispatch_route()
+        },
         dispatch_idempotency_key: event.correlation_id.clone(),
+        thread_ref: thread_ref.map(str::to_owned),
     })?;
 
     let queue = AttemptQueue::new(vault);
-    let mut wtxn = vault.store.env.write_txn()?;
     if let Some(existing) = sole_surface_event_attempt(
-        attempts_for_run_in_write_txn(vault, &queue, &wtxn, &run_id)?,
+        attempts_for_run_in_write_txn(vault, &queue, wtxn, &run_id)?,
         &event.correlation_id,
     )? {
         // A row already owns this correlation id — including after it reached a
         // terminal state. Replay derives that attempt instead of dispatching a
         // second one; the write txn is dropped without a commit.
+        let held = decode_surface_event_attempt_payload(&existing.payload)?;
+        if thread_ref.is_some() || held.thread_ref.is_some() {
+            let requested = thread_ref
+                .map(|thread| {
+                    crate::thread_passport::canonical_thread_ref_in_txn(vault, wtxn, thread)
+                })
+                .transpose()?;
+            let prior = held
+                .thread_ref
+                .as_deref()
+                .map(|thread| {
+                    crate::thread_passport::canonical_thread_ref_in_txn(vault, wtxn, thread)
+                })
+                .transpose()?;
+            if requested != prior || held.event != *event {
+                return Err(Error::InvalidConfig(
+                    "CC correlation already belongs to another message or thread".to_owned(),
+                ));
+            }
+        }
         return Ok(AdmittedSurfaceEvent {
             attempt: existing,
             replayed: true,
@@ -350,7 +388,7 @@ fn admit_surface_event_once(
     }
 
     let outcome = queue.enqueue_in_txn(
-        &mut wtxn,
+        wtxn,
         EnqueueAttempt {
             kind: SURFACE_EVENT_ATTEMPT_KIND.to_owned(),
             payload,
@@ -367,7 +405,6 @@ fn admit_surface_event_once(
             now,
         },
     )?;
-    wtxn.commit()?;
     Ok(match outcome {
         EnqueueOutcome::Enqueued(attempt) => AdmittedSurfaceEvent {
             attempt,
@@ -445,7 +482,7 @@ fn handoff_status(correlation_id: &str, record: &AttemptRecord) -> SurfaceEventH
 
 /// Status URL an ack points at, with the correlation id percent-encoded so a
 /// provider id carrying `/` or `?` still addresses its own resource.
-fn surface_event_status_path(correlation_id: &str) -> String {
+pub(super) fn surface_event_status_path(correlation_id: &str) -> String {
     let mut path = String::from(SURFACE_EVENT_STATUS_PATH_PREFIX);
     for byte in correlation_id.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {

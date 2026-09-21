@@ -1,5 +1,5 @@
 //! The convert door itself: fence-checked selection in, mechanical hash dedup, and one
-//! record landed in one write transaction.
+//! record and its exact source tree landed in one write transaction.
 
 use rmpv::Value;
 
@@ -142,7 +142,13 @@ pub fn convert_messages_to_skill(
             ),
         };
         let id = EntityId::now();
+        let package = crate::skill_hub::package_from_source(
+            &record,
+            refined.files.clone(),
+            crate::skill_hub::SkillPackageFormat::Native,
+        )?;
         vault.put_skill_record_in_txn(wtxn, &id, &record, occurred, learned_at)?;
+        vault.persist_hub_package_in_txn(wtxn, &id, &package)?;
         Ok(match merge_target {
             Some(existing) => ConvertOutcome::MergeProposed {
                 existing,

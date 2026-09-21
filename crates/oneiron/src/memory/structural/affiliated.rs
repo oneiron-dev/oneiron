@@ -9,7 +9,7 @@ use crate::entity_id::EntityId;
 use crate::error::ErrorKind;
 use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
-    NormalizedIngestClaim, admit_imported_evidence_claim,
+    NormalizedIngestClaim,
 };
 use crate::memory::claims::parse_claim_source;
 use crate::memory::support::{
@@ -224,7 +224,7 @@ impl Memory<'_> {
                 learned_at,
             )
             .with_approval(approval);
-            admit_imported_evidence_claim(self.vault, &claim, admission)
+            crate::ingest::admit_imported_evidence_claim_for_memory(self.vault, &claim, admission)
         };
         match admit(approval) {
             Ok(()) => {}

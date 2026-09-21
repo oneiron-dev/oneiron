@@ -565,6 +565,26 @@ impl<'a> ScopedRead<'a> {
         id: &EntityId,
         body: &ClaimBody,
     ) -> Result<bool> {
+        let principal = claim_principal_id(body)?;
+        let reader = EntityId::from_hex(self.actor_key.actor_ref()).ok();
+        if principal.is_some() && principal != reader {
+            return Ok(false);
+        }
+        if crate::edit_distance::miner::is_mined_preference(&body.predicate) {
+            if principal.is_none() {
+                return Ok(false);
+            }
+            let raw = self
+                .entities()
+                .get(rtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("preference entity"))?;
+            let learned_at = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("preference entity header"))?
+                .learned_at;
+            if !preference_in_force(body, learned_at, crate::unix_seconds_now())? {
+                return Ok(false);
+            }
+        }
         if !claim_surfaceable(body) {
             return Ok(false);
         }

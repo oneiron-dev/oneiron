@@ -244,6 +244,9 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::MemoryPutEdge
         | SelfEffect::AskHuman
         | SelfEffect::DestructiveFixture
+        | SelfEffect::AgentsSpawn
+        | SelfEffect::TasksAsk
+        | SelfEffect::TasksWait
         | SelfEffect::TaskDelegate
         | SelfEffect::Context
         | SelfEffect::Speak

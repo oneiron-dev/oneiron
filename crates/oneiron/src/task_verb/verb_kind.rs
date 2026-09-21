@@ -50,6 +50,10 @@ pub enum TaskAssignee {
     Peer {
         actor_ref: EntityId,
     },
+    /// An already spawned child, addressed by its authenticated actor identity.
+    Child {
+        actor_ref: EntityId,
+    },
     Human {
         actor_ref: EntityId,
     },
@@ -64,6 +68,7 @@ impl TaskAssignee {
             Self::AnswerHolders => "answer_holders",
             Self::AgentDef { .. } => "agent_def",
             Self::Peer { .. } => "peer",
+            Self::Child { .. } => "child",
             Self::Human { .. } => "human",
         }
     }
@@ -74,7 +79,9 @@ impl TaskAssignee {
         match self {
             Self::Dreamer | Self::AnswerHolders => None,
             Self::AgentDef { agent_def_ref } => Some(agent_def_ref),
-            Self::Peer { actor_ref } | Self::Human { actor_ref } => Some(actor_ref),
+            Self::Peer { actor_ref } | Self::Child { actor_ref } | Self::Human { actor_ref } => {
+                Some(actor_ref)
+            }
         }
     }
 
@@ -90,7 +97,11 @@ impl TaskAssignee {
             Self::AgentDef { .. } => stored == Some(crate::registry::ENTITY_TYPE_AGENT_DEF),
             // A peer/human actor is whatever kind the identity plane stores it
             // as (PERSON today); existence is the assertable invariant.
-            Self::Dreamer | Self::AnswerHolders | Self::Peer { .. } | Self::Human { .. } => {
+            Self::Dreamer
+            | Self::AnswerHolders
+            | Self::Peer { .. }
+            | Self::Child { .. }
+            | Self::Human { .. } => {
                 stored.is_some()
             }
         };

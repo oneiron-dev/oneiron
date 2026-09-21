@@ -539,6 +539,8 @@ impl Vault {
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::workspace_roster::seed_root_project(&vault)?;
         }
+        // Carrier data must still match the local installation head on reopen.
+        let _ = vault.pack_byte_map_snapshot()?;
         Ok(vault)
     }
 

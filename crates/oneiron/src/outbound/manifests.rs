@@ -432,7 +432,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 verb(
                     "send",
                     "send_email",
-                    json!({"to": ["addr@example.com"], "subject": "string", "body": "text/html|string", "headers": "optional object"}),
+                    json!({"to": ["addr@example.com"], "subject": "string", "body": "text/html|string", "headers": "optional object", "posting": {"default": "named_participant", "post_as_owner_supported": true, "policy_risk": true, "permission": "verified sender plus exact owner space grant"}}),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,

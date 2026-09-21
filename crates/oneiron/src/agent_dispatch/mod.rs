@@ -25,7 +25,21 @@ mod codec;
 mod context;
 mod dispatch;
 mod kill;
+mod resident;
 mod types;
+mod widen;
+mod widen_record;
+mod workflow;
+mod workflow_host;
+mod workflow_pump;
+mod workflow_record;
+
+pub use workflow_record::{WorkflowDispatchStatus, WorkflowProgress, WorkflowStepResult};
+
+#[cfg(test)]
+mod workflow_tests;
+
+pub use self::widen_record::ContextWidenProposal;
 
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, decode_agent_dispatch_input,
@@ -77,3 +91,8 @@ use crate::error::{Error, Result};
 use crate::failure_ladder::HealerCase;
 #[cfg(test)]
 use rmpv::Value;
+
+pub use resident::{ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode};
+
+#[cfg(test)]
+mod resident_tests;
