@@ -22,6 +22,7 @@ impl SyncClient {
     /// metadata, the `x:` quarantine family, and delete-bearing `q:` rows +
     /// their `d:` markers).
     pub fn reset_for_re_bootstrap(&mut self) {
+        self.cancel_lfs_download();
         for key in self.manager.loaded_keys() {
             self.manager.discard_window(&key);
         }
@@ -90,7 +91,7 @@ impl SyncClient {
         // on the same connection; ledger mode remains bound on first use.
         // Frame #2: lease request (ONE-1140, OD-5).
         let mut messages = vec![
-            transport::encode_protocol_hello(),
+            transport::encode_chunk_full_window_protocol_hello(),
             self.lease_request_frame(),
         ];
         messages.extend(self.generate_phase_frames()?);

@@ -860,7 +860,7 @@ fn federation_pact_scope_decode_fails_closed() {
         direction_value(all(), all(), all()),
     );
     let bad_version = encode_value(&Value::Map(vec![
-        (Value::from("schema_version"), Value::from(2_u64)),
+        (Value::from("schema_version"), Value::from(1_u64)),
         (
             Value::from("lo_to_hi"),
             direction_value(all(), all(), all()),
@@ -997,7 +997,7 @@ fn federation_grant_type_registration_is_stable() {
     let entry = entity_type_registry_entry(ENTITY_TYPE_FEDERATION_GRANT)
         .expect("FEDERATION_GRANT registry row");
 
-    assert_eq!(ENTITY_TYPE_FEDERATION_GRANT, 68);
+    assert_eq!(ENTITY_TYPE_FEDERATION_GRANT, 66);
     assert_eq!(entry.kind, "FEDERATION_GRANT");
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);
@@ -1301,7 +1301,7 @@ fn relationship_trust_tier_and_band_tables_are_fixed() {
             vec![
                 SelectorRange::Semantic,
                 SelectorRange::Core,
-                SelectorRange::Companion,
+                SelectorRange::Family(crate::registry::TypeByteFamily::Companion),
             ],
         ),
         (
@@ -1309,7 +1309,7 @@ fn relationship_trust_tier_and_band_tables_are_fixed() {
             vec![
                 SelectorRange::Semantic,
                 SelectorRange::Core,
-                SelectorRange::Companion,
+                SelectorRange::Family(crate::registry::TypeByteFamily::Companion),
             ],
         ),
         (
@@ -1321,15 +1321,15 @@ fn relationship_trust_tier_and_band_tables_are_fixed() {
             vec![
                 SelectorRange::Semantic,
                 SelectorRange::Core,
-                SelectorRange::Productivity,
+                SelectorRange::Family(crate::registry::TypeByteFamily::Productivity),
             ],
         ),
         (
             RelationshipTrustClass::Client,
             vec![
                 SelectorRange::Semantic,
-                SelectorRange::Crm,
-                SelectorRange::Productivity,
+                SelectorRange::Family(crate::registry::TypeByteFamily::People),
+                SelectorRange::Family(crate::registry::TypeByteFamily::Productivity),
             ],
         ),
         (
@@ -1349,9 +1349,13 @@ fn relationship_trust_tier_and_band_tables_are_fixed() {
         default_trust_tier(RelationshipTrustClass::Intimate),
     );
     let client_bands = default_retrieval_bands(RelationshipTrustClass::Client);
-    assert!(client_bands.contains(&SelectorRange::Crm));
+    assert!(client_bands.contains(&SelectorRange::Family(
+        crate::registry::TypeByteFamily::People
+    )));
     assert!(!client_bands.contains(&SelectorRange::Core));
-    assert!(!client_bands.contains(&SelectorRange::Companion));
+    assert!(!client_bands.contains(&SelectorRange::Family(
+        crate::registry::TypeByteFamily::Companion
+    )));
 }
 
 #[test]

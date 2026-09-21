@@ -196,6 +196,16 @@ pub(super) fn validate_existing_witness_message_orders(
 /// checks. Validation is repeated at this storage boundary so a malformed
 /// persisted sibling cannot be treated as an ordinary occupied slot.
 fn canonical_witness_message_order(body: &[u8]) -> MemoryResult<u32> {
+    // MESSAGE text-plane rows retain immutable axes with a document pointer.
+    // Reconstruct an empty canonical content slot solely to validate the order
+    // envelope; this is not a writer or text resolver and grants no authority.
+    let canonical;
+    let body = if let Some(bytes) = message_pointer_order_envelope(body)? {
+        canonical = bytes;
+        canonical.as_slice()
+    } else {
+        body
+    };
     validate_canonical_witness_message_body(body)?;
     let mut cursor = body;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
@@ -263,4 +273,64 @@ pub(in crate::memory) fn distinct_message_orders(messages: &[WitnessMessage]) ->
         seen[word] |= mask;
     }
     Ok(())
+}
+
+/// Pointer-aware metadata validation for sibling-order scans (no document load).
+fn message_pointer_order_envelope(body: &[u8]) -> MemoryResult<Option<Vec<u8>>> {
+    let mut input = body;
+    let value =
+        rmpv::decode::read_value(&mut input).map_err(|_| Error::CorruptedIndex("message body"))?;
+    let Value::Map(fields) = value else {
+        return Ok(None);
+    };
+    if !fields
+        .iter()
+        .any(|(key, _)| key.as_str() == Some("entity_doc_ref"))
+    {
+        return Ok(None);
+    }
+    let fail = || {
+        Error::Record(RecordError::InvalidWitnessMessageBody(
+            "invalid MESSAGE document pointer",
+        ))
+    };
+    if !input.is_empty() {
+        return Err(fail().into());
+    }
+    let mut keys = HashSet::new();
+    for (key, value) in &fields {
+        let key = key.as_str().ok_or_else(fail)?;
+        if !matches!(
+            key,
+            "author" | "type" | "metadata" | "is_visible" | "order" | "entity_doc_ref"
+        ) || !keys.insert(key)
+        {
+            return Err(fail().into());
+        }
+        if key == "entity_doc_ref" {
+            EntityId::from_hex(value.as_str().ok_or_else(fail)?).map_err(|_| fail())?;
+        }
+    }
+    let mut canonical = Vec::new();
+    for name in [
+        "author",
+        "type",
+        "content",
+        "metadata",
+        "is_visible",
+        "order",
+    ] {
+        if name == "content" {
+            canonical.push((Value::from(name), Value::from("")));
+            continue;
+        }
+        if let Some((key, value)) = fields.iter().find(|(key, _)| key.as_str() == Some(name)) {
+            canonical.push((key.clone(), value.clone()));
+        } else if name != "metadata" {
+            return Err(fail().into());
+        }
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(canonical)).map_err(|_| fail())?;
+    Ok(Some(bytes))
 }

@@ -8,7 +8,10 @@ use oneiron::ErrorKind;
 
 pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
     match error.kind() {
-        ErrorKind::DimensionMismatch
+        ErrorKind::ConversationDenied => ApiError::forbidden_scope("conversation_actor"),
+        ErrorKind::ConversationState => ApiError::invalid_state(Some("conversation_state")),
+        ErrorKind::InvalidConversationBody
+        | ErrorKind::DimensionMismatch
         | ErrorKind::InvalidVector
         | ErrorKind::InvalidKey
         | ErrorKind::InvalidConfig

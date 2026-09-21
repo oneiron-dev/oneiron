@@ -349,6 +349,11 @@ pub(super) fn materialize_entity_blob_in_txn(
     lease_vault_id: u64,
 ) -> Result<bool> {
     let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
+    if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, wtxn, &id)?
+        || crate::origin::lfs::is_lfs_chunk_blob(&id, blob)
+    {
+        return Ok(false);
+    }
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Err(crate::Error::CorruptedIndex("entity metadata"));
     };

@@ -8,7 +8,7 @@ use crate::provenance::made_by::{
 };
 use crate::provenance::text_commit::{RowProvenance, TextCommitReceipt};
 use crate::write_envelope::WriteActor;
-use loro::{ChangeMeta, CommitOptions};
+use loro::{ChangeMeta, CommitOptions, LoroDoc};
 use sha2::{Digest, Sha256};
 use std::ops::ControlFlow;
 
@@ -56,8 +56,9 @@ impl ProposalTextArtifact {
         let mut receipts = Vec::new();
         let mut authority_error = None;
         self.doc
+            .doc
             .travel_change_ancestors(
-                &self.doc.oplog_frontiers().to_vec(),
+                &self.doc.doc.oplog_frontiers().to_vec(),
                 &mut |meta: ChangeMeta| {
                     let receipt = meta
                         .message
@@ -144,52 +145,72 @@ impl ProposalTextArtifact {
         receipt: Option<MadeBy>,
     ) -> Result<()> {
         let at = crate::unix_seconds_now();
-        let mut receipt = receipt.unwrap_or_else(|| MadeBy {
-            inputs: self
-                .source_turn_ref
-                .into_iter()
-                .map(|row| MadeByInput {
-                    row,
-                    role: MadeByInputRole::Input,
-                })
-                .collect(),
-            process: MadeByProcess {
-                actor: actor.entity_ref(),
-                class: if actor.actor_class() == EdgeActorClass::Human {
-                    MadeByClass::Stated
-                } else {
-                    MadeByClass::Concluded
-                },
-                identity: actor.entity_ref().to_hex(),
-                version: "1".into(),
-                params_hash: format!("{:x}", Sha256::digest([])),
-            },
+        let message = receipted_message(
+            &self.doc.doc,
+            kind,
+            actor,
+            self.source_turn_ref,
+            receipt,
             at,
-            trigger: None,
-        });
-        receipt.at = at;
-        if receipt.process.actor != actor.entity_ref()
-            || !receipt.process.is_valid()
-            || receipt.inputs.len() > 1024
-        {
-            return Err(Error::InvalidConfig("invalid text commit process".into()));
-        }
-        let encoded = serde_json::to_string(&receipt)
-            .map_err(|_| Error::InvariantViolation("text receipt encoding"))?;
-        // The prior frontier distinguishes even same-second edits by one actor:
-        // Loro must not coalesce two commits with equal commit messages.
-        let before = format!("{:x}", Sha256::digest(self.doc.oplog_frontiers().encode()));
-        let message = format!(
-            "{} before={before} {RECEIPT_PREFIX}{encoded}",
-            stamp(kind, actor)
-        );
-        self.doc.commit_with(
+        )?;
+        let timestamp = i64::try_from(at)
+            .map_err(|_| Error::InvalidConfig("text commit timestamp overflow".into()))?;
+        self.doc.doc.commit_with(
             CommitOptions::new()
-                .timestamp(at as i64)
+                .timestamp(timestamp)
                 .commit_msg(&message),
         );
         Ok(())
     }
+}
+
+pub(super) fn receipted_message(
+    doc: &LoroDoc,
+    kind: StampKind,
+    actor: &WriteActor,
+    source_turn_ref: Option<EntityId>,
+    receipt: Option<MadeBy>,
+    at: u64,
+) -> Result<String> {
+    let mut receipt = receipt.unwrap_or_else(|| MadeBy {
+        inputs: source_turn_ref
+            .into_iter()
+            .map(|row| MadeByInput {
+                row,
+                role: MadeByInputRole::Input,
+            })
+            .collect(),
+        process: MadeByProcess {
+            actor: actor.entity_ref(),
+            class: if actor.actor_class() == EdgeActorClass::Human {
+                MadeByClass::Stated
+            } else {
+                MadeByClass::Concluded
+            },
+            identity: actor.entity_ref().to_hex(),
+            version: "1".into(),
+            params_hash: format!("{:x}", Sha256::digest([])),
+        },
+        at,
+        trigger: None,
+    });
+    receipt.at = at;
+    if receipt.process.actor != actor.entity_ref()
+        || !receipt.process.is_valid()
+        || receipt.inputs.len() > 1024
+    {
+        return Err(Error::InvalidConfig("invalid text commit process".into()));
+    }
+    let encoded = serde_json::to_string(&receipt)
+        .map_err(|_| Error::InvariantViolation("text receipt encoding"))?;
+    // The prior frontier distinguishes even same-second edits by one actor:
+    // Loro must not coalesce two commits with equal commit messages.
+    let before = format!("{:x}", Sha256::digest(doc.oplog_frontiers().encode()));
+    let message = format!(
+        "{} before={before} {RECEIPT_PREFIX}{encoded}",
+        stamp(kind, actor)
+    );
+    Ok(message)
 }
 
 fn trigger_is_valid(vault: &crate::Vault, trigger: &MadeByTrigger) -> Result<bool> {

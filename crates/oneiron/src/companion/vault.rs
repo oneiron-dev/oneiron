@@ -351,7 +351,7 @@ impl Vault {
             .is_some_and(|entry| {
                 entry.short_id_prefix == Some(COMPANION_REGISTER_SHORT_ID_PREFIX)
                     && entry.classification == EntityClassification::Pack
-                    && entry.zone == TypeByteZone::System
+                    && entry.zone == TypeByteZone::CompiledProduct
             });
         if !static_registered {
             return Ok(false);
@@ -363,7 +363,7 @@ impl Vault {
         {
             let compatible_legacy_row = registration.short_id_prefix
                 == COMPANION_REGISTER_SHORT_ID_PREFIX
-                && registration.zone == TypeByteZone::System
+                && registration.zone == TypeByteZone::CompiledProduct
                 && registration.pack == COMPANION_REGISTER_PACK_ID;
             if !compatible_legacy_row {
                 tracing::warn!(

@@ -330,6 +330,7 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         // the refusal side with the rest of the structural kinds.
         | EdgeKind::Fulfills
         | EdgeKind::DischargedBy
+        | EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::AddressedTo | EdgeKind::RepliesTo
         // ONE-1414: `same_as` is structural and its writes belong to the
         // federation coreference door (`put_coreference_link`), which writes
         // the link and its status Claim in ONE transaction under an actor

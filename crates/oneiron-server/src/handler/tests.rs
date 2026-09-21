@@ -1148,11 +1148,12 @@ async fn legacy_selector_protocol_rejects_first_message_full_window_sync() {
 }
 
 #[tokio::test]
-async fn current_protocol_accepts_first_message_full_window_sync() {
+async fn owner_protocol_accepts_first_message_full_window_sync() {
     let (_dir, server) = test_server();
     let key = "2026-10";
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
+    conn_state.protocol_version = protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION;
 
     handle_window_sync(
         &server,
@@ -2440,11 +2441,15 @@ async fn a_session_without_a_jti_is_unaffected_by_an_unreadable_registry() {
 
 #[test]
 fn protocol_hello_validation_literals() {
-    // Contract literals: v6 is full-window-only, v7 is selector-only, and v9
-    // supports both modes plus entity documents. v8 is not negotiated.
+    // Full-window v6/v10 and selector v7/v8/v9 stay distinct.
+    // Both v9 and v10 carry entity documents; only v10 carries owner chunks.
     assert_eq!(
         validate_protocol_hello(&[3, 6]),
         Ok(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
+    );
+    assert_eq!(
+        validate_protocol_hello(&[3, 8]),
+        Ok(protocol::APP_TIER_PROTOCOL_VERSION_VERSION)
     );
     assert_eq!(
         validate_protocol_hello(&[3, 7]),
@@ -2454,6 +2459,10 @@ fn protocol_hello_validation_literals() {
         validate_protocol_hello(&[3, 9]),
         Ok(protocol::PROTOCOL_VERSION)
     );
+    assert_eq!(
+        validate_protocol_hello(&[3, 10]),
+        Ok(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
+    );
 
     let cases: &[(&str, &[u8])] = &[
         ("v1_peer", &[3, 1]),
@@ -2461,8 +2470,7 @@ fn protocol_hello_validation_literals() {
         ("old_selector_v3_peer", &[3, 3]),
         ("old_full_window_v4_peer", &[3, 4]),
         ("old_selector_v5_peer", &[3, 5]),
-        ("retired_app_version", &[3, 8]),
-        ("future_version", &[3, 10]),
+        ("future_version", &[3, 11]),
         ("zero_version", &[3, 0]),
         ("wrong_tag", &[2, 7]),
         ("empty", &[]),
@@ -3561,6 +3569,15 @@ async fn a_silent_peer_gets_re_consulted_on_the_tick_during_the_pre_handover_dra
 
 #[tokio::test]
 async fn document_batch_socket_admission_edit_ack_and_revocation() {
+    document_batch_exchange(protocol::PROTOCOL_VERSION).await;
+}
+
+#[tokio::test]
+async fn owner_socket_combines_document_and_chunk_sync_without_selector_downgrade() {
+    document_batch_exchange(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION).await;
+}
+
+async fn document_batch_exchange(version: u8) {
     use oneiron::sync::transport::{
         self, document_sub_tags, encode_document, encode_document_batch,
     };
@@ -3611,6 +3628,7 @@ async fn document_batch_socket_admission_edit_ack_and_revocation() {
     let batch = encode_document_batch(&requests).into_result().unwrap();
     let (direct, mut replies) = mpsc::unbounded_channel();
     let mut state = test_selector_conn_state();
+    state.protocol_version = version;
     handle_sync_message(
         &server,
         1,
@@ -3653,6 +3671,59 @@ async fn document_batch_socket_admission_edit_ack_and_revocation() {
     client.handle_server_message(&ack).unwrap();
     assert!(local.pending_frames().unwrap().is_empty());
     assert_eq!(source.text().unwrap(), "shared edit");
+
+    // The same socket can carry owner-only chunks without changing the
+    // per-document selector admission or admitting selector window requests.
+    let bytes = b"document and chunk lane coexistence";
+    let oid = oneiron::origin::lfs::LfsOid::digest(bytes);
+    server
+        .vault
+        .put_lfs_object(oid, bytes, oneiron::TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    let request =
+        oneiron::sync::chunks::encode_chunk_request(&oneiron::sync::chunks::ChunkSyncRequest {
+            oid: *oid.as_bytes(),
+            selector: Vec::new(),
+            have: Vec::new(),
+            want: None,
+        })
+        .unwrap();
+    let frame = transport::encode_lfs_chunk_sync(&request)
+        .into_result()
+        .unwrap();
+    let result = handle_sync_message(
+        &server,
+        1,
+        protocol::parse_message(&frame).unwrap(),
+        &direct,
+        &mut state,
+    )
+    .await;
+    if version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION {
+        result.unwrap();
+        let reply = replies.try_recv().unwrap();
+        assert_eq!(reply[0], transport::TAG_LFS_CHUNK_SYNC);
+        assert_eq!(
+            &reply[1..],
+            oneiron::sync::chunks::serve_owner_chunk_request(&server.vault, &request,).unwrap()
+        );
+        assert!(
+            state
+                .bind_window_sync_mode(super::conn_state::WindowSyncMode::Selector)
+                .is_err()
+        );
+        state
+            .bind_window_sync_mode(super::conn_state::WindowSyncMode::FullWindow)
+            .unwrap();
+    } else {
+        assert!(result.is_err());
+        assert!(replies.try_recv().is_err());
+        assert!(
+            state
+                .bind_window_sync_mode(super::conn_state::WindowSyncMode::FullWindow)
+                .is_err()
+        );
+    }
 
     // A queued notice cannot disclose after its grant is gone.
     let notice = source.edit_text(11, 0, "!").unwrap();

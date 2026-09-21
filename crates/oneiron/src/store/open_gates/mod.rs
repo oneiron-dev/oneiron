@@ -36,7 +36,7 @@ pub(in crate::store) use self::manifest_storage_gates::StorageAbiGate;
 #[cfg(test)]
 pub(in crate::store) use self::manifest_storage_gates::gate_storage_abi_value;
 #[cfg(test)]
-pub(in crate::store) use self::open_version_keys::STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR;
+pub(in crate::store) use self::open_version_keys::STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR;
 #[cfg(test)]
 pub(in crate::store) use self::open_version_keys::{
     HNSW_COMPATIBILITY_LEN, HNSW_COMPATIBILITY_V2_LEN, HNSW_COMPATIBILITY_V2_VERSION,

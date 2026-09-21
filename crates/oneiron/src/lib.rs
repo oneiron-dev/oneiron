@@ -37,8 +37,11 @@ pub(crate) mod bm25;
 pub mod compaction;
 pub mod context_pack;
 pub mod context_projection;
+pub mod conversation;
 pub(crate) mod distance;
 pub mod embed;
+#[cfg(feature = "sync")]
+pub mod entity_doc;
 pub(crate) mod fusion;
 pub mod graph_fs;
 pub(crate) mod hnsw;

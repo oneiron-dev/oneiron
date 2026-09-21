@@ -111,8 +111,13 @@ fn lfs_put_writes_asset_and_lookup_row_once() {
     assert_eq!(outcome.object.created_at, LEARNED_AT);
     assert_eq!(
         outcome.object.asset_id,
-        lfs_asset_entity_id(&oid).expect("deterministic asset id"),
-        "the asset id is derived from the oid under the LFS domain"
+        vault
+            .lfs_manifest(oid)
+            .unwrap()
+            .unwrap()
+            .asset_id()
+            .unwrap(),
+        "the asset id is derived from the BLAKE3 manifest"
     );
 
     let record = vault.lfs_object(oid).expect("record read").expect("record");
@@ -120,14 +125,26 @@ fn lfs_put_writes_asset_and_lookup_row_once() {
     assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_ASSET)
+            .map(|mut ids| {
+                ids.sort_unstable();
+                ids
+            })
             .expect("scan assets"),
-        vec![record.asset_id],
-        "exactly one ASSET entity exists, and it is this object's"
+        {
+            let mut ids = vec![
+                record.asset_id,
+                chunks::chunk_id(&vault.lfs_manifest(oid).unwrap().unwrap().chunks[0].hash)
+                    .unwrap(),
+            ];
+            ids.sort_unstable();
+            ids
+        },
+        "one manifest and one small-file chunk exist"
     );
     assert_eq!(
         vault.get(&record.asset_id).expect("asset read"),
-        Some(bytes.clone()),
-        "the bytes are an ordinary ASSET entity"
+        Some(vault.lfs_manifest(oid).unwrap().unwrap().encode().unwrap()),
+        "the manifest is an ordinary ASSET entity"
     );
     assert_eq!(
         vault.get_lfs_object(oid).expect("download"),
@@ -223,9 +240,21 @@ fn lfs_put_dedup_second_upload_is_one_object() {
     assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_ASSET)
+            .map(|mut ids| {
+                ids.sort_unstable();
+                ids
+            })
             .expect("scan assets"),
-        vec![first.object.asset_id],
-        "two identical uploads are one ASSET entity"
+        {
+            let mut ids = vec![
+                first.object.asset_id,
+                chunks::chunk_id(&vault.lfs_manifest(oid).unwrap().unwrap().chunks[0].hash)
+                    .unwrap(),
+            ];
+            ids.sort_unstable();
+            ids
+        },
+        "two identical uploads share both manifest and chunk"
     );
     assert_eq!(
         second.object.created_at, LEARNED_AT,

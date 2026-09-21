@@ -22,6 +22,14 @@ pub enum RecordError {
     /// A well-formed project reference has not materialized yet.
     #[error("project dependency is not materialized")]
     ProjectDependencyPending,
+    #[error("message stream recovery refused: {0}")]
+    MessageStreamRecoveryFailed(String),
+    #[error("invalid conversation body: {0}")]
+    InvalidConversationBody(&'static str),
+    #[error("invalid conversation operation: {0}")]
+    ConversationState(&'static str),
+    #[error("conversation actor is not authorized")]
+    ConversationDenied,
 
     /// AccessGrant creation attempted to reuse an existing entity id.
     #[error("access grant already exists")]
@@ -180,6 +188,10 @@ impl RecordError {
             Self::InvalidProjectBody(_) => ErrorKind::InvalidProjectBody,
             Self::InvalidProjectRoomBody(_) => ErrorKind::InvalidProjectRoomBody,
             Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,
+            Self::InvalidConversationBody(_) => ErrorKind::InvalidConversationBody,
+            Self::ConversationState(_) => ErrorKind::ConversationState,
+            Self::ConversationDenied => ErrorKind::ConversationDenied,
+            Self::MessageStreamRecoveryFailed(_) => ErrorKind::MessageStreamRecoveryFailed,
             Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
             Self::OutboundGrantAlreadyExists => ErrorKind::OutboundGrantAlreadyExists,
             Self::ConnectorKeyAlreadyExists => ErrorKind::ConnectorKeyAlreadyExists,

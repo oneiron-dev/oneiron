@@ -15,10 +15,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncEngineContext, SyncProtocolValidation};
 #[cfg(feature = "test-hooks")]
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
-use crate::registry::{
-    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, EntityClassification, TypeByteZone,
-    entity_type_registry_entry, zone_of,
-};
+use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM};
 use crate::sync::loro_support::{
     map_for_each_tombstone_value, map_for_each_value_bytes, map_insert_bytes,
 };
@@ -27,7 +24,7 @@ use crate::sync::types::WindowKey;
 
 #[cfg(feature = "sync")]
 use super::edge::copy_admitted_edges;
-use crate::error::{RecordError, RegistryError, SyncError};
+use crate::error::{RecordError, SyncError};
 
 /// Role carried by a member/guest federation import path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -261,29 +258,17 @@ pub(crate) fn admit_federated_entity_blob(
             admit_federated_authority_log(vault, &id, &blob[ENTITY_METADATA_HEADER_LEN..])?;
             return Ok(blob.to_vec());
         }
-        // Engine-authored kinds are CLASSIFICATION-routed, never byte-range
-        // routed. Before byte-space v3 the second arm here was a "byte >= 120"
-        // band test, which was only ever a PROXY for "engine-authored" — and
-        // the v3 re-key moves every maintenance kind DOWN into 64–99, so
-        // keeping that test would have silently begun admitting peer-written
-        // maintenance records. The zone arm below now covers only bytes with
-        // no static kind at all: the canon-reserved system bytes (72/74/75)
-        // and the entire pack half, neither of which a peer may author.
-        // DIAGNOSTIC (69) left that reserve set in ONE-1394 and is now caught
-        // by the CLASSIFICATION arm instead — engine-authored either way.
-        let engine_authored = entity_type_registry_entry(header.entity_type).map_or_else(
-            || {
-                !matches!(
-                    zone_of(header.entity_type),
-                    TypeByteZone::Semantic | TypeByteZone::Core | TypeByteZone::CompiledProduct
-                )
-            },
-            |entry| entry.classification == EntityClassification::Maintenance,
-        );
-        if engine_authored {
-            return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
-                header.entity_type,
-            )));
+        // The same registry classification decides writability and admission.
+        // Unknown bytes cannot become peer-writable because they lie in a range.
+        vault
+            .store
+            .validate_public_entity_type(header.entity_type)?;
+        if crate::federation::selector_range_of(header.entity_type).is_none()
+            && vault
+                .structural_kind_registration(header.entity_type)
+                .is_none_or(|registration| registration.family.is_none())
+        {
+            return Err(Error::InvalidEntityType(header.entity_type));
         }
         validate_admitted_replicated_body(
             &id,

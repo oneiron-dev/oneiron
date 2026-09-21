@@ -522,7 +522,7 @@ fn headerless_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<(
     let id = EntityId::now();
     vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
 
-    let outcome = run_raced_delete_rendezvous(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
+    let outcome = run_raced_delete(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
         crate::hnsw::hnsw_deindex(&vault.store, wtxn, &id)?;
         vault.store.vectors.delete(wtxn, id.as_bytes())?;
         Ok(())
@@ -555,7 +555,7 @@ fn headerful_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()
         )
         .commit()?;
 
-    let outcome = run_raced_delete_rendezvous(&vault, &id, DeleteReason::UserHardDelete, |wtxn| {
+    let outcome = run_raced_delete(&vault, &id, DeleteReason::UserHardDelete, |wtxn| {
         // Erase the FULL delete scope the way a racing hard delete would.
         crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
         Ok(())

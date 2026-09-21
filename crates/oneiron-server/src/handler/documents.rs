@@ -16,8 +16,12 @@ pub(super) fn handle_document(
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
-    if state.protocol_version != transport::PROTOCOL_VERSION {
-        return Err(ProtocolError::InvalidPayload("document sync requires v9"));
+    if state.protocol_version != transport::PROTOCOL_VERSION
+        && state.protocol_version != transport::CHUNK_FULL_WINDOW_PROTOCOL_VERSION
+    {
+        return Err(ProtocolError::InvalidPayload(
+            "document sync requires a document-capable protocol",
+        ));
     }
     if payload.len() > server.config.max_update_payload {
         return Err(ProtocolError::FrameTooLarge {

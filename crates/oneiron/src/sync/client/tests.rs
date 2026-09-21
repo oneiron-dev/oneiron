@@ -259,7 +259,10 @@ fn sync_client_generate_initial_sync() {
     // full-window VV_REQUEST flow; selector-capable callers use the
     // current selector protocol.
     // It MUST be the first frame.
-    assert_eq!(messages[0], transport::encode_protocol_hello());
+    assert_eq!(
+        messages[0],
+        transport::encode_chunk_full_window_protocol_hello()
+    );
 
     // Frame 1: lease request — 105 B pinned layout, client_id BE at
     // offset 1, and the embedded PoP signature verifies over the OD-6

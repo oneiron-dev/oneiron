@@ -85,10 +85,20 @@ pub use structural::{
     TextIndexField,
 };
 pub use support::{Memory, parse_actor_key, resolve_entity_ref};
+pub(crate) use witness::MessageStreamRuntime;
+pub use witness::{
+    DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MAX_MESSAGE_STREAMS,
+    MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
+    MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
+    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
+};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use support::verify_owner_actor_binding_in_txn;
 pub(crate) use support::{
-    facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_deletion_authority_in_txn,
+    facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_actor_binding_in_txn,
+    verify_deletion_authority_in_txn,
 };
 pub(crate) use witness::sole_edge_target;

@@ -25,25 +25,13 @@
 //! an upload batch, so it is an upload-flow endpoint; gating it lower would
 //! publish a probe of what a vault holds to any read-scoped bearer.
 //!
-//! # Bodies are bounded here and only here
-//!
-//! [`LFS_MAX_OBJECT_BYTES`] is a named compile-time constant applied per route
-//! through [`DefaultBodyLimit`]. Without it axum's 2 MiB default would silently
-//! cap every LFS upload — the exact failure LFS exists to avoid. The limit is
-//! transport-layer, so an oversized body is refused before the handler runs and
-//! therefore before anything could be written; the handler's own gate is still
-//! auth-first for every body that arrives.
-//!
-//! # Nothing is written on a mismatch, and nothing wrong is served
-//!
-//! An upload re-derives SHA-256 over the received bytes and compares it to the
-//! `{oid}` the batch negotiated, plus the declared length when the client sent
-//! one. A disagreement is a typed refusal BEFORE the engine is called. On the
-//! way out, download and verify re-check the stored length and re-hash the
-//! stored body: a corrupt body is an error, never `200 OK` with wrong bytes.
+//! Uploads and downloads stream with bounded backpressure. Object length has
+//! no transport cap; control requests retain the normal bounded body limit.
 
+mod chunks;
 mod gate;
 mod handlers;
+mod streaming;
 mod support;
 mod wire;
 
@@ -52,7 +40,6 @@ mod tests;
 
 pub(crate) use self::gate::lfs_routes;
 pub(crate) use self::handlers::{lfs_batch, lfs_download, lfs_upload, lfs_verify};
-pub(crate) use self::support::LFS_MAX_OBJECT_BYTES;
 
 // The flat git_lfs.rs module used to provide these names to the sibling test
 // module through `use super::*`. After the directory split the seam

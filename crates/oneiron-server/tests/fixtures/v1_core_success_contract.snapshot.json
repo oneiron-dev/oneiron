@@ -316,12 +316,12 @@
           "api_version": "v1",
           "counts": {
             "1": 1,
-            "17": 7,
+            "41": 7,
             "0": 8,
-            "7": 4,
-            "11": 1,
-            "84": 4,
-            "107": 1
+            "40": 4,
+            "4": 1,
+            "93": 4,
+            "103": 1
           },
           "last_activity": 1782357635
         },
@@ -392,14 +392,14 @@
     },
     "response": {
       "body": {
-        "entity_type": 11,
+        "entity_type": 4,
         "id": "7e000000000000000000000012210002",
         "item": {
           "id": "7e000000000000000000000012210002",
           "kind": "CONVERSATION",
           "label": "Contract dream",
           "name": "Contract dream",
-          "type": 11,
+          "type": 4,
           "updatedAt": 1782357735
         }
       },
@@ -425,7 +425,7 @@
             "kind": "CONVERSATION",
             "label": "Contract dream",
             "name": "Contract dream",
-            "type": 11,
+            "type": 4,
             "updatedAt": 1782357735
           },
           {
@@ -438,7 +438,7 @@
             ],
             "project_id": "<root-project-id>",
             "schema_version": 1,
-            "type": 11,
+            "type": 4,
             "updatedAt": 0
           }
         ],

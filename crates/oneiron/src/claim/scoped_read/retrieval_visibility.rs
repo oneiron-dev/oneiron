@@ -53,8 +53,11 @@ impl<'vault> ScopedRead<'vault> {
         {
             return Ok(false);
         }
+        if !self.audience_readable_in(txn, id)? {
+            return Ok(false);
+        }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            return self.note_readable_in(txn, &raw[ENTITY_METADATA_HEADER_LEN..]);
+            return self.note_readable_in(txn, id, &raw[ENTITY_METADATA_HEADER_LEN..]);
         }
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Ok(true);

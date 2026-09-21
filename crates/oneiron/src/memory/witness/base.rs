@@ -84,6 +84,18 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         before_txn: impl FnOnce(),
     ) -> MemoryResult<WitnessReceipt> {
+        self.witness_with_route_and_txn_effect(turn, session_route, before_txn, |_| Ok(()))
+    }
+
+    /// Stream terminal sidecars and EntityDoc birth share the canonical witness
+    /// transaction. An error rolls back row, indexes, receipt and seed deletion.
+    pub(crate) fn witness_with_route_and_txn_effect(
+        &self,
+        turn: &WitnessTurn,
+        session_route: Option<&SessionWriteRoute>,
+        before_txn: impl FnOnce(),
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
         if turn.messages.is_empty() {
             return Err(MemoryError::bad_request("witness turn carries no messages"));
         }
@@ -406,6 +418,7 @@ impl Memory<'_> {
             // witness admitted on record must not commit base rows once the
             // room has flipped back off record (K10). Every earlier row is
             // rolled back with this `Err`.
+            effect(wtxn)?;
             if let Some(route) = session_route {
                 route.revalidate()?;
             }

@@ -31,7 +31,7 @@ ed25519-dalek = { workspace = true }
 rand_core = { workspace = true }
 thiserror = { workspace = true }
 rmp-serde = { workspace = true }
-rmpv = { workspace = true }
+rmpv = { workspace = true, features = ["with-serde"] }
 xxhash-rust = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -54,6 +54,9 @@ flate2 = "1"
 gix = { version = "0.85.0", default-features = false, features = ["revision", "sha1"] }
 tiktoken-rs = "0.12.0"
 sha2 = "0.10"
+# OF-468: vetted seeded FastCDC; anonymous bounded staging spool.
+fastcdc = "=3.2.1"
+tempfile = "3"
 tree-sitter = "0.26.10"
 tree-sitter-rust = "0.24.2"
 icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }

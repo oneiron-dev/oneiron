@@ -727,7 +727,13 @@ fn non_claim_entities_are_never_status_gated() -> Result<()> {
     let opaque = entity_id(41);
     vault
         .batch()
-        .put(&opaque, 4, TimeRange { start: 1, end: 1 }, 1, b"payload")
+        .put(
+            &opaque,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"payload",
+        )
         .text(&opaque, &[("body", "opaqueneedle")])
         .commit()?;
 
@@ -864,7 +870,13 @@ fn dead_claim_never_seeds_ppr_expansion() -> Result<()> {
         ClaimLifecycleStatus::Active,
         false,
     )?;
-    vault.put_entity(&x, 4, TimeRange { start: 1, end: 1 }, 1, b"payload")?;
+    vault.put_entity(
+        &x,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"payload",
+    )?;
     vault.put_edge(&r, EdgeKind::Supports, &x, 0.9)?;
 
     // Control: while active, the claim seeds the expansion and pulls in

@@ -400,14 +400,15 @@ fn mirrored_endpoint_type(
 }
 
 pub(super) fn entity_selector_decision(
-    id: &EntityId,
-    blob: &[u8],
+    vault: &Vault,
+    entity: (&EntityId, &[u8]),
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
     facet_scope: &HashMap<EntityId, FacetScope>,
     empty: EmptyAxis,
     coreference: &CoreferenceExportContext,
 ) -> Option<EntitySelectorDecision> {
+    let (id, blob) = entity;
     let header = EntityMetadataHeader::parse(blob)?;
     if !claim_sync_allowed(blob) {
         return None;
@@ -427,10 +428,16 @@ pub(super) fn entity_selector_decision(
     {
         return None;
     }
+    // Registration is mandatory even for an unfiltered selector. Unknown
+    // bytes do not gain a scope from their numeric position.
+    let identity = selector_range_of(header.entity_type).or_else(|| {
+        vault
+            .structural_kind_registration(header.entity_type)
+            .and_then(|registration| registration.family)
+            .map(crate::federation::SelectorRange::Family)
+    })?;
     if selector.band_filter_active(empty)
-        && !selector
-            .bands
-            .contains(&selector_range_of(header.entity_type))
+        && !selector.bands.iter().any(|band| band.includes(identity))
     {
         return None;
     }

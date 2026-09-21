@@ -19,10 +19,10 @@
 //! the very version it names. Instead the opening commit marks itself
 //! (`StampKind::Open`) and the window base is derived as the version right
 //! after that change. A reopened artifact therefore needs nothing but its
-//! snapshot bytes. EXACTLY ONE open marker is admissible: the marker is a
-//! commit message, and commit messages replicate, so "the latest open marker
-//! wins" would let a synced peer move the window base forward over earlier
-//! edits. See [`ProposalTextArtifact::finalize`].
+//! snapshot bytes. Additional writer-open markers never replace the causally
+//! earliest opening frontier. Commit messages replicate, so choosing the latest
+//! would let a peer hide earlier edits. Incomparable openings are refused rather
+//! than ordered by actor, timestamp or peer id. See [`ProposalTextArtifact::finalize`].
 //!
 //! # Trust
 //!
@@ -33,7 +33,8 @@
 //! unregistered actor) falls back to the writing peer's own binding, and
 //! failing that to the device peer. No public door accepts a caller-supplied
 //! stamp string — [`ProposalTextArtifact`] builds every stamp from the
-//! authenticated [`WriteActor`] in hand.
+//! authenticated [`WriteActor`] in hand. Attribution fallback does not authenticate
+//! provenance: finalization refuses any history with missing or untrusted receipts.
 
 mod receipts;
 
@@ -49,18 +50,17 @@ use super::{
     put_finalized_proposal_text,
 };
 use crate::Vault;
+use crate::entity_doc::EntityDoc;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::sync::loro_support::{
-    doc_from_snapshot, export_snapshot, import_doc, map_get_bytes, map_insert_bytes,
-};
+use crate::sync::loro_support::{import_doc, map_get_bytes, map_insert_bytes};
 use crate::sync::window::PROPOSAL_TEXT_COMMIT_MSG_PREFIX;
 use crate::write_envelope::WriteActor;
 
 /// Root container holding the proposal body.
-const TEXT_CONTAINER: &str = "proposal_text";
+const TEXT_CONTAINER: &str = "body";
 /// Root container holding the artifact header.
-const META_CONTAINER: &str = "proposal_meta";
+const META_CONTAINER: &str = "meta";
 const META_KEY_ARTIFACT: &str = "artifact";
 const META_KEY_SOURCE_TURN: &str = "source_turn";
 
@@ -99,7 +99,7 @@ impl StampKind {
 /// window are all read back out of the doc at finalize, so a reopened
 /// artifact and a never-closed one behave identically.
 pub struct ProposalTextArtifact {
-    doc: LoroDoc,
+    doc: EntityDoc,
     artifact_ref: ProposalArtifactRef,
     source_turn_ref: Option<EntityId>,
 }
@@ -132,47 +132,53 @@ impl ProposalTextArtifact {
         receipt: Option<crate::provenance::made_by::MadeBy>,
     ) -> Result<Self> {
         let doc = LoroDoc::new();
-        // Establish the peer's authority BEFORE the birth timestamp. Registering
-        // after open made validity depend on completing within the same second.
+        // Bind the fresh peer before choosing the birth timestamp, even when
+        // registration crosses a second boundary.
         crate::edit_distance::register_peer_actor(vault, doc.peer_id(), actor)?;
-        // Change timestamps are OFF by default and are runtime config, not
-        // serialized — so this is re-applied on every reopen too. Attribution
-        // resolves the peer's binding as of the commit instant; without
-        // timestamps every change would resolve at epoch 0.
-        doc.set_record_timestamp(true);
-
-        let artifact_ref = ProposalArtifactRef::mint();
-        let meta = doc.get_map(META_CONTAINER);
-        map_insert_bytes(
-            &meta,
-            META_KEY_ARTIFACT,
-            artifact_ref.entity_id().as_bytes(),
+        let at = crate::unix_seconds_now();
+        let message = receipts::receipted_message(
+            &doc,
+            StampKind::Open,
+            actor,
+            source_turn_ref,
+            receipt,
+            at,
         )?;
-        if let Some(turn) = source_turn_ref {
-            map_insert_bytes(&meta, META_KEY_SOURCE_TURN, turn.as_bytes())?;
-        }
-        // Position 0 of a fresh container: reachable only if a Loro invariant
-        // broke, never through caller input.
-        doc.get_text(TEXT_CONTAINER)
-            .insert(0, initial)
-            .map_err(|_| {
-                Error::InvariantViolation("proposal artifact initial text insert failed")
-            })?;
-        let artifact = Self {
+        let artifact_ref = ProposalArtifactRef::mint();
+        // EntityDoc birth metadata, proposal metadata and text all land in
+        // this one authenticated commit. No unreceipted birth precedes it.
+        let doc = EntityDoc::open_initialized(
+            doc,
+            artifact_ref.entity_id(),
+            initial,
+            *actor,
+            at,
+            |doc| {
+                let meta = doc.get_map(META_CONTAINER);
+                map_insert_bytes(
+                    &meta,
+                    META_KEY_ARTIFACT,
+                    artifact_ref.entity_id().as_bytes(),
+                )?;
+                if let Some(turn) = source_turn_ref {
+                    map_insert_bytes(&meta, META_KEY_SOURCE_TURN, turn.as_bytes())?;
+                }
+                Ok(())
+            },
+            Some(&message),
+        )?;
+        Ok(Self {
             doc,
             artifact_ref,
             source_turn_ref,
-        };
-        artifact.commit_receipted(StampKind::Open, actor, receipt)?;
-        Ok(artifact)
+        })
     }
 
     /// Reopens an artifact from a snapshot produced by
     /// [`ProposalTextArtifact::export_snapshot`].
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self> {
-        let doc = doc_from_snapshot(bytes)?;
-        doc.set_record_timestamp(true);
-        let meta = doc.get_map(META_CONTAINER);
+        let doc = EntityDoc::from_snapshot(bytes)?;
+        let meta = doc.doc.get_map(META_CONTAINER);
         let artifact_ref =
             ProposalArtifactRef::new(meta_entity_id(&meta, META_KEY_ARTIFACT)?.ok_or(
                 Error::CorruptedIndex("proposal artifact snapshot missing its artifact ref"),
@@ -194,13 +200,13 @@ impl ProposalTextArtifact {
     /// [`crate::edit_distance::register_peer_actor`] binds.
     #[must_use]
     pub fn peer_id(&self) -> u64 {
-        self.doc.peer_id()
+        self.doc.doc.peer_id()
     }
 
     /// The artifact's current text.
     #[must_use]
     pub fn text(&self) -> String {
-        self.doc.get_text(TEXT_CONTAINER).to_string()
+        self.doc.doc.get_text(TEXT_CONTAINER).to_string()
     }
 
     /// Applies `edit` to the body and commits it under `actor`'s stamp.
@@ -215,7 +221,7 @@ impl ProposalTextArtifact {
         actor: &WriteActor,
         edit: impl FnOnce(&LoroText) -> Result<()>,
     ) -> Result<()> {
-        let outcome = edit(&self.doc.get_text(TEXT_CONTAINER));
+        let outcome = edit(&self.doc.doc.get_text(TEXT_CONTAINER));
         self.commit_receipted(StampKind::Edit, actor, None)?;
         outcome
     }
@@ -223,7 +229,7 @@ impl ProposalTextArtifact {
     /// Exports the artifact for mid-window persistence, through the same
     /// `loro_support` helper the sync layer uses.
     pub fn export_snapshot(&self) -> Result<Vec<u8>> {
-        export_snapshot(&self.doc)
+        self.doc.export_snapshot()
     }
 
     /// Freezes the artifact: resolves the op window, replays it into
@@ -240,11 +246,12 @@ impl ProposalTextArtifact {
                 "proposal text missing authenticated commit receipt",
             ));
         }
-        let final_frontiers = self.doc.oplog_frontiers();
+        let final_frontiers = self.doc.doc.oplog_frontiers();
 
         // The base fork doubles as the replay scratch: read the proposed text
         // out of it, then feed it the window one change at a time.
         let scratch = self
+            .doc
             .doc
             .fork_at(&proposed_frontiers)
             .map_err(|_| Error::CorruptedIndex("proposal artifact window base"))?;
@@ -252,7 +259,7 @@ impl ProposalTextArtifact {
 
         let ops_by_actor =
             self.replay_window(vault, &scratch, &proposed_frontiers, &final_frontiers)?;
-        let final_text = self.doc.get_text(TEXT_CONTAINER).to_string();
+        let final_text = self.doc.doc.get_text(TEXT_CONTAINER).to_string();
         if scratch.get_text(TEXT_CONTAINER).to_string() != final_text {
             return Err(Error::InvariantViolation(
                 "proposal artifact replay did not reconstruct the final text",
@@ -274,18 +281,16 @@ impl ProposalTextArtifact {
 
     /// The version right after the opening commit — the window's lower bound.
     ///
-    /// Fails closed on a SECOND open marker rather than picking one. The marker
-    /// rides a commit message, which replicates: a peer that syncs the artifact
-    /// can commit its own `open` stamp, and honoring the latest one would move
-    /// the base past every edit before it — dropping them out of the window
-    /// with no trace. Replay-equality cannot catch that, because replay starts
-    /// at the shifted base and reconstructs the final text perfectly from
-    /// there. Two open markers means the artifact's history is not the history
-    /// this engine wrote, so there is nothing to attribute.
+    /// Retains the causally earliest opening as the birth base. A later writer
+    /// may open another divergence without rebasing away earlier attributed ops.
+    /// A forged later marker remains part of the window under normal peer-stamp
+    /// validation; it cannot hide itself or any earlier edit. Incomparable
+    /// openings have no unique base and fail closed.
     fn window_base(&self) -> Result<Frontiers> {
-        let heads = self.doc.oplog_frontiers().to_vec();
+        let heads = self.doc.doc.oplog_frontiers().to_vec();
         let mut opens = Vec::new();
         self.doc
+            .doc
             .travel_change_ancestors(&heads, &mut |meta: ChangeMeta| {
                 if matches!(
                     parse_stamp(meta.message.as_deref()),
@@ -296,15 +301,38 @@ impl ProposalTextArtifact {
                 ControlFlow::Continue(())
             })
             .map_err(|_| Error::CorruptedIndex("proposal artifact history"))?;
-        match opens.as_slice() {
-            [] => Err(Error::CorruptedIndex(
+        if opens.is_empty() {
+            return Err(Error::CorruptedIndex(
                 "proposal artifact has no open commit",
-            )),
-            [meta] => Ok(Frontiers::from_id(change_last_op(meta)?)),
-            _ => Err(Error::CorruptedIndex(
-                "proposal artifact has more than one open commit",
-            )),
+            ));
         }
+        let frontiers: Vec<_> = opens
+            .iter()
+            .map(|meta| change_last_op(meta).map(Frontiers::from_id))
+            .collect::<Result<_>>()?;
+        for candidate in &frontiers {
+            let mut earliest = true;
+            for other in &frontiers {
+                let ordering = self
+                    .doc
+                    .doc
+                    .cmp_frontiers(candidate, other)
+                    .map_err(|_| Error::CorruptedIndex("proposal opening frontier"))?;
+                if !matches!(
+                    ordering,
+                    Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                ) {
+                    earliest = false;
+                    break;
+                }
+            }
+            if earliest {
+                return Ok(candidate.clone());
+            }
+        }
+        Err(Error::CorruptedIndex(
+            "proposal artifact has incomparable opening frontiers",
+        ))
     }
 
     /// Replays every change in the window into `scratch`, one change at a
@@ -324,6 +352,7 @@ impl ProposalTextArtifact {
         let mut before_text = scratch.get_text(TEXT_CONTAINER).to_string();
         for change in window {
             let updates = self
+                .doc
                 .doc
                 .export(ExportMode::updates_in_range(vec![IdSpan::new(
                     change.peer_id,
@@ -354,10 +383,11 @@ impl ProposalTextArtifact {
     /// Every change (clipped to the window) between the two versions.
     fn window_changes(&self, from: &Frontiers, to: &Frontiers) -> Result<Vec<WindowChange>> {
         let mut changes = Vec::new();
-        for (peer, counters) in &self.doc.find_id_spans_between(from, to).forward {
+        for (peer, counters) in &self.doc.doc.find_id_spans_between(from, to).forward {
             let mut counter = counters.start;
             while counter < counters.end {
                 let meta = self
+                    .doc
                     .doc
                     .get_change(ID::new(*peer, counter))
                     .ok_or(Error::CorruptedIndex("proposal artifact window change"))?;
@@ -463,6 +493,9 @@ fn meta_entity_id(meta: &loro::LoroMap, key: &str) -> Result<Option<EntityId>> {
         .map(Some)
         .map_err(|_| Error::CorruptedIndex("proposal artifact meta entity id"))
 }
+
+#[cfg(test)]
+use crate::sync::loro_support::{doc_from_snapshot, export_snapshot};
 
 #[cfg(test)]
 mod tests;

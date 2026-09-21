@@ -15,6 +15,7 @@ use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFi
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
+mod note_visibility;
 mod retrieval_visibility;
 
 /// Actor key bound to a scoped read lane over the `core:read` surface.
@@ -72,6 +73,8 @@ pub struct ScopedRead<'a> {
     vault: &'a crate::vault::Vault,
     actor_key: ScopedReadActorKey,
     policy: Mutex<Option<PolicyManifestResolution>>,
+    audience: Option<Vec<EntityId>>,
+    audience_cache: Mutex<crate::conversation::AudienceCache>,
     /// Session composition (ONE-1728 §7). `None` on the canonical handle,
     /// which therefore reads base only exactly as before; `Some` when the
     /// read was opened through a live session handle, in which case entity
@@ -88,6 +91,8 @@ impl crate::vault::Vault {
             vault: self,
             actor_key,
             policy: Mutex::new(None),
+            audience: None,
+            audience_cache: Mutex::new(Default::default()),
             session_view: None,
         }
     }
@@ -110,12 +115,44 @@ impl crate::vault::Vault {
             vault: self,
             actor_key,
             policy: Mutex::new(None),
+            audience: None,
+            audience_cache: Mutex::new(Default::default()),
             session_view: Some(view),
         }
     }
 }
 
 impl<'a> ScopedRead<'a> {
+    /// Conjoin every read with the all-of-audience rule. An explicit empty
+    /// audience refuses audience-scoped records rather than widening to speaker-only reads.
+    #[must_use]
+    pub fn for_audience(mut self, audience: &[EntityId]) -> Self {
+        let mut ids = audience.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        self.audience = Some(ids);
+        self
+    }
+
+    /// Number of immutable room ledger snapshots loaded by this read handle.
+    pub fn audience_ledger_reads(&self) -> Result<usize> {
+        Ok(self
+            .audience_cache
+            .lock()
+            .map_err(|_| Error::InvariantViolation("audience cache lock"))?
+            .ledger_reads())
+    }
+
+    fn audience_readable_in(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        let Some(audience) = &self.audience else {
+            return Ok(true);
+        };
+        self.audience_cache
+            .lock()
+            .map_err(|_| Error::InvariantViolation("audience cache lock"))?
+            .readable(self.vault, txn, *id, audience)
+    }
+
     #[must_use]
     pub fn vault(&self) -> &'a crate::Vault {
         self.vault
@@ -297,9 +334,22 @@ impl<'a> ScopedRead<'a> {
         if self.vault.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
             return Ok(None);
         }
+        #[cfg(feature = "sync")]
+        let resolved_body = crate::entity_doc::resolve_record_body(
+            &self.vault.store,
+            &rtxn,
+            id,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        #[cfg(feature = "sync")]
+        let body = resolved_body.as_slice();
+        #[cfg(not(feature = "sync"))]
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if !self.audience_readable_in(&rtxn, id)? {
+            return Ok(None);
+        }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-            && !self.note_readable_in(&rtxn, body)?
+            && !self.note_readable_in(&rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?
         {
             return Ok(None);
         }
@@ -320,10 +370,13 @@ impl<'a> ScopedRead<'a> {
         let Some(result) = self.vault.hydrate_short_id(short_id, content_hash)? else {
             return Ok(None);
         };
+        if result.body.is_some() && !self.is_entity_readable(&result.id)? {
+            return Ok(None);
+        }
         if result.entity_type == crate::registry::ENTITY_TYPE_NOTE {
             let txn = self.vault.store.env.read_txn()?;
             return match result.body.as_deref() {
-                Some(body) if self.note_readable_in(&txn, body)? => Ok(Some(result)),
+                Some(body) if self.note_readable_in(&txn, &result.id, body)? => Ok(Some(result)),
                 _ => Ok(None),
             };
         }
@@ -392,7 +445,10 @@ impl<'a> ScopedRead<'a> {
         let rtxn = self.vault.store.env.read_txn()?;
         let policy = self.policy_manifest_in(&rtxn)?;
         let diagnostics = policy.diagnostics();
-        if !diagnostics.loaded_manifest_forces_fail_closed() && !policy.has_scoped_read_grants() {
+        if self.audience.is_none()
+            && !diagnostics.loaded_manifest_forces_fail_closed()
+            && !policy.has_scoped_read_grants()
+        {
             return Ok(requested);
         }
         drop(rtxn);
@@ -477,46 +533,17 @@ impl<'a> ScopedRead<'a> {
         if self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some() {
             return Ok(false);
         }
+        if !self.audience_readable_in(rtxn, id)? {
+            return Ok(false);
+        }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            return self.note_readable_in(rtxn, &raw[ENTITY_METADATA_HEADER_LEN..]);
+            return self.note_readable_in(rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..]);
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw)
         } else {
             Ok(true)
         }
-    }
-
-    /// Scoped actor keys are asserted by a trusted host, not bearer secrets.
-    /// A private NOTE additionally requires an exact entity id and a live,
-    /// class-valid actor row in the same snapshot as its body.
-    fn note_readable_in(&self, txn: &heed::RoTxn<'_>, bytes: &[u8]) -> Result<bool> {
-        let Ok(body) = crate::note::decode_note_body(bytes) else {
-            return Ok(false);
-        };
-        if body.kind == crate::note::NoteKind::OpinionTake {
-            return Ok(true);
-        }
-        let Ok(actor) = EntityId::from_hex(self.actor_key.actor_ref()) else {
-            return Ok(false);
-        };
-        if actor != body.author_ref {
-            return Ok(false);
-        }
-        let Some(class) = self.actor_key.actor_class().and_then(|class| match class {
-            "human" => Some(crate::edge::EdgeActorClass::Human),
-            "agent" => Some(crate::edge::EdgeActorClass::Agent),
-            "system" => Some(crate::edge::EdgeActorClass::System),
-            _ => None,
-        }) else {
-            return Ok(false);
-        };
-        let crate::vault::LiveEntityRow::Live { entity_type, .. } =
-            crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &actor)?
-        else {
-            return Ok(false);
-        };
-        Ok(crate::provenance::validate_actor_class(entity_type, class).is_ok())
     }
 
     fn is_claim_raw_readable_in(
@@ -565,7 +592,7 @@ impl<'a> ScopedRead<'a> {
         id: &EntityId,
         body: &ClaimBody,
     ) -> Result<bool> {
-        if !claim_surfaceable(body) {
+        if !claim_surfaceable(body) || !self.audience_readable_in(rtxn, id)? {
             return Ok(false);
         }
         let claim_facets = self.claim_facet_refs_in(rtxn, id)?;
@@ -694,7 +721,7 @@ impl<'a> ScopedRead<'a> {
                 (_, Some(ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE)) => {
                     self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
                 }
-                (_, Some(_)) => true,
+                (_, Some(_)) => self.audience_readable_in(&rtxn, &record.id)?,
                 (_, None) => false,
             };
             if readable {

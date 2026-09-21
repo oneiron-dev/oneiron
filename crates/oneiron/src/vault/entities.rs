@@ -183,6 +183,15 @@ impl Vault {
         if self.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
             return Ok(None);
         }
+        #[cfg(feature = "sync")]
+        return crate::entity_doc::resolve_record_body(
+            &self.store,
+            &rtxn,
+            id,
+            &bytes[ENTITY_METADATA_HEADER_LEN..],
+        )
+        .map(Some);
+        #[cfg(not(feature = "sync"))]
         Ok(Some(bytes[ENTITY_METADATA_HEADER_LEN..].to_vec()))
     }
 

@@ -650,7 +650,7 @@ fn drafts_are_canonicalized_before_addressing() {
 /// is an event CLASS here, and 126/127 stay unregistered.
 #[test]
 fn registry_registers_diagnostic_once() {
-    assert_eq!(ENTITY_TYPE_DIAGNOSTIC, 69, "canon byte-space v3 says 69");
+    assert_eq!(ENTITY_TYPE_DIAGNOSTIC, 73, "canon byte-space v3 says 69");
 
     let mut rows = Vec::new();
     for entry in ENTITY_TYPE_REGISTRY {
@@ -667,7 +667,7 @@ fn registry_registers_diagnostic_once() {
     assert_eq!(entry.short_id_prefix, None, "no short-id prefix");
     assert!(entry.legacy_short_id_prefixes.is_empty());
 
-    for reserved in [72_u8, 74, 75, 126, 127] {
+    for reserved in [75_u8, 91, 92, 126, 127] {
         assert!(
             entity_type_registry_entry(reserved).is_none(),
             "byte {reserved} must stay unregistered by this feature"

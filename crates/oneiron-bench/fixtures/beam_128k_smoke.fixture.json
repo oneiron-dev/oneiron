@@ -5,7 +5,7 @@
   "records": [
     {
       "id": "10101010101010101010101010101010",
-      "entityType": 8,
+      "entityType": 5,
       "occurred": {
         "start": 1,
         "end": 1
@@ -30,7 +30,7 @@
     },
     {
       "id": "20202020202020202020202020202020",
-      "entityType": 8,
+      "entityType": 5,
       "occurred": {
         "start": 2,
         "end": 2

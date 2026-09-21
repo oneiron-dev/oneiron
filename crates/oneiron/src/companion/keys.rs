@@ -11,7 +11,7 @@
 /// Classification stays `Pack`: the kind remains publicly writable even though
 /// it now sits in the system zone, because classification and not zone
 /// position decides that. The registration is still lazy per vault.
-pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = 78;
+pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = 115;
 
 /// Short-id prefix for companion-register rows.
 pub const COMPANION_REGISTER_SHORT_ID_PREFIX: &str = "cr";

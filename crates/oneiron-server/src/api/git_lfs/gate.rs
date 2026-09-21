@@ -1,6 +1,5 @@
 //! LFS authentication gate and principal checks.
 
-use super::LFS_MAX_OBJECT_BYTES;
 use super::{lfs_batch, lfs_download, lfs_upload, lfs_verify};
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -16,13 +15,19 @@ use std::sync::Arc;
 /// Builds the git-LFS routes. Merged into the ONE-1908 git router.
 pub(crate) fn lfs_routes() -> Router<Arc<SyncServer>> {
     Router::new()
+        .route(
+            "/git/{repo}/info/lfs/chunks",
+            post(super::chunks::exchange).layer(DefaultBodyLimit::max(
+                oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME,
+            )),
+        )
         .route("/git/{repo}/info/lfs/objects/batch", post(lfs_batch))
         .route(
             "/git/{repo}/info/lfs/objects/{oid}",
             get(lfs_download)
                 .put(lfs_upload)
                 .post(lfs_upload)
-                .layer(DefaultBodyLimit::max(LFS_MAX_OBJECT_BYTES)),
+                .layer(DefaultBodyLimit::disable()),
         )
         .route(
             "/git/{repo}/info/lfs/objects/{oid}/verify",

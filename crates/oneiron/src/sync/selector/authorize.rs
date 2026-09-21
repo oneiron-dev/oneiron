@@ -293,8 +293,8 @@ pub(super) fn filter_window_doc(
             return;
         }
         let Some(decision) = entity_selector_decision(
-            &id,
-            blob,
+            vault,
+            (&id, blob),
             grant_scope,
             selector,
             &facet_scope,

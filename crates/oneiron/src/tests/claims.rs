@@ -16,10 +16,22 @@ fn context_pack_run_serialized_toon_end_to_end() -> Result<()> {
 
     vault
         .batch()
-        .put(&claim_subject, 4, test_time_range(99, 99), 100, b"subject")
+        .put(
+            &claim_subject,
+            crate::registry::ENTITY_TYPE_PERSON,
+            test_time_range(99, 99),
+            100,
+            b"subject",
+        )
         .put(&a, 0, test_time_range(100, 100), 101, &payload_a)
         .text(&a, &[("body", "learn japanese")])
-        .put(&b, 4, test_time_range(102, 102), 103, &payload_b)
+        .put(
+            &b,
+            crate::registry::ENTITY_TYPE_PERSON,
+            test_time_range(102, 102),
+            103,
+            &payload_b,
+        )
         .edge(&a, EdgeKind::Mentions, &b, 1.0)
         .commit()?;
 
@@ -106,7 +118,13 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
     // fusion and "sal"/"conf" in profiles, so no single body could do both.
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
 
     let claim = EntityId::now();
     let mut body = ClaimBody::new(
@@ -229,7 +247,13 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
 fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
 
     let claim = EntityId::now();
     let mut body = ClaimBody::new(
@@ -335,7 +359,13 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
 fn put_claim_writes_claim_of_edge_atomically() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
 
     let claim = EntityId::now();
     let body = ClaimBody::new(
@@ -402,8 +432,20 @@ fn put_claim_edge_ref_subject_validates_shape_without_claim_of() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
-    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_entity(
+        &a,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"a",
+    )?;
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"b",
+    )?;
 
     let claim = EntityId::now();
     let body = ClaimBody::new(
@@ -756,7 +798,13 @@ fn claim_negative_matrix_rejects_typed_and_writes_nothing() -> Result<()> {
 fn put_claim_typed_api_rejects_invalid_confidence() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
 
     for bad_conf in [f32::NAN, -0.1, 1.1, f32::INFINITY] {
         let id = EntityId::now();
@@ -782,8 +830,20 @@ fn reserved_predicate_rejected_publicly_but_door_writes_and_reads_back() -> Resu
     let (_dir, vault) = open_test_vault();
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
-    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_entity(
+        &a,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"a",
+    )?;
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"b",
+    )?;
 
     // Structurally valid since ONE-1159: the door validates the provenance
     // value record + actor-class evidence, not just the D18 wrapper.
@@ -856,8 +916,20 @@ fn replicated_door_admits_reserved_claim_on_both_builders() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
-    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_entity(
+        &a,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"a",
+    )?;
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"b",
+    )?;
 
     // Structurally valid since ONE-1159: the replicated door validates the
     // provenance value record + actor-class evidence, not just D18.
@@ -917,7 +989,13 @@ fn replicated_door_admits_reserved_claim_on_both_builders() -> Result<()> {
 fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let a = EntityId::now();
-    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
+    vault.put_entity(
+        &a,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"a",
+    )?;
 
     // Ungrammatical reserved predicate: "Edge.Provenance" violates the D17
     // segment grammar `[a-z][a-z0-9_]*`, so it fails InvalidPredicate even
@@ -1126,7 +1204,13 @@ fn get_claim_rejects_non_claim_types_and_handles_missing() -> Result<()> {
 
     // Non-claim type byte → typed InvalidClaimBody, not a silent decode.
     let person = EntityId::now();
-    vault.put_entity(&person, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let err = vault
         .get_claim(&person)
         .expect_err("get_claim on a PERSON must fail typed");

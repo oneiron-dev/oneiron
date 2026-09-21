@@ -577,7 +577,7 @@ fn channel_identity_type_registration_is_stable() {
     let entry = entity_type_registry_entry(ENTITY_TYPE_CHANNEL_IDENTITY)
         .expect("CHANNEL_IDENTITY registry row");
 
-    assert_eq!(ENTITY_TYPE_CHANNEL_IDENTITY, 79);
+    assert_eq!(ENTITY_TYPE_CHANNEL_IDENTITY, 81);
     assert_eq!(entry.kind, "CHANNEL_IDENTITY");
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);

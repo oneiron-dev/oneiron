@@ -138,7 +138,13 @@ fn local_overwrite_changed_body_without_text_drops_stale_text_postings_same_txn(
 fn retract_claim_lifecycle_reput_drops_stale_text_postings() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let id = put_active_claim(&vault, &subject, "profile.status", "active", 1)?;
     vault
         .batch()

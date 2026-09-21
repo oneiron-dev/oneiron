@@ -166,18 +166,18 @@ pub fn default_retrieval_bands(class: RelationshipTrustClass) -> Vec<SelectorRan
         RelationshipTrustClass::Intimate | RelationshipTrustClass::Family => vec![
             SelectorRange::Semantic,
             SelectorRange::Core,
-            SelectorRange::Companion,
+            SelectorRange::Family(crate::registry::TypeByteFamily::Companion),
         ],
         RelationshipTrustClass::Friend => vec![SelectorRange::Semantic, SelectorRange::Core],
         RelationshipTrustClass::Professional => vec![
             SelectorRange::Semantic,
             SelectorRange::Core,
-            SelectorRange::Productivity,
+            SelectorRange::Family(crate::registry::TypeByteFamily::Productivity),
         ],
         RelationshipTrustClass::Client => vec![
             SelectorRange::Semantic,
-            SelectorRange::Crm,
-            SelectorRange::Productivity,
+            SelectorRange::Family(crate::registry::TypeByteFamily::People),
+            SelectorRange::Family(crate::registry::TypeByteFamily::Productivity),
         ],
         RelationshipTrustClass::Unlabeled => vec![SelectorRange::Semantic],
     }

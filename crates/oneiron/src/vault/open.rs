@@ -494,6 +494,24 @@ impl Vault {
         text_index_trusted: bool,
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
+        // The document runtime is optional, but its ownership of stored bodies is
+        // not. A featureless handle must never overwrite a pointer or delete its
+        // row while leaving document history, forks and citation quotes behind.
+        #[cfg(not(feature = "sync"))]
+        {
+            let txn = store.env.read_txn()?;
+            if store
+                .vault_meta
+                .prefix_iter(&txn, b"entity_doc:v1:head:")?
+                .next()
+                .transpose()?
+                .is_some()
+            {
+                return Err(Error::InvalidConfig(
+                    "this vault contains entity documents and requires the sync feature".to_owned(),
+                ));
+            }
+        }
         // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
         // open, fresh and existing, in its own write transaction before any
         // caller holds the handle. Missing rows are created with pinned
@@ -525,6 +543,10 @@ impl Vault {
             // Every vault opens FULL; only an explicit ctl-driven shed parks
             // it, and only an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
+            conversation_presence: Default::default(),
+            message_streams: Default::default(),
+            #[cfg(feature = "sync")]
+            entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
             #[cfg(feature = "sync")]
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
@@ -534,11 +556,22 @@ impl Vault {
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
+        #[cfg(feature = "sync")]
+        crate::sync::window::upgrade_persisted_windows(&vault)?;
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::workspace_roster::seed_root_project(&vault)?;
         }
+        vault.lfs_chunk_parameters()?;
+        let lfs_recovery_cutoff = crate::unix_seconds_now().saturating_sub(24 * 60 * 60);
+        while vault.recover_lfs_uploads_before(lfs_recovery_cutoff)? != 0 {}
+        while vault.collect_lfs_garbage(32)? != 0 {}
+        vault.recover_message_streams().map_err(|error| {
+            crate::error::Error::Record(crate::error::RecordError::MessageStreamRecoveryFailed(
+                error.to_string(),
+            ))
+        })?;
         Ok(vault)
     }
 

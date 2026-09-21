@@ -89,11 +89,23 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
         (&retracted_tgt, b"retracted-target"),
     ] {
         vault_a
-            .put_entity(id, 4, occurred, learned_at, body)
+            .put_entity(
+                id,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                occurred,
+                learned_at,
+                body,
+            )
             .unwrap();
     }
     vault_a
-        .put_entity(&actor, 4, occurred, out_of_window_learned_at, b"actor")
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            occurred,
+            out_of_window_learned_at,
+            b"actor",
+        )
         .unwrap();
 
     vault_a

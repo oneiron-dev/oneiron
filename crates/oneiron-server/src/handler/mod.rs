@@ -12,10 +12,12 @@ mod connection;
 mod documents;
 mod ephemeral;
 mod hello;
+mod lfs_chunks;
 mod transport;
 mod window_sync;
 
 pub(crate) use self::connection::ws_routes;
+pub(crate) use self::window_sync::selector_grant_scope;
 
 #[cfg(test)]
 mod tests;
@@ -50,3 +52,6 @@ use oneiron::sync::{AllowBlock, FederationQuotaConfig, WindowKey};
 use std::sync::Arc;
 #[cfg(test)]
 use std::task::Poll;
+
+#[cfg(test)]
+mod message_stream_tests;

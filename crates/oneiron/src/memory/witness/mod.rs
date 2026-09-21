@@ -5,7 +5,10 @@
 mod base;
 mod codec;
 mod session;
+mod stream;
 mod types;
+pub(crate) use stream::MessageStreamRuntime;
+pub use stream::*;
 mod validation;
 
 pub use self::types::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};

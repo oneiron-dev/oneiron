@@ -9,9 +9,27 @@ fn put_edge_provenance_atomic_write_restamps_and_indexes() -> Result<()> {
     let actor = EntityId::now();
     let source = EntityId::now();
     let target = EntityId::now();
-    vault.put_entity(&actor, 4, test_time_range(1, 1), 1, b"person-actor")?;
-    vault.put_entity(&source, 4, test_time_range(1, 1), 1, b"src")?;
-    vault.put_entity(&target, 4, test_time_range(1, 1), 1, b"tgt")?;
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person-actor",
+    )?;
+    vault.put_entity(
+        &source,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"src",
+    )?;
+    vault.put_entity(
+        &target,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"tgt",
+    )?;
 
     let vad = Vad {
         valence: 0.25,
@@ -216,9 +234,27 @@ fn put_edge_provenance_explicit_validity_window_maps_envelope() -> Result<()> {
     let actor = EntityId::now();
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_entity(&actor, 4, test_time_range(1, 1), 1, b"person")?;
-    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
-    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
+    vault.put_entity(
+        &a,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"a",
+    )?;
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"b",
+    )?;
     vault.put_edge(&a, EdgeKind::About, &b, 0.5)?;
     let subject = EdgeRef::new(a, EdgeKind::About, b);
 
@@ -289,7 +325,13 @@ fn put_edge_provenance_negative_paths_write_nothing() -> Result<()> {
     let machine = EntityId::now();
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_entity(&person, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     vault.put_entity(
         &machine,
         ENTITY_TYPE_MACHINE,
@@ -297,8 +339,20 @@ fn put_edge_provenance_negative_paths_write_nothing() -> Result<()> {
         1,
         b"machine",
     )?;
-    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
-    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_entity(
+        &a,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"a",
+    )?;
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"b",
+    )?;
 
     // Structural-kind subject edge (part_of u8 = 2, 12 B) → typed reject
     // even though the edge EXISTS; the edge value is untouched.
@@ -421,7 +475,13 @@ fn supersede_claim_closes_old_writes_edge_and_keeps_history() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let old = put_active_claim(&vault, &subject, "profile.lives_in", "osaka", 11)?;
     let new = put_active_claim(&vault, &subject, "profile.lives_in", "tokyo", 22)?;
 
@@ -513,7 +573,13 @@ fn retract_claim_marks_retracted_and_preserves_record() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let claim = put_active_claim(&vault, &subject, "profile.lives_in", "osaka", 11)?;
 
     vault.retract_claim(&claim, NOW)?;
@@ -565,7 +631,13 @@ fn supersede_claim_moves_temporal_occurred_end_row() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let old = put_active_interval_claim(
         &vault,
         &subject,
@@ -632,7 +704,13 @@ fn retract_claim_moves_temporal_occurred_end_row() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let claim = put_active_interval_claim(
         &vault,
         &subject,
@@ -687,7 +765,13 @@ fn retract_claim_moves_temporal_occurred_end_row() -> Result<()> {
 fn supersede_claim_rehomes_temporal_long_interval_row() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
 
     // Span > LONG_INTERVAL_THRESHOLD_SECS: the old claim owns a
     // temporal_long_intervals row keyed by occurred_end, value =
@@ -770,7 +854,13 @@ fn supersede_claim_rehomes_temporal_long_interval_row() -> Result<()> {
 fn supersede_claim_rejects_self_supersession() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let claim = put_active_claim(&vault, &subject, "profile.name", "Alice", 2)?;
     let before = vault.get_raw(&claim)?.expect("claim stored");
 
@@ -798,7 +888,13 @@ fn supersede_claim_rejects_self_supersession() -> Result<()> {
 fn generated_claim_cannot_supersede_user_stated_non_code_truth() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let old = put_active_claim_with_source(
         &vault,
         &subject,
@@ -838,7 +934,13 @@ fn generated_claim_cannot_supersede_user_stated_non_code_truth() -> Result<()> {
 fn restamped_generated_origin_claim_cannot_supersede_user_stated_truth() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let old = put_active_claim_with_source(
         &vault,
         &subject,
@@ -885,7 +987,13 @@ fn restamped_generated_origin_claim_cannot_supersede_user_stated_truth() -> Resu
 fn restamped_generated_origin_claim_cannot_supersede_legacy_unstamped_truth() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let old = put_active_claim(&vault, &subject, "profile.lives_in", "osaka", 11)?;
     assert_eq!(
         vault.get_claim(&old)?.expect("old claim").source,
@@ -930,7 +1038,13 @@ fn restamped_generated_origin_claim_cannot_supersede_legacy_unstamped_truth() ->
 fn claim_lifecycle_ops_reject_non_claims_and_missing_ids() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let claim = put_active_claim(&vault, &subject, "profile.name", "Alice", 2)?;
     let before = vault.get_raw(&claim)?.expect("claim stored");
 
@@ -990,7 +1104,13 @@ fn claim_lifecycle_ops_reject_already_closed_claims() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
-    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     let a = put_active_claim(&vault, &subject, "profile.lives_in", "osaka", 2)?;
     let b = put_active_claim(&vault, &subject, "profile.lives_in", "tokyo", 3)?;
     let c = put_active_claim(&vault, &subject, "profile.lives_in", "kyoto", 4)?;
@@ -1079,8 +1199,20 @@ fn claim_lifecycle_ops_reject_provenance_claims_toward_provenance_api() -> Resul
     let (_dir, vault) = open_test_vault();
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
-    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_entity(
+        &a,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"a",
+    )?;
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"b",
+    )?;
 
     // An edge.provenance Claim written through the pub(crate) reserved-
     // namespace door (the provenance unit's path).

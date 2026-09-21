@@ -558,6 +558,7 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
     match msg {
         SyncMessage::RootUpdate(_) => false,
         SyncMessage::Ephemeral(_)
+        | SyncMessage::LfsChunks(_)
         | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
         | SyncMessage::Doc { .. }
@@ -575,6 +576,7 @@ pub(super) fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> boo
     ) {
         return false; // Only document_delivery may construct a recipient's export.
     }
-    protocol_version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
+    (protocol_version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
+        || protocol_version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
         || data.first().copied() != Some(protocol::TAG_WINDOW_SYNC)
 }

@@ -434,39 +434,103 @@ async fn lfs_unauthenticated_write_fails_including_loopback() {
 }
 
 #[tokio::test]
-async fn lfs_upload_enforces_body_size_limit() {
+async fn lfs_upload_download_streams_past_sixteen_mib() {
+    use futures_util::StreamExt;
+    use sha2::{Digest, Sha256};
     let (_dir, server) = test_server(secret_config());
     let token = writer_token();
-    let oversized = vec![0x5a_u8; LFS_MAX_OBJECT_BYTES + 1];
-    let oid = LfsOid::digest(&oversized);
-
-    let (status, _, _) = route(
-        &server,
-        request(
+    let part = axum::body::Bytes::from(vec![0x5au8; 64 * 1024]);
+    let count = 273usize;
+    let mut hash = Sha256::new();
+    for _ in 0..count {
+        hash.update(&part);
+    }
+    let oid = LfsOid::from_bytes(hash.finalize().into());
+    let stream =
+        futures_util::stream::iter((0..count).map(move |_| Ok::<_, std::io::Error>(part.clone())));
+    let response = lfs_routes()
+        .with_state(Arc::clone(&server))
+        .oneshot(request(
             "PUT",
             &object_uri(&oid.to_hex()),
             Some(&token),
-            Body::from(oversized),
-        ),
-    )
-    .await;
+            Body::from_stream(stream),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = lfs_routes()
+        .with_state(Arc::clone(&server))
+        .oneshot(request(
+            "GET",
+            &object_uri(&oid.to_hex()),
+            Some(&reader_token()),
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        status,
-        StatusCode::PAYLOAD_TOO_LARGE,
-        "a body beyond LFS_MAX_OBJECT_BYTES is refused, not silently truncated"
+        response.headers()[CONTENT_LENGTH],
+        (count * 65536).to_string()
     );
-    assert_eq!(
-        server.vault.lfs_object(oid).expect("record read"),
-        None,
-        "and the refused body wrote nothing"
-    );
+    let mut stream = response.into_body().into_data_stream();
+    let mut hash = Sha256::new();
+    let mut size = 0usize;
+    while let Some(part) = stream.next().await {
+        let part = part.unwrap();
+        assert!(part.len() <= oneiron::origin::lfs::LFS_CHUNK_MAX);
+        size += part.len();
+        hash.update(&part);
+    }
+    assert_eq!(size, count * 65536);
+    let digest: [u8; 32] = hash.finalize().into();
+    assert_eq!(&digest, oid.as_bytes());
+}
 
-    // The limit is a stated bound, not axum's silent 2 MiB default: a body
-    // far above that default still stores.
-    let allowed = vec![0x5a_u8; 3 * 1024 * 1024];
-    assert_eq!(
-        upload(&server, &token, &allowed).await,
-        StatusCode::OK,
-        "3 MiB is past the framework default and well inside ours"
+#[tokio::test]
+async fn lfs_unauthorized_stream_is_not_polled() {
+    let (_dir, server) = test_server(secret_config());
+    let unreadable = futures_util::stream::poll_fn(
+        |_| -> std::task::Poll<Option<Result<axum::body::Bytes, std::io::Error>>> {
+            panic!("unauthorized body must not be polled")
+        },
     );
+    let response = lfs_routes()
+        .with_state(server)
+        .oneshot(request(
+            "PUT",
+            &object_uri(&LfsOid::digest(b"x").to_hex()),
+            None,
+            Body::from_stream(unreadable),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn lfs_interrupted_body_does_not_publish_a_valid_prefix() {
+    let (_dir, server) = test_server(secret_config());
+    let prefix = axum::body::Bytes::from_static(b"valid prefix with a matching oid");
+    let oid = LfsOid::digest(&prefix);
+    let stream = futures_util::stream::iter(vec![
+        Ok(prefix),
+        Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "disconnected",
+        )),
+    ]);
+    let response = lfs_routes()
+        .with_state(Arc::clone(&server))
+        .oneshot(request(
+            "PUT",
+            &object_uri(&oid.to_hex()),
+            Some(&writer_token()),
+            Body::from_stream(stream),
+        ))
+        .await
+        .unwrap();
+    assert!(!response.status().is_success());
+    assert!(server.vault.lfs_object(oid).unwrap().is_none());
 }

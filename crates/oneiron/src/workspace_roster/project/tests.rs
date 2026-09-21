@@ -78,7 +78,12 @@ fn project_binding_does_not_hijack_a_preexisting_crm_slot() -> Result<()> {
     let campaign = EntityId::now();
     {
         let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::device())?;
-        crate::campaign::register_crm_pack(&vault, 107, 108)?;
+        crate::campaign::register_crm_pack(
+            &vault,
+            107,
+            108,
+            crate::registry::TypeByteFamily::Productivity,
+        )?;
         vault.put_entity(
             &campaign,
             107,
@@ -88,10 +93,11 @@ fn project_binding_does_not_hijack_a_preexisting_crm_slot() -> Result<()> {
         )?;
     }
     let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
-    assert_eq!(vault.project_type_byte()?, 109);
+    // The static re-key freed 103; occupied CRM slots are not a lower bound.
+    assert_eq!(vault.project_type_byte()?, 103);
     assert_eq!(vault.get_entity_type(&campaign)?, Some(107));
     let root = vault.root_project()?;
-    assert_eq!(vault.get_entity_type(&root)?, Some(109));
+    assert_eq!(vault.get_entity_type(&root)?, Some(103));
     let project = vault.project(root)?.unwrap();
     assert!(
         vault
@@ -149,12 +155,13 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
         assert!(memory.rooms_messages(room).is_err());
         assert!(vault.bind_room_handle(room, "@old", owner).is_err());
         // No stale owner marker treats a reused ordinary conversation as a room.
+        // The ordinary conversation still needs its validated MessagePack body.
         vault.put_entity(
             &room,
             ENTITY_TYPE_CONVERSATION,
             TimeRange { start: 3, end: 3 },
             3,
-            b"ordinary conversation",
+            &crate::conversation::ConversationBody::default().to_bytes()?,
         )?;
     }
     Ok(())

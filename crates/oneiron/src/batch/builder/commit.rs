@@ -109,6 +109,7 @@ impl BatchBuilder<'_> {
             .vault
             .resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         wtxn.commit()?;
+        while self.vault.collect_lfs_garbage(32)? != 0 {}
         for decision in staged_gate_decisions {
             decision.record_metrics(&self.vault.store.diagnostics.gate);
         }

@@ -69,6 +69,15 @@ pub(in crate::batch) fn apply_put(
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
         crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
     }
+    super::owned_body::guard_storage_owned_body(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        occurred,
+        data,
+        replicated,
+    )?;
     // Publication admission reuses the write-door decode and must precede
     // gate receipts, debits, and every other write effect.
     let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {
@@ -179,28 +188,12 @@ pub(in crate::batch) fn apply_put(
                 )?;
             } else if allow_reserved_predicate {
                 crate::gate::check_reserved_claim_policy(&body, write_envelope, policy)?;
-            } else if let Some(write_envelope) = write_envelope {
-                crate::gate::check_claim_policy_for_write_with_preflight_decision(
-                    store,
-                    wtxn,
-                    &id,
-                    crate::gate::ClaimGateWrite::plain(&body, Some(write_envelope)),
-                    policy,
-                    crate::gate::GateWriteMode {
-                        record_decision: record_gate_decisions,
-                        persist_pending_consent: persist_gate_pending_consent,
-                        resolve_pending: true,
-                        can_resolve_pending_consent,
-                        include_source_in_gate_input,
-                    },
-                    preflight_gate_decision_id,
-                )?;
             } else {
                 crate::gate::check_claim_policy_for_write_with_preflight_decision(
                     store,
                     wtxn,
                     &id,
-                    crate::gate::ClaimGateWrite::plain(&body, None),
+                    crate::gate::ClaimGateWrite::plain(&body, write_envelope),
                     policy,
                     crate::gate::GateWriteMode {
                         record_decision: record_gate_decisions,
@@ -215,29 +208,7 @@ pub(in crate::batch) fn apply_put(
         }
         decoded_claim_body = Some(body);
     } else if entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
-        // ONE-1686 (RT-04): the witness ENVELOPE law, at the one arm every
-        // road to a MESSAGE body converges on — the witness door, promote
-        // replay, and sync rematerialization alike. The AUTHORITY half
-        // (which actor may write which author bucket) is answered before
-        // staging by `gate::check_witness_message_ceiling`, which is the only
-        // way to reach `TxnBatchBuilder::put_witness_message`; what is left
-        // for a chokepoint that holds bytes and no actor is proving the bytes
-        // ARE the canonical envelope those axes encode. A local row already
-        // is one by construction (the put consumes the door's own output), so
-        // this costs the witness path nothing and closes every other road.
-        //
-        // Placed BEFORE any store mutation in this function, so a refusal on
-        // either road leaves nothing partial behind for the caller's
-        // quarantine-and-continue to clean up.
-        if replicated {
-            // The REPLICATED road has no actor to run the ceiling against and
-            // the protocol carries no verified source actor or peer signer at
-            // this door, so it fails closed for every author bucket: see
-            // `gate::validate_replicated_witness_message_body`.
-            crate::gate::validate_replicated_witness_message_body(data)?;
-        } else {
-            crate::gate::validate_canonical_witness_message_body(data)?;
-        }
+        validate_witness_message_body(data, replicated)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
@@ -790,6 +761,33 @@ fn validate_lexical_hint_put(
         return Err(Error::InvalidClaimBody(
             "lexical query hint target must be claim",
         ));
+    }
+    Ok(())
+}
+
+fn validate_witness_message_body(data: &[u8], replicated: bool) -> Result<()> {
+    // ONE-1686 (RT-04): the witness ENVELOPE law, at the one arm every
+    // road to a MESSAGE body converges on — the witness door, promote
+    // replay, and sync rematerialization alike. The AUTHORITY half
+    // (which actor may write which author bucket) is answered before
+    // staging by `gate::check_witness_message_ceiling`, which is the only
+    // way to reach `TxnBatchBuilder::put_witness_message`; what is left
+    // for a chokepoint that holds bytes and no actor is proving the bytes
+    // ARE the canonical envelope those axes encode. A local row already
+    // is one by construction (the put consumes the door's own output), so
+    // this costs the witness path nothing and closes every other road.
+    //
+    // Placed BEFORE any store mutation in this function, so a refusal on
+    // either road leaves nothing partial behind for the caller's
+    // quarantine-and-continue to clean up.
+    if replicated {
+        // The REPLICATED road has no actor to run the ceiling against and
+        // the protocol carries no verified source actor or peer signer at
+        // this door, so it fails closed for every author bucket: see
+        // `gate::validate_replicated_witness_message_body`.
+        crate::gate::validate_replicated_witness_message_body(data)?;
+    } else {
+        crate::gate::validate_canonical_witness_message_body(data)?;
     }
     Ok(())
 }

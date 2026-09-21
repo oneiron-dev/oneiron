@@ -133,7 +133,45 @@ fn an_unregistered_peer_falls_back_to_the_device_peer() {
         .edit_as(&human, |text| insert_at(text, 1, "y"))
         .expect("edit");
 
+    // Attribution still falls back to the device peer, but that fallback is
+    // not an authenticated receipt and cannot authorize finalization.
+    let changes = artifact
+        .window_changes(
+            &artifact.window_base().unwrap(),
+            &artifact.doc.doc.oplog_frontiers(),
+        )
+        .unwrap();
+    assert_eq!(
+        artifact.attribute(&vault, changes.last().unwrap()).unwrap(),
+        OpAttribution::DevicePeer
+    );
     assert!(artifact.finalize(&vault).is_err());
+
+    let unstamped =
+        ProposalTextArtifact::from_snapshot(&opened.export_snapshot().unwrap()).unwrap();
+    unstamped
+        .doc
+        .doc
+        .get_text(TEXT_CONTAINER)
+        .insert(1, "z")
+        .expect("raw insert");
+    unstamped
+        .doc
+        .doc
+        .commit_with(CommitOptions::new().commit_msg("some other layer"));
+    let changes = unstamped
+        .window_changes(
+            &unstamped.window_base().unwrap(),
+            &unstamped.doc.doc.oplog_frontiers(),
+        )
+        .unwrap();
+    assert_eq!(
+        unstamped
+            .attribute(&vault, changes.last().unwrap())
+            .unwrap(),
+        OpAttribution::DevicePeer
+    );
+    assert!(unstamped.finalize(&vault).is_err());
 }
 
 #[test]
@@ -251,15 +289,10 @@ fn a_failed_edit_still_lands_under_its_own_actor() {
     assert_eq!(record.final_text, "Abase!");
 }
 
-/// A SECOND `open` marker fails the artifact closed.
-///
-/// The marker rides a commit message, which replicates: a peer that syncs the
-/// artifact can commit its own `open` stamp, and taking the latest one would
-/// move `proposed_ref` past every edit before it. Replay-equality cannot catch
-/// that — replay starts at the shifted base and reconstructs the final text
-/// perfectly, while the earlier edits simply vanish from the window.
+/// A later opening is retained without shifting the birth window or losing
+/// the peer's earlier text. A forged stamp still cannot claim another actor.
 #[test]
-fn a_second_open_marker_is_refused_rather_than_shifting_the_window() {
+fn a_second_open_marker_preserves_the_birth_window_and_all_attributed_ops() {
     let (_tmp, vault) = temp_vault();
     let human = put_actor(&vault, EdgeActorClass::Human);
 
@@ -284,12 +317,37 @@ fn a_second_open_marker_is_refused_rather_than_shifting_the_window() {
         })
         .expect("later edit");
 
-    let err = forged
-        .finalize(&vault)
-        .expect_err("two open markers must fail closed");
+    assert_eq!(forged.window_base().unwrap(), opened.window_base().unwrap());
+    assert_eq!(forged.text(), "seed hidden visible");
+    // A later marker cannot move the base, but an unreceipted forged marker
+    // must still fail authentication rather than mint a finalized record.
+    assert!(forged.provenance(&vault).unwrap().is_none());
+    assert!(forged.finalize(&vault).is_err());
+}
+
+#[test]
+fn an_authenticated_second_open_keeps_the_earliest_window_base() {
+    let (_tmp, vault) = temp_vault();
+    let human = put_actor(&vault, EdgeActorClass::Human);
+    let mut artifact = ProposalTextArtifact::open(&vault, "seed", &human, None).unwrap();
+    let birth_base = artifact.window_base().unwrap();
+    artifact
+        .edit_as(&human, |text| insert_at(text, text.len_unicode(), " first"))
+        .unwrap();
+    insert_at(&artifact.doc.doc.get_text(TEXT_CONTAINER), 10, " second").unwrap();
+    artifact
+        .commit_receipted(StampKind::Open, &human, None)
+        .unwrap();
+    assert_eq!(artifact.window_base().unwrap(), birth_base);
+    let record = artifact.finalize(&vault).unwrap();
+    assert_eq!(record.proposed_text, "seed");
+    assert_eq!(record.final_text, "seed first second");
+    assert_eq!(record.ops_by_actor.len(), 2);
     assert!(
-        matches!(err, Error::CorruptedIndex(msg) if msg.contains("more than one open commit")),
-        "{err:?}"
+        record
+            .ops_by_actor
+            .iter()
+            .all(|(actor, _)| *actor == OpAttribution::Stamped(human))
     );
 }
 
@@ -334,6 +392,25 @@ fn made_by_two_commits_fold_and_birth_round_trips() {
         process,
     )
     .unwrap();
+    let birth_provenance = artifact.provenance(&vault).unwrap().unwrap();
+    assert_eq!(
+        birth_provenance.commits.len(),
+        1,
+        "birth is one receipted commit"
+    );
+    assert_eq!(
+        artifact.doc.birth().entity,
+        artifact.artifact_ref().entity_id().to_hex()
+    );
+    assert_eq!(artifact.doc.birth().actor, actor.entity_ref().to_hex());
+    assert_eq!(
+        artifact.doc.birth().at,
+        birth_provenance.commits[0].made_by.at
+    );
+    assert_eq!(
+        artifact.window_base().unwrap(),
+        artifact.doc.doc.oplog_frontiers()
+    );
     register_peer_actor(&vault, artifact.peer_id(), &actor).unwrap();
     artifact
         .edit_as(&actor, |text| {
@@ -360,10 +437,11 @@ fn made_by_two_commits_fold_and_birth_round_trips() {
     // row, rather than laundering that unreceipted commit into provenance.
     reopened
         .doc
+        .doc
         .get_text(TEXT_CONTAINER)
         .insert(0, "unreceipted ")
         .unwrap();
-    reopened.doc.commit();
+    reopened.doc.doc.commit();
     assert_eq!(reopened.provenance(&vault).unwrap(), None);
 }
 

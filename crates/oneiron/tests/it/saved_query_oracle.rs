@@ -160,7 +160,13 @@ fn raw_vault() -> (tempfile::TempDir, Vault) {
 /// entities of its dynamically registered kind.
 fn oracle_vault() -> (tempfile::TempDir, Vault) {
     let (dir, vault) = raw_vault();
-    register_crm_pack(&vault, 107, 108).unwrap();
+    register_crm_pack(
+        &vault,
+        107,
+        108,
+        oneiron::registry::TypeByteFamily::Productivity,
+    )
+    .unwrap();
     (dir, vault)
 }
 
@@ -171,7 +177,13 @@ fn vector_oracle_vault() -> (tempfile::TempDir, Vault) {
     let mut config = test_config();
     config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Vault::open_unseeded_for_test(dir.path(), config).unwrap();
-    register_crm_pack(&vault, 107, 108).unwrap();
+    register_crm_pack(
+        &vault,
+        107,
+        108,
+        oneiron::registry::TypeByteFamily::Productivity,
+    )
+    .unwrap();
     (dir, vault)
 }
 
@@ -303,7 +315,13 @@ fn evaluation(record: &SavedQueryRecord, entity_ref: EntityId) -> EvaluationRequ
 #[test]
 fn saved_query_registers_dynamically_in_crm_band_without_static_byte() {
     let (_dir, vault) = raw_vault();
-    let pack = register_crm_pack(&vault, 107, 108).unwrap();
+    let pack = register_crm_pack(
+        &vault,
+        107,
+        108,
+        oneiron::registry::TypeByteFamily::Productivity,
+    )
+    .unwrap();
 
     assert_eq!(pack.saved_query.type_byte, 108);
     assert_eq!(
@@ -325,11 +343,11 @@ fn saved_query_registers_dynamically_in_crm_band_without_static_byte() {
     // The byte is not chosen here, so a caller CAN pick a bad one — and the
     // existing registrar, not this module, is what rejects it.
     assert!(matches!(
-        register_saved_query_kind(&vault, 109),
+        register_saved_query_kind(&vault, 109, oneiron::registry::TypeByteFamily::Productivity),
         Err(Error::Registry(RegistryError::StructuralKindPrefixCollision(prefix))) if prefix == SAVED_QUERY_SHORT_ID_PREFIX
     ));
     assert!(matches!(
-        register_saved_query_kind(&vault, 50),
+        register_saved_query_kind(&vault, 50, oneiron::registry::TypeByteFamily::Productivity),
         Err(Error::Registry(
             RegistryError::StructuralKindZoneViolation { .. }
         ))
@@ -346,14 +364,24 @@ fn crm_pack_registration_never_leaves_half_a_pack() {
 
     // A CRM-band byte for SAVED_QUERY that collides with CAMPAIGN's own slot.
     assert!(matches!(
-        register_crm_pack(&vault, 107, 107),
+        register_crm_pack(
+            &vault,
+            107,
+            107,
+            oneiron::registry::TypeByteFamily::Productivity
+        ),
         Err(Error::Registry(
             RegistryError::StructuralKindTypeByteCollision(107)
         ))
     ));
     // An out-of-band SAVED_QUERY byte.
     assert!(matches!(
-        register_crm_pack(&vault, 107, 50),
+        register_crm_pack(
+            &vault,
+            107,
+            50,
+            oneiron::registry::TypeByteFamily::Productivity
+        ),
         Err(Error::Registry(
             RegistryError::StructuralKindZoneViolation { .. }
         ))
@@ -366,13 +394,33 @@ fn crm_pack_registration_never_leaves_half_a_pack() {
 
     // A half-install that DID happen (a bare CAMPAIGN registration) is repaired
     // by the whole-pack entry point rather than colliding with itself.
-    let campaign = oneiron::campaign::register_campaign_kind(&vault, 107).unwrap();
-    let pack = register_crm_pack(&vault, 107, 108).unwrap();
+    let campaign = oneiron::campaign::register_campaign_kind(
+        &vault,
+        107,
+        oneiron::registry::TypeByteFamily::Productivity,
+    )
+    .unwrap();
+    let pack = register_crm_pack(
+        &vault,
+        107,
+        108,
+        oneiron::registry::TypeByteFamily::Productivity,
+    )
+    .unwrap();
     assert_eq!(pack.campaign, campaign, "the existing slot is reused");
     assert_eq!(pack.saved_query.type_byte, 108);
 
     // And the whole call is idempotent once both slots are installed.
-    assert_eq!(register_crm_pack(&vault, 107, 108).unwrap(), pack);
+    assert_eq!(
+        register_crm_pack(
+            &vault,
+            107,
+            108,
+            oneiron::registry::TypeByteFamily::Productivity
+        )
+        .unwrap(),
+        pack
+    );
 }
 
 #[test]

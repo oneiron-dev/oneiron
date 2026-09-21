@@ -61,15 +61,15 @@ fn seeded_id(counter: u128) -> EntityId {
 fn oracle_vault() -> (tempfile::TempDir, Arc<Vault>, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), test_vault_config()).unwrap();
-    let slots: Vec<_> = (oneiron::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
+    let family = oneiron::registry::TypeByteFamily::Productivity;
+    let mut occupied: Vec<_> = (oneiron::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
         ..=oneiron::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
-        .filter(|kind| {
-            oneiron::registry::entity_type_registry_entry(*kind).is_none()
-                && vault.structural_kind_registration(*kind).is_none()
-        })
-        .take(2)
+        .filter(|kind| vault.structural_kind_registration(*kind).is_some())
         .collect();
-    let pack = register_crm_pack(&vault, slots[0], slots[1]).unwrap();
+    let campaign = oneiron::registry::allocate_type_byte(family, &occupied).unwrap();
+    occupied.push(campaign);
+    let saved_query = oneiron::registry::allocate_type_byte(family, &occupied).unwrap();
+    let pack = register_crm_pack(&vault, campaign, saved_query, family).unwrap();
     assert_eq!(pack.campaign.pack, CRM_PACK_ID);
     assert_eq!(pack.saved_query.pack, CRM_PACK_ID);
     let principal = seeded_id(0x01);

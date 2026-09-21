@@ -85,12 +85,15 @@ mod client_metadata;
 mod companion;
 mod consumer_usage;
 mod context_pack;
+mod conversation_dag;
+mod conversation_members;
 mod conversations;
 mod core;
 mod discover;
 mod entity;
 mod error_map;
 mod esign;
+mod sessions;
 // ONE-1441 [WIRE-P1]: the bounded HTTP projection of the engine memory
 // surface, nested at `/v1/core/facade`. Its own file because it is its own
 // contract — one route per public verb, engine DTOs verbatim, and a facade
@@ -184,6 +187,24 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/memory/verbs/{verb}", post(core_memory_verb))
         .route("/conversations", post(create_core_conversation))
         .route(
+            "/conversations/{conversation_id}/members",
+            post(conversation_members::write_member),
+        )
+        .route(
+            "/conversations/{conversation_id}/records",
+            post(conversation_dag::append),
+        )
+        .route(
+            "/conversations/{conversation_id}/records/{record}/thread",
+            post(conversation_dag::reply),
+        )
+        .route(
+            "/conversations/{conversation_id}/records/{record}/thread/summary",
+            post(conversation_dag::summary),
+        )
+        .route("/sessions/{id}", axum::routing::patch(sessions::mode))
+        .route("/sessions/{id}/presence", post(sessions::presence))
+        .route(
             "/conversations/{conversation_id}/turns",
             post(create_core_conversation_turn),
         )
@@ -216,6 +237,22 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             get(get_core_outbound_verb_contract),
         )
         .route("/conversations", get(list_core_conversations))
+        .route(
+            "/conversations/{conversation_id}/members",
+            get(conversation_members::read_members),
+        )
+        .route(
+            "/conversations/{conversation_id}/records",
+            get(conversation_dag::records),
+        )
+        .route(
+            "/conversations/{conversation_id}/records/{record}/thread",
+            get(conversation_dag::thread),
+        )
+        .route(
+            "/conversations/{conversation_id}/canonical",
+            get(conversation_dag::canonical),
+        )
         .route(
             "/conversations/{conversation_id}/turns",
             get(list_core_conversation_turns),

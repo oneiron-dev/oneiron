@@ -1,10 +1,16 @@
 //! Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators.
 
+mod families;
 mod namespaces;
 mod registry_table;
 mod type_bytes;
 mod validation;
 mod zones;
+
+pub(crate) use self::families::family_matches;
+pub use self::families::{
+    TYPE_BYTE_FAMILIES, TypeByteFamily, TypeByteFamilyEntry, allocate_type_byte, family_of,
+};
 
 pub use self::namespaces::{
     ID_NAMESPACE_REGISTRY, IdNamespaceRegistryEntry, IdNamespaceTarget, StructuralKindRegistration,
@@ -27,6 +33,9 @@ pub use self::type_bytes::{
     ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SECRET_CUSTODY,
     ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SKILL_CONTENT_ANCHOR, ENTITY_TYPE_SUMMARY,
     ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
+};
+pub use self::type_bytes::{
+    ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_SKILL_HUB, ENTITY_TYPE_SUSPICIOUS_WAKE,
 };
 pub use self::zones::{
     EntityClassification, TYPE_BYTE_SEMANTIC, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END,

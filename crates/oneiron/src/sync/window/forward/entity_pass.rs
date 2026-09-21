@@ -115,6 +115,20 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 return;
             }
 
+            // Observer-B parity: internal chunk bytes never materialize from
+            // Loro, including after GC retired the row but kept its reservation.
+            match crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, &id) {
+                Ok(true) => return,
+                Err(err) => {
+                    entity_error = Some(err);
+                    return;
+                }
+                Ok(false) => {}
+            }
+            if crate::origin::lfs::is_lfs_chunk_blob(&id, blob) {
+                return;
+            }
+
             // Decode the envelope before deletion gates so a concurrent
             // protected engine record (notably type-76) cannot be hidden by
             // a hostile tombstone or a pre-fix `dt:` poison marker.

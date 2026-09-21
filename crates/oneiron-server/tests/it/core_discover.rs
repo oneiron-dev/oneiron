@@ -776,7 +776,7 @@ async fn discover_reports_seeded_counts_namespaces_and_health_capabilities() {
             ENTITY_TYPE_CONVERSATION,
             time_range(4, 4),
             40,
-            b"conversation",
+            b"\x80",
         )
         .unwrap();
 
@@ -801,11 +801,11 @@ async fn discover_reports_seeded_counts_namespaces_and_health_capabilities() {
 
     assert_eq!(body["counts"]["0"].as_u64(), Some(initial_claims + 1));
     assert_eq!(body["counts"]["1"].as_u64(), Some(2));
-    assert_eq!(body["counts"]["4"].as_u64(), Some(1));
     assert_eq!(
-        body["counts"]["11"].as_u64(),
+        body["counts"]["4"].as_u64(),
         Some(initial_conversations + 1)
     );
+    assert_eq!(body["counts"]["10"].as_u64(), Some(1));
     assert_eq!(body["last_activity"].as_u64(), Some(50));
     assert_eq!(
         str_array_set(&body["predicate_namespaces"]),

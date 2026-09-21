@@ -78,9 +78,19 @@ fn two_vault_entity_convergence_both_directions() {
     // Expectations are LITERAL envelope bytes built by the test, not engine
     // output: type u8 | occurred u64 BE ×2 | learned_at u64 BE | body.
     let a_src_blob = entity_blob(1, time_range(T0 + 10), T0 + 10, b"a-source");
-    let a_tgt_blob = entity_blob(4, time_range(T0 + 11), T0 + 11, b"a-target");
+    let a_tgt_blob = entity_blob(
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        time_range(T0 + 11),
+        T0 + 11,
+        b"a-target",
+    );
     let b_src_blob = entity_blob(1, time_range(T0 + 20), T0 + 20, b"b-source");
-    let b_tgt_blob = entity_blob(4, time_range(T0 + 21), T0 + 21, b"b-target");
+    let b_tgt_blob = entity_blob(
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        time_range(T0 + 21),
+        T0 + 21,
+        b"b-target",
+    );
 
     a.put_entity_in_window(WINDOW, &a_src, &a_src_blob);
     a.put_entity_in_window(WINDOW, &a_tgt, &a_tgt_blob);
@@ -478,7 +488,12 @@ fn idempotent_reimport_is_byte_stable() {
     let src = EntityId::now();
     let tgt = EntityId::now();
     let src_blob = entity_blob(1, time_range(T0 + 1), T0 + 1, b"idempotent-src");
-    let tgt_blob = entity_blob(4, time_range(T0 + 2), T0 + 2, b"idempotent-tgt");
+    let tgt_blob = entity_blob(
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        time_range(T0 + 2),
+        T0 + 2,
+        b"idempotent-tgt",
+    );
     a.put_entity_in_window(WINDOW, &src, &src_blob);
     a.put_entity_in_window(WINDOW, &tgt, &tgt_blob);
     a.put_edge_in_window(
@@ -569,13 +584,31 @@ fn retracted_provenance_crosses_bit_exact_and_edge_is_kept() {
     let src = EntityId::now();
     let tgt = EntityId::now();
     a.vault
-        .put_entity(&actor, 4, time_range(T0 + 1), T0 + 1, b"actor")
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(T0 + 1),
+            T0 + 1,
+            b"actor",
+        )
         .unwrap();
     a.vault
-        .put_entity(&src, 4, time_range(T0 + 2), T0 + 2, b"src")
+        .put_entity(
+            &src,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(T0 + 2),
+            T0 + 2,
+            b"src",
+        )
         .unwrap();
     a.vault
-        .put_entity(&tgt, 4, time_range(T0 + 3), T0 + 3, b"tgt")
+        .put_entity(
+            &tgt,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(T0 + 3),
+            T0 + 3,
+            b"tgt",
+        )
         .unwrap();
     let _claim = provenanced_edge(
         &a,
@@ -643,12 +676,22 @@ fn structural_edge_carrying_provenance_bytes_is_rejected_without_poisoning_batch
     a.put_entity_in_window(
         WINDOW,
         &src,
-        &entity_blob(4, time_range(T0 + 1), T0 + 1, b"src"),
+        &entity_blob(
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(T0 + 1),
+            T0 + 1,
+            b"src",
+        ),
     );
     a.put_entity_in_window(
         WINDOW,
         &tgt,
-        &entity_blob(4, time_range(T0 + 2), T0 + 2, b"tgt"),
+        &entity_blob(
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(T0 + 2),
+            T0 + 2,
+            b"tgt",
+        ),
     );
 
     // The write-side gate already refuses to ENCODE this shape (ARCH-0034:
@@ -721,13 +764,31 @@ fn edge_provenance_claim_convergence_both_directions() {
         let src = EntityId::now();
         let tgt = EntityId::now();
         node.vault
-            .put_entity(&actor, 4, time_range(T0 + 1), T0 + 1, b"actor")
+            .put_entity(
+                &actor,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                time_range(T0 + 1),
+                T0 + 1,
+                b"actor",
+            )
             .unwrap();
         node.vault
-            .put_entity(&src, 4, time_range(T0 + 2), T0 + 2, b"src")
+            .put_entity(
+                &src,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                time_range(T0 + 2),
+                T0 + 2,
+                b"src",
+            )
             .unwrap();
         node.vault
-            .put_entity(&tgt, 4, time_range(T0 + 3), T0 + 3, b"tgt")
+            .put_entity(
+                &tgt,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                time_range(T0 + 3),
+                T0 + 3,
+                b"tgt",
+            )
             .unwrap();
         let claim = provenanced_edge(
             node,
@@ -883,7 +944,12 @@ fn soft_delete_propagates_end_to_end_keeping_shell_without_receipt() {
     let id = EntityId::now();
     let other = EntityId::now();
     let blob = entity_blob(1, time_range(T0 + 5), T0 + 5, b"soft-delete-me");
-    let other_blob = entity_blob(4, time_range(T0 + 6), T0 + 6, b"bystander");
+    let other_blob = entity_blob(
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        time_range(T0 + 6),
+        T0 + 6,
+        b"bystander",
+    );
     a.put_entity_in_window(WINDOW, &id, &blob);
     a.put_entity_in_window(WINDOW, &other, &other_blob);
     a.put_edge_in_window(

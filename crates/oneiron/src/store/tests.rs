@@ -146,10 +146,10 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
                 result.expect("equal ABI versions must open"),
                 StorageAbiGate::Current
             );
-        } else if stored == STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR {
+        } else if stored == STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR {
             assert_eq!(
                 result.expect("the immediate predecessor opens for the v3 re-key"),
-                StorageAbiGate::RekeyByteSpaceV3
+                StorageAbiGate::RekeyByteSpaceV31
             );
         } else {
             assert!(
@@ -169,7 +169,7 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
     // other ABI must not inherit an accept-the-predecessor branch.
     assert!(matches!(
         gate_storage_abi_value(
-            Some(STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR),
+            Some(STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR),
             STORAGE_ABI_VERSION + 1,
             false
         ),
@@ -192,7 +192,7 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
 
 #[test]
 fn receipt_family_versions_require_a_storage_abi_bump() {
-    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 5])] = &[(17, [0, 2, 0, 1, 1])];
+    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 5])] = &[(18, [0, 2, 0, 1, 1])];
 
     let receipt_versions = [
         GATE_DECISION_LEDGER_VERSION,
@@ -1312,7 +1312,7 @@ fn register_structural_kind_rejects_secret_pack_before_vault_meta_write() {
 
     let error = vault
         .register_structural_kind(
-            110,
+            112,
             "zz",
             TypeByteZone::CompiledProduct,
             "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
@@ -1329,7 +1329,7 @@ fn store_metadata_allows_secret_prefix_embedded_in_larger_identifier() -> Result
     let (_dir, vault) = open_test_vault();
 
     let registration = vault.register_structural_kind(
-        110,
+        112,
         "zz",
         TypeByteZone::CompiledProduct,
         "myghp_0123456789abcdefghijklmnopqrstuvwxyz_label",
@@ -2939,8 +2939,10 @@ struct LegacyRow {
 }
 
 fn legacy_rows() -> Vec<LegacyRow> {
-    TYPE_BYTE_REKEY_V3
+    TYPE_BYTE_REKEY_V31
         .iter()
+        // Three canon reserves have no registered substrate and no v17 rows.
+        .filter(|entry| crate::registry::entity_type_registry_entry(entry.new).is_some())
         .enumerate()
         .map(|(index, entry)| LegacyRow {
             // Distinct, non-reserved ids: the low byte varies per kind.
@@ -3007,7 +3009,7 @@ const LEGACY_EDGE_VALUE: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 /// Writes a pre-v3 vault: every moved kind present at its OLD byte, with the
 /// predecessor ABI stamped. `mutate` gets the last word so a test can inject a
 /// specific corruption before the migration sees the data.
-fn write_pre_v3_vault(
+fn write_v17_vault(
     path: &Path,
     rows: &[LegacyRow],
     mutate: impl FnOnce(&Store, &mut RwTxn<'_>) -> Result<()>,
@@ -3015,7 +3017,7 @@ fn write_pre_v3_vault(
     let store = Store::open_with_storage_abi_version_for_test(
         path,
         &VaultConfig::device(),
-        STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR,
+        STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR,
     )?;
     let mut wtxn = store.env.write_txn()?;
     // Creating the root seeds the default policy manifest (ONE-1869), and that
@@ -3125,15 +3127,16 @@ fn raw_entity_type_bytes(path: &Path, rows: &[LegacyRow]) -> Result<Vec<Option<u
 /// id, body and timestamp, leaves edges untouched, and lands equal per-kind
 /// counts.
 #[test]
-fn byte_space_v3_rekey_moves_every_kind_in_one_transaction() -> Result<()> {
+fn byte_space_v31_rekey_moves_every_kind_in_one_transaction() -> Result<()> {
+    assert_eq!(TYPE_BYTE_REKEY_V31.len(), 37);
     let dir = tempfile::tempdir()?;
     let rows = legacy_rows();
-    write_pre_v3_vault(dir.path(), &rows, |_, _| Ok(()))?;
+    write_v17_vault(dir.path(), &rows, |_, _| Ok(()))?;
 
     // Sources and destinations genuinely overlap — this is the property that
     // makes staged delete-then-write mandatory rather than stylistic.
-    let sources: BTreeSet<u8> = TYPE_BYTE_REKEY_V3.iter().map(|entry| entry.old).collect();
-    let destinations: BTreeSet<u8> = TYPE_BYTE_REKEY_V3.iter().map(|entry| entry.new).collect();
+    let sources: BTreeSet<u8> = TYPE_BYTE_REKEY_V31.iter().map(|entry| entry.old).collect();
+    let destinations: BTreeSet<u8> = TYPE_BYTE_REKEY_V31.iter().map(|entry| entry.new).collect();
     let reused: BTreeSet<u8> = sources.intersection(&destinations).copied().collect();
     assert!(
         reused.contains(&80) && reused.contains(&81) && reused.contains(&82),
@@ -3230,19 +3233,19 @@ fn byte_space_v3_rekey_moves_every_kind_in_one_transaction() -> Result<()> {
 /// code RE-DERIVED — a relocated row must not keep a zone describing where it
 /// used to live.
 #[test]
-fn byte_space_v3_rekey_moves_structural_kind_registrations() -> Result<()> {
+fn byte_space_v31_rekey_moves_structural_kind_registrations() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let rows = legacy_rows();
     // COMPANION_REGISTER is the one moved kind with a real dynamic-registration
     // history, and it moves from the companion band into the system zone.
-    let companion = TYPE_BYTE_REKEY_V3
+    let companion = TYPE_BYTE_REKEY_V31
         .iter()
         .find(|entry| entry.kind == "COMPANION_REGISTER")
         .copied()
         .expect("COMPANION_REGISTER is in the map");
-    write_pre_v3_vault(dir.path(), &rows, |store, wtxn| {
+    write_v17_vault(dir.path(), &rows, |store, wtxn| {
         // Band code 2 is the pre-v3 COMPANION band, the row's honest origin.
-        let record = pre_v3_registration_record(
+        let record = v17_registration_record(
             companion.old,
             2,
             COMPANION_REGISTER_SHORT_ID_PREFIX,
@@ -3284,9 +3287,9 @@ fn byte_space_v3_rekey_moves_structural_kind_registrations() -> Result<()> {
 /// Builds a pre-v3 dynamic registration record: version 1, and a byte-2
 /// discriminant drawn from the PRE-V3 SIX-BAND table (Companion 2, Productivity
 /// 3, CRM 4), which is a different table from the v3 zone ordinals.
-fn pre_v3_registration_record(type_byte: u8, band_code: u8, prefix: &str, pack: &str) -> Vec<u8> {
+fn v17_registration_record(type_byte: u8, band_code: u8, prefix: &str, pack: &str) -> Vec<u8> {
     let mut record = vec![
-        STRUCTURAL_KIND_REGISTRY_RECORD_VERSION_PRE_V3,
+        2,
         type_byte,
         band_code,
         u8::try_from(prefix.len()).expect("fixture prefix length fits u8"),
@@ -3313,24 +3316,24 @@ fn pre_v3_registration_record(type_byte: u8, band_code: u8, prefix: &str, pack: 
 /// in. The re-key rewrites every surviving row in its own transaction, before
 /// the new ABI is stamped.
 #[test]
-fn byte_space_v3_rekey_rezones_registry_rows_the_map_does_not_move() -> Result<()> {
+fn byte_space_v31_rekey_rezones_registry_rows_the_map_does_not_move() -> Result<()> {
     // Neither byte is a re-key source or destination, and neither carries a
     // static kind — exactly the gap the map leaves open.
-    const PRODUCTIVITY_BYTE: u8 = 90;
-    const CRM_BYTE: u8 = 110;
+    const PRODUCTIVITY_BYTE: u8 = 112;
+    const CRM_BYTE: u8 = 113;
 
     let dir = tempfile::tempdir()?;
     let rows = legacy_rows();
-    write_pre_v3_vault(dir.path(), &rows, |store, wtxn| {
+    write_v17_vault(dir.path(), &rows, |store, wtxn| {
         store.vault_meta.put(
             wtxn,
             &structural_kind_registry_key(PRODUCTIVITY_BYTE),
-            &pre_v3_registration_record(PRODUCTIVITY_BYTE, 3, "qz", "productivity-pack"),
+            &v17_registration_record(PRODUCTIVITY_BYTE, 3, "qz", "productivity-pack"),
         )?;
         store.vault_meta.put(
             wtxn,
             &structural_kind_registry_key(CRM_BYTE),
-            &pre_v3_registration_record(CRM_BYTE, 4, "zx", "crm-pack"),
+            &v17_registration_record(CRM_BYTE, 3, "zx", "crm-pack"),
         )?;
         Ok(())
     })?;
@@ -3374,7 +3377,7 @@ fn byte_space_v3_rekey_rezones_registry_rows_the_map_does_not_move() -> Result<(
 /// Every rejection path aborts the WHOLE transaction: old bytes and the old ABI
 /// marker both survive, so the vault stays openable by the predecessor engine.
 #[test]
-fn byte_space_v3_rekey_rolls_back_whole_transaction_on_any_anomaly() -> Result<()> {
+fn byte_space_v31_rekey_rolls_back_whole_transaction_on_any_anomaly() -> Result<()> {
     struct Case {
         name: &'static str,
         inject: fn(&Store, &mut RwTxn<'_>, &[LegacyRow]) -> Result<()>,
@@ -3382,16 +3385,27 @@ fn byte_space_v3_rekey_rolls_back_whole_transaction_on_any_anomaly() -> Result<(
 
     let cases = [
         Case {
+            name: "unsupported_pre_v3_registry_format",
+            inject: |store, wtxn, _rows| {
+                let mut raw = v17_registration_record(112, 3, "qz", "pre-v3-pack");
+                raw[0] = 1;
+                store
+                    .vault_meta
+                    .put(wtxn, &structural_kind_registry_key(112), &raw)?;
+                Ok(())
+            },
+        },
+        Case {
             // A destination byte this map does not vacate already holds rows.
             name: "destination_collision",
             inject: |store, wtxn, _rows| {
                 let squatter = EntityId::from_bytes([0x5A; 16]).expect("squatter id");
-                let mut value = vec![79_u8];
+                let mut value = vec![90_u8];
                 value.extend_from_slice(&[0; 24]);
                 store.entities.put(wtxn, squatter.as_bytes(), &value)?;
                 store
                     .type_index
-                    .put(wtxn, &type_index_key(79, &squatter), &[])?;
+                    .put(wtxn, &type_index_key(90, &squatter), &[])?;
                 Ok(())
             },
         },
@@ -3422,7 +3436,7 @@ fn byte_space_v3_rekey_rolls_back_whole_transaction_on_any_anomaly() -> Result<(
             inject: |store, wtxn, _rows| {
                 store
                     .vault_meta
-                    .put(wtxn, &short_id_counter_key(79), &7_u64.to_le_bytes())?;
+                    .put(wtxn, &short_id_counter_key(90), &7_u64.to_le_bytes())?;
                 Ok(())
             },
         },
@@ -3438,7 +3452,7 @@ fn byte_space_v3_rekey_rolls_back_whole_transaction_on_any_anomaly() -> Result<(
                 store.vault_meta.put(
                     wtxn,
                     &structural_kind_registry_key(95),
-                    &pre_v3_registration_record(95, 3, "abc", "stray-pack"),
+                    &v17_registration_record(95, 2, "abc", "stray-pack"),
                 )?;
                 Ok(())
             },
@@ -3449,7 +3463,7 @@ fn byte_space_v3_rekey_rolls_back_whole_transaction_on_any_anomaly() -> Result<(
         let dir = tempfile::tempdir()?;
         let rows = legacy_rows();
         let inject = case.inject;
-        write_pre_v3_vault(dir.path(), &rows, |store, wtxn| inject(store, wtxn, &rows))?;
+        write_v17_vault(dir.path(), &rows, |store, wtxn| inject(store, wtxn, &rows))?;
 
         let error = match Store::open(dir.path(), &VaultConfig::device()) {
             Ok(_) => panic!("case {}: the re-key must fail closed", case.name),
@@ -3466,7 +3480,7 @@ fn byte_space_v3_rekey_rolls_back_whole_transaction_on_any_anomaly() -> Result<(
         // open this vault.
         assert_eq!(
             stored_abi(dir.path())?,
-            Some(STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR),
+            Some(STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR),
             "case {}: a failed re-key must leave the old ABI marker",
             case.name
         );
@@ -4673,7 +4687,7 @@ fn open_existing_refuses_a_vault_stamped_at_another_storage_abi() -> Result<()> 
         vault.store.vault_meta.put(
             &mut wtxn,
             STORAGE_ABI_VERSION_KEY,
-            &STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR.to_le_bytes(),
+            &STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR.to_le_bytes(),
         )?;
         wtxn.commit()?;
     }
@@ -4686,7 +4700,7 @@ fn open_existing_refuses_a_vault_stamped_at_another_storage_abi() -> Result<()> 
     let Error::Store(StoreError::StorageAbiVersionChanged { stored, current }) = &error else {
         panic!("expected a storage-ABI refusal, got {error}");
     };
-    assert_eq!(*stored, Some(STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR));
+    assert_eq!(*stored, Some(STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR));
     assert_eq!(*current, STORAGE_ABI_VERSION);
     Ok(())
 }
@@ -5281,5 +5295,64 @@ fn retrieval_quality_named_telemetry_round_trip_keeps_version_zero() -> Result<(
     assert_eq!(wire["quality"], "degraded");
     assert_eq!(wire["degradation"], serde_json::json!(["ppr_cache_miss"]));
     assert_eq!(wire["confidence_adjustment"], -0.15);
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn abi18_rekeys_persisted_sync_envelopes_before_replay_and_only_once() -> Result<()> {
+    use crate::sync::WindowKey;
+    use crate::sync::window::load_window_from_state;
+    use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
+
+    for pending_only in [false, true] {
+        let dir = tempfile::tempdir()?;
+        let rows: Vec<_> = legacy_rows()
+            .into_iter()
+            .filter(|row| matches!(row.kind, "PERSON" | "PLACE"))
+            .collect();
+        let row = &rows[0];
+        let before = legacy_envelope(row);
+        let key = WindowKey::new("9999-12");
+        write_v17_vault(dir.path(), &rows, |store, txn| {
+            let doc = LoroDoc::new();
+            doc.get_map("entities")
+                .insert(&row.id.to_hex(), LoroValue::Binary(before.clone().into()))
+                .unwrap();
+            doc.commit();
+            let state = doc.export(ExportMode::Snapshot).unwrap();
+            let state_key = if pending_only {
+                "u:w:9999-12:00000001"
+            } else {
+                "d:w:9999-12"
+            };
+            store.sync_state.put(txn, state_key, &state)?;
+            store.sync_state.put(txn, "svf:w:9999-12", &[1])?;
+            Ok(())
+        })?;
+        let vault = crate::Vault::open(dir.path(), VaultConfig::device())?;
+        let doc = load_window_from_state(&vault, "migration", &key)?;
+        let assert_person = |doc: &LoroDoc| {
+            let Some(ValueOrContainer::Value(LoroValue::Binary(blob))) =
+                doc.get_map("entities").get(&row.id.to_hex())
+            else {
+                panic!("missing recovered person")
+            };
+            assert_eq!(blob[0], crate::registry::ENTITY_TYPE_PERSON);
+            assert_eq!(&blob[1..], &before[1..]);
+        };
+        assert_person(&doc);
+        drop(doc);
+        drop(vault);
+        let vault = crate::Vault::open(dir.path(), VaultConfig::device())?;
+        let reopened = load_window_from_state(&vault, "migration", &key)?;
+        // Current PERSON=10 overlaps old ASSET_TEXT=10. A second conversion
+        // would silently produce ASSET_TEXT=31, so reopen is part of the law.
+        assert_person(&reopened);
+        assert_eq!(
+            vault.get_raw(&row.id)?.unwrap()[0],
+            crate::registry::ENTITY_TYPE_PERSON
+        );
+    }
     Ok(())
 }

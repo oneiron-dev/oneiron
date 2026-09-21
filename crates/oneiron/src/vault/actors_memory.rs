@@ -231,7 +231,8 @@ impl Vault {
         Ok(limit)
     }
 
-    /// Registers a vault-scoped pack StructuralKind slot.
+    /// Registers a local-only vault-scoped StructuralKind slot.
+    /// Use [`Self::register_structural_kind_in_family`] for replicated kinds.
     ///
     /// The claim is persisted in `vault_meta` under the dynamic kind-registry
     /// key family and becomes visible to subsequent write validation and
@@ -249,6 +250,33 @@ impl Vault {
     ) -> Result<StructuralKindRegistration> {
         self.store
             .register_structural_kind(type_byte, short_id_prefix, zone, pack)
+    }
+
+    /// Registers an assigned slot with an explicit semantic family.
+    /// The family, not the numeric byte, determines replication scope and
+    /// persists across reopen. Slots must belong to the family's zone;
+    /// existing static slots and duplicate bytes or prefixes still reject.
+    pub fn register_structural_kind_in_family(
+        &self,
+        type_byte: u8,
+        short_id_prefix: impl Into<String>,
+        family: crate::registry::TypeByteFamily,
+        pack: impl Into<String>,
+    ) -> Result<StructuralKindRegistration> {
+        self.store
+            .register_structural_kind_in_family(type_byte, short_id_prefix, family, pack)
+    }
+
+    /// Allocates and persists the lowest free compiled-pack family slot.
+    /// A full family spills into pack overflow without losing its identity.
+    pub fn allocate_structural_kind(
+        &self,
+        family: crate::registry::TypeByteFamily,
+        short_id_prefix: impl Into<String>,
+        pack: impl Into<String>,
+    ) -> Result<StructuralKindRegistration> {
+        self.store
+            .allocate_structural_kind(family, short_id_prefix, pack)
     }
 
     /// Returns the dynamic StructuralKind registration for `type_byte`, if

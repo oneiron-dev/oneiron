@@ -10,15 +10,10 @@ use super::vault_root_bind::VaultRootIdentity;
 
 pub const MAX_DBS: u32 = 32;
 
-/// v17 (ONE-1754, ARCH-0058): the owner-ratified BYTE-SPACE REDESIGN v3
-/// persisted type-byte re-key. Every system/maintenance kind moved down into
-/// the 64–99 system zone and the compiled-product kinds moved up into
-/// 100–125, so byte 0 of every affected `entities` envelope, the `type_index`
-/// keys, the `sid_counter:` keys, and the structural-kind registry records all
-/// carry different bytes than a v16 vault does. This is the ONE ABI step with
-/// a sanctioned migration branch rather than a plain fail-closed rebuild — see
-/// `rekey_type_bytes_v3_in_txn` — because the strict-equality gate would
-/// otherwise refuse every pre-1754 vault before the re-key could run.
+/// v18 (OF-494, ARCH-0058): byte-space v3.1 family reflow. Exactly ABI 17
+/// migrates, in one transaction over entity envelopes, type_index, sid_counter
+/// and kind_reg. Sources are staged before any deletes; ABI 16 and older fail
+/// closed. No v3 migration branch or pre-v3 registration decoder remains.
 ///
 /// v16 (ONE-1732, ARCH-0052 P7): the off-record fence families were removed
 /// from the vault contract. Off-record state is session-ephemeral — it lives
@@ -86,21 +81,16 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 17;
+pub const STORAGE_ABI_VERSION: u16 = 18;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 
-/// The single stamp the byte-space v3 migration branch accepts besides the
-/// current one — derived from [`STORAGE_ABI_VERSION`], never written as a
-/// historical literal.
-pub(in crate::store) const STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR: u16 = STORAGE_ABI_VERSION - 1;
+/// Only ABI 17 is eligible for the v3.1 four-site re-key. Older vaults fail closed.
+pub(in crate::store) const STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR: u16 = 17;
 
 const _: () = assert!(
-    STORAGE_ABI_VERSION == 17,
-    "ABI bumped past ONE-1754: delete the byte-space v3 migration branch \
-     (rekey_type_bytes_v3_in_txn, StorageAbiGate::RekeyByteSpaceV3, and \
-     STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR) instead of letting it accept a \
-     new predecessor stamp."
+    STORAGE_ABI_VERSION == 18,
+    "delete the v3.1 re-key branch before the next ABI bump"
 );
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;

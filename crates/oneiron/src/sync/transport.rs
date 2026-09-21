@@ -83,8 +83,13 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 /// v7 = Loro-native ephemeral tag 1 payloads for selector-capable clients,
 /// kept distinct from v6 for broadcast filtering.
 /// v8 = in-band bound app-tier RPC and subscription frames.
-/// v9 = entity-document frames and document batches (ARCH-0023b/0044).
+/// v9 = entity-document frames, document batches and manifest-scoped chunk tags.
+/// Selector connections remain distinct from the owner/full-window v10 lane.
 pub const PROTOCOL_VERSION: u8 = 9;
+/// Content-addressed chunk negotiation, outside the Loro op stream.
+pub const TAG_LFS_CHUNK_SYNC: u8 = 22;
+/// Full-window owner lane with document and chunk sync, distinct from selector v9.
+pub const CHUNK_FULL_WINDOW_PROTOCOL_VERSION: u8 = 10;
 /// Sync version that introduces app-tier tags and their close codes.
 pub const APP_TIER_PROTOCOL_VERSION_VERSION: u8 = 8;
 /// Selector-capable sync-only peers retain the v7 wire semantics.
@@ -223,6 +228,11 @@ pub fn encode_protocol_hello() -> Vec<u8> {
 /// selector protocol.
 pub fn encode_legacy_full_window_protocol_hello() -> Vec<u8> {
     vec![TAG_PROTOCOL_HELLO, LEGACY_FULL_WINDOW_PROTOCOL_VERSION]
+}
+
+/// Encodes the chunk-capable owner/full-window hello, distinct from selector v9.
+pub fn encode_chunk_full_window_protocol_hello() -> Vec<u8> {
+    vec![TAG_PROTOCOL_HELLO, CHUNK_FULL_WINDOW_PROTOCOL_VERSION]
 }
 
 /// Decodes a protocol-version hello frame (the FULL frame, tag included).
@@ -556,6 +566,18 @@ pub fn decode_bulk_transfer_done(data: &[u8]) -> Result<(&str, &[u8]), Transport
         return Err(TransportError::InvalidPayload("state has trailing bytes"));
     }
     Ok((key, &data[state_start..state_end]))
+}
+
+/// Encodes one bounded chunk request/reply on its own binary sync lane.
+pub fn encode_lfs_chunk_sync(payload: &[u8]) -> EncodedFrame {
+    let capacity = match checked_encoded_frame_len(1, payload.len()) {
+        Ok(capacity) => capacity,
+        Err(error) => return EncodedFrame::err(error),
+    };
+    let mut frame = Vec::with_capacity(capacity);
+    frame.push(TAG_LFS_CHUNK_SYNC);
+    frame.extend_from_slice(payload);
+    EncodedFrame::ok(frame)
 }
 
 // ─── Transport Error ──────────────────────────────────────────────────────────

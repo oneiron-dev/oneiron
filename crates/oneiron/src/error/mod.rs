@@ -275,6 +275,10 @@ pub enum ErrorKind {
     InvalidProjectBody,
     InvalidProjectRoomBody,
     ProjectDependencyPending,
+    InvalidConversationBody,
+    ConversationState,
+    ConversationDenied,
+    MessageStreamRecoveryFailed,
 }
 
 /// Crate error type.

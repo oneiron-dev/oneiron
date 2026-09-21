@@ -2,6 +2,7 @@
 
 use crate::companion::{COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER};
 
+use super::families::TypeByteFamily;
 use super::namespaces::ID_NAMESPACE_REGISTRY;
 use super::type_bytes::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT,
@@ -46,6 +47,8 @@ pub struct EntityTypeRegistryEntry {
     /// The v3 type-byte zone this kind is allocated within. Always equal to
     /// `zone_of(self.type_byte)` (pinned by spec test).
     pub zone: TypeByteZone,
+    /// Declared identity, preserved when the kind moves or spills.
+    pub family: Option<TypeByteFamily>,
 }
 
 impl EntityTypeRegistryEntry {
@@ -64,6 +67,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("cl"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Semantic,
+        family: None,
         zone: TypeByteZone::Semantic,
     },
     EntityTypeRegistryEntry {
@@ -72,6 +76,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("tn"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::Conversation),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -80,6 +85,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("ss"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::Conversation),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -88,6 +94,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("ms"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::Conversation),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -96,6 +103,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("pr"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::People),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -104,6 +112,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("rl"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::People),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -112,6 +121,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("ev"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::World),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -120,6 +130,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("sk"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::AgentsAndSurfacing),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -128,6 +139,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("sm"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::Conversation),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -136,6 +148,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("pl"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::World),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -144,6 +157,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("tx"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::Content),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -152,6 +166,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("cv"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::Conversation),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -160,6 +175,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("og"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::People),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -168,6 +184,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("fc"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::People),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -176,6 +193,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("wd"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::World),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -184,6 +202,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("as"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::Content),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -192,6 +211,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("nt"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::AgentsAndSurfacing),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -200,6 +220,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("ag"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::AgentsAndSurfacing),
         zone: TypeByteZone::Core,
     },
     EntityTypeRegistryEntry {
@@ -208,7 +229,8 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some(COMPANION_REGISTER_SHORT_ID_PREFIX),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
-        zone: TypeByteZone::System,
+        family: Some(TypeByteFamily::Companion),
+        zone: TypeByteZone::CompiledProduct,
     },
     // The system zone holds both engine-authored and publicly writable kinds:
     // classification — not zone position — drives the public-write rejection.
@@ -219,6 +241,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::AuditObservability),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -227,6 +250,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("tl"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
+        family: Some(TypeByteFamily::Productivity),
         zone: TypeByteZone::CompiledProduct,
     },
     EntityTypeRegistryEntry {
@@ -235,6 +259,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("tk"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
+        family: Some(TypeByteFamily::Productivity),
         zone: TypeByteZone::CompiledProduct,
     },
     EntityTypeRegistryEntry {
@@ -243,6 +268,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("mc"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
+        family: Some(TypeByteFamily::Productivity),
         zone: TypeByteZone::CompiledProduct,
     },
     EntityTypeRegistryEntry {
@@ -251,6 +277,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("cd"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
+        family: Some(TypeByteFamily::Code),
         zone: TypeByteZone::CompiledProduct,
     },
     EntityTypeRegistryEntry {
@@ -259,6 +286,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("cs"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
+        family: Some(TypeByteFamily::Code),
         zone: TypeByteZone::CompiledProduct,
     },
     EntityTypeRegistryEntry {
@@ -267,6 +295,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("ba"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
+        family: Some(TypeByteFamily::Documents),
         zone: TypeByteZone::CompiledProduct,
     },
     EntityTypeRegistryEntry {
@@ -275,6 +304,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("no"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Pack,
+        family: Some(TypeByteFamily::Documents),
         zone: TypeByteZone::CompiledProduct,
     },
     EntityTypeRegistryEntry {
@@ -283,6 +313,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::AuthorityPolicyCustody),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -291,6 +322,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::AuditObservability),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -299,6 +331,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("mo"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::RegistriesDerived),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -307,6 +340,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::AuthorityPolicyCustody),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -315,6 +349,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::AuthorityPolicyCustody),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -323,6 +358,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::AuthorityPolicyCustody),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -331,6 +367,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::AuditObservability),
         zone: TypeByteZone::System,
     },
     // Byte 125 CONNECTION_RECORD and byte 127 FEDERATION_KEY_ENVELOPE are
@@ -346,6 +383,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::AuthorityPolicyCustody),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -354,6 +392,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::RegistriesDerived),
         zone: TypeByteZone::System,
     },
     // Byte 130 SUSPICIOUS_WAKE is reserved and intentionally unregistered.
@@ -363,6 +402,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::OutboundCommunicationConsent),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -371,6 +411,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::OutboundCommunicationConsent),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -379,6 +420,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::OutboundCommunicationConsent),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -387,6 +429,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::OutboundCommunicationConsent),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -395,6 +438,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("ck"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::OutboundCommunicationConsent),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -403,6 +447,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::OutboundCommunicationConsent),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {
@@ -411,6 +456,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::RegistriesDerived),
         zone: TypeByteZone::System,
     },
 ];

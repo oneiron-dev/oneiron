@@ -16,6 +16,7 @@ pub(super) fn reject_engine_authored_delete(
     id: &EntityId,
 ) -> Result<()> {
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
+    crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(());
     };
@@ -83,6 +84,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    #[cfg(feature = "sync")]
+    crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     let mut had_vector = false;
     let mut had_graph_mutation = false;
     let mut neighbors = Vec::new();
@@ -109,6 +112,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     // arm below — where the anchor type can no longer be read back — is
     // covered by the same call.
     crate::code_memory::delete_code_memory_rows_for_entity_in_txn(store, wtxn, id)?;
+    crate::origin::lfs::delete_lfs_lifecycle_in_txn(store, wtxn, id)?;
     let blob_cleanup =
         crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(store, wtxn, id)?;
     had_vector |= blob_cleanup.had_vector;

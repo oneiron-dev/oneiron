@@ -407,21 +407,39 @@ fn derive_confirmation_status_is_identity_mirror() {
 
 #[test]
 fn validate_actor_class_pins_d13_matrix() {
-    // PERSON (type byte 4) → {human=0, agent=1}.
-    validate_actor_class(4, EdgeActorClass::Human).expect("PERSON+human");
-    validate_actor_class(4, EdgeActorClass::Agent).expect("PERSON+agent");
+    // PERSON (type byte 10) → {human=0, agent=1}.
+    validate_actor_class(crate::registry::ENTITY_TYPE_PERSON, EdgeActorClass::Human)
+        .expect("PERSON+human");
+    validate_actor_class(crate::registry::ENTITY_TYPE_PERSON, EdgeActorClass::Agent)
+        .expect("PERSON+agent");
     // MACHINE (type byte 102 after byte-space v3) → {system=2}.
     validate_actor_class(102, EdgeActorClass::System).expect("MACHINE+system");
 
     let rejected = [
-        (4_u8, EdgeActorClass::System, 2_u8),
-        (82, EdgeActorClass::Human, 0),
-        (82, EdgeActorClass::Agent, 1),
+        (
+            crate::registry::ENTITY_TYPE_PERSON,
+            EdgeActorClass::System,
+            2_u8,
+        ),
+        (
+            crate::registry::ENTITY_TYPE_MACHINE,
+            EdgeActorClass::Human,
+            0,
+        ),
+        (
+            crate::registry::ENTITY_TYPE_MACHINE,
+            EdgeActorClass::Agent,
+            1,
+        ),
         // Non-actor kinds never derive a class — typed error, no default.
-        (0, EdgeActorClass::Human, 0),    // CLAIM
-        (1, EdgeActorClass::System, 2),   // TURN
-        (12, EdgeActorClass::Agent, 1),   // ORG
-        (120, EdgeActorClass::System, 2), // REDACTION_AUDIT
+        (0, EdgeActorClass::Human, 0),  // CLAIM
+        (1, EdgeActorClass::System, 2), // TURN
+        (12, EdgeActorClass::Agent, 1), // ORG
+        (
+            crate::registry::ENTITY_TYPE_REDACTION_AUDIT,
+            EdgeActorClass::System,
+            2,
+        ), // REDACTION_AUDIT
         (200, EdgeActorClass::System, 2), // unregistered byte
     ];
     for (actor_type, class, class_byte) in rejected {

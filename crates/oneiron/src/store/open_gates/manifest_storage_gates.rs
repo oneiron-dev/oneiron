@@ -24,7 +24,7 @@ use super::hnsw_model_gates::{
 use super::open_version_keys::{
     DB_MANIFEST, ERR_EXISTING_MISSING_HNSW_CONFIG, HnswCompatibilityState, LMDB_DATABASE_OPEN_LOCK,
     MODEL_ID_KEY, MODEL_ID_NONE, OPEN_STORE_PATHS, PersistedHnswCompatibility, STORAGE_ABI_VERSION,
-    STORAGE_ABI_VERSION_KEY, STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR, STORAGE_SCHEMA_VERSION,
+    STORAGE_ABI_VERSION_KEY, STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR, STORAGE_SCHEMA_VERSION,
     STORAGE_SCHEMA_VERSION_KEY, StorageMigrationPlan, VAULT_ROOT_OPEN_LOCK,
 };
 use super::vault_root_bind::{VaultRootIdentity, duplicate_open_root, vault_root_preflight_error};
@@ -586,10 +586,10 @@ pub(in crate::store) enum StorageAbiGate {
     Current,
     /// A genuinely new vault: stamp the current version.
     StampCurrent,
-    /// ONE-1754 ONLY: the vault is stamped at the immediate predecessor, so
-    /// the byte-space v3 re-key runs inside this open's transaction and the
+    /// OF-494 ONLY: the vault is stamped at the immediate predecessor, so
+    /// the byte-space v3.1 re-key runs inside this open's transaction and the
     /// current version is stamped after its assertions pass.
-    RekeyByteSpaceV3,
+    RekeyByteSpaceV31,
 }
 
 /// Applies the strict-equality storage-ABI handshake used by every
@@ -597,9 +597,9 @@ pub(in crate::store) enum StorageAbiGate {
 ///
 /// The handshake still fails closed in both directions — including a
 /// prior-version reader opening a newer vault — with ONE sanctioned carve-out.
-/// A vault stamped at exactly [`STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR`]
-/// returns [`StorageAbiGate::RekeyByteSpaceV3`] instead of erroring, because
-/// the strict gate would otherwise refuse every pre-1754 vault BEFORE the
+/// A vault stamped at exactly [`STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR`]
+/// returns [`StorageAbiGate::RekeyByteSpaceV31`] instead of erroring, because
+/// the strict gate would otherwise refuse every ABI-17 vault BEFORE the
 /// re-key that makes it current could run. That carve-out is not a migration
 /// framework: it accepts exactly one stamp, and the caller stamps the new
 /// version only after the re-key's count and id-set assertions pass.
@@ -612,9 +612,9 @@ pub(in crate::store) fn gate_storage_abi_value(
         Some(stored) if stored == current => Ok(StorageAbiGate::Current),
         Some(stored)
             if current == STORAGE_ABI_VERSION
-                && stored == STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR =>
+                && stored == STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR =>
         {
-            Ok(StorageAbiGate::RekeyByteSpaceV3)
+            Ok(StorageAbiGate::RekeyByteSpaceV31)
         }
         Some(stored) => Err(Error::Store(StoreError::StorageAbiVersionChanged {
             stored: Some(stored),

@@ -240,7 +240,13 @@ fn replayed_tombstone_on_provenance_claim_runs_d16_refresh() -> Result<()> {
     let vault = &fx.vault;
     let subject = fx.subject;
     let person2 = EntityId::now();
-    vault.put_entity(&person2, 4, test_time_range(1, 1), 1, b"person2")?;
+    vault.put_entity(
+        &person2,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person2",
+    )?;
 
     // Live tie cohort @ learned_at 2000: `winner` (conf 0.6,
     // confirmed/system) outranks `runner_up` (conf 0.4, disputed/agent).

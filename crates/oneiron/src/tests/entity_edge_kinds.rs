@@ -32,8 +32,8 @@ fn edge_kind_u8_round_trip_accepts_pinned_range() {
         assert_eq!(kind, expected);
         assert_eq!(kind as u8, disc);
     }
-    // The frontier: 27 and up stay unallocated (ONE-1541 took 25/26).
-    assert!(EdgeKind::try_from_u8(27).is_none());
+    // Conversation DAG kinds own bytes 27–30.
+    assert!(EdgeKind::try_from_u8(31).is_none());
 }
 
 /// ONE-1541 done-means: appending `fulfills`/`discharged_by` must leave every
@@ -146,7 +146,7 @@ fn blocked_by_matches_structural_non_traversed_contract_row() -> Result<()> {
 #[test]
 fn edge_value_layout_round_trips_all_contract_edge_kinds() -> Result<()> {
     for (i, (kind, layout)) in CONTRACT_EDGE_VALUE_LAYOUTS.iter().copied().enumerate() {
-        let weight = 0.25 + (i as f32 * 0.03125);
+        let weight = 0.25 + (i as f32 * 0.02);
         let created_at = 1_772_000_000 + i as u64;
         let vad = contract_vad(i);
         let encode_vad = match layout {
@@ -342,56 +342,56 @@ fn all_entity_type_prefixes() {
         ),
         (
             "PERSON",
-            4,
+            10,
             Some("pr"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "RELATIONSHIP",
-            5,
+            11,
             Some("rl"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "EVENT",
-            6,
+            20,
             Some("ev"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "SKILL",
-            7,
+            40,
             Some("sk"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "SUMMARY",
-            8,
+            5,
             Some("sm"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "PLACE",
-            9,
+            21,
             Some("pl"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "ASSET_TEXT",
-            10,
+            31,
             Some("tx"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "CONVERSATION",
-            11,
+            4,
             Some("cv"),
             EntityClassification::Core,
             TypeByteZone::Core,
@@ -412,38 +412,38 @@ fn all_entity_type_prefixes() {
         ),
         (
             "WORLD",
-            14,
+            22,
             Some("wd"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "ASSET",
-            15,
+            30,
             Some("as"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "NOTIFICATION",
-            16,
+            42,
             Some("nt"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "AGENT_DEF",
-            17,
+            41,
             Some("ag"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "COMPANION_REGISTER",
-            78,
+            115,
             Some("cr"),
             EntityClassification::Pack,
-            TypeByteZone::System,
+            TypeByteZone::CompiledProduct,
         ),
         // Maintenance-classified engine kind inside the system zone:
         // classification == Maintenance (the door gate) while publicly
@@ -479,21 +479,21 @@ fn all_entity_type_prefixes() {
         ),
         (
             "CODE_ARTIFACT",
-            103,
+            105,
             Some("cd"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
         (
             "CODE_SYMBOL",
-            104,
+            106,
             Some("cs"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
         (
             "BLOB_ARTIFACT",
-            105,
+            110,
             Some("ba"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
@@ -503,21 +503,21 @@ fn all_entity_type_prefixes() {
         // byte because the re-key is done.
         (
             "NOTE",
-            106,
+            111,
             Some("no"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
         (
             "SECRET_CUSTODY",
-            77,
+            68,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "REDACTION_AUDIT",
-            64,
+            72,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
@@ -527,42 +527,42 @@ fn all_entity_type_prefixes() {
         // reuse rejected (kind = shape, DEC-0005 §7).
         (
             "MODEL",
-            65,
+            90,
             Some("mo"),
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "AUTHORITY_LOG",
-            66,
+            64,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "POLICY_MANIFEST",
-            67,
+            65,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "FEDERATION_GRANT",
-            68,
+            66,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "DIAGNOSTIC",
-            69,
+            73,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "ACCESS_GRANT",
-            73,
+            67,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,

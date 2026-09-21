@@ -4,6 +4,7 @@ mod embedding;
 mod lease_rotation;
 mod leases;
 mod lifecycle;
+mod message_stream;
 pub(crate) mod vault_binding;
 mod windows;
 

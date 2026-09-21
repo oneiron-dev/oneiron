@@ -363,7 +363,11 @@ impl ContractEdgeLayout {
     }
 }
 
-pub(super) const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 24] = [
+pub(super) const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 28] = [
+    (EdgeKind::Parent, ContractEdgeLayout::Structural),
+    (EdgeKind::SpawnedBy, ContractEdgeLayout::Structural),
+    (EdgeKind::AddressedTo, ContractEdgeLayout::Structural),
+    (EdgeKind::RepliesTo, ContractEdgeLayout::Structural),
     (EdgeKind::AuthoredBy, ContractEdgeLayout::Structural),
     (EdgeKind::ScopedTo, ContractEdgeLayout::Structural),
     (EdgeKind::PartOf, ContractEdgeLayout::Structural),
@@ -585,6 +589,44 @@ pub(super) fn assert_no_erasure_audit_artifacts(vault: &Vault) -> Result<()> {
         "a delete that erased nothing must not leave a pt: pending-tombstone marker"
     );
     Ok(())
+}
+
+/// Constructs RACED-TO-NOTHING after the deleter has proved a live scope
+/// and published its tombstone, but before it opens the purge transaction.
+/// The existing vault-local, entity-keyed rendezvous parks the deleter while
+/// the eraser commits. No scheduling assumption, held writer lock or retry
+/// is needed; the headerful and headerless paths both reach this seam.
+pub(super) fn run_raced_delete<F>(
+    vault: &Vault,
+    id: &EntityId,
+    reason: DeleteReason,
+    erase_scope: F,
+) -> Result<DeleteEntityOutcome>
+where
+    F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+{
+    let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+    vault.test_hooks().install_delete_rendezvous(
+        crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+        *id,
+        arrived_tx,
+        resume_rx,
+    );
+    std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
+        let deleter = scope.spawn(|| vault.delete_entity_with_reason(id, reason));
+        arrived_rx
+            .recv()
+            .expect("deleter must reach the publish seam");
+        let erased = vault.with_write_txn(erase_scope);
+        // Release even if the eraser fails, so scope teardown can join.
+        resume_tx
+            .send(())
+            .expect("deleter must wait for the eraser");
+        let outcome = deleter.join().expect("deleter thread must not panic");
+        erased?;
+        outcome
+    })
 }
 
 /// Orders the deleter's positive header/scope probe before the eraser commits.
@@ -1320,7 +1362,13 @@ pub(super) fn lifecycle_fixture() -> Result<LifecycleFixture> {
     let machine = EntityId::now();
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_entity(&person, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     vault.put_entity(
         &machine,
         ENTITY_TYPE_MACHINE,
@@ -1328,8 +1376,20 @@ pub(super) fn lifecycle_fixture() -> Result<LifecycleFixture> {
         1,
         b"machine",
     )?;
-    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
-    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_entity(
+        &a,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"a",
+    )?;
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"b",
+    )?;
     let vad = Vad {
         valence: 0.25,
         arousal: 0.5,

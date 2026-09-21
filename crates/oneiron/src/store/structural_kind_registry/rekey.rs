@@ -1,4 +1,4 @@
-//! One-shot byte-space v3 type-byte migration over entities, type_index, counters, and registry rows.
+//! One-shot byte-space v3.1 type-byte migration over entities, type_index, counters, and registry rows.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,7 +15,7 @@ use super::registry::{
     encode_structural_kind_registration, structural_kind_registry_key,
 };
 
-/// One kind's move in the byte-space v3 persisted re-key.
+/// One kind's move in the byte-space v3.1 persisted re-key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::store) struct TypeByteRekey {
     pub kind: &'static str,
@@ -23,138 +23,206 @@ pub(in crate::store) struct TypeByteRekey {
     pub new: u8,
 }
 
-/// The ONE atomic byte-space v3 map.
-///
-/// `old` is the LANDING-BASE constant audited on this branch, NOT canon's
-/// `byteMigrationV3.oldByte` — canon records the docs lineage, and two rows
-/// diverge from what the engine actually persisted: ACCESS_GRANT's lineage is
-/// null while the engine shipped 128, and CONNECTOR_KEY's lineage is 128 while
-/// the engine shipped 135. `new` is canon and binds absolutely.
-///
-/// Sources and destinations OVERLAP on 64 and 80–84: COMPANION_REGISTER
-/// vacates 64 into REDACTION_AUDIT's destination, and TASK_LIST/TASK/MACHINE/
-/// CODE_ARTIFACT/CODE_SYMBOL vacate 80–84 into COUNTERPARTY_CONTACT/
-/// OUTBOUND_GRANT/PERSONA_SNAPSHOT_EXPORT/COMM_RECORD/SKILL_CONTENT_ANCHOR.
-/// That overlap is exactly why the pass stages every source row in memory,
-/// deletes all source keys, and only then writes destinations — a per-kind
-/// migration would clobber live rows halfway through.
-///
-/// IDENTITY_TOPOLOGY_EVENT (76) and SECRET_CUSTODY (77) are absent on purpose:
-/// they already sat at their canon bytes, so there is nothing to move.
-pub(in crate::store) const TYPE_BYTE_REKEY_V3: &[TypeByteRekey] = &[
+/// ARCH-0058 byteMigrationV31: every v17-to-v18 relocation, including the
+/// three unregistered canon reserves. Prefixes never move. Destinations overlap
+/// sources in both the core and system families, so stage ALL before deleting.
+pub(in crate::store) const TYPE_BYTE_REKEY_V31: &[TypeByteRekey] = &[
     TypeByteRekey {
-        kind: "REDACTION_AUDIT",
-        old: 120,
-        new: 64,
+        kind: "CONVERSATION",
+        old: 11,
+        new: 4,
     },
     TypeByteRekey {
-        kind: "MODEL",
-        old: 121,
-        new: 65,
+        kind: "SUMMARY",
+        old: 8,
+        new: 5,
+    },
+    TypeByteRekey {
+        kind: "PERSON",
+        old: 4,
+        new: 10,
+    },
+    TypeByteRekey {
+        kind: "RELATIONSHIP",
+        old: 5,
+        new: 11,
+    },
+    TypeByteRekey {
+        kind: "EVENT",
+        old: 6,
+        new: 20,
+    },
+    TypeByteRekey {
+        kind: "PLACE",
+        old: 9,
+        new: 21,
+    },
+    TypeByteRekey {
+        kind: "WORLD",
+        old: 14,
+        new: 22,
+    },
+    TypeByteRekey {
+        kind: "ASSET",
+        old: 15,
+        new: 30,
+    },
+    TypeByteRekey {
+        kind: "ASSET_TEXT",
+        old: 10,
+        new: 31,
+    },
+    TypeByteRekey {
+        kind: "SKILL",
+        old: 7,
+        new: 40,
+    },
+    TypeByteRekey {
+        kind: "AGENT_DEF",
+        old: 17,
+        new: 41,
+    },
+    TypeByteRekey {
+        kind: "NOTIFICATION",
+        old: 16,
+        new: 42,
     },
     TypeByteRekey {
         kind: "AUTHORITY_LOG",
-        old: 122,
-        new: 66,
+        old: 66,
+        new: 64,
     },
     TypeByteRekey {
         kind: "POLICY_MANIFEST",
-        old: 123,
-        new: 67,
+        old: 67,
+        new: 65,
     },
     TypeByteRekey {
         kind: "FEDERATION_GRANT",
-        old: 124,
-        new: 68,
-    },
-    TypeByteRekey {
-        kind: "CONNECTOR_KEY",
-        old: 135,
-        new: 70,
-    },
-    TypeByteRekey {
-        kind: "PSYCH_PROFILE",
-        old: 129,
-        new: 71,
+        old: 68,
+        new: 66,
     },
     TypeByteRekey {
         kind: "ACCESS_GRANT",
-        old: 128,
+        old: 73,
+        new: 67,
+    },
+    TypeByteRekey {
+        kind: "SECRET_CUSTODY",
+        old: 77,
+        new: 68,
+    },
+    TypeByteRekey {
+        kind: "REDACTION_AUDIT",
+        old: 64,
+        new: 72,
+    },
+    TypeByteRekey {
+        kind: "DIAGNOSTIC",
+        old: 69,
         new: 73,
     },
     TypeByteRekey {
-        kind: "COMPANION_REGISTER",
-        old: 64,
-        new: 78,
+        kind: "IDENTITY_TOPOLOGY_EVENT",
+        old: 76,
+        new: 74,
     },
     TypeByteRekey {
-        kind: "CHANNEL_IDENTITY",
-        old: 131,
-        new: 79,
+        kind: "SUSPICIOUS_WAKE",
+        old: 72,
+        new: 75,
     },
     TypeByteRekey {
-        kind: "COUNTERPARTY_CONTACT",
-        old: 132,
+        kind: "CONNECTOR_KEY",
+        old: 70,
         new: 80,
     },
     TypeByteRekey {
-        kind: "OUTBOUND_GRANT",
-        old: 133,
+        kind: "CHANNEL_IDENTITY",
+        old: 79,
         new: 81,
     },
     TypeByteRekey {
-        kind: "PERSONA_SNAPSHOT_EXPORT",
-        old: 134,
+        kind: "COUNTERPARTY_CONTACT",
+        old: 80,
         new: 82,
     },
     TypeByteRekey {
-        kind: "COMM_RECORD",
-        old: 136,
+        kind: "OUTBOUND_GRANT",
+        old: 81,
         new: 83,
     },
     TypeByteRekey {
-        kind: "SKILL_CONTENT_ANCHOR",
-        old: 138,
+        kind: "COMM_RECORD",
+        old: 83,
         new: 84,
     },
     TypeByteRekey {
-        kind: "TASK_LIST",
-        old: 80,
-        new: 100,
-    },
-    TypeByteRekey {
-        kind: "TASK",
-        old: 81,
-        new: 101,
-    },
-    TypeByteRekey {
-        kind: "MACHINE",
+        kind: "PERSONA_SNAPSHOT_EXPORT",
         old: 82,
-        new: 102,
+        new: 85,
+    },
+    TypeByteRekey {
+        kind: "MODEL",
+        old: 65,
+        new: 90,
+    },
+    TypeByteRekey {
+        kind: "CLAIM_CLASS_DESCRIPTOR",
+        old: 74,
+        new: 91,
+    },
+    TypeByteRekey {
+        kind: "SKILL_HUB",
+        old: 75,
+        new: 92,
+    },
+    TypeByteRekey {
+        kind: "SKILL_CONTENT_ANCHOR",
+        old: 84,
+        new: 93,
+    },
+    TypeByteRekey {
+        kind: "PSYCH_PROFILE",
+        old: 71,
+        new: 94,
     },
     TypeByteRekey {
         kind: "CODE_ARTIFACT",
-        old: 83,
-        new: 103,
-    },
-    TypeByteRekey {
-        kind: "CODE_SYMBOL",
-        old: 84,
-        new: 104,
-    },
-    TypeByteRekey {
-        kind: "BLOB_ARTIFACT",
-        old: 85,
+        old: 103,
         new: 105,
     },
     TypeByteRekey {
-        kind: "NOTE",
-        old: 86,
+        kind: "CODE_SYMBOL",
+        old: 104,
         new: 106,
+    },
+    TypeByteRekey {
+        kind: "BLOB_ARTIFACT",
+        old: 105,
+        new: 110,
+    },
+    TypeByteRekey {
+        kind: "NOTE",
+        old: 106,
+        new: 111,
+    },
+    TypeByteRekey {
+        kind: "COMPANION_REGISTER",
+        old: 78,
+        new: 115,
     },
 ];
 
-/// What the byte-space v3 pass actually moved. Returned so the caller can log
+#[cfg(feature = "sync")]
+pub(crate) fn migrated_v17_type_byte(old: u8) -> u8 {
+    TYPE_BYTE_REKEY_V31
+        .iter()
+        .find(|entry| entry.old == old)
+        .map_or(old, |entry| entry.new)
+}
+
+/// What the byte-space v3.1 pass actually moved. Returned so the caller can log
 /// it and so tests can assert on real work rather than a silent no-op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::store) struct RekeyCounts {
@@ -162,10 +230,6 @@ pub(in crate::store) struct RekeyCounts {
     pub type_index: usize,
     pub short_id_counters: usize,
     pub kind_registrations: usize,
-    /// Registry rows the map does not move, rewritten in place at the current
-    /// record version. Counted apart from `kind_registrations` because nothing
-    /// relocates: only the record format advances.
-    pub kind_registrations_rezoned: usize,
 }
 
 /// Everything one kind contributes to the re-key, staged before any write.
@@ -181,7 +245,7 @@ fn rekey_corrupt(context: &'static str) -> Error {
     Error::CorruptedIndex(context)
 }
 
-/// Executes the byte-space v3 persisted type-byte re-key inside the caller's
+/// Executes the byte-space v3.1 persisted type-byte re-key inside the caller's
 /// write transaction.
 ///
 /// Only PERSISTED TYPE-BYTE FIELDS move: byte 0 of each `entities` envelope,
@@ -189,7 +253,8 @@ fn rekey_corrupt(context: &'static str) -> Error {
 /// and the structural-kind registry records whose own byte is in the map.
 /// Entity ids are the `entities` keys and do not encode a type byte, so those
 /// rows are patched in place — ids, timestamps, hashes, MessagePack bodies,
-/// vectors and CRDT payloads are never rewritten. Edge keys and values carry
+/// vectors and document text are never rewritten. Persisted sync windows are
+/// marked for a one-shot live-envelope upgrade before replay or export. Edge keys and values carry
 /// entity ids and edge data, never endpoint type bytes, so `edges_out` /
 /// `edges_in` are not touched at all; the caller asserts their totals are
 /// unchanged.
@@ -201,7 +266,7 @@ fn rekey_corrupt(context: &'static str) -> Error {
 /// this inside the open-path transaction and stamps the new ABI only on `Ok`,
 /// so any abort rolls the whole transaction back and leaves the old bytes and
 /// the old stamp intact: the vault stays openable by the predecessor engine.
-pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
+pub(in crate::store) fn rekey_type_bytes_v31_in_txn(
     dbs: &RawDatabases,
     txn: &mut RwTxn<'_>,
     map: &[TypeByteRekey],
@@ -210,11 +275,11 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
     let mut destinations = BTreeMap::new();
     for entry in map {
         if sources.insert(entry.old, entry.kind).is_some() {
-            return Err(rekey_corrupt("byte-space v3 duplicate migration source"));
+            return Err(rekey_corrupt("byte-space v3.1 duplicate migration source"));
         }
         if destinations.insert(entry.new, entry.kind).is_some() {
             return Err(rekey_corrupt(
-                "byte-space v3 duplicate migration destination",
+                "byte-space v3.1 duplicate migration destination",
             ));
         }
     }
@@ -225,19 +290,17 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
         staged.entry(entry.old).or_default();
     }
 
-    // A destination that this map does not also vacate must be EMPTY. Byte 64
-    // and 80-84 are legitimately occupied right now precisely because they are
-    // sources; anything else holding rows means the map disagrees with the
-    // vault and the whole pass aborts.
+    // A destination not vacated by this same map must be empty. Overlapping
+    // sources are staged in full before deletes; any other occupant aborts.
     let mut occupied_destinations: BTreeSet<u8> = BTreeSet::new();
 
     for row in dbs.entities.iter(txn)? {
         let (key, value) = row?;
         let type_byte = *value
             .first()
-            .ok_or_else(|| rekey_corrupt("byte-space v3 malformed entity envelope"))?;
+            .ok_or_else(|| rekey_corrupt("byte-space v3.1 malformed entity envelope"))?;
         if value.len() < ENTITY_METADATA_HEADER_LEN {
-            return Err(rekey_corrupt("byte-space v3 malformed entity envelope"));
+            return Err(rekey_corrupt("byte-space v3.1 malformed entity envelope"));
         }
         if !sources.contains_key(&type_byte) {
             if destinations.contains_key(&type_byte) {
@@ -247,9 +310,9 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
         }
         let id = EntityId::from_bytes(
             key.try_into()
-                .map_err(|_| rekey_corrupt("byte-space v3 entity key"))?,
+                .map_err(|_| rekey_corrupt("byte-space v3.1 entity key"))?,
         )
-        .map_err(|_| rekey_corrupt("byte-space v3 entity key"))?;
+        .map_err(|_| rekey_corrupt("byte-space v3.1 entity key"))?;
         staged
             .get_mut(&type_byte)
             .expect("staged entry exists for every source byte")
@@ -261,7 +324,7 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
         let (key, _) = row?;
         let type_byte = *key
             .first()
-            .ok_or_else(|| rekey_corrupt("byte-space v3 type index key"))?;
+            .ok_or_else(|| rekey_corrupt("byte-space v3.1 type index key"))?;
         if !sources.contains_key(&type_byte) {
             if destinations.contains_key(&type_byte) {
                 occupied_destinations.insert(type_byte);
@@ -275,7 +338,7 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
             .type_index_ids
             .insert(id)
         {
-            return Err(rekey_corrupt("byte-space v3 duplicate type index row"));
+            return Err(rekey_corrupt("byte-space v3.1 duplicate type index row"));
         }
     }
 
@@ -298,6 +361,21 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
             })
             .transpose()?;
 
+        if staged_kind
+            .short_id_counter
+            .as_ref()
+            .is_some_and(|raw| raw.len() != 8)
+        {
+            return Err(rekey_corrupt("byte-space v3.1 malformed short-id counter"));
+        }
+        if let Some(registration) = &staged_kind.kind_registration {
+            // A source's dynamic row may describe only the kind being moved.
+            // Do not launder a forged prefix or unrelated pack into a static kind.
+            if registration.zone != zone_of(entry.old) {
+                return Err(rekey_corrupt("byte-space v3.1 source registry zone"));
+            }
+        }
+
         // Destinations this map does not vacate must be clear in vault_meta too.
         if !sources.contains_key(&entry.new) {
             if dbs
@@ -305,14 +383,14 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
                 .get(txn, &short_id_counter_key(entry.new))?
                 .is_some()
             {
-                return Err(rekey_corrupt("byte-space v3 short-id counter collision"));
+                return Err(rekey_corrupt("byte-space v3.1 short-id counter collision"));
             }
             if dbs
                 .vault_meta
                 .get(txn, &structural_kind_registry_key(entry.new))?
                 .is_some()
             {
-                return Err(rekey_corrupt("byte-space v3 kind registry collision"));
+                return Err(rekey_corrupt("byte-space v3.1 kind registry collision"));
             }
         }
     }
@@ -320,9 +398,9 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
     if let Some(byte) = occupied_destinations.first() {
         tracing::error!(
             type_byte = byte,
-            "byte-space v3 destination already holds rows this map does not vacate"
+            "byte-space v3.1 destination already holds rows this map does not vacate"
         );
-        return Err(rekey_corrupt("byte-space v3 destination collision"));
+        return Err(rekey_corrupt("byte-space v3.1 destination collision"));
     }
 
     // Per-kind pre-counts: an entity envelope without its type-index row (or
@@ -333,16 +411,16 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
         let entity_ids: BTreeSet<EntityId> =
             staged_kind.entities.iter().map(|(id, _)| *id).collect();
         if entity_ids.len() != staged_kind.entities.len() {
-            return Err(rekey_corrupt("byte-space v3 duplicate entity id"));
+            return Err(rekey_corrupt("byte-space v3.1 duplicate entity id"));
         }
         if entity_ids != staged_kind.type_index_ids {
             tracing::error!(
                 kind = entry.kind,
                 entities = entity_ids.len(),
                 type_index = staged_kind.type_index_ids.len(),
-                "byte-space v3 entity/type-index id sets disagree"
+                "byte-space v3.1 entity/type-index id sets disagree"
             );
-            return Err(rekey_corrupt("byte-space v3 entity/type-index mismatch"));
+            return Err(rekey_corrupt("byte-space v3.1 entity/type-index mismatch"));
         }
     }
 
@@ -357,10 +435,6 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
             .values()
             .filter(|kind| kind.kind_registration.is_some())
             .count(),
-        // Nothing is staged for the in-place rewrite: it visits whatever the
-        // map leaves behind, so its count is discovered, not predicted, and it
-        // is filled in after this equality holds.
-        kind_registrations_rezoned: 0,
     };
 
     // ---- delete every source key ----
@@ -374,7 +448,7 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
             key[0] = entry.old;
             key[1..].copy_from_slice(id.as_bytes());
             if !dbs.type_index.delete(txn, &key)? {
-                return Err(rekey_corrupt("byte-space v3 type index delete"));
+                return Err(rekey_corrupt("byte-space v3.1 type index delete"));
             }
         }
         if staged_kind.short_id_counter.is_some() {
@@ -418,6 +492,7 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
                 // describing where it used to live.
                 zone: zone_of(entry.new),
                 pack: registration.pack.clone(),
+                family: crate::registry::family_of(entry.new).or(registration.family),
             };
             dbs.vault_meta.put(
                 txn,
@@ -429,39 +504,29 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
     }
 
     if written != expected {
-        return Err(rekey_corrupt("byte-space v3 write count mismatch"));
+        return Err(rekey_corrupt("byte-space v3.1 write count mismatch"));
     }
 
-    // ---- rewrite every registry row this map does NOT move ----
-    // A pre-v3 vault could dynamically register a pack anywhere in the old
-    // companion/productivity/CRM bands, so rows outside the map are legitimate
-    // and common. Their persisted byte-2 discriminant is a six-band ordinal
-    // read off a table v3 replaced, so leaving them alone does not preserve
-    // them — it silently redefines them. Every surviving row is written back at
-    // the current record version with its zone re-derived from its byte, the
-    // same rule the moved rows above follow.
+    // Advance untouched ABI17 registry rows to the current record format.
     let mut survivors = Vec::new();
-    for byte in u8::MIN..=u8::MAX {
-        if destinations.contains_key(&byte) {
-            // Written by this pass already, at the current version.
-            continue;
-        }
-        let key = structural_kind_registry_key(byte);
-        if let Some(raw) = dbs.vault_meta.get(txn, &key)? {
+    for row in dbs
+        .vault_meta
+        .prefix_iter(txn, super::registry::STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?
+    {
+        let (key, raw) = row?;
+        if !destinations.contains_key(
+            key.last()
+                .ok_or_else(|| rekey_corrupt("kind registry key"))?,
+        ) {
+            let registration = decode_structural_kind_registration_for_rekey(key, raw)?;
             survivors.push((
-                key,
-                decode_structural_kind_registration_for_rekey(&key, raw)?,
+                key.to_vec(),
+                encode_structural_kind_registration(&registration)?,
             ));
         }
     }
-    for (key, registration) in survivors {
-        let rezoned = StructuralKindRegistration {
-            zone: zone_of(registration.type_byte),
-            ..registration
-        };
-        dbs.vault_meta
-            .put(txn, &key, &encode_structural_kind_registration(&rezoned)?)?;
-        written.kind_registrations_rezoned += 1;
+    for (key, raw) in survivors {
+        dbs.vault_meta.put(txn, &key, &raw)?;
     }
 
     // ---- the migrated registry must LOAD ----
@@ -486,16 +551,16 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
         let (key, value) = row?;
         let type_byte = *value
             .first()
-            .ok_or_else(|| rekey_corrupt("byte-space v3 malformed entity envelope"))?;
+            .ok_or_else(|| rekey_corrupt("byte-space v3.1 malformed entity envelope"))?;
         if sources.contains_key(&type_byte) && !destinations.contains_key(&type_byte) {
-            return Err(rekey_corrupt("byte-space v3 source row survived"));
+            return Err(rekey_corrupt("byte-space v3.1 source row survived"));
         }
         if destinations.contains_key(&type_byte) {
             let id = EntityId::from_bytes(
                 key.try_into()
-                    .map_err(|_| rekey_corrupt("byte-space v3 entity key"))?,
+                    .map_err(|_| rekey_corrupt("byte-space v3.1 entity key"))?,
             )
-            .map_err(|_| rekey_corrupt("byte-space v3 entity key"))?;
+            .map_err(|_| rekey_corrupt("byte-space v3.1 entity key"))?;
             destination_entities
                 .entry(type_byte)
                 .or_default()
@@ -507,9 +572,9 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
         let (key, _) = row?;
         let type_byte = *key
             .first()
-            .ok_or_else(|| rekey_corrupt("byte-space v3 type index key"))?;
+            .ok_or_else(|| rekey_corrupt("byte-space v3.1 type index key"))?;
         if sources.contains_key(&type_byte) && !destinations.contains_key(&type_byte) {
-            return Err(rekey_corrupt("byte-space v3 source index row survived"));
+            return Err(rekey_corrupt("byte-space v3.1 source index row survived"));
         }
         if destinations.contains_key(&type_byte) {
             destination_index
@@ -534,11 +599,34 @@ pub(in crate::store) fn rekey_type_bytes_v3_in_txn(
                 staged = staged_ids.len(),
                 landed = landed.len(),
                 landed_index = landed_index.len(),
-                "byte-space v3 destination id set does not match staged source"
+                "byte-space v3.1 destination id set does not match staged source"
             );
-            return Err(rekey_corrupt("byte-space v3 destination count mismatch"));
+            return Err(rekey_corrupt("byte-space v3.1 destination count mismatch"));
         }
     }
 
+    // The authoritative rows are now v18, but cached Loro window values can
+    // still carry v17 envelopes. Make every persisted window cold and require
+    // its live-value upgrade before the ordinary rematerialization/export door.
+    // This marker is written even by a featureless opener.
+    let mut windows = BTreeSet::new();
+    for row in dbs.sync_state.iter(txn)? {
+        let (key, _) = row?;
+        if let Some(rest) = key
+            .strip_prefix("d:w:")
+            .or_else(|| key.strip_prefix("u:w:"))
+        {
+            let window = rest
+                .split(':')
+                .next()
+                .ok_or_else(|| rekey_corrupt("v17 sync window key"))?;
+            windows.insert(window.to_owned());
+        }
+    }
+    for window in windows {
+        dbs.sync_state
+            .put(txn, &format!("abi18:w:{window}"), &[1])?;
+        dbs.sync_state.put(txn, &format!("svf:w:{window}"), &[0])?;
+    }
     Ok(written)
 }

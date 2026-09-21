@@ -2494,6 +2494,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastcdc"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf51ceb43e96afbfe4dd5c6f6082af5dfd60e220820b8123792d61963f2ce6bc"
+
+[[package]]
 name = "faster-hex"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6343,6 +6349,7 @@ dependencies = [
  "dom_smoothie",
  "ed25519-dalek",
  "encoding_rs",
+ "fastcdc",
  "flate2",
  "futures-core",
  "futures-util",
@@ -8072,6 +8079,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a4e1d4b9b938a26d2996af33229f0ca0956c652c1375067f0b45291c1df8417"
 dependencies = [
  "rmp",
+ "serde",
+ "serde_bytes",
 ]
 
 [[package]]

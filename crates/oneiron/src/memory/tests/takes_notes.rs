@@ -799,3 +799,78 @@ fn diary_note_rejects_foreign_or_public_scope_without_writing() {
             .is_empty()
     );
 }
+
+#[test]
+fn diary_note_conjoins_actor_privacy_and_room_audience() {
+    use crate::claim::ScopedReadActorKey;
+    use crate::conversation::{ConversationBody, HistoryChoice};
+    use crate::note::{NoteScope, NoteWriteEnvelope};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
+    let owner = put_person(&vault, 0x71);
+    let other = put_person(&vault, 0x72);
+    let actor = crate::WriteActor::new(owner, crate::EdgeActorClass::Human);
+    let room = EntityId::now();
+    vault
+        .create_conversation(room, &ConversationBody::default(), actor, 1)
+        .unwrap();
+    vault
+        .join_member(room, owner, actor, 2, HistoryChoice::None)
+        .unwrap();
+    let receipt = facade_for(&vault, owner)
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::Diary,
+            scope: NoteScope::ActorPrivate { owner_ref: owner },
+            source_revision_ref: [0x73; 16],
+            markdown: "private room diary".to_owned(),
+        })
+        .unwrap();
+    let id = EntityId::from_hex(&receipt.id_hex).unwrap();
+    vault
+        .batch()
+        .edge(&id, EdgeKind::PartOf, &room, 1.0)
+        .commit()
+        .unwrap();
+    let (short, hash) = crate::entity_id::parse_short_ref_syntax(&receipt.entity_ref).unwrap();
+    let check_reads = || {
+        for (reader, audience, allowed) in [
+            (owner, vec![owner], true),
+            (owner, vec![other], false),
+            (other, vec![owner], false),
+            (owner, vec![], false),
+        ] {
+            let read = vault
+                .scoped_read(
+                    ScopedReadActorKey::with_actor_class(reader.to_hex(), "human").unwrap(),
+                )
+                .for_audience(&audience);
+            assert_eq!(read.get(&id).unwrap().is_some(), allowed);
+            assert_eq!(read.is_entity_readable(&id).unwrap(), allowed);
+            assert_eq!(
+                read.hydrate_short_id(short, hash).unwrap().is_some(),
+                allowed
+            );
+        }
+    };
+    check_reads();
+    #[cfg(feature = "sync")]
+    {
+        let authority = vault
+            .authenticate_owner(
+                owner,
+                "principal:note-merge-test",
+                true,
+                crate::store::GateDecisionId::now(),
+            )
+            .unwrap();
+        vault
+            .migrate_entity_text(
+                &id,
+                &crate::entity_doc::TextField::MapField("markdown".to_owned()),
+                actor,
+                &crate::entity_doc::DocAuthorization::Owner(&authority),
+            )
+            .unwrap();
+        check_reads();
+    }
+}

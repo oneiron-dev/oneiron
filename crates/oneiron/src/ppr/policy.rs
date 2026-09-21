@@ -99,7 +99,12 @@ pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
         EdgeKind::Blocks => None,
         // CMT-4 (ONE-1541): a brief discharging an obligation says nothing
         // about retrieval relevance, so neither ruled direction is traversed.
-        EdgeKind::Fulfills | EdgeKind::DischargedBy => None,
+        EdgeKind::Fulfills
+        | EdgeKind::DischargedBy
+        | EdgeKind::Parent
+        | EdgeKind::SpawnedBy
+        | EdgeKind::AddressedTo
+        | EdgeKind::RepliesTo => None,
         EdgeKind::DerivedFrom => Some(0.2),
         EdgeKind::Mentions => Some(0.6),
         EdgeKind::About => Some(0.5),
