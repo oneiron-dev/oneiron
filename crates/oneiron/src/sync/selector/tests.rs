@@ -4897,7 +4897,8 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
             vec![facet],
             vec![crate::federation::selector_range_of(
                 crate::registry::ENTITY_TYPE_TURN,
-            )],
+            )
+            .expect("TURN has a registered selector identity")],
         );
         let result = doc.import_from_peer(
             document_sub_tags::UPDATE,

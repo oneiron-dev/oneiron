@@ -282,7 +282,7 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
         })
     ));
     let mut narrowed = selector.clone();
-    narrowed.bands = vec![crate::federation::SelectorRange::Crm];
+    narrowed.bands = vec![crate::federation::SelectorRange::Maintenance];
     assert_document_denied(
         doc.import_from_peer(document_sub_tags::UPDATE, &next, scope, &narrowed)
             .unwrap_err(),

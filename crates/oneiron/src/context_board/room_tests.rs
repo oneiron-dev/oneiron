@@ -77,9 +77,9 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
         selected: Some(room_scope(&presence).unwrap()),
     };
     let memory = vault.memory(actor, EdgeActorClass::Human);
-    assert_eq!(memory.rooms_list(10).unwrap()[0].id_hex, room.to_hex());
+    assert_eq!(memory.channel_rooms_list(10).unwrap()[0].id_hex, room.to_hex());
     let receipt = memory
-        .rooms_speak(
+        .channel_rooms_speak(
             room,
             &crate::memory::WitnessTurn {
                 conversation_ref: room.to_hex(),
@@ -98,14 +98,26 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
         )
         .unwrap();
     assert_eq!(receipt.message_short_ids.len(), 1);
-    assert_eq!(memory.rooms_messages(room, &presence, 10).unwrap().len(), 1);
+    assert_eq!(
+        memory
+            .channel_rooms_messages(room, &presence, 10)
+            .unwrap()
+            .len(),
+        1
+    );
     vault
         .put_edge(&room, crate::EdgeKind::BelongsTo, &actor, 1.0)
         .unwrap();
     vault
         .put_edge(&other, crate::EdgeKind::BelongsTo, &room, 1.0)
         .unwrap();
-    assert_eq!(memory.rooms_messages(room, &presence, 1).unwrap().len(), 1);
+    assert_eq!(
+        memory
+            .channel_rooms_messages(room, &presence, 1)
+            .unwrap()
+            .len(),
+        1
+    );
 
     let input = crate::memory::ClaimInput {
         id: None,
@@ -122,7 +134,7 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
         learned_at: None,
         salience: None,
     };
-    let claim = memory.rooms_claim(room, &input).unwrap();
+    let claim = memory.channel_rooms_claim(room, &input).unwrap();
     // Earlier hidden rows may not consume the room's visible claim budget.
     for n in 1..=1000u16 {
         let mut bytes = [0u8; 16];
@@ -224,5 +236,11 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
             Ok(())
         })
         .unwrap();
-    assert_eq!(memory.rooms_messages(room, &presence, 1).unwrap().len(), 1);
+    assert_eq!(
+        memory
+            .channel_rooms_messages(room, &presence, 1)
+            .unwrap()
+            .len(),
+        1
+    );
 }

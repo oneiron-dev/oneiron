@@ -41,8 +41,8 @@ pub(crate) fn admit_note_in_txn(
         return Err(denied());
     }
     if super::scope::entity_selector_decision(
-        &id,
-        &raw,
+        vault,
+        (&id, &raw),
         scope,
         selector,
         &Default::default(),

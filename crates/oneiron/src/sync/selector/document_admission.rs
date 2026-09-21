@@ -173,8 +173,8 @@ impl StoredSelection<'_, '_> {
             CoreferenceExportContext::default()
         };
         let Some(decision) = entity_selector_decision(
-            &id,
-            &raw,
+            self.vault,
+            (&id, &raw),
             self.scope,
             self.selector,
             &Default::default(),

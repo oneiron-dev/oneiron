@@ -376,7 +376,7 @@ fn keyed_bodies_never_surface_through_generic_facade_scoped_or_pack_reads() {
                 .unwrap()
                 .is_empty()
         );
-        for effort in [Effort::Minimal, Effort::Standard] {
+        for effort in [Effort::Light, Effort::Medium] {
             let pack = facade
                 .recall(
                     "privatecanary",

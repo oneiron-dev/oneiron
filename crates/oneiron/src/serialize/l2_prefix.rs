@@ -11,7 +11,10 @@ pub(super) fn with_l2_prefix(
     let prefix = serde_json::to_string(summary).expect("L2 summary JSON");
     let delta = String::from_utf8(delta).expect("context pack UTF-8");
     match format {
-        PackFormat::Json => format!("{{\"l2_base\":{prefix},\"delta\":{delta}}}").into_bytes(),
+        PackFormat::Json
+        | PackFormat::OpenaiCompat
+        | PackFormat::AnthropicMessages
+        | PackFormat::Gemini => format!("{{\"l2_base\":{prefix},\"delta\":{delta}}}").into_bytes(),
         PackFormat::Yaml => {
             let mut out = format!("l2_base: {prefix}\ndelta:\n");
             for line in delta.lines() {

@@ -10,7 +10,7 @@ use crate::memory::{
 pub const ROOM_VERBS: [&str; 4] = ["rooms.list", "rooms.messages", "rooms.speak", "rooms.claim"];
 
 impl Memory<'_> {
-    pub fn rooms_list(&self, limit: usize) -> MemoryResult<Vec<EntityView>> {
+    pub fn channel_rooms_list(&self, limit: usize) -> MemoryResult<Vec<EntityView>> {
         bounded(limit)?;
         let mut rooms = Vec::new();
         for id in self
@@ -40,7 +40,7 @@ impl Memory<'_> {
         Ok(rooms)
     }
 
-    pub fn rooms_messages(
+    pub fn channel_rooms_messages(
         &self,
         room: EntityId,
         presence: &[RoomPresence],
@@ -72,14 +72,22 @@ impl Memory<'_> {
         Ok(messages)
     }
 
-    pub fn rooms_speak(&self, room: EntityId, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
+    pub fn channel_rooms_speak(
+        &self,
+        room: EntityId,
+        turn: &WitnessTurn,
+    ) -> MemoryResult<WitnessReceipt> {
         require_member(self, room)?;
         let mut turn = turn.clone();
         turn.conversation_ref = room.to_hex();
         self.in_room(room).witness(&turn)
     }
 
-    pub fn rooms_claim(&self, room: EntityId, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
+    pub fn channel_rooms_claim(
+        &self,
+        room: EntityId,
+        input: &ClaimInput,
+    ) -> MemoryResult<CommitReceipt> {
         require_member(self, room)?;
         if !input.predicate.starts_with("room.") {
             return Err(MemoryError::bad_request_with(
