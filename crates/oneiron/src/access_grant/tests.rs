@@ -44,6 +44,13 @@ fn valid_entries() -> Vec<(Value, Value)> {
             ]),
         ),
         (
+            Value::from("authority_scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .expect("read preset encodes"),
+        ),
+        (
             Value::from(KEY_CAPABILITY),
             Value::from("companion_profile.read"),
         ),
@@ -52,6 +59,20 @@ fn valid_entries() -> Vec<(Value, Value)> {
         (Value::from(KEY_REVOKED_AT), Value::Nil),
         (Value::from("expires_at"), Value::Nil),
     ]
+}
+
+fn legacy_v2_entries() -> Vec<(Value, Value)> {
+    valid_entries()
+        .into_iter()
+        .filter(|(key, _)| key.as_str() != Some("authority_scope"))
+        .map(|(key, value)| {
+            if key.as_str() == Some(KEY_SCHEMA_VERSION) {
+                (key, Value::from(2_u64))
+            } else {
+                (key, value)
+            }
+        })
+        .collect()
 }
 
 fn grant_map(entries: Vec<(Value, Value)>) -> Vec<u8> {
@@ -261,6 +282,13 @@ fn calendar_access_grant_scope_round_trip_preserves_old_tags() -> Result<()> {
                     Value::from(entity(0xC2).to_hex()),
                 ),
             ]),
+        ),
+        (
+            Value::from("authority_scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .expect("read preset encodes"),
         ),
         (
             Value::from(KEY_CAPABILITY),
@@ -510,6 +538,7 @@ fn revoke_calendar_access_grant_admits_and_rewrites_one_record() {
 
 fn shared_brief_grant() -> AccessGrant {
     AccessGrant {
+        authority_scope: crate::federation::scope_codec::read_preset(),
         principal_ref: entity(0x51),
         scope: AccessGrantScope::SharedBrief {
             brief_ref: "brief:opaque".to_owned(),
@@ -526,8 +555,8 @@ fn shared_brief_grant() -> AccessGrant {
 }
 
 #[test]
-fn shared_brief_preserves_scope_and_capability_in_schema_v2() -> Result<()> {
-    assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 2);
+fn shared_brief_preserves_scope_and_capability_in_schema_v3() -> Result<()> {
+    assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 3);
     let grant = shared_brief_grant();
     assert_eq!(grant.capability.as_str(), "brief.share.read");
     let bytes = encode_access_grant_body(&grant)?;
@@ -541,7 +570,7 @@ fn shared_brief_preserves_scope_and_capability_in_schema_v2() -> Result<()> {
         decode_access_grant_body(&encode_access_grant_body(&revoked)?)?,
         revoked
     );
-    // Independently authored v2 maps pin both pre-existing scope wire shapes.
+    // Independently authored v3 maps pin both pre-existing scope wire shapes.
     assert_eq!(
         encode_access_grant_body(&test_grant())?,
         grant_map(valid_entries())
@@ -556,7 +585,7 @@ fn shared_brief_preserves_scope_and_capability_in_schema_v2() -> Result<()> {
         ),
         (Value::from("rung"), Value::from("titles")),
     ]);
-    calendar[3].1 = Value::from("calendar.disclosure_read");
+    calendar[4].1 = Value::from("calendar.disclosure_read");
     assert_eq!(
         encode_access_grant_body(&calendar_grant())?,
         grant_map(calendar)
@@ -625,19 +654,19 @@ fn shared_brief_codec_rejects_unknown_duplicate_and_malformed_scope() -> Result<
     for (index, bad_value) in [
         (1, Value::from("")),
         (1, Value::from("00000000000000000000000000000000")),
-        (3, Value::from("companion_profile.read")),
-        (3, Value::from("calendar.disclosure_read")),
-        (4, Value::from("revoked")),
-        (5, Value::from(-1)),
-        (6, Value::from(43)),
+        (4, Value::from("companion_profile.read")),
+        (4, Value::from("calendar.disclosure_read")),
+        (5, Value::from("revoked")),
+        (6, Value::from(-1)),
+        (7, Value::from(43)),
     ] {
         let mut bad = entries.clone();
         bad[index].1 = bad_value;
         assert!(decode_access_grant_body(&grant_map(bad)).is_err());
     }
     let mut early_revoke = entries.clone();
-    early_revoke[4].1 = Value::from("revoked");
-    early_revoke[6].1 = Value::from(41);
+    early_revoke[5].1 = Value::from("revoked");
+    early_revoke[7].1 = Value::from(41);
     assert!(decode_access_grant_body(&grant_map(early_revoke)).is_err());
     let mut duplicate = entries.clone();
     duplicate.push(duplicate[2].clone());
@@ -652,7 +681,7 @@ fn shared_brief_codec_rejects_unknown_duplicate_and_malformed_scope() -> Result<
 }
 
 #[test]
-fn schema_v2_carries_every_access_scope_and_rejects_other_versions() -> Result<()> {
+fn schema_v3_carries_every_access_scope_and_rejects_other_versions() -> Result<()> {
     let scopes = [
         AccessGrantScope::companion_profile(entity(0xB1), entity(0xC1)),
         AccessGrantScope::calendar(entity(0xB2), DisclosureRung::Titles),
@@ -667,9 +696,10 @@ fn schema_v2_carries_every_access_scope_and_rejects_other_versions() -> Result<(
             envelope_ref: entity(0x92),
         },
     ];
-    assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 2);
+    assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 3);
     for scope in scopes {
         let grant = AccessGrant {
+            authority_scope: crate::federation::scope_codec::read_preset(),
             principal_ref: entity(0x51),
             capability: scope.required_capability(),
             scope,
@@ -684,11 +714,12 @@ fn schema_v2_carries_every_access_scope_and_rejects_other_versions() -> Result<(
         let Value::Map(entries) = value else {
             panic!("map");
         };
-        assert_eq!(entries[0].1, Value::from(2_u64));
+        assert_eq!(entries[0].1, Value::from(3_u64));
         for version in [
             Value::from(0_u64),
             Value::from(1_u64),
-            Value::from(3_u64),
+            Value::from(2_u64),
+            Value::from(4_u64),
             Value::from(-1),
             Value::from("2"),
             Value::from(2.0),
@@ -740,6 +771,7 @@ fn relationship_scopes_and_expiry_fail_closed() -> Result<()> {
         AccessGrantScope::RelationshipClaims { space_ref: space },
     ] {
         let mut grant = AccessGrant {
+            authority_scope: crate::federation::scope_codec::read_preset(),
             principal_ref: principal,
             capability: scope.required_capability(),
             scope,
@@ -768,5 +800,48 @@ fn relationship_scopes_and_expiry_fail_closed() -> Result<()> {
         assert_eq!(revoked.effective_status_at(4), AccessGrantStatus::Revoked);
     }
     assert!(AccessGrantCapability::parse("messages.write").is_none());
+    Ok(())
+}
+
+#[test]
+fn access_scope_migration_rejects_mixed_versions_and_malformed_scope() -> Result<()> {
+    assert_eq!(
+        decode_access_grant_body(&grant_map(legacy_v2_entries()))?,
+        test_grant()
+    );
+    let mut missing = valid_entries();
+    missing.retain(|(key, _)| key.as_str() != Some("authority_scope"));
+    assert_eq!(
+        decode_access_grant_body(&grant_map(missing))
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidAccessGrantBody
+    );
+    for scope in [
+        Value::Nil,
+        crate::federation::scope_codec::encode_scope_value(&crate::federation::Scope::default())?,
+    ] {
+        let mut entries = valid_entries();
+        entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some("authority_scope"))
+            .unwrap()
+            .1 = scope.clone();
+        if scope == Value::Nil {
+            assert_eq!(
+                decode_access_grant_body(&grant_map(entries.clone()))
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::InvalidAccessGrantBody
+            );
+        }
+        entries[0].1 = Value::from(2_u64);
+        assert_eq!(
+            decode_access_grant_body(&grant_map(entries))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidAccessGrantBody
+        );
+    }
     Ok(())
 }

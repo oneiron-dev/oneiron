@@ -1,9 +1,7 @@
 //! Attributed takes, companion records, and imported-claim admission verbs.
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-};
+use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::edge::EdgeKind;
 
 use crate::error::ErrorKind;
@@ -151,7 +149,7 @@ impl Memory<'_> {
             persona,
             json_to_rmpv(&input.value),
             CompanionProvenance::from_envelope(&envelope),
-            CompanionExportClassification::LocalOnly,
+            crate::federation::Sensitivity::Restricted,
         );
         self.with_verified_actor_write_txn(|wtxn| {
             // The early refusal above is only a fast path. Recheck in this

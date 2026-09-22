@@ -52,6 +52,10 @@ impl Hub {
                     break;
                 }
                 worker.refresh();
+                // Refolding live authority can exceed one period. Do not replay
+                // overdue checks in a continuously-ready catch-up loop that
+                // starves socket I/O; inspect current state again after a pause.
+                tick.reset();
             }
         });
         hub
@@ -62,11 +66,10 @@ impl Hub {
             return;
         };
         sessions.retain(|_, session| {
-            let live = self.server.upgrade().is_some_and(|server| {
-                !session.auth.jti().is_some_and(|jti| {
-                    crate::auth::is_revoked_or_unreadable(jti, server.vault().as_ref())
-                })
-            });
+            let live = self
+                .server
+                .upgrade()
+                .is_some_and(|server| session.auth.credential_is_live(server.vault().as_ref()));
             live && (session.attached.load(Ordering::Acquire) != 0
                 || session
                     .touched
@@ -90,7 +93,7 @@ impl Hub {
     ) -> Result<Arc<Session>, AppError> {
         let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
         if let Some(session) = cursor.and_then(|cursor| sessions.get(&cursor.document)) {
-            if &session.auth != auth {
+            if !session.auth.same_authority(auth) {
                 return Err(AppError::unauthorized());
             }
             session.attached.store(conn_id, Ordering::Release);
@@ -206,7 +209,9 @@ impl Connection {
             }
         }
         let session = self.session.as_ref().ok_or_else(unavailable)?;
-        if &session.auth != auth || session.attached.load(Ordering::Acquire) != self.conn_id {
+        if !session.auth.same_authority(auth)
+            || session.attached.load(Ordering::Acquire) != self.conn_id
+        {
             return Err(AppError::unauthorized());
         }
         if !opening && !self.active.contains(&id) {

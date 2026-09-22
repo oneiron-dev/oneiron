@@ -60,6 +60,7 @@ pub(super) fn authorize(
 ) -> Result<CoreAuth, ApiError> {
     let auth = CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())?;
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     if access == LfsAccess::Write {
         require_lfs_write(&auth)?;
     }

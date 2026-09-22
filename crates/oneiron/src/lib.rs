@@ -311,10 +311,10 @@ pub use crate::compaction::{
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub use crate::companion::{
-    CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
-    CompanionProvenance, CompanionRecord, CompanionRecordKind, CompanionScope,
-    CompanionScopeResolutionSource, CompanionSubject, CompanionTaskKind, EndCompanionRelationship,
-    EnqueueCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
+    CompanionExpression, CompanionExpressionRegister, CompanionProvenance, CompanionRecord,
+    CompanionRecordKind, CompanionScope, CompanionScopeResolutionSource, CompanionSubject,
+    CompanionTaskKind, EndCompanionRelationship, EnqueueCompanionTaskOutcome,
+    companion_value_from_json, companion_value_to_json,
 };
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,

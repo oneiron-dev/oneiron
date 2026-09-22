@@ -61,6 +61,7 @@ impl Vault {
         };
         if identity_ref != candidate.identity_ref
             || grant.principal_ref != *actor_ref
+            || !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read")
             || grant.effective_status_at(self.store.clock.now_recorded_at())
                 != AccessGrantStatus::Active
             || grant.created_at > self.store.clock.now_recorded_at()
@@ -132,6 +133,7 @@ impl Vault {
         let read_bound = read_bound(desired.actor_ref, identity, read_ref)?;
         let read_grant_ref = address("read_grant", &Value::from(read_bound.digest().to_hex()))?;
         let read_grant = AccessGrant {
+            authority_scope: crate::federation::scope_codec::read_preset(),
             principal_ref: desired.actor_ref,
             scope: AccessGrantScope::ChannelIdentity {
                 identity_ref: identity,
@@ -192,6 +194,7 @@ impl Vault {
                     return Err(invalid_autonomy());
                 }
                 let grant = StandingOutboundGrant {
+                    authority_scope: crate::federation::scope_codec::effect_preset(),
                     principal_ref: desired.actor_ref.to_hex(),
                     origin_component_id: "channel_identity.autonomy".to_owned(),
                     origin_action_id: "apply".to_owned(),
@@ -267,6 +270,7 @@ impl Vault {
         }
         let receipt = self.create_standing_grant_in_txn(&mut txn, owner, bound.clone())?;
         let grant = StandingOutboundGrant {
+            authority_scope: crate::federation::scope_codec::effect_preset(),
             principal_ref: actor.to_hex(),
             origin_component_id: "channel_identity.autonomy".to_owned(),
             origin_action_id: "owner_grant".to_owned(),
@@ -424,6 +428,7 @@ impl Vault {
         };
         if identity_ref != mode.identity_ref
             || grant.principal_ref != actor
+            || !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read")
             || !grant.is_active()
             || grant.created_at > at
         {

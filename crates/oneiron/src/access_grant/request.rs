@@ -202,6 +202,7 @@ mod tests {
                 created_at: 1,
                 revoked_at: None,
                 expires_at: None,
+                authority_scope: crate::federation::scope_codec::read_preset(),
             };
             assert_eq!(
                 vault.request_access(id, grant.clone())?.status,

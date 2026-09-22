@@ -105,6 +105,7 @@ fn claim_input(id: EntityId, subject: EntityId, value: &str) -> crate::memory::C
         confidence: 0.9,
         source: "user_stated".into(),
         world_ref: None,
+        relationship_ref: None,
         scope: None,
         valid_from: None,
         valid_to: None,

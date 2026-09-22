@@ -15,9 +15,11 @@
 //! the implementation in `code_run::vault_read`'s in-module suite, where the
 //! manifest door is reachable.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use oneiron::claim::ScopedReadActorKey;
+use oneiron::authority::{HostSlipIssuer, SlipCaveat};
+use oneiron::claim::{ScopedReadActorKey, base_world_id};
 use oneiron::code_run::vault_read::{
     AskRequest, CloudVaultReadAdapter, CodeExecuteRequest, CodeSearchRequest,
     ContextPackBudgetControls, ContextPackDepthControls, ContextPackRetrievalBudgetControls,
@@ -28,6 +30,7 @@ use oneiron::code_run::vault_read::{
     VaultReadResponse, VaultReadResult, VaultReadWireOp, View, WireTransport,
     WireTransportVaultReadAdapter,
 };
+use oneiron::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
@@ -37,7 +40,6 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
-const ACTOR_REF: &str = "lens-reader";
 const ADMITTED_TEXT: &str = "alpha hallway note";
 const DENIED_TEXT: &str = "bravo hidden note";
 const SEED_VECTOR: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
@@ -161,6 +163,42 @@ fn execute(
     }
 }
 
+/// Explicit base-world read proof for positives: the host root slip
+/// attenuated to base `read` only. The status-gated denied claim stays
+/// denied through `claim_surfaceable`, exactly as before; the grant gap is
+/// closed by the proof instead of a manifest the public API cannot install.
+fn base_read_scope() -> Scope {
+    Scope {
+        worlds: ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())])),
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
+        audience: ScopeAxis::All,
+        verbs: ScopeAxis::Some(BTreeSet::from(["read".to_owned()])),
+        sensitivity: SensitivityCeiling::AtMost(Sensitivity::Restricted),
+    }
+}
+
+fn base_read_key(vault: &Vault) -> ScopedReadActorKey {
+    let issuer =
+        HostSlipIssuer::from_secret(b"vault-read-parity-test-host-secret").expect("host issuer");
+    let mut slip = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root slip");
+    slip.attenuate(SlipCaveat {
+        scope: Some(base_read_scope()),
+        ..Default::default()
+    })
+    .expect("narrow root to base read");
+    let challenge = b"vault-read-parity";
+    let proof_bytes = issuer
+        .binding_proof(&slip, challenge)
+        .expect("binding proof");
+    let verified = vault
+        .verify_capability_slip(&issuer, &slip, challenge, &proof_bytes)
+        .expect("verified base-read slip");
+    ScopedReadActorKey::from_verified_slip(&verified).expect("read key")
+}
+
 struct Fixture {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
@@ -226,7 +264,7 @@ impl Fixture {
             .commit()
             .expect("fixture vectors");
 
-        let actor = ScopedReadActorKey::new(ACTOR_REF).expect("actor key");
+        let actor = base_read_key(&vault);
         let admitted_ref = probe_short_ref(&vault, &admitted_id);
         let denied_ref = probe_short_ref(&vault, &denied_id);
         let transport = Arc::new(FakeWireTransport {
@@ -786,6 +824,8 @@ fn cloud_structured_read_contract() {
 #[test]
 fn in_process_is_not_privileged() {
     // As in structured_success_parity, pin age to zero without masking scores.
+    // Compare authority at a neutral age: separate adapter calls must not
+    // compare different wall-clock decay.
     let fixture = Fixture::with_claim_learned_at(u64::MAX);
     let wire = fixture.wire();
     // Wire FIRST, in-process second: proximity to `Vault` is never authority.
@@ -813,7 +853,8 @@ fn in_process_is_not_privileged() {
     normalize_pack(&mut wire_pack);
     normalize_pack(&mut direct_pack);
     assert_eq!(encode(&wire_pack), encode(&direct_pack));
-    assert_eq!(direct_pack.0.results.len(), 1, "parity must not be vacuous");
+    assert_eq!(direct_pack.0.results.len(), 1, "parity is not vacuous");
+    assert_eq!(direct_pack.0.results[0].id, fixture.admitted_id.to_hex());
     assert_eq!(
         direct_pack.0.results[0].score, 1.0,
         "fixture decay is neutral"

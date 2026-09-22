@@ -802,12 +802,14 @@ fn claim_subject_decode_pins_both_encodings() {
 
 /// ARCH-0004 / ARCH-0022 world write-validation, exercised on the claim
 /// body chokepoint with hand-built MessagePack so a wrong impl that stores
-/// arbitrary `world` bytes FAILS: a present `world` must be exactly 16
-/// binary bytes (→ an `EntityId`), an absent key is base reality (`None`),
-/// and a 15-byte blob or a string is a typed `InvalidClaimBody`.
+/// arbitrary `worldId` bytes FAILS: `worldId` is REQUIRED and must be exactly
+/// 16 binary bytes (→ an `EntityId`); the reserved base id decodes to `None`,
+/// a missing key, a 15-byte blob, or a string is a typed `InvalidClaimBody`.
 #[test]
 fn world_value_must_be_16_byte_binary() {
     let subj = EntityId::from_bytes([0x60; 16]).expect("valid subject id");
+    let facet = substrate_facet_id(subj);
+    let project = default_project_id();
     let body_with_world = |world: Option<Value>| -> Vec<u8> {
         let mut entries = vec![
             (Value::from("pred"), Value::from("profile.name")),
@@ -816,11 +818,21 @@ fn world_value_must_be_16_byte_binary() {
         ];
         entries.push((Value::from("rel"), Value::from("all")));
         if let Some(world) = world {
-            entries.push((Value::from("world"), world));
+            entries.push((Value::from("worldId"), world));
         }
+        entries.push((Value::from("scopeRelationshipId"), Value::from("all")));
         entries.push((Value::from("subj"), Value::Binary(subj.as_bytes().to_vec())));
         entries.push((Value::from("appr"), Value::from("auto")));
         entries.push((Value::from("life"), Value::from("active")));
+        entries.push((
+            Value::from("scopeFacetId"),
+            Value::Binary(facet.as_bytes().to_vec()),
+        ));
+        entries.push((
+            Value::from("scopeProjectId"),
+            Value::Binary(project.as_bytes().to_vec()),
+        ));
+        entries.push((Value::from("scopeVersion"), Value::from(2_u64)));
         let mut out = Vec::new();
         rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("encode body");
         out
@@ -836,16 +848,29 @@ fn world_value_must_be_16_byte_binary() {
         Some(world_id)
     );
 
-    assert_matches!(
-        decode_claim_body(&body_with_world(None), false),
-        Err(Error::InvalidClaimBody(_))
-    );
-    let base = body_with_world(Some(Value::from("base")));
+    // HEAD: explicit `base` tag string decodes to base reality (None).
+    let base_tagged = body_with_world(Some(Value::from("base")));
     assert_eq!(
-        decode_claim_body(&base, false)
+        decode_claim_body(&base_tagged, false)
             .expect("explicit base tag")
             .world,
         None
+    );
+
+    // Reserved base id = base reality (None); the wire always stamps it.
+    let base_world = base_world_id();
+    let base = body_with_world(Some(Value::Binary(base_world.as_bytes().to_vec())));
+    assert_eq!(
+        decode_claim_body(&base, false)
+            .expect("base worldId passes")
+            .world,
+        None
+    );
+
+    // Missing key is corruption, not an old-version row.
+    assert_matches!(
+        decode_claim_body(&body_with_world(None), false),
+        Err(Error::InvalidClaimBody(_))
     );
 
     // 15-byte blob rejected fail-closed.
@@ -885,8 +910,25 @@ fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
     assert_eq!(
         CLAIM_BODY_KEYS,
         [
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj",
-            "scope", "appr", "life", "stale", "sess",
+            "pred",
+            "val",
+            "conf",
+            "sal",
+            "evid",
+            "from",
+            "to",
+            "src",
+            "worldId",
+            "scopeRelationshipId",
+            "subj",
+            "scope",
+            "appr",
+            "life",
+            "stale",
+            "sess",
+            "scopeFacetId",
+            "scopeProjectId",
+            "scopeVersion",
         ],
         "PsychProfile snapshots must preserve the pinned Claim body ABI"
     );
@@ -902,8 +944,21 @@ fn claim_field_profile_slices_are_prefixes_of_the_pinned_keys() {
     assert_eq!(
         CLAIM_FIELDS_FULL,
         &[
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj",
+            "pred",
+            "val",
+            "conf",
+            "sal",
+            "evid",
+            "from",
+            "to",
+            "src",
+            "worldId",
+            "scopeRelationshipId",
+            "subj",
             "scope",
+            "scopeFacetId",
+            "scopeProjectId",
+            "scopeVersion",
         ],
     );
 }
@@ -2275,7 +2330,10 @@ fn expression_preference_legacy_bare_predicate_remains_compatible() -> Result<()
 fn expression_preference_fixture() -> (tempfile::TempDir, Vault, EntityId, WriteActor, WriteActor) {
     let (temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (
             Value::from("pack_id"),
             Value::from("one-1421-expression-preference"),
@@ -2786,6 +2844,7 @@ fn expression_preference_claim_input(
         source: "inferred".to_owned(),
         scope: None,
         world_ref: None,
+        relationship_ref: None,
         occurred_at: Some(5),
         learned_at: Some(5),
         valid_from: Some(5),
@@ -2901,7 +2960,10 @@ fn vault_put_claim_refuses_an_expression_preference() -> Result<()> {
 /// `proposed`, so the gate refuses an `auto` request for this prefix.
 fn put_proposed_only_expression_manifest(vault: &Vault) {
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("proposed-only")),
         (Value::from("pack_version"), Value::from("v1")),
         (
@@ -3983,6 +4045,43 @@ fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
     let (_temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
     let (a, b, c, edge_value) = scoped_read_session_edge_fixture(&vault)?;
 
+    // Explicit PERSON-band grant for the reader: the no-grant lane is
+    // fail-closed for stamped records, so the positive must carry its own
+    // `core:read` row. Bands narrow to PERSON so the incidental substrate
+    // `HasFacet` edge stays filtered and the assertion keeps proving the
+    // session-staged Mentions edge, not the person-substrate mint.
+    {
+        use crate::federation::ScopeAxis;
+        use std::collections::BTreeSet;
+        let mut scope = crate::federation::scope_codec::read_preset();
+        scope.bands = ScopeAxis::Some(BTreeSet::from([crate::registry::ENTITY_TYPE_PERSON]));
+        let bytes = crate::gate::default_policy_manifest();
+        let Value::Map(mut entries) =
+            rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
+        else {
+            unreachable!("default policy manifest is a map");
+        };
+        entries.push((
+            Value::from("scoped_grants"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("actor_ref"), Value::from("agent:reader")),
+                (Value::from("effector"), Value::from("core:read")),
+                (
+                    Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(&scope)?,
+                ),
+                (Value::from("receipt_required"), Value::Boolean(false)),
+            ])]),
+        ));
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("grant manifest");
+        crate::test_util::put_policy_manifest_bytes(
+            &vault,
+            crate::gate::default_policy_manifest_id()?,
+            &out,
+        )?;
+    }
+
     let overlay = crate::session_overlay::SessionOverlay::new(64 * 1024);
     let segment = overlay.install_txn_segment()?;
     let mut staged_key = crate::vault::edge_kind_prefix(&a, EdgeKind::Mentions).to_vec();
@@ -4554,5 +4653,62 @@ fn scoped_read_search_with_effort_retrieval_depth_is_the_existing_text_door()
     );
     assert!(!dialed.backend_used, "no tier reaches a host by default");
     assert_eq!(dialed.tokens_used, 0);
+    Ok(())
+}
+
+#[test]
+fn relationship_candidate_stamps_and_rejects_unknown_or_wrong_kind() -> Result<()> {
+    let (_temp, vault, subject, human, _) = expression_preference_fixture();
+    let relationship = EntityId::now();
+    let occurred = TimeRange { start: 2, end: 2 };
+    vault.put_entity(
+        &relationship,
+        crate::registry::ENTITY_TYPE_RELATIONSHIP,
+        occurred,
+        2,
+        b"relationship",
+    )?;
+    let envelope = WriteEnvelope::new(
+        human,
+        ClaimSource::UserStated,
+        crate::write_envelope::WriteProvenance::new(Value::from("relationship-test"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    let candidate = || {
+        ClaimCandidate::new(
+            "profile.nickname",
+            ClaimSubject::Entity(subject),
+            Value::from("Ada"),
+            1.0,
+        )
+    };
+    let id = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate(
+            &id,
+            candidate().with_relationship(relationship),
+            &envelope,
+            occurred,
+            2,
+        )
+        .commit()?;
+    assert_eq!(vault.get_claim(&id)?.unwrap().rel, Some(relationship));
+    for invalid in [EntityId::now(), subject] {
+        let rejected = EntityId::now();
+        let error = vault
+            .batch()
+            .claim_candidate(
+                &rejected,
+                candidate().with_relationship(invalid),
+                &envelope,
+                occurred,
+                2,
+            )
+            .commit()
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::InvalidRelationship);
+        assert!(vault.get_claim(&rejected)?.is_none());
+    }
     Ok(())
 }

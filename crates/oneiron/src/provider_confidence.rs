@@ -195,6 +195,16 @@ pub fn write_provider_prior(
     prior: f32,
     evidence: &str,
 ) -> Result<EntityId> {
+    vault.with_write_txn(|txn| write_provider_prior_in_txn(vault, txn, provider, prior, evidence))
+}
+
+pub(crate) fn write_provider_prior_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    provider: &str,
+    prior: f32,
+    evidence: &str,
+) -> Result<EntityId> {
     validate_provider_key(provider)?;
     if !prior.is_finite() || !(0.0..=1.0).contains(&prior) {
         return Err(Error::InvalidClaimBody(
@@ -208,51 +218,49 @@ pub fn write_provider_prior(
     }
 
     let now = vault.store.clock.now_recorded_at();
-    vault.with_write_txn(|wtxn| {
-        let actor = resolve_or_create_provider_actor_in_txn(vault, wtxn, provider)?;
-        let active_priors = prior_claims_for_actor_in_txn(vault, &*wtxn, &actor)?
-            .into_iter()
-            .filter(|(_, body)| body.lifecycle == ClaimLifecycleStatus::Active)
-            .map(|(id, _)| id)
-            .collect::<Vec<_>>();
+    let actor = resolve_or_create_provider_actor_in_txn(vault, wtxn, provider)?;
+    let active_priors = prior_claims_for_actor_in_txn(vault, &*wtxn, &actor)?
+        .into_iter()
+        .filter(|(_, body)| body.lifecycle == ClaimLifecycleStatus::Active)
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
 
-        let claim_id = vault.store.clock.entity_id()?;
-        let mut body = ClaimBody::new(
-            PREDICATE_ACTOR_CONFIDENCE_PRIOR,
-            ClaimSubject::Entity(actor),
-            Value::F32(prior),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        );
-        body.evidence = Some(Value::from(evidence));
-        body.valid_from = Some(now);
-        body.source = Some(ClaimSource::Observed);
-        vault.put_reserved_claim_in_txn(
-            wtxn,
-            &claim_id,
-            &body,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
-        )?;
-        for prior_id in active_priors {
-            vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, &prior_id, now)?;
-        }
-        // The shortcut moves in the SAME transaction that mints the head it
-        // names. A separate write would leave a window in which the row points
-        // at a claim this transaction is about to supersede — survivable (the
-        // read revalidates and falls back) but pointless churn, and a rollback
-        // would strand it pointing at a claim that never landed.
-        vault.store.vault_meta.put(
-            wtxn,
-            &provider_prior_head_index_key(provider),
-            claim_id.as_bytes(),
-        )?;
-        Ok(claim_id)
-    })
+    let claim_id = vault.store.clock.entity_id()?;
+    let mut body = ClaimBody::new(
+        PREDICATE_ACTOR_CONFIDENCE_PRIOR,
+        ClaimSubject::Entity(actor),
+        Value::F32(prior),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.evidence = Some(Value::from(evidence));
+    body.valid_from = Some(now);
+    body.source = Some(ClaimSource::Observed);
+    vault.put_reserved_claim_in_txn(
+        wtxn,
+        &claim_id,
+        &body,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    )?;
+    for prior_id in active_priors {
+        vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, &prior_id, now)?;
+    }
+    // The shortcut moves in the SAME transaction that mints the head it
+    // names. A separate write would leave a window in which the row points
+    // at a claim this transaction is about to supersede — survivable (the
+    // read revalidates and falls back) but pointless churn, and a rollback
+    // would strand it pointing at a claim that never landed.
+    vault.store.vault_meta.put(
+        wtxn,
+        &provider_prior_head_index_key(provider),
+        claim_id.as_bytes(),
+    )?;
+    Ok(claim_id)
 }
 
 /// Mints a fresh stand-in enriched entity for the [`write_enrichment_claim`]

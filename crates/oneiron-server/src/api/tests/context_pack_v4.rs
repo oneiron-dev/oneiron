@@ -90,6 +90,7 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
                 principal_ref: principal_id,
                 scope: oneiron::access_grant::AccessGrantScope::Summaries { space_ref: space },
                 capability: oneiron::access_grant::AccessGrantCapability::SummariesRead,
+                authority_scope: oneiron::federation::Scope::top(),
                 status: oneiron::access_grant::AccessGrantStatus::Active,
                 created_at: 1,
                 revoked_at: None,
@@ -326,7 +327,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
             oneiron::companion_value_from_json(&json!({ "source": "test" }))
                 .expect("provenance value"),
         ),
-        oneiron::CompanionExportClassification::LocalOnly,
+        oneiron::federation::Sensitivity::Restricted,
     );
     server
         .vault

@@ -6,7 +6,7 @@ use super::*;
 /// data in `content`, not only through the `structuredContent` side channel.
 #[tokio::test]
 async fn mcp_results_carry_usable_data_in_negotiated_content() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0105);
     let credential = "one-1704-negotiated-content";
     register_mcp_actor(
@@ -78,7 +78,11 @@ async fn mcp_results_carry_usable_data_in_negotiated_content() {
     let connection = {
         let registry = server.mcp_registry.lock().await;
         registry
-            .resolve(credential, 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection
     };
@@ -347,7 +351,7 @@ async fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
 
 #[tokio::test]
 async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_00c1);
     let credential = "one-1704-carrier-credential";
     register_mcp_actor(
@@ -361,7 +365,11 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
     let connection = {
         let registry = server.mcp_registry.lock().await;
         registry
-            .resolve(credential, 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection
     };

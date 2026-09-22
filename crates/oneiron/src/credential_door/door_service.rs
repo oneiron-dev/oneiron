@@ -211,6 +211,7 @@ impl AdmittedLease {
 /// composition and its refusals.
 pub(crate) struct CredentialDoorService {
     vault: Arc<Vault>,
+    issuer: Option<Arc<crate::authority::HostSlipIssuer>>,
 }
 
 /// Compatibility alias for the door's shorter name. One principal noun, two
@@ -220,7 +221,19 @@ pub(super) type CredentialDoor = CredentialDoorService;
 impl CredentialDoorService {
     /// Binds the door to a vault.
     pub(crate) fn new(vault: Arc<Vault>) -> Self {
-        Self { vault }
+        Self {
+            vault,
+            issuer: None,
+        }
+    }
+
+    /// A signing host may mint and consume logged one-shots. A read-only door cannot.
+    pub(crate) fn with_host_issuer(
+        mut self,
+        issuer: Arc<crate::authority::HostSlipIssuer>,
+    ) -> Self {
+        self.issuer = Some(issuer);
+        self
     }
 
     /// The vault this door composes over.
@@ -481,6 +494,77 @@ impl CredentialDoorService {
         vault.materialize_admitted_lease(&admitted.into_lease(secret_ref, ttl, not_after))
         // `one_shot` drops here: the credential is spent.
     }
+
+    /// Mints a real log-backed one-shot, with exact secret and effector bounds.
+    /// This host-issued capability is distinct from a class-bound parent delegation.
+    pub(super) fn mint_host_one_shot(
+        &self,
+        secret_ref: &str,
+        effector: &str,
+        lifetime_secs: u64,
+    ) -> DoorResult<DoorCredential> {
+        use rand_core::{OsRng, RngCore};
+
+        let issuer = self
+            .issuer
+            .as_ref()
+            .ok_or(CredentialDoorError::MintUnavailable)?;
+        let now = self.door_instant()?;
+        self.admit_scope(effector, now)?;
+        if lifetime_secs == 0 || lifetime_secs > DOOR_ONE_SHOT_MAX_LIFETIME_SECS {
+            return Err(CredentialDoorError::OneShotLifetimeDenied {
+                lifetime_secs,
+                ceiling_secs: DOOR_ONE_SHOT_MAX_LIFETIME_SECS,
+            });
+        }
+        if secret_ref.is_empty() {
+            return Err(CredentialDoorError::MintUnavailable);
+        }
+        let root = self.vault.ensure_host_root_slip(issuer).map_err(custody)?;
+        let mut claims = root.claims;
+        OsRng.fill_bytes(&mut claims.slip_id);
+        // Host-root is the issuer, not a same-holder secret-record delegation.
+        claims.parent_id = None;
+        claims.issued_at = now.secs();
+        claims.expires_at = now.secs().saturating_add(lifetime_secs);
+        claims.ttl_secs = lifetime_secs;
+        claims.single_use = true;
+        claims.records = std::collections::BTreeSet::from([secret_ref.to_owned()]);
+        claims.channels = std::collections::BTreeSet::from([effector.to_owned()]);
+        claims.scope.verbs =
+            crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+                DOOR_VERB_REDEEM.to_owned(),
+            ]));
+        let slip = self
+            .vault
+            .mint_capability_slip(issuer, claims)
+            .map_err(custody)?;
+        let proof = issuer
+            .binding_proof(&slip, b"credential-door-mint")
+            .map_err(custody)?;
+        let verified = self
+            .vault
+            .verify_capability_slip(issuer, &slip, b"credential-door-mint", &proof)
+            .map_err(custody)?;
+        Ok(verified.door_credential())
+    }
+
+    pub(super) fn consume_single_use(&self, credential: &DoorCredential) -> DoorResult<()> {
+        let Some((id, _)) = credential.capability_identity() else {
+            // Class-bound spends belong to authorize's existing write transaction.
+            return Ok(());
+        };
+        if !credential.single_use {
+            return Ok(());
+        }
+        let issuer = self
+            .issuer
+            .as_ref()
+            .ok_or(CredentialDoorError::MintUnavailable)?;
+        self.vault.consume_slip(issuer, id).map_err(custody)
+    }
+
+
 }
 
 impl CredentialDoorService {
@@ -567,3 +651,4 @@ fn validate_seam_fields(blob: &PushedBlob) -> DoorResult<()> {
     }
     Ok(())
 }
+

@@ -22,7 +22,7 @@ use super::pack_preparation::*;
 use super::token_budget::*;
 use super::toon_format::*;
 use super::types::*;
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
+use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_EVENT,
@@ -2108,7 +2108,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
             }),
         ),
         ("lifecycle".to_owned(), Value::String("active".to_owned())),
-        ("export".to_owned(), Value::String("portable".to_owned())),
+        ("sensitivity".to_owned(), Value::String("public".to_owned())),
         (
             "lifecycle_events".to_owned(),
             serde_json::json!([{ "kind": "created", "at": 123_u64 }]),
@@ -2148,7 +2148,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
             }),
         ),
         ("lifecycle".to_owned(), Value::String("active".to_owned())),
-        ("export".to_owned(), Value::String("portable".to_owned())),
+        ("sensitivity".to_owned(), Value::String("public".to_owned())),
         (
             "provenance".to_owned(),
             serde_json::json!({
@@ -2170,7 +2170,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
                 id: EntityId::from_bytes_unchecked([0x64; 16]),
                 short_id: "cr01".to_owned(),
                 content_hash: 0xa1,
-                entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+                entity_type: ENTITY_TYPE_FACET,
                 score: 0.9,
                 fields: Some(persona_fields),
                 edges: None,
@@ -2182,7 +2182,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
                 id: EntityId::from_bytes_unchecked([0x65; 16]),
                 short_id: "cr02".to_owned(),
                 content_hash: 0xa2,
-                entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+                entity_type: ENTITY_TYPE_FACET,
                 score: 0.8,
                 fields: Some(relationship_fields),
                 edges: None,
@@ -2208,7 +2208,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
     let parsed: Value =
         serde_json::from_slice(&serialize_pack(&pack, &cfg_json)).expect("json parse");
     assert!(parsed.get("other").is_none());
-    let records = parsed["companion_records"]
+    let records = parsed["facets"]
         .as_array()
         .expect("companion records group");
     assert_eq!(records.len(), 2);
@@ -2231,32 +2231,32 @@ fn companion_register_records_serialize_as_first_class_export_group() {
     assert!(records[0].get("schema_version").is_none());
     assert!(records[0].get("value").is_none());
     assert_eq!(
-        fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Standard),
-        &["kind", "scope", "subject", "lifecycle", "export"]
+        fields_for_profile(ENTITY_TYPE_FACET, FieldProfile::Standard),
+        &["kind", "scope", "subject", "lifecycle", "sensitivity"]
     );
 
     let cfg_full = config(PackFormat::Json, FieldProfile::Full);
     let full: Value =
         serde_json::from_slice(&serialize_pack(&pack, &cfg_full)).expect("json parse");
     assert_eq!(
-        full["companion_records"][0]["schema_version"],
+        full["facets"][0]["schema_version"],
         serde_json::json!(crate::companion::COMPANION_RECORD_SCHEMA_VERSION)
     );
-    assert!(full["companion_records"][0].get("provenance").is_some());
+    assert!(full["facets"][0].get("provenance").is_some());
     assert_eq!(
-        full["companion_records"][0]["lifecycle_events"],
+        full["facets"][0]["lifecycle_events"],
         serde_json::json!([{ "kind": "created", "at": 123_u64 }])
     );
-    assert!(full["companion_records"][0].get("value").is_none());
+    assert!(full["facets"][0].get("value").is_none());
     assert_eq!(
-        fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Full),
+        fields_for_profile(ENTITY_TYPE_FACET, FieldProfile::Full),
         &[
             "schema_version",
             "kind",
             "scope",
             "subject",
             "lifecycle",
-            "export",
+            "sensitivity",
             "lifecycle_events",
             "provenance"
         ]
@@ -2264,18 +2264,18 @@ fn companion_register_records_serialize_as_first_class_export_group() {
 
     let cfg_plain = config(PackFormat::Plaintext, FieldProfile::Standard);
     let text = String::from_utf8(serialize_pack(&pack, &cfg_plain)).expect("utf8");
-    assert!(text.contains("COMPANION_RECORDS"));
+    assert!(text.contains("FACETS"));
     assert!(text.contains("relationship"));
 }
 
 #[test]
 fn companion_register_records_budget_with_fixed_state_allocation() {
-    assert!(GROUP_ORDER.contains(&ENTITY_TYPE_COMPANION_REGISTER));
+    assert!(GROUP_ORDER.contains(&ENTITY_TYPE_FACET));
 
     let source_id = [0x64; 16];
     let groups = group_entities(vec![PreparedEntity {
         critical: false,
-        entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+        entity_type: ENTITY_TYPE_FACET,
         score: 0.9,
         source: PreparedEntitySource::Result,
         source_id,
@@ -2302,19 +2302,14 @@ fn companion_register_records_budget_with_fixed_state_allocation() {
     };
 
     assert_eq!(
-        type_fraction(
-            GroupKey::Kind(ENTITY_TYPE_COMPANION_REGISTER),
-            &zero_other_allocation
-        ),
+        type_fraction(GroupKey::Kind(ENTITY_TYPE_FACET), &zero_other_allocation),
         zero_other_allocation.claims
     );
 
     let (budgeted, used) = budget_groups(&groups, &zero_other_allocation, needed);
     let records = budgeted
         .iter()
-        .find_map(|(key, rows)| {
-            (*key == GroupKey::Kind(ENTITY_TYPE_COMPANION_REGISTER)).then_some(rows)
-        })
+        .find_map(|(key, rows)| (*key == GroupKey::Kind(ENTITY_TYPE_FACET)).then_some(rows))
         .expect("companion register group should keep state allocation budget");
 
     assert_eq!(used, needed);
@@ -2525,13 +2520,13 @@ fn test_group_labels_sparse_ids() {
         crate::outbound_grant::OUTBOUND_GRANT_FIELDS_MINIMAL
     );
 
-    let companion = group_labels(GroupKey::Kind(ENTITY_TYPE_COMPANION_REGISTER));
-    assert_eq!(companion.key, "companion_records");
-    assert_eq!(companion.name, "COMPANION_RECORDS");
-    assert_eq!(companion.title, "Companion Records");
+    let companion = group_labels(GroupKey::Kind(ENTITY_TYPE_FACET));
+    assert_eq!(companion.key, "facets");
+    assert_eq!(companion.name, "FACETS");
+    assert_eq!(companion.title, "Facets");
     assert_eq!(
-        fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Minimal),
-        &["kind", "scope", "subject"]
+        fields_for_profile(ENTITY_TYPE_FACET, FieldProfile::Minimal),
+        &["kind", "label", "scope", "subject", "sensitivity"]
     );
 
     let psych_profile = group_labels(GroupKey::Kind(ENTITY_TYPE_PSYCH_PROFILE));

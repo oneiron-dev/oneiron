@@ -45,7 +45,10 @@ fn auto_permitting_manifest() -> Vec<u8> {
         ])
     };
     let manifest = Mp::Map(vec![
-        (Mp::from("schema_version"), Mp::from("1.1")),
+        (
+            Mp::from("schema_version"),
+            Mp::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Mp::from("pack_id"), Mp::from("dreamer-promotion-test")),
         (Mp::from("pack_version"), Mp::from("v1")),
         (

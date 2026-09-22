@@ -172,6 +172,9 @@ pub(crate) enum CredentialDoorError {
     /// Signed authority does not admit this mint, handle, or use.
     #[error("credential door authority refused the operation")]
     AuthorityRejected,
+    /// No host signer is configured, so no host-root slip can be minted.
+    #[error("credential door cannot mint: no host signer")]
+    MintUnavailable,
     /// Third outcome: scope is valid but the verb needs an owner grant.
     #[error("credential door asks for verb-class consent")]
     Ask {

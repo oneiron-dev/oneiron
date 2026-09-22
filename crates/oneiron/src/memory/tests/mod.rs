@@ -108,6 +108,7 @@ pub(super) fn claim_input(
         confidence: 1.0,
         source: source.to_owned(),
         world_ref: None,
+        relationship_ref: None,
         scope: None,
         valid_from: None,
         valid_to: None,
@@ -242,6 +243,26 @@ pub(super) fn assert_witness_left_nothing(
         expected_edge_count,
         "a refused witness left an edge behind"
     );
+    let persons = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_PERSON)
+        .expect("persons");
+    for person in &persons {
+        assert!(
+            vault
+                .edge_exists(
+                    person,
+                    crate::EdgeKind::HasFacet,
+                    &crate::claim::substrate_facet_id(*person)
+                )
+                .expect("substrate edge")
+        );
+    }
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert_eq!(
+        vault.store.edges_out.len(&rtxn).expect("edge count"),
+        persons.len() as u64,
+        "a refused witness left an edge beyond the pre-existing substrate edges"
+    );
     assert!(
         vault
             .search_text(refused_text, 10)
@@ -348,6 +369,7 @@ pub(super) fn authority_root(
                 roles: ROLE_OWNER | ROLE_ADMIN,
             },
             genesis_nonce: [seed.wrapping_add(10); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },

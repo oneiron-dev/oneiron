@@ -54,7 +54,7 @@ pub(super) fn is_retired_relationship_end_rescrub(
         && matches!(&existing.subject, CompanionSubject::Relationship { .. })
         && record.key() == existing.key()
         && record.lifecycle_events == existing.lifecycle_events
-        && record.export_classification == existing.export_classification
+        && record.sensitivity == existing.sensitivity
         && is_relationship_end_scrub_value(&record.value)
 }
 

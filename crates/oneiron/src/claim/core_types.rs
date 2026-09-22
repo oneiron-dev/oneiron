@@ -12,7 +12,6 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
-use super::scope_tag::{decode_scope_tag, encode_scope_tag};
 use super::*;
 use crate::affect::{
     AFFECT_TRIGGER_PREDICATE,
@@ -50,9 +49,26 @@ pub(crate) fn claim_body_decode_count() -> usize {
 /// (Minimal = first 2, Standard = first 5, Full = first 12; the lifecycle
 /// keys `appr`/`life`/`stale` and optional session tag `sess` are excluded
 /// from every serialization profile).
-pub const CLAIM_BODY_KEYS: [&str; 16] = [
-    "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj", "scope",
-    "appr", "life", "stale", "sess",
+pub const CLAIM_BODY_KEYS: [&str; 19] = [
+    "pred",
+    "val",
+    "conf",
+    "sal",
+    "evid",
+    "from",
+    "to",
+    "src",
+    "worldId",
+    "scopeRelationshipId",
+    "subj",
+    "scope",
+    "appr",
+    "life",
+    "stale",
+    "sess",
+    "scopeFacetId",
+    "scopeProjectId",
+    "scopeVersion",
 ];
 
 const KEY_PRED: &str = CLAIM_BODY_KEYS[0];
@@ -76,7 +92,23 @@ pub(crate) const KEY_SESSION: &str = CLAIM_BODY_KEYS[15];
 /// serializer cannot drift from the storage ABI.
 pub(crate) const CLAIM_FIELDS_MINIMAL: &[&str] = claim_keys_prefix(2);
 pub(crate) const CLAIM_FIELDS_STANDARD: &[&str] = claim_keys_prefix(5);
-pub(crate) const CLAIM_FIELDS_FULL: &[&str] = claim_keys_prefix(12);
+pub(crate) const CLAIM_FIELDS_FULL: &[&str] = &[
+    "pred",
+    "val",
+    "conf",
+    "sal",
+    "evid",
+    "from",
+    "to",
+    "src",
+    "worldId",
+    "scopeRelationshipId",
+    "subj",
+    "scope",
+    "scopeFacetId",
+    "scopeProjectId",
+    "scopeVersion",
+];
 
 const fn claim_keys_prefix(len: usize) -> &'static [&'static str] {
     let whole: &[&str] = &CLAIM_BODY_KEYS;
@@ -191,22 +223,30 @@ pub struct ClaimBody {
     pub valid_to: Option<u64>,
     /// `src` — optional provenance source.
     pub source: Option<ClaimSource>,
-    /// `world` — world scope. `None` encodes the explicit `base` tag;
-    /// `Some` encodes a 16-byte WORLD id. The key is mandatory on disk.
-    /// Malformed or absent tags fail with [`Error::InvalidClaimBody`].
+    /// `worldId` — the 16-byte WORLD scope member. The wire always stamps it.
+    /// The in-memory `None` convenience encodes the reserved base id, never absence.
+    /// The WORLD entity id this claim
+    /// is scoped to (ARCH-0004 claim world filter; ARCH-0022 world model).
+    /// On disk it is exactly 16 MessagePack-binary bytes;
+    /// any other shape is rejected fail-closed with [`Error::InvalidClaimBody`].
     /// The referenced WORLD entity is NOT required to exist at write time —
     /// extraction may create claims before their world; the read side groups
     /// by id regardless.
     pub world: Option<EntityId>,
-    /// `rel` — relationship scope. `None` encodes the explicit `all` tag;
-    /// `Some` encodes one 16-byte RELATIONSHIP [`EntityId`]. The key is
-    /// mandatory. The claim codec validates this on-disk shape only and
+    /// `scopeRelationshipId` uses `all` or a singleton set of 16-byte ids.
+    /// The in-memory `None` convenience encodes `all`. A present id is one 16-byte
+    /// MessagePack Binary RELATIONSHIP [`EntityId`]; absent means core/all
+    /// relationships. The claim codec validates this on-disk shape only and
     /// does not require the referenced relationship to exist at write time,
     /// matching `world`. Retrieval validates the active relationship's
     /// existence and type when relationship filtering executes.
     pub rel: Option<EntityId>,
     /// `scope` — optional relationship/facet scope (opaque MessagePack).
     pub scope: Option<Value>,
+    /// Required provenance mask id. A mask does not grant authority.
+    pub scope_facet: EntityId,
+    /// Required project audience id.
+    pub scope_project: EntityId,
     /// `sess` — optional agent-session tag. Proposed claims sharing a tag
     /// form a review bundle; the tag remains as provenance after approval.
     pub session_tag: Option<String>,
@@ -271,6 +311,8 @@ impl ClaimBody {
             world: None,
             rel: None,
             scope: None,
+            scope_facet: super::scope_stamp::subject_facet(subject),
+            scope_project: super::default_project_id(),
             session_tag: None,
             stale: false,
         }
@@ -302,8 +344,17 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
     if let Some(source) = body.source {
         entries.push((Value::from(KEY_SRC), Value::from(source.as_str())));
     }
-    entries.push((Value::from(KEY_WORLD), encode_scope_tag(body.world, "base")));
-    entries.push((Value::from(KEY_REL), encode_scope_tag(body.rel, "all")));
+    entries.push((
+        Value::from(KEY_WORLD),
+        super::scope_stamp::id_value(body.world.unwrap_or_else(super::base_world_id)),
+    ));
+    entries.push((
+        Value::from(KEY_REL),
+        body.rel.map_or_else(
+            || Value::from("all"),
+            |id| Value::Array(vec![super::scope_stamp::id_value(id)]),
+        ),
+    ));
     entries.push((Value::from(KEY_SUBJ), Value::Binary(body.subject.encode())));
     if let Some(scope) = &body.scope {
         entries.push((Value::from(KEY_SCOPE), scope.clone()));
@@ -317,6 +368,15 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
         entries.push((Value::from(KEY_SESSION), Value::from(session_tag.as_str())));
     }
 
+    entries.push((
+        "scopeFacetId".into(),
+        super::scope_stamp::id_value(body.scope_facet),
+    ));
+    entries.push((
+        "scopeProjectId".into(),
+        super::scope_stamp::id_value(body.scope_project),
+    ));
+    entries.push(("scopeVersion".into(), 2u64.into()));
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &Value::Map(entries))
         .map_err(|_| Error::InvariantViolation("claim body MessagePack encode failed"))?;
@@ -373,6 +433,9 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
     let mut scope: Option<Value> = None;
     let mut session_tag: Option<String> = None;
     let mut stale: Option<bool> = None;
+    let mut scope_facet = None;
+    let mut scope_project = None;
+    let mut scope_version = None;
 
     let mut seen = [false; CLAIM_BODY_KEYS.len()];
     for (key, value) in entries {
@@ -432,8 +495,24 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
                         ))?;
                 source = Some(parsed);
             }
-            "world" => world = decode_scope_tag(&value, "base")?,
-            "rel" => rel = decode_scope_tag(&value, "all")?,
+            "worldId" => world = Some(super::scope_stamp::scope_id(&value)?),
+            "scopeFacetId" => scope_facet = Some(super::scope_stamp::scope_id(&value)?),
+            "scopeProjectId" => scope_project = Some(super::scope_stamp::scope_id(&value)?),
+            "scopeVersion" => scope_version = value.as_u64(),
+            "scopeRelationshipId" => {
+                if value.as_str() == Some("all") {
+                    rel = None;
+                } else if let Value::Array(ids) = value {
+                    if ids.len() != 1 {
+                        return Err(Error::InvalidClaimBody(
+                            "relationship scope requires all or one id",
+                        ));
+                    }
+                    rel = Some(super::scope_stamp::scope_id(&ids[0])?);
+                } else {
+                    return Err(Error::InvalidClaimBody("invalid relationship scope"));
+                }
+            }
             "subj" => {
                 let Value::Binary(bytes) = &value else {
                     return Err(Error::InvalidClaimBody("subj must be MessagePack binary"));
@@ -470,15 +549,15 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
         }
     }
 
-    for key in [KEY_WORLD, KEY_REL] {
-        let index = CLAIM_BODY_KEYS
-            .iter()
-            .position(|known| *known == key)
-            .expect("pinned key");
-        if !seen[index] {
-            return Err(Error::InvalidClaimBody("missing required world or rel tag"));
-        }
+    if scope_version != Some(2) || !seen[9] {
+        return Err(Error::InvalidClaimBody(
+            "missing required scope stamp/version",
+        ));
     }
+    let stamped_world = world.ok_or(Error::InvalidClaimBody("missing worldId"))?;
+    let world = (stamped_world != super::base_world_id()).then_some(stamped_world);
+    let scope_facet = scope_facet.ok_or(Error::InvalidClaimBody("missing scopeFacetId"))?;
+    let scope_project = scope_project.ok_or(Error::InvalidClaimBody("missing scopeProjectId"))?;
     let predicate = predicate.ok_or(Error::InvalidClaimBody("missing required field pred"))?;
     validate_predicate(&predicate, allow_reserved_predicate)?;
     let subject = subject.ok_or(Error::InvalidClaimBody("missing required field subj"))?;
@@ -507,6 +586,8 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
         world,
         rel,
         scope,
+        scope_facet,
+        scope_project,
         session_tag,
         stale: stale.unwrap_or(false),
     })

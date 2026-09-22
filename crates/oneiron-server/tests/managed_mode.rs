@@ -1611,6 +1611,13 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
     let read_back = http_get_over_unix(&http, &format!("/api/entity/{before}")).await;
     assert!(read_back.starts_with("HTTP/1.1 200 OK"), "{read_back}");
 
+    // The supervisor's authenticated socket is the principal. An arbitrary
+    // forwarded actor/token claim cannot replace that contract identity.
+    let forwarded = http_over_unix(&http, &format!(
+        "GET /api/entity/{before} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer v2.scope=core:read;principal_ref=ffffffffffffffffffffffffffffffff.unsigned\r\nx-oneiron-actor: hostile\r\nConnection: close\r\n\r\n"
+    )).await;
+    assert!(forwarded.starts_with("HTTP/1.1 200 OK"), "{forwarded}");
+
     // The supervisor asks for quiescence.
     match ctl_response(&ctl_roundtrip(&ctl, r#"{"op":"prepare_reap"}"#).await) {
         CtlResponse::PrepareReap { quiescent, .. } => {

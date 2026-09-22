@@ -288,6 +288,9 @@ pub enum ErrorKind {
     InvalidConversationDag,
     InvalidScopeSummary,
     OverlayLimit,
+    CooperativeDeletionRequiresTerminalPact,
+    InvalidCooperativeDeletionRequest,
+    WriteConcurrentWithRevocation,
 }
 
 /// Crate error type.

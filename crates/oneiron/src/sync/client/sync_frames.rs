@@ -59,14 +59,8 @@ impl SyncClient {
 
     /// Generates initial sync messages for the connection flow.
     ///
-    /// Returns messages to send to the server, in wire order (the ONE-1140
-    /// OD-5 connect-sequence literal `[hello][lease_request][…existing]`):
-    /// 1. Protocol-version hello (MUST be the first frame — server checks it)
-    /// 2. Lease request (proof-of-possession over this device's identity;
-    ///    sent on EVERY connect — registration and renewal are one frame)
-    /// 3. Root doc VV (so server knows what we have)
-    /// 4. Default window VV requests (current + previous month), plus any
-    ///    additional already-loaded windows
+    /// Returns protocol hello, root VV and requested window VVs. Device
+    /// lease requests are retired; authentication uses a paired capability.
     ///
     /// All version vectors are Loro binary `VersionVector::encode()` bytes —
     /// the JSON VV encoding is dead (wire break pinned in ONE-1127).
@@ -88,16 +82,13 @@ impl SyncClient {
         &self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         // v9 carries own-device windows and grant-backed entity documents
-        // on the same connection; ledger mode remains bound on first use.
-        // Frame #2: lease request (ONE-1140, OD-5).
-        let mut messages = vec![
-            transport::encode_chunk_full_window_protocol_hello(),
-            self.lease_request_frame(),
-        ];
+        // on the same connection; authentication uses a paired capability.
+        // Device lease requests are retired (C07); the NOTE session bind
+        // (HEAD) still rides along when configured.
+        let mut messages = vec![transport::encode_protocol_hello()];
         if let Some(session) = &self.config.note_session {
             messages.push(super::note_session::bind_frame(session.token())?);
         }
-        messages.extend(self.generate_phase_frames()?);
         Ok(messages)
     }
 

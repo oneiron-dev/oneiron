@@ -1,5 +1,6 @@
 //! Genesis vectors, wall-clock clock, signature suites, roles and quorum.
 
+use super::support::hex;
 use super::support::*;
 use super::*;
 
@@ -58,14 +59,10 @@ fn authority_genesis_golden_vector_is_canonical() {
     let encoded = encode_authority_log_entry_body(&genesis).unwrap();
     let vault_id = genesis_vault_id(&genesis).unwrap();
 
-    assert_eq!(
-        hex(&encoded),
-        "88ae736368656d615f76657273696f6e01a87661756c745f6964c0a373657100ad706172656e745f68617368657390a26f7085a46b696e64a767656e65736973a664657669636585a36b657982a57375697465a765643235353139aa7075626c69635f6b6579c4208a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5cb57472616e73706f72745f6b65795f62696e64696e67c4200707070707070707070707070707070707070707070707070707070707070707ab6174746573746174696f6e82a46b696e64b0536f6674776172654172676f6e326964a865766964656e6365c403010203a474696572a8736f667477617265a5726f6c657303ad67656e657369735f6e6f6e6365c4200b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0baa746965725f666c6f6f72a8736f667477617265b870656e64696e675f776964656e5f64656c61795f73656373ce00015180a67369676e657283a57375697465a765643235353139aa7075626c69635f6b6579c4208a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5ca97369676e6174757265c4408131cde03c78cec247140fe8fc1c3b97b4bce2f52ea4564e15a459badddbe8e0f204047d0e2dbc2cad8490ca48eb8488f842dc4b49b13fd59f5bdb6f75f45e0ba7636f7369676e7390a274737b"
-    );
-    assert_eq!(
-        hex(&vault_id),
-        "c9328f916e5290288757fc622aba9f87f7226d33590ac6652f1c7c7ad7f0dc12"
-    );
+    let golden = "88ae736368656d615f76657273696f6e01a87661756c745f6964c0a373657100ad706172656e745f68617368657390a26f7086a46b696e64a767656e65736973a664657669636585a36b657982a57375697465a765643235353139aa7075626c69635f6b6579c4208a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5cb57472616e73706f72745f6b65795f62696e64696e67c4200707070707070707070707070707070707070707070707070707070707070707ab6174746573746174696f6e82a46b696e64b0536f6674776172654172676f6e326964a865766964656e6365c403010203a474696572a8736f667477617265a5726f6c657303ad67656e657369735f6e6f6e6365c4200b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0bb47265636f766572795f7365637265745f7374657082aa636f6d6d69746d656e74c4200101010101010101010101010101010101010101010101010101010101010101a76f7574636f6d65a57361766564aa746965725f666c6f6f72a8736f667477617265b870656e64696e675f776964656e5f64656c61795f73656373ce00015180a67369676e657283a57375697465a765643235353139aa7075626c69635f6b6579c4208a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5ca97369676e6174757265c4404396b664b5a1769c08a2bcf1ac2ad00c70445eede20f7a1fd80a5fb585f8ee1bbf7adbe1a937ba2e6f1d25945c8382b4c2116efcebee8bdbb52a92c309805101a7636f7369676e7390a274737b";
+    assert_eq!(hex(&encoded), golden);
+    // The identity hashes the pinned full signed body, not just its operation.
+    assert_eq!(vault_id, *blake3::hash(&hex_bytes(golden)).as_bytes());
     assert_eq!(decode_authority_log_entry_body(&encoded).unwrap(), genesis);
 }
 
@@ -80,6 +77,7 @@ fn legacy_genesis_without_pending_delay_decodes_with_default_and_old_hash() {
             AuthorityTier::Software,
         ),
         genesis_nonce: [79; 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Software,
         pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
     };
@@ -115,6 +113,7 @@ fn authority_log_entity_id_is_first_sixteen_bytes_of_entry_hash() {
             AuthorityTier::Software,
         ),
         genesis_nonce: [96; 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Software,
         pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
     };
@@ -157,6 +156,7 @@ fn legacy_signed_genesis_derives_a_stable_store_key_from_its_legacy_bytes() {
             AuthorityTier::Software,
         ),
         genesis_nonce: [97; 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Software,
         pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
     };
@@ -193,6 +193,7 @@ fn genesis_rejects_pending_widen_delay_outside_ceremony_band() {
         let op = AuthorityOp::Genesis {
             device: device(key.clone(), ROLE_OWNER, AuthorityTier::Software),
             genesis_nonce: [80; 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs,
         };
@@ -327,6 +328,7 @@ fn authority_signature_suite_verifies_ed25519_and_p256() {
     let op = AuthorityOp::Genesis {
         device: device(key.clone(), ROLE_OWNER, AuthorityTier::Hardware),
         genesis_nonce: [44; 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Hardware,
         pending_widen_delay_secs: 86_400,
     };
@@ -358,6 +360,7 @@ fn p256_authority_identity_requires_canonical_compressed_sec1() {
     let op = AuthorityOp::Genesis {
         device: device(key.clone(), ROLE_OWNER, AuthorityTier::Hardware),
         genesis_nonce: [22; 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Hardware,
         pending_widen_delay_secs: 86_400,
     };
@@ -402,7 +405,7 @@ fn authority_transcript_binds_cosigner_key_set() {
 }
 
 #[test]
-fn cloud_devices_cannot_hold_authority_consent_roles() {
+fn self_host_fold_rejects_cloud_consent_roles() {
     let signing = ed_key(25);
     let key = authority_key_from_ed(&signing);
     let op = AuthorityOp::Genesis {
@@ -412,14 +415,19 @@ fn cloud_devices_cannot_hold_authority_consent_roles() {
             AuthorityTier::CloudCustodial,
         ),
         genesis_nonce: [25; 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Software,
         pending_widen_delay_secs: 86_400,
     };
     let entry = unsigned_entry(None, 0, Vec::new(), op, key, 1);
 
-    let err = encode_authority_log_entry_body(&entry)
-        .expect_err("cloud/custodial authority roots must fail closed");
-    assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAuthorityLogBody);
+    let entry = sign_ed(entry, &signing);
+    assert!(encode_authority_log_entry_body(&entry).is_ok());
+    assert!(
+        fold_authority_log_without_seen_time_delay(&[entry])
+            .valid_entries
+            .is_empty()
+    );
 }
 
 #[test]
@@ -429,6 +437,7 @@ fn device_authority_roles_reject_unknown_bits() {
     let op = AuthorityOp::Genesis {
         device: device(key.clone(), ROLE_OWNER | 0x8000, AuthorityTier::Hardware),
         genesis_nonce: [31; 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Software,
         pending_widen_delay_secs: 86_400,
     };
@@ -446,6 +455,7 @@ fn genesis_requires_owner_or_admin_authority_consent() {
     let op = AuthorityOp::Genesis {
         device: device(key.clone(), ROLE_AGENT, AuthorityTier::Software),
         genesis_nonce: [37; 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Software,
         pending_widen_delay_secs: 86_400,
     };
@@ -504,6 +514,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
     let state = FoldState {
         door_slips: BTreeMap::new(),
         spent_door_slips: BTreeSet::new(),
+        slips: SlipAuthorityState::default(),
         vault_id: [40; 32],
         roster: BTreeMap::from([
             (
@@ -526,6 +537,10 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
             ),
         ]),
         tier_floor: AuthorityTier::Software,
+        migrated_roots: BTreeSet::new(),
+        genesis_recovery_dismissed: false,
+        recovery_redundancy_established: false,
+        tier_floor_events: BTreeMap::new(),
         pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
         pending_widens: BTreeMap::new(),
         vetoed_widens: BTreeSet::new(),
@@ -533,6 +548,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         fork_resolution_revocations: BTreeSet::new(),
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
+        federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
         consumed_critical_write_confirm_nonces: BTreeSet::new(),
         critical_write_confirm_nonce_provenance: BTreeMap::new(),
@@ -540,6 +556,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         federation_grant_bindings: BTreeMap::new(),
         actor_bindings: BTreeMap::new(),
         actor_binding_revocations: BTreeMap::new(),
+        actor_revocation_hashes: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
     };
     let entry = cosign_ed(

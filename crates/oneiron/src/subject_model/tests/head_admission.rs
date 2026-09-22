@@ -123,7 +123,7 @@ fn scoped_subject_history_is_not_a_supersession_target() -> Result<()> {
     assert_excluded_history_survives(|body| {
         body.scope = Some(Value::Map(vec![(
             Value::from("facet"),
-            Value::from("work"),
+            Value::from(entity(0x87).to_hex()),
         )]));
     })
 }

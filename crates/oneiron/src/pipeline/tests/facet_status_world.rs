@@ -637,26 +637,28 @@ fn world_scope_filter_visibility_matrix() -> Result<()> {
         "W-scoped claim must NOT surface in Base"
     );
 
-    // World(W): the W-scoped claim plus base claims.
+    // World(W): only the W-scoped claim. Base is an explicit member, never
+    // implicit in a named world.
     let in_w = ids(&vault
         .query()
         .search_vector(&FACET_QUERY, 10)
         .world(WorldScope::World(world_w))
         .run()?);
     assert!(
-        in_w.contains(&claim_base) && in_w.contains(&claim_w),
-        "World(W) must surface the W claim + base claim, got {in_w:?}"
+        !in_w.contains(&claim_base) && in_w.contains(&claim_w),
+        "World(W) must surface the W claim only, got {in_w:?}"
     );
 
-    // World(V): base claim only — the W claim belongs to another world.
+    // World(V): neither claim — the W claim belongs to another world and base
+    // is not implicit in a named scope.
     let in_v = ids(&vault
         .query()
         .search_vector(&FACET_QUERY, 10)
         .world(WorldScope::World(world_v))
         .run()?);
     assert!(
-        in_v.contains(&claim_base),
-        "base claim must surface in World(V)"
+        !in_v.contains(&claim_base),
+        "base claim must NOT surface in World(V)"
     );
     assert!(
         !in_v.contains(&claim_w),

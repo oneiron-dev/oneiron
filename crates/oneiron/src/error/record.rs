@@ -14,6 +14,12 @@ use super::ErrorKind;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RecordError {
+    /// A courtesy request requires a disconnected or dissolved pact.
+    #[error("cooperative deletion request requires a disconnected or dissolved pact")]
+    CooperativeDeletionRequiresTerminalPact,
+    /// Malformed or unauthenticated courtesy request.
+    #[error("invalid cooperative deletion request")]
+    InvalidCooperativeDeletionRequest,
     /// A project or its derived home-room payload failed write admission.
     #[error("invalid project body: {0}")]
     InvalidProjectBody(&'static str),
@@ -202,6 +208,10 @@ impl RecordError {
     #[must_use]
     pub(crate) fn kind(&self) -> ErrorKind {
         match self {
+            Self::CooperativeDeletionRequiresTerminalPact => {
+                ErrorKind::CooperativeDeletionRequiresTerminalPact
+            }
+            Self::InvalidCooperativeDeletionRequest => ErrorKind::InvalidCooperativeDeletionRequest,
             Self::InvalidProjectBody(_) => ErrorKind::InvalidProjectBody,
             Self::InvalidProjectRoomBody(_) => ErrorKind::InvalidProjectRoomBody,
             Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,

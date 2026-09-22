@@ -9,6 +9,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_SKILL};
+use crate::secret_custody::validate_replicated_custody_put;
 use crate::store::Store;
 
 /// Materializes the already-authorized CLAIM puts from a session-bundle merge.
@@ -175,9 +176,7 @@ pub(super) fn apply_ops_with_origin(
                     && allow_reserved_predicate
                     && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
                 {
-                    crate::secret_custody::validate_replicated_custody_put(
-                        store, wtxn, &id, &data,
-                    )?;
+                    validate_replicated_custody_put(store, wtxn, &id, &data)?;
                 }
                 if allow_maintenance {
                     store.validate_entity_type(entity_type)?;
@@ -225,11 +224,8 @@ pub(super) fn apply_ops_with_origin(
                     origin,
                 )?;
                 if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                    if materialization.is_some() && !allow_reserved_predicate {
-                        claim_materialization::bind_committed_claim(store, wtxn, &id)?;
-                    } else {
-                        claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
-                    }
+                    let authored = materialization.is_some() && !allow_reserved_predicate;
+                    claim_materialization::record_committed_claim(store, wtxn, &id, authored)?;
                 }
                 evicted_shell_sources.extend(applied.evicted_shell_sources);
                 #[cfg(feature = "sync")]
@@ -351,7 +347,7 @@ pub(super) fn apply_ops_with_origin(
                     preflight_decision_id,
                 )?;
                 if !internal_lexical_query_hint {
-                    claim_materialization::bind_committed_claim(store, wtxn, &id)?;
+                    claim_materialization::record_committed_claim(store, wtxn, &id, true)?;
                 }
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
@@ -617,6 +613,13 @@ pub(super) fn apply_ops_with_origin(
         text_index_trusted,
         wtxn,
         &evicted_shell_sources,
+    )?;
+
+    crate::authority::check_materialized_claim_causality(
+        store,
+        wtxn,
+        config.privacy.posture,
+        &materialized_entity_ids,
     )?;
 
     #[cfg(feature = "sync")]

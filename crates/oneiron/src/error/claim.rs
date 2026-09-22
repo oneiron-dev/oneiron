@@ -17,6 +17,8 @@ pub enum ClaimError {
     /// A generic app-tier writer addressed the private actor-owned keyed store.
     #[error("keyed claims must be written through the actor-bound key_value API")]
     KeyValueWriteRequiresOwnedDoor,
+    #[error("write is concurrent with an actor revocation/regrant window")]
+    WriteConcurrentWithRevocation,
     /// Claim predicate violates the pinned D17 grammar (≥2 segments of
     /// `[a-z][a-z0-9_]*` joined by `.`, total ≤128 bytes).
     #[error("invalid claim predicate {predicate:?}: {reason}")]
@@ -190,6 +192,7 @@ impl ClaimError {
     pub(crate) fn kind(&self) -> ErrorKind {
         match self {
             Self::KeyValueWriteRequiresOwnedDoor => ErrorKind::KeyValueWriteRequiresOwnedDoor,
+            Self::WriteConcurrentWithRevocation => ErrorKind::WriteConcurrentWithRevocation,
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::ProvenanceOnStructuralEdge { .. } => ErrorKind::ProvenanceOnStructuralEdge,

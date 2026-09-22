@@ -11,6 +11,7 @@ pub mod derivation;
 #[cfg(feature = "sync")]
 pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 mod grant;
+pub(crate) mod grant_scope;
 mod ruling_integrity;
 mod rulings;
 pub(crate) use ruling_integrity::{
@@ -22,7 +23,9 @@ pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultP
 mod guest;
 mod pact_scope;
 mod peer_authority;
+pub mod record_scope;
 mod relationships;
+pub(crate) mod scope_codec;
 mod selector_kind;
 mod stale;
 
@@ -70,7 +73,9 @@ pub(crate) use self::pact_scope::{
     decode_federation_direction_scope_value, decode_federation_pact_scope_value,
     federation_direction_scope_value, federation_pact_scope_value,
 };
-pub(crate) use self::peer_authority::admitted_peer_consent_roots_in_txn;
+pub(crate) use self::peer_authority::{
+    admitted_peer_consent_roots_for_store_in_txn, admitted_peer_consent_roots_in_txn,
+};
 pub(crate) use self::stale::stale_stamped_worlds;
 
 // These two are test-only doors (federation, pipeline, and context-pack
@@ -120,3 +125,9 @@ use rmpv::Value;
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 use std::io::Cursor;
+
+mod scope;
+pub use scope::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+
+mod org_admin;
+pub use org_admin::{OrgAdminError, OrgAdminPolicy, OrgAdminPower};

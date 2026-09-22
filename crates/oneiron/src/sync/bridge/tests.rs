@@ -2,13 +2,12 @@ use super::*;
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-    ENTITY_TYPE_COMPANION_REGISTER, encode_companion_record_body,
+    CompanionProvenance, CompanionRecord, CompanionScope, encode_companion_record_body,
 };
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::error::SyncError;
-use crate::registry::ENTITY_TYPE_TASK;
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TASK};
 use crate::sync::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since, import_doc,
     map_contains_binary, map_insert_bytes,
@@ -127,7 +126,7 @@ fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8
 
 fn companion_record(
     persona_ref: EntityId,
-    export_classification: CompanionExportClassification,
+    sensitivity: crate::federation::Sensitivity,
 ) -> CompanionRecord {
     CompanionRecord::persona(
         CompanionScope::neutral(),
@@ -140,7 +139,7 @@ fn companion_record(
             ClaimApprovalStatus::Approved,
             Value::from("private provenance"),
         ),
-        export_classification,
+        sensitivity,
     )
 }
 
@@ -180,6 +179,7 @@ fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
         op: crate::authority::AuthorityOp::Genesis {
             device: authority_test_device(key.clone()),
             genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: crate::authority::AuthorityTier::Software,
             pending_widen_delay_secs: 86_400,
         },
@@ -440,6 +440,7 @@ fn authority_hardware_genesis_fixture(seed: u8) -> crate::authority::AuthorityLo
                 roles: crate::authority::ROLE_OWNER | crate::authority::ROLE_ADMIN,
             },
             genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: crate::authority::AuthorityTier::Software,
             pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
@@ -1711,14 +1712,15 @@ fn companion_register_api_observer_b_suppresses_local_only_records() {
     let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
 
     let id = EntityId::from_bytes_unchecked([0x62; 16]);
+    let persona = EntityId::from_bytes_unchecked([0x6A; 16]);
     let learned_at = 1_772_400_000u64;
-    let record = companion_record(id, CompanionExportClassification::LocalOnly);
+    let record = companion_record(persona, crate::federation::Sensitivity::Restricted);
     let body = encode_companion_record_body(&record.created_at(learned_at).unwrap()).unwrap();
     map_insert_bytes(
         &doc.get_map("entities"),
         &id.to_hex(),
         &entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             TimeRange {
                 start: learned_at,
                 end: learned_at,
@@ -1745,9 +1747,12 @@ fn companion_register_api_observer_b_scrubs_local_only_rows_and_edges_from_crdt(
 
     let local_id = EntityId::from_bytes_unchecked([0x43; 16]);
     let portable_id = EntityId::from_bytes_unchecked([0x44; 16]);
+    let local_persona = EntityId::from_bytes_unchecked([0x4A; 16]);
+    let portable_persona = EntityId::from_bytes_unchecked([0x4B; 16]);
     let learned_at = 1_772_400_001u64;
-    let local_record = companion_record(local_id, CompanionExportClassification::LocalOnly);
-    let portable_record = companion_record(portable_id, CompanionExportClassification::Portable);
+    let local_record = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
+    let portable_record =
+        companion_record(portable_persona, crate::federation::Sensitivity::Public);
     let local_body =
         encode_companion_record_body(&local_record.created_at(learned_at).unwrap()).unwrap();
     let portable_body =
@@ -1760,7 +1765,7 @@ fn companion_register_api_observer_b_scrubs_local_only_rows_and_edges_from_crdt(
         &entities,
         &portable_id.to_hex(),
         &entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             TimeRange {
                 start: learned_at,
                 end: learned_at,
@@ -1782,7 +1787,7 @@ fn companion_register_api_observer_b_scrubs_local_only_rows_and_edges_from_crdt(
         &entities,
         &local_id.to_hex(),
         &entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             TimeRange {
                 start: learned_at,
                 end: learned_at,
@@ -1818,8 +1823,9 @@ fn companion_register_api_observer_b_rejects_edges_touching_existing_local_only_
 
     let local_id = EntityId::from_bytes_unchecked([0x45; 16]);
     let task_id = EntityId::from_bytes_unchecked([0x46; 16]);
+    let local_persona = EntityId::from_bytes_unchecked([0x4C; 16]);
     let learned_at = 1_772_400_002u64;
-    let local_record = companion_record(local_id, CompanionExportClassification::LocalOnly);
+    let local_record = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
     vault
         .create_companion_record(&local_id, &local_record, learned_at)
         .unwrap();

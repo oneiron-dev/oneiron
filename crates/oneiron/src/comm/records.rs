@@ -53,6 +53,7 @@ const EVENT_SEQUENCE_KEY: &[u8] = b"comm.event_sequence.v1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CommEventKind {
     SendSucceeded,
+    InboundReply,
     InboundStop,
     ThreadJoined,
     ThreadLeft,
@@ -62,6 +63,7 @@ impl CommEventKind {
     const fn as_str(self) -> &'static str {
         match self {
             Self::SendSucceeded => "send_succeeded",
+            Self::InboundReply => "inbound_reply",
             Self::InboundStop => "inbound_stop",
             Self::ThreadJoined => "thread_joined",
             Self::ThreadLeft => "thread_left",
@@ -71,6 +73,7 @@ impl CommEventKind {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "send_succeeded" => Some(Self::SendSucceeded),
+            "inbound_reply" => Some(Self::InboundReply),
             "inbound_stop" => Some(Self::InboundStop),
             "thread_joined" => Some(Self::ThreadJoined),
             "thread_left" => Some(Self::ThreadLeft),
@@ -218,7 +221,9 @@ pub(super) fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
             // thread_ref and no channel_class. Cross-populated bodies are
             // rejected at the door (fail-closed) rather than silently accepted.
             match event_kind {
-                CommEventKind::SendSucceeded | CommEventKind::InboundStop
+                CommEventKind::SendSucceeded
+                | CommEventKind::InboundReply
+                | CommEventKind::InboundStop
                     if channel_class.is_some() && thread_ref.is_none() => {}
                 CommEventKind::ThreadJoined | CommEventKind::ThreadLeft
                     if thread_ref.is_some() && channel_class.is_none() => {}

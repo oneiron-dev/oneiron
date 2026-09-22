@@ -33,14 +33,25 @@ fn search_response_rechecks_projected_claim_body() {
         subj: &'a [u8],
         appr: &'static str,
         life: &'static str,
-        world: &'static str,
-        rel: &'static str,
+        #[serde(with = "serde_bytes", rename = "worldId")]
+        world: &'a [u8],
+        #[serde(rename = "scopeRelationshipId")]
+        rel: &'a str,
+        #[serde(with = "serde_bytes", rename = "scopeFacetId")]
+        facet: &'a [u8],
+        #[serde(with = "serde_bytes", rename = "scopeProjectId")]
+        project: &'a [u8],
+        #[serde(rename = "scopeVersion")]
+        version: u64,
     }
 
     let dir = tempfile::tempdir().unwrap();
     let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
     let claim_id = seeded_test_entity_id(0x0012_6901);
     let subject = seeded_test_entity_id(0x0012_6902);
+    let world = oneiron::claim::base_world_id();
+    let facet = oneiron::claim::substrate_facet_id(subject);
+    let project = oneiron::claim::default_project_id();
     let body = rmp_serde::to_vec_named(&ClaimSeed {
         pred: "profile.projected",
         val: "hidden after update",
@@ -48,8 +59,11 @@ fn search_response_rechecks_projected_claim_body() {
         subj: subject.as_bytes(),
         appr: "proposed",
         life: "active",
-        world: "base",
+        world: world.as_bytes(),
         rel: "all",
+        facet: facet.as_bytes(),
+        project: project.as_bytes(),
+        version: 2,
     })
     .expect("encode proposed claim");
     vault
@@ -208,9 +222,9 @@ fn context_pack_response_limits_scrub_stats_after_scoped_truncation() {
 
 #[tokio::test]
 async fn context_pack_route_projects_json_response_controls() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let long_text = format!("projection budget needle {}", "x".repeat(800));
-    let (batch_status, batch_body) = route_json(
+    let (batch_status, batch_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -240,16 +254,17 @@ async fn context_pack_route_projects_json_response_controls() {
         .expect("written id")
         .to_owned();
 
-    let (summary_status, summary_body) = route_json(
+    let (summary_status, summary_body) = route_json_auth(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/context-pack",
-            json!({
+            owner_bearer(),
+            Some(&json!({
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "summary" }
-            }),
+            })),
         ),
     )
     .await;
@@ -264,17 +279,18 @@ async fn context_pack_route_projects_json_response_controls() {
     assert!(!fields.contains_key("sess"));
     assert!(!fields.contains_key("debug"));
 
-    let (budget_status, budget_body) = route_json(
+    let (budget_status, budget_body) = route_json_auth(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/context-pack",
-            json!({
+            owner_bearer(),
+            Some(&json!({
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "full" },
                 "budget": { "max_item_tokens": 96 }
-            }),
+            })),
         ),
     )
     .await;
@@ -294,17 +310,18 @@ async fn context_pack_route_projects_json_response_controls() {
         Value::Array(vec![Value::from(id.clone())])
     );
 
-    let (token_budget_status, token_budget_body) = route_json(
+    let (token_budget_status, token_budget_body) = route_json_auth(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/context-pack",
-            json!({
+            owner_bearer(),
+            Some(&json!({
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "full" },
                 "budget": { "tokenBudget": 16 }
-            }),
+            })),
         ),
     )
     .await;
@@ -332,17 +349,18 @@ async fn context_pack_route_projects_json_response_controls() {
         Value::Array(Vec::new())
     );
 
-    let (dropped_status, dropped_body) = route_json(
+    let (dropped_status, dropped_body) = route_json_auth(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/context-pack",
-            json!({
+            owner_bearer(),
+            Some(&json!({
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "full" },
                 "budget": { "max_item_tokens": 1 }
-            }),
+            })),
         ),
     )
     .await;

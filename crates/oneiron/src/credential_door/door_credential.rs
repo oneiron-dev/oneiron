@@ -8,6 +8,18 @@ use super::door_types::{
 };
 use crate::secret_lease::VaultInstant;
 
+/// The constructor fixes both the verb representation and the identifier namespace.
+/// A verified claims id is never a signed door-mint hash, even with identical bytes.
+#[derive(Debug, PartialEq, Eq)]
+enum DoorGrant {
+    Class(String),
+    Capability {
+        slip_id: [u8; 32],
+        vault_id: [u8; 32],
+        verbs: BTreeSet<String>,
+    },
+}
+
 /// One presented capability slip, as the door sees it.
 ///
 /// Deliberately NOT `Clone`: a one-shot is consumed by move, and a type that
@@ -22,7 +34,7 @@ use crate::secret_lease::VaultInstant;
 pub(crate) struct DoorCredential {
     slip_id: String,
     holder_ref: String,
-    verb_class: String,
+    grant: DoorGrant,
     pub(super) records: BTreeSet<String>,
     pub(super) channels: BTreeSet<String>,
     issued_at: u64,
@@ -33,12 +45,40 @@ pub(crate) struct DoorCredential {
 }
 
 impl DoorCredential {
+    /// The capability constructor accepts only a MAC/log/binding-verified slip.
+    pub(crate) fn from_verified_slip(verified: &crate::authority::VerifiedSlip) -> Self {
+        let claims = verified.claims();
+        let verbs = match &claims.scope.verbs {
+            crate::federation::ScopeAxis::Some(values) => values.clone(),
+            crate::federation::ScopeAxis::All => ["inject", "lease", "redeem", "receive-pack"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            crate::federation::ScopeAxis::Bottom => BTreeSet::new(),
+        };
+        Self {
+            slip_id: claims.slip_id.iter().map(|b| format!("{b:02x}")).collect(),
+            holder_ref: claims.holder_ref.clone(),
+            grant: DoorGrant::Capability {
+                slip_id: claims.slip_id,
+                vault_id: claims.vault_id,
+                verbs,
+            },
+            records: claims.records.clone(),
+            channels: claims.channels.clone(),
+            issued_at: claims.issued_at,
+            expires_at: claims.expires_at,
+            status: DoorCredentialStatus::Active,
+            single_use: claims.single_use,
+            ttl_cap: TtlCeiling::default().meet_secs(claims.ttl_secs),
+        }
+    }
     /// The holder view of a slip whose proof the caller has ALREADY verified.
     ///
     /// Fail-closed defaults: no verbs, no records, no channels, no caveat, and
     /// a TTL ceiling sitting at the floor ([`TtlCeiling::default`]) rather than
     /// unbounded. A credential built and never narrowed authorizes nothing.
-    pub(crate) fn verified(
+    pub(super) fn from_witnessed_bounds(
         slip_id: impl Into<String>,
         holder_ref: impl Into<String>,
         issued_at: u64,
@@ -47,7 +87,7 @@ impl DoorCredential {
         Self {
             slip_id: slip_id.into(),
             holder_ref: holder_ref.into(),
-            verb_class: "door.none".to_owned(),
+            grant: DoorGrant::Class("door.none".to_owned()),
             records: BTreeSet::new(),
             channels: BTreeSet::new(),
             issued_at,
@@ -58,6 +98,25 @@ impl DoorCredential {
         }
     }
 
+    /// Unverified bounds are available outside this module only to fixtures.
+    #[cfg(test)]
+    pub(crate) fn verified(
+        slip_id: impl Into<String>,
+        holder_ref: impl Into<String>,
+        issued_at: u64,
+        expires_at: u64,
+    ) -> Self {
+        Self::from_witnessed_bounds(slip_id, holder_ref, issued_at, expires_at)
+    }
+
+    /// The claims namespace is carried by provenance, never inferred from hex text.
+    pub(super) fn capability_identity(&self) -> Option<([u8; 32], [u8; 32])> {
+        match &self.grant {
+            DoorGrant::Capability { slip_id, vault_id, .. } => Some((*slip_id, *vault_id)),
+            DoorGrant::Class(_) => None,
+        }
+    }
+
     /// Verbs the slip grants.
     #[cfg(test)]
     pub(super) fn with_verbs<I, S>(mut self, verbs: I) -> Self
@@ -65,18 +124,22 @@ impl DoorCredential {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.verb_class =
-            super::verb_class::fixture_class(&verbs.into_iter().map(Into::into).collect());
+        self = self.with_verb_class(super::verb_class::fixture_class(
+            &verbs.into_iter().map(Into::into).collect(),
+        ));
         self
     }
 
     pub(super) fn with_verb_class(mut self, class: impl Into<String>) -> Self {
-        self.verb_class = class.into();
+        // A class setter cannot change a verified capability's namespace or verbs.
+        if let DoorGrant::Class(value) = &mut self.grant {
+            *value = class.into();
+        }
         self
     }
 
     pub(super) fn from_mint(hash: &[u8; 32], scope: &crate::authority::AuthorityDoorSlip) -> Self {
-        let mut credential = Self::verified(
+        let mut credential = Self::from_witnessed_bounds(
             hash.iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>(),
@@ -92,7 +155,8 @@ impl DoorCredential {
     }
 
     pub(super) fn mint_hash(&self) -> DoorResult<[u8; 32]> {
-        if self.slip_id.len() != 64
+        if self.capability_identity().is_some()
+            || self.slip_id.len() != 64
             || !self
                 .slip_id
                 .bytes()
@@ -112,7 +176,7 @@ impl DoorCredential {
     /// reconstructed handle is not permission to expand a mint's authority.
     pub(super) fn matches_mint(&self, scope: &crate::authority::AuthorityDoorSlip) -> bool {
         self.holder_ref == scope.holder_ref
-            && self.verb_class == scope.verb_class
+            && matches!(&self.grant, DoorGrant::Class(class) if class == &scope.verb_class)
             && self.records == scope.records
             && self.channels == scope.channels
             && self.issued_at == scope.issued_at
@@ -263,10 +327,16 @@ impl DoorCredential {
         if channel.is_empty() || !self.channels.contains(channel) {
             return deny(DoorDenyReason::ChannelOutsideSlip);
         }
-        let Some(members) = super::verb_class::verb_class_members(&self.verb_class) else {
-            return deny(DoorDenyReason::UnknownVerbClass);
+        let admits = match &self.grant {
+            DoorGrant::Class(class) => {
+                let Some(members) = super::verb_class::verb_class_members(class) else {
+                    return deny(DoorDenyReason::UnknownVerbClass);
+                };
+                members.contains(&verb)
+            }
+            DoorGrant::Capability { verbs, .. } => verbs.contains(verb),
         };
-        if !members.contains(&verb) {
+        if !admits {
             return deny(DoorDenyReason::VerbNotInSlip);
         }
         Ok(())
@@ -275,16 +345,26 @@ impl DoorCredential {
     /// A slip may not reach a floor either. Verbs, records and channels are
     /// lattice tokens; floors are not in the lattice.
     fn reject_floor_naming(&self) -> DoorResult<()> {
-        let tokens = std::iter::once(&self.verb_class)
-            .chain(self.records.iter())
-            .chain(self.channels.iter());
-        for token in tokens {
+        let reject = |token: &String| {
             if names_a_floor(token) {
-                return Err(CredentialDoorError::FloorNamed {
+                Err(CredentialDoorError::FloorNamed {
                     site: "credential",
                     name: token.clone(),
-                });
+                })
+            } else {
+                Ok(())
             }
+        };
+        match &self.grant {
+            DoorGrant::Class(class) => reject(class)?,
+            DoorGrant::Capability { verbs, .. } => {
+                for verb in verbs {
+                    reject(verb)?;
+                }
+            }
+        }
+        for token in self.records.iter().chain(self.channels.iter()) {
+            reject(token)?;
         }
         Ok(())
     }

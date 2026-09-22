@@ -55,8 +55,25 @@ fn claim_body_keys_pin_d11_vocabulary() {
     assert_eq!(
         CLAIM_BODY_KEYS,
         [
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj",
-            "scope", "appr", "life", "stale", "sess",
+            "pred",
+            "val",
+            "conf",
+            "sal",
+            "evid",
+            "from",
+            "to",
+            "src",
+            "worldId",
+            "scopeRelationshipId",
+            "subj",
+            "scope",
+            "appr",
+            "life",
+            "stale",
+            "sess",
+            "scopeFacetId",
+            "scopeProjectId",
+            "scopeVersion",
         ]
     );
     // fusion.rs consumes the SAME constants — pinned to the short keys.
@@ -71,8 +88,21 @@ fn claim_body_keys_pin_d11_vocabulary() {
     assert_eq!(
         crate::claim::CLAIM_FIELDS_FULL,
         [
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "rel", "subj",
-            "scope"
+            "pred",
+            "val",
+            "conf",
+            "sal",
+            "evid",
+            "from",
+            "to",
+            "src",
+            "worldId",
+            "scopeRelationshipId",
+            "subj",
+            "scope",
+            "scopeFacetId",
+            "scopeProjectId",
+            "scopeVersion",
         ]
     );
 }
@@ -275,9 +305,13 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
     body.stale = true;
     vault.put_claim(&claim, &body, test_time_range(100, 200), 300)?;
 
-    // Pin the EXACT on-disk bytes: pinned short keys, canonical order. The
+    // Pin the EXACT on-disk bytes: pinned keys in canonical order. The
     // expected map is built with LITERAL key strings so an encoder writing
-    // camelCase keys, long names, or a different order fails byte equality.
+    // stale short names, long names, or a different order fails byte equality.
+    // `worldId`/`scopeRelationshipId`/`scopeFacetId`/`scopeProjectId`/
+    // `scopeVersion` are REQUIRED stamps: the scope-relaxed body encodes
+    // `all`, the facet derives from the subject, and the project is the
+    // reserved default.
     let raw = vault.get_raw(&claim)?.ok_or(Error::EntityNotFound)?;
     let expected = rmpv_map_bytes(&[
         ("pred".into(), "profile.lives_in".into()),
@@ -289,10 +323,10 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
         ("to".into(), rmpv::Value::from(200_u64)),
         ("src".into(), "user_stated".into()),
         (
-            "world".into(),
+            "worldId".into(),
             rmpv::Value::Binary(world_id.as_bytes().to_vec()),
         ),
-        ("rel".into(), "all".into()),
+        ("scopeRelationshipId".into(), rmpv::Value::from("all")),
         (
             "subj".into(),
             rmpv::Value::Binary(subject.as_bytes().to_vec()),
@@ -301,6 +335,19 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
         ("appr".into(), "proposed".into()),
         ("life".into(), "active".into()),
         ("stale".into(), rmpv::Value::Boolean(true)),
+        (
+            "scopeFacetId".into(),
+            rmpv::Value::Binary(
+                crate::claim::substrate_facet_id(subject)
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        ),
+        (
+            "scopeProjectId".into(),
+            rmpv::Value::Binary(crate::claim::default_project_id().as_bytes().to_vec()),
+        ),
+        ("scopeVersion".into(), rmpv::Value::from(2_u64)),
     ]);
     assert_eq!(
         &raw[ENTITY_METADATA_HEADER_LEN..],
@@ -606,8 +653,40 @@ fn unset_or_unknown_role_rejected_typed() -> Result<()> {
 #[test]
 fn claim_negative_matrix_rejects_typed_and_writes_nothing() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let subj_bytes = seeded_entity_id(0xAA01).as_bytes().to_vec();
-    let base = base_claim_entries("profile.name", subj_bytes.clone());
+    let subj_id = seeded_entity_id(0xAA01);
+    let subj_bytes = subj_id.as_bytes().to_vec();
+    // REQUIRED v2 stamps: every malformed fixture below carries them so the
+    // ONLY defect is the one under test and each case reaches its intended
+    // door (structural `InvalidClaimBody` vs grammar `InvalidPredicate` vs
+    // `ReservedPredicate`) instead of failing on a missing stamp.
+    let stamps = || -> Vec<(rmpv::Value, rmpv::Value)> {
+        vec![
+            (
+                "worldId".into(),
+                rmpv::Value::Binary(crate::claim::base_world_id().as_bytes().to_vec()),
+            ),
+            ("scopeRelationshipId".into(), rmpv::Value::from("all")),
+            (
+                "scopeFacetId".into(),
+                rmpv::Value::Binary(
+                    crate::claim::substrate_facet_id(subj_id)
+                        .as_bytes()
+                        .to_vec(),
+                ),
+            ),
+            (
+                "scopeProjectId".into(),
+                rmpv::Value::Binary(crate::claim::default_project_id().as_bytes().to_vec()),
+            ),
+            ("scopeVersion".into(), rmpv::Value::from(2_u64)),
+        ]
+    };
+    let stamped_base = |pred: &str| -> Vec<(rmpv::Value, rmpv::Value)> {
+        let mut entries = base_claim_entries(pred, subj_bytes.clone());
+        entries.extend(stamps());
+        entries
+    };
+    let base = stamped_base("profile.name");
 
     let valid_map_plus_trailing = {
         let mut bytes = rmpv_map_bytes(&base);
@@ -767,17 +846,17 @@ fn claim_negative_matrix_rejects_typed_and_writes_nothing() -> Result<()> {
         ),
         (
             "uppercase predicate Edge.Provenance",
-            rmpv_map_bytes(&base_claim_entries("Edge.Provenance", subj_bytes.clone())),
+            rmpv_map_bytes(&stamped_base("Edge.Provenance")),
             ErrorKind::InvalidPredicate,
         ),
         (
             "single-segment predicate profile",
-            rmpv_map_bytes(&base_claim_entries("profile", subj_bytes.clone())),
+            rmpv_map_bytes(&stamped_base("profile")),
             ErrorKind::InvalidPredicate,
         ),
         (
             "reserved edge.provenance via public path",
-            rmpv_map_bytes(&base_claim_entries("edge.provenance", subj_bytes)),
+            rmpv_map_bytes(&stamped_base("edge.provenance")),
             ErrorKind::ReservedPredicate,
         ),
     ];
@@ -884,11 +963,29 @@ fn reserved_predicate_rejected_publicly_but_door_writes_and_reads_back() -> Resu
         }
     );
 
-    // The door still enforces grammar + structural validation.
-    let ungrammatical = rmpv_map_bytes(&base_claim_entries(
-        "Edge.Provenance",
-        a.as_bytes().to_vec(),
-    ));
+    // The door still enforces grammar + structural validation. The
+    // malformed predicate fixture carries the REQUIRED stamps so it reaches
+    // the grammar door instead of failing on a missing stamp.
+    let ungrammatical = {
+        let mut entries = base_claim_entries("Edge.Provenance", a.as_bytes().to_vec());
+        entries.extend([
+            (
+                "worldId".into(),
+                rmpv::Value::Binary(crate::claim::base_world_id().as_bytes().to_vec()),
+            ),
+            ("scopeRelationshipId".into(), rmpv::Value::from("all")),
+            (
+                "scopeFacetId".into(),
+                rmpv::Value::Binary(crate::claim::substrate_facet_id(a).as_bytes().to_vec()),
+            ),
+            (
+                "scopeProjectId".into(),
+                rmpv::Value::Binary(crate::claim::default_project_id().as_bytes().to_vec()),
+            ),
+            ("scopeVersion".into(), rmpv::Value::from(2_u64)),
+        ]);
+        rmpv_map_bytes(&entries)
+    };
     let bad_id = EntityId::now();
     let err = vault
         .with_write_txn(|wtxn| {
@@ -1000,11 +1097,28 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
     // Ungrammatical reserved predicate: "Edge.Provenance" violates the D17
     // segment grammar `[a-z][a-z0-9_]*`, so it fails InvalidPredicate even
     // through the door — `allow_reserved` skips ONLY the ReservedPredicate
-    // arm, never the grammar.
-    let ungrammatical = rmpv_map_bytes(&base_claim_entries(
-        "Edge.Provenance",
-        a.as_bytes().to_vec(),
-    ));
+    // arm, never the grammar. The fixture carries the REQUIRED stamps so it
+    // reaches the grammar door instead of failing on a missing stamp.
+    let ungrammatical = {
+        let mut entries = base_claim_entries("Edge.Provenance", a.as_bytes().to_vec());
+        entries.extend([
+            (
+                "worldId".into(),
+                rmpv::Value::Binary(crate::claim::base_world_id().as_bytes().to_vec()),
+            ),
+            ("scopeRelationshipId".into(), rmpv::Value::from("all")),
+            (
+                "scopeFacetId".into(),
+                rmpv::Value::Binary(crate::claim::substrate_facet_id(a).as_bytes().to_vec()),
+            ),
+            (
+                "scopeProjectId".into(),
+                rmpv::Value::Binary(crate::claim::default_project_id().as_bytes().to_vec()),
+            ),
+            ("scopeVersion".into(), rmpv::Value::from(2_u64)),
+        ]);
+        rmpv_map_bytes(&entries)
+    };
     let bad_txn = EntityId::now();
     let err = vault
         .with_write_txn(|wtxn| {

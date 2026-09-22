@@ -20,7 +20,18 @@ pub(super) fn apply_op(
 ) {
     match op {
         AuthorityOp::Genesis { .. } => {}
-        AuthorityOp::EnrollDevice { device } => upsert_device(state, device),
+        AuthorityOp::EnrollDevice { device } => {
+            upsert_device(state, device);
+            if state
+                .roster
+                .values()
+                .filter(|device| !device.revoked)
+                .count()
+                >= 2
+            {
+                state.recovery_redundancy_established = true;
+            }
+        }
         AuthorityOp::RevokeDevice { revoked_key } => {
             state
                 .fork_resolution_revocations
@@ -32,7 +43,13 @@ pub(super) fn apply_op(
                 }
             }
         }
-        AuthorityOp::SetCeiling { .. } | AuthorityOp::FederationConfirm(_) => {}
+        AuthorityOp::RetiredCeiling { .. }
+        | AuthorityOp::SlipMint(_)
+        | AuthorityOp::SlipRevoke { .. }
+        | AuthorityOp::SlipConsume { .. } => {}
+        AuthorityOp::FederationConfirm(action) => {
+            state.federation_confirms.insert(entry_hash, action.clone());
+        }
         AuthorityOp::CriticalWriteConfirm(action) => {
             state
                 .consumed_critical_write_confirm_nonces
@@ -74,13 +91,9 @@ pub(super) fn apply_op(
             upsert_device(state, new_device);
         }
         AuthorityOp::SetTierFloor { tier_floor } => {
-            state.tier_floor = most_restrictive_tier_floor(state.tier_floor, *tier_floor);
+            record_tier_floor(state, entry_hash, *tier_floor);
         }
-        AuthorityOp::RecoveryReboot {
-            new_device,
-            tier_floor,
-            ..
-        } => {
+        AuthorityOp::ReRoot { new_device } => {
             let revoked_keys: BTreeSet<_> = state.roster.keys().cloned().collect();
             state
                 .fork_resolution_revocations
@@ -88,7 +101,7 @@ pub(super) fn apply_op(
             for device in state.roster.values_mut() {
                 device.revoked = true;
             }
-            state.tier_floor = most_restrictive_tier_floor(state.tier_floor, *tier_floor);
+            state.migrated_roots.insert(new_device.key.clone());
             upsert_device(state, new_device);
             for fork in state.authority_forks.values_mut() {
                 if fork.status == AuthorityForkStatus::Quarantined
@@ -124,6 +137,8 @@ pub(super) fn apply_op(
 pub(super) fn apply_actor_binding(
     state: &mut FoldState,
     op: &AuthorityOp,
+    entry_hash: AuthorityEntryHash,
+    consent_arm: fn(&FoldedDevice) -> bool,
 ) -> std::result::Result<(), ActorBindingRejection> {
     let (authority_key, actor_ref, actor_class, epoch, is_rebind) = match op {
         AuthorityOp::RevokeActor {
@@ -135,6 +150,11 @@ pub(super) fn apply_actor_binding(
                 .entry(authority_key.clone())
                 .or_insert(0);
             *watermark = (*watermark).max(*epoch);
+            state
+                .actor_revocation_hashes
+                .entry(authority_key.clone())
+                .or_default()
+                .insert(entry_hash);
             return Ok(());
         }
         AuthorityOp::BindActor {
@@ -161,7 +181,7 @@ pub(super) fn apply_actor_binding(
     // Closes the bind-an-agent-key-as-human hole: human class is the owner
     // class, so the bound key must itself be able to give owner consent.
     // Agent/system bindings may target ROLE_AGENT keys (the 1634 seam).
-    if actor_class == "human" && !folded_device_can_authority_consent(device) {
+    if actor_class == "human" && !consent_arm(device) {
         return Err(ActorBindingRejection::OwnerCapabilityRequired);
     }
 
@@ -194,6 +214,11 @@ pub(super) fn apply_actor_binding(
     state.actor_bindings.insert(
         authority_key.clone(),
         ActorBindingState {
+            observed_revocations: state
+                .actor_revocation_hashes
+                .get(authority_key)
+                .cloned()
+                .unwrap_or_default(),
             actor_ref: *actor_ref,
             actor_class: actor_class.clone(),
             epoch,

@@ -73,6 +73,43 @@ pub(super) fn record_task_create(
     Ok(count.saturating_add(1))
 }
 
+/// Fan-out admission gate on the generic create quota: refuses (without
+/// recording) once the actor's current-window count reaches the limit, else
+/// records one slot and admits. C07 consult fan-out is the only caller; the
+/// generic create lane stays accounting-only (OF-520).
+pub(super) fn consume_create_rate_slot(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    now: u64,
+    rate_limit: TaskCreateRateLimit,
+) -> Result<bool> {
+    let window_seconds = rate_limit.window_seconds.max(1);
+    let window = now / window_seconds;
+    let key = task_create_rate_key(actor, window_seconds);
+    let count = match vault.store.vault_meta.get(&*wtxn, key.as_slice())? {
+        Some(raw) => {
+            let stored: [u8; 16] = raw
+                .as_ref()
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("tasks.create.rate"))?;
+            let stored_window = u64::from_le_bytes(stored[..8].try_into().expect("rate window"));
+            if stored_window == window {
+                u64::from_le_bytes(stored[8..].try_into().expect("rate count"))
+            } else {
+                0
+            }
+        }
+        None => 0,
+    };
+    if count >= rate_limit.limit as u64 {
+        return Ok(false);
+    }
+    record_task_create(vault, wtxn, actor, now, rate_limit)?;
+    Ok(true)
+}
+
+
 pub(super) fn task_create_rate_key(actor: EntityId, window_seconds: u64) -> Vec<u8> {
     let mut key = Vec::with_capacity(
         TASK_CREATE_RATE_KEY_PREFIX.len() + actor.as_bytes().len() + size_of::<u64>(),

@@ -197,6 +197,7 @@ mod tests {
             created_at: 1,
             revoked_at: None,
             expires_at: Some(u64::MAX),
+            authority_scope: crate::federation::scope_codec::read_preset(),
         };
         vault.create_access_grant(&grant_ref, &grant)?;
         let context = vault.access_context(principal)?;

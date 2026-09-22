@@ -68,7 +68,16 @@ impl PolicyManifestResolution {
             Some(_) if self.diagnostics().loaded_manifest_forces_fail_closed() => {
                 RetrievalPolicyFloor::deny_all()
             }
-            Some(actor) => RetrievalPolicyFloor::from_scoped_grants(self.scoped_grants(), actor),
+            Some(actor) => {
+                let policy = RetrievalPolicyFloor::from_scoped_grants(self.scoped_grants(), actor);
+                match actor.authority_scope() {
+                    Some(scope) => {
+                        let proof = RetrievalPolicyFloor::from_authority_scope(scope);
+                        policy.map_or(proof.clone(), |policy| policy.intersect(&proof))
+                    }
+                    None => policy.unwrap_or_else(RetrievalPolicyFloor::deny_all),
+                }
+            }
         }
     }
 }
@@ -96,13 +105,19 @@ impl RetrievalPolicyFloor {
         }
     }
 
-    fn from_scoped_grants(grants: &[PolicyScopedGrant], actor: &ScopedReadActorKey) -> Self {
+    fn from_scoped_grants(
+        grants: &[PolicyScopedGrant],
+        actor: &ScopedReadActorKey,
+    ) -> Option<Self> {
         let mut saw_read_grant = false;
         let mut floor: Option<Self> = None;
         for grant in grants
             .iter()
             .filter(|grant| scoped_read_grant_has_read_effector(grant))
         {
+            if !scoped_read_actor_matches(grant, actor) {
+                continue;
+            }
             saw_read_grant = true;
             if grant.receipt_required
                 || grant.budget.is_some()
@@ -110,24 +125,79 @@ impl RetrievalPolicyFloor {
             {
                 continue;
             }
-            let Some(row) = Self::from_scope(grant.scope.as_ref()).filter(|row| !row.deny_all)
+            let Some(mut row) = Self::from_scope(grant.scope.as_ref()).filter(|row| !row.deny_all)
             else {
                 // Invalid or empty alternatives authorize nothing, not a veto
                 // of another independently valid complete grant.
                 continue;
             };
+            let authority = &grant.authority_scope;
+            match &authority.bands {
+                crate::federation::ScopeAxis::All => {}
+                crate::federation::ScopeAxis::Some(kinds) if !kinds.is_empty() => {
+                    row.allowed_entity_types = Some(match row.allowed_entity_types {
+                        Some(existing) => existing.intersection(kinds).copied().collect(),
+                        None => kinds.clone(),
+                    });
+                }
+                _ => continue,
+            }
+            let max = match authority.sensitivity {
+                crate::federation::SensitivityCeiling::Bottom => continue,
+                crate::federation::SensitivityCeiling::AtMost(max) => max as u8,
+            };
+            row.max_sensitivity_band = row.max_sensitivity_band.min(max);
             floor = Some(match floor {
                 None => row,
                 Some(existing) => existing.union_envelope(row),
             });
         }
-        floor.unwrap_or_else(|| {
-            if saw_read_grant {
-                Self::deny_all()
-            } else {
-                Self::legacy()
-            }
-        })
+        if saw_read_grant {
+            Some(floor.unwrap_or_else(Self::deny_all))
+        } else {
+            None
+        }
+    }
+
+    fn from_authority_scope(scope: &crate::federation::Scope) -> Self {
+        use crate::federation::{ScopeAxis, SensitivityCeiling};
+        if !scope.verbs.contains(&"read".to_owned())
+            || scope.worlds.is_bottom()
+            || scope.audience.is_bottom()
+        {
+            return Self::deny_all();
+        }
+        let types = match &scope.bands {
+            ScopeAxis::All => None,
+            ScopeAxis::Some(types) if !types.is_empty() => Some(types.clone()),
+            _ => return Self::deny_all(),
+        };
+        let max = match scope.sensitivity {
+            SensitivityCeiling::AtMost(max) => max as u8,
+            _ => return Self::deny_all(),
+        };
+        Self {
+            allowed_entity_types: types,
+            max_sensitivity_band: max,
+            ..Self::legacy()
+        }
+    }
+
+    fn intersect(self, other: &Self) -> Self {
+        let allowed_entity_types = match (self.allowed_entity_types, &other.allowed_entity_types) {
+            (Some(left), Some(right)) => Some(left.intersection(right).copied().collect()),
+            (Some(left), None) => Some(left),
+            (None, Some(right)) => Some(right.clone()),
+            (None, None) => None,
+        };
+        Self {
+            allowed_entity_types,
+            max_sensitivity_band: self.max_sensitivity_band.min(other.max_sensitivity_band),
+            include_stale: self.include_stale && other.include_stale,
+            min_confidence: self.min_confidence.max(other.min_confidence),
+            min_salience: self.min_salience.max(other.min_salience),
+            deny_all: self.deny_all || other.deny_all,
+        }
     }
 
     /// A safe prefilter for alternative grants, not a complete authorization.

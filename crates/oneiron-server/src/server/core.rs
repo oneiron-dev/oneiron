@@ -62,6 +62,9 @@ pub struct SyncServer {
     pub(super) lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
+    /// Set only by managed boot after inherited-credential and DEK checks.
+    /// The supervisor authenticates callers before routing its private socket.
+    pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
     /// Tenant usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
@@ -88,6 +91,9 @@ pub struct SyncServer {
     /// no model and downloads nothing.
     pub(crate) embedder: Option<EmbedderSlot>,
     pub(crate) llm: Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)>,
+    /// Instance-local booking clock override; production always reads wall time.
+    #[cfg(test)]
+    pub(crate) booking_test_now_secs: Option<u64>,
 }
 
 impl SyncServer {
@@ -112,6 +118,17 @@ impl SyncServer {
         config: SyncServerConfig,
     ) -> Result<Self, oneiron::Error> {
         config.validate()?;
+        // Genuine host authority must exist before any scoped-read fail-closed
+        // policy applies. Dev/no-secret and blind-relay modes mint nothing.
+        // An empty configured secret mints nothing either: it carries no key
+        // material, and every upgrade bearing it (or nothing) still 401s at
+        // the auth door, so booting rootless here is fail-closed, not open.
+        if vault.privacy_posture() != oneiron::HostingPrivacyPosture::Relay
+            && let Some(secret) = config.auth_secret.as_deref().filter(|s| !s.is_empty())
+        {
+            let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+            vault.ensure_host_root_slip(&issuer)?;
+        }
 
         let root_doc = match server_state::load_root_from_state(&vault)? {
             Some(doc) => doc,
@@ -198,12 +215,15 @@ impl SyncServer {
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
             config,
+            managed_issuer: None,
             mcp_registry,
             mcp_code_host: None,
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             deep_retrieval: None,
             embedder: None,
             llm: None,
+            #[cfg(test)]
+            booking_test_now_secs: None,
         })
     }
 

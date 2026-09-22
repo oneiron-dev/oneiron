@@ -1222,7 +1222,7 @@ fn anonymous_witness_read_and_close_retain_no_rows_or_receipts() -> Result<()> {
         .recall_in_session(
             &session,
             "anonymousbaseneedle",
-            crate::memory::Effort::Standard,
+            crate::memory::Effort::Medium,
             &crate::memory::RecallScope::default(),
             10,
             None,

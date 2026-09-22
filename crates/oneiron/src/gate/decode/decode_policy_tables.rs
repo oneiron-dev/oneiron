@@ -9,9 +9,10 @@ use crate::gate::ceiling::{
 use crate::gate::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
     GRANT_BUDGET_KEY, GRANT_EFFECTOR_KEY, GRANT_RECEIPT_REQUIRED_KEY, GRANT_SCOPE_KEY,
-    POLICY_PATTERN_CATEGORY_KEY, POLICY_PATTERN_ID_KEY, POLICY_PATTERN_PATTERN_KEY,
-    POLICY_PATTERN_ROLE_KEY, POLICY_ROW_ACTION_KEY, POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY,
-    POLICY_ROW_TEXT_KEY, POLICY_ROW_WORLD_REF_KEY, RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY,
+    GRANT_SELECTORS_KEY, POLICY_PATTERN_CATEGORY_KEY, POLICY_PATTERN_ID_KEY,
+    POLICY_PATTERN_PATTERN_KEY, POLICY_PATTERN_ROLE_KEY, POLICY_ROW_ACTION_KEY,
+    POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY, POLICY_ROW_WORLD_REF_KEY,
+    RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 
@@ -199,7 +200,28 @@ pub(super) fn parse_scoped_grants(value: &Value) -> Option<Vec<PolicyScopedGrant
         if effector.is_empty() {
             return None;
         }
-        let scope = optional_value(entries, GRANT_SCOPE_KEY)?;
+        // Scope and purpose selectors are disjoint fields in schema 1.2.
+        // Never infer a legacy preset from an empty or partially specified Scope.
+        let authority_scope = crate::federation::scope_codec::decode_scope_value(required_value(
+            entries,
+            GRANT_SCOPE_KEY,
+        )?)
+        .ok()?;
+        let scope = optional_value(entries, GRANT_SELECTORS_KEY)?;
+        for (key, _) in entries {
+            if !matches!(
+                key.as_str()?,
+                ACTOR_CLASS_KEY
+                    | ACTOR_REF_KEY
+                    | GRANT_EFFECTOR_KEY
+                    | GRANT_SCOPE_KEY
+                    | GRANT_SELECTORS_KEY
+                    | GRANT_BUDGET_KEY
+                    | GRANT_RECEIPT_REQUIRED_KEY
+            ) {
+                return None;
+            }
+        }
         let budget = optional_value(entries, GRANT_BUDGET_KEY)?;
         let receipt_required = match single_map_value(entries, GRANT_RECEIPT_REQUIRED_KEY) {
             MapValue::Missing => true,
@@ -211,6 +233,7 @@ pub(super) fn parse_scoped_grants(value: &Value) -> Option<Vec<PolicyScopedGrant
             actor_ref,
             effector,
             scope,
+            authority_scope,
             budget,
             receipt_required,
         });

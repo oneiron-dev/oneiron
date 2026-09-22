@@ -136,6 +136,7 @@ fn genesis_entry(seed: u8) -> (SigningKey, AuthorityLogEntry, AuthorityVaultId) 
             AuthorityOp::Genesis {
                 device: device(key.clone(), ROLE_OWNER | ROLE_ADMIN),
                 genesis_nonce: [seed.wrapping_add(10); 32],
+                recovery: oneiron::authority::GenesisRecoveryStep::Saved([1; 32]),
                 tier_floor: AuthorityTier::Software,
                 pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
             },

@@ -115,7 +115,10 @@ fn encode_policy_manifest(extra_entries: Vec<(rmpv::Value, rmpv::Value)>) -> Vec
     use rmpv::Value;
 
     let mut entries = vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("client-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (
@@ -264,42 +267,30 @@ fn sync_client_generate_initial_sync() {
     let manager = test_manager();
     let (client, _rx) = test_client(&manager);
     let messages = client.generate_initial_sync();
-    // hello + lease request + root VV + 2 window VV requests
-    // (current + prev) — the OD-5 connect-sequence literal
-    // `[hello][lease_request][…existing]` (ONE-1140).
-    assert_eq!(messages.len(), 5);
+    // hello + root VV + 2 window VV requests (current + prev).
+    // Device lease requests are retired; authentication uses a paired
+    // capability, so the OD-5 `[hello][lease_request][…]` sequence is now
+    // `[hello][root VV][window VVs]`.
+    assert_eq!(messages.len(), 4);
 
-    // Frame 0: protocol hello. The in-tree sync client uses the
-    // full-window VV_REQUEST flow; selector-capable callers use the
-    // current selector protocol.
+    // Frame 0: v9 protocol hello supports both own-device windows and
+    // grant-backed entity documents on the same connection.
     // It MUST be the first frame.
     assert_eq!(
         messages[0],
         transport::encode_chunk_full_window_protocol_hello()
     );
 
-    // Frame 1: lease request — 105 B pinned layout, client_id BE at
-    // offset 1, and the embedded PoP signature verifies over the OD-6
-    // transcript (a frame signed for a different client id would not).
-    assert_eq!(messages[1].len(), 105);
-    assert_eq!(messages[1][0], transport::TAG_LEASE_REQUEST);
-    let (cid, pubkey, pop_sig) = transport::decode_lease_request(&messages[1][1..]).unwrap();
-    assert_eq!(cid, client.client_id());
+    // Frame 1: root VV — Loro binary encoding, decodable, NOT JSON.
+    assert_eq!(messages[1][0], TAG_VERSION_VECTOR);
+    VersionVector::decode(&messages[1][1..]).expect("root VV must be Loro binary encoding");
     assert!(
-        crate::sync::lease::verify_lease_pop(cid, &pubkey, &pop_sig),
-        "the lease request must carry a valid proof of possession"
-    );
-
-    // Frame 2: root VV — Loro binary encoding, decodable, NOT JSON.
-    assert_eq!(messages[2][0], TAG_VERSION_VECTOR);
-    VersionVector::decode(&messages[2][1..]).expect("root VV must be Loro binary encoding");
-    assert!(
-        serde_json::from_slice::<serde_json::Value>(&messages[2][1..]).is_err(),
+        serde_json::from_slice::<serde_json::Value>(&messages[1][1..]).is_err(),
         "the serde_json VV wire encoding is dead (ONE-1127)"
     );
 
-    // Frames 3..: window VV_REQUEST frames carrying binary VV payloads.
-    for msg in &messages[3..] {
+    // Frames 2..: window VV_REQUEST frames carrying binary VV payloads.
+    for msg in &messages[2..] {
         assert_eq!(msg[0], TAG_WINDOW_SYNC);
         let (key, sub_tag, payload) = transport::decode_window_sync(&msg[1..]).unwrap();
         assert!(parse_window_key_str(key).is_some());

@@ -30,7 +30,14 @@ fn read_grant(actor_ref: &str, scope: Value) -> Value {
         ("actor_ref", Value::from(actor_ref)),
         ("effector", Value::from("core:read")),
         ("receipt_required", Value::Boolean(false)),
-        ("scope", scope),
+        (
+            "scope",
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .unwrap(),
+        ),
+        ("selectors", scope),
     ])
 }
 
@@ -249,7 +256,8 @@ fn authority_empty_read_plane_preserves_default_but_present_unmatched_grants_den
         min_confidence: Some(1.0),
         ..RetrievalFilter::default()
     };
-    assert_search_ids(&reader(&vault), None, &[allowed])?;
+    // Fail-closed: with no manifest grants, nothing is readable.
+    assert_search_ids(&reader(&vault), None, &[])?;
     for grants in [
         Vec::new(),
         vec![map(vec![("effector", Value::from("core:*"))])],
@@ -258,10 +266,15 @@ fn authority_empty_read_plane_preserves_default_but_present_unmatched_grants_den
     ] {
         install_grants(&vault, grants)?;
         let read = reader(&vault);
-        assert_search_ids(&read, None, &[allowed])?;
-        assert_search_ids(&read, Some(&overask), &[allowed])?;
+        assert_search_ids(&read, None, &[])?;
+        assert_search_ids(&read, Some(&overask), &[])?;
         assert_search_ids(&read, Some(&stricter), &[])?;
     }
+    // Positive control: an explicit read grant restores the allowed row.
+    install_grant(&vault, Value::Nil)?;
+    assert_search_ids(&reader(&vault), None, &[allowed])?;
+    assert_search_ids(&reader(&vault), Some(&overask), &[allowed])?;
+    assert_search_ids(&reader(&vault), Some(&stricter), &[])?;
     install_grants(&vault, vec![read_grant("other-reader", Value::Nil)])?;
     assert_search_ids(&reader(&vault), None, &[])?;
     let other = vault.scoped_read(ScopedReadActorKey::new("other-reader").unwrap());
@@ -303,7 +316,22 @@ fn authority_malformed_grants_and_invalid_requests_fail_closed() -> Result<()> {
 #[test]
 fn authority_stale_is_explicit_and_nonclaims_only_obey_type() -> Result<()> {
     let (_tmp, vault) = open_test_vault();
-    install_grant(&vault, map(vec![("include_stale", Value::Boolean(true))]))?;
+    install_grants(
+        &vault,
+        vec![
+            read_grant(
+                "authority-reader",
+                map(vec![("include_stale", Value::Boolean(true))]),
+            ),
+            read_grant(
+                "authority-reader",
+                map(vec![(
+                    "entity_types",
+                    Value::Array(vec![Value::from(ENTITY_TYPE_TURN)]),
+                )]),
+            ),
+        ],
+    )?;
     let stale_id = entity_id(0x70);
     let mut body = claim();
     body.stale = true;
@@ -416,7 +444,11 @@ fn authority_disjoint_type_grants_are_alternatives_not_global_restrictions() -> 
         vec![turn_grant.clone(), claim_grant],
     ] {
         install_grants(&vault, rows)?;
-        assert_search_ids(&reader(&vault), None, &[claim_id, turn_id])?;
+        // The TURN grant carries claim-only numeric selectors plus a Public
+        // ceiling over a Sensitive row, so it authorizes no TURN read. The
+        // CLAIM still surfaces, proving the rows are alternatives: the TURN
+        // row's strict limits do not become global restrictions.
+        assert_search_ids(&reader(&vault), None, &[claim_id])?;
         assert_search_ids(&reader(&vault), Some(&only_claims), &[claim_id])?;
     }
     // An unrestricted type alternative is the union identity for all types,
@@ -434,16 +466,18 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
     let (_tmp, vault) = open_test_vault();
     let world_a = entity_id(0xE3);
     let world_b = entity_id(0xE2);
+    let facet_a = entity_id(0xE6);
+    let facet_b = entity_id(0xE7);
     let corpus_a = crate::corpus::CorpusId::from_entity_id(entity_id(0xE4));
     let corpus_b = crate::corpus::CorpusId::from_entity_id(entity_id(0xE5));
     let scope_a = map(vec![
         ("relationship", Value::from("alpha")),
-        ("facet", Value::from("facet-a")),
+        ("facet", Value::from(facet_a.to_hex())),
         ("sensitivity", Value::from(1)),
     ]);
     let scope_b = map(vec![
         ("relationship", Value::from("beta")),
-        ("facet", Value::from("facet-b")),
+        ("facet", Value::from(facet_b.to_hex())),
         ("sensitivity", Value::from(3)),
     ]);
     let scope_a = crate::corpus::scope_with_corpus_id(Some(scope_a), corpus_a)?;
@@ -453,7 +487,7 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
         map(vec![
             ("world_ref", Value::from(world_a.to_hex())),
             ("claim_scope", scope_a.clone()),
-            ("facet", Value::from("facet-a")),
+            ("facet", Value::from(facet_a.to_hex())),
             ("max_sensitivity_band", Value::from(1)),
             ("include_stale", Value::Boolean(false)),
             ("min_confidence", Value::F32(0.8)),
@@ -465,7 +499,7 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
         map(vec![
             ("world_ref", Value::from(world_b.to_hex())),
             ("claim_scope", scope_b.clone()),
-            ("facet", Value::from("facet-b")),
+            ("facet", Value::from(facet_b.to_hex())),
             ("max_sensitivity_band", Value::from(3)),
             ("include_stale", Value::Boolean(true)),
             ("min_confidence", Value::F32(0.2)),
@@ -499,7 +533,7 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
     let mut wrong_facet_a = a.clone();
     wrong_facet_a.scope = Some(map(vec![
         ("relationship", Value::from("alpha")),
-        ("facet", Value::from("facet-b")),
+        ("facet", Value::from(facet_b.to_hex())),
         ("sensitivity", Value::from(1)),
     ]));
     wrong_facet_a.scope = Some(crate::corpus::scope_with_corpus_id(
@@ -514,7 +548,7 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
     let mut wrong_relationship_a = a;
     wrong_relationship_a.scope = Some(map(vec![
         ("relationship", Value::from("beta")),
-        ("facet", Value::from("facet-a")),
+        ("facet", Value::from(facet_a.to_hex())),
         ("sensitivity", Value::from(1)),
     ]));
     wrong_relationship_a.scope = Some(crate::corpus::scope_with_corpus_id(

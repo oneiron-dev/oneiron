@@ -200,6 +200,13 @@ fn setup_relationship_rows(
 #[test]
 fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
     let subject = entity_id(0xD6);
+    let facet = crate::claim::substrate_facet_id(subject);
+    let project = crate::claim::default_project_id();
+    let base_world = crate::claim::base_world_id();
+    // REQUIRED v2 stamps on every hand-built body: `worldId` is the reserved
+    // base id, the facet derives from the subject, and the project is the
+    // reserved default. `scopeRelationshipId` is `all` or a singleton array
+    // of one 16-byte id — the legacy bare-`rel` binary shape is gone.
     let body_with_relationship = |relationship: Option<rmpv::Value>| -> Vec<u8> {
         let mut fields = vec![
             (
@@ -208,10 +215,14 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
             ),
             (rmpv::Value::from("val"), rmpv::Value::from("value")),
             (rmpv::Value::from("conf"), rmpv::Value::F32(0.9)),
+            (
+                rmpv::Value::from("worldId"),
+                rmpv::Value::Binary(base_world.as_bytes().to_vec()),
+            ),
         ];
         fields.push((rmpv::Value::from("world"), rmpv::Value::from("base")));
         if let Some(relationship) = relationship {
-            fields.push((rmpv::Value::from("rel"), relationship));
+            fields.push((rmpv::Value::from("scopeRelationshipId"), relationship));
         }
         fields.extend([
             (
@@ -220,11 +231,23 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
             ),
             (rmpv::Value::from("appr"), rmpv::Value::from("auto")),
             (rmpv::Value::from("life"), rmpv::Value::from("active")),
+            (
+                rmpv::Value::from("scopeFacetId"),
+                rmpv::Value::Binary(facet.as_bytes().to_vec()),
+            ),
+            (
+                rmpv::Value::from("scopeProjectId"),
+                rmpv::Value::Binary(project.as_bytes().to_vec()),
+            ),
+            (rmpv::Value::from("scopeVersion"), rmpv::Value::from(2_u64)),
         ]);
         let mut encoded = Vec::new();
         rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(fields))
             .expect("encode relationship claim body");
         encoded
+    };
+    let singleton = |id: crate::entity_id::EntityId| -> rmpv::Value {
+        rmpv::Value::Array(vec![rmpv::Value::Binary(id.as_bytes().to_vec())])
     };
 
     let absent = crate::claim::encode_claim_body(&relationship_body(None))?;
@@ -232,28 +255,66 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
     assert_eq!(decoded_absent.rel, None);
     let encoded_value = rmpv::decode::read_value(&mut std::io::Cursor::new(&absent))
         .expect("decode encoded relationship claim body");
-    assert!(matches!(
-        encoded_value,
-        rmpv::Value::Map(entries) if entries.iter().any(|(key, value)| key.as_str() == Some("rel") && value.as_str() == Some("all"))
-    ));
+    let rmpv::Value::Map(entries) = encoded_value else {
+        panic!("encoded relationship claim body is a map");
+    };
+    assert_eq!(
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("scopeRelationshipId"))
+            .map(|(_, value)| value),
+        Some(&rmpv::Value::from("all")),
+        "scope-relaxed claims must stamp scopeRelationshipId=all"
+    );
+    assert!(
+        entries
+            .iter()
+            .all(|(key, _)| !matches!(key.as_str(), Some("rel" | "world"))),
+        "legacy rel/world keys must not appear on the wire"
+    );
 
     let relationship = entity_id(0xD8);
-    let hand_built =
-        body_with_relationship(Some(rmpv::Value::Binary(relationship.as_bytes().to_vec())));
+    let hand_built = body_with_relationship(Some(singleton(relationship)));
     assert_eq!(
         crate::claim::decode_claim_body(&hand_built, true)?.rel,
         Some(relationship)
+    );
+    // The `all` string is the other legal shape for the same None.
+    assert_eq!(
+        crate::claim::decode_claim_body(
+            &body_with_relationship(Some(rmpv::Value::from("all"))),
+            true
+        )?
+        .rel,
+        None
     );
     let round_trip = crate::claim::encode_claim_body(&relationship_body(Some(relationship)))?;
     assert_eq!(
         crate::claim::decode_claim_body(&round_trip, true)?.rel,
         Some(relationship)
     );
+    // Missing scopeRelationshipId is corruption, not a relaxed claim.
+    assert_matches!(
+        crate::claim::decode_claim_body(&body_with_relationship(None), true),
+        Err(Error::InvalidClaimBody(_))
+    );
     for invalid in [
-        body_with_relationship(None),
-        body_with_relationship(Some(rmpv::Value::Binary(vec![0xD8; 15]))),
+        body_with_relationship(Some(rmpv::Value::Array(vec![rmpv::Value::Binary(
+            vec![0xD8; 15],
+        )]))),
         body_with_relationship(Some(rmpv::Value::from("relationship"))),
-        body_with_relationship(Some(rmpv::Value::Binary(vec![0; 16]))),
+        body_with_relationship(Some(rmpv::Value::Array(vec![rmpv::Value::Binary(vec![
+            0;
+            16
+        ])]))),
+        // Singleton only: zero or two ids never validate.
+        body_with_relationship(Some(rmpv::Value::Array(vec![]))),
+        body_with_relationship(Some(rmpv::Value::Array(vec![
+            rmpv::Value::Binary(relationship.as_bytes().to_vec()),
+            rmpv::Value::Binary(entity_id(0xD9).as_bytes().to_vec()),
+        ]))),
+        // Legacy bare-binary shape is no longer on the wire.
+        body_with_relationship(Some(rmpv::Value::Binary(relationship.as_bytes().to_vec()))),
     ] {
         assert_matches!(
             crate::claim::decode_claim_body(&invalid, true),
@@ -593,12 +654,15 @@ fn relationship_facet_world_four_quadrants_compose_conjunctively() -> Result<()>
         }
     }
 
+    // Base is an explicit member, never implicit in a named world: the
+    // `core` claim stamps the reserved base world, so a `World(active)`
+    // selection excludes it in every quadrant. The matrices below pin that
+    // exclusion alongside the facet/relationship conjunction.
     for (use_facet, use_relationship, expected) in [
         (
             false,
             false,
             vec![
-                core,
                 facet_only,
                 relationship_only,
                 both,
@@ -609,20 +673,14 @@ fn relationship_facet_world_four_quadrants_compose_conjunctively() -> Result<()>
         (
             true,
             false,
-            vec![
-                core,
-                facet_only,
-                relationship_only,
-                both,
-                wrong_relationship,
-            ],
+            vec![facet_only, relationship_only, both, wrong_relationship],
         ),
         (
             false,
             true,
-            vec![core, facet_only, relationship_only, both, wrong_facet],
+            vec![facet_only, relationship_only, both, wrong_facet],
         ),
-        (true, true, vec![core, facet_only, relationship_only, both]),
+        (true, true, vec![facet_only, relationship_only, both]),
     ] {
         let mut query = vault
             .query()

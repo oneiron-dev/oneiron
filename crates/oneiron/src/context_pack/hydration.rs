@@ -343,14 +343,18 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
 }
 
 fn decode_entity_fields(
-    payload: &[u8],
+    raw: &[u8],
     entity_type: u8,
 ) -> Option<HashMap<String, serde_json::Value>> {
-    if payload.is_empty() {
+    if raw.len() <= ENTITY_METADATA_HEADER_LEN {
         return Some(HashMap::new());
     }
 
-    if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+    let payload = &raw[ENTITY_METADATA_HEADER_LEN..];
+    if entity_type == ENTITY_TYPE_COMPANION_REGISTER
+        || (entity_type == crate::registry::ENTITY_TYPE_FACET
+            && crate::companion::is_identity_facet_body(payload))
+    {
         return decode_companion_register_fields(payload);
     }
 
@@ -388,8 +392,8 @@ fn decode_companion_register_fields(raw: &[u8]) -> Option<HashMap<String, serde_
         serde_json::Value::String(record.lifecycle.as_str().to_owned()),
     );
     out.insert(
-        "export".to_owned(),
-        serde_json::Value::String(record.export_classification.as_str().to_owned()),
+        "sensitivity".to_owned(),
+        serde_json::Value::String(record.sensitivity.as_str().to_owned()),
     );
     out.insert(
         "provenance".to_owned(),

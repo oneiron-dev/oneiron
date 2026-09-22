@@ -125,6 +125,45 @@ fn insert_entity(doc: &LoroDoc, id: oneiron::EntityId, entity_type: u8, body: &[
         .unwrap();
 }
 
+fn selector_claim_body(person: oneiron::EntityId, predicate: &str) -> Vec<u8> {
+    let claim = oneiron::claim::ClaimBody::new(
+        predicate,
+        oneiron::claim::ClaimSubject::Entity(person),
+        Value::from("value"),
+        0.8,
+        oneiron::claim::ClaimApprovalStatus::Proposed,
+        oneiron::claim::ClaimLifecycleStatus::Active,
+    );
+    let body = Value::Map(vec![
+        (Value::from("pred"), Value::from(claim.predicate.as_str())),
+        (Value::from("val"), claim.value),
+        (Value::from("conf"), Value::F32(claim.confidence)),
+        (
+            Value::from("subj"),
+            Value::Binary(person.as_bytes().to_vec()),
+        ),
+        (Value::from("appr"), Value::from(claim.approval.as_str())),
+        (Value::from("life"), Value::from(claim.lifecycle.as_str())),
+        (
+            "worldId".into(),
+            Value::Binary(oneiron::claim::base_world_id().as_bytes().to_vec()),
+        ),
+        (
+            "scopeFacetId".into(),
+            Value::Binary(claim.scope_facet.as_bytes().to_vec()),
+        ),
+        ("scopeRelationshipId".into(), "all".into()),
+        (
+            "scopeProjectId".into(),
+            Value::Binary(claim.scope_project.as_bytes().to_vec()),
+        ),
+        ("scopeVersion".into(), 2_u64.into()),
+    ]);
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &body).unwrap();
+    encoded
+}
+
 fn edge_map_key(src: oneiron::EntityId, kind: oneiron::EdgeKind, tgt: oneiron::EntityId) -> String {
     format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex())
 }
@@ -232,37 +271,6 @@ async fn submit_lease_request(
     }
 }
 
-fn root_lease_record(
-    server: &SyncServer,
-    vault_id: u64,
-    client_id: u64,
-) -> oneiron::sync::LeaseRecord {
-    let key = oneiron::sync::lease::lease_registry_key(vault_id, client_id);
-    match server
-        .root_doc
-        .get_map(oneiron::sync::ROOT_LEASES_MAP)
-        .get(&key)
-    {
-        Some(ValueOrContainer::Value(LoroValue::Binary(raw))) => {
-            oneiron::sync::decode_lease_record(&raw).unwrap()
-        }
-        other => panic!("missing scoped root lease record {key}: {other:?}"),
-    }
-}
-
-fn mirror_lease_record(
-    vault: &oneiron::Vault,
-    vault_id: u64,
-    client_id: u64,
-) -> oneiron::sync::LeaseRecord {
-    let key = oneiron::sync::lease_key(vault_id, client_id);
-    let raw = vault
-        .sync_state_get(&key)
-        .unwrap()
-        .unwrap_or_else(|| panic!("missing mirrored lease row {key}"));
-    oneiron::sync::decode_lease_record(&raw).unwrap()
-}
-
 #[tokio::test]
 async fn hosted_lease_production_path_isolates_same_client_id_by_configured_vault() {
     use ed25519_dalek::{Signer, SigningKey};
@@ -278,64 +286,23 @@ async fn hosted_lease_production_path_isolates_same_client_id_by_configured_vaul
         .sign(&oneiron::sync::lease_pop_transcript(client_id, &pubkey))
         .to_bytes();
 
-    let server_a = test_server_with_lease_vault_id(vault.clone(), tenant_a);
-    assert!(submit_lease_request(&server_a, client_id, pubkey, pop_sig).await);
-
-    let server_b = test_server_with_lease_vault_id(vault.clone(), tenant_b);
-    assert!(submit_lease_request(&server_b, client_id, pubkey, pop_sig).await);
-    assert!(
-        server_b
-            .root_doc
-            .get_map(oneiron::sync::ROOT_LEASES_MAP)
-            .get(&oneiron::sync::client_id_hex(client_id))
-            .is_none(),
-        "production registration must not write the legacy subscriber-only root key"
-    );
-    assert_eq!(
-        root_lease_record(&server_b, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-    assert_eq!(
-        root_lease_record(&server_b, tenant_b, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-    assert_eq!(
-        mirror_lease_record(&vault, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-    assert_eq!(
-        mirror_lease_record(&vault, tenant_b, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-
-    let server_a_revoke = test_server_with_lease_vault_id(vault.clone(), tenant_a);
-    assert!(
-        server_a_revoke
-            .revoke_lease(client_id)
-            .await
-            .unwrap()
-            .is_some()
-    );
-
-    let server_b_renew = test_server_with_lease_vault_id(vault.clone(), tenant_b);
-    assert!(submit_lease_request(&server_b_renew, client_id, pubkey, pop_sig).await);
-    assert_eq!(
-        root_lease_record(&server_b_renew, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Revoked
-    );
-    assert_eq!(
-        root_lease_record(&server_b_renew, tenant_b, client_id).status,
-        oneiron::sync::LeaseStatus::Active,
-        "tenant A's revocation floor must not block tenant B renewal"
-    );
-
-    let server_a_retry = test_server_with_lease_vault_id(vault.clone(), tenant_a);
-    assert!(!submit_lease_request(&server_a_retry, client_id, pubkey, pop_sig).await);
-    assert_eq!(
-        root_lease_record(&server_a_retry, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Revoked,
-        "tenant A's own revoked row remains terminal"
-    );
+    for tenant in [tenant_a, tenant_b] {
+        let server = test_server_with_lease_vault_id(vault.clone(), tenant);
+        assert!(!submit_lease_request(&server, client_id, pubkey, pop_sig).await);
+        assert!(
+            vault
+                .sync_state_get(&oneiron::sync::lease_key(tenant, client_id))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            server
+                .root_doc
+                .get_map(oneiron::sync::ROOT_LEASES_MAP)
+                .get(&oneiron::sync::lease::lease_registry_key(tenant, client_id))
+                .is_none()
+        );
+    }
 }
 
 #[tokio::test]
@@ -774,43 +741,18 @@ async fn selector_vv_request_sends_filtered_update_only() {
         oneiron::registry::ENTITY_TYPE_FACET,
         b"facet-b",
     );
-    let claim_body = |predicate: &str| {
-        let claim = oneiron::claim::ClaimBody::new(
-            predicate,
-            oneiron::claim::ClaimSubject::Entity(person),
-            Value::from("value"),
-            0.8,
-            oneiron::claim::ClaimApprovalStatus::Proposed,
-            oneiron::claim::ClaimLifecycleStatus::Active,
-        );
-        let body = Value::Map(vec![
-            (Value::from("pred"), Value::from(claim.predicate.as_str())),
-            (Value::from("val"), claim.value),
-            (Value::from("conf"), Value::F32(claim.confidence)),
-            (
-                Value::from("subj"),
-                Value::Binary(person.as_bytes().to_vec()),
-            ),
-            (Value::from("appr"), Value::from(claim.approval.as_str())),
-            (Value::from("life"), Value::from(claim.lifecycle.as_str())),
-            (Value::from("world"), Value::from("base")),
-            (Value::from("rel"), Value::from("all")),
-        ]);
-        let mut encoded = Vec::new();
-        rmpv::encode::write_value(&mut encoded, &body).unwrap();
-        encoded
-    };
+    let claim_body = |predicate: &str| selector_claim_body(person, predicate);
     insert_entity(
         &server_doc,
         claim_allowed,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        &claim_body("selector.test"),
+        &selector_claim_body(person, "selector.test"),
     );
     insert_entity(
         &server_doc,
         claim_denied,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        &claim_body("selector.denied"),
+        &selector_claim_body(person, "selector.denied"),
     );
     insert_entity(
         &server_doc,
@@ -843,13 +785,38 @@ async fn selector_vv_request_sends_filtered_update_only() {
         person,
     );
     server_doc.commit();
+    for (id, kind, body) in [
+        (
+            facet_allowed,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            &b"facet-a"[..],
+        ),
+        (
+            facet_denied,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            &b"facet-b"[..],
+        ),
+        (
+            person,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            &b"person"[..],
+        ),
+    ] {
+        server
+            .vault
+            .put_entity(&id, kind, oneiron::TimeRange { start: 1, end: 1 }, 1, body)
+            .unwrap();
+    }
 
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
         member,
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet_allowed],
-        vec![],
+        vec![
+            oneiron::federation::SelectorRange::Semantic,
+            oneiron::federation::SelectorRange::Core,
+        ],
     );
     let client_doc = client_window_doc();
     let payload =
@@ -1227,7 +1194,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
         &server_doc,
         claim_allowed,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        b"claim",
+        &selector_claim_body(member, "selector.test"),
     );
     insert_edge(
         &server_doc,
@@ -1236,13 +1203,26 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
         facet_allowed,
     );
     server_doc.commit();
+    server
+        .vault
+        .put_entity(
+            &facet_allowed,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .unwrap();
 
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
         member,
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet_allowed],
-        vec![],
+        vec![
+            oneiron::federation::SelectorRange::Semantic,
+            oneiron::federation::SelectorRange::Core,
+        ],
     );
     let client_doc = client_window_doc();
     let empty_payload =
@@ -3653,6 +3633,7 @@ async fn document_batch_exchange(version: u8) {
         oneiron::sync::SyncClient::new(manager.clone(), oneiron::sync::SyncClientConfig::default())
             .unwrap();
     let id = oneiron::EntityId::now();
+    let facet = oneiron::EntityId::now();
     for vault in [server.vault.as_ref(), client_vault.as_ref()] {
         vault
             .put_entity(
@@ -3662,6 +3643,18 @@ async fn document_batch_exchange(version: u8) {
                 1,
                 b"ledger",
             )
+            .unwrap();
+        vault
+            .put_entity(
+                &facet,
+                oneiron::registry::ENTITY_TYPE_FACET,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"shared document facet",
+            )
+            .unwrap();
+        vault
+            .put_edge(&id, oneiron::EdgeKind::FacetOf, &facet, 1.0)
             .unwrap();
     }
     let member = oneiron::EntityId::now();
@@ -3677,8 +3670,8 @@ async fn document_batch_exchange(version: u8) {
         grant_id,
         member,
         oneiron::sync::SyncSelectorWorld::All,
-        vec![],
-        vec![],
+        vec![facet],
+        vec![oneiron::federation::SelectorRange::Core],
     );
     let source = server.reassert_manager.documents().open(id).unwrap();
     let notice = source.edit_text(0, 0, "shared").unwrap();
@@ -3689,6 +3682,24 @@ async fn document_batch_exchange(version: u8) {
                 .is_empty()
         );
     }
+    let empty_selector = oneiron::sync::SyncSelector::new(
+        grant_id,
+        member,
+        oneiron::sync::SyncSelectorWorld::All,
+        vec![],
+        vec![],
+    );
+    assert!(
+        server
+            .reassert_manager
+            .export_document(
+                id,
+                test_selector_scope(),
+                &empty_selector,
+                &VersionVector::default().encode(),
+            )
+            .is_err()
+    );
     manager.documents().subscribe_entity(id, &selector).unwrap();
     let requests = manager.documents().request_frames().unwrap();
     let batch = encode_document_batch(&requests).into_result().unwrap();

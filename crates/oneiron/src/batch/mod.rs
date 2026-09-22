@@ -10,13 +10,16 @@ mod claim_candidate_apply;
 mod claim_materialization;
 mod deindex;
 mod edge_apply;
+mod facet_identity;
 mod facet_validation;
 mod gate_mode;
 mod gate_staging;
 mod lexical_query_hints;
 mod ops_pipeline;
+mod person_substrate;
 mod phonetic_apply;
 mod put_apply;
+pub(crate) use person_substrate::sweep_scope_stamps;
 #[cfg(feature = "sync")]
 mod recovery_shell;
 #[cfg(feature = "sync")]

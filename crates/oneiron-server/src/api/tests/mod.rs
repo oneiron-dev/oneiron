@@ -14,6 +14,9 @@ use tower::ServiceExt;
 mod mcp_source_gate;
 
 mod auth_idempotency;
+mod org_admin;
+mod slips;
+use crate::test_credentials as slip_credentials;
 mod billing_usage;
 mod board_host_events;
 mod companion;
@@ -38,6 +41,8 @@ mod retrieval_shaping;
 mod run_tree;
 mod support_contract;
 mod support_mcp;
+mod support_mcp_credentials;
+use support_mcp_credentials::*;
 mod surface_events;
 mod surface_routes;
 mod vad_and_error_mapping;
@@ -303,6 +308,8 @@ pub(super) async fn route_bytes(
     server: Arc<SyncServer>,
     request: Request<Body>,
 ) -> (StatusCode, HeaderMap, Bytes) {
+    let request = bind_mcp_request(&server, request);
+    let request = slip_credentials::bind_request(&server, request);
     let response = api_routes(server)
         .oneshot(request)
         .await
@@ -379,41 +386,24 @@ pub(super) fn seed_active_claim(
     value: &str,
     learned_at: u64,
 ) {
-    #[derive(serde::Serialize)]
-    struct ClaimSeed<'a> {
-        pred: &'a str,
-        val: &'a str,
-        conf: f32,
-        #[serde(with = "serde_bytes")]
-        subj: &'a [u8],
-        appr: &'static str,
-        life: &'static str,
-        world: &'static str,
-        rel: &'static str,
-    }
-
-    let body = rmp_serde::to_vec_named(&ClaimSeed {
-        pred: "profile.route_test",
-        val: value,
-        conf: 0.9,
-        subj: subject.as_bytes(),
-        appr: "auto",
-        life: "active",
-        world: "base",
-        rel: "all",
-    })
-    .expect("encode claim fixture");
+    let claim = oneiron::ClaimBody::new(
+        "profile.route_test",
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from(value),
+        0.9,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
     server
         .vault
-        .put_entity(
+        .put_claim(
             &id,
-            oneiron::registry::ENTITY_TYPE_CLAIM,
+            &claim,
             oneiron::TimeRange {
                 start: learned_at,
                 end: learned_at,
             },
             learned_at,
-            &body,
         )
         .expect("seed active claim");
 }
@@ -442,12 +432,10 @@ pub(super) fn json_request(method: &str, uri: &str, body: Value) -> Request<Body
         .expect("request")
 }
 
-/// Mints a v2 token against the `"secret"` these tests configure everywhere.
+/// An explicit credential recipe. `route_json`/`route_bytes` mint and bind a
+/// real logged slip in this fixture's vault before the production router runs.
 pub(super) fn test_bearer(claims: &str) -> String {
-    format!(
-        "Bearer {}",
-        crate::auth::mint_core_token_v2("secret", claims)
-    )
+    format!("{}{claims}", slip_credentials::RECIPE_PREFIX)
 }
 
 /// Owner-grade credential: the bare trust root over the standard header.
@@ -501,6 +489,8 @@ pub(super) async fn route_json(
     server: Arc<SyncServer>,
     request: Request<Body>,
 ) -> (StatusCode, Value) {
+    let request = bind_mcp_request(&server, request);
+    let request = slip_credentials::bind_request(&server, request);
     let response = api_routes(server)
         .oneshot(request)
         .await
@@ -511,6 +501,40 @@ pub(super) async fn route_json(
         .expect("JSON response body");
     let body: Value = serde_json::from_slice(&body).expect("JSON response");
     (status, body)
+}
+
+/// Authenticated-test server: the host secret is configured (so the vault is
+/// rooted and slips mint), and `route_json_auth` binds the default
+/// read+write slip to every request that does not already carry credentials.
+/// Use for positive `/v1` tests; negative auth tests keep `test_server()` and
+/// `route_json` so missing credentials still reach the production 401.
+pub(super) fn auth_test_server() -> (tempfile::TempDir, Arc<SyncServer>) {
+    test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    })
+}
+
+/// `route_json` with a default credential for positive tests: when the request
+/// has no `Authorization` header, a read+write recipe is attached first, so
+/// `bind_request` mints a real logged slip before the production router runs.
+/// Requests that already carry credentials (explicit recipes, bare secrets,
+/// negative pins) pass through untouched.
+pub(super) async fn route_json_auth(
+    server: Arc<SyncServer>,
+    request: Request<Body>,
+) -> (StatusCode, Value) {
+    route_json(server, with_default_recipe(request)).await
+}
+
+fn with_default_recipe(mut request: Request<Body>) -> Request<Body> {
+    if !request.headers().contains_key(AUTHORIZATION) {
+        request.headers_mut().insert(
+            AUTHORIZATION,
+            test_bearer("scope=core:read,core:write").parse().unwrap(),
+        );
+    }
+    request
 }
 
 /// One call against a RETIRED plain-verb adapter.
@@ -1164,9 +1188,39 @@ pub(super) fn memory_reason_server(
     )
 }
 
+pub(super) fn memory_reason_server_auth(
+    backend: Option<Arc<dyn MemoryReasonBackend>>,
+) -> (tempfile::TempDir, Arc<SyncServer>) {
+    memory_reason_server_with_guard_auth(
+        backend,
+        oneiron::llm::BudgetGuard::new(
+            "one-207-server-tests",
+            10_000,
+            oneiron::llm::BudgetExhaustionPolicy::Suspend,
+        ),
+    )
+}
+
 pub(super) fn memory_reason_server_with_guard(
     backend: Option<Arc<dyn MemoryReasonBackend>>,
     guard: oneiron::llm::BudgetGuard,
+) -> (tempfile::TempDir, Arc<SyncServer>) {
+    let (dir, server) = memory_reason_server_inner(backend, guard, None);
+    (dir, server)
+}
+
+pub(super) fn memory_reason_server_with_guard_auth(
+    backend: Option<Arc<dyn MemoryReasonBackend>>,
+    guard: oneiron::llm::BudgetGuard,
+) -> (tempfile::TempDir, Arc<SyncServer>) {
+    let (dir, server) = memory_reason_server_inner(backend, guard, Some("secret".to_owned()));
+    (dir, server)
+}
+
+fn memory_reason_server_inner(
+    backend: Option<Arc<dyn MemoryReasonBackend>>,
+    guard: oneiron::llm::BudgetGuard,
+    auth_secret: Option<String>,
 ) -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().expect("temp vault dir");
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
@@ -1193,10 +1247,12 @@ pub(super) fn memory_reason_server_with_guard(
         .commit()
         .expect("seed reasoning evidence");
 
+    let allow_unauthenticated = auth_secret.is_none();
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
-            allow_unauthenticated: true,
+            auth_secret,
+            allow_unauthenticated,
             ..Default::default()
         },
     )

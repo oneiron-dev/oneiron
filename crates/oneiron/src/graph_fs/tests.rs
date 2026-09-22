@@ -70,7 +70,7 @@ fn put_claim_with_value(
 
 fn encode_policy_manifest(scoped_grants: Vec<Value>) -> Vec<u8> {
     let value = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("graph-fs-test")),
         (Value::from("pack_version"), Value::from("1")),
         (Value::from("min_engine_version"), Value::from("0.0.0")),
@@ -84,12 +84,38 @@ fn encode_policy_manifest(scoped_grants: Vec<Value>) -> Vec<u8> {
     data
 }
 
+fn core_read_base_grant(actor_ref: &str) -> Value {
+    Value::Map(vec![
+        (Value::from("actor_ref"), Value::from(actor_ref)),
+        (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .expect("scope fixture"),
+        ),
+        (
+            Value::from("selectors"),
+            Value::Map(vec![(Value::from("world_ref"), Value::from("base"))]),
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ])
+}
+
 fn core_read_world_grant(actor_ref: &str, world: EntityId) -> Value {
     Value::Map(vec![
         (Value::from("actor_ref"), Value::from(actor_ref)),
         (Value::from("effector"), Value::from("core:read")),
         (
             Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .expect("scope fixture"),
+        ),
+        (
+            Value::from("selectors"),
             Value::Map(vec![(
                 Value::from("world_ref"),
                 Value::from(world.to_hex()),
@@ -234,6 +260,12 @@ fn large_day_shard_returns_first_page_and_more_under_byte_cap() -> Result<()> {
     )?;
     wtxn.commit()?;
 
+    put_policy_manifest(
+        &vault,
+        test_id(0x92),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
+
     let reader =
         vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
     let day = format_day_shard(learned_at / 86_400);
@@ -263,6 +295,12 @@ fn same_fork_hash_mount_renders_byte_identical_readdir() -> Result<()> {
     let claim = test_id(0x56);
     put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
     put_claim(&vault, claim, subject, None, 20)?;
+
+    put_policy_manifest(
+        &vault,
+        test_id(0x93),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
 
     let reader =
         vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
@@ -316,6 +354,12 @@ fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
         .batch()
         .text(&matching_claim, &[("body", "pushdownneedle alpha")])
         .commit()?;
+
+    put_policy_manifest(
+        &vault,
+        test_id(0x94),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
 
     let reader =
         vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
@@ -394,6 +438,12 @@ fn find_newer_uses_scoped_temporal_pushdown() -> Result<()> {
     put_claim(&vault, old_claim, subject, None, 10)?;
     put_claim(&vault, new_claim, subject, None, 20)?;
 
+    put_policy_manifest(
+        &vault,
+        test_id(0x95),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
+
     let reader =
         vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
     let output = resolver(&reader, 1024).find("/claims", Some(15), None)?;
@@ -419,6 +469,12 @@ fn wikilink_deeplink_resolves_to_claim_symlink() -> Result<()> {
     let claim = test_id(0x71);
     put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
     put_claim(&vault, claim, subject, None, 30)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x96),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
+
     let reader =
         vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
     let link = resolver(&reader, 1024)
@@ -455,6 +511,12 @@ fn ls_claims_by_time_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
             100 + u64::from(index),
         )?;
     }
+
+    put_policy_manifest(
+        &vault,
+        test_id(0x97),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
 
     let reader =
         vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
@@ -514,6 +576,12 @@ fn find_newer_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
         )?;
     }
     put_claim(&vault, claim, subject, None, 200)?;
+
+    put_policy_manifest(
+        &vault,
+        test_id(0x98),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
 
     let reader =
         vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));

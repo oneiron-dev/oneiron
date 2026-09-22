@@ -282,6 +282,7 @@ fn note_citations_and_authorship_cross_peer_state_reopen_and_guard_reviewed_edit
             confidence: 0.9,
             source: "user_stated".into(),
             world_ref: None,
+            relationship_ref: None,
             scope: None,
             valid_from: None,
             valid_to: None,

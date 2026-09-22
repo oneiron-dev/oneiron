@@ -22,13 +22,7 @@ pub(super) async fn mcp_legacy_adapter_json(
     server: Arc<SyncServer>,
     call: McpLegacyCall,
 ) -> (StatusCode, Value) {
-    let mut headers = axum::http::HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        format!("Bearer {credential}", credential = call.credential)
-            .parse()
-            .expect("bearer credential header"),
-    );
+    let headers = mcp_credential_headers(&server, &call.credential);
     let id = Value::from(call.id.clone());
     let body = match mcp_legacy_adapter_result(&server, &headers, &call).await {
         Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
@@ -78,12 +72,19 @@ pub(super) async fn register_mcp_actor(
             b"mcp actor",
         )
         .expect("seed mcp actor entity");
+    let credential = pair_mcp_credential(
+        server,
+        credential,
+        actor_ref,
+        actor_class,
+        &crate::mcp::McpConnectorScope::vault_wide(),
+    );
     server
         .mcp_registry
         .lock()
         .await
         .register(
-            credential,
+            &credential,
             crate::mcp::McpConnectorActorRecord::new(
                 actor_ref,
                 actor_class,
@@ -177,15 +178,16 @@ pub(super) fn mcp_endpoint_request(path: &str, credential: &str, body: Value) ->
 /// Used where a test drives a gateway seam directly instead of through the
 /// router, so the credential still resolves exactly the way the wire resolves
 /// it — nothing here fabricates an actor.
-pub(super) fn mcp_credential_headers(credential: &str) -> axum::http::HeaderMap {
-    let mut headers = axum::http::HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        format!("Bearer {credential}")
-            .parse()
-            .expect("bearer credential header"),
-    );
-    headers
+pub(super) fn mcp_credential_headers(
+    server: &SyncServer,
+    credential: &str,
+) -> axum::http::HeaderMap {
+    let request = Request::builder()
+        .header(AUTHORIZATION, format!("Bearer {credential}"))
+        .body(Body::empty())
+        .unwrap();
+    let request = bind_mcp_request(server, request);
+    request.into_parts().0.headers
 }
 
 pub(super) fn mcp_list_request(path: &str, credential: &str, id: &str) -> Request<Body> {
@@ -319,12 +321,19 @@ pub(super) async fn register_scoped_mcp_actor(
             b"scoped mcp actor",
         )
         .expect("seed scoped mcp actor entity");
+    let credential = pair_mcp_credential(
+        server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+        &scope,
+    );
     server
         .mcp_registry
         .lock()
         .await
         .register(
-            credential,
+            &credential,
             crate::mcp::McpConnectorActorRecord::new(
                 actor_ref,
                 oneiron::EdgeActorClass::Human,
@@ -502,12 +511,19 @@ pub(super) async fn register_bound_verb_mcp_actor(
             b"bound-verb mcp actor",
         )
         .expect("seed bound-verb mcp actor entity");
+    let credential = pair_mcp_credential(
+        server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+        &crate::mcp::McpConnectorScope::vault_wide(),
+    );
     server
         .mcp_registry
         .lock()
         .await
         .register(
-            credential,
+            &credential,
             crate::mcp::McpConnectorActorRecord::new(
                 actor_ref,
                 oneiron::EdgeActorClass::Human,

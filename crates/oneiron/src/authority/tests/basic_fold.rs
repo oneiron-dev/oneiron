@@ -132,18 +132,16 @@ fn delayed_rotation_that_would_leave_no_authority_consent_is_not_pending() {
 }
 
 #[test]
-fn recovery_reboot_requires_consenting_new_device() {
+fn re_root_requires_consenting_new_device() {
     let owner = ed_key(47);
     let agent = ed_key(48);
     let owner_key = authority_key_from_ed(&owner);
-    let op = AuthorityOp::RecoveryReboot {
-        new_genesis_nonce: [47; 32],
+    let op = AuthorityOp::ReRoot {
         new_device: device(
             authority_key_from_ed(&agent),
             ROLE_AGENT,
             AuthorityTier::Software,
         ),
-        tier_floor: AuthorityTier::Software,
     };
     let entry = unsigned_entry(Some([47; 32]), 1, vec![[48; 32]], op, owner_key, 1);
 
@@ -153,17 +151,15 @@ fn recovery_reboot_requires_consenting_new_device() {
 }
 
 #[test]
-fn fold_rejects_recovery_reboot_reusing_existing_key() {
+fn fold_rejects_re_root_reusing_existing_key() {
     let (owner, owner_key, parent, state) = single_owner_state(49);
     let entry = sign_ed(
         unsigned_entry(
             Some(state.vault_id),
             1,
             vec![parent],
-            AuthorityOp::RecoveryReboot {
-                new_genesis_nonce: [49; 32],
+            AuthorityOp::ReRoot {
                 new_device: device(owner_key.clone(), ROLE_OWNER, AuthorityTier::Software),
-                tier_floor: AuthorityTier::Software,
             },
             owner_key,
             1,
@@ -369,6 +365,7 @@ fn fold_records_signed_invalid_equivocation_candidate_as_loser() {
                     AuthorityTier::Software,
                 ),
                 genesis_nonce: [126; 32],
+                recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
                 tier_floor: AuthorityTier::Software,
                 pending_widen_delay_secs: 86_400,
             },

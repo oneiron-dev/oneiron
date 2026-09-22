@@ -33,8 +33,9 @@ impl<'vault> ScopedRead<'vault> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
     ) -> Result<bool> {
-        // Audience, NOTE privacy, relationship grants and type/scalar ceilings
-        // all live in the shared row predicate; graph traversal must not fork it.
+        // Audience, NOTE privacy, relationship grants, credential scope and
+        // type/scalar ceilings all live in the shared row predicate; graph
+        // traversal must not fork it.
         self.is_entity_readable_with_filter_in(txn, policy, id, filter)
     }
 }

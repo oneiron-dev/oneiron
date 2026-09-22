@@ -1104,28 +1104,6 @@ fn trap_for_consent_scale_durable_wait_is_consent() {
     );
 }
 
-struct HungBackend;
-
-impl LlmBackend for HungBackend {
-    fn generate<'a>(
-        &'a self,
-        _request: LlmRequest,
-        _lease: &'a BudgetLease,
-    ) -> LlmGenerateFuture<'a> {
-        Box::pin(std::future::pending())
-    }
-
-    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        Err(LlmError::Fatal(FatalLlmError::Unsupported(
-            UnsupportedCapability {
-                capability: LlmCapability::Streaming,
-                model: None,
-                reason: None,
-            },
-        )))
-    }
-}
-
 fn injected_deadline(
     start_elapsed_ms: u64,
     ceiling_ms: u64,
@@ -1137,45 +1115,6 @@ fn injected_deadline(
         Arc::new(move || clock.load(Ordering::SeqCst)),
     );
     (elapsed, deadline)
-}
-
-#[test]
-fn deadline_race_aborts_hung_generate() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let fixture = step_fixture(&vault, 10)?;
-    // Not yet in the finalize window (elapsed 1s of 180s), so the step is
-    // admitted; the clock jumps past the ceiling while the call hangs.
-    let (elapsed, deadline) = injected_deadline(1_000, 180_000);
-    let mut ctx = ctx(&vault, &fixture, 10_000);
-    ctx.deadline = Some(&deadline);
-    let guard = guard_with_limit(10_000);
-
-    let advancer = {
-        let elapsed = Arc::clone(&elapsed);
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(120));
-            elapsed.store(180_001, Ordering::SeqCst);
-        })
-    };
-    let error = block_on(call_as_step(&ctx, &HungBackend, &guard, request_fixture()))
-        .expect_err("hung generate must lose the deadline race");
-    advancer.join().expect("advancer thread");
-
-    assert!(matches!(error, DurableStepError::DeadlineHardCut));
-    let read = guard.read();
-    assert_eq!(read.reserved_units, 0, "lease aborted with settled spend");
-    assert_eq!(read.used_units, 0);
-    let runner = DreamerRunnerStore::new(&vault);
-    let parked = runner
-        .parked_attempt(fixture.attempt_id)?
-        .expect("attempt parked");
-    assert_eq!(
-        parked.reason,
-        crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON
-    );
-    let step_hash = request_fixture().canonical_hash().expect("hash");
-    assert!(step_state_read(&vault, fixture.attempt_id, &step_hash)?.is_none());
-    Ok(())
 }
 
 /// Backend whose generate future lets the injected deadline pass while the
@@ -1216,46 +1155,39 @@ impl LlmBackend for ExpireThenCompleteBackend {
 }
 
 #[test]
-fn expired_deadline_never_records_finished() -> Result<()> {
+fn admitted_step_finishes_and_settles_after_deadline() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fixture = step_fixture(&vault, 10)?;
     let (elapsed, deadline) = injected_deadline(1_000, 180_000);
     let mut ctx = ctx(&vault, &fixture, 10_000);
     ctx.deadline = Some(&deadline);
     let guard = guard_with_limit(10_000);
-    let backend = ExpireThenCompleteBackend {
-        clock: Arc::clone(&elapsed),
-    };
-
-    // The response ARRIVES, but only after the ceiling passed. Expiry is
-    // checked before the completion poll, so the call loses the race — it
-    // must never be recorded as a finished step.
-    let error = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
-        .expect_err("expired call must never finish");
-    assert!(matches!(error, DurableStepError::DeadlineHardCut));
-
-    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let backend = ExpireThenCompleteBackend { clock: elapsed };
+    let outcome = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect("an admitted call must finish");
+    assert!(matches!(
+        outcome,
+        StepOutcome::Finished {
+            memoized: false,
+            ..
+        }
+    ));
+    assert_eq!(guard.read().reserved_units, 0);
+    assert_eq!(guard.read().used_units, 150);
+    let hash = request_fixture().canonical_hash().expect("hash");
+    assert!(step_index_lookup(&vault, fixture.attempt_id, &hash)?.is_some());
     assert!(
-        step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.is_none(),
-        "no terminal step claim for an expired call"
+        DreamerRunnerStore::new(&vault)
+            .parked_attempt(fixture.attempt_id)?
+            .is_none()
     );
-    let read = guard.read();
-    assert_eq!(read.reserved_units, 0, "lease aborted");
-    assert_eq!(read.used_units, 0, "no spend recorded");
-    let runner = DreamerRunnerStore::new(&vault);
-    let parked = runner
-        .parked_attempt(fixture.attempt_id)?
-        .expect("attempt parked");
-    assert_eq!(
-        parked.reason,
-        crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON
-    );
-    // The deadline hard-cut park must also store parked_at in Unix SECONDS:
-    // now_ms=10_000 lands as 10, not 10_000 (#480-1).
-    assert_eq!(
-        parked.parked_at, 10,
-        "deadline hard-cut park must store parked_at in seconds, not milliseconds"
-    );
+    let mut next = request_fixture();
+    next.model = ModelId::new("other/model@r9").expect("model");
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, next)),
+        Err(DurableStepError::FinalizeRefused)
+    ));
+    assert_eq!(guard.read().used_units, 150);
     Ok(())
 }
 

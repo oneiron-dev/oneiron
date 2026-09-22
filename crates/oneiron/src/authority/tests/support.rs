@@ -168,6 +168,7 @@ pub(super) fn genesis_entry(seed: u8, pending_widen_delay_secs: u64, ts: u64) ->
             AuthorityTier::Software,
         ),
         genesis_nonce: [seed.wrapping_add(10); 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Software,
         pending_widen_delay_secs,
     };
@@ -307,7 +308,7 @@ pub(super) fn set_ceiling_entry(
             Some(vault_id),
             seq,
             vec![authority_entry_hash(parent).unwrap()],
-            AuthorityOp::SetCeiling {
+            AuthorityOp::RetiredCeiling {
                 authority_key: signer_key.clone(),
                 actor_class: "agent".to_string(),
                 ceiling: 1,
@@ -349,17 +350,17 @@ pub(super) fn rotate_entry(
     )
 }
 
-pub(super) fn recovery_reboot_entry(
+pub(super) fn re_root_entry(
     vault_id: AuthorityVaultId,
     parent: &AuthorityLogEntry,
     signer: &SigningKey,
     new_seed: u8,
     seq: u64,
 ) -> AuthorityLogEntry {
-    recovery_reboot_entry_at(vault_id, parent, signer, new_seed, seq, 890)
+    re_root_entry_at(vault_id, parent, signer, new_seed, seq, 890)
 }
 
-pub(super) fn recovery_reboot_entry_at(
+pub(super) fn re_root_entry_at(
     vault_id: AuthorityVaultId,
     parent: &AuthorityLogEntry,
     signer: &SigningKey,
@@ -374,14 +375,12 @@ pub(super) fn recovery_reboot_entry_at(
             Some(vault_id),
             seq,
             vec![authority_entry_hash(parent).unwrap()],
-            AuthorityOp::RecoveryReboot {
-                new_genesis_nonce: [new_seed; 32],
+            AuthorityOp::ReRoot {
                 new_device: device(
                     authority_key_from_ed(&new),
                     ROLE_OWNER | ROLE_ADMIN,
                     AuthorityTier::Software,
                 ),
-                tier_floor: AuthorityTier::Software,
             },
             signer_key,
             ts,
@@ -475,6 +474,7 @@ pub(super) fn single_owner_state(
     let state = FoldState {
         door_slips: BTreeMap::new(),
         spent_door_slips: BTreeSet::new(),
+        slips: SlipAuthorityState::default(),
         vault_id,
         roster: BTreeMap::from([(
             owner_key.clone(),
@@ -486,6 +486,10 @@ pub(super) fn single_owner_state(
             },
         )]),
         tier_floor: AuthorityTier::Software,
+        migrated_roots: BTreeSet::new(),
+        genesis_recovery_dismissed: false,
+        recovery_redundancy_established: false,
+        tier_floor_events: BTreeMap::new(),
         pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
         pending_widens: BTreeMap::new(),
         vetoed_widens: BTreeSet::new(),
@@ -493,6 +497,7 @@ pub(super) fn single_owner_state(
         fork_resolution_revocations: BTreeSet::new(),
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
+        federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
         consumed_critical_write_confirm_nonces: BTreeSet::new(),
         critical_write_confirm_nonce_provenance: BTreeMap::new(),
@@ -500,6 +505,7 @@ pub(super) fn single_owner_state(
         federation_grant_bindings: BTreeMap::new(),
         actor_bindings: BTreeMap::new(),
         actor_binding_revocations: BTreeMap::new(),
+        actor_revocation_hashes: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
     };
     (owner, owner_key, parent, state)
@@ -826,6 +832,7 @@ pub(super) fn fold_state_with_pact(
     let mut state = FoldState {
         door_slips: BTreeMap::new(),
         spent_door_slips: BTreeSet::new(),
+        slips: SlipAuthorityState::default(),
         vault_id: fixture.vault_id,
         roster: BTreeMap::from([(
             owner_key.clone(),
@@ -837,6 +844,10 @@ pub(super) fn fold_state_with_pact(
             },
         )]),
         tier_floor: AuthorityTier::Software,
+        migrated_roots: BTreeSet::new(),
+        genesis_recovery_dismissed: false,
+        recovery_redundancy_established: false,
+        tier_floor_events: BTreeMap::new(),
         pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
         pending_widens: BTreeMap::new(),
         vetoed_widens: BTreeSet::new(),
@@ -844,6 +855,7 @@ pub(super) fn fold_state_with_pact(
         fork_resolution_revocations: BTreeSet::new(),
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
+        federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
         consumed_critical_write_confirm_nonces: BTreeSet::new(),
         critical_write_confirm_nonce_provenance: BTreeMap::new(),
@@ -851,6 +863,7 @@ pub(super) fn fold_state_with_pact(
         federation_grant_bindings: BTreeMap::new(),
         actor_bindings: BTreeMap::new(),
         actor_binding_revocations: BTreeMap::new(),
+        actor_revocation_hashes: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key, 0)]),
     };
     if let Some(status) = status {

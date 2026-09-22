@@ -63,14 +63,14 @@ pub(super) fn authorize_in_txn(
             return Err(selector_err(SelectorError::GrantInactive));
         }
     }
-    let empty = if let Some(ceiling) = effective_scope_for_grant(&fold, &selector.grant_id) {
+    // Unified bottom: unpacted grants also read as requesting nothing (staged
+    // selector codec has no Unfiltered variant).
+    if let Some(ceiling) = effective_scope_for_grant(&fold, &selector.grant_id) {
         if !selector_direction_scope(selector).is_narrowing_of(&ceiling) {
             return Err(selector_err(SelectorError::GrantScopeMismatch));
         }
-        EmptyAxis::Bottom
-    } else {
-        EmptyAxis::Unfiltered
-    };
+    }
+    let empty = EmptyAxis::Bottom;
     Ok(DocumentGrant { grant, fold, empty })
 }
 

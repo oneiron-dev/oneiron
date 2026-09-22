@@ -5,9 +5,9 @@ use oneiron::companion::{
     decode_companion_record_body,
 };
 use oneiron::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
-    ENTITY_TYPE_TURN, entity_type_registry_entry,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, entity_type_registry_entry,
 };
 use oneiron::{EdgeInfo, EntityId, FieldProfile, SKILL_RECORD_BODY_KEYS, Vault};
 use serde::de::{self, Visitor};
@@ -246,6 +246,26 @@ fn decode_body_fields(entity_type: u8, body: &[u8]) -> Map<String, Value> {
             )])
         });
     }
+    if entity_type == ENTITY_TYPE_FACET {
+        let mut cursor = std::io::Cursor::new(body);
+        if rmpv::decode::read_value(&mut cursor).is_err() || cursor.position() != body.len() as u64
+        {
+            return Map::from_iter([(
+                "redacted".to_owned(),
+                Value::String("invalid_companion_register_body".to_owned()),
+            )]);
+        }
+    }
+    // Companion records now live on FACET rows: a body that decodes as a
+    // companion record projects through the redacting companion shape, never
+    // the generic MessagePack shape that would leak private values. A FACET
+    // body that is neither a valid companion record nor valid MessagePack is
+    // redacted rather than exposed as raw bytes.
+    if entity_type == ENTITY_TYPE_FACET
+        && let Some(fields) = decode_companion_register_fields(body)
+    {
+        return fields;
+    }
 
     match oneiron::batch::export::redacted_memory_body(body) {
         Value::Object(fields) => fields,
@@ -271,7 +291,7 @@ fn decode_companion_register_fields(body: &[u8]) -> Option<Map<String, Value>> {
     );
     fields.insert(
         "export".to_owned(),
-        Value::String(record.export_classification.as_str().to_owned()),
+        Value::String(record.sensitivity.as_str().to_owned()),
     );
     fields.insert(
         "provenance".to_owned(),

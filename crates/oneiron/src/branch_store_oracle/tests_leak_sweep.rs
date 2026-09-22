@@ -326,6 +326,7 @@ fn plant_raw_claim_row(vault: &Vault, id: &EntityId, body: &[u8]) -> Result<()> 
 #[test]
 fn scoped_read_claim_census_surfaces_an_undecodable_body() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    seam::authorize_scoped_reader(&vault)?;
     let subject = seed_base_turn(&vault, 10);
 
     // Positive control FIRST: the census really does read bodies, so the

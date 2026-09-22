@@ -247,9 +247,10 @@ pub struct ServeArgs {
     #[arg(long)]
     pub runtime_summarizer_model: Option<String>,
 
-    /// Deployment privacy posture: `hosted` (an operator hosts and CAN read
-    /// this vault) or `self_host_local` (owner-operated, owner-held key).
-    /// Defaults to `self_host_local`; hosting is opt-in.
+    /// Deployment privacy posture: `managed` (an operator hosts and CAN read
+    /// this vault), `relay` (blind relay, no host keys), or `self-host`
+    /// (owner-operated, owner-held key). Defaults to `self-host`; managed
+    /// hosting is opt-in.
     #[arg(long, value_parser = parse_privacy_posture)]
     pub privacy_posture: Option<HostingPrivacyPosture>,
     /// Failure-signal participation for self-hosted deployments (default off).
@@ -260,8 +261,8 @@ pub struct ServeArgs {
     pub failure_signal_training: Option<bool>,
 
     /// Opaque host-managed KMS/HSM key reference (ARN / URI / key id), never
-    /// key material. Required by `--privacy-posture hosted` and rejected by
-    /// `self_host_local`.
+    /// key material. Required by `--privacy-posture managed` and rejected by
+    /// `relay` and `self-host`.
     #[arg(long)]
     pub hosted_kms_key_ref: Option<String>,
 }
@@ -359,9 +360,9 @@ fn parse_runtime_provider_kind(value: &str) -> Result<RuntimeProviderKind, Strin
     value.parse()
 }
 
-/// Clap value parser for `--privacy-posture`. Accepts only the two exact wire
-/// values, so an unrecognized posture fails closed instead of resolving to a
-/// default.
+/// Clap value parser for `--privacy-posture`. Accepts only the three exact wire
+/// values (`managed`, `relay`, `self-host`), so an unrecognized posture fails
+/// closed instead of resolving to a default.
 fn parse_privacy_posture(value: &str) -> Result<HostingPrivacyPosture, String> {
     value.parse()
 }

@@ -21,7 +21,6 @@ pub(super) use self::equivocation_core::{
     resolve_equivocation_group,
 };
 pub(super) use self::quarantine_gate::{
-    key_is_quarantined_for_entry, resolve_global_forks_for_recovery_reboot,
-    resolve_global_forks_for_revoke,
+    key_is_quarantined_for_entry, resolve_global_forks_for_re_root, resolve_global_forks_for_revoke,
 };
 pub(super) use self::restore_rank::{entry_ancestor_index, restore_prefix_divergence};

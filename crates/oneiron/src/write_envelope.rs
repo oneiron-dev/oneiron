@@ -17,6 +17,7 @@ use crate::entity_id::EntityId;
 pub struct WriteActor {
     entity_ref: EntityId,
     actor_class: EdgeActorClass,
+    authority_frontier: Option<crate::authority::AuthorityEntryHash>,
 }
 
 impl WriteActor {
@@ -26,7 +27,24 @@ impl WriteActor {
         Self {
             entity_ref,
             actor_class,
+            authority_frontier: None,
         }
+    }
+
+    /// Binds this write to an authority state observed by its author.
+    #[must_use]
+    pub const fn with_authority_frontier(
+        mut self,
+        frontier: crate::authority::AuthorityEntryHash,
+    ) -> Self {
+        self.authority_frontier = Some(frontier);
+        self
+    }
+
+    /// The observed causal state, never inferred from the write timestamp.
+    #[must_use]
+    pub const fn authority_frontier(self) -> Option<crate::authority::AuthorityEntryHash> {
+        self.authority_frontier
     }
 
     /// Actor entity reference stamped into candidate writes.
@@ -281,7 +299,7 @@ pub struct ClaimCandidate {
     valid_from: Option<u64>,
     valid_to: Option<u64>,
     world: Option<EntityId>,
-    rel: Option<EntityId>,
+    relationship: Option<EntityId>,
     scope: Option<Value>,
     stale: bool,
 }
@@ -306,7 +324,7 @@ impl ClaimCandidate {
             valid_from: None,
             valid_to: None,
             world: None,
-            rel: None,
+            relationship: None,
             scope: None,
             stale: false,
         }
@@ -342,14 +360,15 @@ impl ClaimCandidate {
     }
 
     /// Adds a relationship scope. Without one, the writer stamps `rel:all`.
+    /// Limits the claim to one RELATIONSHIP. Validated at the write door.
     #[must_use]
     pub fn with_relationship(mut self, relationship: EntityId) -> Self {
-        self.rel = Some(relationship);
+        self.relationship = Some(relationship);
         self
     }
 
     pub(crate) const fn relationship(&self) -> Option<EntityId> {
-        self.rel
+        self.relationship
     }
 
     /// Adds an optional opaque scope value.
@@ -433,7 +452,29 @@ impl ClaimCandidate {
         body.valid_to = self.valid_to;
         body.source = Some(envelope.source());
         body.world = self.world;
-        body.rel = self.rel;
+        body.rel = self.relationship;
+        body.scope_facet = crate::claim::substrate_facet_id(envelope.actor().entity_ref());
+        if let Some(Value::Map(entries)) = self.scope.as_ref() {
+            for (key, value) in entries {
+                let id = match value {
+                    Value::Binary(bytes) => bytes
+                        .as_slice()
+                        .try_into()
+                        .ok()
+                        .and_then(|bytes| EntityId::from_bytes(bytes).ok()),
+                    _ => value
+                        .as_str()
+                        .and_then(|value| EntityId::from_hex(value).ok()),
+                };
+                if let Some(id) = id {
+                    match key.as_str() {
+                        Some("facet" | "facet_ref" | "facetRef") => body.scope_facet = id,
+                        Some("scopeProjectId" | "corpus_id") => body.scope_project = id,
+                        _ => {}
+                    }
+                }
+            }
+        }
         body.scope = self.scope;
         body.session_tag = envelope.session_tag.clone();
         body.stale = self.stale;
@@ -473,6 +514,13 @@ pub(crate) fn write_envelope_evidence(
     // Engine-owned and strictly additive: a writer cannot suppress it (the
     // lineage is not caller-supplied) and cannot mint it (a trivial lineage
     // stamps nothing at all, which is every pre-ONE-1314 write).
+    if let Some(frontier) = actor.authority_frontier() {
+        entries.push((
+            Value::from("authority_frontier"),
+            Value::Binary(frontier.to_vec()),
+        ));
+    }
+
     if !envelope.lineage_is_trivial() {
         entries.push((
             Value::from(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY),

@@ -132,20 +132,13 @@ impl SyncSelector {
 /// shape, authorizes as "requests nothing" beneath any ceiling however narrow,
 /// and is then handed the whole window.
 ///
-/// The split is by BINDING, not by axis:
-///
-/// * a PACT-BOUND grant has a ceiling to escape, so silence exports as the ⊥
-///   the ceiling check just credited the selector with;
-/// * an UNPACTED grant has no ceiling at all, so silence keeps its legacy wire
-///   meaning and shipped guest grants do not brick.
+/// Every grant uses the same bottom reading, including unpacted grants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum EmptyAxis {
     /// The lattice ⊥: the axis filter is ACTIVE with nothing named, so it
     /// admits nothing. A selector that authorized as requesting nothing
     /// exports nothing.
     Bottom,
-    /// The legacy wire reading: no filter on this axis.
-    Unfiltered,
 }
 
 /// Decoded selector request payload.

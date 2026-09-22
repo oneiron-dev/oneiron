@@ -37,40 +37,33 @@ pub fn validate_ppr_vad_alpha(alpha: f32) -> crate::error::Result<()> {
 /// Default hard byte budget for one live off-record session overlay.
 pub const DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 
-/// Deployment posture of the process that holds the vault's bytes.
-///
-/// Exactly two postures exist, and both are described honestly:
-///
-/// - [`Self::Hosted`] — a hosting operator runs the process and CAN read the
-///   vault. Encryption at rest and in transit, KMS/HSM custody, and operator
-///   access controls are deployment responsibilities of that tier; they are
-///   not properties this enum asserts.
-/// - [`Self::SelfHostLocal`] — the owner runs the process on their own machine
-///   with an owner-held local data-key source, so no host is in the loop.
-///
-/// There is deliberately NO third tier that claims a host cannot read the
-/// vault it stores. This type carries a posture and a custody pairing; it is
-/// not an encryption protocol.
+/// Deployment posture: managed host root, blind relay, or owner self-host.
+/// This describes key custody, not an encryption protocol.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostingPrivacyPosture {
     /// Operator-hosted and host-readable. Must be paired with
     /// [`VaultDataKeyCustody::HostManagedKms`] and opted into explicitly.
+    #[serde(rename = "managed")]
     Hosted,
+    /// Blind relay: the host holds no owner key and mints no authority.
+    Relay,
     /// Owner-operated local process holding its own key material. The default
     /// for the open-source engine and every embedded caller.
     #[default]
+    #[serde(rename = "self-host")]
     SelfHostLocal,
 }
 
 impl HostingPrivacyPosture {
     /// Returns the exact wire value used by the CLI, environment, TOML, and
-    /// serde representations: `hosted` or `self_host_local`.
+    /// serde representations: `managed`, `relay`, or `self-host`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Hosted => "hosted",
-            Self::SelfHostLocal => "self_host_local",
+            Self::Hosted => "managed",
+            Self::Relay => "relay",
+            Self::SelfHostLocal => "self-host",
         }
     }
 }
@@ -84,16 +77,17 @@ impl fmt::Display for HostingPrivacyPosture {
 impl std::str::FromStr for HostingPrivacyPosture {
     type Err = String;
 
-    /// Accepts ONLY the two exact wire values. Every other spelling — including
+    /// Accepts ONLY the three exact wire values. Every other spelling — including
     /// case variants, aliases, and any legacy "unreadable hosted" naming — is a
     /// hard error, so an unrecognized posture can never silently degrade into a
     /// weaker or stronger one.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "hosted" => Ok(Self::Hosted),
-            "self_host_local" => Ok(Self::SelfHostLocal),
+            "managed" => Ok(Self::Hosted),
+            "relay" => Ok(Self::Relay),
+            "self-host" => Ok(Self::SelfHostLocal),
             _ => Err(format!(
-                "expected one of hosted, self_host_local; got {value:?}"
+                "expected one of managed, relay, self-host; got {value:?}"
             )),
         }
     }
@@ -140,7 +134,8 @@ const HOSTED_REQUIRES_KEY_REF: &str =
 const HOSTED_REQUIRES_HOST_CUSTODY: &str =
     "hosted privacy posture requires host-managed KMS key custody, not an owner-held local key";
 /// Refusal text for a self-hosted deployment carrying a host-managed key.
-const SELF_HOST_REJECTS_HOST_CUSTODY: &str = "self_host_local privacy posture rejects host-managed KMS key custody; use an owner-held local key";
+const SELF_HOST_REJECTS_HOST_CUSTODY: &str =
+    "self-host and relay postures reject host-managed KMS key custody; use an owner-held key";
 
 /// The deployment posture together with the key custody it is paired with.
 ///
@@ -153,6 +148,8 @@ const SELF_HOST_REJECTS_HOST_CUSTODY: &str = "self_host_local privacy posture re
 /// | `Hosted` | `OwnerHeldLocal` | rejected |
 /// | `SelfHostLocal` | `OwnerHeldLocal` | valid, owner-held key |
 /// | `SelfHostLocal` | `HostManagedKms` | rejected |
+/// | `Relay` | `OwnerHeldLocal` | valid, blind relay |
+/// | `Relay` | `HostManagedKms` | rejected |
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultPrivacyConfig {
     /// Deployment posture. Defaults to [`HostingPrivacyPosture::SelfHostLocal`].
@@ -174,7 +171,7 @@ impl Default for VaultPrivacyConfig {
 }
 
 impl VaultPrivacyConfig {
-    /// Rejects every posture/custody pairing outside the two supported
+    /// Rejects every posture/custody pairing outside the three supported
     /// deployments, with no fallback between them.
     ///
     /// Hosted requires a host-managed reference that is non-empty after
@@ -191,15 +188,19 @@ impl VaultPrivacyConfig {
                 }
                 Ok(())
             }
-            (HostingPrivacyPosture::SelfHostLocal, VaultDataKeyCustody::OwnerHeldLocal) => Ok(()),
+            (
+                HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay,
+                VaultDataKeyCustody::OwnerHeldLocal,
+            ) => Ok(()),
             (HostingPrivacyPosture::Hosted, VaultDataKeyCustody::OwnerHeldLocal) => Err(
                 Error::InvalidConfig(HOSTED_REQUIRES_HOST_CUSTODY.to_owned()),
             ),
-            (HostingPrivacyPosture::SelfHostLocal, VaultDataKeyCustody::HostManagedKms { .. }) => {
-                Err(Error::InvalidConfig(
-                    SELF_HOST_REJECTS_HOST_CUSTODY.to_owned(),
-                ))
-            }
+            (
+                HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay,
+                VaultDataKeyCustody::HostManagedKms { .. },
+            ) => Err(Error::InvalidConfig(
+                SELF_HOST_REJECTS_HOST_CUSTODY.to_owned(),
+            )),
         }
     }
 
@@ -219,6 +220,7 @@ impl VaultPrivacyConfig {
     pub const fn honest_label(&self) -> &'static str {
         match self.posture {
             HostingPrivacyPosture::Hosted => "host-readable",
+            HostingPrivacyPosture::Relay => "blind-relay-owner-held-key",
             HostingPrivacyPosture::SelfHostLocal => "owner-held-key",
         }
     }

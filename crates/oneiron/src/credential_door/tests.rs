@@ -123,6 +123,15 @@ fn door_fixture() -> (tempfile::TempDir, Arc<Vault>, CredentialDoorService) {
     (tmp, vault, door)
 }
 
+/// Keep host-signed capability fixtures separate from the local-device door ledger.
+fn host_door_fixture() -> (tempfile::TempDir, Arc<Vault>, CredentialDoorService) {
+    let (tmp, vault, door) = door_fixture();
+    let issuer =
+        Arc::new(crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap());
+    vault.ensure_host_root_slip(&issuer).unwrap();
+    (tmp, vault, door.with_host_issuer(issuer))
+}
+
 fn repo() -> RepoRef {
     RepoRef::GitHubAtCommit {
         owner: "oneiron".to_owned(),
@@ -210,6 +219,7 @@ fn ensure_door_authority(vault: &Vault) {
                 roles: ROLE_OWNER,
             },
             genesis_nonce: [53; 32],
+            recovery: GenesisRecoveryStep::acknowledge(&[54; 32], true).unwrap(),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
@@ -370,6 +380,11 @@ fn effector_row(names: Vec<Value>) -> (Value, Value) {
 fn vault_meta_rows(vault: &Vault) -> u64 {
     let rtxn = vault.store.env.read_txn().expect("read txn");
     vault.store.vault_meta.len(&rtxn).expect("vault_meta len")
+}
+
+fn entity_rows(vault: &Vault) -> u64 {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    vault.store.entities.len(&rtxn).expect("entities len")
 }
 
 fn prefix_rows(vault: &Vault, prefix: &str) -> usize {
@@ -1963,6 +1978,22 @@ fn one_shot_mint_and_redemption_fail_closed_without_authority_log() {
     ));
 }
 
+#[test]
+fn the_one_shot_mint_arm_stops_closed() {
+    let (_tmp, vault, _door) = host_door_fixture();
+    let door = CredentialDoorService::new(vault.clone());
+    let meta_before = vault_meta_rows(&vault);
+    let entities_before = entity_rows(&vault);
+
+    let err = door
+        .mint_host_one_shot(DOOR_SECRET, EFFECTOR, 120)
+        .expect_err("read-only door has no host signer");
+    assert!(matches!(err, CredentialDoorError::MintUnavailable));
+    // The stop is a stop: nothing was persisted in its place.
+    assert_eq!(vault_meta_rows(&vault), meta_before);
+    assert_eq!(entity_rows(&vault), entities_before);
+}
+
 // ---------------------------------------------------------------------------
 // Nothing printable carries a value
 // ---------------------------------------------------------------------------
@@ -2004,3 +2035,87 @@ fn door_refusals_and_credentials_print_no_secret_material() {
 }
 
 mod authority;
+
+#[test]
+fn signing_host_mints_and_redeems_one_shot_via_authority_log() {
+    let (_tmp, vault, door) = host_door_fixture();
+    let before = vault.authority_fold().unwrap().valid_entries.len();
+    let credential = door.mint_host_one_shot(DOOR_SECRET, EFFECTOR, 120).unwrap();
+    assert_eq!(
+        vault.authority_fold().unwrap().valid_entries.len(),
+        before + 1
+    );
+    let ticket = door.redeem_one_shot(credential).unwrap();
+    assert_eq!(ticket.value.as_slice(), SECRET_VALUE);
+    assert_eq!(
+        vault.authority_fold().unwrap().valid_entries.len(),
+        before + 2
+    );
+}
+
+/// Builds the verified view twice so replay keeps its provenance, not just its hex id.
+fn capability_pair(
+    door: &CredentialDoorService,
+    verbs: &[&str],
+    single_use: bool,
+) -> (DoorCredential, DoorCredential, [u8; 32]) {
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap();
+    let mut claims = door.vault().ensure_host_root_slip(&issuer).unwrap().claims;
+    let id = [91; 32];
+    let now = witnessed(door).secs();
+    claims.slip_id = id;
+    claims.parent_id = None;
+    claims.issued_at = now;
+    claims.expires_at = now + 120;
+    claims.ttl_secs = 120;
+    claims.single_use = single_use;
+    claims.records = [repo_record(&repo()), DOOR_SECRET.to_owned()].into();
+    claims.channels = [EFFECTOR.to_owned()].into();
+    claims.scope.verbs = crate::federation::ScopeAxis::Some(
+        verbs.iter().map(|verb| (*verb).to_owned()).collect(),
+    );
+    let slip = door.vault().mint_capability_slip(&issuer, claims).unwrap();
+    let proof = issuer.binding_proof(&slip, b"door-adapter-test").unwrap();
+    let verified = door
+        .vault()
+        .verify_capability_slip(&issuer, &slip, b"door-adapter-test", &proof)
+        .unwrap();
+    (verified.door_credential(), verified.door_credential(), id)
+}
+
+#[test]
+fn capability_receive_pack_burns_claims_id_once_and_never_a_door_mint() {
+    let (_tmp, vault, door) = host_door_fixture();
+    let (credential, replay, id) = capability_pair(&door, &[DOOR_VERB_RECEIVE_PACK], true);
+    assert!(matches!(credential.mint_hash(), Err(CredentialDoorError::AuthorityRejected)));
+    assert!(matches!(
+        door.mint_one_shot(&credential, DOOR_SECRET, EFFECTOR, 60),
+        Err(CredentialDoorError::AuthorityRejected)
+    ));
+    door.authenticate_receive_pack(Some(&credential), &repo(), loopback()).unwrap();
+    let fold = vault.authority_fold().unwrap();
+    assert!(fold.slips.consumed.contains(&id));
+    assert!(fold.door_slips.is_empty());
+    assert!(fold.spent_door_slips.is_empty());
+    assert!(door.authenticate_receive_pack(Some(&replay), &repo(), loopback()).is_err());
+}
+
+#[test]
+fn capability_verbs_stay_exact_and_repeatable_views_recheck_revocation() {
+    let (_tmp, vault, door) = host_door_fixture();
+    // This subset has no registered class. It must neither lose inject nor gain lease.
+    let (credential, _, id) = capability_pair(
+        &door, &[DOOR_VERB_RECEIVE_PACK, DOOR_VERB_INJECT], false,
+    );
+    let now = witnessed(&door);
+    credential.evaluate(DOOR_VERB_INJECT, DOOR_SECRET, EFFECTOR, now).unwrap();
+    assert!(matches!(
+        credential.evaluate(DOOR_VERB_LEASE, DOOR_SECRET, EFFECTOR, now),
+        Err(CredentialDoorError::UnauthorizedPrincipal { reason: DoorDenyReason::VerbNotInSlip })
+    ));
+    door.authenticate_receive_pack(Some(&credential), &repo(), loopback()).unwrap();
+    assert!(!vault.authority_fold().unwrap().slips.consumed.contains(&id));
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap();
+    vault.revoke_capability_slip(&issuer, id).unwrap();
+    assert!(door.authenticate_receive_pack(Some(&credential), &repo(), loopback()).is_err());
+}

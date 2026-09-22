@@ -446,6 +446,11 @@ pub(crate) fn mcp_claim_candidate_from_args(
         candidate =
             candidate.with_world(parse_entity_id_param(world_ref, "world").map_err(mcp_api_error)?);
     }
+    if let Some(relationship) = args.relationship.as_deref() {
+        candidate = candidate.with_relationship(
+            parse_entity_id_param(relationship, "relationship").map_err(mcp_api_error)?,
+        );
+    }
     if let Some(scope) = args.scope.as_ref() {
         candidate = candidate.with_scope(
             oneiron::companion_value_from_json(scope)

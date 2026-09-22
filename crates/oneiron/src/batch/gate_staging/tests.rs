@@ -29,7 +29,7 @@ fn fixture() -> Result<(tempfile::TempDir, crate::Vault, ClaimBody, WriteEnvelop
         Ok(())
     })?;
     let manifest = serde_json::json!({
-        "schema_version": "1.1", "pack_id": "receipt-rollback", "pack_version": "1",
+        "schema_version": crate::gate::POLICY_SCHEMA_VERSION, "pack_id": "preflight-rollback", "pack_version": "1",
         "min_engine_version": env!("CARGO_PKG_VERSION"),
         "defaults": { "criticality": "normal", "sensitivity": "normal" },
         "rules": [],

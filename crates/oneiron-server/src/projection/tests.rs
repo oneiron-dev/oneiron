@@ -1,11 +1,10 @@
 use std::collections::BTreeSet;
 
-use oneiron::companion::ENTITY_TYPE_COMPANION_REGISTER;
+use oneiron::registry::ENTITY_TYPE_FACET;
 use oneiron::registry::ENTITY_TYPE_REGISTRY;
 use oneiron::{
-    ClaimApprovalStatus, ClaimSource, CompanionExportClassification, CompanionProvenance,
-    CompanionRecord, CompanionScope, EdgeActorClass, companion::encode_companion_record_body,
-    companion_value_from_json,
+    ClaimApprovalStatus, ClaimSource, CompanionProvenance, CompanionRecord, CompanionScope,
+    EdgeActorClass, companion::encode_companion_record_body, companion_value_from_json,
 };
 
 use super::*;
@@ -196,18 +195,12 @@ fn companion_register_api_projection_redacts_private_values() {
             }))
             .unwrap(),
         ),
-        CompanionExportClassification::Portable,
+        oneiron::federation::Sensitivity::Public,
     );
     let body = encode_companion_record_body(&record.created_at(1_777_000_000).unwrap()).unwrap();
 
     for view in [View::Standard, View::Full] {
-        let value = project_entity_parts(
-            &id,
-            ENTITY_TYPE_COMPANION_REGISTER,
-            1_777_000_000,
-            &body,
-            view,
-        );
+        let value = project_entity_parts(&id, ENTITY_TYPE_FACET, 1_777_000_000, &body, view);
         let rendered = serde_json::to_string(&value).unwrap();
         assert!(!rendered.contains("private companion projection note"));
         assert!(!rendered.contains("private companion provenance note"));
@@ -236,7 +229,7 @@ fn companion_register_api_projection_redacts_malformed_body_bytes() {
     let id = EntityId::from_bytes([0x53; 16]).unwrap();
     let value = project_entity_parts(
         &id,
-        ENTITY_TYPE_COMPANION_REGISTER,
+        ENTITY_TYPE_FACET,
         1_777_000_000,
         b"private malformed companion bytes",
         View::Full,

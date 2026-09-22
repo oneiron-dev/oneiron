@@ -127,6 +127,7 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
         confidence: 1.0,
         source: "user_stated".into(),
         world_ref: None,
+        relationship_ref: None,
         scope: None,
         valid_from: None,
         valid_to: None,

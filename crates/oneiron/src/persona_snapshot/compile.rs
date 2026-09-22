@@ -16,7 +16,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedRead,
     claim_sensitivity_band, decode_claim_body,
 };
-use crate::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};
+use crate::companion::{CompanionRecordKind, CompanionScope};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
@@ -324,14 +324,13 @@ impl crate::Vault {
             ),
         );
 
-        // Key relationships from the companion register, honoring the
-        // portable-export law (Portable classification, never SharedVault
-        // scope — matching `export.rs::companion_record_exportable`).
+        // A portable card has no shared-vault destination and discloses only
+        // Public relationships, independently of the audience's claim scope.
         let register = self.companion_register()?;
         let mut related: BTreeMap<EntityId, (Option<String>, String)> = BTreeMap::new();
         for (key, record) in register.iter() {
             if record.kind() != CompanionRecordKind::Relationship
-                || record.export_classification != CompanionExportClassification::Portable
+                || record.sensitivity > crate::federation::Sensitivity::Public
                 || matches!(record.scope, CompanionScope::SharedVault { .. })
             {
                 continue;

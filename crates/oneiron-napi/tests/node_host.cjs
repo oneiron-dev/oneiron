@@ -29,6 +29,33 @@ try {
   // Exercise N-API exception conversion on the ordinary production graph too.
   assert.throws(() => NativeClient.open(join(dir, "bad"), 0), /BAD_REQUEST/)
   console.log("NODE-HOST-OK: production addon load, keyed writes/replay/delete, typed refusal")
+
+  // ── C07: legacy NapiVault entity roundtrip + SDK receipts ──
+  const { NapiVault } = require(addonPath)
+  const vault = new NapiVault(join(dir, "vault-entity"), 4)
+  const id = Buffer.alloc(16, 0x41)
+  const payload = Buffer.from("native host payload")
+  assert.equal(vault.getEntity(id), null)
+  assert.equal(vault.entityExists(id), false)
+  // ENTITY_TYPE_PERSON is 4 in the current registry.
+  vault.putEntity(id, 4, 1, 1, 1, payload)
+  const stored = vault.getEntity(id)
+  assert.ok(Buffer.isBuffer(stored))
+  assert.ok(stored.includes(payload))
+  assert.equal(vault.entityExists(id), true)
+  assert.deepEqual(vault.getEntity(id), stored)
+  assert.equal(vault.deleteEntity(id), true)
+  assert.equal(vault.getEntity(id), null)
+  assert.equal(vault.deleteEntity(id), false)
+
+  const client2 = NativeClient.open(join(dir, "client"), 4)
+  assert.deepEqual(client2.receipts(10), [])
+  // Exercise real Node-API exception conversion, not a hostless Rust helper.
+  assert.throws(() => NativeClient.open(join(dir, "bad"), 0), (error) => {
+    assert.equal(JSON.parse(error.message).code, "BAD_REQUEST")
+    return true
+  })
+  console.log("NODE-HOST-OK: production addon load, entity roundtrip/delete, SDK receipts, typed refusal")
 } finally {
   rmSync(dir, { recursive: true, force: true })
 }

@@ -646,12 +646,12 @@ fn stale_stamped_world_drops_from_all_and_base_but_survives_explicit_scope() -> 
     );
     assert_eq!(
         run(Some(WorldScope::World(stale_world)))?,
-        HashSet::from([claim_base, claim_stale]),
+        HashSet::from([claim_stale]),
         "World(stamped): naming a dead world is an explicit request to read it"
     );
     assert_eq!(
         run(Some(WorldScope::World(live_world)))?,
-        HashSet::from([claim_base, claim_live]),
+        HashSet::from([claim_live]),
         "an unstamped world is untouched by the stale filter"
     );
     assert_eq!(

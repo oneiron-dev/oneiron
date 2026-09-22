@@ -3450,6 +3450,13 @@ fn allow_email_send_manifest() -> Vec<u8> {
                 (Value::from("effector"), Value::from("send")),
                 (
                     Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::effect_preset(),
+                    )
+                    .expect("scope fixture"),
+                ),
+                (
+                    Value::from("selectors"),
                     Value::Map(vec![(Value::from("channel"), Value::from("email"))]),
                 ),
             ])]),
@@ -3504,6 +3511,7 @@ fn gate_holds_for_counterparty_opt_out(vault: &Vault, counterparty: &str) -> Com
 /// Seeds one email ChannelIdentity so a contact resolves to a channel class.
 fn put_email_identity(vault: &Vault, id: EntityId, address: &str) -> CommResult<()> {
     let identity = crate::channel_identity::ChannelIdentity {
+        auth_mode: crate::channel_identity::ChannelAuthMode::ApiKey,
         channel: "email".to_owned(),
         address_or_handle: address.to_owned(),
         shape: crate::channel_identity::ChannelIdentityShape::DedicatedAddress,
@@ -3562,3 +3570,32 @@ fn descriptor_rows_are_complete_and_pinned() {
 
 #[path = "thread_alias_tests.rs"]
 mod thread_alias_tests;
+
+#[test]
+fn send_and_reply_receipts_project_only_last_touch() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party = "reply@example.test";
+    let party_ref = resolve_or_create_comm_party(&vault, party)?;
+    for (reply, at) in [(false, 10), (true, 20)] {
+        if reply {
+            record_comm_inbound_reply(&vault, party, "email", at)?;
+        } else {
+            record_comm_send_receipt(&vault, party, "email", at)?;
+        }
+        // The receipt door writes no semantic claim alongside the event.
+        let before = vault.claims_for_subject(&party_ref)?;
+        assert_eq!(before.len(), usize::from(reply));
+        run_comm_projector(&vault)?;
+        assert_eq!(active_last_touch_occurred_at(&vault, party, "email")?, at);
+        for id in vault.claims_for_subject(&party_ref)? {
+            assert_eq!(
+                vault.get_claim(&id)?.unwrap().predicate,
+                PREDICATE_COMM_LAST_TOUCH
+            );
+        }
+        let rows = vault.claims_for_subject(&party_ref)?.len();
+        run_comm_projector(&vault)?;
+        assert_eq!(vault.claims_for_subject(&party_ref)?.len(), rows);
+    }
+    Ok(())
+}

@@ -94,6 +94,7 @@ fn score_fusion_ranks_expansion_and_score_improvements_before_cutoff() {
 #[test]
 fn standard_fusion_can_replace_a_saturated_direct_page() -> TestResult {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    super::authorize_readers(&vault, &[READER]);
     let (first, second, neighbor) = (entity(0x61), entity(0x62), entity(0x63));
     vault
         .batch()
@@ -211,6 +212,7 @@ fn graph_expansion_uses_configured_vad_alpha_at_each_effort() -> TestResult {
 #[test]
 fn session_scope_precedes_text_topk_and_deep_candidate_bodies() -> TestResult {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    super::authorize_readers(&vault, &[READER]);
     let (outside, inside, extra) = (entity(0x71), entity(0x72), entity(0x73));
     let (world, other_world, facet) = (entity(0x74), entity(0x75), entity(0x76));
     vault
@@ -305,6 +307,7 @@ fn session_scope_precedes_vector_topk() -> TestResult {
         ..VaultConfig::default()
     };
     let (_dir, vault) = open_test_vault_with(config);
+    super::authorize_readers(&vault, &[READER]);
     let (outside, inside) = (entity(0x81), entity(0x82));
     vault
         .batch()
@@ -378,6 +381,7 @@ fn standard_specificity_ignores_unreadable_inbound_mentions() -> TestResult {
 #[test]
 fn session_scope_cannot_admit_a_hidden_document_at_any_effort() -> TestResult {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    super::authorize_readers(&vault, &[READER]);
     let hidden = entity(0xB1);
     let body = ClaimBody::new(
         "facet.scope_test",

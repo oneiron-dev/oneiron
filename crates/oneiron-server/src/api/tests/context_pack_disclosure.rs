@@ -4,8 +4,8 @@ use super::*;
 
 #[tokio::test]
 async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
-    let (_dir, server) = test_server();
-    let (batch_status, batch_body) = route_json(
+    let (_dir, server) = auth_test_server();
+    let (batch_status, batch_body) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
@@ -33,12 +33,13 @@ async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
         .expect("written id")
         .to_owned();
 
-    let (status, body) = route_json(
+    let (status, body) = route_json_auth(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/context-pack",
-            json!({
+            owner_bearer(),
+            Some(&json!({
                 "query": "evidence needle",
                 "limit": 5,
                 "depth": { "edge_hop": 1, "max_neighbors": 5 },
@@ -60,7 +61,7 @@ async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
                         "selected_edges": 5
                     }
                 }
-            }),
+            })),
         ),
     )
     .await;

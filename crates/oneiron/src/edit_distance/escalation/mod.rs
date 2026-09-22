@@ -25,8 +25,9 @@
 //! 3. **Standing policy.** [`maybe_propose_standing_policy`] mints ONE
 //!    *proposed* [`StandingPolicy`] row when the newest N rulings on a
 //!    `(scope, trigger)` agree, citing the receipts that earned it.
-//!    [`accept_standing_policy`] is the owner's tap and the only door to
-//!    [`StandingPolicyStatus::Accepted`] — nothing here graduates silently.
+//!    [`accept_standing_policy`] is the owner's tap for learned proposals.
+//!    The crate-private explicit-ruling door also accepts an authenticated
+//!    remember gesture with an exact magnitude ceiling. Nothing graduates silently.
 //!
 //! # One delta language
 //!
@@ -56,12 +57,14 @@
 //! ruling covered — and [`StandingPolicy::covers_ask`] is the one place that
 //! comparison happens, so ES-07 consults a decision rather than re-deriving it.
 
+mod explicit;
 mod ledger;
 mod policy;
 mod receipts;
 mod storage;
 mod types;
 
+pub(crate) use self::explicit::record_explicit_ruling_in_txn;
 #[cfg(test)]
 pub(crate) use self::ledger::record_escalation_at;
 pub use self::ledger::{

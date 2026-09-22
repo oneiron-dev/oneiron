@@ -40,7 +40,39 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
 }
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(VaultConfig::device())
+    let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    grant_fixture_reads(&vault).expect("explicit consolidation read grant");
+    (dir, vault)
+}
+
+fn grant_fixture_reads(vault: &Vault) -> Result<()> {
+    let actor = vault.dreamer_authority()?;
+    let bytes = crate::gate::default_policy_manifest();
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut bytes.as_slice()).expect("default policy map")
+    else {
+        unreachable!()
+    };
+    entries.push((
+        "scoped_grants".into(),
+        Value::Array(vec![Value::Map(vec![
+            ("actor_ref".into(), actor.entity_ref().to_hex().into()),
+            ("actor_class".into(), "agent".into()),
+            ("effector".into(), "core:read".into()),
+            (
+                "scope".into(),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::read_preset(),
+                )?,
+            ),
+            ("receipt_required".into(), false.into()),
+        ])]),
+    ));
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &super::support::encode_value(&Value::Map(entries))?,
+    )
 }
 
 fn occurred(at: u64) -> TimeRange {
@@ -2617,6 +2649,35 @@ fn injected_ner_shadow_reports_mentions_without_landing_claims_or_turn_changes()
     assert_eq!(vault.get_raw(&turn)?, before);
     assert_eq!(claim_predicates_in_store(&vault)?, claims);
     Ok(())
+}
+
+#[test]
+fn nickname_relationships_form_distinct_buckets() {
+    let subject = EntityId::from_bytes([1; 16]).unwrap();
+    let candidates: Vec<_> = [2, 3]
+        .into_iter()
+        .map(|seed| PromotionCandidate {
+            claim_id: EntityId::now(),
+            candidate: ClaimCandidate::new(
+                "profile.nickname",
+                ClaimSubject::Entity(subject),
+                Value::from("Ada"),
+                1.0,
+            )
+            .with_relationship(EntityId::from_bytes([seed; 16]).unwrap()),
+            evidence_turn_refs: vec![],
+            provenance_chain: vec![],
+            supersedes: None,
+            evidence_meet: ClaimSource::Generated,
+            occurred: occurred(1),
+            learned_at: 1,
+        })
+        .collect();
+    let buckets = plan_candidate_buckets(&candidates).unwrap();
+    assert_eq!(buckets.len(), 2);
+    assert_ne!(buckets[0].key.bucket_hash(), buckets[1].key.bucket_hash());
+    assert_eq!(buckets[0].candidate_indexes.len(), 1);
+    assert_eq!(buckets[1].candidate_indexes.len(), 1);
 }
 
 #[test]

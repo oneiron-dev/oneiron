@@ -157,8 +157,10 @@ pub fn resolve_serve_config_with_sources(
     // Only the final posture may discard inherited custody. An intermediate
     // self-host layer can still be overridden by a later hosted layer, which
     // needs the highest-precedence reference even when it came from the file.
-    if resolved.privacy_posture == HostingPrivacyPosture::SelfHostLocal
-        && let (Some(posture_source), Some(key_ref_source)) = (posture_source, key_ref_source)
+    if matches!(
+        resolved.privacy_posture,
+        HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay
+    ) && let (Some(posture_source), Some(key_ref_source)) = (posture_source, key_ref_source)
         && key_ref_source < posture_source
     {
         resolved.hosted_kms_key_ref = None;
@@ -208,7 +210,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
                 );
             }
         }
-        HostingPrivacyPosture::SelfHostLocal => {
+        HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay => {
             // ANY reference, including a whitespace-only one, is refused: a
             // self-hosted owner holds their own key and stores no host
             // reference.

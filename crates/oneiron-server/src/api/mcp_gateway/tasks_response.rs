@@ -320,17 +320,18 @@ pub(crate) fn mcp_scoped_read<'a>(
     vault: &'a oneiron::Vault,
     actor: &McpResolvedActor,
 ) -> Result<oneiron::claim::ScopedRead<'a>, McpGatewayError> {
-    let key = oneiron::claim::ScopedReadActorKey::with_actor_class(
-        &actor.gate_actor_ref,
-        actor.gate_actor_class,
-    )
-    .ok_or_else(|| {
-        McpGatewayError::new(
-            -32003,
-            "mcp_actor_invalid",
-            "resolved actor cannot be used as a scoped read key",
-        )
-    })?;
+    let key = actor
+        .auth
+        .as_ref()
+        .and_then(crate::auth::CoreAuth::verified_slip)
+        .and_then(oneiron::claim::ScopedReadActorKey::from_verified_slip)
+        .ok_or_else(|| {
+            McpGatewayError::new(
+                -32001,
+                "mcp_auth_required",
+                "scoped reads require the authenticated connector proof",
+            )
+        })?;
     Ok(vault.scoped_read(key))
 }
 

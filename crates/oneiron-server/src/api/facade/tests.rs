@@ -22,13 +22,11 @@ async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes(
         )
         .expect("server"),
     );
-    let token = crate::auth::mint_core_token_v2(
-        SECRET,
-        &format!(
-            "scope=core:read,core:write;principal_ref={};actor_class=human",
-            actor.to_hex()
-        ),
+    let recipe = format!(
+        "scope=core:read,core:write;principal_ref={};actor_class=human",
+        actor.to_hex()
     );
+    let (slip, holder) = crate::test_credentials::credential(&server, &recipe);
     let app = crate::build_app(server);
     let before = vault
         .memory(actor, EdgeActorClass::Human)
@@ -67,17 +65,18 @@ async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes(
     for (verb, payload, label) in requests {
         let response = app
             .clone()
-            .oneshot(
+            .oneshot(crate::test_credentials::bind_slip_request(
+                &slip,
+                &holder,
                 Request::builder()
                     .method("POST")
                     .uri(format!("/v1/core/facade/{verb}"))
-                    .header("Authorization", format!("Bearer {token}"))
                     .header("Content-Type", "application/json")
                     .body(Body::from(
                         serde_json::to_vec(&payload).expect("request JSON"),
                     ))
                     .expect("request"),
-            )
+            ))
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{verb}");

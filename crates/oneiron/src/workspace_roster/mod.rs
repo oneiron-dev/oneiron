@@ -66,9 +66,7 @@ use crate::channel_identity_autonomy::{
     ChannelIdentityAutonomyRequest, ChannelIdentityAutonomyRung,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-};
+use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;

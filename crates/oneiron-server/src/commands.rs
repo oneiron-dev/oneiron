@@ -14,7 +14,9 @@ use serde_json::{Value as JsonValue, json};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
-use crate::auth::{mint_identified_core_token_v2, revoke_token_jti, validate_bearer_claims};
+use crate::auth::revoke_token_jti;
+#[cfg(test)]
+use crate::auth::{mint_identified_core_token_v2, validate_bearer_claims};
 use crate::build_app;
 use crate::cli::{
     ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenMintArgs, TokenRevokeArgs, VaultArgs,
@@ -109,59 +111,10 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
 /// that would 401 is never emitted. Every minted token carries a fresh `jti`
 /// so it can later be revoked individually; the id is printed to stderr so
 /// piping stdout still yields exactly the token.
-pub fn token_mint(args: TokenMintArgs) -> anyhow::Result<()> {
-    let config = resolve_serve_config(&args.serve)?;
-    let auth_secret = config
-        .sync_server_config()
-        .auth_secret
-        .filter(|secret| !secret.is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no auth secret configured; set --auth-secret, ONEIRON_AUTH_SECRET, or auth_secret in the config file"
-            )
-        })?;
-
-    let mint = prepare_token_mint(
-        &auth_secret,
-        args.scope.as_deref(),
-        args.principal_ref.as_deref(),
-        args.actor_class.as_deref(),
-    )?;
-
-    if let Some(warning) = &mint.warning {
-        eprintln!("warning: {warning}");
-    }
-    eprintln!("token id (jti): {}", mint.jti);
-    println!("{}", mint.token);
-    Ok(())
-}
-
-/// One minted token plus everything the operator must be told about it.
-struct TokenMint {
-    token: String,
-    jti: String,
-    warning: Option<String>,
-}
-
-/// The whole mint decision, with no IO, so what the operator is told is
-/// testable rather than inferred from a `println!`.
-fn prepare_token_mint(
-    auth_secret: &str,
-    scope: Option<&[String]>,
-    principal_ref: Option<&str>,
-    actor_class: Option<&str>,
-) -> anyhow::Result<TokenMint> {
-    let claims = build_token_claims(scope, principal_ref, actor_class);
-    validate_bearer_claims(&claims).map_err(|_| {
-        anyhow::anyhow!("refusing to mint a token the server would reject: {claims}")
-    })?;
-
-    let (token, jti) = mint_identified_core_token_v2(auth_secret, &claims);
-    Ok(TokenMint {
-        token,
-        jti,
-        warning: weak_auth_secret_warning(auth_secret),
-    })
+pub fn token_mint(_args: TokenMintArgs) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "token mint is retired; create a one-use pairing link at /v1/core/pairing/links and redeem it with a connection binding-key proof"
+    )
 }
 
 /// Revokes one previously minted token by its id.
@@ -182,7 +135,30 @@ pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
 
-    let revoked = revoke_token_jti(&vault, &args.jti)?;
+    let revoked = if args.jti.len() == 64 {
+        anyhow::ensure!(
+            args.jti
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "invalid slip id"
+        );
+        let secret = config
+            .sync_server_config()
+            .auth_secret
+            .ok_or_else(|| anyhow::anyhow!("host secret required"))?;
+        let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+        let bytes = (0..64)
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&args.jti[index..index + 2], 16))
+            .collect::<Result<Vec<_>, _>>()?;
+        let id: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid slip id"))?;
+        vault.revoke_capability_slip(&issuer, id)?;
+        true
+    } else {
+        revoke_token_jti(&vault, &args.jti)?
+    };
     println!("{}", serde_json::json!({ "revoked": revoked }));
     Ok(())
 }
@@ -215,40 +191,6 @@ fn weak_auth_secret_warning(secret: &str) -> Option<String> {
             "configured auth_secret is shorter than {MIN_RECOMMENDED_AUTH_SECRET_BYTES} bytes; it is the MAC key for every minted bearer token"
         )
     })
-}
-
-/// Assembles a claims string in the bearer grammar. No flags yields an empty
-/// claims string, which mints an owner-grade token.
-///
-/// ONE-1441: `actor_class` appends one `;actor_class=<v>` segment when the
-/// operator asked for one, in the pinned position AFTER `principal_ref`. The
-/// segment order is the wire form, not a detail — the MAC covers these exact
-/// bytes, so reordering them would invalidate every previously minted slip.
-fn build_token_claims(
-    scope: Option<&[String]>,
-    principal_ref: Option<&str>,
-    actor_class: Option<&str>,
-) -> String {
-    let mut claims = String::new();
-    if let Some(scope) = scope.filter(|scope| !scope.is_empty()) {
-        claims.push_str("scope=");
-        claims.push_str(&scope.join(","));
-    }
-    if let Some(principal_ref) = principal_ref {
-        if !claims.is_empty() {
-            claims.push(';');
-        }
-        claims.push_str("principal_ref=");
-        claims.push_str(principal_ref);
-    }
-    if let Some(actor_class) = actor_class {
-        if !claims.is_empty() {
-            claims.push(';');
-        }
-        claims.push_str("actor_class=");
-        claims.push_str(actor_class);
-    }
-    claims
 }
 
 pub fn skills_pack(args: SkillsPackArgs) -> anyhow::Result<()> {

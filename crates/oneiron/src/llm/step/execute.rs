@@ -1,4 +1,4 @@
-//! Durable step execution: memo/admission/deadline orchestration plus deadline-race, retry, and lease-settle helpers.
+//! Durable step execution: memo/admission/deadline orchestration with retry and lease settlement.
 
 use super::super::{
     BudgetDenied, BudgetGuard, CallClass, LlmBackend, LlmError, LlmRequest, LlmResponse, LlmResult,
@@ -149,7 +149,9 @@ pub async fn call_as_step_with_fallbacks(
 
     // Mid-step preemption (ONE-1305, G1): inside a wake pass the in-flight
     // generate future races the deadline; on loss the lease aborts (actual
-    // spend settled) and the attempt parks at the hard cut.
+    // spend settled) and the attempt parks at the hard cut. The raced future
+    // is the retrying generate (C07) via the schema-validating generate door,
+    // so corrective spend still settles through the SpentLlm split below.
     let generated = match ctx.deadline {
         Some(deadline) => {
             match race_deadline(

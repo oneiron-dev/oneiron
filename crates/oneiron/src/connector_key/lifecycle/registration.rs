@@ -108,7 +108,7 @@ impl Vault {
     /// reservation, the entity body + connector index, the generation-0 log
     /// row, and the register receipt. The caller owns the transaction, which
     /// is what makes a composed registration atomic.
-    fn register_connector_key_in_txn(
+    pub(crate) fn register_connector_key_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,

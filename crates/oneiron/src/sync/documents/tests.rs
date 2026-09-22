@@ -217,7 +217,7 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
         FederationGrantRole::Member,
         FederationGrantPreset::Member,
     );
-    document_grant(&vault, grant_id, grant);
+    document_grant(&vault, grant_id, grant.clone());
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     let registry = DocumentRegistry::new(vault.clone());
     let doc = registry.open(id).unwrap();
@@ -226,9 +226,9 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
         .unwrap();
     let before = doc.version_vector().unwrap();
     let next = peer_update("forbidden");
-    let mut readonly = grant;
+    let mut readonly = grant.clone();
     readonly.role = FederationGrantRole::Viewer;
-    document_grant(&vault, grant_id, readonly);
+    document_grant(&vault, grant_id, readonly.clone());
     assert_document_denied(
         doc.import_from_peer(document_sub_tags::UPDATE, &next, scope, &selector)
             .unwrap_err(),

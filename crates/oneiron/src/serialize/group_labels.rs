@@ -1,6 +1,5 @@
 //! Static entity-type to section-label lookup used by every writer.
 
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT,
@@ -171,11 +170,6 @@ pub(super) fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
             key: "outbound_grants",
             name: "OUTBOUND_GRANTS",
             title: "Outbound Grants",
-        }),
-        ENTITY_TYPE_COMPANION_REGISTER => Some(GroupLabels {
-            key: "companion_records",
-            name: "COMPANION_RECORDS",
-            title: "Companion Records",
         }),
         ENTITY_TYPE_PSYCH_PROFILE => Some(GroupLabels {
             key: "psych_profiles",

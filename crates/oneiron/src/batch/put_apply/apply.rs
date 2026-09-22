@@ -6,10 +6,10 @@ use heed::RwTxn;
 
 use super::{
     AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,
-    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
+    ENTITY_METADATA_HEADER_LEN, LONG_INTERVAL_THRESHOLD_SECS,
     apply_short_id_plan, authority_observation_secs_for_write,
     check_authority_log_store_key, delete_short_id_rows_for_id,
-    evict_authority_log_store_key_squatter, lexical_query_hint_claim_id, parse_entity_metadata,
+    evict_authority_log_store_key_squatter, parse_entity_metadata,
     plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
     stage_entity_body_row, stage_entity_index_rows, stage_optimizer_birth_marker_row,
     validate_companion_register_put, validate_local_agent_definition_create,
@@ -59,6 +59,19 @@ pub(in crate::batch) fn apply_put(
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
+    super::super::person_substrate::validate_scope_identity(id)?;
+    // Normalize before body comparison, short-id hashing and scope stamping so
+    // every index names the bytes actually stored. Malformed policy stays intact
+    // and is diagnosed fail-closed by the policy resolver, never defaulted away.
+    let normalized_policy = if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
+        crate::gate::normalize_policy_manifest_scope(data)
+    } else {
+        None
+    };
+    let data = normalized_policy.as_deref().unwrap_or(data);
+    if entity_type == crate::registry::ENTITY_TYPE_FACET {
+        super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
+    }
     if crate::workspace_roster::is_project_type(store, entity_type) {
         for referenced in crate::workspace_roster::validate_project_body(id, data)? {
             reject_overlay_member_base_write(store, &referenced, origin)?;
@@ -149,7 +162,7 @@ pub(in crate::batch) fn apply_put(
         crate::thread_passport::validate_thread_claim_in_txn(store, wtxn, &id, &body, replicated)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
         if is_lexical_query_hint_claim {
-            validate_lexical_hint_put(store, wtxn, id, &body, replicated)?;
+            super::lexical_hint::validate_lexical_query_hint(store, wtxn, id, &body, replicated)?;
         }
         if body.session_tag.is_some()
             && !replicated
@@ -246,6 +259,12 @@ pub(in crate::batch) fn apply_put(
         crate::agent_def::validate_reserved_logical_id(&id, &decoded)?;
         new_agent_definition = Some(decoded);
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+        return Err(Error::InvalidClaimBody(
+            "CompanionRecord storage retired; use PERSON/FACET",
+        ));
+    } else if entity_type == crate::registry::ENTITY_TYPE_FACET
+        && crate::companion::is_identity_facet_body(data)
+    {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     } else if entity_type == ENTITY_TYPE_TASK {
         // The role's TREE invariants are not judged here: `ChildOf` nesting
@@ -652,6 +671,17 @@ pub(in crate::batch) fn apply_put(
     }
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
+    crate::federation::record_scope::stamp_put(store, wtxn, id, entity_type, data, replicated)?;
+    if entity_type == crate::registry::ENTITY_TYPE_FACET {
+        super::super::facet_identity::reconcile_identity_facet(
+            store, wtxn, id, data, occurred, learned_at,
+        )?;
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_PERSON {
+        super::super::person_substrate::ensure_person_substrate(
+            store, wtxn, id, occurred, learned_at,
+        )?;
+    }
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;
@@ -709,73 +739,6 @@ fn validate_note_birth_put(
     Ok(())
 }
 
-// Keep synthetic hint identity validation separate from staging its effects.
-fn validate_lexical_hint_put(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    body: &crate::claim::ClaimBody,
-    replicated: bool,
-) -> Result<()> {
-    if !id
-        .as_bytes()
-        .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
-    {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint claim id must use LH prefix",
-        ));
-    }
-    let hint_value = crate::claim::decode_lexical_query_hint_value(&body.value)?;
-    let target = hint_value.target;
-    let expected_id = lexical_query_hint_claim_id(&target, &hint_value.query)?;
-    if expected_id != id {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint claim id must match target and query",
-        ));
-    }
-    if !body.stale {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint claims must be stale",
-        ));
-    }
-    if body.lifecycle != crate::claim::ClaimLifecycleStatus::Active {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint claims must be active",
-        ));
-    }
-    if target == id {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint target must not be self",
-        ));
-    }
-    if let Some(target_raw) = store.entities.get(txn, target.as_bytes())? {
-        let Some(target_header) = EntityMetadataHeader::parse(&target_raw) else {
-            return Err(Error::CorruptedIndex("entity header"));
-        };
-        if target_header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-            return Err(Error::InvalidClaimBody(
-                "lexical query hint target must be claim",
-            ));
-        }
-        let Ok(target_body) =
-            crate::claim::decode_claim_body(&target_raw[ENTITY_METADATA_HEADER_LEN..], true)
-        else {
-            return Err(Error::InvalidClaimBody(
-                "lexical query hint target must be claim",
-            ));
-        };
-        if target_body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
-            return Err(Error::InvalidClaimBody(
-                "lexical query hint target must not be synthetic hint",
-            ));
-        }
-    } else if !replicated {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint target must be claim",
-        ));
-    }
-    Ok(())
-}
 
 fn validate_witness_message_body(data: &[u8], replicated: bool) -> Result<()> {
     // ONE-1686 (RT-04): the witness ENVELOPE law, at the one arm every

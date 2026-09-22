@@ -69,7 +69,7 @@ impl CredentialDoorService {
     }
 
     fn checkout_view(ticket: &str, lease: &CheckoutLeaseAct) -> DoorCredential {
-        DoorCredential::verified(
+        DoorCredential::from_witnessed_bounds(
             format!("checkout:{ticket}"),
             lease.holder_ref.clone(),
             lease.claimed_at,

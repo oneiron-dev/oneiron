@@ -63,6 +63,7 @@ fn room_membership_revocation_between_prepare_and_commit_refuses_both_writers() 
         confidence: 1.0,
         source: "user_stated".into(),
         world_ref: None,
+        relationship_ref: None,
         scope: None,
         valid_from: None,
         valid_to: None,

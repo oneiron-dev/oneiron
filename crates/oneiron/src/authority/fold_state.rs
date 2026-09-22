@@ -43,6 +43,8 @@ pub struct AuthorityPendingWiden {
 pub enum AuthorityFoldIssue {
     /// Entry failed shape or signature verification.
     InvalidEntry(AuthorityEntryHash),
+    /// A valid signer does not meet the folded vault assurance floor.
+    SignerBelowTierFloor(AuthorityEntryHash),
     /// Entry references a missing or invalid parent.
     InvalidAncestry(AuthorityEntryHash),
     /// Entry signer was not valid in its own ancestry.
@@ -171,6 +173,14 @@ pub struct AuthorityFold {
     pub door_slips: BTreeMap<AuthorityEntryHash, FoldedDoorSlip>,
     /// Monotone spend/revoke tombstones.
     pub spent_door_slips: BTreeSet<AuthorityEntryHash>,
+    /// Historical actor/class pairs affected by a key revocation, including rebind-away.
+    pub actor_revocation_affected_writers: BTreeSet<(EntityId, String)>,
+    /// Known causal frontiers that observed every revocation before regrant.
+    pub actor_write_frontiers: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
+    /// Keys with any actor revocation in valid history; missing write frontiers then quarantine.
+    pub revoked_actor_keys: BTreeSet<AuthorityKey>,
+    /// Log-derived mint tree and monotone revocation/consumption tombstones.
+    pub slips: SlipAuthorityState,
     /// Derived vault id.
     pub vault_id: Option<AuthorityVaultId>,
     /// Valid entry hashes.
@@ -179,6 +189,8 @@ pub struct AuthorityFold {
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
     /// Most-restrictive tier floor.
     pub tier_floor: Option<AuthorityTier>,
+    /// Owner dismissed saving the recovery secret and no second device has enrolled.
+    pub genesis_fragile: bool,
     /// Software-tier widens that are valid but not yet locally eligible.
     pub pending_widens: BTreeMap<AuthorityEntryHash, AuthorityPendingWiden>,
     /// Pending widen hashes killed by a valid owner veto.
@@ -189,6 +201,8 @@ pub struct AuthorityFold {
     pub fork_alarms: Vec<AuthorityForkAlarm>,
     /// Fold-derived federation pact states keyed by pact id.
     pub federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
+    /// Consumed federation confirmation ids and nonces, bound to signed entries.
+    pub federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
     pub critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
     pub consumed_critical_write_confirm_nonces: BTreeSet<[u8; 16]>,
     /// Confirm ids made unusable by a deterministic sibling collision.
@@ -298,9 +312,15 @@ impl AuthorityFold {
 pub(super) struct FoldState {
     pub(super) door_slips: BTreeMap<AuthorityEntryHash, FoldedDoorSlip>,
     pub(super) spent_door_slips: BTreeSet<AuthorityEntryHash>,
+    pub(super) slips: SlipAuthorityState,
     pub(super) vault_id: AuthorityVaultId,
     pub(super) roster: BTreeMap<AuthorityKey, FoldedDevice>,
     pub(super) tier_floor: AuthorityTier,
+    pub(super) migrated_roots: BTreeSet<AuthorityKey>,
+    pub(super) genesis_recovery_dismissed: bool,
+    pub(super) recovery_redundancy_established: bool,
+    pub(super) tier_floor_events:
+        BTreeMap<AuthorityEntryHash, (AuthorityTier, BTreeSet<AuthorityEntryHash>)>,
     pub(super) pending_widen_delay_secs: u64,
     pub(super) pending_widens: BTreeMap<AuthorityEntryHash, AuthorityPendingWiden>,
     pub(super) vetoed_widens: BTreeSet<AuthorityEntryHash>,
@@ -317,6 +337,7 @@ pub(super) struct FoldState {
     pub(super) fork_resolution_revocations: BTreeSet<AuthorityKey>,
     pub(super) authority_forks: BTreeMap<(AuthorityKey, u64), AuthorityFork>,
     pub(super) federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
+    pub(super) federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
     pub(super) critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
     pub(super) consumed_critical_write_confirm_nonces: BTreeSet<[u8; 16]>,
     /// Every confirmation id ever observed for each consumed nonce.
@@ -333,12 +354,15 @@ pub(super) struct FoldState {
     pub(super) actor_bindings: BTreeMap<AuthorityKey, ActorBindingState>,
     /// Inclusive revocation watermark per authority key, merged by max.
     pub(super) actor_binding_revocations: BTreeMap<AuthorityKey, u64>,
+    pub(super) actor_revocation_hashes: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     pub(super) seqs: BTreeMap<AuthorityKey, u64>,
 }
 
 /// Fold-internal binding content for one authority key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActorBindingState {
+    /// Valid revoke entries in this bind's ancestry. This is fold-only state.
+    pub observed_revocations: BTreeSet<AuthorityEntryHash>,
     /// Store actor entity the key speaks for.
     pub actor_ref: EntityId,
     /// EXACT bound class.
@@ -360,14 +384,20 @@ impl FoldState {
             .get(key)
             .copied()
             .unwrap_or(0);
-        (binding.epoch > watermark && !binding.conflicted).then_some(binding)
+        (binding.epoch > watermark
+            && !binding.conflicted
+            && self
+                .actor_revocation_hashes
+                .get(key)
+                .is_none_or(|revocations| revocations.is_subset(&binding.observed_revocations)))
+        .then_some(binding)
     }
 }
 
 /// Projects fold-internal binding state onto the public tuple.
 ///
 /// Status is computed HERE rather than stored, so roster death propagates for
-/// free: `RevokeDevice`/`RotateKey`/`RecoveryReboot` kill dependent bindings
+/// free: `RevokeDevice`/`RotateKey`/`ReRoot` kill dependent bindings
 /// automatically and order-independently, with no cascade written into binding
 /// state. A rotation deliberately does NOT migrate a binding — the old binding
 /// dies with the old key and the new key needs a fresh `BindActor`.
@@ -388,13 +418,19 @@ impl FoldState {
 pub(super) fn folded_actor_bindings(
     state: &FoldState,
     authority_forks: &[AuthorityFork],
+    consent_arm: fn(&FoldedDevice) -> bool,
 ) -> BTreeMap<AuthorityKey, FoldedActorBinding> {
     state
         .actor_bindings
         .iter()
         .map(|(key, binding)| {
-            let status = if folded_binding_key_still_qualifies(state, authority_forks, key, binding)
-                && state.live_actor_binding(key).is_some()
+            let status = if folded_binding_key_still_qualifies(
+                state,
+                authority_forks,
+                key,
+                binding,
+                consent_arm,
+            ) && state.live_actor_binding(key).is_some()
             {
                 ActorBindingStatus::Active
             } else {
@@ -424,6 +460,7 @@ fn folded_binding_key_still_qualifies(
     authority_forks: &[AuthorityFork],
     key: &AuthorityKey,
     binding: &ActorBindingState,
+    consent_arm: fn(&FoldedDevice) -> bool,
 ) -> bool {
     if authority_forks
         .iter()
@@ -434,7 +471,7 @@ fn folded_binding_key_still_qualifies(
     let Some(device) = state.roster.get(key).filter(|device| !device.revoked) else {
         return false;
     };
-    binding.actor_class != "human" || folded_device_can_authority_consent(device)
+    binding.actor_class != "human" || consent_arm(device)
 }
 
 pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
@@ -449,6 +486,12 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .spent_door_slips
         .extend(right.spent_door_slips.iter().copied());
+    merged.slips.merge_from(&right.slips);
+    merged
+        .migrated_roots
+        .extend(right.migrated_roots.iter().cloned());
+    merged.genesis_recovery_dismissed |= right.genesis_recovery_dismissed;
+    merged.recovery_redundancy_established |= right.recovery_redundancy_established;
     merged
         .consumed_critical_write_confirm_nonces
         .extend(right.consumed_critical_write_confirm_nonces.iter().copied());
@@ -487,7 +530,14 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             }
         }
     }
-    merged.tier_floor = most_restrictive_tier_floor(left.tier_floor, right.tier_floor);
+    merged
+        .federation_confirms
+        .extend(right.federation_confirms.clone());
+    merged
+        .tier_floor_events
+        .extend(right.tier_floor_events.clone());
+    merged.tier_floor = effective_tier_floor(&merged.tier_floor_events)
+        .unwrap_or_else(|| most_restrictive_tier_floor(left.tier_floor, right.tier_floor));
     merged.pending_widen_delay_secs = left
         .pending_widen_delay_secs
         .max(right.pending_widen_delay_secs);
@@ -560,6 +610,13 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .and_modify(|current| *current = (*current).max(*epoch))
             .or_insert(*epoch);
     }
+    for (key, hashes) in &right.actor_revocation_hashes {
+        merged
+            .actor_revocation_hashes
+            .entry(key.clone())
+            .or_default()
+            .extend(hashes.iter().copied());
+    }
     for (key, binding) in &right.actor_bindings {
         match merged.actor_bindings.get_mut(key) {
             Some(existing) => *existing = merge_actor_bindings(existing, binding),
@@ -604,6 +661,11 @@ fn merge_actor_bindings(left: &ActorBindingState, right: &ActorBindingState) -> 
             } else {
                 right.clone()
             };
+            winner.observed_revocations = left
+                .observed_revocations
+                .intersection(&right.observed_revocations)
+                .copied()
+                .collect();
             winner.conflicted |= left_tuple != right_tuple || left.conflicted || right.conflicted;
             winner
         }

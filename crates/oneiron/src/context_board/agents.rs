@@ -10,6 +10,7 @@ pub enum AgentLane {
     Child,
     Peer,
     Cand,
+    Fanout,
 }
 
 impl AgentLane {
@@ -20,6 +21,7 @@ impl AgentLane {
             Self::Child => "child",
             Self::Peer => "peer",
             Self::Cand => "cand",
+            Self::Fanout => "fanout", 
         }
     }
 }

@@ -1,5 +1,6 @@
 //! Actor bind, rebind and revoke fold, qualification and DAG merge.
 
+use super::support::hex;
 use super::support::*;
 use super::*;
 
@@ -496,14 +497,12 @@ fn binding_dies_with_roster_key() {
         &fixture,
         vec![authority_entry_hash(&bind).unwrap()],
         3,
-        AuthorityOp::RecoveryReboot {
-            new_genesis_nonce: [231; 32],
+        AuthorityOp::ReRoot {
             new_device: device(
                 authority_key_from_ed(&ed_key(231)),
                 ROLE_OWNER | ROLE_ADMIN,
                 AuthorityTier::Software,
             ),
-            tier_floor: AuthorityTier::Software,
         },
         108,
     );
@@ -1003,8 +1002,17 @@ fn fork_winner_bind_with_independent_quorum_still_binds() {
         cosign_ed_two(entry, &fixture.owner, &clean_a, &clean_b)
     };
     let actor_a = scope_entity(0x81);
-    entries.push(bind_leg(actor_a, 120));
-    entries.push(bind_leg(scope_entity(0x82), 121));
+    let actor_b = scope_entity(0x82);
+    let leg_a = bind_leg(actor_a, 120);
+    let leg_b = bind_leg(actor_b, 121);
+    let (winner, loser) =
+        if authority_entry_hash(&leg_a).unwrap() < authority_entry_hash(&leg_b).unwrap() {
+            (actor_a, actor_b)
+        } else {
+            (actor_b, actor_a)
+        };
+    entries.push(leg_a);
+    entries.push(leg_b);
 
     let fold = fold_authority_log_without_seen_time_delay(&entries);
     assert!(
@@ -1020,9 +1028,10 @@ fn fork_winner_bind_with_independent_quorum_still_binds() {
         "a bind an independent owner quorum backs must survive its signer's quarantine"
     );
     assert!(
-        actor_binding_is_active(&fold, &actor_a, "human"),
+        actor_binding_is_active(&fold, &winner, "human"),
         "the fork WINNER's actor keeps owner authority"
     );
+    assert!(!actor_binding_is_active(&fold, &loser, "human"));
 }
 
 /// Divergent branches over one key's identity: both siblings parent on the
@@ -1226,4 +1235,115 @@ fn atomic_genesis_owner_binding_door() {
         .put_authority_log_entries(&[(genesis, TimeRange { start: 1, end: 1 }, 1)])
         .unwrap();
     assert_eq!(other.authority_fold().unwrap().vault_id, Some(vault_id));
+}
+
+#[test]
+fn revoke_fork_beats_concurrent_higher_epoch_bind_in_every_order() {
+    fn permutations(entries: &mut [AuthorityLogEntry], at: usize, expected: &AuthorityFold) {
+        if at == entries.len() {
+            assert_eq!(
+                &fold_authority_log_without_seen_time_delay(entries),
+                expected
+            );
+        } else {
+            for i in at..entries.len() {
+                entries.swap(at, i);
+                permutations(entries, at + 1, expected);
+                entries.swap(at, i);
+            }
+        }
+    }
+
+    let f = bind_fixture(190);
+    let initial = cosigned_entry(
+        &f,
+        vec![authority_entry_hash(&f.enroll).unwrap()],
+        2,
+        bind_op(&f.agent_key, f.actor, "agent", 1),
+        10,
+    );
+    let parent = authority_entry_hash(&initial).unwrap();
+    let revoke = cosigned_entry(&f, vec![parent], 3, revoke_actor_op(&f.agent_key, 1), 30);
+    // A backdated grant with a larger epoch did not observe the revoke.
+    let grant = cosigned_entry(
+        &f,
+        vec![parent],
+        4,
+        rebind_op(&f.agent_key, f.actor, "agent", 99),
+        1,
+    );
+    let mut entries = vec![
+        f.genesis.clone(),
+        f.enroll.clone(),
+        initial,
+        revoke.clone(),
+        grant,
+    ];
+    let expected = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        folded_status(&expected, &f.agent_key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    permutations(&mut entries, 0, &expected);
+    let regrant = cosigned_entry(
+        &f,
+        vec![authority_entry_hash(&revoke).unwrap()],
+        5,
+        bind_op(&f.agent_key, f.actor, "agent", 100),
+        40,
+    );
+    entries.push(regrant);
+    let recovered = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        folded_status(&recovered, &f.agent_key),
+        Some(ActorBindingStatus::Active)
+    );
+}
+
+#[test]
+fn write_concurrent_with_revoke_regrant_window_quarantines() {
+    let f = bind_fixture(195);
+    let initial = cosigned_entry(
+        &f,
+        vec![authority_entry_hash(&f.enroll).unwrap()],
+        2,
+        bind_op(&f.agent_key, f.actor, "agent", 1),
+        10,
+    );
+    let initial_hash = authority_entry_hash(&initial).unwrap();
+    let revoke = cosigned_entry(
+        &f,
+        vec![initial_hash],
+        3,
+        revoke_actor_op(&f.agent_key, 1),
+        20,
+    );
+    let regrant = cosigned_entry(
+        &f,
+        vec![authority_entry_hash(&revoke).unwrap()],
+        4,
+        bind_op(&f.agent_key, f.actor, "agent", 2),
+        30,
+    );
+    let regrant_hash = authority_entry_hash(&regrant).unwrap();
+    let entries = vec![f.genesis, f.enroll, initial, revoke, regrant];
+    let folded = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        folded.actor_write_disposition(&f.actor, "agent", Some(initial_hash)),
+        CausalWriteDisposition::Quarantined
+    );
+    assert_eq!(
+        folded.actor_write_disposition(&f.actor, "agent", None),
+        CausalWriteDisposition::Quarantined
+    );
+    assert_eq!(
+        folded.actor_write_disposition(&f.actor, "agent", Some([0xEE; 32])),
+        CausalWriteDisposition::Quarantined
+    );
+    assert_eq!(
+        folded.actor_write_disposition(&f.actor, "agent", Some(regrant_hash)),
+        CausalWriteDisposition::Admitted
+    );
+    let reverse: Vec<_> = entries.into_iter().rev().collect();
+    assert_eq!(fold_authority_log_without_seen_time_delay(&reverse), folded);
 }

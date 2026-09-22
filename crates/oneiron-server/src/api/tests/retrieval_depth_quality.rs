@@ -6,9 +6,9 @@ use super::*;
 /// additive fields do not change the default-tier behavior.
 #[tokio::test]
 async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
-    let (_dir, server) = memory_reason_server(None);
+    let (_dir, server) = memory_reason_server_auth(None);
 
-    let (status, body) = route_json(
+    let (status, body) = route_json_auth(
         server,
         json_request(
             "POST",
@@ -194,9 +194,9 @@ async fn memory_reason_deep_without_a_backend_is_service_unavailable() {
 #[tokio::test]
 async fn memory_reason_deep_reports_decompose_rerank_and_compose_spend() {
     let backend = Arc::new(StubReasonBackend::answering("the launch moved to March"));
-    let (_dir, server) = memory_reason_server(Some(backend));
+    let (_dir, server) = memory_reason_server_auth(Some(backend));
 
-    let (status, body) = route_json(
+    let (status, body) = route_json_auth(
         server,
         json_request(
             "POST",
@@ -230,9 +230,9 @@ async fn memory_reason_deep_reports_decompose_rerank_and_compose_spend() {
 async fn memory_reason_refuses_an_answer_citing_evidence_it_never_retrieved() {
     let mut stub = StubReasonBackend::answering("invented recollection");
     stub.sources = Some(vec!["not-a-retrieved-short-id".to_owned()]);
-    let (_dir, server) = memory_reason_server(Some(Arc::new(stub)));
+    let (_dir, server) = memory_reason_server_auth(Some(Arc::new(stub)));
 
-    let (status, body) = route_json(
+    let (status, body) = route_json_auth(
         server,
         json_request(
             "POST",

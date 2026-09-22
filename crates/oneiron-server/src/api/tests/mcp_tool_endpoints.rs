@@ -4,7 +4,7 @@ use super::*;
 
 #[tokio::test]
 async fn mcp_endpoints_register_distinct_tool_listings() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0001);
     let credential = "one-1704-listing-credential";
     register_mcp_actor(
@@ -57,7 +57,7 @@ async fn mcp_endpoints_register_distinct_tool_listings() {
 
 #[tokio::test]
 async fn mcp_tools_list_bytes_are_identical_across_credentials_and_scopes() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let wide_actor = seeded_test_entity_id(0x1704_0011);
     let scoped_actor = seeded_test_entity_id(0x1704_0012);
     register_mcp_actor(
@@ -99,7 +99,7 @@ async fn mcp_tools_list_bytes_are_identical_across_credentials_and_scopes() {
 
 #[tokio::test]
 async fn mcp_cross_endpoint_tool_calls_are_unknown_tool() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0021);
     let credential = "one-1704-cross-credential";
     register_mcp_actor(
@@ -147,7 +147,7 @@ async fn mcp_cross_endpoint_tool_calls_are_unknown_tool() {
 
 #[tokio::test]
 async fn mcp_setup_returns_keyframe_grammar_instructions_and_no_carrier() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0031);
     let credential = "one-1704-setup-credential";
     register_mcp_actor(
@@ -218,7 +218,7 @@ async fn mcp_setup_returns_keyframe_grammar_instructions_and_no_carrier() {
 #[tokio::test]
 async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
     bind_mcp_test_code_host();
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let wide_actor = seeded_test_entity_id(0x1704_0041);
     let wide = "one-1704-code-credential";
     register_mcp_actor(&server, wide, wide_actor, oneiron::EdgeActorClass::Human).await;
@@ -301,7 +301,7 @@ async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
 /// vault-wide credential is untouched.
 #[tokio::test]
 async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_00d1);
     let world_only =
         crate::mcp::McpConnectorScope::scoped(Some(seeded_test_entity_id(0x1704_00d2)), None);
@@ -403,7 +403,7 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
         let context = crate::api::resolve_mcp_gateway_actor(
             crate::mcp::McpSurfaceMode::Primary,
             "axis-admission",
-            &mcp_credential_headers(credential),
+            &mcp_credential_headers(&server, credential),
             &server,
         )
         .await
@@ -434,7 +434,7 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
 /// decoder still sees the spelling the caller actually sent.
 #[tokio::test]
 async fn mcp_tool_call_preserves_request_number_text_at_advertised_integers() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0052);
     let credential = "one-1704-raw-number";
     register_mcp_actor(
@@ -507,7 +507,7 @@ async fn mcp_tool_call_preserves_request_number_text_at_advertised_integers() {
 
 #[tokio::test]
 async fn mcp_tool_first_verb_call_carries_scope_page_and_cache_metadata() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0051);
     let credential = "one-1704-verb-credential";
     register_mcp_actor(
@@ -553,7 +553,7 @@ async fn mcp_tool_first_verb_call_carries_scope_page_and_cache_metadata() {
 
 #[tokio::test]
 async fn mcp_missing_credential_returns_the_structured_error_contract() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let request = Request::builder()
         .method("POST")
         .uri("/mcp")
@@ -575,7 +575,7 @@ async fn mcp_missing_credential_returns_the_structured_error_contract() {
 
 #[tokio::test]
 async fn mcp_endpoint_tool_args_are_gated_before_execution() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0061);
     let credential = "one-1704-args-credential";
     register_mcp_actor(

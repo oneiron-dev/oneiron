@@ -327,6 +327,7 @@ pub(crate) async fn read_turn_vad_annotation(
     query: Result<Query<TurnVadAnnotateQuery>, QueryRejection>,
 ) -> Result<Json<TurnVadAnnotateResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let params = query_params(query)?;
     let turn_id = parse_entity_id_param(&params.turn_id, "turn_id")?;
     require_entity_type(&server, &turn_id, ENTITY_TYPE_TURN, "turn")?;

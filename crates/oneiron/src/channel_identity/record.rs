@@ -29,6 +29,8 @@ use super::keys::{
     PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT,
 };
 
+use super::auth_mode::ChannelAuthMode;
+use super::keys::PREDICATE_CHANNEL_IDENTITY_AUTH_MODE;
 use super::lifecycle::ChannelIdentityState;
 
 use super::shape::{ChannelIdentityShape, SelfHeldShape};
@@ -37,6 +39,8 @@ use crate::error::RecordError;
 /// Vault-resident ChannelIdentity record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelIdentity {
+    /// Authentication mechanism only; credentials stay in host custody.
+    pub auth_mode: ChannelAuthMode,
     pub channel: String,
     pub address_or_handle: String,
     pub shape: ChannelIdentityShape,
@@ -101,6 +105,7 @@ impl ChannelIdentity {
             reputation_ref: None,
             manifest_ref: None,
             grant: None,
+            auth_mode: ChannelAuthMode::ApiKey,
         }
     }
 
@@ -156,6 +161,7 @@ impl ChannelIdentity {
             reputation_ref: None,
             manifest_ref: None,
             grant: Some(grant),
+            auth_mode: ChannelAuthMode::OAuth,
         };
         identity.validate()?;
         Ok(identity)
@@ -176,6 +182,7 @@ impl ChannelIdentity {
             reputation_ref: None,
             manifest_ref: None,
             grant: None,
+            auth_mode: ChannelAuthMode::Local,
         }
     }
 
@@ -232,8 +239,26 @@ impl ChannelIdentity {
         !self.is_delegated() && matches!(self.state, ChannelIdentityState::Active)
     }
 
+    /// Shared-vault content stays on a live sending identity bound to that exact
+    /// vault. A matching sensitivity ceiling alone never supplies this binding.
+    pub(crate) fn permits_companion_export_scope(
+        &self,
+        scope: &crate::companion::CompanionScope,
+    ) -> bool {
+        if !self.may_send() || self.validate().is_err() {
+            return false;
+        }
+        self.binding.permits_companion_scope(scope)
+    }
+
     /// Validates CID-1 record invariants.
     pub fn validate(&self) -> Result<()> {
+        if self.is_delegated() && self.auth_mode != ChannelAuthMode::OAuth {
+            return Err(RecordError::InvalidChannelIdentityBody(
+                "delegated identity requires OAuth",
+            )
+            .into());
+        }
         validate_non_empty_bounded(
             &self.channel,
             MAX_CHANNEL_BYTES,
@@ -363,6 +388,7 @@ impl ChannelIdentity {
 
     fn claim_value(&self, predicate: &str) -> Option<Value> {
         match predicate {
+            PREDICATE_CHANNEL_IDENTITY_AUTH_MODE => Some(Value::from(self.auth_mode.as_str())),
             PREDICATE_CHANNEL_IDENTITY_CHANNEL => Some(Value::from(self.channel.as_str())),
             PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE => {
                 Some(Value::from(self.address_or_handle.as_str()))

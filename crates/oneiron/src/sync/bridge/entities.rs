@@ -12,7 +12,6 @@ use super::companion_identity::{
 use super::tombstones::quarantine_and_neutralize_protected_tombstone_in_txn;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::sync::loro_support::tombstone_map_contains_id;
@@ -405,7 +404,8 @@ pub(super) fn materialize_entity_blob_in_txn(
         &[]
     };
 
-    if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER
+    if header.entity_type == crate::registry::ENTITY_TYPE_FACET
+        && crate::companion::is_identity_facet_body(data)
         && !companion_register_sync_admitted(data)?
     {
         tracing::warn!(

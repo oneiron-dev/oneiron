@@ -56,11 +56,7 @@ impl BoundSource {
     fn server(&self) -> Result<std::sync::Arc<SyncServer>, AppError> {
         let server = self.server.upgrade().ok_or_else(AppError::unauthorized)?;
         self.auth.require(CoreScope::Read)?;
-        if self
-            .auth
-            .jti()
-            .is_some_and(|jti| crate::auth::is_revoked_or_unreadable(jti, server.vault().as_ref()))
-        {
+        if !self.auth.credential_is_live(server.vault().as_ref()) {
             return Err(AppError::unauthorized());
         }
         Ok(server)
@@ -335,12 +331,10 @@ mod remediation_tests {
     #[tokio::test]
     async fn retained_loro_payloads_replay_after_delivery_ring_is_removed() {
         let (_dir, server) = super::super::production_tests::server();
-        let auth = CoreAuth::from_bind_token(
+        let auth = crate::test_credentials::authenticate(
+            &server,
             &super::super::production_tests::token("human"),
-            &server.config,
-            server.vault().as_ref(),
-        )
-        .unwrap();
+        );
         let source = std::sync::Arc::new(BoundSource::new(
             std::sync::Arc::downgrade(&server),
             auth,
@@ -394,12 +388,10 @@ mod remediation_tests {
     #[tokio::test]
     async fn journal_budget_expiry_expires_the_cursor_without_allocating_unbounded_history() {
         let (_dir, server) = super::super::production_tests::server();
-        let auth = CoreAuth::from_bind_token(
+        let auth = crate::test_credentials::authenticate(
+            &server,
             &super::super::production_tests::token("human"),
-            &server.config,
-            server.vault().as_ref(),
-        )
-        .unwrap();
+        );
         let source = BoundSource::with_budgets(
             std::sync::Arc::downgrade(&server),
             auth,
@@ -427,12 +419,10 @@ mod remediation_tests {
     #[tokio::test]
     async fn alternating_unchanged_views_do_not_consume_retention() {
         let (_dir, server) = super::super::production_tests::server();
-        let auth = CoreAuth::from_bind_token(
+        let auth = crate::test_credentials::authenticate(
+            &server,
             &super::super::production_tests::token("human"),
-            &server.config,
-            server.vault().as_ref(),
-        )
-        .unwrap();
+        );
         let source = BoundSource::new(std::sync::Arc::downgrade(&server), auth, "fixture".into());
         let a = ScopedView::default();
         let b = ScopedView {

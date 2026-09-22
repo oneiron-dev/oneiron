@@ -186,6 +186,7 @@ pub(crate) async fn context_board_hydrate(
     payload: Result<Json<ContextBoardRequest>, JsonRejection>,
 ) -> Result<Json<ContextBoardResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let mut req = json_payload(payload)?;
     let standing = standing::standing_prefix(&server, &auth, req.standing.as_ref()).await?;
     if let Some(prefix) = &standing

@@ -66,7 +66,7 @@ fn put_family_claim(
         .expect("put calendar claim");
 }
 
-/// One calendar EVENT carrying a world-less family claim plus one decisive
+/// One calendar EVENT carrying a granted-world family claim plus one decisive
 /// single-cardinality claim. Placing the decisive claim in `decisive_world`
 /// puts it OUTSIDE the scoped grant below while leaving it live and
 /// surfaceable — so the two lanes legitimately see different facts about
@@ -77,6 +77,7 @@ fn store_split_grant_event(
     occurred: TimeRange,
     decisive: (&str, Value),
     decisive_world: Option<EntityId>,
+    granted_world: EntityId,
 ) -> EntityId {
     let id = entity(seed);
     vault
@@ -95,39 +96,51 @@ fn store_split_grant_event(
         id,
         PREDICATE_CALENDAR_ORIGIN,
         Value::from("imported"),
-        None,
+        Some(granted_world),
     );
-    put_family_claim(vault, seed, 1, id, decisive.0, decisive.1, decisive_world);
+    put_family_claim(
+        vault,
+        seed,
+        1,
+        id,
+        decisive.0,
+        decisive.1,
+        decisive_world.or(Some(granted_world)),
+    );
     id
 }
 
-/// A policy manifest whose only scoped grant is `core:read` over `world`.
-///
-/// Under `gate::scoped_read_claim_allowed` a world grant also admits every
-/// world-less claim, so this is the smallest manifest that splits one
-/// EVENT's family across the grant boundary.
+/// Grant the named claim world and the EVENT metadata kind separately.
+/// A named world never grants base-world claims implicitly.
 fn scoped_read_world_manifest(actor_ref: &str, world: EntityId) -> Vec<u8> {
-    let grant = Value::Map(vec![
-        (Value::from("actor_ref"), Value::from(actor_ref)),
-        (Value::from("effector"), Value::from("core:read")),
-        (
-            Value::from("scope"),
-            Value::Map(vec![(
-                Value::from("world_ref"),
-                Value::from(world.to_hex()),
-            )]),
-        ),
-        (Value::from("receipt_required"), Value::Boolean(false)),
-    ]);
+    use crate::federation::{ScopeAxis, ScopeId};
+    let mut claims = crate::federation::scope_codec::read_preset();
+    claims.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(world)]));
+    let mut events = crate::federation::scope_codec::read_preset();
+    events.bands = ScopeAxis::Some(std::collections::BTreeSet::from([ENTITY_TYPE_EVENT]));
+    let grants = [claims, events]
+        .into_iter()
+        .map(|scope| {
+            Value::Map(vec![
+                (Value::from("actor_ref"), Value::from(actor_ref)),
+                (Value::from("effector"), Value::from("core:read")),
+                (
+                    Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(&scope).unwrap(),
+                ),
+                (Value::from("receipt_required"), Value::Boolean(false)),
+            ])
+        })
+        .collect();
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("cal-09-scoped-read")),
         (Value::from("pack_version"), Value::from("1")),
         (Value::from("min_engine_version"), Value::from("0.0.0")),
         (Value::from("defaults"), Value::Map(Vec::new())),
         (Value::from("rules"), Value::Array(Vec::new())),
         (Value::from("actor_ceilings"), Value::Array(Vec::new())),
-        (Value::from("scoped_grants"), Value::Array(vec![grant])),
+        (Value::from("scoped_grants"), Value::Array(grants)),
     ]);
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("policy manifest encodes");
@@ -147,6 +160,7 @@ fn scoped_lane_fails_closed_on_a_decisive_claim_it_may_not_read() {
         at(1_000, 1_099),
         (PREDICATE_CALENDAR_TIME_KIND, time_kind_value("free")),
         Some(hidden_world),
+        granted_world,
     );
     // Cancelled — but only the claim outside the grant says so.
     let cancelled = store_split_grant_event(
@@ -155,6 +169,7 @@ fn scoped_lane_fails_closed_on_a_decisive_claim_it_may_not_read() {
         at(2_000, 2_099),
         (PREDICATE_CALENDAR_STATUS, cancelled_status_value()),
         Some(hidden_world),
+        granted_world,
     );
     // Control: the whole family is inside the grant, and it really is busy.
     let busy = store_split_grant_event(
@@ -163,6 +178,7 @@ fn scoped_lane_fails_closed_on_a_decisive_claim_it_may_not_read() {
         at(3_000, 3_099),
         (PREDICATE_CALENDAR_TIME_KIND, time_kind_value("busy")),
         None,
+        granted_world,
     );
 
     // Written after the claims so the write door stays gate-free; only the
@@ -559,6 +575,7 @@ fn withheld_exception_suppresses_only_its_own_series() {
             ]),
         ),
         Some(entity(0x92)),
+        entity(0x91),
     );
     put_policy_manifest_bytes(
         &vault,

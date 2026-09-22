@@ -38,6 +38,7 @@ fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
         op: crate::authority::AuthorityOp::Genesis {
             device: authority_test_device(key.clone()),
             genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: crate::authority::AuthorityTier::Software,
             pending_widen_delay_secs: 86_400,
         },
@@ -639,7 +640,12 @@ fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Resu
         "the evicted event's induced shell edge must be unwound, not left dangling"
     );
     assert!(
-        vault.edges_out(&loser)?.is_empty() && vault.edges_in(&survivor)?.is_empty(),
+        vault
+            .edges_out(&loser)?
+            .iter()
+            .all(|edge| edge.kind == EdgeKind::HasFacet
+                && edge.target == crate::claim::substrate_facet_id(loser))
+            && vault.edges_in(&survivor)?.is_empty(),
         "no half of the shell pair may survive its ledger justification"
     );
     assert_eq!(

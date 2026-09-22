@@ -65,6 +65,13 @@ fn policy(
             (Value::from("effector"), Value::from("external:share_brief")),
             (
                 Value::from("scope"),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::effect_preset(),
+                )
+                .unwrap(),
+            ),
+            (
+                Value::from("selectors"),
                 Value::Map(vec![(Value::from("channel"), Value::from("shared_brief"))]),
             ),
         ]));
@@ -75,11 +82,18 @@ fn policy(
             Value::from(share.recipient_ref.to_hex()),
         ),
         (Value::from("effector"), Value::from("core:read")),
-        (Value::from("scope"), read_scope.unwrap_or(Value::Nil)),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .unwrap(),
+        ),
+        (Value::from("selectors"), read_scope.unwrap_or(Value::Nil)),
         (Value::from("receipt_required"), Value::Boolean(false)),
     ]));
     let value = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("brief-share-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (

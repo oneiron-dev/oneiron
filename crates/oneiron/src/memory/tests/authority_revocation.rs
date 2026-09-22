@@ -897,6 +897,17 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
     let subject = put_person(&vault, 0x6C);
     let facade = facade_for(&vault, owner);
 
+    let agent = put_person(&vault, 0x6D);
+    let claim = vault
+        .memory(agent, EdgeActorClass::Agent)
+        .claim_upsert(&claim_input(
+            "profile.mood",
+            &subject,
+            "observed",
+            serde_json::json!("calm"),
+        ))
+        .expect("agent claim");
+
     // Two independently rooted genesis entries in one log. Each is internally
     // valid; together they are a collapse.
     let (genesis_a, _) = authority_root(0x74);
@@ -943,16 +954,6 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
             })
             .expect_err("conflicted-root PERSON mint"),
         {
-            let agent = put_person(&vault, 0x6D);
-            let claim = vault
-                .memory(agent, EdgeActorClass::Agent)
-                .claim_upsert(&claim_input(
-                    "profile.mood",
-                    &subject,
-                    "observed",
-                    serde_json::json!("calm"),
-                ))
-                .expect("agent claim");
             facade
                 .claim_retract(&claim.claim_short_id)
                 .expect_err("conflicted-root cross-actor retract")
@@ -986,6 +987,17 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     let attacker = put_person(&vault, 0x76);
     let subject = put_person(&vault, 0x77);
     let facade = facade_for(&vault, attacker);
+
+    let agent = put_person(&vault, 0x7A);
+    let claim = vault
+        .memory(agent, EdgeActorClass::Agent)
+        .claim_upsert(&claim_input(
+            "profile.mood",
+            &subject,
+            "observed",
+            serde_json::json!("calm"),
+        ))
+        .expect("agent claim");
 
     let (genesis, signing) = authority_root(0x78);
     let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
@@ -1057,16 +1069,6 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     // Pre-migration the fold cannot date the rotation, so every owner verb is
     // SUSPENDED — the gate refuses rather than reading maturity out of the
     // attacker's own `learned_at`.
-    let agent = put_person(&vault, 0x7A);
-    let claim = vault
-        .memory(agent, EdgeActorClass::Agent)
-        .claim_upsert(&claim_input(
-            "profile.mood",
-            &subject,
-            "observed",
-            serde_json::json!("calm"),
-        ))
-        .expect("agent claim");
     for err in [
         facade
             .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
@@ -1094,11 +1096,9 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
         );
     }
 
-    // The suspension is self-clearing, not a brick: one write-path fold records
-    // the local observation and the rotation becomes datable. It is freshly
-    // observed, so it now sits INSIDE its delay — the veto window a legacy
-    // import is supposed to serve — rather than being declared elapsed by the
-    // peer that shipped it.
+    // This fixture exercises an ordinary delayed key rotation, not ReRoot.
+    // First-seen migration starts its veto window now; peer timestamps cannot
+    // pretend that the delay has already elapsed.
     let full = vault.authority_fold().expect("fold");
     assert!(
         !full.pending_widens.is_empty(),

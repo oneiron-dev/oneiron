@@ -9,6 +9,7 @@ use std::{collections::HashSet, sync::Mutex};
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_pack::{ContextEntity, ContextPack, EmptyContext, EmptyReason};
+use crate::deletion::{MemoryTimelineRecord, MemoryTimelineRecordState};
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -109,10 +110,51 @@ impl<'a> ScopedRead<'a> {
         let Some(audience) = &self.audience else {
             return Ok(true);
         };
-        self.audience_cache
+        Ok(self
+            .audience_cache
             .lock()
             .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-            .readable(self.vault, txn, *id, audience)
+            .readable(self.vault, txn, *id, audience)?)
+    }
+
+    fn credential_allows_id(&self, id: &EntityId) -> bool {
+        self.actor_key.proof.as_ref().is_none_or(|proof| {
+            let claims = proof.claims();
+            // Generic records have no proved channel context. Channel-bound
+            // credentials must use their typed adapter instead of losing a caveat.
+            claims.channels.is_empty()
+                && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
+        })
+    }
+
+    fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        let Some(proof) = &self.actor_key.proof else {
+            return Ok(true);
+        };
+        let claims = proof.claims();
+        let now = self.vault.instant_in_txn(txn)?.secs();
+        if now < claims.issued_at || now >= claims.expires_at {
+            return Ok(false);
+        }
+        let fold = self.vault.authority_fold_readonly_in_txn(txn)?;
+        if fold.vault_id != Some(claims.vault_id) {
+            return Ok(false);
+        }
+        Ok(fold.slip_is_live(&claims.slip_id))
+    }
+
+    fn deletion_metadata_allowed_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+    ) -> Result<bool> {
+        // The row's old position cannot be proved. Only authority covering every
+        // possible position may reveal deletion metadata, never a narrow grant.
+        let all_positions = crate::federation::scope_codec::read_preset();
+        Ok(self.credential_allows_id(id)
+            && self.proof_live_in(txn)?
+            && crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &all_positions))
     }
 
     #[must_use]
@@ -226,6 +268,11 @@ impl<'a> ScopedRead<'a> {
         txn: &heed::RoTxn<'_>,
         requested: Option<&RetrievalFilter>,
     ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
+        if !self.proof_live_in(txn)? {
+            return Err(Error::InvalidClaimBody(
+                "scoped read credential no longer live",
+            ));
+        }
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
         let filter = crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
@@ -542,13 +589,29 @@ impl<'a> ScopedRead<'a> {
         if !self.audience_readable_in(rtxn, id)? {
             return Ok(false);
         }
+        if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {
+            return Ok(false);
+        }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
             return self.note_readable_in(rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..]);
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw, filter)
         } else {
-            Ok(true)
+            let Some(scope) = crate::federation::record_scope::scope_for_blob(
+                &self.vault.store,
+                rtxn,
+                *id,
+                &raw,
+            )?
+            else {
+                return Ok(false);
+            };
+            Ok(crate::gate::scoped_read_record_allowed(
+                policy,
+                &self.actor_key,
+                &scope,
+            ))
         }
     }
 
@@ -593,6 +656,18 @@ impl<'a> ScopedRead<'a> {
         body: &ClaimBody,
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
+        if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {
+            return Ok(false);
+        }
+        if !crate::authority::claim_causal_admitted(
+            &self.vault.authority_fold_readonly_in_txn(rtxn)?,
+            body,
+        ) {
+            return Ok(false);
+        }
+        if !claim_surfaceable(body) {
+            return Ok(false);
+        }
         let admitted = crate::pipeline::retrieval_claim_allowed(filter, body);
         if !admitted
             || !self.audience_readable_in(rtxn, id)?
@@ -726,6 +801,36 @@ impl<'a> ScopedRead<'a> {
         Ok(())
     }
 
+    fn filter_memory_timeline_records(
+        &self,
+        records: Vec<MemoryTimelineRecord>,
+    ) -> Result<Vec<MemoryTimelineRecord>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let policy = self.policy_manifest_in(&rtxn)?;
+        let mut kept = Vec::with_capacity(records.len());
+        for record in records {
+            let readable = match (record.state, record.entity_type) {
+                (MemoryTimelineRecordState::Missing, _) => false,
+                (MemoryTimelineRecordState::Deleted, _) => {
+                    self.deletion_metadata_allowed_in(&rtxn, &policy, &record.id)?
+                }
+                (_, Some(_)) => {
+                    self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
+                }
+                (_, None) => false,
+            };
+            if readable {
+                kept.push(record);
+            }
+        }
+        let kept_ids: HashSet<EntityId> = kept.iter().map(|record| record.id).collect();
+        for record in &mut kept {
+            record.supersedes.retain(|id| kept_ids.contains(id));
+            record.superseded_by.retain(|id| kept_ids.contains(id));
+        }
+        Ok(kept)
+    }
+
     pub(crate) fn policy_manifest_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -778,3 +883,6 @@ impl ScopedRead<'_> {
         Ok(events)
     }
 }
+
+#[cfg(test)]
+mod slip_tests;

@@ -138,10 +138,7 @@ pub(super) fn validate_workspace_references(
         minted.extend([
             (companion.person_ref, ENTITY_TYPE_PERSON),
             (companion.actor_ref, ENTITY_TYPE_AGENT_DEF),
-            (
-                companion.companion_record_ref,
-                crate::companion::ENTITY_TYPE_COMPANION_REGISTER,
-            ),
+            (companion.companion_record_ref, ENTITY_TYPE_FACET),
             (
                 companion.profile_grant_ref,
                 crate::registry::ENTITY_TYPE_ACCESS_GRANT,
@@ -623,7 +620,7 @@ pub(super) fn ensure_companion_record(
     );
     let record = CompanionRecord::persona(
         CompanionScope::personal(intent.person_ref),
-        companion.actor_ref,
+        companion.person_ref,
         Value::Map(vec![
             (
                 Value::from("schema_version"),
@@ -639,14 +636,14 @@ pub(super) fn ensure_companion_record(
             ),
         ]),
         provenance,
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         if let Some(raw) = vault
             .store
             .port_entity_record(txn, &companion.companion_record_ref)?
         {
-            if raw.entity_type != crate::companion::ENTITY_TYPE_COMPANION_REGISTER {
+            if raw.entity_type != ENTITY_TYPE_FACET {
                 return Err(Error::InvalidEntityType(raw.entity_type));
             }
             let existing = crate::companion::decode_companion_record_body(&raw.body)?;
@@ -654,7 +651,7 @@ pub(super) fn ensure_companion_record(
                 || existing.subject != record.subject
                 || existing.value != record.value
                 || existing.lifecycle != record.lifecycle
-                || existing.export_classification != record.export_classification
+                || existing.sensitivity != record.sensitivity
             {
                 return Err(invalid(
                     "companion_record_ref is already bound to a different companion",
@@ -685,7 +682,7 @@ pub(super) fn ensure_companion_profile_grant(
     let expected = AccessGrant::companion_profile_read(
         intent.person_ref,
         intent.person_ref,
-        companion.actor_ref,
+        companion.person_ref,
         intent.occurred_at,
     );
     let id = companion.profile_grant_ref;

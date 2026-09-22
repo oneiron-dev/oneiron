@@ -1,7 +1,6 @@
 //! LFS handler tests.
 
 use super::*;
-use crate::auth::mint_core_token_v2;
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
 use axum::body::Body;
@@ -53,17 +52,14 @@ fn test_server(config: SyncServerConfig) -> (tempfile::TempDir, Arc<SyncServer>)
 /// A registered principal is an entity id, so the fixture mints one rather
 /// than inventing a spelling the grammar would reject.
 fn writer_token() -> String {
-    mint_core_token_v2(
-        TRUST_ROOT,
-        &format!(
-            "scope=core:read,core:write;principal_ref={}",
-            oneiron::EntityId::now().to_hex()
-        ),
+    format!(
+        "{}scope=core:read,core:write;principal_ref={}",
+        crate::test_credentials::RECIPE_PREFIX,
+        oneiron::EntityId::now().to_hex()
     )
 }
-
 fn reader_token() -> String {
-    mint_core_token_v2(TRUST_ROOT, "scope=core:read")
+    format!("{}scope=core:read", crate::test_credentials::RECIPE_PREFIX)
 }
 
 fn bearer(token: &str) -> HeaderMap {
@@ -81,7 +77,7 @@ fn request(method: &str, uri: &str, token: Option<&str>, body: Body) -> Request<
         .uri(uri)
         .header(HOST, "origin.invalid");
     if let Some(token) = token {
-        builder = builder.header(AUTHORIZATION, format!("Bearer {token}"));
+        builder = builder.header(AUTHORIZATION, token);
     }
     builder.body(body).expect("request")
 }
@@ -90,6 +86,7 @@ async fn route(
     server: &Arc<SyncServer>,
     request: Request<Body>,
 ) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let request = crate::test_credentials::bind_request(server, request);
     let response = lfs_routes()
         .with_state(Arc::clone(server))
         .oneshot(request)

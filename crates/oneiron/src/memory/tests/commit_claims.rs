@@ -1329,3 +1329,42 @@ fn put_structural_refuses_to_mint_a_same_as_link() {
             .all(|edge| edge.kind != EdgeKind::SameAs)
     );
 }
+
+#[test]
+fn relationship_upserts_do_not_supersede_another_relationship() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x21);
+    let subject = put_person(&vault, 0x22);
+    let facade = facade_for(&vault, actor);
+    let mut rows = Vec::new();
+    for value in ["Ada", "A"] {
+        let relationship = EntityId::now();
+        vault
+            .put_entity(
+                &relationship,
+                crate::registry::ENTITY_TYPE_RELATIONSHIP,
+                test_time(1),
+                1,
+                b"relationship",
+            )
+            .unwrap();
+        let mut input = claim_input(
+            "profile.nickname",
+            &subject,
+            "user_stated",
+            serde_json::json!(value),
+        );
+        input.relationship_ref = Some(relationship.to_hex());
+        let receipt = facade.claim_upsert(&input).unwrap();
+        let id = facade.resolve_ref(&receipt.claim_short_id).unwrap();
+        let body = vault.get_claim(&id).unwrap().unwrap();
+        assert_eq!(body.rel, Some(relationship));
+        rows.push(id);
+    }
+    for id in rows {
+        assert_eq!(
+            vault.get_claim(&id).unwrap().unwrap().lifecycle,
+            ClaimLifecycleStatus::Active
+        );
+    }
+}

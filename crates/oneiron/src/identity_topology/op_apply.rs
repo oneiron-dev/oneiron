@@ -386,7 +386,16 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
-                data: spec.label.as_bytes().to_vec(),
+                data: {
+                    let body = rmpv::Value::Map(vec![
+                        ("label".into(), spec.label.clone().into()),
+                        ("sensitivity".into(), "sensitive".into()),
+                    ]);
+                    let mut data = Vec::new();
+                    rmpv::encode::write_value(&mut data, &body)
+                        .map_err(|_| Error::InvariantViolation("facet encoding"))?;
+                    data
+                },
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,

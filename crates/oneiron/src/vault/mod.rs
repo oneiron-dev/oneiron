@@ -13,6 +13,9 @@ pub use entity_revision::{
 };
 mod open;
 mod places;
+
+#[cfg(feature = "test-support")]
+mod read_fixture;
 mod search_retrieval;
 mod transactions;
 

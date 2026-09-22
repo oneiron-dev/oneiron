@@ -3,6 +3,8 @@
 //! WORLDS, MEMORIES, TASKS, AGENTS, SKILLS, session read-set riders and stream projections.
 
 mod agents;
+mod agents_fanout;
+pub(crate) use agents_fanout::fanout_agent_rows;
 mod capabilities;
 mod observations;
 #[cfg(test)]

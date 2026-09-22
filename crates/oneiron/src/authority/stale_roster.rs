@@ -35,7 +35,7 @@ fn expired_stale_roster_approvals(
         let keys = match &entry.op {
             AuthorityOp::RevokeDevice { revoked_key } => vec![revoked_key.clone()],
             AuthorityOp::RotateKey { old_key, .. } => vec![old_key.clone()],
-            AuthorityOp::RecoveryReboot { new_device, .. } => fold
+            AuthorityOp::ReRoot { new_device } => fold
                 .roster
                 .keys()
                 .filter(|key| **key != new_device.key)

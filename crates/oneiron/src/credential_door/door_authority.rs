@@ -22,6 +22,18 @@ impl CredentialDoorService {
         txn: &heed::RoTxn<'_>,
         credential: &DoorCredential,
     ) -> DoorResult<()> {
+        if let Some((slip_id, vault_id)) = credential.capability_identity() {
+            #[cfg(test)]
+            check_log_available()?;
+            let fold = self
+                .vault()
+                .authority_fold_readonly_in_txn(txn)
+                .map_err(log_unreachable)?;
+            if fold.vault_id != Some(vault_id) || !fold.slip_is_live(&slip_id) {
+                return Err(CredentialDoorError::AuthorityRejected);
+            }
+            return Ok(());
+        }
         if credential.slip_id().starts_with("checkout:") {
             return self.witness_checkout_in_txn(txn, credential);
         }
@@ -83,8 +95,13 @@ impl CredentialDoorService {
             .write_txn()
             .map_err(log_unreachable)?;
         self.witness_in_txn(&txn, credential)?;
-        self.evaluate_with_consent_in_txn(&mut txn, credential, verb, record, channel, now)?;
-        if credential.is_single_use() {
+        if credential.capability_identity().is_some() {
+            // A verified verb set is exact. Class consent cannot widen it.
+            credential.evaluate(verb, record, channel, now)?;
+        } else {
+            self.evaluate_with_consent_in_txn(&mut txn, credential, verb, record, channel, now)?;
+        }
+        if credential.is_single_use() && credential.capability_identity().is_none() {
             self.vault().append_local_door_op_in_txn(
                 &mut txn,
                 AuthorityOp::SpendDoorSlip {
@@ -93,7 +110,9 @@ impl CredentialDoorService {
             )?;
         }
         txn.commit().map_err(log_unreachable)?;
-        Ok(())
+        // The capability API owns its write transaction and rechecks liveness.
+        // Release the door transaction before entering it. No effect precedes burn.
+        self.consume_single_use(credential)
     }
 
     /// Rehydrates a signed slip for the registered principal the transport has
@@ -134,6 +153,7 @@ impl CredentialDoorService {
                 ceiling_secs: DOOR_ONE_SHOT_MAX_LIFETIME_SECS,
             });
         }
+        let parent_hash = presented.mint_hash()?;
         #[cfg(test)]
         check_log_available()?;
         let now = self.door_instant()?;
@@ -177,12 +197,12 @@ impl CredentialDoorService {
             verb_class: "door.redeem".to_owned(),
             records: [secret_ref.to_owned()].into(),
             channels: [admitted.effector().as_str().to_owned()].into(),
-            parent: Some(presented.mint_hash()?),
+            parent: Some(parent_hash),
             pact: self
                 .vault()
                 .authority_fold_readonly_in_txn(&txn)
                 .map_err(log_unreachable)?
-                .live_door_slip(&presented.mint_hash()?)
+                .live_door_slip(&parent_hash)
                 .ok_or(CredentialDoorError::AuthorityRejected)?
                 .scope
                 .pact

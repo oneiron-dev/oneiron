@@ -13,9 +13,7 @@ use super::window_packing_excludes_entity;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::{
-    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
-};
+use crate::companion::decode_companion_record_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
@@ -275,11 +273,13 @@ pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
     if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
         return Ok(true);
     }
-    if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+    if header.entity_type != crate::registry::ENTITY_TYPE_FACET
+        || !crate::companion::is_identity_facet_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+    {
         return Ok(false);
     }
     decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])
-        .map(|record| record.export_classification == CompanionExportClassification::LocalOnly)
+        .map(|record| record.sensitivity == crate::federation::Sensitivity::Restricted)
 }
 
 /// Local-only diagnostics and credentials refused by the same-vault locality predicate.

@@ -336,6 +336,7 @@ fn disclosure_and_interlocutor_reads_identical() -> Result<()> {
 /// channel class.
 fn put_identity(vault: &Vault, id: EntityId, channel: &str, address: &str) -> Result<()> {
     let identity = crate::channel_identity::ChannelIdentity {
+        auth_mode: crate::channel_identity::ChannelAuthMode::ApiKey,
         channel: channel.to_owned(),
         address_or_handle: address.to_owned(),
         shape: crate::channel_identity::ChannelIdentityShape::DedicatedAddress,

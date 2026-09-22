@@ -285,10 +285,13 @@ async fn http_get(addr: SocketAddr, path: &str, secret: Option<&str>) -> String 
 }
 
 async fn http_get_bytes(addr: SocketAddr, path: &str, secret: Option<&str>) -> Vec<u8> {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let secret_header = secret
         .map(|secret| format!("Authorization: Bearer {secret}\r\n"))
         .unwrap_or_default();
+    http_get_with_headers(addr, path, &secret_header).await
+}
+async fn http_get_with_headers(addr: SocketAddr, path: &str, secret_header: &str) -> Vec<u8> {
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let request =
         format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{secret_header}\r\n");
     stream.write_all(request.as_bytes()).await.unwrap();
@@ -554,15 +557,6 @@ async fn ws_upgrade_allows_unauthenticated_only_in_dev_mode() {
 /// Spelled out rather than called into the crate for the same reason as
 /// [`mint_identified_owner_token`]: this is the black-box side, so the KDF
 /// context and the `v2.<claims>.<mac-hex>` framing are pinned as wire facts.
-fn mint_token_with_claims(secret: &str, claims: &str) -> String {
-    let key = blake3::derive_key(
-        "oneiron-server 2026-07 core-token-v2 mac",
-        secret.as_bytes(),
-    );
-    let mac = blake3::keyed_hash(&key, claims.as_bytes());
-    format!("v2.{claims}.{}", mac.to_hex())
-}
-
 /// The `/ws` device plane is owner-grade only, and a scoped token is refused
 /// at the upgrade — before any socket exists to send an UPDATE on.
 ///
@@ -588,22 +582,41 @@ fn mint_token_with_claims(secret: &str, claims: &str) -> String {
 #[tokio::test]
 async fn ws_upgrade_rejects_a_live_scoped_token_that_works_on_v1() {
     let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
+    let (addr, server, handle) = spawn_server(
         open_vault(dir.path()),
         config_with_secret(Some("scoped-ws-secret")),
     )
     .await;
 
-    // Widest scopes a mint can carry: the refusal is about grade, not reach.
-    let scoped = mint_token_with_claims("scoped-ws-secret", "scope=core:read,core:write");
+    let mut scoped = mint_identified_owner_token(&server, "scoped-ws-secret", "scoped-upgrade");
+    let mut scope = oneiron::federation::Scope::top();
+    scope.verbs = oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        "read".into(),
+        "write".into(),
+    ]));
+    scoped
+        .slip
+        .attenuate(oneiron::authority::SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        })
+        .unwrap();
 
     // The credential is authentic and live: it is served on its own /v1 route.
-    let response = http_get(addr, "/v1/core/outbound/capabilities", Some(&scoped)).await;
+    let headers = format!(
+        "Authorization: Bearer {}\r\nx-oneiron-binding: {}\r\n",
+        scoped.slip.to_token().unwrap(),
+        binding_proof(&scoped)
+    );
+    let response = String::from_utf8(
+        http_get_with_headers(addr, "/v1/core/outbound/capabilities", &headers).await,
+    )
+    .unwrap();
     assert_http_status(&response, 200);
 
     // Same credential at /ws: refused before the upgrade completes, so no
     // socket — and therefore no doc-mutating import — ever exists.
-    let err = connect(addr, Some(&scoped)).await.unwrap_err();
+    let err = connect_bound(addr, &scoped, true).await.unwrap_err();
     assert_unauthorized(&err);
 
     // The owner-grade half: the same server admits a device credential and
@@ -616,22 +629,77 @@ async fn ws_upgrade_rejects_a_live_scoped_token_that_works_on_v1() {
 
 // ─── /ws live-session revocation ──────────────────────────────────────────────
 
-/// Mints an owner-grade v2 token carrying `jti`, computing the MAC the way
-/// `auth.rs` does.
-///
-/// Spelled out here rather than called into the crate on purpose: this is the
-/// black-box side of the contract, so the KDF context string and the
-/// `v2.<claims>.<mac-hex>` framing are pinned as wire facts. Claims are the
-/// `jti` alone, which leaves the token owner-grade and therefore admissible
-/// at `/ws`.
-fn mint_identified_owner_token(secret: &str, jti: &str) -> String {
-    let key = blake3::derive_key(
-        "oneiron-server 2026-07 core-token-v2 mac",
-        secret.as_bytes(),
+/// A real, individually revocable owner slip. Its private binding key never
+/// crosses the wire; each upgrade signs a fresh short-lived challenge.
+struct BoundCredential {
+    slip: oneiron::authority::CapabilitySlip,
+    holder: ed25519_dalek::SigningKey,
+}
+fn mint_identified_owner_token(server: &SyncServer, secret: &str, jti: &str) -> BoundCredential {
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).unwrap();
+    let root = server.vault().ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(jti.as_bytes()).as_bytes();
+    let holder = ed25519_dalek::SigningKey::from_bytes(
+        blake3::hash(format!("holder:{jti}").as_bytes()).as_bytes(),
     );
-    let claims = format!("jti={jti}");
-    let mac = blake3::keyed_hash(&key, claims.as_bytes());
-    format!("v2.{claims}.{}", mac.to_hex())
+    claims.binding_key = holder.verifying_key().to_bytes();
+    let slip = server
+        .vault()
+        .mint_capability_slip(&issuer, claims)
+        .unwrap();
+    BoundCredential { slip, holder }
+}
+fn binding_proof(credential: &BoundCredential) -> serde_json::Value {
+    use ed25519_dalek::Signer;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let nonce = EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature: String = credential
+        .holder
+        .sign(
+            &credential
+                .slip
+                .binding_transcript(challenge.as_bytes())
+                .unwrap(),
+        )
+        .to_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    serde_json::json!({"timestamp":timestamp,"nonce":nonce,"signature":signature})
+}
+async fn connect_bound(
+    addr: SocketAddr,
+    credential: &BoundCredential,
+    hello: bool,
+) -> Result<WsStream, tokio_tungstenite::tungstenite::Error> {
+    let proof = binding_proof(credential);
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    request.headers_mut().insert(
+        "authorization",
+        format!("Bearer {}", credential.slip.to_token().unwrap())
+            .parse()
+            .unwrap(),
+    );
+    request
+        .headers_mut()
+        .insert("x-oneiron-binding", proof.to_string().parse().unwrap());
+    let (mut ws, _) = tokio_tungstenite::connect_async(request).await?;
+    if hello {
+        send_protocol_hello(&mut ws).await?;
+    }
+    Ok(ws)
+}
+fn revoke_owner_slip(server: &SyncServer, secret: &str, jti: &str) {
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).unwrap();
+    server
+        .vault()
+        .revoke_capability_slip(&issuer, *blake3::hash(jti.as_bytes()).as_bytes())
+        .unwrap();
 }
 
 /// Records `jti` as revoked, byte-for-byte as `oneiron-server token revoke`
@@ -679,9 +747,9 @@ async fn revoked_token_stops_serving_its_already_open_socket() {
     .await;
 
     let jti = "a".repeat(32);
-    let token = mint_identified_owner_token("live-revoke-secret", &jti);
+    let token = mint_identified_owner_token(&server, "live-revoke-secret", &jti);
 
-    let mut ws = connect(addr, Some(&token)).await.unwrap();
+    let mut ws = connect_bound(addr, &token, true).await.unwrap();
     let first = next_binary(&mut ws).await;
     assert_eq!(
         first[0], TAG_SYNC_UPDATE,
@@ -714,7 +782,7 @@ async fn revoked_token_stops_serving_its_already_open_socket() {
     }
 
     // The operator revokes THIS token while the socket stays open.
-    revoke_token_jti(server.vault(), &jti);
+    revoke_owner_slip(&server, "live-revoke-secret", &jti);
 
     // Same privileged message, same socket: no further sync data, and the
     // connection closes rather than lingering.
@@ -743,11 +811,11 @@ async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
     .await;
 
     let jti = "b".repeat(32);
-    let revoked_token = mint_identified_owner_token("fanout-revoke-secret", &jti);
+    let revoked_token = mint_identified_owner_token(&server, "fanout-revoke-secret", &jti);
 
     // A holds the token that gets revoked; B holds the trust root and stays
     // live, so it keeps authoring the updates A must stop receiving.
-    let mut client_a = connect(addr, Some(&revoked_token)).await.unwrap();
+    let mut client_a = connect_bound(addr, &revoked_token, true).await.unwrap();
     let mut client_b = connect(addr, Some("fanout-revoke-secret")).await.unwrap();
     let _ = next_binary(&mut client_a).await;
     let _ = next_binary(&mut client_b).await;
@@ -773,7 +841,7 @@ async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
         "A receives relayed updates while its token is live"
     );
 
-    revoke_token_jti(server.vault(), &jti);
+    revoke_owner_slip(&server, "fanout-revoke-secret", &jti);
 
     // B authors again. A sends nothing at all from here on — the only thing
     // that changed is its token's liveness.
@@ -878,13 +946,13 @@ async fn revocation_between_upgrade_and_hello_serves_no_snapshot() {
         .unwrap();
 
     let jti = "d".repeat(32);
-    let token = mint_identified_owner_token("pre-hello-secret", &jti);
+    let token = mint_identified_owner_token(&server, "pre-hello-secret", &jti);
 
     // Upgraded, authenticated, and deliberately silent.
-    let mut ws = connect_without_hello(addr, Some(&token)).await.unwrap();
+    let mut ws = connect_bound(addr, &token, false).await.unwrap();
 
     // The operator revokes while the socket is parked pre-hello.
-    revoke_token_jti(server.vault(), &jti);
+    revoke_owner_slip(&server, "pre-hello-secret", &jti);
 
     send_protocol_hello(&mut ws).await.unwrap();
 
@@ -914,11 +982,11 @@ async fn revoked_token_cannot_publish_ephemeral_state_to_peers() {
     .await;
 
     let jti = "e".repeat(32);
-    let token = mint_identified_owner_token("ephemeral-revoke-secret", &jti);
+    let token = mint_identified_owner_token(&server, "ephemeral-revoke-secret", &jti);
 
     // A holds the token that gets revoked; B holds the trust root and is the
     // live peer A must stop reaching.
-    let mut client_a = connect(addr, Some(&token)).await.unwrap();
+    let mut client_a = connect_bound(addr, &token, true).await.unwrap();
     let mut client_b = connect(addr, Some("ephemeral-revoke-secret"))
         .await
         .unwrap();
@@ -937,7 +1005,7 @@ async fn revoked_token_cannot_publish_ephemeral_state_to_peers() {
     apply_ephemeral_frame(&receiver, &relayed);
     assert_eq!(receiver.get("presence:device-a"), Some("online".into()));
 
-    revoke_token_jti(server.vault(), &jti);
+    revoke_owner_slip(&server, "ephemeral-revoke-secret", &jti);
 
     // Same socket, same message class — only the token's liveness changed.
     client_a
@@ -1080,6 +1148,7 @@ async fn http_bad_entity_id_returns_structured_api_error_body() {
 
 #[tokio::test]
 async fn http_entity_summary_projects_exact_keys_and_hides_heavy_fields() {
+    const SECRET: &str = "ws-entity-summary-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
     let id = EntityId::now();
@@ -1100,12 +1169,12 @@ async fn http_entity_summary_projects_exact_keys_and_hides_heavy_fields() {
             &body,
         )
         .unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
     let response = http_get_bytes(
         addr,
         &format!("/api/entity/{}?view=summary", id.to_hex()),
-        None,
+        Some(SECRET),
     )
     .await;
     assert_http_status_bytes(&response, 200);
@@ -1126,6 +1195,7 @@ async fn http_entity_summary_projects_exact_keys_and_hides_heavy_fields() {
 
 #[tokio::test]
 async fn http_entity_default_returns_standard_raw_body() {
+    const SECRET: &str = "ws-entity-default-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
     let id = EntityId::now();
@@ -1143,9 +1213,10 @@ async fn http_entity_default_returns_standard_raw_body() {
             &body,
         )
         .unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let response = http_get_bytes(addr, &format!("/api/entity/{}", id.to_hex()), None).await;
+    let response =
+        http_get_bytes(addr, &format!("/api/entity/{}", id.to_hex()), Some(SECRET)).await;
     assert_http_status_bytes(&response, 200);
     assert_eq!(http_body(&response), body.as_slice());
 
@@ -1293,6 +1364,7 @@ async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
 
 #[tokio::test]
 async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
+    const SECRET: &str = "ws-vector-defaults-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_search_vault(dir.path());
     let id = EntityId::now();
@@ -1315,10 +1387,14 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
         )
         .unwrap();
     vault.put_vector(&id, &[1.0_f32, 0.0, 0.0, 0.0]).unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let summary_response =
-        http_get_bytes(addr, "/api/search/vector?query=1,0,0,0&limit=1", None).await;
+    let summary_response = http_get_bytes(
+        addr,
+        "/api/search/vector?query=1,0,0,0&limit=1",
+        Some(SECRET),
+    )
+    .await;
     assert_http_status_bytes(&summary_response, 200);
     let summary = http_json(&summary_response);
     let summary_hit = summary["items"].as_array().unwrap().first().unwrap();
@@ -1331,7 +1407,7 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
     let standard_response = http_get_bytes(
         addr,
         "/api/search/vector?query=1,0,0,0&limit=1&view=standard",
-        None,
+        Some(SECRET),
     )
     .await;
     assert_http_status_bytes(&standard_response, 200);
@@ -1345,7 +1421,7 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
     let full_response = http_get_bytes(
         addr,
         "/api/search/vector?query=1,0,0,0&limit=1&view=full",
-        None,
+        Some(SECRET),
     )
     .await;
     assert_http_status_bytes(&full_response, 200);
@@ -1368,6 +1444,7 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
 
 #[tokio::test]
 async fn http_edges_default_summary_and_standard_preserves_current_fields() {
+    const SECRET: &str = "ws-edges-summary-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
     let source = EntityId::now();
@@ -1388,10 +1465,14 @@ async fn http_edges_default_summary_and_standard_preserves_current_fields() {
     vault
         .put_edge(&source, EdgeKind::BelongsTo, &target, 0.5)
         .unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let summary_response =
-        http_get_bytes(addr, &format!("/api/edges/{}", source.to_hex()), None).await;
+    let summary_response = http_get_bytes(
+        addr,
+        &format!("/api/edges/{}", source.to_hex()),
+        Some(SECRET),
+    )
+    .await;
     assert_http_status_bytes(&summary_response, 200);
     let summary = http_json(&summary_response);
     let summary_edge = summary.as_array().unwrap().first().unwrap();
@@ -1403,7 +1484,7 @@ async fn http_edges_default_summary_and_standard_preserves_current_fields() {
     let standard_response = http_get_bytes(
         addr,
         &format!("/api/edges/{}?view=standard", source.to_hex()),
-        None,
+        Some(SECRET),
     )
     .await;
     assert_http_status_bytes(&standard_response, 200);
@@ -1462,12 +1543,18 @@ async fn http_search_text_response_defaults_to_estimate_meta() {
 
 #[tokio::test]
 async fn http_search_text_estimate_counts_before_page_truncation() {
+    const SECRET: &str = "ws-search-text-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_search_vault(dir.path());
     seed_text_search_matches(&vault);
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let response = http_get(addr, "/api/search/text?query=metaneedle&limit=2", None).await;
+    let response = http_get(
+        addr,
+        "/api/search/text?query=metaneedle&limit=2",
+        Some(SECRET),
+    )
+    .await;
     assert_http_status(&response, 200);
     let body = http_json_value(&response);
 
@@ -1533,15 +1620,16 @@ async fn http_search_vector_response_defaults_to_estimate_meta() {
 
 #[tokio::test]
 async fn http_search_vector_estimate_counts_before_page_truncation() {
+    const SECRET: &str = "ws-search-vector-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_search_vault(dir.path());
     seed_vector_search_matches(&vault);
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
     let response = http_get(
         addr,
         "/api/search/vector?query=1.0,0.0,0.0,0.0&limit=2",
-        None,
+        Some(SECRET),
     )
     .await;
     assert_http_status(&response, 200);

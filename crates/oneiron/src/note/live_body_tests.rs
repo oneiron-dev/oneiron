@@ -64,7 +64,7 @@ fn note_live_reads_survive_reopen_without_mirroring_projection_into_birth() {
     let read_key = ScopedReadActorKey::with_actor_class(actor.to_hex(), "human").unwrap();
     let read = vault.scoped_read(read_key);
     assert_eq!(
-        decode_note_body(&read.get(&note).unwrap().unwrap())
+        decode_note_body(&read.get(&note).unwrap().value.unwrap())
             .unwrap()
             .markdown,
         expected
@@ -77,6 +77,7 @@ fn note_live_reads_survive_reopen_without_mirroring_projection_into_birth() {
             &read
                 .hydrate_short_id(short_id, hash)
                 .unwrap()
+                .value
                 .unwrap()
                 .body
                 .unwrap()

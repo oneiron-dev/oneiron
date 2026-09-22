@@ -239,6 +239,8 @@ impl AccessGrantStatus {
 /// Vault-resident access grant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AccessGrant {
+    /// Canonical grant authority. Resource fields below are narrowing presets.
+    pub authority_scope: crate::federation::Scope,
     /// Principal receiving access.
     pub principal_ref: EntityId,
     /// Exact resource scope.
@@ -258,13 +260,14 @@ pub struct AccessGrant {
 impl AccessGrant {
     /// Constructs an active companion-profile read grant.
     #[must_use]
-    pub const fn companion_profile_read(
+    pub fn companion_profile_read(
         principal_ref: EntityId,
         person_ref: EntityId,
         persona_ref: EntityId,
         created_at: u64,
     ) -> Self {
         Self {
+            authority_scope: crate::federation::scope_codec::read_preset(),
             principal_ref,
             scope: AccessGrantScope::companion_profile(person_ref, persona_ref),
             capability: AccessGrantCapability::CompanionProfileRead,
@@ -280,13 +283,14 @@ impl AccessGrant {
     /// `principal_ref` is the audience: DEC-0006 binds one standing grant per
     /// `(calendar × audience)`, and this record is that binding.
     #[must_use]
-    pub const fn calendar_disclosure(
+    pub fn calendar_disclosure(
         principal_ref: EntityId,
         calendar_ref: EntityId,
         rung: DisclosureRung,
         created_at: u64,
     ) -> Self {
         Self {
+            authority_scope: crate::federation::scope_codec::read_preset(),
             principal_ref,
             scope: AccessGrantScope::calendar(calendar_ref, rung),
             capability: AccessGrantCapability::CalendarDisclosureRead,
@@ -387,7 +391,8 @@ impl AccessGrant {
         person_ref: &EntityId,
         persona_ref: &EntityId,
     ) -> bool {
-        self.is_active()
+        crate::federation::grant_scope::admits_preset(&self.authority_scope, "read")
+            && self.is_active()
             && self.capability == AccessGrantCapability::CompanionProfileRead
             && self.principal_ref.as_bytes() == principal_ref.as_bytes()
             && self
@@ -407,7 +412,8 @@ impl AccessGrant {
         principal_ref: &EntityId,
         calendar_ref: &EntityId,
     ) -> Option<DisclosureRung> {
-        if !self.is_active()
+        if !crate::federation::grant_scope::admits_preset(&self.authority_scope, "read")
+            || !self.is_active()
             || self.capability != AccessGrantCapability::CalendarDisclosureRead
             || self.principal_ref.as_bytes() != principal_ref.as_bytes()
         {

@@ -101,9 +101,27 @@ pub(super) fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_dela
                 (Value::from("mint_hash"), binary_value(*mint_hash)),
             ])
         }
+        AuthorityOp::SlipMint(action) => Value::Map(vec![
+            (Value::from(OP_KEY_KIND), Value::from("slip_mint")),
+            (
+                Value::from("slip"),
+                Value::Binary(
+                    serde_json::to_vec(action).expect("slip fields have infallible JSON encodings"),
+                ),
+            ),
+        ]),
+        AuthorityOp::SlipRevoke { slip_id } => Value::Map(vec![
+            (Value::from(OP_KEY_KIND), Value::from("slip_revoke")),
+            (Value::from("slip_id"), binary_value(*slip_id)),
+        ]),
+        AuthorityOp::SlipConsume { slip_id } => Value::Map(vec![
+            (Value::from(OP_KEY_KIND), Value::from("slip_consume")),
+            (Value::from("slip_id"), binary_value(*slip_id)),
+        ]),
         AuthorityOp::Genesis {
             device,
             genesis_nonce,
+            recovery,
             tier_floor,
             pending_widen_delay_secs,
         } => {
@@ -111,6 +129,23 @@ pub(super) fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_dela
                 (Value::from(OP_KEY_KIND), Value::from(OP_KIND_GENESIS)),
                 (Value::from("device"), device_value(device)),
                 (Value::from("genesis_nonce"), binary_value(*genesis_nonce)),
+                (
+                    Value::from("recovery_secret_step"),
+                    Value::Map(vec![
+                        (
+                            Value::from("commitment"),
+                            binary_value(recovery.commitment()),
+                        ),
+                        (
+                            Value::from("outcome"),
+                            Value::from(if recovery.dismissed() {
+                                "dismissed"
+                            } else {
+                                "saved"
+                            }),
+                        ),
+                    ]),
+                ),
                 (Value::from("tier_floor"), Value::from(tier_floor.as_str())),
             ];
             if include_genesis_delay {
@@ -129,12 +164,15 @@ pub(super) fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_dela
             (Value::from(OP_KEY_KIND), Value::from(OP_KIND_REVOKE_DEVICE)),
             (Value::from("revoked_key"), key_value(revoked_key)),
         ]),
-        AuthorityOp::SetCeiling {
+        AuthorityOp::RetiredCeiling {
             authority_key,
             actor_class,
             ceiling,
         } => Value::Map(vec![
-            (Value::from(OP_KEY_KIND), Value::from(OP_KIND_SET_CEILING)),
+            (
+                Value::from(OP_KEY_KIND),
+                Value::from(OP_KIND_RETIRED_CEILING),
+            ),
             (Value::from("authority_key"), key_value(authority_key)),
             (
                 Value::from("actor_class"),
@@ -157,21 +195,9 @@ pub(super) fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_dela
             ),
             (Value::from("tier_floor"), Value::from(tier_floor.as_str())),
         ]),
-        AuthorityOp::RecoveryReboot {
-            new_genesis_nonce,
-            new_device,
-            tier_floor,
-        } => Value::Map(vec![
-            (
-                Value::from(OP_KEY_KIND),
-                Value::from(OP_KIND_RECOVERY_REBOOT),
-            ),
-            (
-                Value::from("new_genesis_nonce"),
-                binary_value(*new_genesis_nonce),
-            ),
+        AuthorityOp::ReRoot { new_device } => Value::Map(vec![
+            (Value::from(OP_KEY_KIND), Value::from(OP_KIND_RE_ROOT)),
             (Value::from("new_device"), device_value(new_device)),
-            (Value::from("tier_floor"), Value::from(tier_floor.as_str())),
         ]),
         AuthorityOp::CriticalWriteConfirm(action) => Value::Map(vec![
             (
@@ -395,7 +421,7 @@ pub(super) fn key_value(key: &AuthorityKey) -> Value {
     }
 }
 
-fn signature_value(signature: &AuthoritySignature) -> Value {
+pub(super) fn signature_value(signature: &AuthoritySignature) -> Value {
     Value::Map(vec![
         (
             Value::from(KEY_SUITE),

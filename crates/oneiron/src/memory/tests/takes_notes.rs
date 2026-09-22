@@ -571,10 +571,40 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             .is_err()
     );
 
-    let owner_read = vault
-        .scoped_read(ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").expect("key"));
-    let other_read = vault
-        .scoped_read(ScopedReadActorKey::with_actor_class(other.to_hex(), "human").expect("key"));
+    // C07 requires logged proof as well as C01's live NOTE author identity.
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"diary read fixture").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mint_actor = |actor: EntityId| {
+        let mut claims = root.claims.clone();
+        claims.slip_id = *blake3::hash(actor.as_bytes()).as_bytes();
+        claims.holder_ref = actor.to_hex();
+        claims.actor_class = Some("human".into());
+        vault.mint_capability_slip(&issuer, claims).unwrap()
+    };
+    let read_key = |slip: &crate::authority::CapabilitySlip| {
+        let signature = issuer.binding_proof(slip, b"diary-read").unwrap();
+        let proof = vault
+            .verify_capability_slip(&issuer, slip, b"diary-read", &signature)
+            .unwrap();
+        ScopedReadActorKey::from_verified_slip(&proof).unwrap()
+    };
+    let owner_slip = mint_actor(owner);
+    let owner_read = vault.scoped_read(read_key(&owner_slip));
+    let other_read = vault.scoped_read(read_key(&mint_actor(other)));
+    let unproven =
+        vault.scoped_read(ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").unwrap());
+    assert!(unproven.get(&id).unwrap().is_none());
+    let mut narrowed = owner_slip;
+    narrowed
+        .attenuate(crate::authority::SlipCaveat {
+            records: Some(std::collections::BTreeSet::from([other.to_hex()])),
+            ..Default::default()
+        })
+        .unwrap();
+    let limited = vault.scoped_read(read_key(&narrowed));
+    assert!(limited.get(&id).unwrap().is_none());
+    assert!(limited.get_entity_parts(&id).unwrap().is_none());
+    assert!(limited.memory_timeline(&id).unwrap().records.is_empty());
     assert_eq!(
         crate::note::decode_note_body(&owner_read.get(&id).expect("read").value.expect("body"))
             .expect("decode"),
@@ -604,6 +634,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             .is_empty()
     );
     assert!(other_read.edges_out(&id).expect("edges").is_none());
+    assert!(limited.hydrate_short_id(short, hash).unwrap().is_none());
     let classless = vault.scoped_read(ScopedReadActorKey::new(owner.to_hex()).expect("key"));
     assert!(classless.get(&id).expect("class required").is_none());
     let wrong_class = vault
@@ -774,6 +805,10 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         entity_type: ENTITY_TYPE_PERSON,
         ..entity
     }];
+    let mut narrowed_pack = injected.clone();
+    limited.filter_context_pack(&mut narrowed_pack).unwrap();
+    assert!(narrowed_pack.results.is_empty());
+    assert!(narrowed_pack.neighbors.is_empty());
     let mut owner_pack = injected.clone();
     owner_read
         .filter_context_pack(&mut owner_pack)

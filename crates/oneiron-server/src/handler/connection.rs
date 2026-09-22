@@ -27,7 +27,11 @@ use crate::server::SyncServer;
 pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
     Router::new()
         .route("/ws", get(ws_upgrade_handler))
-        .with_state(server)
+        .with_state(server.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            crate::auth::admit_http_binding,
+        ))
 }
 
 /// Handles WebSocket upgrade requests.
@@ -243,6 +247,10 @@ async fn handle_connection(
                         Err(_) => break,
                     }
                 }
+                // Delivery/revocation work is level-triggered. Its synchronous
+                // authority checks may outlast a period; a backlog of timer
+                // ticks must not crowd out inbound frames or queued replies.
+                app_tick.reset();
                 continue;
             }
             ConnEvent::Broadcast(broadcast_result) => {

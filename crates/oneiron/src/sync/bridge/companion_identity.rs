@@ -9,9 +9,7 @@ use super::entities::materialize_entity_blob_in_txn;
 
 use crate::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::{
-    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
-};
+use crate::companion::decode_companion_record_body;
 use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, encode_edge_value,
 };
@@ -156,7 +154,9 @@ pub(super) fn ensure_companion_register_kind_for_entity_delta(
         let Some(header) = EntityMetadataHeader::parse(blob) else {
             continue;
         };
-        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+        if header.entity_type != crate::registry::ENTITY_TYPE_FACET
+            || !crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
+        {
             continue;
         }
         let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
@@ -174,14 +174,16 @@ pub(super) fn ensure_companion_register_kind_for_entity_delta(
 
 pub(super) fn companion_register_sync_admitted(data: &[u8]) -> Result<bool> {
     let record = decode_companion_record_body(data)?;
-    Ok(record.export_classification != CompanionExportClassification::LocalOnly)
+    Ok(record.sensitivity != crate::federation::Sensitivity::Restricted)
 }
 
 pub(super) fn companion_register_blob_is_local_only(blob: &[u8]) -> Result<bool> {
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Err(Error::CorruptedIndex("entity metadata"));
     };
-    if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+    if header.entity_type != crate::registry::ENTITY_TYPE_FACET
+        || !crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
+    {
         return Ok(false);
     }
     let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {

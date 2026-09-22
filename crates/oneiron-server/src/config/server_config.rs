@@ -225,8 +225,8 @@ pub struct ServeConfig {
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
     pub failure_signal_training: bool,
-    /// Opaque host-managed KMS key reference. `Some` only for the hosted
-    /// posture; self-host/local keeps no host reference at all. Never key
+    /// Opaque host-managed KMS key reference. `Some` only for the managed
+    /// posture; relay and self-host keep no host reference at all. Never key
     /// material, and redacted in this struct's `Debug`.
     pub hosted_kms_key_ref: Option<String>,
 }
@@ -404,7 +404,9 @@ impl ServeConfig {
             (HostingPrivacyPosture::Hosted, None) => VaultDataKeyCustody::HostManagedKms {
                 key_ref: String::new(),
             },
-            (HostingPrivacyPosture::SelfHostLocal, None) => VaultDataKeyCustody::OwnerHeldLocal,
+            (HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay, None) => {
+                VaultDataKeyCustody::OwnerHeldLocal
+            }
         };
         VaultPrivacyConfig {
             posture: self.privacy_posture,

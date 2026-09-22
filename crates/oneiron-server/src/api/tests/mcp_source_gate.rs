@@ -45,7 +45,7 @@ fn assert_tool_output_proposal_gate(
 
 #[tokio::test]
 async fn mcp_edit_propose_claim_unstamped_and_above_cap_stay_pending() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1222_0901);
     let credential = "mcp-source-gate-pending";
     register_mcp_actor(
@@ -96,7 +96,7 @@ async fn mcp_edit_propose_claim_unstamped_and_above_cap_stay_pending() {
 
 #[tokio::test]
 async fn public_batch_lineage_source_gate_is_consistent() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1222_0902);
     register_mcp_actor(
         &server,
@@ -144,6 +144,27 @@ async fn public_batch_lineage_source_gate_is_consistent() {
             oneiron::companion_value_from_json(&json!({ "sensitivity": 1 }))
                 .expect("above-cap scope"),
         ),
+        (
+            rmpv::Value::from("worldId"),
+            rmpv::Value::Binary(oneiron::claim::base_world_id().as_bytes().to_vec()),
+        ),
+        (
+            rmpv::Value::from("scopeRelationshipId"),
+            rmpv::Value::from("all"),
+        ),
+        (
+            rmpv::Value::from("scopeFacetId"),
+            rmpv::Value::Binary(
+                oneiron::claim::substrate_facet_id(actor_ref)
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        ),
+        (
+            rmpv::Value::from("scopeProjectId"),
+            rmpv::Value::Binary(oneiron::claim::default_project_id().as_bytes().to_vec()),
+        ),
+        (rmpv::Value::from("scopeVersion"), rmpv::Value::from(2u64)),
     ]);
     let mut raw_data = Vec::new();
     rmpv::encode::write_value(&mut raw_data, &raw_body).expect("encode raw claim");

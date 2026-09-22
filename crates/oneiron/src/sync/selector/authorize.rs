@@ -16,7 +16,6 @@ use crate::federation::{
 };
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::sync::bridge::parse_edge_key;
-use crate::sync::local_claims::withheld_claim_carriers;
 use crate::sync::loro_support::{
     map_for_each_tombstone_value, map_for_each_value_bytes, map_insert_bytes,
 };
@@ -100,7 +99,7 @@ pub(super) fn authorize_selector_export(
     // substitute for it. Unpacted grants have no pact and keep legacy-allow —
     // on the export path too, which is what `EmptyAxis` carries out of here.
     let empty = match effective_scope_for_grant(&fold, &selector.grant_id) {
-        None => EmptyAxis::Unfiltered,
+        None => EmptyAxis::Bottom,
         Some(ceiling) => {
             if !selector_direction_scope(selector).is_narrowing_of(&ceiling) {
                 return Err(selector_err(SelectorError::GrantScopeMismatch));
@@ -249,6 +248,22 @@ pub(super) fn filter_window_doc(
     let refreshed = crate::sync::loro_support::doc_from_snapshot(&source_bytes)?;
     crate::sync::note::refresh(vault, &refreshed, key)?;
     let source = &refreshed;
+    let grant_raw = vault
+        .get_raw(&selector.grant_id)?
+        .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
+    let grant_header = EntityMetadataHeader::parse(&grant_raw)
+        .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
+    if grant_header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
+        return Err(selector_err(SelectorError::GrantWrongType));
+    }
+    let grant = decode_federation_grant_body(&grant_raw[ENTITY_METADATA_HEADER_LEN..])?;
+    // One read snapshot for the whole export: facet scope, coreference
+    // consent, causal admission, and record stamps all read through this
+    // `rtxn`. Opening nested read txns on this thread would fail with
+    // `Storage(Mdb(BadRslot))` under LMDB's single-slot rule, so the scope
+    // doors take the txn instead of opening their own.
+    let rtxn = vault.store.env.read_txn()?;
+    let mut scope_error = None;
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");
     let source_edges = source.get_map("edges");
@@ -262,9 +277,9 @@ pub(super) fn filter_window_doc(
         tombstoned.insert(id);
     });
 
-    let (_, claims_withheld) = withheld_claim_carriers(vault, &source_entities, &source_edges)?;
-    let facet_scope = facet_scope_by_source(vault, &source_entities, &source_edges, selector)?;
-    let coreference = coreference_export_context(vault, source, selector)?;
+    let facet_scope =
+        facet_scope_by_source(vault, &rtxn, &source_entities, &source_edges, selector)?;
+    let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
     let mut custody_ids = BTreeSet::new();
     map_for_each_value_bytes(&source_entities, |key, blob| {
         if blob
@@ -277,7 +292,7 @@ pub(super) fn filter_window_doc(
     });
     let mut custody_withheld = BTreeSet::new();
     for id in custody_ids {
-        if vault.get_raw_unsealed(&id)?.is_some_and(|raw| {
+        if vault.get_raw_in(&rtxn, &id)?.is_some_and(|raw| {
             EntityMetadataHeader::parse(&raw).is_some_and(|h| {
                 h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
                     && !crate::secret_custody::custody_sync_allowed(
@@ -302,9 +317,46 @@ pub(super) fn filter_window_doc(
         if id.to_hex() != raw_key {
             return;
         }
-        if tombstoned.contains(&id)
-            || custody_withheld.contains(&id)
-            || claims_withheld.contains(&id)
+        if custody_withheld.contains(&id) {
+            return;
+        }
+        // Tombstoned rows still evaluate scope: their live bytes must not
+        // replicate (excluded from `out_entities` below), but an in-scope
+        // tombstone must be retained to propagate the delete, while an
+        // out-of-scope one is dropped to avoid leaking counts. Skipping
+        // scope here would retain nothing under any filtered selector.
+        let is_tombstoned = tombstoned.contains(&id);
+        if scope_error.is_some() {
+            return;
+        }
+        match crate::authority::row_causal_admitted(vault, &rtxn, blob) {
+            Ok(true) => {}
+            Ok(false) => return,
+            // An undecodable CLAIM is a withheld row, not a failed export:
+            // the window carries peer-controlled bytes (quarantine records a
+            // rejected row but does not remove it from the CRDT), so one bad
+            // row must not fail the whole filter closed. Every other decode
+            // site on this path (`scope_for_blob`, `coreference_claim_passes`,
+            // `world_passes`) already withholds; the causal check is the only
+            // one that propagates, and it propagates only for CLAIM bodies.
+            Err(crate::error::Error::InvalidClaimBody(_)) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
+        let scope =
+            match crate::federation::record_scope::scope_for_blob(&vault.store, &rtxn, id, blob) {
+                Ok(Some(scope)) => scope,
+                Ok(None) => return,
+                Err(error) => {
+                    scope_error = Some(error);
+                    return;
+                }
+            };
+        if !grant
+            .authority_scope
+            .admits("read", &scope, &crate::federation::Scope::top())
         {
             return;
         }
@@ -325,13 +377,23 @@ pub(super) fn filter_window_doc(
                 kept.insert(id);
             }
             if decision.facet_seed {
-                seeds.insert(id);
+                // A deleted seed's own tombstone is retained (it is kept),
+                // but it does not pull neighbors: deletion ends closure.
+                if is_tombstoned {
+                    kept.insert(id);
+                } else {
+                    seeds.insert(id);
+                }
             }
         } else {
             kept.insert(id);
         }
     });
 
+    if let Some(error) = scope_error {
+        return Err(error);
+    }
+    drop(rtxn);
     if selector.facet_filter_active(empty) {
         kept.extend(seeds.iter().copied());
         map_for_each_value_bytes(&source_edges, |raw_key, maybe_value| {

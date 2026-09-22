@@ -1817,6 +1817,7 @@ fn claim_id_scopes_by_credential_scope_identity() {
 
     // Scope alone discriminates, with the credential identity held EQUAL.
     let restated = McpResolvedActor {
+        auth: None,
         scope: McpConnectorScope::scoped(Some(world_b), None),
         ..a.clone()
     };
@@ -3994,4 +3995,17 @@ fn memory_tool_census_keeps_native_names_schemas_and_reserved_refusals() {
     for retired in ["oneiron.nav", "oneiron.read", "oneiron.ask"] {
         assert!(surface.resolve(retired).is_none());
     }
+}
+
+#[test]
+fn claim_edit_accepts_and_preserves_relationship_scope() {
+    let args = edit_args(json!({
+        "verb": "propose_claim", "subject": { "entity": ACTOR_ID },
+        "predicate": "profile.nickname", "value": "Ada", "confidence": 1.0,
+        "relationship": RESULT_ID,
+    }));
+    assert_eq!(args.relationship.as_deref(), Some(RESULT_ID));
+    let wire = serde_json::to_value(&args).unwrap();
+    let decoded: McpEditToolArgs = serde_json::from_value(wire).unwrap();
+    assert_eq!(decoded.relationship, args.relationship);
 }

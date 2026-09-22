@@ -410,7 +410,8 @@ fn keyed_bodies_never_surface_through_generic_facade_scoped_or_pack_reads() {
             scoped
                 .edges_out(&owner)
                 .unwrap()
-                .unwrap()
+                .value
+                .unwrap_or_default()
                 .iter()
                 .all(|edge| edge.target != id)
         );

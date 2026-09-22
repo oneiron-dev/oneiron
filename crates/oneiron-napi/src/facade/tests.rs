@@ -453,6 +453,7 @@ fn forget_drains_all_active_matches_beyond_one_page() {
                     confidence: 1.0,
                     source: "user_stated".to_owned(),
                     world_ref: None,
+                    relationship_ref: None,
                     scope: Some(serde_json::json!({ "idx": i })),
                     valid_from: None,
                     valid_to: None,

@@ -3,6 +3,7 @@ use crate::authority::{
     AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
     AuthorityTier, DeviceAuthority, ROLE_OWNER, authority_transcript,
 };
+use crate::channel_identity::{ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::CompanionProvenance;
 use crate::edge::EdgeActorClass;
@@ -40,7 +41,7 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
         persona_ref,
         Value::from("portable persona"),
         provenance(0x55),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let relationship = CompanionRecord::relationship(
         personal,
@@ -48,7 +49,7 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
         relationship_target,
         Value::from("portable relationship"),
         provenance(0x56),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
 
     let mut records = CompanionRegister::new();
@@ -59,7 +60,16 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
     expressions.update(persona.key(), CompanionExpression::Professional)?;
     expressions.update(relationship.key(), CompanionExpression::Warm)?;
 
-    let layer = companion_export_layer(&records, &expressions);
+    let layer = companion_export_layer(
+        &records,
+        &expressions,
+        &crate::federation::Scope {
+            sensitivity: crate::federation::SensitivityCeiling::AtMost(
+                crate::federation::Sensitivity::Public,
+            ),
+            ..crate::federation::Scope::top()
+        },
+    );
 
     assert_eq!(layer.layer_version(), COMPANION_EXPORT_LAYER_VERSION);
     assert_eq!(layer.len(), 2);
@@ -79,7 +89,7 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
 }
 
 #[test]
-fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
+fn companion_export_checks_channel_ceiling_scope_and_lifecycle() -> Result<()> {
     let neutral = CompanionScope::neutral();
     let personal = CompanionScope::personal(entity(0x61));
     let shared = CompanionScope::shared_vault(7);
@@ -89,29 +99,29 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
         entity(0x62),
         Value::from("portable neutral persona"),
         provenance(0xB1),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let private = CompanionRecord::persona(
         personal.clone(),
         entity(0x63),
         Value::from("private personal persona"),
         provenance(0xB2),
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
-    let shared_classified = CompanionRecord::relationship(
+    let shared_private = CompanionRecord::relationship(
         shared.clone(),
         entity(0x64),
         entity(0x65),
         Value::from("shared org relationship"),
         provenance(0xB3),
-        CompanionExportClassification::SharedVault,
+        crate::federation::Sensitivity::Private,
     );
-    let shared_misclassified = CompanionRecord::persona(
+    let shared_public = CompanionRecord::persona(
         shared,
         entity(0x66),
-        Value::from("shared scope with portable flag"),
+        Value::from("public shared-scope persona"),
         provenance(0xB4),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let mut closed = CompanionRecord::relationship(
         personal,
@@ -119,7 +129,7 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
         entity(0x68),
         Value::from("closed relationship"),
         provenance(0xB5),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     closed.lifecycle = ClaimLifecycleStatus::Retracted;
 
@@ -127,8 +137,8 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
     for record in [
         included.clone(),
         private.clone(),
-        shared_classified.clone(),
-        shared_misclassified.clone(),
+        shared_private.clone(),
+        shared_public.clone(),
         closed.clone(),
     ] {
         records.register(record)?;
@@ -137,14 +147,20 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
     let mut expressions = CompanionExpressionRegister::new();
     expressions.update(included.key(), CompanionExpression::Warm)?;
     expressions.update(private.key(), CompanionExpression::Unrestricted)?;
-    expressions.update(shared_classified.key(), CompanionExpression::Unrestricted)?;
-    expressions.update(
-        shared_misclassified.key(),
-        CompanionExpression::Unrestricted,
-    )?;
+    expressions.update(shared_private.key(), CompanionExpression::Unrestricted)?;
+    expressions.update(shared_public.key(), CompanionExpression::Unrestricted)?;
     expressions.update(closed.key(), CompanionExpression::Professional)?;
 
-    let layer = companion_export_layer(&records, &expressions);
+    let layer = companion_export_layer(
+        &records,
+        &expressions,
+        &crate::federation::Scope {
+            sensitivity: crate::federation::SensitivityCeiling::AtMost(
+                crate::federation::Sensitivity::Public,
+            ),
+            ..crate::federation::Scope::top()
+        },
+    );
 
     assert_eq!(layer.len(), 1);
     assert_eq!(layer.personas().len(), 1);
@@ -155,7 +171,92 @@ fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
         Some(CompanionExpression::Warm)
     );
     assert_ne!(layer.personas()[0].record(), &private);
-    assert_ne!(layer.personas()[0].record(), &shared_misclassified);
+    assert!(
+        layer
+            .personas()
+            .iter()
+            .all(|item| item.record() != &shared_public)
+    );
+    assert!(
+        layer
+            .personas()
+            .iter()
+            .all(|item| item.record() != &private)
+    );
+    // Even the highest sensitivity ceiling does not grant a destination.
+    let portable = companion_export_layer(&records, &expressions, &crate::federation::Scope::top());
+    assert_eq!(portable.len(), 2);
+    assert!(portable.relationships().is_empty());
+    assert!(
+        portable
+            .personas()
+            .iter()
+            .all(|item| item.record() != &shared_public)
+    );
+
+    let mut identity = ChannelIdentity::own_app_home(entity(0xB6), 1);
+    let mut channel = crate::federation::Scope::top();
+    // Actor-bound and other-vault identities cannot carry shared-vault rows.
+    for binding in [identity.binding, ChannelIdentityBinding::vault(8)] {
+        identity.binding = binding;
+        let layer = companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
+        assert_eq!(layer.len(), 2);
+        assert!(layer.relationships().is_empty());
+        assert!(
+            layer
+                .personas()
+                .iter()
+                .all(|item| item.record() != &shared_public)
+        );
+    }
+    identity.binding = ChannelIdentityBinding::vault(7);
+    channel.sensitivity =
+        crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Public);
+    let public = companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
+    assert_eq!(public.len(), 2);
+    assert!(
+        public
+            .personas()
+            .iter()
+            .any(|item| item.record() == &shared_public)
+    );
+    assert!(public.relationships().is_empty());
+    channel.sensitivity =
+        crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Private);
+    let private_layer =
+        companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
+    assert_eq!(private_layer.len(), 3);
+    assert_eq!(private_layer.relationships()[0].record(), &shared_private);
+    assert_eq!(
+        private_layer.relationships()[0].expression(),
+        Some(CompanionExpression::Unrestricted)
+    );
+    channel.sensitivity = crate::federation::SensitivityCeiling::Bottom;
+    assert!(
+        companion_export_layer_for_channel(&records, &expressions, &channel, &identity).is_empty()
+    );
+    channel = crate::federation::Scope::top();
+    for state in [
+        ChannelIdentityState::Requested,
+        ChannelIdentityState::Released,
+        ChannelIdentityState::Tombstone,
+    ] {
+        identity.state = state;
+        assert!(
+            companion_export_layer_for_channel(&records, &expressions, &channel, &identity)
+                .is_empty()
+        );
+    }
+    identity.state = ChannelIdentityState::Active;
+    identity.shape = crate::channel_identity::ChannelIdentityShape::DelegatedGrant;
+    assert!(
+        companion_export_layer_for_channel(&records, &expressions, &channel, &identity).is_empty()
+    );
+    identity.shape = crate::channel_identity::ChannelIdentityShape::DedicatedHandle;
+    identity.binding = ChannelIdentityBinding::vault(0);
+    assert!(
+        companion_export_layer_for_channel(&records, &expressions, &channel, &identity).is_empty()
+    );
     Ok(())
 }
 
@@ -428,6 +529,7 @@ fn genesis_entry(seed: u8) -> AuthorityLogEntry {
                 roles: ROLE_OWNER,
             },
             genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: 86_400,
         },
@@ -909,7 +1011,10 @@ mod staged_content_gc {
 
     fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
         let mut entries = vec![
-            (Value::from("schema_version"), Value::from("1.1")),
+            (
+                Value::from("schema_version"),
+                Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+            ),
             (Value::from("pack_id"), Value::from("export-stage-test")),
             (Value::from("pack_version"), Value::from("v1")),
             (
@@ -1395,7 +1500,7 @@ mod staged_content_gc {
             test_entity_id(0x7A),
             Value::from("portable persona"),
             provenance(0x7B),
-            CompanionExportClassification::Portable,
+            crate::federation::Sensitivity::Public,
         )
         .created_at(1_772_400_000)
         .expect("companion created_at");
@@ -1423,10 +1528,30 @@ mod staged_content_gc {
             &claim_id,
             &claim,
             &companion_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             &companion_body_without_pinned_keys(),
         );
 
+        let retired = claim_and_entity_update(
+            &claim_id,
+            &claim,
+            &companion_id,
+            ENTITY_TYPE_COMPANION_REGISTER,
+            &valid_companion_body(),
+        );
+        assert!(matches!(
+            admit_federated_window_update(
+                &vault,
+                &WindowKey::new("2026-01"),
+                &retired,
+                FederationAdmissionRole::Guest
+            ),
+            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+        ));
+        assert!(matches!(
+            stage_prebuilt_update(&vault, 0x7A, &retired),
+            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+        ));
         // Admission refuses the whole artifact, as it already does for TASK.
         let err = admit_federated_window_update(
             &vault,
@@ -1488,7 +1613,7 @@ mod staged_content_gc {
             &claim_id,
             &claim,
             &test_entity_id(0x7E),
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             &valid_companion_body(),
         );
 

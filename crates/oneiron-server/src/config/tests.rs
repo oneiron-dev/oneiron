@@ -451,7 +451,7 @@ fn privacy_posture_flags_parse_as_serve_args() {
     let cli = TestCli::try_parse_from([
         "oneiron-server",
         "--privacy-posture",
-        "hosted",
+        "managed",
         "--hosted-kms-key-ref",
         "kms://example/flag-ref",
     ])
@@ -466,8 +466,8 @@ fn privacy_posture_flags_parse_as_serve_args() {
         Some("kms://example/flag-ref")
     );
 
-    let cli = TestCli::try_parse_from(["oneiron-server", "--privacy-posture", "self_host_local"])
-        .unwrap();
+    let cli =
+        TestCli::try_parse_from(["oneiron-server", "--privacy-posture", "self-host"]).unwrap();
 
     assert_eq!(
         cli.serve.privacy_posture,
@@ -482,7 +482,7 @@ fn hosted_privacy_posture_merges_file_env_and_flags_in_precedence_order() {
     std::fs::write(
         &config_path,
         r#"
-privacy_posture = "hosted"
+privacy_posture = "managed"
 hosted_kms_key_ref = "kms://example/file-ref"
 "#,
     )
@@ -525,7 +525,7 @@ hosted_kms_key_ref = "kms://example/file-ref"
 #[test]
 fn privacy_posture_resolves_from_the_environment() {
     let env = EnvConfig::from_pairs([
-        ("ONEIRON_PRIVACY_POSTURE", "hosted"),
+        ("ONEIRON_PRIVACY_POSTURE", "managed"),
         ("ONEIRON_HOSTED_KMS_KEY_REF", "kms://example/env-ref"),
     ])
     .unwrap();
@@ -600,7 +600,7 @@ fn self_host_local_override_clears_an_inherited_kms_key_reference() {
     std::fs::write(
         &config_path,
         r#"
-privacy_posture = "hosted"
+privacy_posture = "managed"
 hosted_kms_key_ref = "kms://example/file-ref"
 "#,
     )
@@ -612,7 +612,7 @@ hosted_kms_key_ref = "kms://example/file-ref"
     // the same way.
     let from_env = EnvConfig::from_pairs([
         ("ONEIRON_CONFIG", config_path.to_str().unwrap()),
-        ("ONEIRON_PRIVACY_POSTURE", "self_host_local"),
+        ("ONEIRON_PRIVACY_POSTURE", "self-host"),
     ])
     .unwrap();
     let env_resolved =
@@ -678,7 +678,7 @@ hosted_kms_key_ref = "kms://example/file-ref"
 #[test]
 fn env_config_debug_redacts_hosted_kms_key_ref() {
     let env = EnvConfig::from_pairs([
-        ("ONEIRON_PRIVACY_POSTURE", "hosted"),
+        ("ONEIRON_PRIVACY_POSTURE", "managed"),
         ("ONEIRON_HOSTED_KMS_KEY_REF", "kms://example/secret-ref"),
         ("ONEIRON_AUTH_SECRET", "super-secret-value"),
     ])
@@ -693,11 +693,15 @@ fn env_config_debug_redacts_hosted_kms_key_ref() {
 #[test]
 fn unknown_privacy_posture_values_are_rejected() {
     for raw in [
+        "hosted",
+        "self_host_local",
+        "host_blind",
         "private_hosted",
         "e2e_hosted",
         "encrypted_hosted",
         "unreadable_hosted",
         "Hosted",
+        "MANAGED",
         "cloud",
         "",
     ] {
@@ -738,8 +742,10 @@ fn serve_config_debug_redacts_hosted_kms_key_ref() {
 }
 
 #[test]
-fn privacy_posture_has_exactly_two_variants_and_no_unreadable_hosted_tier() {
-    const LEGACY_TOKENS: [&str; 5] = [
+fn privacy_posture_has_exactly_three_variants_with_blind_relay() {
+    const LEGACY_TOKENS: [&str; 7] = [
+        "hosted",
+        "self_host_local",
         "unreadable",
         "private_hosted",
         "e2e_hosted",
@@ -748,14 +754,15 @@ fn privacy_posture_has_exactly_two_variants_and_no_unreadable_hosted_tier() {
     ];
 
     for posture in [
+        HostingPrivacyPosture::Relay,
         HostingPrivacyPosture::Hosted,
         HostingPrivacyPosture::SelfHostLocal,
     ] {
-        // Wildcard-free exhaustive match: a third posture variant — an
-        // "unreadable hosted" tier included — stops compiling right here.
+        // Wildcard-free exhaustive match pins the three supported postures.
         let wire = match posture {
-            HostingPrivacyPosture::Hosted => "hosted",
-            HostingPrivacyPosture::SelfHostLocal => "self_host_local",
+            HostingPrivacyPosture::Hosted => "managed",
+            HostingPrivacyPosture::Relay => "relay",
+            HostingPrivacyPosture::SelfHostLocal => "self-host",
         };
         assert_eq!(
             serde_json::to_string(&posture).unwrap(),
@@ -781,14 +788,17 @@ fn privacy_posture_has_exactly_two_variants_and_no_unreadable_hosted_tier() {
 
     for (config, serialized) in [(hosted, hosted_privacy), (self_host, self_host_privacy)] {
         let debug = format!("{config:?}");
+        // The `hosted_kms_key_ref` FIELD name is not a tier name; strip it so
+        // the legacy-tier scan only sees values and variant names.
+        let debug_tiers = debug.replace("hosted_kms_key_ref", "");
         for token in LEGACY_TOKENS {
             assert!(
                 !serialized.contains(token),
                 "resolved privacy config must not name a {token:?} tier: {serialized}"
             );
             assert!(
-                !debug.contains(token),
-                "resolved serve config must not name a {token:?} tier"
+                !debug_tiers.contains(token),
+                "resolved serve config must not name a {token:?} tier: {debug}"
             );
         }
     }

@@ -36,6 +36,7 @@ fn root_and_bind(vault: &Vault) -> AuthorityLogEntry {
                     roles: ROLE_OWNER | ROLE_ADMIN,
                 },
                 genesis_nonce: [0x74; 32],
+                recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
                 tier_floor: AuthorityTier::Software,
                 pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
             },

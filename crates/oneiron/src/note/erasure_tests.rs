@@ -118,6 +118,7 @@ fn claim(vault: &Vault, person: EntityId) -> EntityId {
             confidence: 0.9,
             source: "user_stated".into(),
             world_ref: None,
+            relationship_ref: None,
             scope: None,
             valid_from: None,
             valid_to: None,

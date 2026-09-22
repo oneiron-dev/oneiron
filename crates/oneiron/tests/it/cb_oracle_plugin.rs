@@ -1798,6 +1798,12 @@ mod plugin_fixture {
     /// The engine's pinned CLAIM body encoding, mirrored for the bound
     /// consent door (which takes the reviewed body as bytes). Field order
     /// and key names follow `oneiron::claim::CLAIM_BODY_KEYS`.
+    ///
+    /// v2 stamps are REQUIRED: `worldId` always stamps (base id for
+    /// `None`), `scopeRelationshipId` is `all` or a singleton id array,
+    /// `scopeFacetId`/`scopeProjectId` round-trip the reviewed body's own
+    /// stamps, and `scopeVersion` is 2. The helper re-encodes the EXACT
+    /// reviewed body — the decision stays "yes to this", not an edit.
     fn encode_claim_body(body: &ClaimBody) -> Vec<u8> {
         let mut entries: Vec<(Value, Value)> = Vec::new();
         entries.push((Value::from("pred"), Value::from(body.predicate.as_str())));
@@ -1818,19 +1824,22 @@ mod plugin_fixture {
         if let Some(source) = body.source {
             entries.push((Value::from("src"), Value::from(source.as_str())));
         }
-        if let Some(world) = body.world {
-            entries.push((
-                Value::from("world"),
-                Value::Binary(world.as_bytes().to_vec()),
-            ));
-        } else {
-            entries.push((Value::from("world"), Value::from("base")));
-        }
-        if let Some(rel) = body.rel {
-            entries.push((Value::from("rel"), Value::Binary(rel.as_bytes().to_vec())));
-        } else {
-            entries.push((Value::from("rel"), Value::from("all")));
-        }
+        entries.push((
+            Value::from("worldId"),
+            Value::Binary(
+                body.world
+                    .unwrap_or_else(oneiron::claim::base_world_id)
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        ));
+        entries.push((
+            Value::from("scopeRelationshipId"),
+            body.rel.map_or_else(
+                || Value::from("all"),
+                |id| Value::Array(vec![Value::Binary(id.as_bytes().to_vec())]),
+            ),
+        ));
         let subject = match body.subject {
             ClaimSubject::Entity(id) => id.as_bytes().to_vec(),
             ClaimSubject::Edge { .. } => panic!("fixture claims are entity-subject"),
@@ -1847,6 +1856,15 @@ mod plugin_fixture {
         if let Some(session_tag) = &body.session_tag {
             entries.push((Value::from("sess"), Value::from(session_tag.as_str())));
         }
+        entries.push((
+            Value::from("scopeFacetId"),
+            Value::Binary(body.scope_facet.as_bytes().to_vec()),
+        ));
+        entries.push((
+            Value::from("scopeProjectId"),
+            Value::Binary(body.scope_project.as_bytes().to_vec()),
+        ));
+        entries.push((Value::from("scopeVersion"), Value::from(2_u64)));
         let mut out = Vec::new();
         rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("encode claim body");
         out

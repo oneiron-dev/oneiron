@@ -6,9 +6,7 @@ use heed::RwTxn;
 
 use crate::claim::ClaimLifecycleStatus;
 use crate::companion::CompanionLifecycleEventKind;
-use crate::companion::{
-    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
-};
+use crate::companion::decode_companion_record_body;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
 use crate::ppr;
@@ -259,7 +257,7 @@ pub(super) fn validate_companion_register_put(
     if let Some(existing_raw) = store.entities.get(&*wtxn, id.as_bytes())? {
         let header = EntityMetadataHeader::parse(&existing_raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+        if header.entity_type == crate::registry::ENTITY_TYPE_FACET {
             let existing =
                 decode_companion_record_body(&existing_raw[ENTITY_METADATA_HEADER_LEN..])?;
             if existing.key() != key {
@@ -292,13 +290,6 @@ pub(super) fn validate_companion_register_put(
                         "companion lifecycle events must preserve history",
                     ));
                 }
-            }
-            if existing.export_classification != CompanionExportClassification::LocalOnly
-                && record.export_classification == CompanionExportClassification::LocalOnly
-            {
-                return Err(Error::InvalidClaimBody(
-                    "companion record export cannot be downgraded to local_only",
-                ));
             }
         }
     }

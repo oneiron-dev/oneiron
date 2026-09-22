@@ -119,6 +119,7 @@ async fn authenticated_note_socket_preserves_pins_provenance_and_review_after_re
             occurred_at: None,
             learned_at: None,
             salience: None,
+            relationship_ref: None,
         })
         .unwrap();
     let source = EntityId::from_hex(

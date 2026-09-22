@@ -189,7 +189,7 @@ pub(crate) async fn search_vector(
     }
     let admission = admit_deep_retrieval(&server, params.depth)?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let scoped_read = scoped_read_for_legacy_api(&server)?;
     let results = run_depth_search(
         &scoped_read,
         SearchProbe::Vector {
@@ -311,7 +311,7 @@ pub(crate) async fn search_text(
     let count_mode = params.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, params.limit);
     let admission = admit_deep_retrieval(&server, params.depth)?;
-    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let scoped_read = scoped_read_for_legacy_api(&server)?;
     let results = run_depth_search(
         &scoped_read,
         SearchProbe::Text {
@@ -649,7 +649,7 @@ pub(crate) async fn search_semantic(
     let count_mode = params.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, params.limit);
     let admission = admit_deep_retrieval(&server, params.depth)?;
-    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let scoped_read = scoped_read_for_legacy_api(&server)?;
     let results = run_depth_search(
         &scoped_read,
         SearchProbe::Vector {

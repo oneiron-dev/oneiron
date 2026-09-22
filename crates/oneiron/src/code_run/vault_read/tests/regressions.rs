@@ -200,6 +200,12 @@ fn opaque_bodies_survive_query_and_hydrate_views_losslessly() {
         references.push(short_ref(&vault, &id));
         ids.push(id);
     }
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x74),
+        &scoped_grant_manifest("reader", "base"),
+    )
+    .expect("base core:read grant for opaque-body positives");
     let adapter = InProcessVaultReadAdapter::new(
         &vault,
         ScopedReadActorKey::new("reader").expect("actor key"),

@@ -59,6 +59,7 @@ use rmpv::Value;
 
 mod board_ack;
 mod cancel;
+mod consult_fanout;
 mod consult_ladder;
 mod consult_lifecycle;
 mod create_admission;

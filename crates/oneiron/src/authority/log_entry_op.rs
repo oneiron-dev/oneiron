@@ -21,21 +21,32 @@ use crate::error::RecordError;
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorityOp {
-    /// Immutable class-bound capability, authorized by the authority roster.
+    /// Immutable class-bound door capability, addressed by its signed mint-entry hash.
     MintDoorSlip(AuthorityDoorSlip),
     /// Issuer-serialized consume-once event. The log is the only spend ledger.
     SpendDoorSlip {
         mint_hash: AuthorityEntryHash,
     },
-    /// Revokes a slip and all descendants; merged by union.
+    /// Revokes a door slip and all descendants; merged by union.
     RevokeDoorSlip {
         mint_hash: AuthorityEntryHash,
+    },
+    /// Mints a vault capability under its claims.slip_id; no MAC is stored in history.
+    SlipMint(SlipMintAction),
+    /// Revokes a capability and every descendant in the slip-id namespace.
+    SlipRevoke {
+        slip_id: [u8; 32],
+    },
+    /// Durably consumes a capability in the slip-id namespace.
+    SlipConsume {
+        slip_id: [u8; 32],
     },
     /// Vault genesis. `vault_id` is `None` on the containing entry and is
     /// derived as BLAKE3(canonical signed genesis).
     Genesis {
         device: DeviceAuthority,
         genesis_nonce: [u8; 32],
+        recovery: GenesisRecoveryStep,
         tier_floor: AuthorityTier,
         pending_widen_delay_secs: u64,
     },
@@ -47,8 +58,8 @@ pub enum AuthorityOp {
     RevokeDevice {
         revoked_key: AuthorityKey,
     },
-    /// Binds an authority key to an actor-class ceiling.
-    SetCeiling {
+    /// Historic ceiling payload retained for signed-history replay. It confers no authority.
+    RetiredCeiling {
         authority_key: AuthorityKey,
         actor_class: String,
         ceiling: u8,
@@ -62,11 +73,10 @@ pub enum AuthorityOp {
     SetTierFloor {
         tier_floor: AuthorityTier,
     },
-    /// Rebootstraps authority after recovery.
-    RecoveryReboot {
-        new_genesis_nonce: [u8; 32],
+    /// In-chain host migration. Replaces the roster without a new genesis,
+    /// a floor reset, or recovered instant-widen authority.
+    ReRoot {
         new_device: DeviceAuthority,
-        tier_floor: AuthorityTier,
     },
     /// Federation confirm that travels with authority fold verification.
     FederationConfirm(AuthorityConfirmAction),
@@ -309,15 +319,24 @@ pub(super) fn validate_op(op: &AuthorityOp) -> Result<()> {
                 Ok(())
             }
         }
+        AuthorityOp::SlipMint(action) => action.validate(),
+        AuthorityOp::SlipRevoke { slip_id } | AuthorityOp::SlipConsume { slip_id } => {
+            if *slip_id == [0; 32] {
+                return Err(invalid_authority());
+            }
+            Ok(())
+        }
         AuthorityOp::Genesis {
             device,
             genesis_nonce,
+            recovery,
             pending_widen_delay_secs,
             ..
         } => {
             if genesis_nonce.iter().all(|byte| *byte == 0) {
                 return Err(invalid_authority());
             }
+            recovery.validate()?;
             validate_pending_widen_delay_secs(*pending_widen_delay_secs)?;
             device.validate()?;
             if !device.can_authority_consent() {
@@ -327,7 +346,7 @@ pub(super) fn validate_op(op: &AuthorityOp) -> Result<()> {
         }
         AuthorityOp::EnrollDevice { device } => device.validate(),
         AuthorityOp::RevokeDevice { revoked_key } => revoked_key.validate(),
-        AuthorityOp::SetCeiling {
+        AuthorityOp::RetiredCeiling {
             authority_key,
             actor_class,
             ..
@@ -348,7 +367,17 @@ pub(super) fn validate_op(op: &AuthorityOp) -> Result<()> {
             }
             Ok(())
         }
-        AuthorityOp::SetTierFloor { .. } | AuthorityOp::FederationConfirm(_) => Ok(()),
+        AuthorityOp::SetTierFloor { .. } => Ok(()),
+        AuthorityOp::FederationConfirm(action) => {
+            if action.confirm_id == [0; 32]
+                || action.nonce == [0; 16]
+                || action.peer_vault_id == [0; 32]
+            {
+                Err(invalid_authority())
+            } else {
+                Ok(())
+            }
+        }
         AuthorityOp::CriticalWriteConfirm(action) => {
             if action.schema_version != CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION
                 || action.confirm_id.iter().all(|b| *b == 0)
@@ -363,14 +392,7 @@ pub(super) fn validate_op(op: &AuthorityOp) -> Result<()> {
                 Ok(())
             }
         }
-        AuthorityOp::RecoveryReboot {
-            new_genesis_nonce,
-            new_device,
-            ..
-        } => {
-            if new_genesis_nonce.iter().all(|byte| *byte == 0) {
-                return Err(invalid_authority());
-            }
+        AuthorityOp::ReRoot { new_device } => {
             new_device.validate()?;
             if !new_device.can_authority_consent() {
                 return Err(invalid_authority());
@@ -396,7 +418,7 @@ pub(super) fn validate_op(op: &AuthorityOp) -> Result<()> {
             epoch,
             ..
         } => {
-            // EXACT class vocabulary, not SetCeiling's free-form string: an
+            // EXACT class vocabulary, not RetiredCeiling's free-form string: an
             // unrecognized class must never fold into a binding that some
             // future reader treats as equivalent to "human".
             if !ACTOR_BINDING_CLASSES.contains(&actor_class.as_str()) || *epoch == 0 {

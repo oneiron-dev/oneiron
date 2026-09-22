@@ -25,7 +25,7 @@ pub(super) fn seed_generated_auto_source_trust_manifest(vault: &Vault) -> Result
     let manifest = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("schema_version"),
-            rmpv::Value::from("1.1"),
+            rmpv::Value::from(crate::gate::POLICY_SCHEMA_VERSION),
         ),
         (
             rmpv::Value::from("pack_id"),
@@ -1225,6 +1225,11 @@ pub(super) fn federation_grant_body_with_role_and_preset(role: &str, preset: &st
                 ("kind".into(), "vault".into()),
                 ("vault_id".into(), rmpv::Value::from(7_u64)),
             ]),
+        ),
+        (
+            "authority_scope".into(),
+            crate::federation::scope_codec::encode_scope_value(&crate::federation::Scope::top())
+                .expect("fixture scope"),
         ),
         ("member_ref".into(), rmpv::Value::from(member_ref.as_str())),
         ("role".into(), rmpv::Value::from(role)),

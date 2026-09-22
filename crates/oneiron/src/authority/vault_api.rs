@@ -85,6 +85,9 @@ impl Vault {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
         for (entry, occurred, learned_at) in entries {
+            if matches!(entry.op, AuthorityOp::RetiredCeiling { .. }) {
+                return Err(invalid_authority());
+            }
             let data = encode_authority_log_entry_body(entry)?;
             crate::authority::validate_authority_log_entry_body_bytes(&data)?;
             let id = authority_log_entity_id(entry)?;
@@ -306,12 +309,13 @@ impl Vault {
             }
             Ok(now_secs)
         })?;
-        Ok(fold_authority_log_with_local_observations(
+        Ok(fold_authority_log_with_local_observations_and_posture(
             &entries,
             &first_seen_at_secs,
             now_secs,
             &peer_consent_roots,
             &observations,
+            self.privacy_posture(),
         ))
     }
 
@@ -401,12 +405,13 @@ impl Vault {
         // entry the full fold accepts.
         let peer_consent_roots = crate::federation::admitted_peer_consent_roots_in_txn(self, txn)?;
         let observations = authority_local_observations_in_txn(&self.store, txn, &entries)?;
-        let fold = fold_authority_log_with_local_observations(
+        let fold = fold_authority_log_with_local_observations_and_posture(
             &entries,
             &first_seen_at_secs,
             now_secs,
             &peer_consent_roots,
             &observations,
+            self.privacy_posture(),
         );
         // An indeterminate row is only a problem where its delay actually
         // decides something. `now_secs` is the maximum-delay assumption, so any

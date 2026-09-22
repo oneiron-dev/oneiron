@@ -278,3 +278,9 @@ mod tests;
 
 #[cfg(feature = "sync")]
 pub(crate) use document::materialize_recovery_notes_in_txn;
+
+mod privacy_kit;
+pub use privacy_kit::{
+    BackupShareLocation, PrivacyBackupError, PrivacyBackupShare, RestoredVaultKey,
+    issue_privacy_backup_kit, restore_privacy_backup_kit,
+};

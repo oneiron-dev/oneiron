@@ -2,6 +2,7 @@
 
 mod apply;
 mod claim_admission;
+mod lexical_hint;
 mod owned_body;
 mod put_entity_update;
 mod put_staging;

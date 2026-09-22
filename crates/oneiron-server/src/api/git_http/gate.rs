@@ -32,6 +32,8 @@ pub(super) fn authenticate(
         CoreAuth::from_headers(headers, config, revoked).map_err(|_| Box::new(challenge()))?;
     auth.require(service.scope())
         .map_err(|error| Box::new(text_response(error.status(), "insufficient scope")))?;
+    auth.require_unrestricted_record_scope()
+        .map_err(|error| Box::new(text_response(error.status(), "record scope unsupported")))?;
     if service == GitService::ReceivePack {
         // RC4. A hatch-only identity and a bare trust-root secret both reach
         // here with every scope and no principal_ref; neither is a registered

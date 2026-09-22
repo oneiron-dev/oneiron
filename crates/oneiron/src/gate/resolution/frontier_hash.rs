@@ -101,6 +101,13 @@ pub(super) fn hash_policy_frontier_v0(
         hash_opt_str(hasher, grant.actor_class.as_deref());
         hash_opt_str(hasher, grant.actor_ref.as_deref());
         hash_str(hasher, &grant.effector);
+        hash_str(hasher, "authority_scope");
+        hash_opt_value(
+            hasher,
+            Some(&crate::federation::scope_codec::encode_scope_value(
+                &grant.authority_scope,
+            )?),
+        )?;
         hash_opt_value(hasher, grant.scope.as_ref())?;
         hash_opt_value(hasher, grant.budget.as_ref())?;
         hash_bool(hasher, grant.receipt_required);

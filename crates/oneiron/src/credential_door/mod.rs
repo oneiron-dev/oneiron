@@ -98,16 +98,12 @@
 //!
 //! # The credential
 //!
-//! One credential = one presented capability slip. This tree carries no slip
-//! struct yet, so [`DoorCredential`] is the smallest honest holder-view the
-//! crate-private seam needs: non-secret identifiers plus the verbs, records,
-//! channels and lifetime the holder's slip bounds. It carries NO token
-//! material, it is not `Clone` (single-use redemption is consumption by
-//! move), and it is not constructible from a caller-supplied string: the
-//! constructor's contract is that holder proof was already verified by the
-//! verifier that produced the view. The production verifier arrives with the
-//! transport adapter; this module ships the seam and its fail-closed
-//! evaluation.
+//! One serialized capability slip is verified against its MAC chain, live
+//! authority-log mint ancestry, expiry and binding-key proof. The verifier
+//! derives [`DoorCredential`]; production code cannot assemble an unverified view.
+//! One-shot mints and consumption are signed authority-log entries. The burn
+//! commits before secret materialization, so a failed effect can spend a one-shot
+//! but cannot let two callers redeem it.
 //!
 //! # The one-shot authority
 //!

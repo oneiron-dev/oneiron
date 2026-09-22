@@ -22,7 +22,9 @@ pub(crate) struct PolicyScopedGrant {
     pub(crate) actor_class: Option<String>,
     pub(crate) actor_ref: Option<String>,
     pub(crate) effector: String,
+    /// Purpose-specific selectors; these can only narrow `authority_scope`.
     pub(crate) scope: Option<Value>,
+    pub(crate) authority_scope: crate::federation::Scope,
     pub(crate) budget: Option<Value>,
     pub(crate) receipt_required: bool,
 }
@@ -49,19 +51,29 @@ pub(crate) fn scoped_read_claim_allowed(
     if diagnostics.loaded_manifest_forces_fail_closed() {
         return false;
     }
-    if diagnostics.manifest_count == 0 {
-        return true;
-    }
     if policy.is_fail_closed() {
         return false;
     }
 
+    let explicit_scope = actor_key.authority_scope();
+    if explicit_scope.is_some_and(|scope| {
+        !scope.admits(
+            "read",
+            &body.record_scope("read"),
+            &crate::federation::Scope::top(),
+        )
+    }) {
+        return false;
+    }
     let mut saw_core_read_grant = false;
     for grant in policy
         .scoped_grants()
         .iter()
         .filter(|grant| scoped_read_grant_has_read_effector(grant))
     {
+        if !scoped_read_actor_matches(grant, actor_key) {
+            continue;
+        }
         saw_core_read_grant = true;
         if grant.receipt_required {
             continue;
@@ -72,12 +84,70 @@ pub(crate) fn scoped_read_claim_allowed(
         if !scoped_read_actor_matches(grant, actor_key) {
             continue;
         }
-        if scoped_read_scope_matches_claim(grant.scope.as_ref(), body, claim_facets) {
+        if grant.authority_scope.admits(
+            "read",
+            &body.record_scope("read"),
+            &crate::federation::Scope::top(),
+        ) && scoped_read_scope_matches_claim(grant.scope.as_ref(), body, claim_facets)
+        {
             return true;
         }
     }
 
-    !saw_core_read_grant
+    explicit_scope.is_some() && !saw_core_read_grant
+}
+
+/// Scope authorization for positively stamped non-claim rows. Legacy selectors
+/// not expressible from a record position cannot authorize a raw record read.
+pub(crate) fn scoped_read_record_allowed(
+    policy: &PolicyManifestResolution,
+    actor: &ScopedReadActorKey,
+    record: &crate::federation::Scope,
+) -> bool {
+    if policy.diagnostics().loaded_manifest_forces_fail_closed() || policy.is_fail_closed() {
+        return false;
+    }
+    let proof = actor.authority_scope();
+    if proof.is_some_and(|scope| !scope.admits("read", record, &crate::federation::Scope::top())) {
+        return false;
+    }
+    let mut matched = false;
+    for grant in policy.scoped_grants().iter().filter(|grant| {
+        scoped_read_grant_has_read_effector(grant) && scoped_read_actor_matches(grant, actor)
+    }) {
+        matched = true;
+        if grant.receipt_required || grant.budget.is_some() {
+            continue;
+        }
+        let position_only = match grant.scope.as_ref() {
+            None | Some(Value::Nil) => true,
+            Some(Value::Map(entries)) => entries.iter().all(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    Some(
+                        "world"
+                            | "world_ref"
+                            | "worldRef"
+                            | "scopeProjectId"
+                            | "entity_types"
+                            | "max_sensitivity_band"
+                    )
+                )
+            }),
+            _ => false,
+        };
+        if position_only
+            && crate::federation::scope_codec::legacy_read_scope(grant.scope.as_ref()).is_some_and(
+                |selectors| selectors.admits("read", record, &crate::federation::Scope::top()),
+            )
+            && grant
+                .authority_scope
+                .admits("read", record, &crate::federation::Scope::top())
+        {
+            return true;
+        }
+    }
+    proof.is_some() && !matched
 }
 
 pub(super) fn scoped_read_grant_has_read_effector(grant: &PolicyScopedGrant) -> bool {
@@ -171,7 +241,7 @@ fn scoped_read_world_matches_claim(value: &Value, claim_world: Option<EntityId>)
         return false;
     };
     match claim_world {
-        None => true,
+        None => false,
         Some(claim_world) => claim_world == grant_world,
     }
 }
@@ -227,7 +297,13 @@ pub(super) fn external_effect_grant_matches(
     actor: &GateActor,
     effect: &ExternalEffectGateContext,
 ) -> bool {
-    external_effect_actor_matches(grant, actor)
+    // This adapter has no positively stamped record position. A bounded
+    // resource grant cannot be widened by treating missing context as a match.
+    grant.authority_scope.admits(
+        "effect",
+        &crate::federation::scope_codec::effect_preset(),
+        &crate::federation::Scope::top(),
+    ) && external_effect_actor_matches(grant, actor)
         && external_effect_effector_matches(grant.effector.trim(), effect.verb.trim())
         && external_effect_scope_matches(grant.scope.as_ref(), effect)
 }

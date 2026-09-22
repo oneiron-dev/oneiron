@@ -1,9 +1,7 @@
 use super::*;
 use crate::access_grant::AccessGrant;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-};
+use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
 use crate::edge::EdgeActorClass;
 use crate::federation::{
@@ -200,7 +198,7 @@ fn companion_record(actor: EntityId) -> CompanionRecord {
         entity(0x51),
         rmpv::Value::from("persona"),
         provenance(actor),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     )
 }
 

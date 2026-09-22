@@ -11,6 +11,7 @@ pub struct ScopedReadActorKey {
     actor_class: Option<String>,
     pub(super) principal_ref: Option<EntityId>,
     pub(super) enforce_access_grants: bool,
+    pub(super) proof: Option<crate::authority::VerifiedSlip>,
 }
 
 impl ScopedReadActorKey {
@@ -38,6 +39,7 @@ impl ScopedReadActorKey {
             actor_class,
             principal_ref: None,
             enforce_access_grants: false,
+            proof: None,
         })
     }
 
@@ -47,6 +49,26 @@ impl ScopedReadActorKey {
         self.principal_ref = principal_ref;
         self.enforce_access_grants = true;
         self
+    }
+
+    /// Constructs a read capability only from a log/MAC/holder-verified slip.
+    #[must_use]
+    pub fn from_verified_slip(proof: &crate::authority::VerifiedSlip) -> Option<Self> {
+        if !proof.allows_verb("read") {
+            return None;
+        }
+        let mut key = Self::from_parts(
+            proof.claims().holder_ref.clone(),
+            proof.claims().actor_class.clone(),
+        )?;
+        key.proof = Some(proof.clone());
+        Some(key)
+    }
+
+    pub(crate) fn authority_scope(&self) -> Option<&crate::federation::Scope> {
+        self.proof
+            .as_ref()
+            .map(crate::authority::VerifiedSlip::scope)
     }
 
     #[must_use]

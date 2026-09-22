@@ -57,6 +57,7 @@ pub(crate) use self::constants::{POLICY_SCHEMA_VERSION, SCOPED_READ_EFFECTOR_COR
 #[cfg(test)]
 pub(crate) use self::decision::gate_metric_emission_count_for_test;
 pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReasonCode};
+pub(crate) use self::decode::normalize_policy_manifest_scope;
 pub(crate) use self::default_manifest::{
     DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_policy_manifest, default_policy_manifest_id,
 };
@@ -84,6 +85,7 @@ pub(crate) use self::effect::{
 };
 pub(crate) use self::grants::{
     PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
+    scoped_read_record_allowed,
 };
 pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,

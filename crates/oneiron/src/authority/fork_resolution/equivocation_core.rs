@@ -196,7 +196,7 @@ pub(in crate::authority) fn reconcile_reported_authority_forks(
     }
     for (key, fork) in reported.iter_mut() {
         // A non-empty scope is resolved only after every named vault has a
-        // real RevokeDevice/RecoveryReboot resolution in that vault. Empty
+        // real RevokeDevice/ReRoot resolution in that vault. Empty
         // scope means universal: a local real revocation lifts only that
         // state's gate, while the global alarm remains quarantined because no
         // finite set of vaults can prove universal resolution.

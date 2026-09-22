@@ -5,9 +5,7 @@ use super::keys::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, COMPANION_TASK_ATTEMPT_KIND,
     ENTITY_TYPE_COMPANION_REGISTER,
 };
-use super::model::{
-    CompanionExportClassification, CompanionRecord, CompanionRecordKey, CompanionSubject,
-};
+use super::model::{CompanionRecord, CompanionRecordKey, CompanionSubject};
 use super::queue::{
     CompanionTask, CompanionTaskKind, CompanionTaskStatus, EndCompanionRelationship,
     EndCompanionRelationshipOutcome, EnqueueCompanionTaskOutcome, encode_companion_task_payload,
@@ -82,7 +80,34 @@ impl Vault {
         {
             return Err(Error::Record(RecordError::CompanionRecordAlreadyExists));
         }
+        let person = match record.subject {
+            CompanionSubject::Persona { persona_ref } => persona_ref,
+            CompanionSubject::Relationship { source_ref, .. } => source_ref,
+        };
+        if let Some(raw) = self.store.entities.get(wtxn, person.as_bytes())? {
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("persona PERSON header"))?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_PERSON {
+                return Err(Error::InvalidEntityType(header.entity_type));
+            }
+        } else {
+            self.batch_in()
+                .put(
+                    &person,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange {
+                        start: learned_at,
+                        end: learned_at,
+                    },
+                    learned_at,
+                    b"",
+                )
+                .apply(wtxn)?;
+        }
         self.apply_companion_record_body(wtxn, id, learned_at, data)?;
+        self.batch_in()
+            .edge(&person, crate::edge::EdgeKind::HasFacet, id, 1.0)
+            .apply(wtxn)?;
         Ok(())
     }
 
@@ -113,13 +138,6 @@ impl Vault {
                 "companion record key cannot change",
             ));
         }
-        if existing.export_classification != CompanionExportClassification::LocalOnly
-            && record.export_classification == CompanionExportClassification::LocalOnly
-        {
-            return Err(Error::InvalidClaimBody(
-                "companion record export cannot be downgraded to local_only",
-            ));
-        }
         let mut updated = record.clone();
         updated.lifecycle_events = existing.lifecycle_events;
         if updated.lifecycle_events.is_empty() {
@@ -145,7 +163,7 @@ impl Vault {
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+        if header.entity_type != crate::registry::ENTITY_TYPE_FACET {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
@@ -320,7 +338,7 @@ impl Vault {
         let mut register = CompanionRegister::new();
         for index_entry in
             self.store
-                .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_COMPANION_REGISTER, None)?
+                .port_entity_ids_by_type(&rtxn, crate::registry::ENTITY_TYPE_FACET, None)?
         {
             let id = index_entry?;
             let Some(raw) = self
@@ -332,8 +350,11 @@ impl Vault {
             };
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+            if header.entity_type != crate::registry::ENTITY_TYPE_FACET {
                 return Err(Error::CorruptedIndex("companion register type index"));
+            }
+            if !super::is_identity_facet_body(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+                continue;
             }
             let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if record.lifecycle != ClaimLifecycleStatus::Active {
@@ -347,10 +368,11 @@ impl Vault {
     }
 
     pub(crate) fn ensure_companion_register_kind(&self) -> Result<()> {
-        if self.companion_register_kind_registered()? {
+        if crate::registry::entity_type_registry_entry(crate::registry::ENTITY_TYPE_FACET).is_some()
+        {
             Ok(())
         } else {
-            Err(Error::InvalidEntityType(ENTITY_TYPE_COMPANION_REGISTER))
+            Err(Error::InvalidEntityType(crate::registry::ENTITY_TYPE_FACET))
         }
     }
 
@@ -405,7 +427,7 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+        if header.entity_type != crate::registry::ENTITY_TYPE_FACET {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])
@@ -425,7 +447,7 @@ impl Vault {
             wtxn,
             vec![BatchOp::Put {
                 id: *id,
-                entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+                entity_type: crate::registry::ENTITY_TYPE_FACET,
                 occurred: TimeRange {
                     start: learned_at,
                     end: learned_at,

@@ -483,6 +483,11 @@ fn test_vault(dir: &std::path::Path) -> Arc<oneiron::Vault> {
 }
 
 fn claim_body(text: &str) -> Vec<u8> {
+    // Hand-encoded CLAIM bodies must carry the full v2 scope stamp: the
+    // write door rejects a body that misses one of the four scope keys or
+    // the version. The subject's substrate mask is derived exactly as the
+    // typed `ClaimBody::new` constructor derives it.
+    let subject = oneiron::EntityId::from_bytes([0x7d; 16]).expect("subject id");
     let mut body = Vec::new();
     rmpv::encode::write_value(
         &mut body,
@@ -490,7 +495,7 @@ fn claim_body(text: &str) -> Vec<u8> {
             (rmpv::Value::from("pred"), rmpv::Value::from("test.status")),
             (
                 rmpv::Value::from("subj"),
-                rmpv::Value::Binary([0x7d; 16].to_vec()),
+                rmpv::Value::Binary(subject.as_bytes().to_vec()),
             ),
             (rmpv::Value::from("val"), rmpv::Value::from(text)),
             (rmpv::Value::from("conf"), rmpv::Value::F32(0.9)),
@@ -498,6 +503,27 @@ fn claim_body(text: &str) -> Vec<u8> {
             (rmpv::Value::from("life"), rmpv::Value::from("active")),
             (rmpv::Value::from("world"), rmpv::Value::from("base")),
             (rmpv::Value::from("rel"), rmpv::Value::from("all")),
+            (
+                rmpv::Value::from("worldId"),
+                rmpv::Value::Binary(oneiron::claim::base_world_id().as_bytes().to_vec()),
+            ),
+            (
+                rmpv::Value::from("scopeRelationshipId"),
+                rmpv::Value::from("all"),
+            ),
+            (
+                rmpv::Value::from("scopeFacetId"),
+                rmpv::Value::Binary(
+                    oneiron::claim::substrate_facet_id(subject)
+                        .as_bytes()
+                        .to_vec(),
+                ),
+            ),
+            (
+                rmpv::Value::from("scopeProjectId"),
+                rmpv::Value::Binary(oneiron::claim::default_project_id().as_bytes().to_vec()),
+            ),
+            (rmpv::Value::from("scopeVersion"), rmpv::Value::from(2u64)),
         ]),
     )
     .expect("encode claim body");
@@ -580,11 +606,15 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
     let slot = EmbedderSlot::from_config(serve_config.embedder.as_ref().unwrap())
         .expect("slot resolves")
         .expect("an endpoint slot exists");
+    // The semantic door is an owner-grade `/api/*` route over a proof-backed
+    // scoped read: it needs the configured host secret on both the server and
+    // the request. The dev hatch authenticates but carries no proof, so its
+    // reads deny.
     let server = Arc::new(
         crate::server::SyncServer::new(
             Arc::clone(&vault),
             crate::config::SyncServerConfig {
-                allow_unauthenticated: true,
+                auth_secret: Some("embedder-fixture-secret".to_owned()),
                 ..Default::default()
             },
         )
@@ -610,6 +640,10 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
                     .method("POST")
                     .uri("/api/search/semantic")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        "Bearer embedder-fixture-secret",
+                    )
                     .body(Body::from(
                         json!({ "text": texts[1], "limit": corpus_size, "view": "standard" })
                             .to_string(),
