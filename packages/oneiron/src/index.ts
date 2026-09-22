@@ -104,6 +104,8 @@ export class Oneiron {
     return new Oneiron(this.#call(() => this.#client.asActor(actorKey)))
   }
 
+  // BEGIN GENERATED FACADE VERBS
+
   /**
    * Witnesses one conversational turn.
    *
@@ -144,6 +146,7 @@ export class Oneiron {
       return item === null ? null : itemFromWire(item)
     })
   }
+
   /** Synchronous gated write. Review-required writes fail without changing the key. */
   keyValuePut(request: KeyValuePut): KeyValuePutReceipt {
     return this.#call(() => {
@@ -153,6 +156,7 @@ export class Oneiron {
       return { item: itemFromWire(result.item), replayed: result.replayed, receiptRef: result.receipt_ref }
     })
   }
+
   /** Retracts only the caller's current key; preserves claim history. */
   keyValueDelete(request: KeyValueAddress): KeyValueDeleteReceipt {
     return this.#call(() => {
@@ -161,6 +165,7 @@ export class Oneiron {
       return { existed: result.existed, receiptRefs: result.receipt_refs }
     })
   }
+
   /** Exact prefix search, ordered lexically and paginated after filtering. */
   keyValueSearch(request: KeyValueSearch): KeyValueItem[] {
     return this.#call(() => {
@@ -169,6 +174,7 @@ export class Oneiron {
       return result.map(itemFromWire)
     })
   }
+
   /** Exact segment namespace enumeration. Empty namespaces are not retained. */
   keyValueNamespaces(request: KeyValueNamespaces): string[][] {
     return this.#call(() => {
@@ -176,6 +182,8 @@ export class Oneiron {
       return JSON.parse(this.#client.keyValueNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]
     })
   }
+
+// END GENERATED FACADE VERBS
 
   /** The one place a native throw becomes an `OneironError`. */
   #call<T>(operation: () => T): T {

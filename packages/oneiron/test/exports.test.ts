@@ -43,10 +43,8 @@ describe("export census", () => {
     const instanceMethods = Object.getOwnPropertyNames(pkg.Oneiron.prototype)
       .filter((name) => name !== "constructor")
       .sort()
-    const source = readFileSync(new URL("../../../crates/oneiron-remote/src/agent_verbs.rs", import.meta.url), "utf8")
-    const catalog = source.match(/pub const FACADE_VERB_CATALOG[^=]*=\s*\[([^\]]+)\]/)?.[1]
-    expect(catalog).toBeDefined()
-    const verbs = [...catalog!.matchAll(/"([a-z_.]+)"/g)].map((match) => match[1])
+    const manifest = JSON.parse(readFileSync(new URL("../../../scripts/sdk/agent-verbs.json", import.meta.url), "utf8")) as { verbs: { name: string }[] }
+    const verbs = manifest.verbs.map((row) => row.name)
     expect(verbs.length).toBeGreaterThan(0)
     const jsVerbs = verbs.filter((verb) => !verb.includes(".")).map((verb) => verb.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase()))
     expect(instanceMethods).toEqual(["asActor", ...jsVerbs].sort())

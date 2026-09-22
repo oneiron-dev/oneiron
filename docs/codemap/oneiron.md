@@ -119,7 +119,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/engine/enqueue_claim.rs` | src | m | 5 fn · 8 crate-vis | — | Enqueue doors plus kind-scoped claim machinery and read-repair scans |
 | `src/attempt_queue/engine/mod.rs` | src | s | 1 struct · 4 crate-vis | AttemptQueue | The [`AttemptQueue`] handle and its lease state machine |
 | `src/attempt_queue/engine/mutate.rs` | src | m | 4 fn · 4 crate-vis | — | Retry/intervene/manifest append plus lease-cleanup mutation doors |
-| `src/attempt_queue/engine/reads.rs` | src | m | 4 fn · 16 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
+| `src/attempt_queue/engine/reads.rs` | src | m | 4 fn · 15 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
 | `src/attempt_queue/engine/redirect.rs` | src | s | 1 fn | — | Atomic operator placement changes with lease fencing and cycle refusal |
 | `src/attempt_queue/engine/workflow.rs` | src | s | 2 crate-vis | — | Transactional point-claim and retry lineage reads for ordered host composition |
 | `src/attempt_queue/mod.rs` | src | s | 4 re-export · 5 crate-vis | — | Generic LMDB-backed background attempt queue |
@@ -2555,8 +2555,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/reconciliation.rs` | src | s | 1 fn · 1 crate-vis | — | Repository conflicts mint one linked reconciliation TASK and realizing attempt |
 | `src/task_verb/route_receipts.rs` | src | s | 5 struct · 4 enum · 3 fn · 2 const · 1 crate-vis | TaskAckReceipt, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskResultInput, TaskRouteLane, TaskRouteOutcome +1 | — |
 | `src/task_verb/scheduling.rs` | src | s | 3 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
-| `src/task_verb/sdk.rs` | src | s | 6 struct | EmptyRequest, RoomClaimRequest, RoomEntry, RoomRequest, TaskAnswerRequest, TaskWaitRequest | Shared typed agent-verb inputs and generated transport dispatch |
-| `src/task_verb/sdk_generated.rs` | src | s | 1 fn · 1 const | — | — |
+| `src/task_verb/sdk.rs` | src | s | 8 struct | EmptyRequest, RecallRequest, ReceiptsRequest, RoomClaimRequest, RoomEntry, RoomRequest, TaskAnswerRequest, TaskWaitRequest | Shared typed agent-verb inputs and generated transport dispatch |
+| `src/task_verb/sdk_generated.rs` | src | s | 2 fn · 1 const | — | — |
 | `src/task_verb/symbol_lease.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 crate-vis | SymbolLease, SymbolLeaseOutcome | Node-local time-held symbol declarations and atomic queue ordering |
 | `src/task_verb/symbol_lease_tests.rs` | test | s | — | — | — |
 | `src/task_verb/terminal_state.rs` | src | s | 1 struct · 4 enum · 4 fn · 3 crate-vis | ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord | — |

@@ -12,6 +12,115 @@
   ],
   "verbs": [
     {
+      "name": "witness",
+      "input": "crate::memory::WitnessTurn",
+      "output": "crate::memory::WitnessReceipt",
+      "call": "memory.witness(&input)?",
+      "scope": "Write",
+      "mcp_fields": [
+        "spec"
+      ],
+      "admission": {
+        "validate": "crate::memory::caps::check_witness_turn(&input)?;"
+      }
+    },
+    {
+      "name": "claim_upsert",
+      "input": "crate::memory::ClaimInput",
+      "output": "crate::memory::CommitReceipt",
+      "call": "memory.claim_upsert(&input)?",
+      "scope": "Write",
+      "mcp_fields": [
+        "spec"
+      ],
+      "admission": {
+        "validate": "crate::memory::caps::check_claim_input(&input)?;"
+      }
+    },
+    {
+      "name": "recall",
+      "input": "RecallRequest",
+      "output": "crate::memory::MemoryPack",
+      "call": "memory.recall(&input.query, input.effort.unwrap_or(crate::memory::Effort::Medium), &input.scope.unwrap_or_default(), input.limit.unwrap_or(10), input.format.as_deref(), None)?",
+      "scope": "Read",
+      "mcp_fields": [
+        "spec"
+      ],
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;"
+      }
+    },
+    {
+      "name": "receipts",
+      "input": "ReceiptsRequest",
+      "output": "Vec<crate::memory::MemoryReceipt>",
+      "call": "memory.receipts(input.limit.unwrap_or(100))?",
+      "scope": "Read",
+      "mcp_fields": [
+        "spec"
+      ],
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::memory::caps::check_limit(input.limit.unwrap_or(100))?;"
+      }
+    },
+    {
+      "name": "key_value_get",
+      "input": "crate::memory::KeyValueAddress",
+      "output": "Option<crate::memory::KeyValueItem>",
+      "call": "memory.key_value_get(&input)?",
+      "scope": "Read",
+      "mcp_fields": [
+        "spec"
+      ],
+      "admission": {}
+    },
+    {
+      "name": "key_value_put",
+      "input": "crate::memory::KeyValuePut",
+      "output": "crate::memory::KeyValuePutReceipt",
+      "call": "memory.key_value_put(&input)?",
+      "scope": "Write",
+      "mcp_fields": [
+        "spec"
+      ],
+      "admission": {}
+    },
+    {
+      "name": "key_value_delete",
+      "input": "crate::memory::KeyValueAddress",
+      "output": "crate::memory::KeyValueDeleteReceipt",
+      "call": "memory.key_value_delete(&input)?",
+      "scope": "Write",
+      "mcp_fields": [
+        "spec"
+      ],
+      "admission": {}
+    },
+    {
+      "name": "key_value_search",
+      "input": "crate::memory::KeyValueSearch",
+      "output": "Vec<crate::memory::KeyValueItem>",
+      "call": "memory.key_value_search(&input)?",
+      "scope": "Read",
+      "mcp_fields": [
+        "spec"
+      ],
+      "admission": {}
+    },
+    {
+      "name": "key_value_namespaces",
+      "input": "crate::memory::KeyValueNamespaces",
+      "output": "Vec<Vec<String>>",
+      "call": "memory.key_value_namespaces(&input)?",
+      "scope": "Read",
+      "mcp_fields": [
+        "spec"
+      ],
+      "admission": {}
+    },
+    {
       "name": "tasks.ask",
       "input": "crate::task_verb::TaskAskSpec",
       "output": "crate::task_verb::TaskAskReceipt",
@@ -96,16 +205,5 @@
         "spec"
       ]
     }
-  ],
-  "legacy_facade": [
-    "witness",
-    "claim_upsert",
-    "recall",
-    "receipts",
-    "key_value_get",
-    "key_value_put",
-    "key_value_delete",
-    "key_value_search",
-    "key_value_namespaces"
   ]
 }

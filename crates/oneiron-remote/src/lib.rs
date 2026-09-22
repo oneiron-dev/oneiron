@@ -47,15 +47,7 @@ mod remote;
 use std::fmt;
 use std::path::Path;
 
-use oneiron::memory::{
-    ClaimInput, CommitReceipt, Effort, MemoryError, MemoryPack, MemoryReceipt, RecallScope,
-    WitnessReceipt, WitnessTurn,
-};
-use oneiron::memory::{
-    KeyValueAddress, KeyValueDeleteReceipt, KeyValueItem, KeyValueNamespaces, KeyValuePut,
-    KeyValuePutReceipt, KeyValueSearch,
-};
-use serde::Serialize;
+use oneiron::memory::{Effort, MemoryError};
 
 pub use crate::caps::{
     MAX_BATCH_ENTITIES, MAX_BLOB_BASE64_LEN, MAX_BLOB_CONTENT_BYTES, MAX_CODEBASE_FILES,
@@ -63,7 +55,6 @@ pub use crate::caps::{
     MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len, check_dimensions, check_limit,
     check_payload_bytes, check_query, check_unix_seconds,
 };
-use crate::caps::{check_claim_input, check_witness_turn};
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::store_open_count;
 use crate::error::forbidden;
@@ -160,23 +151,6 @@ impl fmt::Debug for OneironClient {
         };
         write!(formatter, "OneironClient {{ backend: {backend} }}")
     }
-}
-
-/// `recall`'s wire request, matching the server handler's body exactly.
-#[derive(Serialize)]
-struct RecallRequest<'a> {
-    query: &'a str,
-    effort: Effort,
-    scope: &'a RecallScope,
-    limit: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    format: Option<&'a str>,
-}
-
-/// `receipts`'s wire request.
-#[derive(Serialize)]
-struct ReceiptsRequest {
-    limit: usize,
 }
 
 impl OneironClient {
@@ -293,128 +267,4 @@ impl OneironClient {
 
     // ── the declared catalog ────────────────────────────────────────────
     //
-    // One method per FACADE_VERB_CATALOG entry, in catalog order. Each one
-    // gates the PID, validates its own caps, and then makes exactly one
-    // dispatch: an engine facade call or one HTTP round trip to the verb of
-    // the same name. There is no composition and no second code path.
-
-    /// Witnesses one conversational turn.
-    ///
-    /// `turn.occurred_at` is already stamped by the caller through
-    /// [`stamp_occurred_at`], because the engine DTO's field is required and a
-    /// backend cannot tell an omitted `0` from a deliberate one.
-    pub fn witness(&self, turn: &WitnessTurn) -> Result<WitnessReceipt, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        check_witness_turn(turn)?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().witness(turn),
-            Backend::Remote(remote) => remote.call("witness", turn),
-        }
-    }
-
-    /// Upserts one claim through the gated claim-candidate path.
-    pub fn claim_upsert(&self, claim: &ClaimInput) -> Result<CommitReceipt, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        check_claim_input(claim)?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().claim_upsert(claim),
-            Backend::Remote(remote) => remote.call("claim_upsert", claim),
-        }
-    }
-
-    /// Recalls a memory pack.
-    ///
-    /// The lease argument the engine takes is `None` and is NOT a client
-    /// input: no lease issuer exists, and a bearer slip is not one. An
-    /// `Effort::High` call therefore returns the engine's `LEASE_REQUIRED`
-    /// through both backends, spelled identically.
-    pub fn recall(
-        &self,
-        query: &str,
-        effort: Effort,
-        scope: &RecallScope,
-        limit: usize,
-        format: Option<&str>,
-    ) -> Result<MemoryPack, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        check_query(query)?;
-        check_limit(limit)?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded
-                .memory()
-                .recall(query, effort, scope, limit, format, None),
-            Backend::Remote(remote) => remote.call(
-                "recall",
-                &RecallRequest {
-                    query,
-                    effort,
-                    scope,
-                    limit,
-                    format,
-                },
-            ),
-        }
-    }
-
-    /// Lists governance receipts, newest first.
-    pub fn receipts(&self, limit: usize) -> Result<Vec<MemoryReceipt>, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        check_limit(limit)?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().receipts(limit),
-            Backend::Remote(remote) => remote.call("receipts", &ReceiptsRequest { limit }),
-        }
-    }
-    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
-    pub fn key_value_get(
-        &self,
-        request: &KeyValueAddress,
-    ) -> Result<Option<KeyValueItem>, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().key_value_get(request),
-            Backend::Remote(remote) => remote.call("key_value_get", request),
-        }
-    }
-    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
-    pub fn key_value_put(&self, request: &KeyValuePut) -> Result<KeyValuePutReceipt, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().key_value_put(request),
-            Backend::Remote(remote) => remote.call("key_value_put", request),
-        }
-    }
-    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
-    pub fn key_value_delete(
-        &self,
-        request: &KeyValueAddress,
-    ) -> Result<KeyValueDeleteReceipt, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().key_value_delete(request),
-            Backend::Remote(remote) => remote.call("key_value_delete", request),
-        }
-    }
-    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
-    pub fn key_value_search(
-        &self,
-        request: &KeyValueSearch,
-    ) -> Result<Vec<KeyValueItem>, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().key_value_search(request),
-            Backend::Remote(remote) => remote.call("key_value_search", request),
-        }
-    }
-    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
-    pub fn key_value_namespaces(
-        &self,
-        request: &KeyValueNamespaces,
-    ) -> Result<Vec<Vec<String>>, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().key_value_namespaces(request),
-            Backend::Remote(remote) => remote.call("key_value_namespaces", request),
-        }
-    }
 }

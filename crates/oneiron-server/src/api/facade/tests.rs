@@ -452,3 +452,70 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
     assert_eq!(bodies[7]["existed"], true);
     assert_eq!(bodies[8], Value::Null);
 }
+
+#[tokio::test]
+async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
+    use oneiron::authority::SlipCaveat;
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            crate::config::SyncServerConfig {
+                auth_secret: Some("generated-facade-scope".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let recipe = format!(
+        "scope=core:read;principal_ref={};actor_class=human",
+        actor.to_hex()
+    );
+    let (slip, holder) = crate::test_credentials::credential(&server, &recipe);
+    let mut narrow = slip.clone();
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(actor)]));
+    narrow
+        .attenuate(SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        })
+        .unwrap();
+    let app = crate::build_app(server);
+    for (credential, verb, input, status) in [
+        (&slip, "receipts", json!({}), StatusCode::OK),
+        (
+            &slip,
+            "receipts",
+            json!({"limit": 0}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (&narrow, "receipts", json!({}), StatusCode::FORBIDDEN),
+        (
+            &narrow,
+            "recall",
+            json!({"query": "hello"}),
+            StatusCode::FORBIDDEN,
+        ),
+        (&slip, "witness", json!({}), StatusCode::FORBIDDEN),
+    ] {
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/core/facade/{verb}"))
+            .header("Content-Type", "application/json")
+            .body(Body::from(serde_json::to_vec(&input).unwrap()))
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(crate::test_credentials::bind_slip_request(
+                credential, &holder, request,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "{verb}");
+    }
+}

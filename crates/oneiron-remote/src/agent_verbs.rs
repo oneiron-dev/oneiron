@@ -29,15 +29,208 @@ impl OneironClient {
         if !oneiron::task_verb::sdk::AGENT_VERBS.contains(&verb) {
             return Err(crate::error::bad_request(
                 "unknown SDK agent verb",
-                &["Use a tasks.* or rooms.* SDK agent verb."],
+                &["Use a verb from the SDK catalog."],
             ));
         }
+        oneiron::task_verb::sdk::validate_input(verb, &input)?;
         match &self.backend {
             Backend::Embedded(client) => {
                 oneiron::task_verb::sdk::invoke(&client.memory(), verb, input)
             }
             Backend::Remote(client) => client.call(verb, &input),
         }
+    }
+    /// Witnesses one conversational turn.
+    ///
+    /// `turn.occurred_at` is already stamped by the caller through
+    /// [`stamp_occurred_at`], because the engine DTO's field is required and a
+    /// backend cannot tell an omitted `0` from a deliberate one.
+    pub fn witness(
+        &self,
+        input: &oneiron::memory::WitnessTurn,
+    ) -> Result<oneiron::memory::WitnessReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        let result = self.agent_verb("witness", value)?;
+        serde_json::from_value(result).map_err(|_| {
+            crate::error::bad_request(
+                "SDK output decoding failed",
+                &["Report this SDK response mismatch."],
+            )
+        })
+    }
+    /// Upserts one claim through the gated claim-candidate path.
+    pub fn claim_upsert(
+        &self,
+        input: &oneiron::memory::ClaimInput,
+    ) -> Result<oneiron::memory::CommitReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        let result = self.agent_verb("claim_upsert", value)?;
+        serde_json::from_value(result).map_err(|_| {
+            crate::error::bad_request(
+                "SDK output decoding failed",
+                &["Report this SDK response mismatch."],
+            )
+        })
+    }
+    /// Recalls a memory pack.
+    ///
+    /// The lease argument the engine takes is `None` and is NOT a client
+    /// input: no lease issuer exists, and a bearer slip is not one. An
+    /// `Effort::High` call therefore returns the engine's `LEASE_REQUIRED`
+    /// through both backends, spelled identically.
+    pub fn recall(
+        &self,
+        query: &str,
+        effort: oneiron::memory::Effort,
+        scope: &oneiron::memory::RecallScope,
+        limit: usize,
+        format: Option<&str>,
+    ) -> Result<oneiron::memory::MemoryPack, MemoryError> {
+        let input = oneiron::task_verb::sdk::RecallRequest {
+            query: query.to_owned(),
+            effort: Some(effort),
+            scope: Some(scope.clone()),
+            limit: Some(limit),
+            format: format.map(str::to_owned),
+        };
+        let value = serde_json::to_value(&input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        let result = self.agent_verb("recall", value)?;
+        serde_json::from_value(result).map_err(|_| {
+            crate::error::bad_request(
+                "SDK output decoding failed",
+                &["Report this SDK response mismatch."],
+            )
+        })
+    }
+    /// Lists governance receipts, newest first.
+    pub fn receipts(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
+        let input = oneiron::task_verb::sdk::ReceiptsRequest { limit: Some(limit) };
+        let value = serde_json::to_value(&input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        let result = self.agent_verb("receipts", value)?;
+        serde_json::from_value(result).map_err(|_| {
+            crate::error::bad_request(
+                "SDK output decoding failed",
+                &["Report this SDK response mismatch."],
+            )
+        })
+    }
+    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
+    pub fn key_value_get(
+        &self,
+        input: &oneiron::memory::KeyValueAddress,
+    ) -> Result<Option<oneiron::memory::KeyValueItem>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        let result = self.agent_verb("key_value_get", value)?;
+        serde_json::from_value(result).map_err(|_| {
+            crate::error::bad_request(
+                "SDK output decoding failed",
+                &["Report this SDK response mismatch."],
+            )
+        })
+    }
+    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
+    pub fn key_value_put(
+        &self,
+        input: &oneiron::memory::KeyValuePut,
+    ) -> Result<oneiron::memory::KeyValuePutReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        let result = self.agent_verb("key_value_put", value)?;
+        serde_json::from_value(result).map_err(|_| {
+            crate::error::bad_request(
+                "SDK output decoding failed",
+                &["Report this SDK response mismatch."],
+            )
+        })
+    }
+    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
+    pub fn key_value_delete(
+        &self,
+        input: &oneiron::memory::KeyValueAddress,
+    ) -> Result<oneiron::memory::KeyValueDeleteReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        let result = self.agent_verb("key_value_delete", value)?;
+        serde_json::from_value(result).map_err(|_| {
+            crate::error::bad_request(
+                "SDK output decoding failed",
+                &["Report this SDK response mismatch."],
+            )
+        })
+    }
+    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
+    pub fn key_value_search(
+        &self,
+        input: &oneiron::memory::KeyValueSearch,
+    ) -> Result<Vec<oneiron::memory::KeyValueItem>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        let result = self.agent_verb("key_value_search", value)?;
+        serde_json::from_value(result).map_err(|_| {
+            crate::error::bad_request(
+                "SDK output decoding failed",
+                &["Report this SDK response mismatch."],
+            )
+        })
+    }
+    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
+    pub fn key_value_namespaces(
+        &self,
+        input: &oneiron::memory::KeyValueNamespaces,
+    ) -> Result<Vec<Vec<String>>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        let result = self.agent_verb("key_value_namespaces", value)?;
+        serde_json::from_value(result).map_err(|_| {
+            crate::error::bad_request(
+                "SDK output decoding failed",
+                &["Report this SDK response mismatch."],
+            )
+        })
     }
     pub fn tasks_ask(
         &self,

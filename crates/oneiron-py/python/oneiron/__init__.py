@@ -163,6 +163,8 @@ class Oneiron:
         """
         return Oneiron(_translate(lambda: self._client.as_actor(actor_key)))
 
+    # BEGIN GENERATED FACADE VERBS
+
     def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
         """Witnesses one conversational turn.
 
@@ -209,9 +211,6 @@ class Oneiron:
         """Governance receipts, newest first."""
         return json.loads(_translate(lambda: self._client.receipts(limit)))
 
-    def _agent_verb(self, method: str, value: object) -> Any:
-        return json.loads(_translate(lambda: getattr(self._client, method)(json.dumps(value))))
-
     def key_value_get(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
         return json.loads(_translate(lambda: self._client.key_value_get(json.dumps(request, allow_nan=False))))
@@ -231,3 +230,8 @@ class Oneiron:
     def key_value_namespaces(self, request: dict[str, Any]) -> list[list[str]]:
         """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
         return json.loads(_translate(lambda: self._client.key_value_namespaces(json.dumps(request, allow_nan=False))))
+
+# END GENERATED FACADE VERBS
+
+    def _agent_verb(self, method: str, value: object) -> Any:
+        return json.loads(_translate(lambda: getattr(self._client, method)(json.dumps(value))))

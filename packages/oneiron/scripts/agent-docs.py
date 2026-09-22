@@ -3,6 +3,7 @@
 from pathlib import Path
 import argparse
 import re
+import json
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -10,11 +11,8 @@ def artifacts():
     readme = (ROOT / "packages/oneiron/README.md").read_text()
     ts = (ROOT / "packages/oneiron/src/types.ts").read_text()
     py = (ROOT / "crates/oneiron-py/python/oneiron/__init__.pyi").read_text()
-    catalog = (ROOT / "crates/oneiron-remote/src/lib.rs").read_text()
-    match = re.search(r"pub const FACADE_VERB_CATALOG[^=]*=\s*\[([^\]]+)\]", catalog)
-    if match is None:
-        raise ValueError("Rust facade catalog missing")
-    verbs = re.findall(r'"([a-z_]+)"', match[1])
+    manifest = json.loads((ROOT / "scripts/sdk/agent-verbs.json").read_text())
+    verbs = [row["name"] for row in manifest["verbs"]]
     errors = (ROOT / "crates/oneiron/src/memory/error.rs").read_text()
     codes = re.findall(r'pub const MEMORY_CODE_\w+: &str = "([A-Z_]+)";', errors)
     remedies = {
@@ -33,7 +31,7 @@ def artifacts():
     error_doc = "# Memory Wire typed errors\n\nEvery SDK failure carries `code`, `message`, and nonempty `suggestions`.\nUse the returned suggestions; do not parse message prose. No adapter swallows\nor downgrades the engine's refusal. Future remote codes pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
     error_doc += "".join(f"| `{code}` | {remedies[code]} |\n" for code in codes)
     error_doc += "\nRemote server-specific codes and HTTP schemas are also indexed by\n[the engine API reference](../../oneiron.skills.md).\n"
-    census = "# Memory Wire facade census\n\nThis is the complete **shipped SDK facade**, in Rust catalog order. It is\nnot a claim that every engine-internal method is a public SDK verb.\n`FACADE_VERB_CATALOG` in `crates/oneiron-remote/src/lib.rs` owns this list.\nNames are stable: a new export or rename must update the engine catalog,\nboth bindings and their export-census tests in one reviewed change.\n\n"
+    census = "# Memory Wire facade census\n\nThis is the complete **shipped SDK facade**, in manifest order. It is\nnot a claim that every engine-internal method is a public SDK verb.\n`scripts/sdk/agent-verbs.json` owns this list.\nNames are stable: a new export or rename must update the engine catalog,\nboth bindings and their export-census tests in one reviewed change.\n\n"
     census += "\n".join(f"- `{verb}`" for verb in verbs) + "\n"
     return {
         "docs/agent-sdk/quickstart.md": readme,

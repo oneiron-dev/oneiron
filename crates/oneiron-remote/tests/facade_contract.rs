@@ -9,33 +9,22 @@
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN};
 use oneiron_remote::{FACADE_VERB_CATALOG, OneironClient, OpenOptions, unix_seconds_now};
 
-/// The declared catalog, spelled once here so a silent reorder or addition in
-/// the crate fails a test rather than a downstream census.
-const EXPECTED_CATALOG: [&str; 17] = [
-    "witness",
-    "claim_upsert",
-    "recall",
-    "receipts",
-    "key_value_get",
-    "key_value_put",
-    "key_value_delete",
-    "key_value_search",
-    "key_value_namespaces",
-    "tasks.ask",
-    "tasks.wait",
-    "tasks.answer",
-    "tasks.outcomes",
-    "rooms.list",
-    "rooms.messages",
-    "rooms.claim",
-    "rooms.speak",
-];
-
 /// §Test/Shared #1 — `facade_contract_catalog_is_exact`.
 #[test]
 fn facade_contract_catalog_is_exact() {
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../scripts/sdk/agent-verbs.json"))
+            .expect("manifest");
+    let expected: Vec<&str> = manifest["verbs"]
+        .as_array()
+        .expect("verb rows")
+        .iter()
+        .map(|row| row["name"].as_str().expect("verb name"))
+        .collect();
+    assert_eq!(FACADE_VERB_CATALOG.len(), expected.len());
     assert_eq!(
-        FACADE_VERB_CATALOG, EXPECTED_CATALOG,
+        FACADE_VERB_CATALOG.as_slice(),
+        expected,
         "the shipped catalog must equal the declared catalog, in order"
     );
 }
@@ -157,6 +146,33 @@ fn omitted_timestamp_is_stamped_in_unix_seconds() {
         assert!(
             oneiron_remote::stamp_occurred_at(Some(rejected)).is_err(),
             "{rejected} must be refused before core entry"
+        );
+    }
+}
+
+#[test]
+fn facade_agent_dispatch_validates_before_remote_transport() {
+    let client = OneironClient::connect("http://127.0.0.1:9/", "unused").unwrap();
+    for (verb, input) in [
+        ("receipts", serde_json::json!({"limit": 0})),
+        (
+            "key_value_get",
+            serde_json::json!({"namespace": 3, "key": false}),
+        ),
+        (
+            "recall",
+            serde_json::json!({"query": "x".repeat(oneiron_remote::MAX_QUERY_BYTES + 1)}),
+        ),
+        (
+            "witness",
+            serde_json::json!({"conversation_ref": "11111111111111111111111111111111", "occurred_at": 1,
+            "messages": [{"author": "user", "message_type": "text", "content": "x".repeat(oneiron_remote::MAX_ENTITY_PAYLOAD_BYTES + 1), "is_visible": true, "order": 0}]}),
+        ),
+    ] {
+        assert_eq!(
+            client.agent_verb(verb, input).unwrap_err().code,
+            MEMORY_CODE_BAD_REQUEST,
+            "{verb}"
         );
     }
 }

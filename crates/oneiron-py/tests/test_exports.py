@@ -7,7 +7,7 @@ promising to keep it working.
 
 import inspect
 import pathlib
-import re
+import json
 
 import oneiron
 
@@ -15,11 +15,9 @@ PUBLIC_EXPORTS = {"Oneiron", "OneironError"}
 
 # The facade catalog has top-level verbs and generated tasks/rooms families.
 # Check both projections exactly, without flattening away dotted names.
-_catalog_source = (pathlib.Path(__file__).resolve().parents[2] / "oneiron-remote/src/agent_verbs.rs").read_text()
-_catalog_match = re.search(r"pub const FACADE_VERB_CATALOG[^=]*=\s*\[([^\]]+)\]", _catalog_source)
-assert _catalog_match is not None, "Rust facade catalog is missing"
-_VERBS = re.findall(r'"([a-z_.]+)"', _catalog_match[1])
-assert _VERBS, "Rust facade catalog is empty"
+_manifest = json.loads((pathlib.Path(__file__).resolve().parents[3] / "scripts/sdk/agent-verbs.json").read_text())
+_VERBS = [row["name"] for row in _manifest["verbs"]]
+assert _VERBS, "SDK manifest is empty"
 PUBLIC_METHODS = {"open", "connect", "as_actor", *(verb for verb in _VERBS if "." not in verb)}
 
 

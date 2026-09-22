@@ -46,4 +46,29 @@ pub struct RoomEntry {
     pub id: String,
     pub room: crate::workspace_roster::ProjectRoom,
 }
+/// `recall`'s inputs, spelled exactly as §HEAD-CONTRACT does.
+///
+/// Every field but `query` is optional and defaults to the contract's default,
+/// so an omitting client and a spelling-everything client reach the same
+/// engine call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecallRequest {
+    pub query: String,
+    #[serde(default)]
+    pub effort: Option<crate::memory::Effort>,
+    #[serde(default)]
+    pub scope: Option<crate::memory::RecallScope>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub format: Option<String>,
+}
+
+/// `receipts`'s one input.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReceiptsRequest {
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 include!("sdk_generated.rs");

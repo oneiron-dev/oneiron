@@ -9,6 +9,25 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 class AgentSdkProjectionTests(unittest.TestCase):
+    def test_manifest_removal_suppresses_facade_bindings(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        generator.ROWS = [row for row in generator.ROWS if row["name"] != "key_value_get"]
+        outputs = generator.outputs()
+        for path, spelling in [
+            ("crates/oneiron/src/task_verb/sdk_generated.rs", '"key_value_get"'),
+            ("crates/oneiron-server/src/api/facade/agent_verbs.rs", "fn key_value_get("),
+            ("crates/oneiron-remote/src/agent_verbs.rs", "fn key_value_get("),
+            ("crates/oneiron-napi/src/facade/client/agent_verbs.rs", "fn key_value_get("),
+            ("crates/oneiron-py/src/lib.rs", "fn key_value_get("),
+            ("packages/oneiron/src/index.ts", "keyValueGet(request:"),
+            ("packages/oneiron/src/native.ts", "keyValueGet(requestJson:"),
+            ("crates/oneiron-py/python/oneiron/__init__.py", "def key_value_get("),
+            ("crates/oneiron-py/python/oneiron/__init__.pyi", "def key_value_get("),
+        ]:
+            self.assertNotIn(spelling, outputs[path], path)
+
     def test_python_ask_wait_answer_and_room_arguments(self):
         spec = importlib.util.spec_from_file_location("generated_agent_verbs", ROOT / "crates/oneiron-py/python/oneiron/agent_verbs.py")
         module = importlib.util.module_from_spec(spec)

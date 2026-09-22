@@ -98,7 +98,7 @@ export type CommitReceipt = {
 }
 
 /** Retrieval effort dial. `deep` is lease-gated and returns `LEASE_REQUIRED`. */
-export type Effort = "minimal" | "standard" | "deep"
+export type Effort = "light" | "medium" | "high" | "xhigh" | "max"
 
 /** Rendered pack formats; these are the engine's exact tokens. */
 export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
@@ -149,6 +149,7 @@ export type ScopeHonesty = {
 
 /** Retrieval accounting. */
 export type RetrievalMeta = {
+  partial: boolean
   sparse?: boolean
   totalCandidates: number
   claimsReturned: number
@@ -227,13 +228,14 @@ Timestamps are Unix SECONDS everywhere and are never converted. Blob content is
 in these stubs.
 """
 
+from .agent_verbs import TasksVerbs, RoomsVerbs
 import os
 from typing import Any, Literal, NotRequired, TypedDict
 
 __all__ = ["Oneiron", "OneironError"]
 
 WitnessAuthor = Literal["user", "companion", "system"]
-Effort = Literal["minimal", "standard", "deep"]
+Effort = Literal["light", "medium", "high", "xhigh", "max"]
 PackFormat = Literal["json", "yaml", "toon", "md", "txt"]
 
 class WitnessMessage(TypedDict):
@@ -304,6 +306,7 @@ class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
 
 class RetrievalMeta(TypedDict):
+    partial: bool
     sparse: bool | None
     total_candidates: int
     claims_returned: int
@@ -372,6 +375,8 @@ class OneironError(RuntimeError):
     def __init__(self, code: str, message: str, suggestions: list[str]) -> None: ...
 
 class Oneiron:
+    tasks: TasksVerbs
+    rooms: RoomsVerbs
     @classmethod
     def open(
         cls,
@@ -382,13 +387,14 @@ class Oneiron:
     @classmethod
     def connect(cls, url: str, key: str) -> "Oneiron": ...
     def as_actor(self, actor_key: str) -> "Oneiron": ...
+    # BEGIN GENERATED FACADE VERBS
     def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
     def claim_upsert(self, claim: ClaimInput) -> CommitReceipt: ...
     def recall(
         self,
         query: str,
         *,
-        effort: Effort = "standard",
+        effort: Effort = "medium",
         scope: RecallScope | None = None,
         limit: int = 10,
         format: PackFormat | None = None,
@@ -399,4 +405,6 @@ class Oneiron:
     def key_value_delete(self, request: KeyValueAddress) -> KeyValueDeleteReceipt: ...
     def key_value_search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
     def key_value_namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...
+
+# END GENERATED FACADE VERBS
 ```

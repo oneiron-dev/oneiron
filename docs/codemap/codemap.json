@@ -1341,7 +1341,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 15,
       "fn": 4
      }
     },
@@ -31304,6 +31304,8 @@
      "kind": "src",
      "notable": [
       "EmptyRequest",
+      "RecallRequest",
+      "ReceiptsRequest",
       "RoomClaimRequest",
       "RoomEntry",
       "RoomRequest",
@@ -31313,7 +31315,7 @@
      "path": "src/task_verb/sdk.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
-      "struct": 6
+      "struct": 8
      }
     },
     {
@@ -31324,7 +31326,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -37372,7 +37374,7 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 12,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -37383,7 +37385,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 8
+      "fn": 17
      }
     },
     {
@@ -37661,14 +37663,14 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
       "const": 1,
-      "fn": 9
+      "fn": 18
      }
     },
     {
@@ -37703,7 +37705,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "OneironClient",
@@ -37713,7 +37715,7 @@
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
       "const": 2,
-      "fn": 20,
+      "fn": 11,
       "mod": 1,
       "re-export": 3,
       "struct": 2
@@ -37821,7 +37823,7 @@
     "agent_verbs": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "—"
     },
@@ -38995,7 +38997,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade.rs",
@@ -39005,7 +39007,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/agent_verbs.rs",

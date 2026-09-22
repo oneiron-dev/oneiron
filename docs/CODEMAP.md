@@ -320,7 +320,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `agent_verbs` | file | 1 | s | — |
+| `agent_verbs` | file | 1 | m | — |
 | `caps` | file | 1 | s | Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators |
 | `embedded` | file | 1 | m | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
 | `error` | file | 1 | s | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
