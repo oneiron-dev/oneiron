@@ -19,13 +19,6 @@ pub(crate) fn migrate_in_txn(
     conversation: &EntityId,
 ) -> Result<bool> {
     require_type(&vault.store, txn, conversation, ENTITY_TYPE_CONVERSATION)?;
-    crate::conversation::ownership::claim_in(
-        &vault.store,
-        txn,
-        *conversation,
-        crate::conversation::ownership::Owner::Dag,
-    )?;
-
     if let Some(marker) = vault
         .store
         .vault_meta
@@ -161,7 +154,6 @@ impl Vault {
                 let live = {
                     let txn = self.store.env.read_txn()?;
                     live_entity_row_in_txn(&self.store, &txn, id)?.is_live()
-                        && !graph::room_owned(&self.store, &txn, id)?
                         && (self
                             .store
                             .vault_meta

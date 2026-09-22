@@ -197,3 +197,43 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
     validate(&body)?;
     Ok(body)
 }
+
+/// Recognizes scope-summary identity before strict decoding, including a
+/// damaged suffix after a family-specific key.
+pub(super) fn is_scope_summary(bytes: &[u8]) -> bool {
+    let (pairs, mut cursor) = match bytes {
+        [marker @ 0x80..=0x8f, rest @ ..] => (u32::from(*marker & 0x0f), rest),
+        [0xde, a, b, rest @ ..] => (u32::from(u16::from_be_bytes([*a, *b])), rest),
+        [0xdf, a, b, c, d, rest @ ..] => (u32::from_be_bytes([*a, *b, *c, *d]), rest),
+        _ => return false,
+    };
+    for _ in 0..pairs {
+        let Ok(key) = rmpv::decode::read_value(&mut cursor) else {
+            break;
+        };
+        if matches!(key.as_str(), Some("scope" | "covers" | "minted_at")) {
+            return true;
+        }
+        if rmpv::decode::read_value(&mut cursor).is_err() {
+            break;
+        }
+    }
+    false
+}
+
+pub(super) fn reply_summary(bytes: &[u8]) -> Result<Option<EntityId>> {
+    let mut cursor = bytes;
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+        return Ok(None);
+    };
+    let mut summaries = entries
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some("summary"));
+    let Some((_, summary)) = summaries.next() else {
+        return Ok(None);
+    };
+    if summaries.next().is_some() || !cursor.is_empty() {
+        return Err(invalid("invalid reply summary association"));
+    }
+    Ok(Some(id(summary)?))
+}

@@ -85,10 +85,7 @@ mod client_metadata;
 mod companion;
 mod consumer_usage;
 mod context_pack;
-#[path = "conversation_dag.rs"]
 mod conversation_dag;
-#[path = "conversation_dag/mod.rs"]
-mod conversation_dag_core;
 mod conversation_members;
 mod conversations;
 mod core;
@@ -141,7 +138,7 @@ pub(crate) use self::companion::*;
 pub(crate) use self::consumer_usage::*;
 pub(crate) use self::context_board::*;
 pub(crate) use self::context_pack::*;
-pub(crate) use self::conversation_dag_core::*;
+pub(crate) use self::conversation_dag::*;
 pub(crate) use self::conversations::*;
 pub(crate) use self::core::*;
 pub(crate) use self::discover::*;
@@ -201,25 +198,17 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         )
         .route(
             "/conversations/{conversation_id}/records",
-            post(conversation_dag::append),
+            post(append_core_record),
         )
         .route(
             "/conversations/{conversation_id}/records/{record}/thread",
-            post(conversation_dag::reply),
-        )
-        .route(
-            "/conversations/{conversation_id}/records/{record}/thread/summary",
-            post(conversation_dag::summary),
+            post(reply_in_thread),
         )
         .route("/sessions/{id}", axum::routing::patch(sessions::mode))
         .route("/sessions/{id}/presence", post(sessions::presence))
         .route(
             "/conversations/{conversation_id}/turns",
             post(create_core_conversation_turn),
-        )
-        .route(
-            "/conversations/{conversation_id}/dag/records",
-            post(append_core_record),
         )
         .route(
             "/conversations/{conversation_id}/head",
@@ -273,21 +262,20 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         )
         .route(
             "/conversations/{conversation_id}/records",
-            get(conversation_dag::records),
+            get(get_core_dag),
         )
         .route(
             "/conversations/{conversation_id}/records/{record}/thread",
-            get(conversation_dag::thread),
+            get(get_thread),
         )
         .route(
             "/conversations/{conversation_id}/canonical",
-            get(conversation_dag::canonical),
+            get(get_canonical),
         )
         .route(
             "/conversations/{conversation_id}/turns",
             get(list_core_conversation_turns),
         )
-        .route("/conversations/{conversation_id}/dag", get(get_core_dag))
         .route(
             "/conversations/{conversation_id}/scope",
             post(resolve_core_scope),

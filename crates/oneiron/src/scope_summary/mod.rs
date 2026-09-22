@@ -8,6 +8,7 @@ mod doors;
 
 pub use codec::{ScopeSummaryBody, decode_scope_summary_body, encode_scope_summary_body};
 pub use doors::LandedHeader;
+pub(crate) use doors::{body_covers_in_txn, merge_covers_in_txn};
 
 #[cfg(test)]
 mod tests;

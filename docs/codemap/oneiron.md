@@ -940,28 +940,24 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/contract_oracle/tests.rs` | test | s | 1 fn | — | — |
 | `src/contract_oracle/types.rs` | src | s | 5 struct · 1 enum · 1 fn | CommandOutput, ContractBaseline, ContractDiff, ContractSnapshot, ContractSpec, ContractVerdict | Contract input, snapshot and persisted verdict types |
 | `src/conversation/body.rs` | src | s | 1 struct · 1 enum · 8 fn · 2 crate-vis | ConversationBody, ConversationKind | Forward-compatible room body codec and the all-writer membership guard |
-| `src/conversation/dag.rs` | src | m | 1 struct · 1 enum · 7 fn · 1 const · 9 crate-vis | AppendRecord, ScopeSelector | Record-kind-independent parent edges, canonical path and scoped walks |
 | `src/conversation/membership.rs` | src | m | 2 struct · 2 enum · 8 fn · 5 crate-vis | HistoryChoice, MembershipAction, MembershipRow, MembershipWindow | Append-only membership ledger |
-| `src/conversation/mod.rs` | src | s | 5 re-export · 3 crate-vis | — | Rooms, append-only conversation DAGs, membership windows and scoped summaries |
-| `src/conversation/ownership.rs` | src | s | 4 crate-vis | — | Local, explicit topology ownership; selector families never auto-adopt each other |
+| `src/conversation/mod.rs` | src | s | 3 re-export · 2 crate-vis | — | Room bodies, membership windows, session presence and audience visibility |
 | `src/conversation/session.rs` | src | s | 1 struct · 1 enum · 3 fn | SessionMode, SessionPresence | Session mode persists; active participant presence belongs only to this process |
-| `src/conversation/summary.rs` | src | s | 2 fn | — | Caller-authored scoped summaries, landed as gated claim headers |
 | `src/conversation/tests.rs` | test | L | — | — | — |
 | `src/conversation/tests/audience_boundaries.rs` | test | m | — | — | — |
-| `src/conversation/threads.rs` | src | s | 2 struct · 6 fn · 1 crate-vis | Thread, ThreadMeta | Threads are ordinary branches with a rebuildable trunk metadata projection |
 | `src/conversation/visibility.rs` | src | s | 2 fn · 4 crate-vis | — | The audience predicate shared by all ScopedRead paths |
 | `src/conversation_dag/admission.rs` | src | s | 3 crate-vis | — | Close the legacy ChildOf-only append door after DAG adoption |
-| `src/conversation_dag/graph.rs` | src | s | 16 crate-vis | — | Strict transactional graph reads and shared guards |
+| `src/conversation_dag/fixtures.rs` | src | s | 6 crate-vis | — | — |
+| `src/conversation_dag/graph.rs` | src | s | 15 crate-vis | — | Strict transactional graph reads and shared guards |
 | `src/conversation_dag/membership.rs` | src | s | 4 crate-vis | — | Replicated TURN session membership: body carrier and local index reconstruction |
 | `src/conversation_dag/migration.rs` | src | s | 1 fn · 2 crate-vis | — | Idempotent lazy and maintenance migration of legacy conversation turns |
 | `src/conversation_dag/mod.rs` | src | s | 1 mod · 2 re-export · 7 crate-vis | — | Conversation DAG topology, local HEAD state and exact scope resolution |
 | `src/conversation_dag/policy.rs` | src | s | 1 crate-vis | — | Actor-bound write-policy preflight for the append operation |
-| `src/conversation_dag/reply.rs` | src | s | 1 struct · 1 fn | ReplyStrip | Revision-bound reply strips |
+| `src/conversation_dag/reply.rs` | src | s | 2 struct · 3 fn | ReplyStrip, Thread | Revision-bound reply strips |
 | `src/conversation_dag/scopes.rs` | src | s | 1 fn · 1 crate-vis | — | Exact, capped scope resolution over a single transaction snapshot |
 | `src/conversation_dag/test_support.rs` | src | s | 1 fn | — | Test-only policy fixture shared by engine and HTTP acceptance tests |
 | `src/conversation_dag/tests/mod.rs` | test | m | — | — | Observable DAG invariants, legacy adoption and rejection atomicity |
 | `src/conversation_dag/tests/replay.rs` | test | s | — | — | Observable session-carrier replay without exporting local membership indexes |
-| `src/conversation_dag/tests/support.rs` | test | s | 6 crate-vis | — | — |
 | `src/conversation_dag/types.rs` | src | s | 6 struct · 1 enum | AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath, ScopeSelector | Door inputs and snapshot results |
 | `src/conversation_dag/writes.rs` | src | m | 5 fn · 3 crate-vis | — | Atomic append, explicit HEAD moves and canonical-index repair |
 | `src/corpus.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 const · 2 crate-vis | CorpusId, CorpusScope | Corpus scope for CLAIM records (ONE-1914): the AUDIENCE a claim belongs to, carried as a typed nested entry… |
@@ -2143,9 +2139,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/saved_query/storage.rs` | src | m | 25 crate-vis | — | — |
 | `src/saved_query/support.rs` | src | s | 15 crate-vis | — | — |
 | `src/saved_query/tests.rs` | test | m | — | — | — |
-| `src/scope_summary/codec.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | ScopeSummaryBody | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
-| `src/scope_summary/doors.rs` | src | m | 1 struct · 7 fn | LandedHeader | Transactional spawn, summary mint, merge-header and drill doors |
-| `src/scope_summary/mod.rs` | src | s | 2 re-export | — | Retained spawned sub-sessions and caller-composed scope summaries |
+| `src/scope_summary/codec.rs` | src | s | 1 struct · 2 fn · 4 crate-vis | ScopeSummaryBody | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
+| `src/scope_summary/doors.rs` | src | m | 1 struct · 7 fn · 2 crate-vis | LandedHeader | Transactional spawn, summary mint, merge-header and drill doors |
+| `src/scope_summary/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | Retained spawned sub-sessions and caller-composed scope summaries |
 | `src/scope_summary/tests.rs` | test | m | — | — | Exact covers, gated merge atomicity and revision-bound late results |
 | `src/secret_custody/codec.rs` | src | m | 2 fn · 3 crate-vis | — | MessagePack body codec for custody records, bands, floors, and bindings |
 | `src/secret_custody/doors.rs` | src | m | 3 fn · 10 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |

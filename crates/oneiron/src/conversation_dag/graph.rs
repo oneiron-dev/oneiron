@@ -223,12 +223,3 @@ pub(super) fn canonical_chain(
     }
     Ok(path)
 }
-
-/// The rooms DAG and program DAG have different branch/session semantics.
-/// An adopted conversation must not be silently reinterpreted by the other.
-pub(super) fn room_owned(store: &Store, txn: &RoTxn<'_>, conversation: &EntityId) -> Result<bool> {
-    Ok(
-        crate::conversation::ownership::owner_in(store, txn, *conversation)?
-            == Some(crate::conversation::ownership::Owner::Room),
-    )
-}

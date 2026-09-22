@@ -52,6 +52,7 @@ impl DagActor {
 #[serde(deny_unknown_fields)]
 pub(crate) struct DagAppendRequest {
     pub parent: Option<String>,
+    pub reply_to: Option<String>,
     pub advance: bool,
     pub body: Value,
     pub text: Option<Vec<CoreTextField>>,
@@ -198,4 +199,12 @@ pub(crate) struct DagSummaryResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct DagCoversResponse {
     pub covers: Vec<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DagThreadResponse {
+    pub root: Option<String>,
+    pub replies: Vec<String>,
+    pub count: u64,
+    pub last_at: Option<u64>,
 }

@@ -1,5 +1,7 @@
 //! The audience predicate shared by all ScopedRead paths.
 use super::*;
+use crate::conversation_dag::edge_ids;
+use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::{
     EdgeKind,
     registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_RELATIONSHIP},
@@ -28,6 +30,35 @@ impl AudienceCache {
     ) -> Result<bool> {
         self.readable_at_depth(vault, txn, id, audience, 0)
     }
+    fn covers_readable(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        covers: Result<Option<Vec<EntityId>>>,
+        audience: &[EntityId],
+        depth: usize,
+    ) -> Result<bool> {
+        let covers = match covers {
+            Ok(None) => return Ok(true),
+            Ok(Some(covers)) => covers,
+            Err(
+                Error::EntityNotFound
+                | Error::Record(
+                    RecordError::InvalidScopeSummary(_) | RecordError::InvalidConversationDag(_),
+                ),
+            ) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        if covers.is_empty() {
+            return Ok(false);
+        }
+        for id in covers {
+            if !self.readable_at_depth(vault, txn, id, audience, depth + 1)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
     fn readable_at_depth(
         &mut self,
         vault: &Vault,
@@ -36,7 +67,10 @@ impl AudienceCache {
         audience: &[EntityId],
         depth: usize,
     ) -> Result<bool> {
-        if depth > 64 {
+        if depth > 64
+            || !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
+            || vault.archive_tombstone_in_txn(txn, &id)?.is_some()
+        {
             return Ok(false);
         }
         let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? else {
@@ -87,33 +121,18 @@ impl AudienceCache {
                 }
             }
         }
+        let body = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("audience body"))?;
+        let covers = crate::scope_summary::body_covers_in_txn(vault, txn, &id, h.entity_type, body);
+        if !self.covers_readable(vault, txn, covers, audience, depth)? {
+            return Ok(false);
+        }
         if h.entity_type == ENTITY_TYPE_CLAIM {
-            let claim = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if claim.predicate == "conversation.summary" {
-                let rmpv::Value::Map(entries) = &claim.value else {
-                    return Ok(false);
-                };
-                let Some((_, rmpv::Value::Array(covers))) =
-                    entries.iter().find(|(k, _)| k.as_str() == Some("covers"))
-                else {
-                    return Ok(false);
-                };
-                if covers.is_empty() {
-                    return Ok(false);
-                }
-                for covered in covers {
-                    let rmpv::Value::Binary(raw) = covered else {
-                        return Ok(false);
-                    };
-                    let id = EntityId::from_bytes(
-                        raw.as_slice()
-                            .try_into()
-                            .map_err(|_| invalid("summary coverage"))?,
-                    )?;
-                    if !self.readable_at_depth(vault, txn, id, audience, depth + 1)? {
-                        return Ok(false);
-                    }
-                }
+            let claim = crate::claim::decode_claim_body(body, true)?;
+            let covers = crate::scope_summary::merge_covers_in_txn(vault, txn, &claim);
+            if !self.covers_readable(vault, txn, covers, audience, depth)? {
+                return Ok(false);
             }
             if let Some(relationship) = claim.rel {
                 if audience.is_empty() {
@@ -129,8 +148,14 @@ impl AudienceCache {
                     }
                     Err(error) => return Err(error),
                 };
-                let mut participants =
-                    dag::peers(vault, txn, relationship, EdgeKind::ParticipatesIn, true)?;
+                let mut participants = edge_ids(
+                    &vault.store,
+                    txn,
+                    &relationship,
+                    EdgeKind::ParticipatesIn,
+                    true,
+                    MAX_ANCESTOR_DEPTH,
+                )?;
                 // Relationship participant ids are a read-path feed, not a
                 // replacement for scope/tier authorization or room windows.
                 if let Ok(value) = decode::<serde_json::Value>(&rel[ENTITY_METADATA_HEADER_LEN..])
@@ -183,7 +208,14 @@ pub(crate) fn room_for_record_in(
             EdgeKind::SpawnedBy,
             EdgeKind::BelongsTo,
         ] {
-            pending.extend(dag::peers(vault, txn, id, kind, false)?);
+            pending.extend(edge_ids(
+                &vault.store,
+                txn,
+                &id,
+                kind,
+                false,
+                MAX_ANCESTOR_DEPTH,
+            )?);
         }
         if h.entity_type == ENTITY_TYPE_CLAIM {
             let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;

@@ -73,9 +73,16 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
     vault
         .join_member(room, actor.entity_ref(), actor, 1, HistoryChoice::Share)
         .unwrap();
-    let mut good = record(room, actor, 2);
-    good.body = serde_json::json!({"txt":"needle healthy"});
-    vault.append_record(&good).unwrap();
+    let mut good = record(&vault, room, actor, 2);
+    good.body = encode(&serde_json::json!({"txt":"needle healthy"})).unwrap();
+    good.text = vec![(
+        "body".into(),
+        serde_json::json!({"txt":"needle healthy"})["txt"]
+            .as_str()
+            .unwrap()
+            .into(),
+    )];
+    let good = vault.append_dag_record(&good).unwrap();
     let mut hidden = Vec::new();
     let mut unavailable = Vec::new();
     for state in [
@@ -96,9 +103,16 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
                 1,
             )
             .unwrap();
-        let mut candidate = record(room, actor, 2);
-        candidate.body = serde_json::json!({"txt":"needle room"});
-        vault.append_record(&candidate).unwrap();
+        let mut candidate = record(&vault, room, actor, 2);
+        candidate.body = encode(&serde_json::json!({"txt":"needle room"})).unwrap();
+        candidate.text = vec![(
+            "body".into(),
+            serde_json::json!({"txt":"needle room"})["txt"]
+                .as_str()
+                .unwrap()
+                .into(),
+        )];
+        let candidate = vault.append_dag_record(&candidate).unwrap();
         assert!(
             vault
                 .record_visible_to(candidate.id, actor.entity_ref())

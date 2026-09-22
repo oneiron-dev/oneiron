@@ -48,11 +48,6 @@ pub(crate) fn validate_local_membership(
     if !is_kind(&record, ENTITY_TYPE_TURN)? || !is_kind(&conversation, ENTITY_TYPE_CONVERSATION)? {
         return Ok(());
     }
-    if crate::conversation::ownership::owner_in(store, txn, conversation)?
-        != Some(crate::conversation::ownership::Owner::Dag)
-    {
-        return Ok(());
-    }
     let marker = store.vault_meta.get(txn, &key(MIGRATED, &conversation))?;
     let Some(marker) = marker else {
         return Ok(());

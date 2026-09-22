@@ -49,7 +49,7 @@ async fn dag_routes_roundtrip_trunk_thread_fork_scope_migration_and_auth() {
     )
     .await;
     let path = format!("/v1/core/conversations/{}", conv["id"].as_str().unwrap());
-    let records = format!("{path}/dag/records");
+    let records = format!("{path}/records");
     let root = post(
         &server,
         &records,
@@ -71,13 +71,16 @@ async fn dag_routes_roundtrip_trunk_thread_fork_scope_migration_and_auth() {
     )
     .await;
     assert_eq!(thread["head"], trunk["id"]);
-    let first = get(&server, &format!("{path}/dag?limit=1")).await;
+    let first = get(&server, &format!("{path}/records?limit=1")).await;
     assert_eq!(first["root"], root["id"]);
     assert_eq!(first["page"]["next"], root["id"]);
     assert_eq!(first["main_line"], json!([root["id"]]));
     let second = get(
         &server,
-        &format!("{path}/dag?limit=1&after={}", root["id"].as_str().unwrap()),
+        &format!(
+            "{path}/records?limit=1&after={}",
+            root["id"].as_str().unwrap()
+        ),
     )
     .await;
     assert_eq!(second["main_line"], json!([trunk["id"]]));
@@ -165,7 +168,7 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
     let path = format!("/v1/core/conversations/{}", conv["id"].as_str().unwrap());
     let root = post(
         &server,
-        &format!("{path}/dag/records"),
+        &format!("{path}/records"),
         json!({"advance": true, "body": {"txt": "asking turn"}, "actor": actor}),
     )
     .await;
@@ -197,6 +200,7 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
             .append_dag_record(&oneiron::conversation_dag::AppendRecord {
                 conversation: conv_id,
                 parent: Some(parent),
+                reply_to: None,
                 advance: false,
                 kind: ENTITY_TYPE_TURN,
                 occurred: TimeRange {
@@ -218,7 +222,7 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
         post(&server, &format!("{path}/scope"), scope.clone()).await["records"],
         json!(covers)
     );
-    let current = post(&server, &format!("{path}/dag/records"), json!({"parent": root["id"], "advance": true, "body": {"txt": "continued"}, "actor": actor})).await;
+    let current = post(&server, &format!("{path}/records"), json!({"parent": root["id"], "advance": true, "body": {"txt": "continued"}, "actor": actor})).await;
     oneiron::conversation_dag::test_support::put_dag_test_policy(&server.vault, writer, false)
         .unwrap();
     let request = json!({"scope": scope, "text": "caller result", "actor": actor, "land_on": root["id"], "as_record": true});
@@ -292,11 +296,8 @@ fn dag_routes_are_registered_in_openapi() {
     use utoipa::OpenApi;
     let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
     for (path, method) in [
-        (
-            "/v1/core/conversations/{conversation_id}/dag/records",
-            "post",
-        ),
-        ("/v1/core/conversations/{conversation_id}/dag", "get"),
+        ("/v1/core/conversations/{conversation_id}/records", "post"),
+        ("/v1/core/conversations/{conversation_id}/records", "get"),
         ("/v1/core/conversations/{conversation_id}/head", "post"),
         ("/v1/core/conversations/{conversation_id}/scope", "post"),
         (
@@ -318,7 +319,7 @@ async fn dag_writes_require_complete_matching_identity_on_scoped_credentials() {
     let (_dir, server, actor) = setup();
     let conv = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
     let records = format!(
-        "/v1/core/conversations/{}/dag/records",
+        "/v1/core/conversations/{}/records",
         conv["id"].as_str().unwrap()
     );
     let principal = actor["entity_ref"].as_str().unwrap();
@@ -361,11 +362,54 @@ async fn dag_writes_require_complete_matching_identity_on_scoped_credentials() {
         get(
             &server,
             &format!(
-                "/v1/core/conversations/{}/dag",
+                "/v1/core/conversations/{}/records",
                 conv["id"].as_str().unwrap()
             )
         )
         .await["main_line"],
         json!([body["id"]])
     );
+}
+
+#[tokio::test]
+async fn records_thread_and_canonical_share_the_typed_dag() {
+    let (_dir, server, actor) = setup();
+    let conversation = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let path = format!(
+        "/v1/core/conversations/{}",
+        conversation["id"].as_str().unwrap()
+    );
+    let root = post(
+        &server,
+        &format!("{path}/records"),
+        json!({
+            "advance": true, "body": {"txt": "question"}, "actor": actor
+        }),
+    )
+    .await;
+    let reply = post(
+        &server,
+        &format!("{path}/records"),
+        json!({
+            "parent": root["id"], "reply_to": root["id"], "advance": false,
+            "body": {"txt": "answer"}, "actor": actor
+        }),
+    )
+    .await;
+    let thread = get(
+        &server,
+        &format!("{path}/records/{}/thread", root["id"].as_str().unwrap()),
+    )
+    .await;
+    assert_eq!(thread["replies"], json!([reply["id"]]));
+    assert_eq!(thread["count"], 1);
+    let canonical = get(&server, &format!("{path}/canonical")).await;
+    assert_eq!(canonical["records"], json!([root["id"]]));
+    for uri in [format!("{path}/dag"), format!("{path}/dag/records")] {
+        let response = api_routes(server.clone())
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
 }

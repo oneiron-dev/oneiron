@@ -43,6 +43,8 @@ pub struct AppendRecord {
     pub conversation: EntityId,
     /// Record continued by the append; absent only for the first root.
     pub parent: Option<EntityId>,
+    /// Reply target; its content revision is captured in the append transaction.
+    pub reply_to: Option<EntityId>,
     /// Advance HEAD; requires parent == HEAD and a non-sub-session record.
     pub advance: bool,
     /// Record type. This revision admits TURN only; MESSAGE has its own door.

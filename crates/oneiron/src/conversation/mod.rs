@@ -1,19 +1,13 @@
-//! Rooms, append-only conversation DAGs, membership windows and scoped summaries.
+//! Room bodies, membership windows, session presence and audience visibility.
 mod body;
-mod dag;
 mod membership;
-pub(crate) mod ownership;
 mod session;
-mod summary;
-mod threads;
 mod visibility;
 
 pub(crate) use body::validate_put_in_txn;
 pub use body::{ConversationBody, ConversationKind};
-pub use dag::{AppendRecord, MAX_ANCESTOR_DEPTH, ScopeSelector};
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub use session::{SessionMode, SessionPresence};
-pub use threads::{Thread, ThreadMeta};
 pub(crate) use visibility::AudienceCache;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};

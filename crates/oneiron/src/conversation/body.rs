@@ -164,7 +164,7 @@ impl Vault {
         let at = occurred.start;
         self.with_write_txn(|txn| {
             authorize(self, txn, actor)?;
-            if self.store.entities.get(txn, id.as_bytes())?.is_some() {
+            if crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live() {
                 return Err(state("conversation already exists"));
             }
             for person in &body.member_ids {
@@ -183,7 +183,6 @@ impl Vault {
                     },
                 )?;
             }
-            ownership::claim_in(&self.store, txn, id, ownership::Owner::Room)?;
             let mut batch = self.batch_in().put(
                 &id,
                 ENTITY_TYPE_CONVERSATION,

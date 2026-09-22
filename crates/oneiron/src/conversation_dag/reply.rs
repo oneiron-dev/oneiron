@@ -1,13 +1,17 @@
 //! Revision-bound reply strips. Missing or edited targets never expose a
 //! replacement body as though it were the historical quotation.
 
-use super::graph::{conversation_of, edge_ids, invalid, require_type};
+use super::graph::{conversation_of, edge_ids, invalid, require_member, require_type};
+use super::{AppendRecord, AppendedRecord};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
+use crate::limits::MAX_ANCESTOR_DEPTH;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use rmpv::Value;
+use std::collections::{HashSet, VecDeque};
 
 /// Renderer-neutral reply strip over an exact content revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,5 +111,90 @@ impl Vault {
             text,
             stale,
         }))
+    }
+}
+
+/// A bounded root-first reply walk and its derived metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Thread {
+    pub conversation: EntityId,
+    pub root: Option<EntityId>,
+    pub replies: Vec<EntityId>,
+    pub count: u64,
+    pub last_at: Option<u64>,
+}
+
+fn thread_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, trunk: EntityId) -> Result<Thread> {
+    let conversation = conversation_of(&vault.store, txn, &trunk)?;
+    let mut queue = VecDeque::from([trunk]);
+    let mut seen = HashSet::from([trunk]);
+    let mut replies = Vec::new();
+    let mut examined = 0;
+    let mut last_at = None;
+    while let Some(target) = queue.pop_front() {
+        let children = edge_ids(
+            &vault.store,
+            txn,
+            &target,
+            EdgeKind::RepliesTo,
+            true,
+            MAX_ANCESTOR_DEPTH.saturating_sub(examined),
+        )?;
+        examined += children.len();
+        for child in children {
+            if !seen.insert(child) {
+                return Err(crate::error::RegistryError::CycleDetected.into());
+            }
+            if !live_entity_row_in_txn(&vault.store, txn, &child)?.is_live() {
+                continue;
+            }
+            require_member(&vault.store, txn, &conversation, &child)?;
+            if edge_ids(&vault.store, txn, &child, EdgeKind::RepliesTo, false, 2)? != [target] {
+                return Err(invalid("record needs exactly one reply target"));
+            }
+            let row = vault
+                .store
+                .port_entity_record(txn, &child)?
+                .ok_or(Error::EntityNotFound)?;
+            last_at = Some(last_at.unwrap_or(0).max(row.occurred.start));
+            replies.push(child);
+            queue.push_back(child);
+        }
+    }
+    Ok(Thread {
+        conversation,
+        root: replies.first().copied(),
+        count: replies.len() as u64,
+        replies,
+        last_at,
+    })
+}
+
+impl Vault {
+    pub fn thread(&self, trunk: EntityId) -> Result<Thread> {
+        let txn = self.store.env.read_txn()?;
+        thread_in_txn(self, &txn, trunk)
+    }
+
+    /// Continues the reply chain without changing the conversation HEAD.
+    pub fn reply_in_thread(&self, trunk: EntityId, input: &AppendRecord) -> Result<AppendedRecord> {
+        self.with_write_txn(|txn| {
+            require_member(&self.store, txn, &input.conversation, &trunk)?;
+            let thread = thread_in_txn(self, txn, trunk)?;
+            let mut target = trunk;
+            for reply in thread.replies.iter().rev() {
+                if crate::compaction::turn_session_membership_in_txn(&self.store, txn, reply)?
+                    == input.session
+                {
+                    target = *reply;
+                    break;
+                }
+            }
+            let mut input = input.clone();
+            input.parent = Some(target);
+            input.reply_to = Some(target);
+            input.advance = false;
+            super::append_in_txn(self, txn, &input, None)
+        })
     }
 }

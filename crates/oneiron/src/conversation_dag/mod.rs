@@ -18,7 +18,7 @@ mod types;
 mod writes;
 
 pub(crate) use graph::{actor_in_txn, conversation_of, edge_ids, require_type};
-pub use reply::ReplyStrip;
+pub use reply::{ReplyStrip, Thread};
 pub(crate) use scopes::resolve_in_txn;
 pub use types::{
     AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath, ScopeSelector,
@@ -26,7 +26,6 @@ pub use types::{
 pub(crate) use writes::append_in_txn;
 
 #[cfg(test)]
-#[path = "tests/support.rs"]
 pub(crate) mod fixtures;
 
 #[cfg(test)]

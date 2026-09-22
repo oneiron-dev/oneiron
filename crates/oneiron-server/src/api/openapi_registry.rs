@@ -2,6 +2,7 @@
 
 use super::run_tree::CoreAttemptPlacement;
 use super::{
+    __path_get_thread, __path_reply_in_thread, __path_get_canonical,
     __path_annotate_turn_vad, __path_append_core_record, __path_booking_agent_instructions,
     __path_booking_availability, __path_booking_book, __path_booking_cancel,
     __path_booking_reschedule, __path_companion_memory_reason, __path_context_board_hydrate,
@@ -63,7 +64,7 @@ use super::{
     DagAppendResponse, DagCoversResponse, DagHeadRequest, DagHeadResponse, DagMigrationResponse,
     DagPageCursor, DagPageQuery, DagPageResponse, DagRecordsResponse, DagScopePath,
     DagScopeRequest, DagSessionsResponse, DagSpawnRequest, DagSpawnResponse, DagSummaryRequest,
-    DagSummaryResponse, DagTurnQuery, DiscoverResponse, DiscoveredEntity, EdgeResult, FeatureFlags,
+    DagSummaryResponse, DagThreadResponse, DagTurnQuery, DiscoverResponse, DiscoveredEntity, EdgeResult, FeatureFlags,
     HealthResponse, LeaseRevokeRequest, LeaseRevokeResponse, MemoryReasonFormat,
     MemoryReasonRequest, MemoryReasonResponse, MemoryReasonSessionContext, MemoryReasonTrace,
     OutboundCapabilityDiscovery, OutboundConnectorManifestSummary, RateLimitStatus, SearchResult,
@@ -87,6 +88,9 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        get_thread,
+        reply_in_thread,
+        get_canonical,
         append_core_record,
         get_core_dag,
         move_core_head,
@@ -173,6 +177,7 @@ use utoipa::OpenApi;
         DagMigrationResponse,
         DagSummaryResponse,
         DagCoversResponse,
+        DagThreadResponse,
         CoreProposeRequest, CoreProposeResponse,
         CountMode,
         PaginatedResponse<SearchResult>,

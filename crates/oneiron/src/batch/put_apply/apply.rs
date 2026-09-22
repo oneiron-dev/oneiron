@@ -79,15 +79,7 @@ pub(in crate::batch) fn apply_put(
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
         crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
     }
-    super::owned_body::guard_storage_owned_body(
-        store,
-        wtxn,
-        &id,
-        entity_type,
-        occurred,
-        data,
-        replicated,
-    )?;
+    super::owned_body::guard_storage_owned_body(store, wtxn, &id, entity_type, data, replicated)?;
     super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;

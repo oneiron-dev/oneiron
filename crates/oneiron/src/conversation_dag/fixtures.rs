@@ -50,6 +50,7 @@ pub(crate) fn input(
     AppendRecord {
         conversation: conv,
         parent,
+        reply_to: None,
         advance,
         kind: crate::registry::ENTITY_TYPE_TURN,
         occurred: time(20),

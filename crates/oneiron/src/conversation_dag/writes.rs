@@ -44,7 +44,7 @@ fn stamp_body(body: &[u8], actor: crate::WriteActor, session: Option<EntityId>) 
         }
         if matches!(
             key,
-            "actor" | "actor_class" | "reply_to" | "addr" | "summary" | "dag_session_ref"
+            "actor" | "actor_class" | "reply_to" | "addr" | "to" | "summary" | "dag_session_ref"
         ) {
             return Err(invalid("record body contains door-owned fields"));
         }
@@ -69,13 +69,13 @@ fn stamp_body(body: &[u8], actor: crate::WriteActor, session: Option<EntityId>) 
     Ok(bytes)
 }
 
-/// A merge reply is stamped only by the summary door, not by the public
-/// append input. Its pointer revision is the source body hash at landing.
+/// The summary association is stamped only by the summary door. Reply
+/// revisions are captured from the target body in this transaction.
 pub(crate) fn append_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     input: &AppendRecord,
-    reply: Option<(EntityId, EntityId)>,
+    summary: Option<EntityId>,
 ) -> Result<AppendedRecord> {
     actor_in_txn(&vault.store, txn, input.actor)?;
     if input.kind != ENTITY_TYPE_TURN {
@@ -149,7 +149,7 @@ pub(crate) fn append_in_txn(
         }
     }
     let mut body = stamp_body(&input.body, input.actor, input.session)?;
-    if let Some((asking, summary)) = reply {
+    if let Some(asking) = input.reply_to {
         require_member(&vault.store, txn, &input.conversation, &asking)?;
         let asking_body = require_type(&vault.store, txn, &asking, ENTITY_TYPE_TURN)?;
         let mut entries = match rmpv::decode::read_value(&mut body.as_slice())
@@ -160,7 +160,6 @@ pub(crate) fn append_in_txn(
         };
         entries.extend([
             (Value::from("addr"), Value::from("reply")),
-            (Value::from("summary"), Value::from(summary.to_hex())),
             (
                 Value::from("reply_to"),
                 Value::Map(vec![
@@ -172,6 +171,9 @@ pub(crate) fn append_in_txn(
                 ]),
             ),
         ]);
+        if let Some(summary) = summary {
+            entries.push((Value::from("summary"), Value::from(summary.to_hex())));
+        }
         body.clear();
         rmpv::encode::write_value(&mut body, &Value::Map(entries))
             .map_err(|_| invalid("record encode failed"))?;
@@ -194,7 +196,7 @@ pub(crate) fn append_in_txn(
         batch =
             batch.edge_with_value_fields(&id, EdgeKind::Parent, &parent, value(input.learned_at));
     }
-    if let Some((asking, _)) = reply {
+    if let Some(asking) = input.reply_to {
         batch = batch.edge_with_value_fields(
             &id,
             EdgeKind::RepliesTo,

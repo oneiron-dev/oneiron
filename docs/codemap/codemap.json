@@ -11724,23 +11724,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "AppendRecord",
-      "ScopeSelector"
-     ],
-     "path": "src/conversation/dag.rs",
-     "purpose": "Record-kind-independent parent edges, canonical path and scoped walks",
-     "surface": {
-      "const": 1,
-      "crate-vis": 9,
-      "enum": 1,
-      "fn": 7,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
       "HistoryChoice",
       "MembershipAction",
       "MembershipRow",
@@ -11760,20 +11743,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/conversation/mod.rs",
-     "purpose": "Rooms, append-only conversation DAGs, membership windows and scoped summaries",
+     "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/conversation/ownership.rs",
-     "purpose": "Local, explicit topology ownership; selector families never auto-adopt each other",
-     "surface": {
-      "crate-vis": 4
+      "crate-vis": 2,
+      "re-export": 3
      }
     },
     {
@@ -11792,16 +11765,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/conversation/summary.rs",
-     "purpose": "Caller-authored scoped summaries, landed as gated claim headers",
-     "surface": {
-      "fn": 2
-     }
-    },
-    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -11816,21 +11779,6 @@
      "path": "src/conversation/tests/audience_boundaries.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "Thread",
-      "ThreadMeta"
-     ],
-     "path": "src/conversation/threads.rs",
-     "purpose": "Threads are ordinary branches with a rebuildable trunk metadata projection",
-     "surface": {
-      "crate-vis": 1,
-      "fn": 6,
-      "struct": 2
-     }
     },
     {
      "bucket": "s",
@@ -11857,10 +11805,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/conversation_dag/fixtures.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
      }
     },
     {
@@ -11910,13 +11868,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "ReplyStrip"
+      "ReplyStrip",
+      "Thread"
      ],
      "path": "src/conversation_dag/reply.rs",
      "purpose": "Revision-bound reply strips",
      "surface": {
-      "fn": 1,
-      "struct": 1
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -11955,16 +11914,6 @@
      "path": "src/conversation_dag/tests/replay.rs",
      "purpose": "Observable session-carrier replay without exporting local membership indexes",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/conversation_dag/tests/support.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 6
-     }
     },
     {
      "bucket": "s",
@@ -26456,7 +26405,7 @@
      "path": "src/scope_summary/codec.rs",
      "purpose": "Strict, versioned scope-summary MessagePack codec (distinct from epochs)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -26470,6 +26419,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
+      "crate-vis": 2,
       "fn": 7,
       "struct": 1
      }
@@ -26481,6 +26431,7 @@
      "path": "src/scope_summary/mod.rs",
      "purpose": "Retained spawned sub-sessions and caller-composed scope summaries",
      "surface": {
+      "crate-vis": 1,
       "re-export": 2
      }
     },
@@ -34103,11 +34054,11 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 11,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
-     "purpose": "Rooms, append-only conversation DAGs, membership windows and scoped summaries"
+     "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
      "files": 14,
@@ -35015,8 +34966,8 @@
    },
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2071,
-   "test_files": 708
+   "source_files": 2068,
+   "test_files": 707
   },
   "oneiron-android": {
    "files": [
@@ -38739,23 +38690,13 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/conversation_dag.rs",
-     "purpose": "Conversation record and thread routes",
-     "surface": {
-      "crate-vis": 9
-     }
-    },
-    {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/conversation_dag/mod.rs",
      "purpose": "HTTP adapters for transactional conversation DAG and summary doors",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 14
      }
     },
     {
@@ -38765,7 +38706,7 @@
      "path": "src/api/conversation_dag/types.rs",
      "purpose": "Closed wire inputs for conversation topology and merge operations",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -41723,7 +41664,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 158,
+     "files": 157,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41900,7 +41841,7 @@
    },
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 233,
+   "source_files": 232,
    "test_files": 95
   },
   "oneiron-uniffi": {

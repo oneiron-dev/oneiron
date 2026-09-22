@@ -86,7 +86,16 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
             "get",
         ),
         ("/v1/core/conversations/{conversation_id}/records", "post"),
-        ("/v1/core/conversations/{conversation_id}/dag", "get"),
+        ("/v1/core/conversations/{conversation_id}/records", "get"),
+        ("/v1/core/conversations/{conversation_id}/canonical", "get"),
+        (
+            "/v1/core/conversations/{conversation_id}/records/{record}/thread",
+            "get",
+        ),
+        (
+            "/v1/core/conversations/{conversation_id}/records/{record}/thread",
+            "post",
+        ),
         ("/v1/core/conversations/{conversation_id}/head", "post"),
         ("/v1/core/conversations/{conversation_id}/scope", "post"),
         (

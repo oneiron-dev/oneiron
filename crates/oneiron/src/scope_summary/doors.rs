@@ -32,6 +32,9 @@ pub struct LandedHeader {
 }
 
 fn summary_in_txn(vault: &Vault, txn: &RoTxn<'_>, summary: &EntityId) -> Result<ScopeSummaryBody> {
+    if vault.archive_tombstone_in_txn(txn, summary)?.is_some() {
+        return Err(Error::EntityNotFound);
+    }
     decode_scope_summary_body(&require_type(
         &vault.store,
         txn,
@@ -161,6 +164,7 @@ fn land_in_txn(
             &AppendRecord {
                 conversation: body.scope.conversation,
                 parent: head,
+                reply_to: Some(*turn),
                 advance: true,
                 kind: ENTITY_TYPE_TURN,
                 occurred: TimeRange {
@@ -173,13 +177,59 @@ fn land_in_txn(
                 session: None,
                 actor,
             },
-            Some((*turn, *summary)),
+            Some(*summary),
         )?;
         Some(appended.id)
     } else {
         None
     };
     Ok(LandedHeader { claim, record })
+}
+
+pub(crate) fn body_covers_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+    entity_type: u8,
+    bytes: &[u8],
+) -> Result<Option<Vec<EntityId>>> {
+    if entity_type == ENTITY_TYPE_SUMMARY && super::codec::is_scope_summary(bytes) {
+        return Ok(Some(decode_scope_summary_body(bytes)?.covers));
+    }
+    if entity_type == ENTITY_TYPE_TURN
+        && let Some(summary) = super::codec::reply_summary(bytes)?
+    {
+        let summary = summary_in_txn(vault, txn, &summary)?;
+        if conversation_of(&vault.store, txn, record)? != summary.scope.conversation {
+            return Err(invalid("reply and summary conversations differ"));
+        }
+        return Ok(Some(summary.covers));
+    }
+    Ok(None)
+}
+
+pub(crate) fn merge_covers_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    body: &crate::ClaimBody,
+) -> Result<Option<Vec<EntityId>>> {
+    if body.predicate != "merge.summary" {
+        return Ok(None);
+    }
+    let summary = EntityId::from_hex(
+        body.value
+            .as_str()
+            .ok_or_else(|| invalid("header value must be a summary id"))?,
+    )
+    .map_err(|_| invalid("invalid header summary id"))?;
+    let summary = summary_in_txn(vault, txn, &summary)?;
+    let ClaimSubject::Entity(turn) = body.subject else {
+        return Err(invalid("header subject must be a turn"));
+    };
+    if conversation_of(&vault.store, txn, &turn)? != summary.scope.conversation {
+        return Err(invalid("header and summary conversations differ"));
+    }
+    Ok(Some(summary.covers))
 }
 
 impl Vault {
@@ -234,13 +284,7 @@ impl Vault {
     /// Lists live retained sub-sessions, proving each reverse index entry.
     pub fn sub_sessions(&self, turn: &EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
-        let conversation = conversation_of(&self.store, &txn, turn)?;
-        crate::conversation::ownership::require_in(
-            &self.store,
-            &txn,
-            conversation,
-            crate::conversation::ownership::Owner::Dag,
-        )?;
+        conversation_of(&self.store, &txn, turn)?;
         let sessions = edge_ids(
             &self.store,
             &txn,
@@ -343,21 +387,7 @@ impl Vault {
         let body = self
             .get_claim_in_txn(&txn, claim)?
             .ok_or(Error::EntityNotFound)?;
-        if body.predicate != "merge.summary" {
-            return Err(invalid("claim is not a merge header"));
-        }
-        let summary = EntityId::from_hex(
-            body.value
-                .as_str()
-                .ok_or_else(|| invalid("header value must be a summary id"))?,
-        )?;
-        let summary = summary_in_txn(self, &txn, &summary)?;
-        let ClaimSubject::Entity(turn) = body.subject else {
-            return Err(invalid("header subject must be a turn"));
-        };
-        if conversation_of(&self.store, &txn, &turn)? != summary.scope.conversation {
-            return Err(invalid("header and summary conversations differ"));
-        }
-        Ok(summary.covers)
+        merge_covers_in_txn(self, &txn, &body)?
+            .ok_or_else(|| invalid("claim is not a merge header"))
     }
 }

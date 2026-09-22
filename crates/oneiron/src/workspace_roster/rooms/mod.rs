@@ -159,7 +159,10 @@ impl Memory<'_> {
                 room_id: room.to_hex(),
                 turn_id: turn.to_hex(),
                 actor: self.actor().to_hex(),
-                receipt_ref: format!("rooms.claim:{}", EntityId::now().to_hex()),
+                receipt_ref: format!(
+                    "rooms.claim:{}",
+                    self.vault().store.clock.entity_id()?.to_hex()
+                ),
                 at: now,
             };
             self.vault()

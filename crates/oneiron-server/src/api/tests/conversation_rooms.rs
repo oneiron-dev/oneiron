@@ -4,6 +4,12 @@ use super::*;
 async fn conversation_rooms_members_threads_and_filters_round_trip() {
     let (_dir, server) = test_server();
     let actor = server.vault.ensure_embedded_owner_actor().unwrap();
+    oneiron::conversation_dag::test_support::put_dag_test_policy(
+        &server.vault,
+        oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Human),
+        true,
+    )
+    .unwrap();
     let person = oneiron::EntityId::now();
     server
         .vault
@@ -35,45 +41,54 @@ async fn conversation_rooms_members_threads_and_filters_round_trip() {
     .await;
     assert_eq!(status, StatusCode::OK, "{members}");
     assert_eq!(members["member_ids"].as_array().unwrap().len(), 2);
-    let (status,record)=route_json(server.clone(),json_request("POST",&format!("/v1/core/conversations/{id}/records"),json!({"actor":actor,"at":at+1,"body":{"txt":"room transcript needle","addr":"direct","to":[actor]}}))).await;
+    let (status,record)=route_json(server.clone(),json_request("POST",&format!("/v1/core/conversations/{id}/records"),json!({"actor":{"entity_ref":actor,"actor_class":"human"},"advance":true,"occurred_start":at+1,"body":{"txt":"room transcript needle"}}))).await;
     assert_eq!(status, StatusCode::OK, "{record}");
     let trunk = record["id"].as_str().unwrap();
     let head = server
         .vault
-        .conversation_head(oneiron::EntityId::from_hex(id).unwrap())
+        .head(&oneiron::EntityId::from_hex(id).unwrap())
         .unwrap();
     let (status, reply) = route_json(
         server.clone(),
         json_request(
             "POST",
             &format!("/v1/core/conversations/{id}/records/{trunk}/thread"),
-            json!({"actor":actor,"at":at+2,"body":{"txt":"thread reply"}}),
+            json!({"actor":{"entity_ref":actor,"actor_class":"human"},"advance":false,"occurred_start":at+2,"body":{"txt":"thread reply"}}),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{reply}");
-    assert_eq!(reply["thread"]["count"], 1);
+    let (status, thread) = route_json(
+        server.clone(),
+        Request::builder()
+            .uri(format!(
+                "/v1/core/conversations/{id}/records/{trunk}/thread"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{thread}");
+    assert_eq!(thread["count"], 1);
+    assert_eq!(thread["replies"], json!([reply["id"]]));
     assert_eq!(
         server
             .vault
-            .conversation_head(oneiron::EntityId::from_hex(id).unwrap())
+            .head(&oneiron::EntityId::from_hex(id).unwrap())
             .unwrap(),
         head
     );
     let (status, records) = route_json(
         server.clone(),
         Request::builder()
-            .uri(format!(
-                "/v1/core/conversations/{id}/records?as={}&with=thread_meta",
-                person.to_hex()
-            ))
+            .uri(format!("/v1/core/conversations/{id}/records?limit=1"))
             .body(Body::empty())
             .unwrap(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{records}");
-    assert_eq!(records["items"].as_array().unwrap().len(), 2);
-    assert_eq!(records["items"][0]["thread_meta"]["count"], 1);
+    assert_eq!(records["main_line"], json!([trunk]));
+    assert!(records["page"]["next"].is_null());
     let (status, rooms) = route_json(
         server.clone(),
         Request::builder()

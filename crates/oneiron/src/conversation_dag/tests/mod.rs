@@ -517,55 +517,158 @@ fn migration_rejects_disconnected_received_roots_without_adopting_the_forest() {
 mod replay;
 
 #[test]
-fn canonical_adapter_conversation_families_do_not_adopt_each_other() {
-    let (_dir, vault, dag_room, actor) = fixture();
-    let room = EntityId::now();
-    vault
-        .create_conversation(
-            room,
-            &crate::conversation::ConversationBody::default(),
-            actor,
-            1,
-        )
-        .unwrap();
-    let room_record = |parent| crate::conversation::AppendRecord {
-        conversation: room,
-        id: EntityId::now(),
-        parent,
-        advance: true,
-        body: serde_json::json!({"txt": "room record"}),
-        occurred: time(2),
-        learned_at: 2,
-        actor,
-    };
-    let first = room_record(None);
-    vault.append_record(&first).unwrap();
-    let reply = room_record(Some(first.id));
-    vault.reply_in_thread(first.id, &reply).unwrap();
-    assert!(
-        vault
-            .resolve_dag_scope(&scope(room, ScopePath::Canonical, false))
-            .is_err()
-    );
-    let second = room_record(Some(first.id));
-    vault.append_record(&second).unwrap();
-    assert_eq!(vault.conversation_head(room).unwrap(), Some(second.id));
-    assert_eq!(vault.thread(first.id).unwrap().replies, vec![reply.id]);
-
+fn reply_pointer_rejects_foreign_target_and_reserved_body_fields_atomically() {
+    let (_dir, vault, conversation, actor) = fixture();
     let root = vault
-        .append_dag_record(&input(dag_room, None, true, actor))
+        .append_dag_record(&input(conversation, None, true, actor))
         .unwrap()
         .id;
-    let mut wrong = room_record(Some(root));
-    wrong.conversation = dag_room;
-    assert!(vault.append_record(&wrong).is_err());
-    assert!(vault.conversation_head(dag_room).is_err());
-    let next = vault
-        .append_dag_record(&input(dag_room, Some(root), true, actor))
+    let other = EntityId::now();
+    vault
+        .put_entity(&other, ENTITY_TYPE_CONVERSATION, time(1), 1, &body("other"))
+        .unwrap();
+    let foreign = vault
+        .append_dag_record(&input(other, None, true, actor))
         .unwrap()
         .id;
-    assert_eq!(vault.head(&dag_room).unwrap(), Some(next));
-    assert_eq!(vault.migrate_all_conversation_dags().unwrap(), 0);
-    assert_eq!(vault.conversation_head(room).unwrap(), Some(second.id));
-    assert_eq!(vault.head(&dag_room).unwrap(), Some(next));
+    let mut reply = input(conversation, Some(root), false, actor);
+    reply.reply_to = Some(foreign);
+    assert_eq!(
+        vault.append_dag_record(&reply).unwrap_err().kind(),
+        ErrorKind::DagParentOutsideConversation
+    );
+    reply.reply_to = Some(root);
+    for field in ["addr", "to", "reply_to", "summary"] {
+        reply.body = rmp_serde::to_vec_named(&serde_json::json!({field: "forged"})).unwrap();
+        assert_eq!(
+            vault.append_dag_record(&reply).unwrap_err().kind(),
+            ErrorKind::InvalidConversationDag
+        );
+    }
+    assert_eq!(
+        vault
+            .sources(&conversation, EdgeKind::ChildOf, None)
+            .unwrap(),
+        [root]
+    );
+    assert_eq!(vault.head(&conversation).unwrap(), Some(root));
+}
+
+#[test]
+fn thread_walk_rejects_cycles_multiple_targets_and_foreign_replies() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let reply = vault
+        .reply_in_thread(root, &input(conversation, None, false, actor))
+        .unwrap()
+        .id;
+    vault
+        .batch()
+        .edge_with_value_fields(&root, EdgeKind::RepliesTo, &reply, super::writes::value(1))
+        .commit()
+        .unwrap();
+    assert_eq!(
+        vault.thread(root).unwrap_err().kind(),
+        ErrorKind::CycleDetected
+    );
+    vault
+        .delete_edge(&root, EdgeKind::RepliesTo, &reply)
+        .unwrap();
+    let other = EntityId::now();
+    vault
+        .put_entity(&other, ENTITY_TYPE_CONVERSATION, time(1), 1, &body("other"))
+        .unwrap();
+    let foreign = vault
+        .append_dag_record(&input(other, None, true, actor))
+        .unwrap()
+        .id;
+    vault
+        .batch()
+        .edge_with_value_fields(
+            &reply,
+            EdgeKind::RepliesTo,
+            &foreign,
+            super::writes::value(1),
+        )
+        .commit()
+        .unwrap();
+    assert_eq!(
+        vault.thread(root).unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    vault
+        .delete_edge(&reply, EdgeKind::RepliesTo, &foreign)
+        .unwrap();
+    vault
+        .batch()
+        .edge_with_value_fields(
+            &foreign,
+            EdgeKind::RepliesTo,
+            &root,
+            super::writes::value(1),
+        )
+        .commit()
+        .unwrap();
+    assert_eq!(
+        vault.thread(root).unwrap_err().kind(),
+        ErrorKind::DagParentOutsideConversation
+    );
+}
+
+#[test]
+fn thread_walk_caps_examined_rows_even_when_replies_are_missing() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let mut batch = vault.batch();
+    for _ in 0..=crate::limits::MAX_ANCESTOR_DEPTH {
+        batch = batch.edge_with_value_fields(
+            &EntityId::now(),
+            EdgeKind::RepliesTo,
+            &root,
+            super::writes::value(1),
+        );
+    }
+    batch.commit().unwrap();
+    assert_eq!(
+        vault.thread(root).unwrap_err().kind(),
+        ErrorKind::IndexOverflow
+    );
+}
+
+#[test]
+fn thread_continuation_keeps_each_session_boundary() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let session = vault.spawn_dag_sub_session(&root, actor).unwrap();
+    let mut worker_input = input(conversation, Some(root), false, actor);
+    worker_input.session = Some(session);
+    worker_input.reply_to = Some(root);
+    let worker = vault.append_dag_record(&worker_input).unwrap().id;
+    let ordinary = vault
+        .reply_in_thread(root, &input(conversation, None, false, actor))
+        .unwrap();
+    assert_eq!(ordinary.parent, Some(root));
+    let worker_next = vault.reply_in_thread(root, &worker_input).unwrap();
+    assert_eq!(worker_next.parent, Some(worker));
+    let ordinary_next = vault
+        .reply_in_thread(root, &input(conversation, None, false, actor))
+        .unwrap();
+    assert_eq!(ordinary_next.parent, Some(ordinary.id));
+    assert_eq!(vault.head(&conversation).unwrap(), Some(root));
+    assert_eq!(
+        vault
+            .resolve_dag_scope(&scope(conversation, ScopePath::SubSession(session), false))
+            .unwrap()
+            .records,
+        [worker, worker_next.id]
+    );
 }
