@@ -380,3 +380,7 @@ use crate::write_envelope::WriteActor;
 use rmpv::Value;
 #[cfg(test)]
 use std::collections::BTreeSet;
+
+pub(crate) use thread_membership::active_thread_refs_in_txn;
+
+pub(crate) use projector::record_comm_thread_event_in_txn;

@@ -18,7 +18,6 @@ use super::model::{
 };
 use super::store::{decode_row, encode_row, meta_key, mined_skill_edit_in_txn};
 use crate::Vault;
-use crate::actor_claims::edit_cost_scope;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
@@ -39,7 +38,14 @@ pub(super) fn emit_cluster(
     cluster: &SubstitutionCluster,
     now: u64,
 ) -> Result<Option<MinedOutcome>> {
+    if cluster.principal.is_none() {
+        return Ok(None);
+    }
     let handle = cluster_handle(cluster);
+    if cluster.target.predicate().is_some() {
+        return Ok(emit_preference_claim(vault, run, cluster, &handle, now)?
+            .map(MinedOutcome::PreferenceClaim));
+    }
     match classify_substitution(&cluster.from, &cluster.to) {
         SubstitutionClass::Lexical => Ok(emit_preference_claim(vault, run, cluster, &handle, now)?
             .map(MinedOutcome::PreferenceClaim)),
@@ -143,6 +149,21 @@ fn preference_is_stale(
     let Some(body) = vault.get_claim_in_txn(txn, claim_id)? else {
         return Ok(true);
     };
+    let learned_at = vault
+        .store
+        .entities
+        .get(txn, claim_id.as_bytes())?
+        .and_then(|raw| {
+            crate::batch::EntityMetadataHeader::parse(&raw).map(|header| header.learned_at)
+        })
+        .ok_or(Error::CorruptedIndex("mined preference header"))?;
+    if matches!(
+        body.approval,
+        ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+    ) && !crate::claim::preference_in_force(&body, learned_at, now)?
+    {
+        return Ok(true);
+    }
     if vault
         .store
         .pending_gate_consent_in_txn(txn, claim_id)?
@@ -190,8 +211,43 @@ fn emit_preference_claim(
     handle: &[u8; 32],
     now: u64,
 ) -> Result<Option<EntityId>> {
+
+    let predicate = cluster
+        .target
+        .predicate()
+        .unwrap_or(PREDICATE_PREFERENCE_PHRASING);
+    let value = match cluster.target.text() {
+        Some(text) => Value::Map(vec![
+            (Value::from("text"), Value::from(text)),
+            (
+                Value::from("target_predicate"),
+                Value::from(match &cluster.target {
+                    super::target::CompilationTarget::StyleRule(_) => {
+                        crate::claim::PREDICATE_COMPANION_EXPRESSION_STYLE
+                    }
+                    _ => predicate,
+                }),
+            ),
+        ]),
+        None => preference_value(cluster, SubstitutionClass::Lexical),
+    };
+    emit_preference_value(vault, run, cluster, handle, now, predicate, value)
+}
+
+pub(super) fn emit_preference_value(
+    vault: &Vault,
+    run: &MinerRun,
+    cluster: &SubstitutionCluster,
+    handle: &[u8; 32],
+    now: u64,
+    predicate: &str,
+    value: Value,
+) -> Result<Option<EntityId>> {
+    let Some(principal) = cluster.principal else {
+        return Ok(None);
+    };
     let claim_id = vault.store.clock.entity_id()?;
-    let class = SubstitutionClass::Lexical;
+    let class = classify_substitution(&cluster.from, &cluster.to);
     let envelope = miner_envelope(run, handle)?;
     let evidence_id = mined_evidence_record_id(handle)?;
     let evidence_record = encode_row(
@@ -199,13 +255,13 @@ fn emit_preference_claim(
         MINED_EVIDENCE_ROW_LABEL,
     )?;
     let candidate = ClaimCandidate::new(
-        PREDICATE_PREFERENCE_PHRASING,
+        predicate,
         ClaimSubject::Entity(cluster.actor),
-        preference_value(cluster, class),
+        value,
         MINER_PREFERENCE_CONFIDENCE,
     )
     .with_evidence(mined_evidence_candidate(cluster, evidence_id))
-    .with_scope(edit_cost_scope(&cluster.scope))
+    .with_scope(super::feedback::preference_scope(&cluster.scope, principal))
     .with_validity(Some(cluster.at), None);
     let mark = encode_row(
         &StoredMintMark::new(MARK_KIND_PREFERENCE, &claim_id),
@@ -312,6 +368,7 @@ fn emit_skill_edit(
     let class = SubstitutionClass::Content;
     let row = encode_row(
         &StoredSkillEdit {
+            principal: cluster.principal,
             v: ROW_VERSION,
             skill: skill.to_hex(),
             scope: cluster.scope.clone(),
@@ -432,13 +489,23 @@ pub(super) fn receipt_citations(cluster: &SubstitutionCluster) -> Value {
 pub(super) fn cluster_handle(cluster: &SubstitutionCluster) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(MINER_CLUSTER_HASH_DOMAIN);
+    if let Some(principal) = cluster.principal {
+        hasher.update(principal.as_bytes());
+    }
+    if let Some(predicate) = cluster.target.predicate() {
+        hasher.update(predicate.as_bytes());
+        if let Some(text) = cluster.target.text() {
+            hasher.update(&(text.len() as u64).to_be_bytes());
+            hasher.update(text.as_bytes());
+        }
+    }
     for part in [
         cluster.scope.as_bytes(),
         cluster.actor.as_bytes(),
         cluster.from.as_bytes(),
         cluster.to.as_bytes(),
     ] {
-        hasher.update(&[0]);
+        hasher.update(&(part.len() as u64).to_be_bytes());
         hasher.update(part);
     }
     *hasher.finalize().as_bytes()

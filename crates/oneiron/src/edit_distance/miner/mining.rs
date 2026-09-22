@@ -98,6 +98,15 @@ pub fn set_miner_k(vault: &Vault, k: u32) -> Result<()> {
 /// Storage errors; whatever the claim write gate rejects for a single cluster
 /// rolls that cluster's transaction back and fails the pass.
 pub fn run_substitution_miner(vault: &Vault, run: &MinerRun) -> Result<Vec<MinedOutcome>> {
+    run_substitution_miner_at(vault, run, crate::unix_seconds_now())
+}
+
+/// The miner under one resolved clock, used by replay and deterministic hosts.
+pub fn run_substitution_miner_at(
+    vault: &Vault,
+    run: &MinerRun,
+    now: u64,
+) -> Result<Vec<MinedOutcome>> {
     // Checked HERE, before any evidence is read, because the consequence is
     // invisible at the write: a mined preference under the wrong actor class or
     // with no run id lands Proposed in a tray that has no group, so no surface
@@ -109,22 +118,19 @@ pub fn run_substitution_miner(vault: &Vault, run: &MinerRun) -> Result<Vec<Mined
         ));
     }
     let judgments = amendment_judgments(vault)?;
-    // The watermark is a WORK GATE: no evidence the last pass did not already
-    // see means there is nothing a re-cluster could conclude that it did not.
-    let Some(observed) = MinerWatermark::observed(&judgments) else {
-        return Ok(Vec::new());
-    };
-    if !observed.advances(miner_watermark(vault)?) {
-        return Ok(Vec::new());
-    }
-
-    let now = vault.store.clock.now_recorded_at();
+    let observed = MinerWatermark::observed(&judgments);
+    // The mark is the dedup authority. A global time watermark cannot gate
+    // independently arriving principal decisions or later re-judgments.
+    let previous = miner_watermark(vault)?;
+    let changed = observed.is_some_and(|observed| observed.advances(previous));
     let k = miner_k(vault)?;
-    let clusters = clusters_from(vault, &judgments)?;
+    let clusters = clusters_from(vault, &judgments, Some(now))?;
     let mut outcomes = Vec::with_capacity(clusters.len());
     for cluster in &clusters {
         if cluster.count < k {
-            outcomes.push(MinedOutcome::BelowThreshold);
+            if changed {
+                outcomes.push(MinedOutcome::BelowThreshold);
+            }
             continue;
         }
         if let Some(outcome) = emit_cluster(vault, run, cluster, now)? {
@@ -134,7 +140,10 @@ pub fn run_substitution_miner(vault: &Vault, run: &MinerRun) -> Result<Vec<Mined
     // ONCE, and only now that every cluster has been ruled on. An error above
     // returns before this line, so the failed pass's unreached clusters are
     // still new evidence to its replay.
-    vault.with_write_txn(|wtxn| advance_watermark_in_txn(vault, wtxn, observed))?;
+    outcomes.extend(super::win::mine_untouched_approvals(vault, run, now, k)?);
+    if let Some(observed) = observed {
+        vault.with_write_txn(|wtxn| advance_watermark_in_txn(vault, wtxn, observed))?;
+    }
     Ok(outcomes)
 }
 
@@ -211,7 +220,7 @@ fn malformed_payload() -> Error {
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable artifact row.
 pub fn mine_substitution_clusters(vault: &Vault) -> Result<Vec<SubstitutionCluster>> {
     let judgments = amendment_judgments(vault)?;
-    clusters_from(vault, &judgments)
+    clusters_from(vault, &judgments, None)
 }
 
 /// Buckets every judged amendment's substitutions by `(scope, actor, from,
@@ -219,15 +228,49 @@ pub fn mine_substitution_clusters(vault: &Vault) -> Result<Vec<SubstitutionClust
 fn clusters_from(
     vault: &Vault,
     judgments: &[AmendmentJudgment],
+    now: Option<u64>,
 ) -> Result<Vec<SubstitutionCluster>> {
     let artifacts = artifact_index(vault)?;
+    let decisions = super::feedback::principal_decisions(vault)?;
+    let decision_by_receipt = decisions
+        .iter()
+        .map(|row| (row.receipt.as_str(), row))
+        .collect::<BTreeMap<_, _>>();
     let mut buckets: BTreeMap<ClusterKey, Bucket> = BTreeMap::new();
     for judgment in judgments {
         let Some(source) = amendment_source(vault, judgment, &artifacts)? else {
             continue;
         };
+        let binding = decision_by_receipt
+            .get(judgment.receipt_id.as_str())
+            .copied();
+        let binding = binding.filter(|row| {
+            row.outcome == "approved_amended"
+                && row.actor == source.actor
+                && row.skill == source.skill
+                && row.scope == judgment.scope
+                && row.at == judgment.at
+        });
+        if now.is_some_and(|now| {
+            binding
+                .as_ref()
+                .is_none_or(|row| !crate::claim::preference_evidence_in_force(row.at, now))
+        }) {
+            continue;
+        }
+        if binding
+            .as_ref()
+            .is_some_and(|row| row.target != super::target::CompilationTarget::Fallback)
+        {
+            continue;
+        }
         for substitution in substitutions(source.delta_source, source.artifact) {
             let key = ClusterKey {
+                principal: binding.as_ref().map(|row| row.principal),
+                target: binding
+                    .as_ref()
+                    .map(|row| row.target.clone())
+                    .unwrap_or_default(),
                 scope: judgment.scope.clone(),
                 actor: source.actor,
                 from: substitution.from,
@@ -236,9 +279,49 @@ fn clusters_from(
             buckets.entry(key).or_default().observe(
                 &judgment.receipt_id,
                 source.skill,
-                judgment.at,
+                binding.as_ref().map_or(judgment.at, |row| row.at),
             );
         }
+    }
+    for row in decisions {
+        if now.is_some_and(|now| !crate::claim::preference_evidence_in_force(row.at, now)) {
+            continue;
+        }
+        let pair = if let Some(text) = row.target.text() {
+            if !matches!(
+                row.outcome.as_str(),
+                "approved" | "approved_amended" | "rejected"
+            ) {
+                continue;
+            }
+            // Explicit target text is the compiler instruction; no lexical
+            // rule is inferred from an empty/insert-only/rejected delta.
+            (String::new(), text.to_owned())
+        } else {
+            if row.outcome != "approved_amended"
+                || judgments
+                    .iter()
+                    .any(|judgment| judgment.receipt_id == row.receipt)
+            {
+                continue;
+            }
+            let Some(pair) = row.substitution else {
+                continue;
+            };
+            pair
+        };
+        let key = ClusterKey {
+            principal: Some(row.principal),
+            target: row.target,
+            scope: row.scope,
+            actor: row.actor,
+            from: pair.0,
+            to: pair.1,
+        };
+        buckets
+            .entry(key)
+            .or_default()
+            .observe(&row.receipt, None, row.at);
     }
     Ok(buckets
         .into_iter()

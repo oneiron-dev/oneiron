@@ -97,6 +97,19 @@ fn imported_candidate(skill_id: &str, tree_hash: SkillContentHash) -> SkillRecor
     .with_content_hash(tree_hash)
 }
 
+// These legacy source fixtures have metadata outside SKILL.md. The Native
+// syntax tag does not grant trust or bypass held-out activation.
+fn native_package(
+    record: SkillRecord,
+    files: Vec<HubFile>,
+    capabilities: SkillCapabilitySurface,
+) -> HubPackage {
+    HubPackage {
+        format: oneiron::skill_hub::SkillPackageFormat::Native,
+        ..HubPackage::new(record, files, capabilities)
+    }
+}
+
 fn fixture_tree_hash() -> SkillContentHash {
     canonical_skill_tree_hash([("SKILL.md", b"# oracle fixture skill\n".as_slice())])
         .expect("fixture tree hashes")
@@ -107,10 +120,11 @@ fn alternate_tree_hash() -> SkillContentHash {
         .expect("fixture tree hashes")
 }
 
-/// Puts an imported skill and walks it `candidate → active` so pack/verdict
-/// contracts run against an admitted record.
-fn put_active_imported_skill(vault: &Vault, id: &EntityId, skill_id: &str) -> Result<SkillRecord> {
-    let candidate = imported_candidate(skill_id, fixture_tree_hash());
+/// Projection/attribution fixtures use an owner-authored skill. Marketplace
+/// admission is exercised by the hub gate tests, not bypassed with an Active flip.
+fn put_active_native_skill(vault: &Vault, id: &EntityId, skill_id: &str) -> Result<SkillRecord> {
+    let mut candidate = imported_candidate(skill_id, fixture_tree_hash());
+    candidate.source = ClaimSource::UserStated;
     vault.put_skill_record(id, &candidate, t(10), 11)?;
     let mut active = candidate;
     active.lifecycle_status = SkillLifecycle::Active;
@@ -370,7 +384,10 @@ fn sk02_hub_ref_is_structured_with_five_way_pin() {
 fn sk02_update_widening_capability_surface_requires_reconsent() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
-    let active = put_active_imported_skill(&vault, &skill_entity, "oracle.skill.rugpull")?;
+    // Automatic narrowing is a Candidate update law. Active marketplace
+    // revisions now require a new held-out proposal even when narrower.
+    let active = imported_candidate("oracle.skill.rugpull", fixture_tree_hash());
+    vault.put_skill_record(&skill_entity, &active, t(10), 11)?;
 
     // Real today (ONE-1735 floor): a silent auto overwrite of imported
     // content is rejected at the generic update door.
@@ -387,7 +404,7 @@ fn sk02_update_widening_capability_surface_requires_reconsent() -> Result<()> {
         .get_skill_record(&skill_entity)?
         .expect("active imported skill");
     narrower_record.version = "1.1.0".to_owned();
-    let narrower_package = HubPackage::new(
+    let narrower_package = native_package(
         narrower_record,
         vec![HubFile::new(
             "SKILL.md",
@@ -410,14 +427,15 @@ fn sk02_update_widening_capability_surface_requires_reconsent() -> Result<()> {
         .get_skill_record(&skill_entity)?
         .expect("narrower update landed");
     wider_record.version = "1.2.0".to_owned();
-    let wider_package = HubPackage::new(
+    let mut wider_package = native_package(
         wider_record,
         vec![HubFile::new(
             "SKILL.md",
-            b"# oracle fixture skill\n".to_vec(),
+            b"---\nrequires:\n  bins: [new-required-bin]\n---\n# oracle fixture skill\n".to_vec(),
         )],
         SkillCapabilitySurface::default().with_bin("new-required-bin"),
     );
+    wider_package.record.content_hash = Some(wider_package.content_hash()?);
     let widening_landed_as = vault
         .sync_skill_from_hub(
             &skill_entity,
@@ -456,8 +474,22 @@ fn sk02_update_widening_capability_surface_requires_reconsent() -> Result<()> {
 #[test]
 fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let skill_entity = EntityId::now();
-    put_active_imported_skill(&vault, &skill_entity, "oracle.skill.verdicts")?;
+    // This law crosses hub aliases, so its carrier is an actual imported
+    // Candidate. A native owner's record is not a valid hub publisher payload.
+    let first_ref = HubRef::new(
+        EntityId::now(),
+        "skills/oracle-verdicts-origin",
+        HubPin::None,
+    )?;
+    let package = native_package(
+        imported_candidate("oracle.skill.verdicts", fixture_tree_hash()),
+        vec![HubFile::new(
+            "SKILL.md",
+            b"# oracle fixture skill\n".to_vec(),
+        )],
+        SkillCapabilitySurface::default(),
+    );
+    let skill_entity = vault.import_skill_from_hub(&first_ref, &package, t(10), 11)?;
 
     let content_hash = fixture_tree_hash();
     let receipts = [
@@ -495,7 +527,7 @@ fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
         "skills/oracle-verdicts-mirror",
         HubPin::None,
     )?;
-    let second_hub_package = HubPackage::new(
+    let second_hub_package = native_package(
         vault
             .get_skill_record(&skill_entity)?
             .expect("same-hash skill persists before second-hub import"),
@@ -581,7 +613,7 @@ fn sk02_same_content_via_two_hubs_is_one_entity_two_provenance_rows() -> Result<
 
     let first_ref = HubRef::new(EntityId::now(), "skills/oracle-first", HubPin::None)?;
     let second_ref = HubRef::new(EntityId::now(), "skills/oracle-second", HubPin::None)?;
-    let package = HubPackage::new(
+    let package = native_package(
         imported_candidate("oracle.skill.dedup", fixture_tree_hash()),
         vec![HubFile::new(
             "SKILL.md",
@@ -624,13 +656,13 @@ fn sk02_same_content_via_two_hubs_is_one_entity_two_provenance_rows() -> Result<
 fn sk02_cross_hub_dependency_inherits_nothing_fails_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
-    put_active_imported_skill(&vault, &skill_entity, "oracle.skill.deps")?;
+    put_active_native_skill(&vault, &skill_entity, "oracle.skill.deps")?;
     // The entity the dependency WOULD materialize as, if trust chained.
     let dep_entity = EntityId::now();
 
     let importing_ref = HubRef::new(EntityId::now(), "skills/oracle-parent", HubPin::None)?;
     let dependency_ref = HubRef::new(EntityId::now(), "skills/oracle-dependency", HubPin::None)?;
-    let dependency_package = HubPackage::new(
+    let dependency_package = native_package(
         imported_candidate("oracle.skill.cross-hub-dependency", alternate_tree_hash()),
         vec![HubFile::new("SKILL.md", b"# a different tree\n".to_vec())],
         SkillCapabilitySurface::default(),
@@ -683,7 +715,7 @@ fn sk03_adapter_rejects_declared_hash_mismatch_fail_closed() -> Result<()> {
     // hash, targeting `target`; capture whether ingest refused.
     let hub_id = EntityId::now();
     let ref_string = "skills/oracle-hashcheck";
-    let package = HubPackage::new(
+    let package = native_package(
         imported_candidate("oracle.skill.hashcheck", fixture_tree_hash()),
         vec![HubFile::new(
             "SKILL.md",
@@ -761,7 +793,7 @@ fn sk03_adapter_rejects_declared_hash_mismatch_fail_closed() -> Result<()> {
 fn sk03_provider_audit_verdicts_are_independent_rows_signal_not_gate() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
-    let active = put_active_imported_skill(&vault, &skill_entity, "oracle.skill.audit")?;
+    let active = put_active_native_skill(&vault, &skill_entity, "oracle.skill.audit")?;
 
     // ARM(ONE-1741): ingest an audit-endpoint fixture carrying verdicts
     // from three providers, exactly one of them flagging malicious.
@@ -1022,7 +1054,7 @@ fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
     let actor_entity = EntityId::now();
-    put_active_imported_skill(&vault, &skill_entity, "oracle.skill.attrib")?;
+    put_active_native_skill(&vault, &skill_entity, "oracle.skill.attrib")?;
     put_actor(&vault, &actor_entity)?;
     let skill_claims_before = total_claims(&vault, &skill_entity)?;
 
@@ -1088,7 +1120,7 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
     let actor_entity = EntityId::now();
-    put_active_imported_skill(&vault, &skill_entity, "oracle.skill.discovery")?;
+    put_active_native_skill(&vault, &skill_entity, "oracle.skill.discovery")?;
     put_actor(&vault, &actor_entity)?;
     let skill_claims_before = total_claims(&vault, &skill_entity)?;
 
@@ -1157,7 +1189,7 @@ fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
     let actor_entity = EntityId::now();
-    put_active_imported_skill(&vault, &skill_entity, "oracle.skill.reliability")?;
+    put_active_native_skill(&vault, &skill_entity, "oracle.skill.reliability")?;
     put_actor(&vault, &actor_entity)?;
 
     // ARMED (ONE-1738): project reliability after a first attributed outcome,
@@ -1252,7 +1284,7 @@ fn sk05_record_score_is_a_rebuildable_cache_claims_are_truth() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
     let actor_entity = EntityId::now();
-    put_active_imported_skill(&vault, &skill_entity, "oracle.skill.cache")?;
+    put_active_native_skill(&vault, &skill_entity, "oracle.skill.cache")?;
     put_actor(&vault, &actor_entity)?;
 
     // ARMED (ONE-1738): project a reliability claim, capture the posterior mean
@@ -1315,7 +1347,7 @@ fn sk05_floor_crossing_proposes_quarantine_never_auto() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
     let actor_entity = EntityId::now();
-    let active = put_active_imported_skill(&vault, &skill_entity, "oracle.skill.floor")?;
+    let active = put_active_native_skill(&vault, &skill_entity, "oracle.skill.floor")?;
     put_actor(&vault, &actor_entity)?;
 
     // Real today (ONE-1735 floor): the door itself refuses auto quarantine.
@@ -1383,8 +1415,8 @@ fn sk06_actor_row_cardinalities_are_pinned() -> Result<()> {
     let skill_a = EntityId::now();
     let skill_b = EntityId::now();
     put_actor(&vault, &actor_entity)?;
-    put_active_imported_skill(&vault, &skill_a, "oracle.skill.fit.a")?;
-    put_active_imported_skill(&vault, &skill_b, "oracle.skill.fit.b")?;
+    put_active_native_skill(&vault, &skill_a, "oracle.skill.fit.a")?;
+    put_active_native_skill(&vault, &skill_b, "oracle.skill.fit.b")?;
 
     // ARMED (ONE-1739): every row goes through `write_actor_claim`, the ONE
     // door both inlets share — cardinality is the door's contract, so this is
@@ -1531,7 +1563,7 @@ fn sk06_two_inlets_one_ledger_both_through_the_write_gate() -> Result<()> {
     let actor_entity = EntityId::now();
     let skill_entity = EntityId::now();
     put_actor(&vault, &actor_entity)?;
-    put_active_imported_skill(&vault, &skill_entity, "oracle.skill.inlets")?;
+    put_active_native_skill(&vault, &skill_entity, "oracle.skill.inlets")?;
 
     // ARMED (ONE-1739) TASK lane: an ATTEMPT receipt routes to an
     // ExecutionLapse judgment, the projector lands its failure-mode row, and

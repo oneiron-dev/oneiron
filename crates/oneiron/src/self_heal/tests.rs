@@ -667,7 +667,7 @@ fn registry_registers_diagnostic_once() {
     assert_eq!(entry.short_id_prefix, None, "no short-id prefix");
     assert!(entry.legacy_short_id_prefixes.is_empty());
 
-    for reserved in [75_u8, 91, 92, 126, 127] {
+    for reserved in [75_u8, 91, 126, 127] {
         assert!(
             entity_type_registry_entry(reserved).is_none(),
             "byte {reserved} must stay unregistered by this feature"

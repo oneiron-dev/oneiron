@@ -74,11 +74,16 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
         ]),
     )
     .with_governance_tier(SkillGovernanceTier::Standard);
-    Ok(HubPackage::new(
+    // Native format: the shipped markdown carries no versioned folder
+    // frontmatter (version rides the record), so the folder parser must not be
+    // asked to re-derive the record from it on export/import round trips.
+    let mut package = HubPackage::new(
         record,
         vec![HubFile::new("SKILL.md", markdown.as_bytes())],
         SkillCapabilitySurface::default(),
-    ))
+    );
+    package.format = super::SkillPackageFormat::Native;
+    Ok(package)
 }
 
 pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
@@ -118,9 +123,19 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         let mut record = vault.read_skill_record_in_txn(&wtxn, &id)?;
         // Local seed admission, not a remote package's approval stamp. The
         // ordinary update/scan gates still run. Reopen never reactivates edits.
+        // The materialization door requires a bound admission ticket for any
+        // hub-origin activation, so the seed mints and consumes its own ticket
+        // exactly like the scored admission path does.
         if record.lifecycle_status == SkillLifecycle::Candidate {
             record.lifecycle_status = SkillLifecycle::Active;
-            vault.apply_hub_import_skill_record(&mut wtxn, &id, &record, occurred, 0)?;
+            let data = crate::skill::encode_skill_record(&record)?;
+            let ticket = super::admission_guard::ticket_key(&id);
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, &ticket, blake3::hash(&data).as_bytes())?;
+            vault.apply_skill_record_body(&mut wtxn, &id, occurred, 0, data, false)?;
+            vault.store.vault_meta.delete(&mut wtxn, &ticket)?;
         }
     }
     vault

@@ -143,7 +143,7 @@ fn matching_thread_membership_with_boundary_in_txn(
     Ok(rows)
 }
 
-pub(super) fn active_thread_refs_in_txn(
+pub(crate) fn active_thread_refs_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     party_ref: EntityId,

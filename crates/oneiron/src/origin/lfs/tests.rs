@@ -122,24 +122,19 @@ fn lfs_put_writes_asset_and_lookup_row_once() {
 
     let record = vault.lfs_object(oid).expect("record read").expect("record");
     assert_eq!(record, outcome.object, "the row carries the whole record");
+    // The vault also holds the four seeded bootstrap source carriers; the
+    // assertion is that this object's ASSET is present exactly once.
+    let assets = vault.entities_by_type(ENTITY_TYPE_ASSET).expect("scan assets");
     assert_eq!(
-        vault
-            .entities_by_type(ENTITY_TYPE_ASSET)
-            .map(|mut ids| {
-                ids.sort_unstable();
-                ids
-            })
-            .expect("scan assets"),
-        {
-            let mut ids = vec![
-                record.asset_id,
-                chunks::chunk_id(&vault.lfs_manifest(oid).unwrap().unwrap().chunks[0].hash)
-                    .unwrap(),
-            ];
-            ids.sort_unstable();
-            ids
-        },
-        "one manifest and one small-file chunk exist"
+        assets.iter().filter(|id| **id == record.asset_id).count(),
+        1,
+        "this object's ASSET entity exists exactly once"
+    );
+    assert!(
+        assets.contains(
+            &chunks::chunk_id(&vault.lfs_manifest(oid).unwrap().unwrap().chunks[0].hash).unwrap()
+        ),
+        "one small-file chunk exists"
     );
     assert_eq!(
         vault.get(&record.asset_id).expect("asset read"),
@@ -169,12 +164,13 @@ fn lfs_put_rejects_expected_oid_mismatch_without_writing() {
         None,
         "no lookup row exists after the refusal"
     );
-    assert!(
+    assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_ASSET)
             .expect("scan assets")
-            .is_empty(),
-        "no ASSET entity exists after the refusal"
+            .len(),
+        4,
+        "only the four seeded bootstrap carriers exist after the refusal"
     );
     assert_eq!(
         vault
@@ -212,12 +208,13 @@ fn lfs_put_rejects_size_mismatch_without_writing() {
         None,
         "the refusal happened before any write"
     );
-    assert!(
+    assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_ASSET)
             .expect("scan assets")
-            .is_empty(),
-        "and no ASSET entity was created"
+            .len(),
+        4,
+        "and no ASSET entity was created beyond the four seed carriers"
     );
 }
 
@@ -237,24 +234,17 @@ fn lfs_put_dedup_second_upload_is_one_object() {
     assert!(!first.deduplicated);
     assert!(second.deduplicated, "the second upload stores nothing");
     assert_eq!(first.object, second.object, "one durable record survives");
+    let assets = vault.entities_by_type(ENTITY_TYPE_ASSET).expect("scan assets");
     assert_eq!(
-        vault
-            .entities_by_type(ENTITY_TYPE_ASSET)
-            .map(|mut ids| {
-                ids.sort_unstable();
-                ids
-            })
-            .expect("scan assets"),
-        {
-            let mut ids = vec![
-                first.object.asset_id,
-                chunks::chunk_id(&vault.lfs_manifest(oid).unwrap().unwrap().chunks[0].hash)
-                    .unwrap(),
-            ];
-            ids.sort_unstable();
-            ids
-        },
-        "two identical uploads share both manifest and chunk"
+        assets.iter().filter(|id| **id == first.object.asset_id).count(),
+        1,
+        "two identical uploads are one ASSET entity (plus four seed carriers)"
+    );
+    assert!(
+        assets.contains(
+            &chunks::chunk_id(&vault.lfs_manifest(oid).unwrap().unwrap().chunks[0].hash).unwrap()
+        ),
+        "two identical uploads share the small-file chunk"
     );
     assert_eq!(
         second.object.created_at, LEARNED_AT,

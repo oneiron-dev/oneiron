@@ -32,6 +32,11 @@ pub(super) fn group_labels(key: GroupKey) -> GroupLabels {
             known_group_labels(entity_type).unwrap_or(OTHER_GROUP_LABELS)
         }
         GroupKey::Other => OTHER_GROUP_LABELS,
+        GroupKey::ExportSection(name) => GroupLabels {
+            key: name,
+            name,
+            title: name,
+        },
     }
 }
 

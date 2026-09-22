@@ -439,6 +439,13 @@ fn all_entity_type_prefixes() {
             TypeByteZone::Core,
         ),
         (
+            "WORKFLOW",
+            18,
+            Some("wf"),
+            EntityClassification::Core,
+            TypeByteZone::Core,
+        ),
+        (
             "COMPANION_REGISTER",
             115,
             Some("cr"),
@@ -612,6 +619,13 @@ fn all_entity_type_prefixes() {
         (
             "COMM_RECORD",
             crate::registry::ENTITY_TYPE_COMM_RECORD,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteZone::System,
+        ),
+        (
+            "SKILL_HUB",
+            92,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,

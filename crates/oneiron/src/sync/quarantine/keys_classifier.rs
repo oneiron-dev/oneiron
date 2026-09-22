@@ -278,7 +278,30 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // never surface this kind on the replay path (a corrupt on-disk row
         // reads as `CorruptedIndex`), so this arm cannot swallow local
         // corruption.
-        | ErrorKind::InvalidDiagnosticBody => Some(reason_code_for(error)),
+        | ErrorKind::InvalidDiagnosticBody
+        // PackByteMap sync rejections: a forged source/schema identity
+        // (`PackKindNameCollision`) is a rejection of that remote row, never
+        // a local failure — quarantine and continue, so one forged pack row
+        // cannot wedge the window. A well-formed remote row for a kind this
+        // vault has not installed (`PackKindNotInstalled`) is likewise
+        // remote data, not local corruption: quarantine it and keep the
+        // `rm:` retry marker pending (see
+        // `pack_sync::pack_rejection_keeps_retry_marker`), so a later local
+        // install heals it via forward rematerialization. The bytes stay in
+        // the CRDT map for OD-10-style lazy re-admission.
+        //
+        // `InvalidPackByteMap` is deliberately
+        // NOT classified here. `InvalidPackByteMap` is ambiguous: it covers
+        // both a malformed REMOTE envelope and LOCAL map corruption (carrier
+        // drift, missing head). The sync entry points pre-validate the
+        // remote envelope statelessly via
+        // `pack_sync::remote_pack_envelope_error` before the remap reads the
+        // local map, so a malformed remote body quarantines without ever
+        // needing this arm — and a later `InvalidPackByteMap` from the remap
+        // is then provably local and fails closed. Blindly mapping it here
+        // would quarantine local disk corruption as if it were a peer fault.
+        | ErrorKind::PackKindNameCollision
+        | ErrorKind::PackKindNotInstalled => Some(reason_code_for(error)),
         _ => None,
     }
 }

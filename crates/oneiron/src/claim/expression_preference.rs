@@ -18,6 +18,32 @@ use crate::temporal::TimeRange;
 use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
+/// Only the owning archive adapter may select Imported. The public origin
+/// enum remains a statement about native writes, not foreign authorship.
+pub(super) struct ExpressionPreferenceWrite {
+    pub(super) subject: EntityId,
+    pub(super) value: ExpressionPreferenceValue,
+    pub(super) valid_from: u64,
+    pub(super) origin: ExpressionWriteOrigin,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ExpressionWriteOrigin {
+    Native(ExpressionPreferenceOrigin),
+    Imported,
+}
+
+impl ExpressionPreferenceWrite {
+    fn native(change: ExpressionPreferenceChange) -> Self {
+        Self {
+            subject: change.subject,
+            value: change.value,
+            valid_from: change.valid_from,
+            origin: ExpressionWriteOrigin::Native(change.origin),
+        }
+    }
+}
+
 impl Vault {
     /// Ranks a claim source for expression-preference precedence, highest first.
     fn expression_source_rank(source: Option<ClaimSource>) -> u8 {
@@ -92,8 +118,34 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<ExpressionPreferenceWriteResult> {
-        if matches!(change.origin, ExpressionPreferenceOrigin::ExplicitUser)
-            && !matches!(actor.actor_class(), EdgeActorClass::Human)
+        let mut txn = self.store.env.write_txn()?;
+        let result = self.write_expression_preference_in_txn(
+            &mut txn,
+            actor,
+            claim_id,
+            &ExpressionPreferenceWrite::native(change),
+            occurred,
+            learned_at,
+        )?;
+        txn.commit()?;
+        Ok(result)
+    }
+
+    /// Shared owning implementation. Errors require the caller to abort its
+    /// transaction, including any prior history generation staged in it.
+    pub(super) fn write_expression_preference_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        actor: &crate::write_envelope::WriteActor,
+        claim_id: EntityId,
+        change: &ExpressionPreferenceWrite,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<ExpressionPreferenceWriteResult> {
+        if matches!(
+            change.origin,
+            ExpressionWriteOrigin::Native(ExpressionPreferenceOrigin::ExplicitUser)
+        ) && !matches!(actor.actor_class(), EdgeActorClass::Human)
         {
             return Err(Error::InvalidClaimBody(
                 "explicit expression preference requires a human actor",
@@ -150,13 +202,8 @@ impl Vault {
         // Auto or refuse. A raw `GateWriteRejected` would tell the caller the
         // gate said no without telling it why there is nothing further to try,
         // so the refusal names the contract in the family's own voice.
-        match self.set_expression_preference_requesting(
-            actor,
-            claim_id,
-            &change,
-            occurred,
-            learned_at,
-            ClaimApprovalStatus::Auto,
+        match self.set_expression_preference_requesting_in_txn(
+            wtxn, actor, claim_id, change, occurred, learned_at,
         ) {
             // ONLY a denial that wanted to PARK the write becomes the
             // family refusal. `Pending` is the gate saying "a human should
@@ -184,21 +231,17 @@ impl Vault {
         }
     }
 
-    /// One attempt at [`Vault::set_expression_preference`], asking the gate for
-    /// exactly `requested`.
-    ///
-    /// The public door only ever asks for `Auto` — this family has no ladder
-    /// to climb — but the ask stays a parameter so what is being requested is
-    /// visible at the call site rather than buried here.
-    fn set_expression_preference_requesting(
+    /// One ordinary source-aware Auto attempt; this family has no parking lane.
+    fn set_expression_preference_requesting_in_txn(
         &self,
+        wtxn: &mut heed::RwTxn<'_>,
         actor: &crate::write_envelope::WriteActor,
         claim_id: EntityId,
-        change: &ExpressionPreferenceChange,
+        change: &ExpressionPreferenceWrite,
         occurred: TimeRange,
         learned_at: u64,
-        requested: ClaimApprovalStatus,
     ) -> Result<ExpressionPreferenceWriteResult> {
+        let requested = ClaimApprovalStatus::Auto;
         let (predicate, wire) = match &change.value {
             ExpressionPreferenceValue::Language(v) => {
                 (PREDICATE_COMPANION_EXPRESSION_LANGUAGE, v.clone())
@@ -228,8 +271,13 @@ impl Vault {
             }
         };
         let source = match change.origin {
-            ExpressionPreferenceOrigin::ExplicitUser => ClaimSource::UserStated,
-            ExpressionPreferenceOrigin::Inferred => ClaimSource::Inferred,
+            ExpressionWriteOrigin::Native(ExpressionPreferenceOrigin::ExplicitUser) => {
+                ClaimSource::UserStated
+            }
+            ExpressionWriteOrigin::Native(ExpressionPreferenceOrigin::Inferred) => {
+                ClaimSource::Inferred
+            }
+            ExpressionWriteOrigin::Imported => ClaimSource::Imported,
         };
         let candidate = ClaimCandidate::new(
             predicate,
@@ -240,9 +288,9 @@ impl Vault {
         .with_validity(Some(change.valid_from), None);
         let provenance = WriteProvenance::new(Value::from("expression_preference"))?;
         let envelope = WriteEnvelope::new(*actor, source, provenance, requested);
-        let mut wtxn = self.store.env.write_txn()?;
+        crate::memory::guard_existing_claim_in_txn(self, wtxn, *actor, claim_id)?;
         let mut prior_ids = Vec::new();
-        for (old_id, body) in self.claims_with_predicate_in_txn(&wtxn, predicate)? {
+        for (old_id, body) in self.claims_with_predicate_in_txn(wtxn, predicate)? {
             if old_id == claim_id
                 || body.subject != ClaimSubject::Entity(change.subject)
                 || body.lifecycle != ClaimLifecycleStatus::Active
@@ -259,6 +307,22 @@ impl Vault {
                 (Some(source), Some(change.valid_from), learned_at, claim_id),
                 (body.source, body.valid_from, old_learned_at, old_id),
             ) {
+                if change.origin
+                    == ExpressionWriteOrigin::Native(ExpressionPreferenceOrigin::ExplicitUser)
+                {
+                    crate::memory::explicit_claim_override_in_txn(
+                        self, wtxn, *actor, old_id, &body, learned_at,
+                    )?;
+                } else {
+                    crate::memory::require_claim_self_grant_in_txn(
+                        self,
+                        wtxn,
+                        *actor,
+                        old_id,
+                        &body,
+                        "memory.claim.supersede",
+                    )?;
+                }
                 prior_ids.push(old_id);
             }
         }
@@ -267,7 +331,7 @@ impl Vault {
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut wtxn,
+            wtxn,
             vec![BatchOp::ClaimCandidate {
                 id: claim_id,
                 candidate: Box::new(candidate),
@@ -282,13 +346,12 @@ impl Vault {
         )?;
         let mut superseded_claim_ids = Vec::new();
         for old_id in prior_ids {
-            match self.supersede_claim_in_txn(&mut wtxn, &claim_id, &old_id, learned_at) {
+            match self.supersede_claim_in_txn(wtxn, &claim_id, &old_id, learned_at) {
                 Ok(()) => superseded_claim_ids.push(old_id),
                 Err(Error::InvalidClaimBody(_)) if source == ClaimSource::Inferred => {}
                 Err(err) => return Err(err),
             }
         }
-        wtxn.commit()?;
         Ok(ExpressionPreferenceWriteResult {
             claim_id,
             approval: requested,
@@ -462,6 +525,9 @@ impl Vault {
             ));
         }
         self.verify_expression_preference_retract_actor_in_txn(&wtxn, actor, &head)?;
+        crate::memory::explicit_claim_override_in_txn(
+            self, &mut wtxn, *actor, *claim_id, &head, now,
+        )?;
 
         let mut predecessors = Vec::new();
         for entry in self.port_edges(

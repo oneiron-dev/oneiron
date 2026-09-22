@@ -87,6 +87,7 @@ impl Memory<'_> {
                     &id,
                     &crate::claim::encode_claim_body(&body)?,
                     now,
+                    None,
                 )?;
                 finish_publication_write(self.vault, txn, id)?;
                 finish_publication_write(self.vault, txn, old)?;

@@ -48,6 +48,9 @@ pub(super) fn spawn_git(
         command.env(key, value);
     }
     command.env("GIT_CEILING_DIRECTORIES", ceiling);
+    if let Some(root) = &process_env.hub_root {
+        super::hub_read::configure(&mut command, root)?;
+    }
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     command.stdin(if stdin_payload.is_some() {
         Stdio::piped()
@@ -59,13 +62,21 @@ pub(super) fn spawn_git(
     let cap = process_env.max_output_bytes;
     let out_reader = child.stdout.take().map(|pipe| spawn_reader(pipe, cap));
     let err_reader = child.stderr.take().map(|pipe| spawn_reader(pipe, cap));
-    let status = wait_bounded(&mut child, process_env.timeout)?;
+    let status = wait_bounded(
+        &mut child,
+        process_env.timeout,
+        process_env.hub_root.as_deref(),
+    );
+    if status.is_err() {
+        stop_child(&mut child, process_env.hub_root.is_some());
+    }
     if let Some(writer) = writer {
         let _ = writer.join();
     }
     let (stdout, stdout_over) = join_reader(out_reader);
     let (stderr, stderr_over) = join_reader(err_reader);
     let truncated = stdout_over || stderr_over;
+    let status = status?;
     let (exit_code, exited_zero) = match status {
         Some(status) => (status.code(), status.success()),
         None => (None, false),
@@ -132,15 +143,21 @@ fn read_capped<R: Read>(mut pipe: R, cap: usize) -> (Vec<u8>, bool) {
 
 /// Waits for the child under a wall-clock bound, killing and reaping it on
 /// expiry. `None` means the bound was exceeded.
-fn wait_bounded(child: &mut Child, timeout: Duration) -> Result<Option<ExitStatus>> {
+fn wait_bounded(
+    child: &mut Child,
+    timeout: Duration,
+    hub_root: Option<&Path>,
+) -> Result<Option<ExitStatus>> {
     let deadline = Instant::now() + timeout;
     loop {
+        if let Some(root) = hub_root {
+            super::hub_read::check_budget(root, deadline)?;
+        }
         if let Some(status) = child.try_wait()? {
             return Ok(Some(status));
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop_child(child, hub_root.is_some());
             return Ok(None);
         }
         std::thread::sleep(GIT_WIRE_POLL_INTERVAL);
@@ -201,4 +218,18 @@ fn config_policy_env() -> Vec<(String, OsString)> {
         pairs.push((format!("GIT_CONFIG_VALUE_{index}"), OsString::from(value)));
     }
     pairs
+}
+
+fn stop_child(child: &mut Child, isolated: bool) {
+    #[cfg(unix)]
+    if isolated {
+        // SAFETY: the hub profile starts this child as leader of its own process group.
+        unsafe {
+            libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = isolated;
+    let _ = child.kill();
+    let _ = child.wait();
 }

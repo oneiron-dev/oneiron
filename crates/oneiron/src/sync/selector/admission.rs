@@ -143,6 +143,9 @@ fn recheck_admitted_claim_blob(
     let blob = value.ok_or(Error::InvalidKey)?;
     let header =
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if crate::sync::pack_sync::is_pack_handle(header.entity_type) {
+        return validate_federated_pack(store, blob);
+    }
     if header.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(());
     }
@@ -254,6 +257,10 @@ pub(crate) fn admit_federated_entity_blob(
 
     let header =
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if crate::sync::pack_sync::is_pack_handle(header.entity_type) {
+        validate_federated_pack(&vault.store, blob)?;
+        return Ok(blob.to_vec());
+    }
     if header.entity_type != ENTITY_TYPE_CLAIM {
         if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
             admit_federated_authority_log(vault, &id, &blob[ENTITY_METADATA_HEADER_LEN..])?;
@@ -463,4 +470,14 @@ fn reject_federated_tombstones(source: &LoroDoc) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(feature = "sync")]
+fn validate_federated_pack(store: &crate::store::Store, blob: &[u8]) -> Result<()> {
+    let source = crate::registry::pack_byte_map::PackInstanceEnvelope::from_bytes(
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    let txn = store.env.read_txn()?;
+    let (handle, local) = store.remap_pack_instance_in_txn(&txn, &source)?;
+    store.validate_pack_instance_in_txn(&txn, handle, &local.to_bytes()?)
 }

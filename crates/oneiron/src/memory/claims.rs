@@ -221,6 +221,12 @@ impl Memory<'_> {
         self.commit_one(input, true, None)
     }
 
+    /// Proposes an independent claim without implicitly replacing a peer's head.
+    /// A conflict review can cite this proposal; the proposal grants no authority.
+    pub fn claim_propose(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
+        self.commit_one(input, false, Some(ClaimApprovalStatus::Proposed))
+    }
+
     /// Retracts an active claim (deliberate withdrawal; record preserved).
     ///
     /// Authority (fail-closed): the asserted actor is RESOLVED against the
@@ -274,10 +280,19 @@ impl Memory<'_> {
             if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
                 self.verify_public_booking_writer_in_txn(wtxn)?;
             }
+            let owns_claim = claim_envelope_actor(&body) == Some(self.actor)
+                && crate::batch::authenticated_claim_author_in_txn(&self.vault.store, wtxn, &id, &body)?
+                    .is_some_and(|author| author.entity_ref() == self.actor);
+            if self.actor_class == EdgeActorClass::System || owns_claim {
+                super::authorship::require_claim_self_grant_in_txn(
+                    self.vault, wtxn, WriteActor::new(self.actor, self.actor_class),
+                    id, &body, "memory.claim.retract",
+                )?;
+            }
             // Retracting your OWN claim is not an owner power and needs no
             // owner binding; retracting SOMEONE ELSE'S is, so it gets the
             // authority-log teeth.
-            if claim_envelope_actor(&body) != Some(self.actor) {
+            if !owns_claim && self.actor_class != EdgeActorClass::System {
                 if self.actor_class != EdgeActorClass::Human {
                     return Err(MemoryError::new(
                         MEMORY_CODE_FORBIDDEN,
@@ -293,6 +308,13 @@ impl Memory<'_> {
                     ));
                 }
                 verify_owner_actor_binding_in_txn(self.vault, &*wtxn, self.actor)?;
+                let raw = crate::claim::encode_claim_body(&body)?;
+                let receipt = super::authorship::decision(
+                    WriteActor::new(self.actor, self.actor_class), "memory_claim_override", "approved",
+                    "gate.memory.explicit_owner_retraction", Some(id),
+                    blake3::hash(&raw).as_bytes().to_vec(), now,
+                );
+                self.vault.store.append_gate_decision_in_txn(wtxn, &receipt)?;
             }
             if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
                 super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
@@ -608,6 +630,26 @@ impl Memory<'_> {
                     .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
                 {
                     return Ok(true);
+                }
+                super::authorship::guard_existing_claim_in_txn(
+                    self.vault,
+                    wtxn,
+                    envelope.actor(),
+                    id,
+                )?;
+                if let Some(old_id) = prior {
+                    let old = self
+                        .vault
+                        .get_claim_in_txn(wtxn, &old_id)?
+                        .ok_or(Error::EntityNotFound)?;
+                    super::authorship::require_claim_self_grant_in_txn(
+                        self.vault,
+                        wtxn,
+                        envelope.actor(),
+                        old_id,
+                        &old,
+                        "memory.claim.supersede",
+                    )?;
                 }
                 let publication_write =
                     input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;

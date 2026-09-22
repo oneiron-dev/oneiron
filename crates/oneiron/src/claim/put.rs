@@ -175,6 +175,7 @@ impl Vault {
         crate::batch::reject_family_owned_candidate(&candidate)?;
         let mut wtxn = self.store.env.write_txn()?;
         self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
+        crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
         apply_ops_with_gate_mode(
             &self.store,
             &self.config,
@@ -224,6 +225,25 @@ impl Vault {
         let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&wtxn, old_id)?;
         self.validate_code_run_claim_target_in_txn(&wtxn, old_id, None)?;
         self.validate_code_run_claim_target_in_txn(&wtxn, new_id, None)?;
+        crate::memory::require_claim_self_grant_in_txn(
+            self,
+            &wtxn,
+            envelope.actor(),
+            *old_id,
+            &old_body,
+            "memory.claim.supersede",
+        )?;
+        let new_body = self
+            .get_claim_in_txn(&wtxn, new_id)?
+            .ok_or(Error::EntityNotFound)?;
+        crate::memory::require_claim_self_grant_in_txn(
+            self,
+            &wtxn,
+            envelope.actor(),
+            *new_id,
+            &new_body,
+            "memory.claim.edit",
+        )?;
 
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         // Both bodies are host-typed synthetic effect bodies for ONE memory

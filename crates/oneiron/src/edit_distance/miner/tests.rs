@@ -77,7 +77,7 @@ fn put_skill_as(vault: &Vault, id: EntityId) -> EntityId {
         "1.0.0",
         ClaimApprovalStatus::Approved,
         SkillLifecycle::Candidate,
-        ClaimSource::Imported,
+        ClaimSource::UserStated,
         0.9,
         false,
         true,
@@ -113,6 +113,10 @@ struct Amendment {
 
 impl Amendment {
     fn land(&self, vault: &Vault) -> Result<()> {
+        self.land_bound(vault, Some(fixture_owner(vault)))
+    }
+
+    fn land_bound(&self, vault: &Vault, principal: Option<WriteActor>) -> Result<()> {
         let artifact_ref = ProposalArtifactRef::mint();
         let record = FinalizedProposalText {
             artifact_ref,
@@ -151,12 +155,35 @@ impl Amendment {
             evidence = evidence.with_skill(skill);
         }
         record_amendment_evidence(vault, &evidence)?;
+        if let Some(principal) = principal {
+            bind_amendment_preference_principal(
+                vault,
+                principal,
+                &self.receipt_id,
+                &CompilationTarget::Fallback,
+            )?;
+        }
         assert!(
             judge_amendment(vault, &self.receipt_id)?.is_some(),
             "the fixture's routing facts must settle a class"
         );
         Ok(())
     }
+}
+
+fn fixture_owner(vault: &Vault) -> WriteActor {
+    let id = EntityId::from_bytes([0xD1; 16]).expect("fixture owner id");
+    vault
+        .put_entity(&id, ENTITY_TYPE_PERSON, t(1), 1, b"preference owner")
+        .expect("owner");
+    WriteActor::new(id, EdgeActorClass::Human)
+}
+
+// These fixtures deliberately use historical seconds. The production wrapper
+// uses wall time; the explicit-clock entry lets this suite test recurrence,
+// hysteresis and replay rather than accidentally test 50 years of decay.
+fn run_substitution_miner(vault: &Vault, run: &MinerRun) -> Result<Vec<MinedOutcome>> {
+    super::run_substitution_miner_at(vault, run, 10_000)
 }
 
 /// Op-window bytes unique per artifact, so two artifacts never share an index
@@ -884,6 +911,7 @@ fn the_dedup_check_sees_the_mark_written_in_its_own_transaction() -> Result<()> 
     let proposal_id = EntityId::now();
     let row = encode_row(
         &StoredSkillEdit {
+            principal: None,
             v: ROW_VERSION,
             skill: EntityId::now().to_hex(),
             scope: "scheduling".to_owned(),
@@ -1211,7 +1239,13 @@ fn mined_group(vault: &Vault, run: &MinerRun) -> crate::inbox::InboxGroup {
 fn answer_group(vault: &Vault, run: &MinerRun, verb: crate::inbox::InboxBulkVerb, now: u64) {
     let group = mined_group(vault, run);
     vault
-        .resolve_inbox_group_at(&group.group_key, verb, None, now)
+        .resolve_inbox_group_as_at(
+            fixture_owner(vault),
+            &group.group_key,
+            verb,
+            &CompilationTarget::Fallback,
+            now,
+        )
         .expect("the decider answers the group");
 }
 
@@ -1350,3 +1384,5 @@ fn miner_floor_still_denies() -> Result<()> {
     );
     Ok(())
 }
+
+mod preference_learning;

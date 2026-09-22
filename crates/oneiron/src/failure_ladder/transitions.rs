@@ -3,9 +3,7 @@
 use std::num::NonZeroU16;
 
 use crate::Vault;
-use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, decode_agent_dispatch_input,
-};
+use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, FailAttempt, FailOutcome, RetryAttempt, RetryOutcome,
 };
@@ -86,9 +84,11 @@ pub(crate) fn dispatched_target_ref(record: &AttemptRecord) -> Option<EntityId> 
     if payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
         return None;
     }
-    let AgentDispatchTarget::Custom(target) =
-        decode_agent_dispatch_input(&payload.input).ok()?.target;
-    Some(target)
+    decode_agent_dispatch_input(&payload.input)
+        .ok()?
+        .target
+        .agent_definition_ref()
+        .ok()
 }
 
 pub(crate) fn verified_blocked_reports(

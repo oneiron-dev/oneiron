@@ -15,8 +15,9 @@ use super::type_bytes::{
     ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
     ENTITY_TYPE_PLACE, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
     ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SECRET_CUSTODY,
-    ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SKILL_CONTENT_ANCHOR, ENTITY_TYPE_SUMMARY,
-    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
+    ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
+    ENTITY_TYPE_SKILL_HUB, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
+    ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW, ENTITY_TYPE_WORLD,
 };
 use super::zones::{EntityClassification, TypeByteZone};
 
@@ -218,6 +219,15 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "AGENT_DEF",
         type_byte: ENTITY_TYPE_AGENT_DEF,
         short_id_prefix: Some("ag"),
+        legacy_short_id_prefixes: &[],
+        classification: EntityClassification::Core,
+        family: Some(TypeByteFamily::AgentsAndSurfacing),
+        zone: TypeByteZone::Core,
+    },
+    EntityTypeRegistryEntry {
+        kind: "WORKFLOW",
+        type_byte: ENTITY_TYPE_WORKFLOW,
+        short_id_prefix: Some("wf"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Core,
         family: Some(TypeByteFamily::AgentsAndSurfacing),
@@ -448,6 +458,15 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         family: Some(TypeByteFamily::OutboundCommunicationConsent),
+        zone: TypeByteZone::System,
+    },
+    EntityTypeRegistryEntry {
+        kind: "SKILL_HUB",
+        type_byte: ENTITY_TYPE_SKILL_HUB,
+        short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
+        classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::RegistriesDerived),
         zone: TypeByteZone::System,
     },
     EntityTypeRegistryEntry {

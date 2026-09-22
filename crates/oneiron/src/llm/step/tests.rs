@@ -1469,7 +1469,10 @@ fn delegation_wait_and_binding_survive_a_reopen() -> Result<()> {
 
     // Reopen: nothing but LMDB carried state across this boundary.
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("reopen vault");
-    let binding = peer_wait_binding_read(&vault, &task_ref)?.expect("binding survives restart");
+    let binding = peer_wait_bindings(&vault)?
+        .into_iter()
+        .find(|binding| binding.task_ref == task_ref)
+        .expect("binding survives restart");
     let (_, head) = trap_head(&vault, &trap.trap_claim_id)?;
 
     assert_eq!(binding.trap_claim_id, trap.trap_claim_id);
@@ -1546,7 +1549,7 @@ fn a_landed_peer_result_signals_once_and_resumes_once() -> Result<()> {
 /// is closed by reconciliation: it walks the BINDING index, finds the settled
 /// task, and sends the signal that never went out.
 #[test]
-fn reconciliation_replays_a_terminal_task_whose_signal_never_sent() -> Result<()> {
+fn registration_recovers_a_result_that_landed_before_wait() -> Result<()> {
     let (_dir, vault) = open_delegation_vault();
     let fixture = step_fixture(&vault, 10)?;
     let step_hash = request_fixture().canonical_hash().expect("hash");
@@ -1554,14 +1557,14 @@ fn reconciliation_replays_a_terminal_task_whose_signal_never_sent() -> Result<()
     let runner = DreamerRunnerStore::new(&vault);
 
     let (_, before) = trap_head(&vault, &trap.trap_claim_id)?;
-    assert_eq!(before.state, DreamerTrapState::Waiting);
+    assert_eq!(before.state, DreamerTrapState::Sent);
 
     let replayed = reconcile_peer_result_signals(&vault, DELEGATE_NOW + 30)?;
     let (_, after) = trap_head(&vault, &trap.trap_claim_id)?;
     let idempotent = reconcile_peer_result_signals(&vault, DELEGATE_NOW + 31)?;
     let resumed = consume_trap_signal(&vault, &runner, &trap, DELEGATE_NOW + 32)?;
 
-    assert_eq!(replayed, 1);
+    assert_eq!(replayed, 0);
     assert_eq!(after.state, DreamerTrapState::Sent);
     assert_eq!(idempotent, 0);
     assert_eq!(resumed, fixture.attempt_id);
@@ -1594,7 +1597,7 @@ fn a_mismatched_step_hash_can_neither_send_nor_consume_a_delegation() -> Result<
     );
 
     assert_eq!(usize::from(forged_send.is_err()), 1);
-    assert_eq!(usize::from(honest_send.is_some()), 1);
+    assert_eq!(honest_send, None);
     assert_eq!(usize::from(forged_consume.is_err()), 1);
     assert_eq!(
         usize::from(runner.parked_attempt(fixture.attempt_id)?.is_some()),
@@ -2754,3 +2757,5 @@ fn native_schema_validation_refuses_invalid_requests_and_unvalidated_terminals()
     }
     Ok(())
 }
+
+mod ask_wait;

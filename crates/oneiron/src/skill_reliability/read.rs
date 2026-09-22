@@ -77,7 +77,15 @@ pub(super) fn active_reliability_heads_in_txn(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
-    active_claims_in_txn(vault, rtxn, skill, PREDICATE_SKILL_RELIABILITY)
+    Ok(
+        active_claims_in_txn(vault, rtxn, skill, PREDICATE_SKILL_RELIABILITY)?
+            .into_iter()
+            .filter(|(_, body, _)| {
+                body.source == Some(crate::claim::ClaimSource::Observed)
+                    && body.approval == crate::claim::ClaimApprovalStatus::Auto
+            })
+            .collect(),
+    )
 }
 
 // ---------------------------------------------------------------------------

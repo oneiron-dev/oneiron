@@ -156,7 +156,7 @@ mod cb_a {
     /// and, separately, the registered system-default base logical id.
     fn arm_zero_config_spawn() -> DefaultPresetSpawn {
         use oneiron::agent_dispatch::{
-            AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
+            AgentDispatchOutcome, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
         };
         use oneiron::dreamer_runner::{
             DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload,
@@ -176,7 +176,11 @@ mod cb_a {
         else {
             panic!("expected one fresh spawn");
         };
-        let AgentDispatchTarget::Custom(resolved_id) = status.input.target;
+        let resolved_id = status
+            .input
+            .target
+            .agent_definition_ref()
+            .expect("agent target");
         let resolved_logical_id = vault
             .get_agent_definition(&resolved_id)
             .expect("read the resolved row")
@@ -538,7 +542,11 @@ mod cb_a {
         // Effective ceilings come from the row each dispatch NAMED, read back
         // live — never from the frozen payload snapshot, which carries none.
         let effective = |status: &AgentDispatchStatus| {
-            let AgentDispatchTarget::Custom(id) = status.input.target;
+            let id = status
+                .input
+                .target
+                .agent_definition_ref()
+                .expect("agent target");
             vault
                 .get_agent_definition(&id)
                 .expect("read the dispatched row")

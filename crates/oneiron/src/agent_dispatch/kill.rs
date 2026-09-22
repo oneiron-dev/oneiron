@@ -88,6 +88,18 @@ impl AgentDispatcher<'_> {
                     super::AgentDispatchOutcome::Existing(status) => {
                         HealerSlotOutcome::Existing(status)
                     }
+                    // A healer dispatch targets one Custom agent, so the
+                    // workflow arms are unreachable; a proposed widening is a
+                    // typed refusal, never a silent reuse.
+                    super::AgentDispatchOutcome::ProposedWiden(_)
+                    | super::AgentDispatchOutcome::WorkflowDispatched(_)
+                    | super::AgentDispatchOutcome::WorkflowExisting(_) => {
+                        return Err(Error::Artifact(
+                            ArtifactError::InvalidAgentDispatchInput(
+                                "healer dispatch unexpectedly proposed widening",
+                            ),
+                        ));
+                    }
                 })
             }
         }

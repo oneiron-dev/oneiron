@@ -136,6 +136,7 @@ fn type_byte_zone_allocation_matches_contract() {
         (83, "OUTBOUND_GRANT"),
         (85, "PERSONA_SNAPSHOT_EXPORT"),
         (84, "COMM_RECORD"),
+        (92, "SKILL_HUB"),
         (93, "SKILL_CONTENT_ANCHOR"),
     ] {
         assert!(
@@ -157,7 +158,7 @@ fn type_byte_zone_allocation_matches_contract() {
     // Unregistered bytes — including bytes INSIDE structural zones — are not
     // StructuralKinds, and the write-path gate still rejects them with the
     // same typed error.
-    for byte in [63_u8, 75, 91, 92, 86, 99, 107, 125, 128, 247, 255] {
+    for byte in [63_u8, 75, 91, 86, 99, 107, 125, 128, 247, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -169,14 +170,10 @@ fn type_byte_zone_allocation_matches_contract() {
     }
 
     // Canon reserves the engine has not built yet stay explicitly
-    // unregistered rather than disappearing from the record. DIAGNOSTIC (69)
+    // unregistered rather than disappearing from the record. DIAGNOSTIC (73)
     // LEFT this list when ONE-1394 built its substrate — a reserve is a
     // promise to implement, not a permanent shelf.
-    for (byte, name) in [
-        (75_u8, "SUSPICIOUS_WAKE"),
-        (91, "CLAIM_CLASS_DESCRIPTOR"),
-        (92, "SKILL_HUB"),
-    ] {
+    for (byte, name) in [(75_u8, "SUSPICIOUS_WAKE"), (91, "CLAIM_CLASS_DESCRIPTOR")] {
         assert!(
             entity_type_registry_entry(byte).is_none(),
             "{name} byte {byte} must stay reserved-unregistered"
@@ -775,12 +772,12 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
 
     // Every byte the v3 re-key moved into the system zone left this list when
     // its kind was registered; public puts of those bytes now fail
-    // MaintenanceKindNotWritable — covered by the D5 gate test. DIAGNOSTIC (69)
-    // left it that way in ONE-1394. What stays InvalidEntityType is the
-    // canon-reserved system bytes with no engine substrate (72 SUSPICIOUS_WAKE,
-    // 74 CLAIM_CLASS_DESCRIPTOR, 75 SKILL_HUB), free bytes inside
-    // otherwise-live zones, the PackByteMap half (128–247), and the 255
-    // sentinel.
+    // MaintenanceKindNotWritable — covered by the D5 gate test. DIAGNOSTIC (73)
+    // left it that way in ONE-1394, and SKILL_HUB (92) is registered on the
+    // C02 side too. What stays InvalidEntityType is the canon-reserved system
+    // bytes with no engine substrate (75 SUSPICIOUS_WAKE, 91
+    // CLAIM_CLASS_DESCRIPTOR), free bytes inside otherwise-live zones, the
+    // PackByteMap half (128–247), and the 255 sentinel.
     let free = (crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
         ..=crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
         .find(|kind| {
@@ -788,7 +785,7 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
                 && vault.structural_kind_registration(*kind).is_none()
         })
         .unwrap();
-    for unknown in [75_u8, 91, 92, 99, 107, free, 125, 130, 200, 255] {
+    for unknown in [75_u8, 91, 99, 107, free, 125, 130, 200, 255] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")

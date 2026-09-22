@@ -79,7 +79,7 @@ fn require_answerable(
 }
 
 impl Memory<'_> {
-    pub fn tasks_wait(
+    pub fn tasks_wait_in_step(
         &self,
         handle: &TaskAskHandle,
         ctx: &DurableStepContext<'_>,
@@ -192,7 +192,7 @@ impl Memory<'_> {
 
 impl Memory<'_> {
     /// External SDK clients have no engine-owned run. Their stable step key
-    /// names a detached C9 step; native runners call tasks_wait with their
+    /// names a detached C9 step; native runners call tasks_wait_in_step with their
     /// own DurableStepContext instead. No queue row or run is suspended.
     pub fn tasks_wait_external(
         &self,

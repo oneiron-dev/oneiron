@@ -332,10 +332,22 @@ impl AttemptQueue<'_> {
         id: AttemptId,
         entry: ManifestEntry,
     ) -> Result<AttemptRecord> {
-        validate_manifest_entry(&entry)?;
+        let mut txn = self.store.env.write_txn()?;
+        let record = self.append_manifest_entry_in_txn(&mut txn, id, entry)?;
+        txn.commit()?;
+        self.store.notify_attempt_observers();
+        Ok(record)
+    }
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, id.as_bytes())? else {
+    /// Joins a load or dispatch transaction, so returned pack data and its receipt cannot diverge.
+    pub(crate) fn append_manifest_entry_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        entry: ManifestEntry,
+    ) -> Result<AttemptRecord> {
+        validate_manifest_entry(&entry)?;
+        let Some(raw_record) = self.store.attempt_records.get(txn, id.as_bytes())? else {
             return Err(invalid_transition("append_manifest_entry", "missing"));
         };
         let mut record = decode_record(&raw_record, id)?;
@@ -354,10 +366,7 @@ impl AttemptQueue<'_> {
         let encoded = encode_record(&record)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-        wtxn.commit()?;
-        self.store.notify_attempt_observers();
-
+            .put(txn, record.id.as_bytes(), &encoded)?;
         Ok(record)
     }
 

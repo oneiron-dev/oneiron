@@ -328,6 +328,7 @@ mod assignee_wire {
             ("dreamer", None) => Ok(TaskAssignee::Dreamer),
             ("agent_def", Some(agent_def_ref)) => Ok(TaskAssignee::AgentDef { agent_def_ref }),
             ("peer", Some(actor_ref)) => Ok(TaskAssignee::Peer { actor_ref }),
+            ("child", Some(actor_ref)) => Ok(TaskAssignee::Child { actor_ref }),
             ("human", Some(actor_ref)) => Ok(TaskAssignee::Human { actor_ref }),
             _ => Err(serde::de::Error::custom(
                 "assignee kind and ref do not agree",

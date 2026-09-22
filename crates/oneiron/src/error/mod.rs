@@ -291,6 +291,9 @@ pub enum ErrorKind {
     CooperativeDeletionRequiresTerminalPact,
     InvalidCooperativeDeletionRequest,
     WriteConcurrentWithRevocation,
+    PackKindNameCollision,
+    PackKindNotInstalled,
+    InvalidPackByteMap,
 }
 
 /// Crate error type.

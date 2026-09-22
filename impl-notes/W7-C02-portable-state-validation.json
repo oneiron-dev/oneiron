@@ -1,0 +1,39 @@
+{
+  "status": "completed",
+  "exit_code": 0,
+  "unit": "w7-c02-final-portable-state-r2",
+  "source": "dd5ced70beb3de3d49c8fa1b2b717e257a72f933",
+  "timestamp": "2026-09-19T18:06:15.995848+00:00",
+  "command": [
+    "/home/lexi/.local/share/prime-agent-oneiron/installs/0.9.5-oneiron.20260919.4-linux-x64/lib/node_modules/prime-agent/dist/factory/bin/cargo",
+    "test",
+    "-p",
+    "oneiron",
+    "--lib",
+    "--all-features",
+    "--config",
+    "env.TMPDIR.value=\".w7/test-tmp\"",
+    "--config",
+    "env.TMPDIR.relative=true",
+    "--config",
+    "env.TMPDIR.force=true",
+    "--",
+    "affect::state_index::tests",
+    "--test-threads=1"
+  ],
+  "host": "Arch through normal guarded factory wrapper",
+  "routing_evidence": "[factory-cargo] arch slot 1/2; at most 3 Cargo jobs",
+  "environment_override": {
+    "W7_CARGO_EXCLUDE_MACBOOK": "1"
+  },
+  "passed": 1,
+  "failed": 0,
+  "ignored": 0,
+  "filtered_out": 7235,
+  "test_runtime_seconds": 8.77,
+  "build_duration": "4m 14s",
+  "test": "affect::state_index::tests::composite_is_provenanced_idempotent_and_neutral_when_unknown",
+  "log_sha256": "f21ed29a62aab36316142da6ee2174650f73ab3503edfc3f40abcbe77b8030d5",
+  "terminal_file_sha256": "532a3d5534c7efafe3b25e7928d59c4d8907145f1f49e18bfdc6c5f6d33eab36",
+  "scope": "Local producer/body binding: raw and replayed forgeries, future-head veto refusal, idempotence, supersession, inert import, modified-body refusal, repair and reopen. Not an audio qualification run or repeat of the full suite."
+}

@@ -40,7 +40,9 @@ pub(super) fn task_assignee_value(assignee: TaskAssignee) -> Value {
             Value::from("agent_def_ref"),
             entity_ref_value(agent_def_ref),
         )),
-        TaskAssignee::Peer { actor_ref } | TaskAssignee::Human { actor_ref } => {
+        TaskAssignee::Peer { actor_ref }
+        | TaskAssignee::Child { actor_ref }
+        | TaskAssignee::Human { actor_ref } => {
             entries.push((Value::from("actor_ref"), entity_ref_value(actor_ref)));
         }
     }

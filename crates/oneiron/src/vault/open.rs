@@ -606,6 +606,8 @@ impl Vault {
                 error.to_string(),
             ))
         })?;
+        // Carrier data must still match the local installation head on reopen.
+        let _ = vault.pack_byte_map_snapshot()?;
         Ok(vault)
     }
 

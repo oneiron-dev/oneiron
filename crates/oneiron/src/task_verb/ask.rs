@@ -76,7 +76,7 @@ pub(super) fn save(
     Ok(())
 }
 impl Memory<'_> {
-    pub fn tasks_ask(&self, spec: &TaskAskSpec) -> MemoryResult<TaskAskReceipt> {
+    pub(super) fn tasks_ask_holders(&self, spec: &TaskAskSpec) -> MemoryResult<TaskAskReceipt> {
         if spec.idempotency_key.is_empty()
             || spec.idempotency_key.len() > 256
             || spec.holders.is_empty()

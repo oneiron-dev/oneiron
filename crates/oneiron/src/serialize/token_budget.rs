@@ -80,7 +80,7 @@ pub(super) fn type_fraction(key: GroupKey, allocation: &TokenAllocation) -> f32 
         GroupKey::Kind(ENTITY_TYPE_CLAIM | ENTITY_TYPE_FACET) => allocation.claims,
         GroupKey::Kind(ENTITY_TYPE_TURN) => allocation.turns,
         GroupKey::Kind(ENTITY_TYPE_SUMMARY) => allocation.summaries,
-        GroupKey::Kind(_) | GroupKey::Other => allocation.other,
+        GroupKey::Kind(_) | GroupKey::Other | GroupKey::ExportSection(_) => allocation.other,
     }
 }
 

@@ -1,0 +1,30 @@
+{
+  "segment_tracks": [
+    {
+      "start_ms": 960,
+      "end_ms": 4730,
+      "speaker_cluster": "S01",
+      "text": "[S01] The library opens at nine. Please bring the blue notebook."
+    },
+    {
+      "start_ms": 6160,
+      "end_ms": 9360,
+      "speaker_cluster": "S01",
+      "text": "[S01] The train leaves at noon. We will meet by the station."
+    }
+  ],
+  "timestamp_kind": "segment_not_word",
+  "provenance": {
+    "invocation_id": "f8573382-8e2a-466f-8030-747c6a1e55b9",
+    "model_id": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+    "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+    "execution": "measured",
+    "runtime_components_sha256": {
+      "meeting_audio_runtime.py": "446f9c57b257fb221aacd30900d6cb22a5355b1f61d4d53030abf9714be65e47",
+      "meeting_audio_process.py": "707ef32d057dbb478889c070119659db4113c80524df684c5bc3af63880f9abb",
+      "meeting_audio_ctc.py": "d9a89905d461db38b995c7dac166453452d680cf6ae06be0f106933cbcd295ba"
+    },
+    "runtime_profile_sha256": "f92dfc04130be8784c25b82809a5e6ba2850fc5dc224f30af04288b64ccfbca7",
+    "full_file_samples": 190218
+  }
+}

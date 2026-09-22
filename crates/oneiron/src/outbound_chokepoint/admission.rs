@@ -112,10 +112,11 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         PreparedAuthorization::None => None,
         PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
     };
+    let posting_gate = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
     let mut governance = gate::evaluate_external_effect_policy(
         &vault.store,
         &mut wtxn,
-        &prepared.gate,
+        &posting_gate,
         &policy,
         required_grant_id,
         match &prepared.authorization {

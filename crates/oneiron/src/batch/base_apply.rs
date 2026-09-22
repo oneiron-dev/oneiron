@@ -137,52 +137,24 @@ pub(super) fn apply_ops_with_origin(
         match op {
             BatchOp::Put {
                 id,
-                entity_type,
+                mut entity_type,
                 occurred,
                 learned_at,
-                data,
+                mut data,
                 allow_maintenance,
                 allow_reserved_predicate,
                 hub_sync_imported,
             } => {
-                if hub_sync_imported
-                    && (entity_type != ENTITY_TYPE_SKILL
-                        || allow_maintenance
-                        || allow_reserved_predicate)
-                {
-                    return Err(Error::InvariantViolation(
-                        "hub-sync imported flag is only valid for a local SKILL Put",
-                    ));
-                }
-                // Public writes reject engine-authored system kinds via
-                // the public entity-type gate; the sync rematerialization path
-                // sets `allow_maintenance` so REDACTION_AUDIT receipts
-                // survive CRDT→LMDB replay (registry-only entity-type validation
-                // still rejects genuinely unknown type bytes).
-                if allow_maintenance
-                    && allow_reserved_predicate
-                    && matches!(
-                        entity_type,
-                        ENTITY_TYPE_ACCESS_GRANT | ENTITY_TYPE_OUTBOUND_GRANT
-                    )
-                {
-                    return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
-                        entity_type,
-                    )));
-                }
-                // Same-vault custody replication is opt-out per credential. A
-                // remote portable body cannot widen a locally narrowed record.
-                if allow_maintenance
-                    && allow_reserved_predicate
-                    && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                {
-                    validate_replicated_custody_put(store, wtxn, &id, &data)?;
-                }
-                if allow_maintenance {
-                    store.validate_entity_type(entity_type)?;
-                } else {
-                    store.validate_public_entity_type(entity_type)?;
-                }
+                (entity_type, data) = validate_put_type(
+                    store,
+                    wtxn,
+                    &id,
+                    entity_type,
+                    data,
+                    allow_maintenance,
+                    allow_reserved_predicate,
+                    hub_sync_imported,
+                )?;
                 let preflight_decision_id = if entity_type == crate::registry::ENTITY_TYPE_CLAIM
                     && !allow_reserved_predicate
                 {
@@ -223,6 +195,27 @@ pub(super) fn apply_ops_with_origin(
                     Some(&companion_retired_histories),
                     origin,
                 )?;
+                if let Some((source_id, source_bytes)) = applied.portable_agent_source {
+                    apply_ops_with_origin(
+                        store,
+                        config,
+                        analyzer,
+                        wtxn,
+                        vec![BatchOp::Put {
+                            id: source_id,
+                            entity_type: crate::registry::ENTITY_TYPE_ASSET,
+                            occurred,
+                            learned_at,
+                            data: source_bytes,
+                            allow_maintenance: false,
+                            allow_reserved_predicate: false,
+                            hub_sync_imported: false,
+                        }],
+                        text_index_trusted,
+                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
+                        origin,
+                    )?;
+                }
                 if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                     let authored = materialization.is_some() && !allow_reserved_predicate;
                     claim_materialization::record_committed_claim(store, wtxn, &id, authored)?;
@@ -716,4 +709,68 @@ fn apply_text_index_update(
         crate::bm25::index_text(store, wtxn, analyzer, id, fields)?;
     }
     Ok(())
+}
+
+/// Resolves pack handles and enforces the public/maintenance put-type boundary.
+fn validate_put_type(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    mut entity_type: u8,
+    mut data: Vec<u8>,
+    allow_maintenance: bool,
+    allow_reserved_predicate: bool,
+    hub_sync_imported: bool,
+) -> Result<(u8, Vec<u8>)> {
+    // Replay/import resolves GLOBAL identity before local-byte validation.
+    // Foreign byte and generation never select the destination kind.
+    if allow_maintenance
+        && allow_reserved_predicate
+        && crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle
+    {
+        let source = crate::registry::pack_byte_map::PackInstanceEnvelope::from_bytes(&data)?;
+        let (local_handle, local_envelope) = store.remap_pack_instance_in_txn(wtxn, &source)?;
+        entity_type = local_handle;
+        data = local_envelope.to_bytes()?;
+    }
+    if hub_sync_imported
+        && (entity_type != ENTITY_TYPE_SKILL || allow_maintenance || allow_reserved_predicate)
+    {
+        return Err(Error::InvariantViolation(
+            "hub-sync imported flag is only valid for a local SKILL Put",
+        ));
+    }
+    // Public writes reject engine-authored system kinds via
+    // the public entity-type gate; the sync rematerialization path
+    // sets `allow_maintenance` so REDACTION_AUDIT receipts
+    // survive CRDT→LMDB replay (registry-only entity-type validation
+    // still rejects genuinely unknown type bytes).
+    if allow_maintenance
+        && allow_reserved_predicate
+        && matches!(
+            entity_type,
+            ENTITY_TYPE_ACCESS_GRANT | ENTITY_TYPE_OUTBOUND_GRANT
+        )
+    {
+        return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            entity_type,
+        )));
+    }
+    // Same-vault custody replication is opt-out per credential. A
+    // remote portable body cannot widen a locally narrowed record.
+    if allow_maintenance
+        && allow_reserved_predicate
+        && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+    {
+        validate_replicated_custody_put(store, wtxn, id, &data)?;
+    }
+    if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
+        store.validate_pack_handle_in_txn(wtxn, entity_type)?;
+        store.validate_pack_instance_in_txn(wtxn, entity_type, &data)?;
+    } else if allow_maintenance {
+        store.validate_entity_type(entity_type)?;
+    } else {
+        store.validate_public_entity_type(entity_type)?;
+    }
+    Ok((entity_type, data))
 }

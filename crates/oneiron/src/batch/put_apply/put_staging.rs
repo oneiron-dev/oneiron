@@ -237,3 +237,39 @@ pub(super) fn stage_claim_projection(
     }
     Ok(())
 }
+
+/// Retires the prior interval and changed timestamp index entries before a put.
+pub(super) fn remove_prior_temporal_index_rows(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    old_occurred: TimeRange,
+    old_learned: u64,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<()> {
+    if old_occurred.end.saturating_sub(old_occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
+        let old_long_interval_key = Store::encode_temporal_key(old_occurred.end, id);
+        store
+            .temporal_long_intervals
+            .delete(wtxn, &old_long_interval_key)?;
+    }
+
+    if old_occurred.start != occurred.start {
+        let old_start_key = Store::encode_temporal_key(old_occurred.start, id);
+        store.temporal_occurred_start.delete(wtxn, &old_start_key)?;
+    }
+
+    let old_is_range = old_occurred.start != old_occurred.end;
+    let new_is_range = occurred.start != occurred.end;
+    if old_is_range && (!new_is_range || old_occurred.end != occurred.end) {
+        let old_end_key = Store::encode_temporal_key(old_occurred.end, id);
+        store.temporal_occurred_end.delete(wtxn, &old_end_key)?;
+    }
+
+    if old_learned != learned_at {
+        let old_learned_key = Store::encode_temporal_key(old_learned, id);
+        store.temporal_learned.delete(wtxn, &old_learned_key)?;
+    }
+    Ok(())
+}

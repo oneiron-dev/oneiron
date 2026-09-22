@@ -6,8 +6,7 @@ use heed::RwTxn;
 
 use super::{
     AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,
-    ENTITY_METADATA_HEADER_LEN, LONG_INTERVAL_THRESHOLD_SECS,
-    apply_short_id_plan, authority_observation_secs_for_write,
+    ENTITY_METADATA_HEADER_LEN, apply_short_id_plan, authority_observation_secs_for_write,
     check_authority_log_store_key, delete_short_id_rows_for_id,
     evict_authority_log_store_key_squatter, parse_entity_metadata,
     plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
@@ -91,6 +90,13 @@ pub(in crate::batch) fn apply_put(
     )?;
     super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
+    crate::skill_hub::validate_hub_source_carrier_put(store, wtxn, &id, entity_type, data)?;
+    crate::agent_def::validate_birth_source_put(store, wtxn, &id, entity_type, data)?;
+    crate::receipt::validate_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
+    let mut portable_agent_source = None;
+    store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
+    store.guard_pack_instance_identity_in_txn(wtxn, &id, entity_type, data)?;
     // Publication admission reuses the write-door decode and must precede
     // gate receipts, debits, and every other write effect.
     let incoming_claim_body = super::claim_admission::admit_claim_put(
@@ -129,6 +135,7 @@ pub(in crate::batch) fn apply_put(
         plan_replicated_name_index(store, wtxn, &id, entity_type, data, replicated)?;
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
+    let mut hub_origin_marker = None;
     let mut new_agent_definition = None;
     // STO-03: `Some` only when the incoming TASK body named a derived streak
     // counter, i.e. only on the sync door — the body that gets stored instead.
@@ -249,8 +256,13 @@ pub(in crate::batch) fn apply_put(
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
+    } else if entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
+        crate::skill_hub::decode_skill_hub_record(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
-        new_skill_record = Some(crate::skill::decode_skill_record(data)?);
+        let decoded = crate::skill::decode_skill_record(data)?;
+        hub_origin_marker =
+            crate::skill_hub::check_hub_skill_put(store, &*wtxn, &id, &decoded, hub_sync_imported)?;
+        new_skill_record = Some(decoded);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {
         let decoded = crate::agent_def::decode_agent_definition(data)?;
         // ONE-1890 `sys.*` reservation, at the one arm that holds both the
@@ -258,6 +270,8 @@ pub(in crate::batch) fn apply_put(
         // SKILL's decode-site capture of `new_skill_record`.
         crate::agent_def::validate_reserved_logical_id(&id, &decoded)?;
         new_agent_definition = Some(decoded);
+    } else if entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
+        crate::agent_def::workflow::validate_workflow_put(store, wtxn, &id, data, replicated)?;
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         return Err(Error::InvalidClaimBody(
             "CompanionRecord storage retired; use PERSON/FACET",
@@ -400,6 +414,8 @@ pub(in crate::batch) fn apply_put(
     // fail with `InvalidEntityType` on the missing prefix.
     let short_id_prefix = if is_lexical_query_hint_claim {
         None
+    } else if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
+        Some(store.pack_short_id_prefix_in_txn(wtxn, entity_type, data)?)
     } else {
         store.short_id_prefix(entity_type).ok()
     };
@@ -537,29 +553,15 @@ pub(in crate::batch) fn apply_put(
             crate::bm25::deindex_text(store, wtxn, &id)?;
         }
 
-        if old_occurred.end.saturating_sub(old_occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
-            let old_long_interval_key = Store::encode_temporal_key(old_occurred.end, &id);
-            store
-                .temporal_long_intervals
-                .delete(wtxn, &old_long_interval_key)?;
-        }
-
-        if old_occurred.start != occurred.start {
-            let old_start_key = Store::encode_temporal_key(old_occurred.start, &id);
-            store.temporal_occurred_start.delete(wtxn, &old_start_key)?;
-        }
-
-        let old_is_range = old_occurred.start != old_occurred.end;
-        let new_is_range = occurred.start != occurred.end;
-        if old_is_range && (!new_is_range || old_occurred.end != occurred.end) {
-            let old_end_key = Store::encode_temporal_key(old_occurred.end, &id);
-            store.temporal_occurred_end.delete(wtxn, &old_end_key)?;
-        }
-
-        if old_learned != learned_at {
-            let old_learned_key = Store::encode_temporal_key(old_learned, &id);
-            store.temporal_learned.delete(wtxn, &old_learned_key)?;
-        }
+        super::put_staging::remove_prior_temporal_index_rows(
+            store,
+            wtxn,
+            &id,
+            old_occurred,
+            old_learned,
+            occurred,
+            learned_at,
+        )?;
     } else if entity_type == ENTITY_TYPE_AGENT_DEF && !replicated {
         // ONE-1890 mirror of the SKILL create gate below, one entity type
         // over: LOCAL creates only, so genuine creates are gated and updates
@@ -574,6 +576,8 @@ pub(in crate::batch) fn apply_put(
                 "validated AGENT_DEF record missing",
             ))?;
         validate_local_agent_definition_create(store, wtxn, &id, created)?;
+        portable_agent_source =
+            crate::agent_def::bind_agent_birth_in_txn(store, wtxn, &id, created)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let created = new_skill_record
             .as_ref()
@@ -635,6 +639,18 @@ pub(in crate::batch) fn apply_put(
     )?;
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, &id)?;
     stage_claim_projection(store, wtxn, id, decoded_claim_body.as_ref())?;
+    if let Some((key, value)) = hub_origin_marker {
+        store.vault_meta.put(wtxn, &key, &value)?;
+    }
+    crate::skill_hub::stage_source_custody_put(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        previous_skill_record.as_ref(),
+        new_skill_record.as_ref(),
+    )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if entity_type == ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
@@ -682,6 +698,8 @@ pub(in crate::batch) fn apply_put(
             store, wtxn, id, occurred, learned_at,
         )?;
     }
+    crate::agent_def::stage_birth_custody_put(store, wtxn, &id, entity_type, data)?;
+    crate::receipt::stage_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;
@@ -712,6 +730,7 @@ pub(in crate::batch) fn apply_put(
             None
         };
     Ok(AppliedPut {
+        portable_agent_source,
         pending_embedding_token,
         cleared_pending_embedding,
         had_vector_mutation,
@@ -817,3 +836,4 @@ fn observe_authority_put(
     }
     Ok(())
 }
+

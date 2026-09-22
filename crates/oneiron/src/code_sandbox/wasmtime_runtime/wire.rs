@@ -219,6 +219,28 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }
         SelfDispatchOutcome::Failed(_) => json!({"failed":true}),
+        SelfDispatchOutcome::AgentSpawn(value) => match value {
+            crate::code_run::SelfAgentSpawnResult::Queued { attempt_ref } => {
+                json!({"kind":"agent_spawn","state":"queued","attempt":crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes())})
+            }
+            crate::code_run::SelfAgentSpawnResult::ProposedWiden { proposal_ref } => {
+                json!({"kind":"agent_spawn","state":"proposed_widen","proposal":proposal_ref})
+            }
+        },
+        SelfDispatchOutcome::TaskAsk(value) => {
+            json!({"kind":"task_ask","group":value.handle.group_ref.to_hex(),"tasks":value.task_refs.iter().map(|id|id.to_hex()).collect::<Vec<_>>(),"hold":value.hold.as_ref().map(|_|"no_live_route"),"replay":value.idempotent_replay})
+        },
+        SelfDispatchOutcome::TaskAskStatus(value) => match value {
+            crate::task_verb::TaskAskStatus::Pending { hold } => {
+                json!({"kind":"task_ask_status","state":"pending","hold":hold.as_ref().map(|_|"no_live_route")})
+            }
+            crate::task_verb::TaskAskStatus::Exhausted => {
+                json!({"kind":"task_ask_status","state":"exhausted"})
+            }
+            crate::task_verb::TaskAskStatus::Answered(answer) => {
+                json!({"kind":"task_ask_status","state":"answered","task":answer.task_ref.to_hex(),"actor":answer.actor_ref.to_hex(),"result":answer.result_ref.to_hex()})
+            }
+        },
         SelfDispatchOutcome::Speech(value) => {
             json!({"order":value.order,"isVisible":value.is_visible})
         }

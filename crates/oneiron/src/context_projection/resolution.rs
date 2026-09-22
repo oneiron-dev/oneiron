@@ -121,7 +121,14 @@ fn resolve_memory_sections(
         // Inherit: a `Default` child sees exactly what its parent saw, which is
         // both the widest legal request and the no-context-rot answer.
         MemoryProjection::Default => match parent {
-            Some(parent) => Ok(parent.memory_sections.clone()),
+            Some(parent) if matches!(world_scope, None | Some(WorldScope::All)) => {
+                Ok(parent.memory_sections.clone())
+            }
+            Some(parent) => Ok(intersect_with_parent(
+                scan_memory_sections(vault, None, parent.memory_sections.len(), world_scope)?,
+                Some(&parent.memory_sections),
+                parent.memory_sections.len(),
+            )),
             None => {
                 scan_memory_sections(vault, None, CONTEXT_SPEC_DEFAULT_MEMORY_LIMIT, world_scope)
             }

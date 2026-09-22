@@ -150,6 +150,7 @@ impl Memory<'_> {
                 .map_err(MemoryError::from)
             })?;
         }
+        crate::llm::reconcile_peer_result_signals(self.vault(), now)?;
         Ok(report)
     }
 

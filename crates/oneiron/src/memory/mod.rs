@@ -24,7 +24,10 @@
 //! unchanged from the flat-file era.
 
 mod archive_purge;
+mod authorship;
 mod booking;
+mod claim_conflict;
+mod skill_authoring;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) mod booking_publication;
@@ -51,10 +54,17 @@ mod tests;
 mod tests_regressions;
 
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
+pub use authorship::MemoryAuthoringAction;
+pub(crate) use authorship::{
+    explicit_claim_override_in_txn, guard_existing_claim_in_txn, require_claim_self_grant_in_txn,
+};
 pub use booking::EmergencyInstructionInput;
 pub use chat::{
     ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
     ChatScope, ComposedChatAnswer,
+};
+pub use claim_conflict::{
+    ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
 };
 pub use claims::{
     ClaimInput, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
@@ -85,6 +95,7 @@ pub use recall::{
     Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack, MemoryProvenance, RecallScope,
     RetrievalMeta, ScopeHonesty,
 };
+pub use skill_authoring::SkillAuthoringReceipt;
 pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CompanionRecordInput,
     EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput,

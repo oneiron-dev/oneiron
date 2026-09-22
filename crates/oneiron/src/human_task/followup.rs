@@ -13,7 +13,7 @@ use crate::comm::{
 use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::memory::OutboundDraftInput;
 use crate::outbound::outbound_verb_contract;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
@@ -254,7 +254,18 @@ impl<'a> HumanTaskFollowupDriver<'a> {
         for record in self.due_records(now, limit)? {
             // A settled TASK closes its own loop: the authoritative synced fact
             // wins over anything the local cursor believed.
-            if task_is_terminal(self.vault, record.task_ref)? {
+            let ask_settled = if let Some(owner) = task_create_owner(self.vault, record.task_ref)? {
+                self.vault
+                    .memory(owner, EdgeActorClass::Agent)
+                    .tasks_ask_status_for_task(record.task_ref)
+                    .map_err(|_| Error::InvalidClaimBody("ask follow-up projection"))?
+                    .is_some_and(|status| {
+                        !matches!(status, crate::task_verb::TaskAskStatus::Pending { .. })
+                    })
+            } else {
+                false
+            };
+            if ask_settled || task_is_terminal(self.vault, record.task_ref)? {
                 self.complete(&record, now)?;
                 continue;
             }

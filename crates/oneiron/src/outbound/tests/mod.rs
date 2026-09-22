@@ -8,6 +8,7 @@ mod pipeline_contract;
 mod quiet_window;
 mod retry_audit;
 mod sender_selection;
+mod space_posting;
 
 use super::*;
 use crate::delivery_window::DeliveryWindowDecision;

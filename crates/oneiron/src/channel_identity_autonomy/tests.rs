@@ -1932,3 +1932,5 @@ fn graduation_duplicate_admission_is_atomic_and_survives_reopen() {
         [evidence.receipt_ref]
     );
 }
+
+mod space_posting;

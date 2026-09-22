@@ -433,6 +433,8 @@ fn active_cost_heads_in_txn(
         };
         if body.predicate != predicate
             || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.source != Some(ClaimSource::Observed)
+            || body.approval != ClaimApprovalStatus::Auto
             || edit_cost_scope_name(body.scope.as_ref()) != Some(scope)
         {
             continue;
@@ -464,6 +466,8 @@ pub fn edit_cost_for(vault: &Vault, subject: &EntityId, scope: &str) -> Result<O
             body.predicate.as_str(),
             PREDICATE_SKILL_EDIT_COST | PREDICATE_ACTOR_EDIT_COST
         ) || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.source != Some(ClaimSource::Observed)
+            || body.approval != ClaimApprovalStatus::Auto
             || edit_cost_scope_name(body.scope.as_ref()) != Some(scope)
         {
             continue;

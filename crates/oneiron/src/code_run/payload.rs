@@ -24,6 +24,13 @@ const CODE_RUN_REPLAY_CANONICAL_REQUEST_ACTOR: [u8; 16] = [0x42; 16];
 
 pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
     Ok(match call {
+        SelfCall::AgentsSpawn(call) => super::coordination_codec::spawn_request(call)?,
+        SelfCall::Ask(call) | SelfCall::TasksAsk(call) => {
+            super::coordination_codec::ask_request(call)
+        }
+        SelfCall::TasksWait(handle) => {
+            request_map(vec![("handle", entity_id_value(handle.group_ref))])
+        }
         SelfCall::MemorySearch(call) => request_map(vec![
             ("query", Value::from(call.query.as_str())),
             ("limit", Value::from(call.limit as u64)),
@@ -125,6 +132,11 @@ fn canonical_replay_request_envelope() -> Result<WriteEnvelope> {
 
 pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Value {
     match outcome {
+        SelfDispatchOutcome::AgentSpawn(result) => super::coordination_codec::spawn_value(result),
+        SelfDispatchOutcome::TaskAsk(result) => super::coordination_codec::ask_value(result),
+        SelfDispatchOutcome::TaskAskStatus(result) => {
+            super::coordination_codec::status_value(result)
+        }
         SelfDispatchOutcome::MemorySearch(result) => request_map(vec![
             ("kind", Value::from("memory_search")),
             ("query", Value::from(result.query.as_str())),
@@ -214,6 +226,16 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
         "report_blocked" => Ok(SelfDispatchOutcome::ReportBlocked {
             receipt: entity_value(map_get(entries, "receipt")?)?,
         }),
+
+        "agent_spawn" => Ok(SelfDispatchOutcome::AgentSpawn(
+            super::coordination_codec::decode_spawn(value)?,
+        )),
+        "task_ask" => Ok(SelfDispatchOutcome::TaskAsk(
+            super::coordination_codec::decode_ask(value)?,
+        )),
+        "task_ask_status" => Ok(SelfDispatchOutcome::TaskAskStatus(
+            super::coordination_codec::decode_status(value)?,
+        )),
         "memory_search" => {
             let results = decode_array(map_get(entries, "results")?, decode_scored_entity)?;
             Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
@@ -334,6 +356,9 @@ fn decode_scored_entity(value: &Value) -> Result<ScoredEntity> {
 
 pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
     match value {
+        "agents.spawn" => Ok(SelfEffect::AgentsSpawn),
+        "tasks.ask" => Ok(SelfEffect::TasksAsk),
+        "tasks.wait" => Ok(SelfEffect::TasksWait),
         "self.memory.search" => Ok(SelfEffect::MemorySearch),
         "self.memory.write_fixture" => Ok(SelfEffect::MemoryWriteFixture),
         "self.memory.put_claim" => Ok(SelfEffect::MemoryPutClaim),

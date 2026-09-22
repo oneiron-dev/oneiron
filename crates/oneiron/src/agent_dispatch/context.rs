@@ -11,7 +11,6 @@ use crate::error::{Error, Result};
 
 use super::codec::record_dispatch_input;
 use super::dispatch::AgentDispatcher;
-use super::types::AgentDispatchTarget;
 use crate::error::ArtifactError;
 
 impl AgentDispatcher<'_> {
@@ -33,7 +32,8 @@ impl AgentDispatcher<'_> {
                 // parent's stored scope, checked before either is resolved.
                 if let (Some(parent_spec), Some(child_spec)) = (
                     self.parent_dispatch_input(parent_attempt)?
-                        .and_then(|input| input.context_spec),
+                        .map(|input| self.effective_context_spec(parent_attempt, &input))
+                        .transpose()?,
                     context_spec,
                 ) {
                     validate_spec_narrows(&parent_spec, child_spec)?;
@@ -62,7 +62,7 @@ impl AgentDispatcher<'_> {
     /// the spawn must ride the parent attempt's exact run. A root spawn has no
     /// siblings to name; a foreign parent or run rejects with the same typed
     /// error — never a silent skip.
-    fn require_sibling_result_lineage(
+    pub(super) fn require_sibling_result_lineage(
         &self,
         parent_attempt: Option<AttemptId>,
         run_id: Option<&str>,
@@ -71,6 +71,7 @@ impl AgentDispatcher<'_> {
         if context_from.is_empty() {
             return Ok(());
         }
+        let parent_attempt = self.workflow_authority_parent(parent_attempt)?;
         let Some(parent_attempt) = parent_attempt else {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom names sibling results but there is no parent attempt",
@@ -91,7 +92,7 @@ impl AgentDispatcher<'_> {
                 "contextFrom requires a parent with agent dispatch lineage",
             )));
         };
-        let AgentDispatchTarget::Custom(parent_row) = parent_input.target;
+        let parent_row = parent_input.target.agent_definition_ref()?;
         for entity_ref in context_from {
             if crate::task_verb::task_create_owner(self.vault, *entity_ref)? != Some(parent_row) {
                 return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -108,28 +109,45 @@ impl AgentDispatcher<'_> {
     /// The fold is what makes `MemoryProjection::Default` honest: resolving an
     /// ancestor's spec standalone would hand it the widest default, so a
     /// `Default` under an excluding grandparent would silently WIDEN.
-    fn resolve_ancestor_projection(
+    pub(super) fn resolve_ancestor_projection(
         &self,
         attempt: AttemptId,
     ) -> Result<Option<ResolvedContextProjection>> {
         let queue = AttemptQueue::new(self.vault);
         let mut chain: Vec<(ContextSpec, crate::pipeline::WorldScope)> = Vec::new();
         let mut cursor = Some(attempt);
+        let mut seen = std::collections::HashSet::new();
         while let Some(id) = cursor {
-            if chain.len() >= CONTEXT_PROJECTION_MAX_ANCESTORS {
-                break;
+            if chain.len() >= CONTEXT_PROJECTION_MAX_ANCESTORS || !seen.insert(id) {
+                return Err(super::widen_record::invalid(
+                    "context ancestor bound or cycle",
+                ));
             }
-            let Some(record) = queue.get(id)? else { break };
+            let Some(record) = queue.get(id)? else {
+                if chain.is_empty() {
+                    return Ok(None);
+                }
+                return Err(super::widen_record::invalid("context ancestor is missing"));
+            };
+            if super::workflow_record::is_wrapper(&record) {
+                cursor = self.workflow_authority_parent(Some(id))?;
+                continue;
+            }
             let Some(input) = record_dispatch_input(&record) else {
-                break;
+                if chain.is_empty() {
+                    return Ok(None);
+                }
+                return Err(super::widen_record::invalid(
+                    "context ancestor is not dispatch lineage",
+                ));
             };
             chain.push((
-                input.context_spec.unwrap_or_default(),
-                input.definition.scope.to_world_scope(),
+                self.effective_context_spec(id, &input)?,
+                self.dispatchable_definition(&input.target)?
+                    .scope
+                    .to_world_scope(),
             ));
-            cursor = decode_dreamer_attempt_payload(&record.payload)
-                .ok()
-                .and_then(|payload| payload.parent_attempt);
+            cursor = decode_dreamer_attempt_payload(&record.payload)?.parent_attempt;
         }
         if chain.is_empty() {
             return Ok(None);

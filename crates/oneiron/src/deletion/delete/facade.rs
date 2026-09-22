@@ -82,6 +82,7 @@ impl Vault {
         {
             let txn = self.store.env.read_txn()?;
             crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
+            self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
         }
         let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {

@@ -407,6 +407,7 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
+        self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let (room_had_vector, room_had_graph, room_neighbors) =
             crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;
         if room_had_graph {
@@ -445,6 +446,8 @@ impl Vault {
             hint_had_vector | entity_had_vector | blob_cleanup.had_vector | room_had_vector;
         crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
 
+        crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
+        crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
         let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
             let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
             had_vector |= cleanup.had_vector;
@@ -464,6 +467,7 @@ impl Vault {
         // content bytes, so nothing to relocate). The maintenance helper no-ops for
         // kinds that keep no content-hash index, so the generic delete engine needs
         // no entity-kind branch of its own.
+
         self.maintain_skill_content_hash_index_on_delete_in_txn(wtxn, id)?;
         // ONE-1447, the other half of the same question: this id may be the
         // conversation a SKILL was converted from, and a skill whose evidence
@@ -571,6 +575,7 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+        self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let decoded = decode_tombstone_value(raw_value);
         // Cleanup is local visibility, never a replicated deletion intent.
         // Accepting byte 5 here would irreversibly scrub a retained archive
@@ -592,6 +597,15 @@ impl Vault {
         let captured = self.capture_provenance_delete_in_txn(wtxn, id)?;
 
         if !decoded.is_hard() {
+            let had_sources =
+                crate::skill_hub::source_custody_exists_in_txn(&self.store, wtxn, id)?;
+            crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
+            let had_receipt_sources =
+                crate::receipt::receipt_archive_custody_exists(&self.store, wtxn, id)?;
+            let had_birth_sources =
+                crate::agent_def::birth_custody_exists_in_txn(&self.store, wtxn, id)?;
+            crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
+            crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
             let had_body = self
                 .store
                 .entities
@@ -607,7 +621,11 @@ impl Vault {
                 self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
             }
             return Ok(ReplayedTombstoneOutcome::SoftErased {
-                changed: had_body || had_vector,
+                changed: had_body
+                    || had_vector
+                    || had_birth_sources
+                    || had_sources
+                    || had_receipt_sources,
             });
         }
 
@@ -618,6 +636,9 @@ impl Vault {
         // counts as local state to erase, mirroring the local
         // `delete_entity_without_header` semantics.
         if !self.active_delete_scope_exists_in_txn(wtxn, id)? {
+            crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
+            crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
+            crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
             // Hard-once-seen is durable LOCAL truth even when nothing local
             // was erased (never-materialized id): the permanent `dt:` marker
             // still gates a future re-put after hostile tombstone-map
@@ -788,6 +809,9 @@ impl Vault {
         id: &EntityId,
     ) -> Result<bool> {
         if crate::note::citation_delete_scope_exists(&self.store, txn, id)?
+            || crate::skill_hub::source_custody_exists_in_txn(&self.store, txn, id)?
+            || crate::agent_def::birth_custody_exists_in_txn(&self.store, txn, id)?
+            || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
             || self.store.entities.get(txn, id.as_bytes())?.is_some()
             || self.store.vectors.get(txn, id.as_bytes())?.is_some()
             || self.store.text_forward.get(txn, id.as_bytes())?.is_some()

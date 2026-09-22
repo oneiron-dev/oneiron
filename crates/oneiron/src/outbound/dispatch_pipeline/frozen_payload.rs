@@ -26,6 +26,8 @@ pub(super) struct FrozenOutboundPayload<'a> {
     /// byte-identical by reference rather than by re-rendering.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) calendar_invite: Option<&'a CalendarInvitePayload>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) space_posting: Option<&'a crate::channel_identity_autonomy::FrozenSpacePosting>,
     // The intent's display actor is not its gate principal. Freeze the actual
     // authority and sender in the existing ledger payload, including an absent
     // sender. Neither the gate audit nor the TASK stores this complete binding.

@@ -227,7 +227,7 @@ fn custom_dispatch_executes_seeded_row_data() -> Result<()> {
     assert_eq!(status.input.definition, edited);
     assert_eq!(status.input.definition.desc, "user edited scout");
 
-    let actor = agent_dispatch_actor(&status.input);
+    let actor = agent_dispatch_actor(&status.input).expect("agent actor");
     assert_eq!(actor.entity_ref(), scout_id);
     assert_eq!(actor.actor_class(), EdgeActorClass::Agent);
     Ok(())
@@ -540,7 +540,12 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
             ),
             (
                 Value::from("agentActor"),
-                Value::from(agent_dispatch_actor(&dispatch_input).entity_ref().to_hex()),
+                Value::from(
+                    agent_dispatch_actor(&dispatch_input)
+                        .expect("agent actor")
+                        .entity_ref()
+                        .to_hex(),
+                ),
             ),
         ]))?,
         crate::claim::ClaimApprovalStatus::Approved,
@@ -704,7 +709,7 @@ fn dispatched_agent_runs_under_clamped_ceiling() -> Result<()> {
     else {
         panic!("expected fresh dispatch");
     };
-    let actor = agent_dispatch_actor(&status.input);
+    let actor = agent_dispatch_actor(&status.input).expect("agent actor");
     assert_eq!(actor.entity_ref(), fork_id);
 
     let subject = test_id(0x49);
@@ -1351,7 +1356,12 @@ fn legacy_system_dispatch_payload_recovers() -> Result<()> {
         // The embedded snapshot decodes unchanged, never preset-derived.
         assert_eq!(decoded.definition, definition);
         // The actor identity is the pinned row id, as before.
-        assert_eq!(agent_dispatch_actor(&decoded).entity_ref(), pinned_id);
+        assert_eq!(
+            agent_dispatch_actor(&decoded)
+                .expect("agent actor")
+                .entity_ref(),
+            pinned_id
+        );
     }
 
     // The durable status + kill paths recover through that one arm: enqueue a
@@ -1466,8 +1476,14 @@ fn dispatch_for_task_carries_the_backlink_and_nothing_else_changes() -> Result<(
     })?;
 
     let (AgentDispatchOutcome::Dispatched(backlinked) | AgentDispatchOutcome::Existing(backlinked)) =
-        backlinked;
-    let (AgentDispatchOutcome::Dispatched(plain) | AgentDispatchOutcome::Existing(plain)) = plain;
+        backlinked
+    else {
+        panic!("task dispatch cannot propose widening")
+    };
+    let (AgentDispatchOutcome::Dispatched(plain) | AgentDispatchOutcome::Existing(plain)) = plain
+    else {
+        panic!("plain dispatch cannot propose widening")
+    };
 
     assert_eq!(
         backlinked.attempt.task_ref.as_deref(),
@@ -1575,7 +1591,11 @@ fn spawn_child(
 /// The ceiling of the row a dispatch actually NAMED, read back live from
 /// storage — never the frozen payload snapshot, which carries no authority.
 fn dispatched_row_ceiling(vault: &Vault, status: &AgentDispatchStatus) -> AgentCeiling {
-    let AgentDispatchTarget::Custom(id) = status.input.target;
+    let id = status
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     vault
         .get_agent_definition(&id)
         .expect("read the dispatched row")
@@ -1737,7 +1757,11 @@ fn parented_dispatch_clamps_the_child_to_the_live_parent_ceiling() -> Result<()>
         dispatched_row_ceiling(&vault, &clamped),
         AgentCeiling::Proposed
     );
-    let AgentDispatchTarget::Custom(fork_id) = clamped.input.target;
+    let fork_id = clamped
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     let fork = vault.get_agent_definition(&fork_id)?.expect("fork exists");
     assert_eq!(fork.forked_from, Some(auto_child));
     assert_eq!(fork.logical_id, None);
@@ -1838,7 +1862,11 @@ fn fork_registration_is_idempotent_and_never_falls_back_to_the_wider_row() -> Re
     let first = spawn_child(&dispatcher, child_id, parent.attempt.id, 2)?;
     let second = spawn_child(&dispatcher, child_id, parent.attempt.id, 3)?;
     assert_eq!(first.input.target, second.input.target);
-    let AgentDispatchTarget::Custom(fork_id) = first.input.target;
+    let fork_id = first
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     assert_eq!(
         vault
             .entities_by_type(crate::registry::ENTITY_TYPE_AGENT_DEF)?
@@ -2233,12 +2261,20 @@ fn updating_the_source_row_mints_a_distinct_fork_without_a_foreign_collision() -
 
     // Wider request under a Proposed parent mints the attenuated fork.
     let first = spawn(2);
-    let AgentDispatchTarget::Custom(first_fork) = first.input.target;
+    let first_fork = first
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     assert!(first_fork != child_id, "attenuation names the fork row");
 
     // Retry of the SAME revision: idempotent fork reuse, not an error.
     let retry = spawn(3);
-    let AgentDispatchTarget::Custom(retry_fork) = retry.input.target;
+    let retry_fork = retry
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     assert_eq!(retry_fork, first_fork, "same revision reuses its fork");
 
     // A legitimate in-place source update mints a NEW fork; the stale
@@ -2250,7 +2286,11 @@ fn updating_the_source_row_mints_a_distinct_fork_without_a_foreign_collision() -
     updated.version = "1.0.1".to_owned();
     vault.update_agent_definition(&child_id, &updated, t(4), 4)?;
     let after = spawn(5);
-    let AgentDispatchTarget::Custom(updated_fork) = after.input.target;
+    let updated_fork = after
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     assert!(
         updated_fork != child_id && updated_fork != first_fork,
         "an updated source mints a distinct fork"
@@ -2557,8 +2597,8 @@ fn spawn_context_can_only_narrow_and_rides_the_payload_unresolved() -> Result<()
             },
             AgentSpawnContext::default().with_context_spec(widening),
         )
-        .expect_err("a widening descriptor is refused");
-    assert_eq!(refused.kind(), ErrorKind::InvalidAgentDispatchInput);
+        .expect("a widening descriptor parks a proposal");
+    assert!(matches!(refused, AgentDispatchOutcome::ProposedWiden(_)));
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
     Ok(())
 }
@@ -3050,3 +3090,5 @@ fn child_dispatch_inherits_scope_and_refuses_widening_before_enqueue() -> Result
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
     Ok(())
 }
+
+mod widen;

@@ -188,9 +188,16 @@ impl Vault {
     /// start) → [`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody); subject edge missing →
     /// [`Error::EdgeNotFound`].
     pub fn retract_edge_provenance(&self, claim_id: &EntityId, now: u64) -> Result<()> {
-        let mut wtxn = self.store.env.write_txn()?;
+        self.with_write_txn(|wtxn| self.retract_edge_provenance_in_txn(wtxn, claim_id, now))
+    }
 
-        let claim = self.load_provenance_claim_in_txn(&wtxn, claim_id)?;
+    pub(super) fn retract_edge_provenance_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        now: u64,
+    ) -> Result<()> {
+        let claim = self.load_provenance_claim_in_txn(wtxn, claim_id)?;
         if claim.wrapper.lifecycle != ClaimLifecycleStatus::Active {
             return Err(Error::Claim(ClaimError::ProvenanceClaimAlreadyClosed {
                 lifecycle: claim.wrapper.lifecycle.as_str(),
@@ -203,19 +210,18 @@ impl Vault {
         // The subject edge must still exist — the retraction KEEPS it and
         // only refreshes the two flag bytes.
         let subject = claim.subject;
-
         if self
             .store
-            .port_edge_get(&wtxn, &subject.source, subject.kind, &subject.target)?
+            .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
             .is_none()
         {
             return Err(Error::EdgeNotFound);
         }
 
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
         crate::gate::check_edge_provenance_claim_policy(
             &self.store,
-            &wtxn,
+            wtxn,
             &retracted_claim_body,
             &retracted,
             claim.actor_class,
@@ -224,7 +230,7 @@ impl Vault {
 
         // Flags refresh: the D14 winner among REMAINING live Claims, else
         // the contract's retracted stamp with this Claim's persisted class.
-        let survivors = self.live_edge_provenance_claims_in_txn(&wtxn, &subject, Some(claim_id))?;
+        let survivors = self.live_edge_provenance_claims_in_txn(wtxn, &subject, Some(claim_id))?;
         let precedence: Vec<ProvenancePrecedence> = survivors
             .iter()
             .map(StoredProvenanceClaim::precedence)
@@ -239,19 +245,18 @@ impl Vault {
 
         let (op, binding) = provenance_materialization_op(
             &self.store,
-            &wtxn,
+            wtxn,
             *claim_id,
             occurred,
             learned_at,
             data,
         )?;
-        crate::batch::apply_owner_bound_claim_puts(self, &mut wtxn, vec![op], vec![binding], true)?;
-        restamp_edge_flags(&self.store, &mut wtxn, &subject, flags)?;
-        ppr::invalidate_ppr_for_edge(&self.store, &mut wtxn, &subject.source, &subject.target)?;
+        crate::batch::apply_owner_bound_claim_puts(self, wtxn, vec![op], vec![binding], true)?;
+        restamp_edge_flags(&self.store, wtxn, &subject, flags)?;
+        ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
         // The edge bytes changed without an edge BatchOp in this txn, so the
         // graph version is bumped explicitly (apply_ops does it for edge ops).
-        ppr::increment_graph_version(&self.store, &mut wtxn)?;
-        wtxn.commit()?;
+        ppr::increment_graph_version(&self.store, wtxn)?;
         Ok(())
     }
 
@@ -280,14 +285,22 @@ impl Vault {
     /// [`RegistryError::MaintenanceKindNotWritable`](crate::error::RegistryError::MaintenanceKindNotWritable): this method is the ONLY public
     /// door, and it only ever writes the engine-shaped body.
     pub fn ensure_model_substrate(&self, name: &str, version: &str, now: u64) -> Result<EntityId> {
+        self.with_write_txn(|wtxn| self.ensure_model_substrate_in_txn(wtxn, name, version, now))
+    }
+
+    pub(crate) fn ensure_model_substrate_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        name: &str,
+        version: &str,
+        now: u64,
+    ) -> Result<EntityId> {
         validate_model_substrate_field(name, "model name must be non-empty and at most 256 bytes")?;
         validate_model_substrate_field(
             version,
             "model version must be non-empty and at most 256 bytes",
         )?;
         let body = encode_model_entity_body(name, version)?;
-
-        let mut wtxn = self.store.env.write_txn()?;
 
         // GET: scan the MODEL partition of type_index — one row per distinct
         // substrate, so the partition stays tiny — for a (name, version)
@@ -296,12 +309,12 @@ impl Vault {
         let mut existing: Option<EntityId> = None;
         for entry in self
             .store
-            .port_entity_ids_by_type(&wtxn, ENTITY_TYPE_MODEL, None)?
+            .port_entity_ids_by_type(wtxn, ENTITY_TYPE_MODEL, None)?
         {
             let id = entry?;
             let raw = self
                 .store
-                .port_entity_record(&wtxn, &id)?
+                .port_entity_record(wtxn, &id)?
                 .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("type index row without entity"))?;
             let (stored_name, stored_version) =
@@ -336,14 +349,13 @@ impl Vault {
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut wtxn,
+            wtxn,
             ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
         )?;
-        wtxn.commit()?;
         Ok(id)
     }
 

@@ -81,6 +81,8 @@
 //! DECISION derives the failure-mode CLASS ([`LAPSE_FAILURE_MODE`]) and stops
 //! there, because "what to do instead" is not recoverable from a boolean.
 
+mod runner;
+pub use runner::{SessionDistillDrain, drain_pending_session_actor_distills};
 mod distill;
 mod evidence;
 mod rows;
@@ -136,3 +138,9 @@ pub(super) const fn invalid(reason: &'static str) -> Error {
 
 #[cfg(test)]
 mod tests;
+
+mod archive_references;
+pub(crate) use archive_references::actor_archive_references;
+
+mod archive;
+pub(crate) use archive::{imported_actor_body, imported_actor_dependencies};

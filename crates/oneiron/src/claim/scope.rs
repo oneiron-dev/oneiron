@@ -37,6 +37,7 @@ pub(crate) fn claim_corpus_id(body: &ClaimBody) -> Result<Option<CorpusId>> {
 /// opaque contract is not a side effect of adding a recognized entry to it.
 pub(super) fn validate_known_claim_scope_entries(scope: Option<&Value>) -> Result<()> {
     corpus_id_from_scope(scope)?;
+    principal_id_from_scope(scope)?;
     if let Some(Value::Map(entries)) = scope {
         let mut facet_seen = false;
         let mut project_seen = false;
@@ -71,4 +72,32 @@ pub(super) fn validate_known_claim_scope_entries(scope: Option<&Value>) -> Resul
         }
     }
     Ok(())
+}
+
+/// Principal audience for learned preferences. Missing is unknown, not everyone.
+pub(crate) fn claim_principal_id(body: &ClaimBody) -> Result<Option<crate::entity_id::EntityId>> {
+    principal_id_from_scope(body.scope.as_ref())
+}
+
+fn principal_id_from_scope(scope: Option<&Value>) -> Result<Option<crate::entity_id::EntityId>> {
+    let Some(Value::Map(entries)) = scope else {
+        return Ok(None);
+    };
+    let mut principal = None;
+    for (key, value) in entries {
+        if key.as_str() != Some("principal") {
+            continue;
+        }
+        let invalid =
+            || crate::error::Error::InvalidClaimBody("invalid or duplicate principal scope");
+        if principal.is_some() {
+            return Err(invalid());
+        }
+        let Value::Binary(bytes) = value else {
+            return Err(invalid());
+        };
+        let bytes: [u8; 16] = bytes.as_slice().try_into().map_err(|_| invalid())?;
+        principal = Some(crate::entity_id::EntityId::from_bytes(bytes).map_err(|_| invalid())?);
+    }
+    Ok(principal)
 }
