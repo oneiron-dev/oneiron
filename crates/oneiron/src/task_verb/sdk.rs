@@ -3,22 +3,22 @@ use super::TaskAskHandle;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskWaitRequest {
     pub handle: TaskAskHandle,
     pub step_key: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAnswerRequest {
     pub handle: TaskAskHandle,
     pub result_ref: String,
 }
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyRequest {}
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RoomRequest {
     pub room_ref: String,
@@ -27,7 +27,7 @@ pub struct RoomRequest {
     #[serde(default)]
     pub limit: Option<usize>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RoomClaimRequest {
     pub room_ref: String,
@@ -51,7 +51,7 @@ pub struct RoomEntry {
 /// Every field but `query` is optional and defaults to the contract's default,
 /// so an omitting client and a spelling-everything client reach the same
 /// engine call.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecallRequest {
     pub query: String,
     #[serde(default)]
@@ -65,7 +65,7 @@ pub struct RecallRequest {
 }
 
 /// `receipts`'s one input.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReceiptsRequest {
     #[serde(default)]
     pub limit: Option<usize>,

@@ -8394,7 +8394,7 @@
      "purpose": "The one declarative contract table and every surface the macro generates from it",
      "surface": {
       "const": 4,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 6,
       "fn": 11,
       "struct": 1,
@@ -8446,7 +8446,7 @@
      "path": "src/code_run/vault_read/mod.rs",
      "purpose": "One Rust vault-read contract whose behavior does not change with deployment topology (ONE-1433)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 6
      }
     },
@@ -31175,14 +31175,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
       "const": 1,
-      "fn": 19
+      "fn": 21
      }
     },
     {

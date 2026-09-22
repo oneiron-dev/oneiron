@@ -18,6 +18,115 @@ pub const AGENT_VERBS: &[&str] = &[
     "rooms.claim",
     "rooms.speak",
 ];
+pub fn input_schema(verb: &str) -> Option<serde_json::Value> {
+    Some(match verb {
+        "witness" => crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
+        "claim_upsert" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimInput>()
+        }
+        "recall" => crate::code_run::vault_read::request_schema::<RecallRequest>(),
+        "receipts" => crate::code_run::vault_read::request_schema::<ReceiptsRequest>(),
+        "key_value_get" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::KeyValueAddress>()
+        }
+        "key_value_put" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::KeyValuePut>()
+        }
+        "key_value_delete" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::KeyValueAddress>()
+        }
+        "key_value_search" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::KeyValueSearch>()
+        }
+        "key_value_namespaces" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>()
+        }
+        "tasks.ask" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskSpec>()
+        }
+        "tasks.wait" => crate::code_run::vault_read::request_schema::<TaskWaitRequest>(),
+        "tasks.answer" => crate::code_run::vault_read::request_schema::<TaskAnswerRequest>(),
+        "tasks.outcomes" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskHandle>()
+        }
+        "rooms.list" => crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+        "rooms.messages" => crate::code_run::vault_read::request_schema::<RoomRequest>(),
+        "rooms.claim" => crate::code_run::vault_read::request_schema::<RoomClaimRequest>(),
+        "rooms.speak" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>()
+        }
+        _ => return None,
+    })
+}
+pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
+    let schema = input_schema(verb)?;
+    let mut properties = serde_json::Map::new();
+    let required: &[&str] = match verb {
+        "tasks.ask" => {
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.wait" => {
+            properties.insert(
+                "task_ref".to_owned(),
+                schema
+                    .pointer("/properties/handle/properties/task_ref")?
+                    .clone(),
+            );
+            properties.insert(
+                "key".to_owned(),
+                schema.pointer("/properties/step_key")?.clone(),
+            );
+            &["task_ref", "key"]
+        }
+        "tasks.answer" => {
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.outcomes" => {
+            properties.insert(
+                "task_ref".to_owned(),
+                schema.pointer("/properties/task_ref")?.clone(),
+            );
+            &["task_ref"]
+        }
+        "rooms.list" => &[],
+        "rooms.messages" => {
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room_ref")?.clone(),
+            );
+            properties.insert(
+                "turn_ref".to_owned(),
+                schema.pointer("/properties/after")?.clone(),
+            );
+            &["room_ref"]
+        }
+        "rooms.claim" => {
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room_ref")?.clone(),
+            );
+            properties.insert(
+                "turn_ref".to_owned(),
+                schema.pointer("/properties/turn_ref")?.clone(),
+            );
+            &["room_ref", "turn_ref"]
+        }
+        "rooms.speak" => {
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/conversation_ref")?.clone(),
+            );
+            &["spec", "room_ref"]
+        }
+        _ => return None,
+    };
+    Some(
+        serde_json::json!({"type": "object", "additionalProperties": false, "required": required, "properties": properties}),
+    )
+}
 pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> {
     match verb {
         "witness" => {

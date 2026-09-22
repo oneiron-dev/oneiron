@@ -34,6 +34,7 @@ class AgentSdkProjectionTests(unittest.TestCase):
         spec.loader.exec_module(generator)
         generator.ROWS = [row for row in generator.ROWS if row["name"] != "rooms.claim"]
         outputs = generator.outputs()
+        self.assertNotIn('"rooms.claim"', outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
         self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"])
         self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/mcp/agent_catalog.rs"])
 
@@ -45,6 +46,7 @@ class AgentSdkProjectionTests(unittest.TestCase):
             if row["name"] == "rooms.claim":
                 row["mcp"] = "none"
         outputs = generator.outputs()
+        self.assertIn('"rooms.claim"', outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
         self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"])
         self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/mcp/agent_catalog.rs"])
         self.assertIn('fn rooms_claim(', outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])

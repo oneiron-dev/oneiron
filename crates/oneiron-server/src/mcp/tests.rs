@@ -4009,3 +4009,82 @@ fn claim_edit_accepts_and_preserves_relationship_scope() {
     let decoded: McpEditToolArgs = serde_json::from_value(wire).unwrap();
     assert_eq!(decoded.relationship, args.relationship);
 }
+
+#[test]
+fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
+    let manifest: Value =
+        serde_json::from_str(include_str!("../../../../scripts/sdk/agent-verbs.json"))
+            .expect("manifest");
+    let surface = McpRegisteredSurface::register(McpSurfaceMode::ToolFirst).expect("surface");
+    for row in manifest["verbs"].as_array().expect("verb rows") {
+        let name = row["name"].as_str().expect("verb name");
+        let input = oneiron::task_verb::sdk::input_schema(name).expect("input schema");
+        assert_eq!(input["type"], "object", "{name}");
+        if row["mcp"] == "none" {
+            assert!(oneiron::task_verb::sdk::mcp_arguments_schema(name).is_none());
+            assert!(surface.resolve(name).is_none());
+            continue;
+        }
+        let tool = surface.resolve(name).expect("projected tool");
+        let schema = tool.schema().input_schema;
+        let arguments = &schema["properties"]["arguments"];
+        let projected = oneiron::task_verb::sdk::mcp_arguments_schema(name).expect("arguments");
+        assert_eq!(arguments["required"], projected["required"], "{name}");
+        assert_eq!(arguments["additionalProperties"], false, "{name}");
+        for (field, path) in row["mcp_fields"].as_object().expect("argument paths") {
+            let path = path.as_str().expect("path");
+            let pointer = if path == "$" {
+                String::new()
+            } else {
+                path.trim_start_matches('=')
+                    .split('.')
+                    .map(|part| format!("/properties/{part}"))
+                    .collect()
+            };
+            let expected = input.pointer(&pointer).expect("typed input field");
+            assert_eq!(&projected["properties"][field], expected, "{name}.{field}");
+            let shipped = &arguments["properties"][field];
+            let typed = shipped.pointer("/allOf/0").unwrap_or(shipped);
+            assert_eq!(typed, expected, "{name}.{field}");
+        }
+    }
+    assert!(oneiron::task_verb::sdk::input_schema("tasks.missing").is_none());
+    assert!(oneiron::task_verb::sdk::mcp_arguments_schema("tasks.missing").is_none());
+}
+
+#[test]
+fn agent_verb_schema_publishes_nested_types_and_wire_defaults() {
+    let surface = McpRegisteredSurface::register(McpSurfaceMode::ToolFirst).expect("surface");
+    let speak = surface
+        .resolve("rooms.speak")
+        .expect("speak")
+        .schema()
+        .input_schema;
+    let spec = &speak["properties"]["arguments"]["properties"]["spec"];
+    assert_eq!(spec["properties"]["messages"]["type"], "array");
+    let message = &spec["properties"]["messages"]["items"];
+    assert_eq!(
+        message["properties"]["author"]["enum"],
+        json!(["user", "companion", "system"])
+    );
+    assert_eq!(message["properties"]["is_visible"]["type"], "boolean");
+    assert!(
+        spec["required"]
+            .as_array()
+            .expect("required")
+            .contains(&json!("occurred_at"))
+    );
+    let wait = oneiron::task_verb::sdk::mcp_arguments_schema("tasks.wait").expect("wait");
+    assert_eq!(wait["properties"]["task_ref"]["type"], "string");
+    assert_eq!(wait["properties"]["key"]["type"], "string");
+    let room = oneiron::task_verb::sdk::input_schema("rooms.messages").expect("room");
+    assert_eq!(room["required"], json!(["room_ref"]));
+    assert_eq!(room["properties"]["limit"]["default"], Value::Null);
+    let keyed = oneiron::task_verb::sdk::input_schema("key_value_search").expect("keyed");
+    assert_eq!(keyed["properties"]["limit"]["default"], 100);
+    assert_eq!(keyed["properties"]["offset"]["default"], 0);
+    assert_eq!(keyed["additionalProperties"], false);
+    let empty = oneiron::task_verb::sdk::mcp_arguments_schema("rooms.list").expect("empty");
+    assert_eq!(empty["properties"], json!({}));
+    assert_eq!(empty["required"], json!([]));
+}

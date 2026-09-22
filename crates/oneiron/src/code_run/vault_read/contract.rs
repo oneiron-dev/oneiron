@@ -327,10 +327,13 @@ pub enum VaultReadAdapterKind {
     Cloud,
 }
 
-fn request_schema<T: schemars::JsonSchema>() -> serde_json::Value {
+pub(crate) fn request_schema<T: schemars::JsonSchema>() -> serde_json::Value {
     let mut settings = schemars::r#gen::SchemaSettings::default();
     settings.inline_subschemas = true;
     let mut schema = settings.into_generator().into_root_schema_for::<T>();
     schema.meta_schema = None;
-    serde_json::to_value(schema).expect("native request schema is JSON data")
+    match serde_json::to_value(schema) {
+        Ok(value) => value,
+        Err(_) => serde_json::Value::Bool(false),
+    }
 }

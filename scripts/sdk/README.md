@@ -34,6 +34,12 @@ to all mapped fields; `mcp_required_fields` can narrow that set. The generated
 MCP dispatcher calls the same typed SDK functions as the other transports and
 serializes their outputs without adding a per-verb result shape.
 
+Every row's `input` also selects its schemars input schema. MCP projects the
+same `mcp_fields` paths into that schema, including `$` and `=field`, and keeps
+the common envelope constraints. An unresolved input field refuses tool
+construction instead of advertising an unconstrained argument. Domain validation
+still runs at dispatch; schema derivation does not replace the gate.
+
 A bounded output supplies `page: {"rows": "rows", "cursor": "next_after"}`.
 The cursor's presence, not a full row count, decides source exhaustion. A vector
 output is an exhaustive set. MCP can split either result into retained transport

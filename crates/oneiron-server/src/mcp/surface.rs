@@ -215,6 +215,11 @@ fn project_verb_row(
     let Some(binding) = verb_binding(family, verb) else {
         return Err(unprojectable);
     };
+    if oneiron::task_verb::sdk::AGENT_VERBS.contains(&row)
+        && oneiron::task_verb::sdk::mcp_arguments_schema(row).is_none()
+    {
+        return Err(unprojectable);
+    }
     Ok(McpGeneratedVerbTool {
         name: row,
         family,

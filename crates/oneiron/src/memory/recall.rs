@@ -41,7 +41,7 @@ pub(super) const RECALL_TOKEN_BUDGET: usize = 4000;
 
 /// Retrieval effort dial (S6). Deliberately distinct from `llm.rs`
 /// `ReasoningEffort` (the LLM dial) and `context_pack.rs` `FieldProfile`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Effort {
     /// Available vector, text, phonetic and temporal signals, then blend.
@@ -105,7 +105,7 @@ impl Effort {
 
 /// Recall scoping (S5): world/facet narrowing only — unset means the vault
 /// floor; the scope never widens beyond it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecallScope {
     /// WORLD entity ref; scopes to that world plus base reality.
     pub world_ref: Option<String>,

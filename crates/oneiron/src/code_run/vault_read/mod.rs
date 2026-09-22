@@ -46,6 +46,7 @@ pub use self::context_pack::{
     CoreContextPackRequest, CoreContextPackResponse, CoreContextPackSectionTokenStats,
     CoreContextPackSignal, CoreContextPackStats, CoreContextPackTokenStats, CoreContextPackVad,
 };
+pub(crate) use self::contract::request_schema;
 pub use self::contract::{
     MEMORY_VERBS, VAULT_READ_METHOD_MAP, VaultReadAdapterKind, VaultReadAvailability,
     VaultReadClient, VaultReadMethod, VaultReadMethodMapping, VaultReadRequest, VaultReadResponse,

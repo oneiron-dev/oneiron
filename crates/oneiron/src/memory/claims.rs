@@ -33,7 +33,7 @@ const MULTI_CARDINALITY_VALUE_KEY: &str = "question_id";
 
 /// One claim to commit. `approval` is deliberately NOT settable by callers
 /// (pin 2); the facade computes the request and the gate decides.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClaimInput {
     /// Caller-supplied deterministic 32-hex claim id; `None` ⇒ generated.
     /// Load-bearing for ONE-258's idempotent backfill.

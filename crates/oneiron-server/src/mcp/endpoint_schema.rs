@@ -117,11 +117,21 @@ pub(super) fn execute_code_tool_schema() -> Value {
 /// admitting an omission the runtime rejects.
 pub(super) fn verb_tool_schema(tool: McpGeneratedVerbTool) -> Value {
     let allowed = verb_argument_fields(tool.binding);
+    let typed = oneiron::task_verb::sdk::mcp_arguments_schema(tool.name);
     let mut properties = serde_json::Map::new();
     for field in allowed {
         let schema = match (tool.binding, *field) {
             (super::surface::McpVerbBinding::Memory(method), "request") => method.request_schema(),
             _ => verb_argument_field_schema(field),
+        };
+        let schema = match typed
+            .as_ref()
+            .and_then(|typed| typed.get("properties"))
+            .and_then(|properties| properties.get(*field))
+        {
+            Some(input) if schema == json!({}) => input.clone(),
+            Some(input) => json!({ "allOf": [input, schema] }),
+            None => schema,
         };
         properties.insert((*field).to_owned(), schema);
     }

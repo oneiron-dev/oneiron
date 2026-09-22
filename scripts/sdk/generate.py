@@ -408,6 +408,19 @@ def mcp_dispatch():
 
 def outputs():
     core = HEADER + 'pub const AGENT_VERBS: &[&str] = &[' + ','.join(json.dumps(r['name']) for r in ROWS) + '];\n'
+    core += "pub fn input_schema(verb: &str) -> Option<serde_json::Value> { Some(match verb {\n"
+    for r in ROWS:
+        core += f'{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["input"]}>(),\n'
+    core += '_ => return None, }) }\n'
+    core += "pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> { let schema = input_schema(verb)?; let mut properties = serde_json::Map::new(); let required: &[&str] = match verb {\n"
+    for r in ROWS:
+        if r['mcp'] == 'none': continue
+        core += f'{json.dumps(r["name"])} => {{\n'
+        for field, path in r['mcp_fields'].items():
+            pointer = '' if path == '$' else ''.join('/properties/' + part for part in path.removeprefix('=').split('.'))
+            core += f'properties.insert({json.dumps(field)}.to_owned(), schema.pointer({json.dumps(pointer)})?.clone());\n'
+        core += '&' + json.dumps(list(r.get('mcp_required_fields', r['mcp_fields']))) + '},\n'
+    core += '_ => return None, }; Some(serde_json::json!({"type": "object", "additionalProperties": false, "required": required, "properties": properties})) }\n'
     core += "pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> { match verb {\n"
     for r in ROWS:
         checks = r.get('admission', {}).get('validate', '')

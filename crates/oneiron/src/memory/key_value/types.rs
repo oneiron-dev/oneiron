@@ -2,7 +2,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Exact address. Segments are data, never wildcard or path syntax.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct KeyValueAddress {
     pub namespace: Vec<String>,
@@ -13,7 +15,7 @@ pub struct KeyValueAddress {
 /// Replacement preserves claim source-trust rules: generated output cannot
 /// supersede user-stated truth, even for the same actor/address. Never relabel
 /// provenance to work around refusal; use a separate key for generated output.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KeyValuePut {
     pub namespace: Vec<String>,
@@ -56,7 +58,7 @@ pub struct KeyValueDeleteReceipt {
 }
 
 /// Lexical, exact-segment namespace search, not ranked recall.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KeyValueSearch {
     #[serde(default)]
@@ -72,7 +74,7 @@ pub struct KeyValueSearch {
 }
 
 /// Enumerates non-empty namespaces in lexical order; pages are live snapshots.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KeyValueNamespaces {
     #[serde(default)]

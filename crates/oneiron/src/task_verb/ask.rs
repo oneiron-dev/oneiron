@@ -15,7 +15,7 @@ use crate::{EntityId, Error, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(super) const ASKS: &[u8] = b"tasks.ask.v1/";
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskSpec {
     pub question: serde_json::Value,
@@ -24,7 +24,7 @@ pub struct TaskAskSpec {
     /// Ask-local binding into the shared versioned question/outcome substrate.
     pub outcome_binding: Option<OutcomeBinding>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TaskAskHandle {
     pub task_ref: String,
 }
