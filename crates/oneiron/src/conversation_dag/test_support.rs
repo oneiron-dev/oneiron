@@ -22,16 +22,27 @@ pub fn put_dag_test_policy(vault: &Vault, actor: WriteActor, allow: bool) -> cra
     let bytes = rmp_serde::to_vec_named(&policy)
         .map_err(|_| crate::Error::InvariantViolation("test policy encode"))?;
     let id: EntityId = crate::gate::default_policy_manifest_id()?;
-    let mut row = vec![crate::registry::ENTITY_TYPE_POLICY_MANIFEST];
-    for at in [1_u64; 3] {
-        row.extend_from_slice(&at.to_be_bytes());
-    }
-    row.extend_from_slice(&bytes);
     vault.with_write_txn(|txn| {
-        vault.store.entities.put(txn, id.as_bytes(), &row)?;
-        let type_key =
-            crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, &id);
-        vault.store.type_index.put(txn, &type_key, &[])?;
-        Ok(())
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                occurred: crate::TimeRange { start: 1, end: 1 },
+                learned_at: 1,
+                data: bytes,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            true,
+            true,
+        )
     })
 }

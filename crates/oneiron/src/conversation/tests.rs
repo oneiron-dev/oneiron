@@ -947,6 +947,36 @@ fn summary_families_and_unavailable_dependencies_do_not_hide_healthy_hits() {
     let read = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new(bob.to_hex()).unwrap())
         .for_audience(&[bob]);
+    assert!(vault.record_visible_to(summary, bob).unwrap());
+    assert!(read.get(&summary).unwrap().is_none());
+    let read_scope = crate::federation::scope_codec::encode_scope_value(
+        &crate::federation::scope_codec::read_preset(),
+    )
+    .unwrap();
+    let policy = rmpv::Value::Map(vec![
+        ("schema_version".into(), "1.2".into()),
+        ("pack_id".into(), "summary-reader-test".into()),
+        ("pack_version".into(), "1".into()),
+        ("min_engine_version".into(), "0.0.0".into()),
+        ("defaults".into(), rmpv::Value::Map(vec![])),
+        ("rules".into(), rmpv::Value::Array(vec![])),
+        ("actor_ceilings".into(), rmpv::Value::Array(vec![])),
+        (
+            "scoped_grants".into(),
+            rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                ("actor_ref".into(), bob.to_hex().into()),
+                ("effector".into(), "core:read".into()),
+                ("scope".into(), read_scope),
+                (
+                    "selectors".into(),
+                    rmpv::Value::Map(vec![("world_ref".into(), "base".into())]),
+                ),
+                ("receipt_required".into(), false.into()),
+            ])]),
+        ),
+    ]);
+    crate::test_util::put_policy_manifest_bytes(&vault, EntityId::now(), &encode(&policy).unwrap())
+        .unwrap();
     for id in [
         summary,
         landed.claim,

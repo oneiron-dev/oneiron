@@ -556,66 +556,49 @@ fn reply_pointer_rejects_foreign_target_and_reserved_body_fields_atomically() {
 
 #[test]
 fn thread_walk_rejects_cycles_multiple_targets_and_foreign_replies() {
-    let (_dir, vault, conversation, actor) = fixture();
-    let root = vault
-        .append_dag_record(&input(conversation, None, true, actor))
-        .unwrap()
-        .id;
-    let reply = vault
-        .reply_in_thread(root, &input(conversation, None, false, actor))
-        .unwrap()
-        .id;
-    vault
-        .batch()
-        .edge_with_value_fields(&root, EdgeKind::RepliesTo, &reply, super::writes::value(1))
-        .commit()
-        .unwrap();
-    assert_eq!(
-        vault.thread(root).unwrap_err().kind(),
-        ErrorKind::CycleDetected
-    );
-    vault
-        .delete_edge(&root, EdgeKind::RepliesTo, &reply)
-        .unwrap();
-    let other = EntityId::now();
-    vault
-        .put_entity(&other, ENTITY_TYPE_CONVERSATION, time(1), 1, &body("other"))
-        .unwrap();
-    let foreign = vault
-        .append_dag_record(&input(other, None, true, actor))
-        .unwrap()
-        .id;
-    vault
-        .batch()
-        .edge_with_value_fields(
-            &reply,
-            EdgeKind::RepliesTo,
-            &foreign,
-            super::writes::value(1),
-        )
-        .commit()
-        .unwrap();
-    assert_eq!(
-        vault.thread(root).unwrap_err().kind(),
-        ErrorKind::InvalidConversationDag
-    );
-    vault
-        .delete_edge(&reply, EdgeKind::RepliesTo, &foreign)
-        .unwrap();
-    vault
-        .batch()
-        .edge_with_value_fields(
-            &foreign,
-            EdgeKind::RepliesTo,
-            &root,
-            super::writes::value(1),
-        )
-        .commit()
-        .unwrap();
-    assert_eq!(
-        vault.thread(root).unwrap_err().kind(),
-        ErrorKind::DagParentOutsideConversation
-    );
+    for expected in [
+        ErrorKind::CycleDetected,
+        ErrorKind::InvalidConversationDag,
+        ErrorKind::DagParentOutsideConversation,
+    ] {
+        let (_dir, vault, conversation, actor) = fixture();
+        let root = vault
+            .append_dag_record(&input(conversation, None, true, actor))
+            .unwrap()
+            .id;
+        let reply = vault
+            .reply_in_thread(root, &input(conversation, None, false, actor))
+            .unwrap()
+            .id;
+        let (source, target) = if expected == ErrorKind::CycleDetected {
+            (root, reply)
+        } else {
+            let other = EntityId::now();
+            vault
+                .put_entity(&other, ENTITY_TYPE_CONVERSATION, time(1), 1, &body("other"))
+                .unwrap();
+            let foreign = vault
+                .append_dag_record(&input(other, None, true, actor))
+                .unwrap()
+                .id;
+            if expected == ErrorKind::InvalidConversationDag {
+                (reply, foreign)
+            } else {
+                (foreign, root)
+            }
+        };
+        vault
+            .batch()
+            .edge_with_value_fields(
+                &source,
+                EdgeKind::RepliesTo,
+                &target,
+                super::writes::value(1),
+            )
+            .commit()
+            .unwrap();
+        assert_eq!(vault.thread(root).unwrap_err().kind(), expected);
+    }
 }
 
 #[test]
