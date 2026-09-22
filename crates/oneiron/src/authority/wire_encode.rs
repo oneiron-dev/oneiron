@@ -56,67 +56,14 @@ pub(super) fn entry_value_with_genesis_delay(
 
 pub(super) fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool) -> Value {
     match op {
-        AuthorityOp::MintDoorSlip(scope) => Value::Map(vec![
-            (Value::from(OP_KEY_KIND), Value::from("mint_door_slip")),
-            (
-                Value::from("holder_ref"),
-                Value::from(scope.holder_ref.clone()),
-            ),
-            (
-                Value::from("verb_class"),
-                Value::from(scope.verb_class.clone()),
-            ),
-            (
-                Value::from("records"),
-                Value::Array(scope.records.iter().cloned().map(Value::from).collect()),
-            ),
-            (
-                Value::from("channels"),
-                Value::Array(scope.channels.iter().cloned().map(Value::from).collect()),
-            ),
-            (Value::from("parent"), option_hash_value(scope.parent)),
-            (
-                Value::from("pact"),
-                scope.pact.as_ref().map_or(Value::Nil, |(grant, bound)| {
-                    Value::Array(vec![
-                        Value::from(grant.to_hex()),
-                        federation_direction_scope_value(bound),
-                    ])
-                }),
-            ),
-            (Value::from("issued_at"), Value::from(scope.issued_at)),
-            (Value::from("expires_at"), Value::from(scope.expires_at)),
-            (Value::from("single_use"), Value::from(scope.single_use)),
-        ]),
-        AuthorityOp::SpendDoorSlip { mint_hash } | AuthorityOp::RevokeDoorSlip { mint_hash } => {
-            Value::Map(vec![
-                (
-                    Value::from(OP_KEY_KIND),
-                    Value::from(if matches!(op, AuthorityOp::SpendDoorSlip { .. }) {
-                        "spend_door_slip"
-                    } else {
-                        "revoke_door_slip"
-                    }),
-                ),
-                (Value::from("mint_hash"), binary_value(*mint_hash)),
-            ])
-        }
-        AuthorityOp::SlipMint(action) => Value::Map(vec![
-            (Value::from(OP_KEY_KIND), Value::from("slip_mint")),
-            (
-                Value::from("slip"),
-                Value::Binary(
-                    serde_json::to_vec(action).expect("slip fields have infallible JSON encodings"),
-                ),
-            ),
-        ]),
+        AuthorityOp::SlipMint(action) => super::slip_wire::slip_mint_value(action),
         AuthorityOp::SlipRevoke { slip_id } => Value::Map(vec![
-            (Value::from(OP_KEY_KIND), Value::from("slip_revoke")),
-            (Value::from("slip_id"), binary_value(*slip_id)),
+            (Value::from(OP_KEY_KIND), Value::from(OP_KIND_SLIP_REVOKE)),
+            (Value::from(SLIP_KEY_SLIP_ID), binary_value(*slip_id)),
         ]),
         AuthorityOp::SlipConsume { slip_id } => Value::Map(vec![
-            (Value::from(OP_KEY_KIND), Value::from("slip_consume")),
-            (Value::from("slip_id"), binary_value(*slip_id)),
+            (Value::from(OP_KEY_KIND), Value::from(OP_KIND_SLIP_CONSUME)),
+            (Value::from(SLIP_KEY_SLIP_ID), binary_value(*slip_id)),
         ]),
         AuthorityOp::Genesis {
             device,

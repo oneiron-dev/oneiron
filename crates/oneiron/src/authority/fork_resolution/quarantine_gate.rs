@@ -90,9 +90,6 @@ pub(super) fn fork_winner_post_quarantine_issue(
         // RevokeActor only raises a revocation watermark: it strips authority
         // and can never mint it, so re-scrutinizing it could only resurrect a
         // binding the quarantined key wanted gone.
-        | AuthorityOp::MintDoorSlip(_)
-        | AuthorityOp::SpendDoorSlip { .. }
-        | AuthorityOp::RevokeDoorSlip { .. }
         | AuthorityOp::RevokeActor { .. } => {}
     }
     None

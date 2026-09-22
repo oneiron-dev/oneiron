@@ -30,6 +30,12 @@ pub struct SlipClaims {
     pub channels: BTreeSet<String>,
     pub actor_class: Option<String>,
     pub org_ref: Option<String>,
+    #[serde(
+        default,
+        serialize_with = "serialize_pact",
+        deserialize_with = "deserialize_pact"
+    )]
+    pub pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
 }
 
 /// A narrowing appended by a holder, without contacting the issuing host.
@@ -42,6 +48,12 @@ pub struct SlipCaveat {
     pub single_use: bool,
     pub records: Option<BTreeSet<String>>,
     pub channels: Option<BTreeSet<String>>,
+    #[serde(
+        default,
+        serialize_with = "serialize_pact",
+        deserialize_with = "deserialize_pact"
+    )]
+    pub pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
 }
 
 /// One serializable slip. Only the FINAL MAC travels: a prior MAC would let a
@@ -77,6 +89,9 @@ impl SlipMintAction {
 }
 impl SlipClaims {
     pub fn validate(&self) -> Result<()> {
+        if let Some((_, bound)) = &self.pact {
+            bound.validate()?;
+        }
         if self.slip_id == [0; 32]
             || self.vault_id == [0; 32]
             || self.parent_id == Some(self.slip_id)
@@ -90,7 +105,7 @@ impl SlipClaims {
             || self
                 .actor_class
                 .as_deref()
-                .is_some_and(|v| !matches!(v, "human" | "agent" | "system"))
+                .is_some_and(|v| !super::ACTOR_BINDING_CLASSES.contains(&v))
             || self
                 .org_ref
                 .as_deref()
@@ -101,6 +116,35 @@ impl SlipClaims {
                 .chain(self.channels.iter())
                 .any(|v| v.is_empty() || v.len() > 512)
             || canonical(self)?.len() > MAX_WIRE_BYTES / 2
+        {
+            return Err(invalid_authority());
+        }
+        Ok(())
+    }
+    pub(crate) fn witness_pact(&self, fold: &AuthorityFold) -> Result<()> {
+        let Some((grant, requested)) = &self.pact else {
+            return Ok(());
+        };
+        let pact = fold.pact_for_grant(grant).ok_or_else(invalid_authority)?;
+        let effective = requested.intersect(&pact.effective_scope);
+        if pact.status != super::FederationPactStatus::Active
+            || fold
+                .federation_grant_bindings
+                .get(grant)
+                .is_none_or(|ids| ids.len() != 1)
+            || !requested.is_narrowing_of(&effective)
+            || matches!(
+                effective.worlds,
+                crate::federation::FederationScopeWorlds::Bottom
+            )
+            || matches!(
+                effective.facets,
+                crate::federation::FederationScopeFacets::Bottom
+            )
+            || matches!(
+                effective.bands,
+                crate::federation::FederationScopeBands::Bottom
+            )
         {
             return Err(invalid_authority());
         }
@@ -117,6 +161,11 @@ impl SlipClaims {
             && self.holder_ref == parent.holder_ref
             && self.actor_class == parent.actor_class
             && self.org_ref == parent.org_ref
+            && parent.pact.as_ref().is_none_or(|(grant, bound)| {
+                self.pact.as_ref().is_some_and(|(child_grant, child)| {
+                    child_grant == grant && child.is_narrowing_of(bound)
+                })
+            })
             && (self.records == parent.records
                 || (!self.records.is_empty()
                     && ((parent.records.is_empty() && parent.channels.is_empty())
@@ -269,6 +318,16 @@ impl CapabilitySlip {
                 effective.ttl_secs = effective.ttl_secs.min(ttl);
             }
             effective.single_use |= caveat.single_use;
+            if let Some((grant, bound)) = &caveat.pact {
+                bound.validate()?;
+                effective.pact = Some(match &effective.pact {
+                    Some((prior_grant, prior)) if prior_grant == grant => {
+                        (*grant, prior.intersect(bound))
+                    }
+                    Some(_) => return Err(invalid_authority()),
+                    None => (*grant, bound.clone()),
+                });
+            }
             if let Some(records) = &caveat.records {
                 effective.records = if records_constrained {
                     effective.records.intersection(records).cloned().collect()
@@ -297,6 +356,7 @@ impl CapabilitySlip {
         {
             return Err(invalid_authority());
         }
+        effective.witness_pact(fold)?;
         effective.ttl_secs = effective.ttl_secs.min(effective.expires_at - now);
         Ok(VerifiedSlip { claims: effective })
     }
@@ -330,3 +390,40 @@ pub(super) fn unhex(value: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 #[path = "slip_tests.rs"]
 mod tests;
+
+fn serialize_pact<S: serde::Serializer>(
+    pact: &Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    pact.as_ref()
+        .map(|(grant, bound)| {
+            super::encode_value(&crate::federation::federation_direction_scope_value(bound))
+                .map(|bytes| (*grant, bytes))
+        })
+        .transpose()
+        .map_err(serde::ser::Error::custom)?
+        .serialize(serializer)
+}
+
+fn deserialize_pact<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<
+    Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    D::Error,
+> {
+    let wire = Option::<(crate::federation::ScopeId, Vec<u8>)>::deserialize(deserializer)?;
+    wire.map(|(grant, bytes)| {
+        let mut cursor = std::io::Cursor::new(&bytes);
+        let value = rmpv::decode::read_value(&mut cursor).map_err(serde::de::Error::custom)?;
+        let scope = crate::federation::decode_federation_direction_scope_value(&value)
+            .map_err(serde::de::Error::custom)?;
+        let canonical =
+            super::encode_value(&crate::federation::federation_direction_scope_value(&scope))
+                .map_err(serde::de::Error::custom)?;
+        if canonical != bytes {
+            return Err(serde::de::Error::custom("noncanonical pact bound"));
+        }
+        Ok((grant.0, scope))
+    })
+    .transpose()
+}

@@ -65,8 +65,6 @@ pub(super) fn fold_entry_state(
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
         };
         let mut state = FoldState {
-            door_slips: BTreeMap::new(),
-            spent_door_slips: BTreeSet::new(),
             slips: SlipAuthorityState::default(),
             vault_id,
             roster: BTreeMap::new(),
@@ -235,26 +233,9 @@ pub(super) fn fold_entry_state(
     }
     if matches!(
         entry.op,
-        AuthorityOp::MintDoorSlip(_)
-            | AuthorityOp::SpendDoorSlip { .. }
-            | AuthorityOp::RevokeDoorSlip { .. }
-    ) {
-        // A consent cosigner cannot launder an agent primary into a mint issuer.
-        if !state
-            .roster
-            .get(&signer)
-            .is_some_and(folded_device_can_authority_consent)
-            || !apply_door_slip(&mut state, &entry.op, hash, &signer)
-        {
-            return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
-        }
-        state.seqs.insert(signer, entry.seq);
-        return EntryFold::Ready(state);
-    }
-    if matches!(
-        entry.op,
         AuthorityOp::SlipMint(_) | AuthorityOp::SlipRevoke { .. } | AuthorityOp::SlipConsume { .. }
     ) {
+        // A consent cosigner cannot launder an agent primary into a mint issuer.
         if state.slips.apply(entry, hash).is_err() {
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
         }
@@ -329,9 +310,6 @@ pub(super) fn fold_entry_state(
         | AuthorityOp::FederationLifecycle(_)
         | AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
-        | AuthorityOp::MintDoorSlip(_)
-        | AuthorityOp::SpendDoorSlip { .. }
-        | AuthorityOp::RevokeDoorSlip { .. }
         | AuthorityOp::RevokeActor { .. } => {}
     }
     if !state_has_authority_consent_for_entry(&state, entry, context, hash) {
@@ -556,7 +534,6 @@ fn op_is_delayable_widen(
 pub(super) fn op_applies_despite_pending_widen(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::RevokeActor { .. }
-        | AuthorityOp::RevokeDoorSlip { .. }
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. } => true,
         AuthorityOp::Genesis { .. }
@@ -572,9 +549,7 @@ pub(super) fn op_applies_despite_pending_widen(op: &AuthorityOp) -> bool {
         | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
         | AuthorityOp::BindActor { .. }
-        | AuthorityOp::RebindActor { .. }
-        | AuthorityOp::MintDoorSlip(_)
-        | AuthorityOp::SpendDoorSlip { .. } => false,
+        | AuthorityOp::RebindActor { .. } => false,
     }
 }
 
@@ -600,9 +575,6 @@ fn op_can_be_pending_widen(state: &FoldState, op: &AuthorityOp) -> bool {
         // owner-capable bound key, so no authority widens at bind time.
         | AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
-        | AuthorityOp::MintDoorSlip(_)
-        | AuthorityOp::SpendDoorSlip { .. }
-        | AuthorityOp::RevokeDoorSlip { .. }
         | AuthorityOp::RevokeActor { .. } => false,
     }
 }
@@ -629,9 +601,6 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::FederationLifecycle(_)
         | AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
-        | AuthorityOp::MintDoorSlip(_)
-        | AuthorityOp::SpendDoorSlip { .. }
-        | AuthorityOp::RevokeDoorSlip { .. }
         | AuthorityOp::RevokeActor { .. } => false,
     }
 }

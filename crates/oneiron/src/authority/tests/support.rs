@@ -472,8 +472,6 @@ pub(super) fn single_owner_state(
     let parent = [seed.wrapping_add(90); 32];
     let vault_id = [seed.wrapping_add(91); 32];
     let state = FoldState {
-        door_slips: BTreeMap::new(),
-        spent_door_slips: BTreeSet::new(),
         slips: SlipAuthorityState::default(),
         vault_id,
         roster: BTreeMap::from([(
@@ -830,8 +828,6 @@ pub(super) fn fold_state_with_pact(
 ) -> FoldState {
     let owner_key = authority_key_from_ed(&fixture.owner);
     let mut state = FoldState {
-        door_slips: BTreeMap::new(),
-        spent_door_slips: BTreeSet::new(),
         slips: SlipAuthorityState::default(),
         vault_id: fixture.vault_id,
         roster: BTreeMap::from([(

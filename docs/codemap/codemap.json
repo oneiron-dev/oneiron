@@ -1677,7 +1677,7 @@
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
       "const": 15,
-      "crate-vis": 46,
+      "crate-vis": 73,
       "type": 2
      }
     },
@@ -1711,31 +1711,6 @@
      "surface": {
       "crate-vis": 7,
       "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/door_append.rs",
-     "purpose": "Door-local signing, but authority-log-owned immutable ledger and atomic admission",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "AuthorityDoorSlip",
-      "FoldedDoorSlip"
-     ],
-     "path": "src/authority/door_slip.rs",
-     "purpose": "Signed capability mints and monotone consumption in the authority DAG",
-     "surface": {
-      "crate-vis": 3,
-      "fn": 1,
-      "struct": 2
      }
     },
     {
@@ -1919,7 +1894,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 4,
-      "re-export": 20
+      "re-export": 19
      }
     },
     {
@@ -1954,7 +1929,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -2005,7 +1980,7 @@
      "path": "src/authority/slip.rs",
      "purpose": "Version-two capability slips: chained keyed MACs, offline narrowing and holder proof",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 10,
       "struct": 5
      }
@@ -2059,7 +2034,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/authority/slip_tests.rs",
@@ -2078,6 +2053,16 @@
       "crate-vis": 8,
       "fn": 13,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip_wire.rs",
+     "purpose": "Field-by-field signed capability claims and six-axis Scope wire codec",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -2136,14 +2121,6 @@
      "notable": [],
      "path": "src/authority/tests/critical_confirm.rs",
      "purpose": "Critical-write confirm fold, wire strictness and poisoning",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/authority/tests/door_slip.rs",
-     "purpose": "Signed DAG replay and narrowing for door capability mints",
      "surface": {}
     },
     {
@@ -12071,7 +12048,7 @@
      "path": "src/credential_door/door_authority.rs",
      "purpose": "Canonical mint witnesses, atomic spend, and one-shot mint composition",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
@@ -12091,7 +12068,7 @@
      "path": "src/credential_door/door_credential.rs",
      "purpose": "DoorCredential attenuation, lifetime math, and floor-naming evaluation",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 19
      }
     },
     {
@@ -12131,7 +12108,7 @@
      "path": "src/credential_door/mod.rs",
      "purpose": "ARCH-0068 RC4 — the credential door (CSTDY-02)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -12147,7 +12124,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/credential_door/tests/authority.rs",
-     "purpose": "Credential authority, replay, consent, and federation-scope regression cases",
+     "purpose": "Credential capability replay, consent, and scope regression cases",
      "surface": {}
     },
     {
@@ -12155,9 +12132,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/credential_door/verb_class.rs",
-     "purpose": "Closed verb-class registry",
+     "purpose": "Scope presets for the credential door's seven action classes",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -33731,7 +33708,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 69,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34965,8 +34942,8 @@
    },
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
-   "test_files": 707
+   "source_files": 2067,
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [

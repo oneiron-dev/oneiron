@@ -1,8 +1,6 @@
 //! Checkout redemption rights. Tickets carry only id/epoch, never a secret.
 
-use super::door_types::{
-    CredentialDoorError, DOOR_RECEIVE_PACK_EFFECTOR, DoorResult, log_unreachable, repo_record,
-};
+use super::door_types::{CredentialDoorError, DoorResult, log_unreachable, repo_record};
 use super::{CredentialDoorService, DoorCredential};
 use crate::checkout::lease::{CheckoutId, CheckoutLeaseAct, CheckoutLeaseState, load_act_in_txn};
 use crate::codebase::RepoRef;
@@ -69,26 +67,15 @@ impl CredentialDoorService {
     }
 
     fn checkout_view(ticket: &str, lease: &CheckoutLeaseAct) -> DoorCredential {
-        DoorCredential::from_witnessed_bounds(
-            format!("checkout:{ticket}"),
-            lease.holder_ref.clone(),
-            lease.claimed_at,
-            lease.lease_expires_at.unwrap_or(0),
-        )
-        .with_verb_class("door.push")
-        .with_records([repo_record(&lease.repo_ref)])
-        .with_channels([DOOR_RECEIVE_PACK_EFFECTOR])
+        DoorCredential::from_checkout(ticket, lease)
     }
 
     pub(super) fn witness_checkout_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         credential: &DoorCredential,
+        ticket: &str,
     ) -> DoorResult<()> {
-        let ticket = credential
-            .slip_id()
-            .strip_prefix("checkout:")
-            .ok_or(CredentialDoorError::AuthorityRejected)?;
         let lease = self.checkout_act(txn, ticket)?;
         if *credential != Self::checkout_view(ticket, &lease) {
             return Err(CredentialDoorError::AuthorityRejected);

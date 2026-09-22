@@ -169,10 +169,6 @@ impl AuthorityForkAlarm {
 /// Deterministic authority fold output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityFold {
-    /// Immutable signed mints; consult live_door_slip before authorizing.
-    pub door_slips: BTreeMap<AuthorityEntryHash, FoldedDoorSlip>,
-    /// Monotone spend/revoke tombstones.
-    pub spent_door_slips: BTreeSet<AuthorityEntryHash>,
     /// Historical actor/class pairs affected by a key revocation, including rebind-away.
     pub actor_revocation_affected_writers: BTreeSet<(EntityId, String)>,
     /// Known causal frontiers that observed every revocation before regrant.
@@ -310,8 +306,6 @@ impl AuthorityFold {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FoldState {
-    pub(super) door_slips: BTreeMap<AuthorityEntryHash, FoldedDoorSlip>,
-    pub(super) spent_door_slips: BTreeSet<AuthorityEntryHash>,
     pub(super) slips: SlipAuthorityState,
     pub(super) vault_id: AuthorityVaultId,
     pub(super) roster: BTreeMap<AuthorityKey, FoldedDevice>,
@@ -471,21 +465,13 @@ fn folded_binding_key_still_qualifies(
     let Some(device) = state.roster.get(key).filter(|device| !device.revoked) else {
         return false;
     };
-    binding.actor_class != "human" || consent_arm(device)
+    ACTOR_BINDING_CLASSES.contains(&binding.actor_class.as_str())
+        && (binding.actor_class != ACTOR_CLASS_HUMAN || consent_arm(device))
 }
 
 pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     debug_assert_eq!(left.vault_id, right.vault_id);
     let mut merged = left.clone();
-    merged.door_slips.extend(
-        right
-            .door_slips
-            .iter()
-            .map(|(key, value)| (*key, value.clone())),
-    );
-    merged
-        .spent_door_slips
-        .extend(right.spent_door_slips.iter().copied());
     merged.slips.merge_from(&right.slips);
     merged
         .migrated_roots

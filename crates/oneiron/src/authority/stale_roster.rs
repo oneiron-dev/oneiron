@@ -56,9 +56,7 @@ fn expired_stale_roster_approvals(
         .iter()
         .filter_map(|entry| {
             let approval = match &entry.op {
-                AuthorityOp::BindActor { .. }
-                | AuthorityOp::RebindActor { .. }
-                | AuthorityOp::MintDoorSlip(_) => true,
+                AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => true,
                 AuthorityOp::FederationConfirm(action) => {
                     action.kind != AuthorityConfirmKind::Revoke
                 }
@@ -137,7 +135,6 @@ pub(super) fn apply_stale_roster_window(
             binding.status = ActorBindingStatus::Revoked;
         }
     }
-    fold.door_slips.retain(|hash, _| !expired.contains(hash));
     fold.critical_write_confirms
         .retain(|_, confirm| !expired.contains(&confirm.authority_entry_hash));
     for hash in expired {

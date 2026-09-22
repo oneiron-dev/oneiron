@@ -205,8 +205,6 @@ pub(crate) enum DoorDenyReason {
     ParentRevoked,
     /// `verb ∈ slip` failed.
     VerbNotInSlip,
-    /// Unknown class identifiers never ask or authorize.
-    UnknownVerbClass,
     /// `record ⊑ slip` failed.
     RecordOutsideSlip,
     /// `record ⊑ channel` failed.

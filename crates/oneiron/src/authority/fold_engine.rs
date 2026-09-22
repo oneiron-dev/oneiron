@@ -551,8 +551,6 @@ fn fold_authority_log_once(
                 conflicted_critical_write_confirms: BTreeSet::new(),
                 federation_grant_bindings: BTreeMap::new(),
                 actor_bindings: BTreeMap::new(),
-                door_slips: BTreeMap::new(),
-                spent_door_slips: BTreeSet::new(),
                 issues,
             },
             authority_fork_vault_ids,
@@ -654,12 +652,6 @@ fn fold_authority_log_once(
                 state.federation_grant_bindings.clone()
             }),
             actor_bindings,
-            door_slips: merged
-                .as_ref()
-                .map_or_else(BTreeMap::new, |state| state.door_slips.clone()),
-            spent_door_slips: merged
-                .as_ref()
-                .map_or_else(BTreeSet::new, |state| state.spent_door_slips.clone()),
             issues,
         },
         authority_fork_vault_ids,

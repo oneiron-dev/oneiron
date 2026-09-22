@@ -489,3 +489,394 @@ fn request_timestamp_and_nonce_are_signed_and_replay_is_refused() {
             .is_err()
     );
 }
+
+#[test]
+fn divergent_mints_poison_the_identifier_in_either_merge_order() {
+    let (_dir, vault, issuer, root) = fixture();
+    let base = vault.authority_fold().unwrap();
+    let parent = base.slips.mints[&root.claims.slip_id].entry_hash;
+    let mut claims = root.claims.clone();
+    claims.slip_id = [77; 32];
+    let mut other = claims.clone();
+    other.ttl_secs = 60;
+    let left = issuer
+        .sign_entry(
+            Some(claims.vault_id),
+            2,
+            vec![parent],
+            AuthorityOp::SlipMint(SlipMintAction { claims }),
+            root.claims.issued_at,
+        )
+        .unwrap();
+    let right = issuer
+        .sign_entry(
+            Some(other.vault_id),
+            3,
+            vec![parent],
+            AuthorityOp::SlipMint(SlipMintAction { claims: other }),
+            root.claims.issued_at,
+        )
+        .unwrap();
+    let mut a = base.slips.clone();
+    let mut b = base.slips.clone();
+    a.apply(&left, authority_entry_hash(&left).unwrap())
+        .unwrap();
+    b.apply(&right, authority_entry_hash(&right).unwrap())
+        .unwrap();
+    let mut ab = a.clone();
+    ab.merge_from(&b);
+    let mut ba = b;
+    ba.merge_from(&a);
+    assert_eq!(ab, ba);
+    assert!(ab.revoked.contains(&[77; 32]));
+    assert!(!ab.is_live(&[77; 32], &base.roster));
+    assert!(ab.is_live(&root.claims.slip_id, &base.roster));
+}
+
+#[test]
+fn a_rejected_signed_local_entry_still_advances_the_next_sequence() {
+    let (_dir, vault, issuer, root) = fixture();
+    let fold = vault.authority_fold().unwrap();
+    let parent = fold.slips.mints[&root.claims.slip_id].entry_hash;
+    let mut invalid = root.claims.clone();
+    invalid.slip_id = [73; 32];
+    invalid.parent_id = Some([72; 32]);
+    let rejected = issuer
+        .sign_entry(
+            Some(root.claims.vault_id),
+            7,
+            vec![parent],
+            AuthorityOp::SlipMint(SlipMintAction { claims: invalid }),
+            root.claims.issued_at,
+        )
+        .unwrap();
+    let hash = authority_entry_hash(&rejected).unwrap();
+    vault
+        .put_authority_log_entry(&rejected, crate::TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    assert!(
+        !vault
+            .authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&hash)
+    );
+    let mut claims = root.claims.clone();
+    claims.slip_id = [74; 32];
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let fold = vault.authority_fold().unwrap();
+    let hash = fold.slips.mints[&slip.claims.slip_id].entry_hash;
+    let entry = vault
+        .get_authority_log_entry(&authority_log_entity_id_from_hash(&hash).unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(entry.seq, 8);
+    assert!(
+        !entry
+            .parent_hashes
+            .contains(&authority_entry_hash(&rejected).unwrap())
+    );
+    assert!(verify(&vault, &issuer, &slip).is_ok());
+}
+
+#[test]
+fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
+    use crate::federation::{
+        FederationDirectionScope, FederationScopeBands, FederationScopeFacets,
+        FederationScopeWorlds, Sensitivity, SensitivityCeiling,
+    };
+    use rmpv::Value;
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let scope = Scope {
+        worlds: ScopeAxis::Some([ScopeId(crate::EntityId::from_bytes([2; 16]).unwrap())].into()),
+        facets: ScopeAxis::Bottom,
+        bands: ScopeAxis::Some([4, 7].into()),
+        audience: ScopeAxis::All,
+        verbs: ScopeAxis::Some(["inject".into(), "lease".into()].into()),
+        sensitivity: SensitivityCeiling::AtMost(Sensitivity::Private),
+    };
+    let claims = SlipClaims {
+        slip_id: [3; 32],
+        vault_id: [4; 32],
+        parent_id: Some([5; 32]),
+        holder_ref: "holder".into(),
+        binding_key: issuer.binding_key(),
+        scope,
+        issued_at: 10,
+        expires_at: 100,
+        ttl_secs: 60,
+        single_use: true,
+        records: ["secret".into()].into(),
+        channels: ["git.receive-pack".into()].into(),
+        actor_class: Some("agent".into()),
+        org_ref: Some(crate::EntityId::from_bytes([6; 16]).unwrap().to_hex()),
+        pact: Some((
+            crate::EntityId::from_bytes([7; 16]).unwrap(),
+            FederationDirectionScope {
+                worlds: FederationScopeWorlds::Base,
+                facets: FederationScopeFacets::All,
+                bands: FederationScopeBands::All,
+            },
+        )),
+    };
+    let entry = issuer
+        .sign_entry(
+            Some([4; 32]),
+            2,
+            vec![[8; 32]],
+            AuthorityOp::SlipMint(SlipMintAction { claims }),
+            10,
+        )
+        .unwrap();
+    let bytes = encode_authority_log_entry_body(&entry).unwrap();
+    assert_eq!(decode_authority_log_entry_body(&bytes).unwrap(), entry);
+    let mut cursor = std::io::Cursor::new(&bytes);
+    let value = rmpv::decode::read_value(&mut cursor).unwrap();
+    let entries = super::super::map_entries(&value).unwrap();
+    let op = super::super::required(entries, "op").unwrap();
+    let fields = super::super::map_entries(op).unwrap();
+    assert_eq!(
+        fields
+            .iter()
+            .map(|(k, _)| k.as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec![
+            "kind",
+            "slip_id",
+            "vault_id",
+            "parent_id",
+            "holder_ref",
+            "binding_key",
+            "scope",
+            "issued_at",
+            "expires_at",
+            "ttl_secs",
+            "single_use",
+            "records",
+            "channels",
+            "actor_class",
+            "org_ref",
+            "pact"
+        ]
+    );
+    assert!(matches!(
+        super::super::required(fields, "scope").unwrap(),
+        Value::Map(_)
+    ));
+    let mut duplicate = fields.to_vec();
+    duplicate.push(duplicate[1].clone());
+    assert!(super::super::decode_op(&Value::Map(duplicate)).is_err());
+    let mut unknown = fields.to_vec();
+    unknown.push((Value::from("extra"), Value::Nil));
+    assert!(super::super::decode_op(&Value::Map(unknown)).is_err());
+    let mut missing = fields.to_vec();
+    missing.pop();
+    assert!(super::super::decode_op(&Value::Map(missing)).is_err());
+    let blob = Value::Map(vec![
+        (Value::from("kind"), Value::from("slip_mint")),
+        (Value::from("slip"), Value::Binary(vec![])),
+    ]);
+    assert!(super::super::decode_op(&blob).is_err());
+    let mut tampered = entry.clone();
+    if let AuthorityOp::SlipMint(action) = &mut tampered.op {
+        action.claims.ttl_secs += 1;
+    }
+    assert!(
+        decode_authority_log_entry_body(&encode_authority_log_entry_body(&tampered).unwrap())
+            .is_err()
+    );
+}
+
+#[test]
+fn pact_caveats_meet_and_recheck_live_grant_state() {
+    use crate::federation::{
+        FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
+        FederationScopeWorlds,
+    };
+    let (_dir, vault, issuer, root) = fixture();
+    let mut fold = vault.authority_fold().unwrap();
+    let grant = crate::EntityId::from_bytes([41; 16]).unwrap();
+    let wide = FederationDirectionScope {
+        worlds: FederationScopeWorlds::All,
+        facets: FederationScopeFacets::All,
+        bands: FederationScopeBands::All,
+    };
+    let narrow = FederationDirectionScope {
+        worlds: FederationScopeWorlds::Base,
+        ..wide.clone()
+    };
+    fold.federation_pacts.insert(
+        [42; 32],
+        FederationPactState {
+            status: FederationPactStatus::Active,
+            grant_ref: grant,
+            peer_vault_id: [43; 32],
+            peer_owner_key: issuer.public_key(),
+            pact_epoch: 1,
+            scope_digest: [44; 32],
+            pact_scope: FederationPactScope {
+                lo_to_hi: wide.clone(),
+                hi_to_lo: wide.clone(),
+            },
+            effective_scope: wide.clone(),
+            successor_vault_id: None,
+            terminal_epoch: None,
+        },
+    );
+    fold.federation_grant_bindings
+        .insert(grant, [[42; 32]].into());
+    let caveat = |bound| SlipCaveat {
+        pact: Some((grant, bound)),
+        ..Default::default()
+    };
+    let mut slip = root.clone();
+    slip.attenuate(caveat(narrow.clone())).unwrap();
+    slip.attenuate(caveat(wide.clone())).unwrap();
+    let proof = issuer.binding_proof(&slip, b"pact").unwrap();
+    let checked = slip
+        .verify(
+            issuer.secret(),
+            &fold,
+            root.claims.issued_at,
+            b"pact",
+            &proof,
+        )
+        .unwrap();
+    assert_eq!(checked.claims().pact, Some((grant, narrow.clone())));
+    let decoded = CapabilitySlip::from_token(&slip.to_token().unwrap()).unwrap();
+    assert_eq!(decoded, slip);
+    fold.federation_pacts.get_mut(&[42; 32]).unwrap().status = FederationPactStatus::Disconnected;
+    assert!(
+        slip.verify(
+            issuer.secret(),
+            &fold,
+            root.claims.issued_at,
+            b"pact",
+            &proof
+        )
+        .is_err()
+    );
+    fold.federation_pacts.get_mut(&[42; 32]).unwrap().status = FederationPactStatus::Active;
+    fold.federation_pacts
+        .get_mut(&[42; 32])
+        .unwrap()
+        .effective_scope
+        .facets = FederationScopeFacets::Bottom;
+    assert!(
+        slip.verify(
+            issuer.secret(),
+            &fold,
+            root.claims.issued_at,
+            b"pact",
+            &proof
+        )
+        .is_err()
+    );
+    fold.federation_pacts
+        .get_mut(&[42; 32])
+        .unwrap()
+        .effective_scope = wide.clone();
+    fold.federation_grant_bindings
+        .get_mut(&grant)
+        .unwrap()
+        .insert([45; 32]);
+    assert!(
+        slip.verify(
+            issuer.secret(),
+            &fold,
+            root.claims.issued_at,
+            b"pact",
+            &proof
+        )
+        .is_err()
+    );
+    fold.federation_grant_bindings
+        .get_mut(&grant)
+        .unwrap()
+        .remove(&[45; 32]);
+    slip.attenuate(SlipCaveat {
+        pact: Some((crate::EntityId::from_bytes([46; 16]).unwrap(), wide.clone())),
+        ..Default::default()
+    })
+    .unwrap();
+    let proof = issuer.binding_proof(&slip, b"pact").unwrap();
+    assert!(
+        slip.verify(
+            issuer.secret(),
+            &fold,
+            root.claims.issued_at,
+            b"pact",
+            &proof
+        )
+        .is_err()
+    );
+    let mut slip = root;
+    for id in [47, 48] {
+        slip.attenuate(caveat(FederationDirectionScope {
+            facets: FederationScopeFacets::Some(vec![
+                crate::EntityId::from_bytes([id; 16]).unwrap(),
+            ]),
+            ..wide.clone()
+        }))
+        .unwrap();
+    }
+    slip.attenuate(caveat(wide)).unwrap();
+    let proof = issuer.binding_proof(&slip, b"pact").unwrap();
+    assert!(
+        slip.verify(
+            issuer.secret(),
+            &fold,
+            slip.claims.issued_at,
+            b"pact",
+            &proof
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn pact_bound_mint_is_not_live_through_either_revalidation_door_without_its_pact() {
+    use crate::federation::{
+        FederationDirectionScope, FederationScopeBands, FederationScopeFacets,
+        FederationScopeWorlds,
+    };
+    let (_dir, vault, issuer, root) = fixture();
+    let fold = vault.authority_fold().unwrap();
+    let parent = fold.slips.mints[&root.claims.slip_id].entry_hash;
+    let mut claims = root.claims.clone();
+    claims.slip_id = [71; 32];
+    claims.pact = Some((
+        crate::EntityId::from_bytes([51; 16]).unwrap(),
+        FederationDirectionScope {
+            worlds: FederationScopeWorlds::All,
+            facets: FederationScopeFacets::All,
+            bands: FederationScopeBands::All,
+        },
+    ));
+    let entry = issuer
+        .sign_entry(
+            Some(claims.vault_id),
+            2,
+            vec![parent],
+            AuthorityOp::SlipMint(SlipMintAction {
+                claims: claims.clone(),
+            }),
+            claims.issued_at,
+        )
+        .unwrap();
+    vault
+        .put_authority_log_entry(&entry, crate::TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    assert!(
+        vault
+            .authority_fold()
+            .unwrap()
+            .slip_is_live(&claims.slip_id)
+    );
+    assert!(!vault.capability_slip_id_is_live(&claims.slip_id).unwrap());
+    assert!(
+        !vault
+            .capability_slip_is_live(&VerifiedSlip { claims })
+            .unwrap()
+    );
+}

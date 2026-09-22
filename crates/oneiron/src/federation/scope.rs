@@ -214,12 +214,12 @@ impl Scope {
     }
     /// All three conjuncts bind the caller's record, credential and channel.
     #[must_use]
-    pub fn admits(&self, verb_class: &str, record: &Scope, channel: &Scope) -> bool {
+    pub fn admits(&self, verb: &str, record: &Scope, channel: &Scope) -> bool {
         !record.worlds.is_bottom()
             && !record.bands.is_bottom()
             && !record.audience.is_bottom()
             && record.sensitivity != SensitivityCeiling::Bottom
-            && self.verbs.contains(&verb_class.to_owned())
+            && self.verbs.contains(&verb.to_owned())
             && record.disclosure_narrows(self)
             && record.disclosure_narrows(channel)
     }

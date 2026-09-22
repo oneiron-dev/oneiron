@@ -89,7 +89,8 @@ pub(super) const OP_KIND_REVOKE_ACTOR: &str = "revoke_actor";
 /// Deliberately narrower than `RetiredCeiling`'s free-form class string: an
 /// approximate class is the ESB-C defect, so anything outside this list fails
 /// closed at `validate_op`. Mirrors `EdgeActorClass::gate_actor_class`.
-pub(super) const ACTOR_BINDING_CLASSES: [&str; 3] = ["human", "agent", "system"];
+pub(super) const ACTOR_CLASS_HUMAN: &str = "human";
+pub(super) const ACTOR_BINDING_CLASSES: [&str; 3] = [ACTOR_CLASS_HUMAN, "agent", "system"];
 
 pub(super) const CONFIRM_KIND_ACCEPT: &str = "accept";
 pub(super) const CONFIRM_KIND_RESCOPE: &str = "rescope";
@@ -122,3 +123,54 @@ pub const MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS: u64 = 48 * 60 * 60;
 pub const DEFAULT_PENDING_WIDEN_DELAY_SECS: u64 = MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS;
 const _: () = assert!(DEFAULT_PENDING_WIDEN_DELAY_SECS >= MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS);
 const _: () = assert!(DEFAULT_PENDING_WIDEN_DELAY_SECS <= MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS);
+
+pub(super) const OP_KIND_SLIP_MINT: &str = "slip_mint";
+pub(super) const OP_KIND_SLIP_REVOKE: &str = "slip_revoke";
+pub(super) const OP_KIND_SLIP_CONSUME: &str = "slip_consume";
+pub(super) const SLIP_KEY_SLIP_ID: &str = "slip_id";
+pub(super) const SLIP_KEY_VAULT_ID: &str = "vault_id";
+pub(super) const SLIP_KEY_PARENT_ID: &str = "parent_id";
+pub(super) const SLIP_KEY_HOLDER_REF: &str = "holder_ref";
+pub(super) const SLIP_KEY_BINDING_KEY: &str = "binding_key";
+pub(super) const SLIP_KEY_SCOPE: &str = "scope";
+pub(super) const SLIP_KEY_ISSUED_AT: &str = "issued_at";
+pub(super) const SLIP_KEY_EXPIRES_AT: &str = "expires_at";
+pub(super) const SLIP_KEY_TTL_SECS: &str = "ttl_secs";
+pub(super) const SLIP_KEY_SINGLE_USE: &str = "single_use";
+pub(super) const SLIP_KEY_RECORDS: &str = "records";
+pub(super) const SLIP_KEY_CHANNELS: &str = "channels";
+pub(super) const SLIP_KEY_ACTOR_CLASS: &str = "actor_class";
+pub(super) const SLIP_KEY_ORG_REF: &str = "org_ref";
+pub(super) const SLIP_KEY_PACT: &str = "pact";
+pub(super) const SLIP_MINT_KEYS: [&str; 16] = [
+    OP_KEY_KIND,
+    SLIP_KEY_SLIP_ID,
+    SLIP_KEY_VAULT_ID,
+    SLIP_KEY_PARENT_ID,
+    SLIP_KEY_HOLDER_REF,
+    SLIP_KEY_BINDING_KEY,
+    SLIP_KEY_SCOPE,
+    SLIP_KEY_ISSUED_AT,
+    SLIP_KEY_EXPIRES_AT,
+    SLIP_KEY_TTL_SECS,
+    SLIP_KEY_SINGLE_USE,
+    SLIP_KEY_RECORDS,
+    SLIP_KEY_CHANNELS,
+    SLIP_KEY_ACTOR_CLASS,
+    SLIP_KEY_ORG_REF,
+    SLIP_KEY_PACT,
+];
+pub(super) const SLIP_SCOPE_KEYS: [&str; 6] = [
+    "worlds",
+    "facets",
+    "bands",
+    "audience",
+    "verbs",
+    "sensitivity",
+];
+pub(super) const SCOPE_KEY_WORLDS: &str = "worlds";
+pub(super) const SCOPE_KEY_FACETS: &str = "facets";
+pub(super) const SCOPE_KEY_BANDS: &str = "bands";
+pub(super) const SCOPE_KEY_AUDIENCE: &str = "audience";
+pub(super) const SCOPE_KEY_VERBS: &str = "verbs";
+pub(super) const SCOPE_KEY_SENSITIVITY: &str = "sensitivity";

@@ -120,9 +120,6 @@ pub(super) fn apply_op(
         // reaching here, so these are unreachable for Ready entries.
         AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
-        | AuthorityOp::MintDoorSlip(_)
-        | AuthorityOp::SpendDoorSlip { .. }
-        | AuthorityOp::RevokeDoorSlip { .. }
         | AuthorityOp::RevokeActor { .. } => {}
     }
 }

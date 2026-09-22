@@ -200,6 +200,7 @@ impl Vault {
             SlipClaims {
                 slip_id,
                 vault_id,
+                pact: None,
                 parent_id: None,
                 holder_ref: actor_ref.to_hex(),
                 binding_key: registration.binding_key,

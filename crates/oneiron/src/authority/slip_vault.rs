@@ -90,7 +90,8 @@ impl Vault {
         Ok(now >= claims.issued_at
             && now < claims.expires_at
             && fold.vault_id == Some(claims.vault_id)
-            && fold.slip_is_live(&claims.slip_id))
+            && fold.slip_is_live(&claims.slip_id)
+            && claims.witness_pact(&fold).is_ok())
     }
     /// A session already proved its uncaveated instrument. Its mint's lifetime
     /// and the current fold still bound every subsequent frame.
@@ -100,7 +101,9 @@ impl Vault {
         let now = self.instant_in_txn(&txn)?.secs();
         Ok(fold.slip_is_live(id)
             && fold.slips.mints.get(id).is_some_and(|mint| {
-                now >= mint.action.claims.issued_at && now < mint.action.claims.expires_at
+                now >= mint.action.claims.issued_at
+                    && now < mint.action.claims.expires_at
+                    && mint.action.claims.witness_pact(&fold).is_ok()
             }))
     }
 
@@ -158,6 +161,7 @@ impl Vault {
         let claims = SlipClaims {
             slip_id: random_slip_id(),
             vault_id: fold.vault_id.ok_or_else(invalid_authority)?,
+            pact: None,
             parent_id: None,
             holder_ref: "host".into(),
             binding_key: issuer.binding_key(),
@@ -350,15 +354,17 @@ impl Vault {
         txn.commit()?;
         Ok(verified)
     }
-    pub(crate) fn consume_slip(&self, issuer: &HostSlipIssuer, slip_id: [u8; 32]) -> Result<()> {
-        let mut txn = self.store.env.write_txn()?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+    pub(crate) fn consume_slip(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        slip_id: [u8; 32],
+    ) -> Result<()> {
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
         if !fold.slip_is_live(&slip_id) {
             return Err(invalid_authority());
         }
-        self.append_slip_op_in_txn(&mut txn, issuer, AuthorityOp::SlipConsume { slip_id })?;
-        txn.commit()?;
-        Ok(())
+        self.append_slip_op_in_txn(txn, issuer, AuthorityOp::SlipConsume { slip_id })
     }
     pub(super) fn append_slip_op_in_txn(
         &self,
@@ -392,25 +398,10 @@ impl Vault {
         Ok(())
     }
     pub(super) fn slip_log_entries(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<AuthorityLogEntry>> {
-        let mut entries = Vec::new();
-        for row in self
-            .store
-            .type_index
-            .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_AUTHORITY_LOG])?
-        {
-            let (key, _) = row?;
-            let id = crate::vault::entity_id_from_type_index_key(&key)?;
-            let raw = self
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
-                .ok_or_else(invalid_authority)?;
-            let body = raw
-                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                .ok_or_else(invalid_authority)?;
-            entries.push(decode_authority_log_entry_body(body)?);
-        }
-        Ok(entries)
+        authority_log_rows_in_txn(&self.store, txn)?
+            .into_iter()
+            .map(|(_, body)| decode_authority_log_entry_body(&body))
+            .collect()
     }
 }
 fn next_entry(
@@ -424,14 +415,16 @@ fn next_entry(
     let mut seq = 0;
     for entry in entries {
         let hash = authority_entry_hash(entry)?;
+        // Advance beyond even a signed rejected local entry. Reusing a seq
+        // would create an equivocation, not a retry.
+        if entry.signer.public_key == issuer.public_key() {
+            seq = seq.max(entry.seq.checked_add(1).ok_or_else(invalid_authority)?);
+        }
         if !fold.valid_entries.contains(&hash) {
             continue;
         }
         for parent in &entry.parent_hashes {
             heads.remove(parent);
-        }
-        if entry.signer.public_key == issuer.public_key() {
-            seq = seq.max(entry.seq.checked_add(1).ok_or_else(invalid_authority)?);
         }
     }
     if heads.is_empty() {

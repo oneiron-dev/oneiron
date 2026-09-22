@@ -118,7 +118,6 @@ pub(in crate::authority) fn revocation_bypass_states(
     if !matches!(
         entry.op,
         AuthorityOp::RevokeActor { .. }
-            | AuthorityOp::RevokeDoorSlip { .. }
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }
     ) {

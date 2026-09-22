@@ -51,81 +51,11 @@ pub(super) fn decode_op(value: &Value) -> Result<AuthorityOp> {
         .as_str()
         .ok_or_else(invalid_authority)?;
     match kind {
-        "mint_door_slip" => {
-            validate_keys(
-                entries,
-                &[
-                    OP_KEY_KIND,
-                    "holder_ref",
-                    "verb_class",
-                    "records",
-                    "channels",
-                    "parent",
-                    "pact",
-                    "issued_at",
-                    "expires_at",
-                    "single_use",
-                ],
-            )?;
-            Ok(AuthorityOp::MintDoorSlip(AuthorityDoorSlip {
-                holder_ref: required(entries, "holder_ref")?
-                    .as_str()
-                    .ok_or_else(invalid_authority)?
-                    .to_owned(),
-                verb_class: required(entries, "verb_class")?
-                    .as_str()
-                    .ok_or_else(invalid_authority)?
-                    .to_owned(),
-                records: decode_door_tokens(required(entries, "records")?)?,
-                channels: decode_door_tokens(required(entries, "channels")?)?,
-                parent: decode_optional_hash(required(entries, "parent")?)?,
-                pact: match required(entries, "pact")? {
-                    Value::Nil => None,
-                    Value::Array(pair) if pair.len() == 2 => {
-                        let text = pair[0].as_str().ok_or_else(invalid_authority)?;
-                        let grant = EntityId::from_hex(text).map_err(|_| invalid_authority())?;
-                        if grant.to_hex() != text {
-                            return Err(invalid_authority());
-                        }
-                        Some((grant, decode_federation_direction_scope_value(&pair[1])?))
-                    }
-                    _ => return Err(invalid_authority()),
-                },
-                issued_at: required(entries, "issued_at")?
-                    .as_u64()
-                    .ok_or_else(invalid_authority)?,
-                expires_at: required(entries, "expires_at")?
-                    .as_u64()
-                    .ok_or_else(invalid_authority)?,
-                single_use: required(entries, "single_use")?
-                    .as_bool()
-                    .ok_or_else(invalid_authority)?,
-            }))
-        }
-        "spend_door_slip" | "revoke_door_slip" => {
-            validate_keys(entries, &[OP_KEY_KIND, "mint_hash"])?;
-            let mint_hash = decode_hash(required(entries, "mint_hash")?)?;
-            Ok(if kind == "spend_door_slip" {
-                AuthorityOp::SpendDoorSlip { mint_hash }
-            } else {
-                AuthorityOp::RevokeDoorSlip { mint_hash }
-            })
-        }
-        "slip_mint" => {
-            validate_keys(entries, &[OP_KEY_KIND, "slip"])?;
-            let bytes = bytes(required(entries, "slip")?)?;
-            let action: SlipMintAction =
-                serde_json::from_slice(bytes).map_err(|_| invalid_authority())?;
-            action.validate()?;
-            if serde_json::to_vec(&action).map_err(|_| invalid_authority())? != bytes {
-                return Err(invalid_authority());
-            }
-            Ok(AuthorityOp::SlipMint(action))
-        }
-        "slip_revoke" | "slip_consume" => {
-            validate_keys(entries, &[OP_KEY_KIND, "slip_id"])?;
-            let slip_id = decode_hash(required(entries, "slip_id")?)?;
-            Ok(if kind == "slip_revoke" {
+        OP_KIND_SLIP_MINT => super::slip_wire::decode_slip_mint(entries),
+        OP_KIND_SLIP_REVOKE | OP_KIND_SLIP_CONSUME => {
+            validate_keys(entries, &[OP_KEY_KIND, SLIP_KEY_SLIP_ID])?;
+            let slip_id = decode_hash(required(entries, SLIP_KEY_SLIP_ID)?)?;
+            Ok(if kind == OP_KIND_SLIP_REVOKE {
                 AuthorityOp::SlipRevoke { slip_id }
             } else {
                 AuthorityOp::SlipConsume { slip_id }
@@ -633,24 +563,4 @@ pub(super) fn is_terminal_federation_lifecycle(entry: &AuthorityLogEntry) -> boo
                     | FederationLifecycleKind::Promote
             )
     )
-}
-
-fn decode_door_tokens(value: &Value) -> Result<std::collections::BTreeSet<String>> {
-    let values = value.as_array().ok_or_else(invalid_authority)?;
-    if values.len() > 256 {
-        return Err(invalid_authority());
-    }
-    let tokens = values
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(invalid_authority)
-        })
-        .collect::<Result<std::collections::BTreeSet<_>>>()?;
-    if tokens.len() != values.len() {
-        return Err(invalid_authority());
-    }
-    Ok(tokens)
 }

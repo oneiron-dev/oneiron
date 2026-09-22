@@ -39,7 +39,6 @@ mod widen_veto;
 
 mod causal_claim;
 mod checkpoint;
-mod door_slip;
 mod history_transfer;
 mod recovery_ceremony;
 mod retired_ceiling;

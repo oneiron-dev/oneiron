@@ -1,9 +1,8 @@
 //! Signed-history migration and independently authorized per-vault re-root doors.
 use super::*;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, apply_ops};
 use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
-use crate::vault::entity_id_from_type_index_key;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,24 +11,7 @@ pub(super) fn history_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>> {
     let mut history = BTreeMap::new();
-    for row in vault
-        .store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_AUTHORITY_LOG])?
-    {
-        let (key, _) = row?;
-        let id = entity_id_from_type_index_key(&key)?;
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
-            .ok_or(Error::CorruptedIndex("authority history body"))?;
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("authority history header"))?;
-        if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
-            return Err(Error::CorruptedIndex("authority history kind"));
-        }
-        let bytes = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+    for (id, bytes) in authority_log_rows_in_txn(&vault.store, txn)? {
         let entry = decode_authority_log_entry_body(&bytes)?;
         let hash = authority_entry_hash(&entry)?;
         if authority_log_entity_id_from_hash(&hash)? != id {

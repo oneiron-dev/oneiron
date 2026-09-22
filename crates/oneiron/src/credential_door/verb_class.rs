@@ -1,45 +1,34 @@
-//! Closed verb-class registry. Slips persist identifiers, never expansions.
+//! Scope presets for the credential door's seven action classes.
+use crate::federation::{Scope, ScopeAxis};
 
-pub(crate) fn verb_class_members(class: &str) -> Option<&'static [&'static str]> {
-    match class {
-        "door.none" => Some(&[]),
-        "door.push" => Some(&["receive-pack"]),
-        "door.inject" => Some(&["inject"]),
-        "door.lease" => Some(&["lease"]),
-        "door.redeem" => Some(&["redeem"]),
-        "door.operate" => Some(&["receive-pack", "inject", "lease"]),
-        "door.delegate" => Some(&["receive-pack", "inject", "lease", "redeem", "mint"]),
-        _ => None,
-    }
+const PRESETS: [(&str, &[&str]); 7] = [
+    ("door.none", &[]),
+    ("door.push", &["receive-pack"]),
+    ("door.inject", &["inject"]),
+    ("door.lease", &["lease"]),
+    ("door.redeem", &["redeem"]),
+    ("door.operate", &["receive-pack", "inject", "lease"]),
+    (
+        "door.delegate",
+        &["receive-pack", "inject", "lease", "redeem", "mint"],
+    ),
+];
+
+pub(super) fn preset(class: &str) -> Option<Scope> {
+    let (_, verbs) = PRESETS.iter().find(|(name, _)| *name == class)?;
+    Some(Scope {
+        verbs: if verbs.is_empty() {
+            ScopeAxis::Bottom
+        } else {
+            ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect())
+        },
+        ..Scope::top()
+    })
 }
 
 pub(super) fn class_for_verb(verb: &str) -> Option<&'static str> {
-    match verb {
-        "receive-pack" => Some("door.push"),
-        "inject" => Some("door.inject"),
-        "lease" => Some("door.lease"),
-        "redeem" => Some("door.redeem"),
-        "mint" => Some("door.delegate"),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-pub(super) fn fixture_class(verbs: &std::collections::BTreeSet<String>) -> String {
-    for class in [
-        "door.none",
-        "door.push",
-        "door.inject",
-        "door.lease",
-        "door.redeem",
-        "door.operate",
-        "door.delegate",
-    ] {
-        let members = verb_class_members(class).expect("registry class");
-        if members.len() == verbs.len() && members.iter().all(|v| verbs.contains(*v)) {
-            return class.to_owned();
-        }
-    }
-    // Preserve hostile floor names so evaluator fixtures prove the floor arm.
-    verbs.iter().cloned().collect::<Vec<_>>().join(",")
+    PRESETS
+        .iter()
+        .find(|(_, verbs)| verbs.contains(&verb))
+        .map(|(name, _)| *name)
 }

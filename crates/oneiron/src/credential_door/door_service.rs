@@ -496,7 +496,6 @@ impl CredentialDoorService {
     }
 
     /// Mints a real log-backed one-shot, with exact secret and effector bounds.
-    /// This host-issued capability is distinct from a class-bound parent delegation.
     pub(super) fn mint_host_one_shot(
         &self,
         secret_ref: &str,
@@ -531,10 +530,8 @@ impl CredentialDoorService {
         claims.single_use = true;
         claims.records = std::collections::BTreeSet::from([secret_ref.to_owned()]);
         claims.channels = std::collections::BTreeSet::from([effector.to_owned()]);
-        claims.scope.verbs =
-            crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
-                DOOR_VERB_REDEEM.to_owned(),
-            ]));
+        claims.scope =
+            super::verb_class::preset("door.redeem").ok_or(CredentialDoorError::MintUnavailable)?;
         let slip = self
             .vault
             .mint_capability_slip(issuer, claims)
@@ -549,9 +546,12 @@ impl CredentialDoorService {
         Ok(verified.door_credential())
     }
 
-    pub(super) fn consume_single_use(&self, credential: &DoorCredential) -> DoorResult<()> {
+    pub(super) fn consume_single_use(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        credential: &DoorCredential,
+    ) -> DoorResult<()> {
         let Some((id, _)) = credential.capability_identity() else {
-            // Class-bound spends belong to authorize's existing write transaction.
             return Ok(());
         };
         if !credential.single_use {
@@ -561,10 +561,8 @@ impl CredentialDoorService {
             .issuer
             .as_ref()
             .ok_or(CredentialDoorError::MintUnavailable)?;
-        self.vault.consume_slip(issuer, id).map_err(custody)
+        self.vault.consume_slip(txn, issuer, id).map_err(custody)
     }
-
-
 }
 
 impl CredentialDoorService {
@@ -651,4 +649,3 @@ fn validate_seam_fields(blob: &PushedBlob) -> DoorResult<()> {
     }
     Ok(())
 }
-

@@ -36,8 +36,6 @@ mod confirm;
 mod constants;
 mod crypto;
 mod device;
-mod door_append;
-mod door_slip;
 mod entry_transition;
 mod federation_pact;
 mod first_seen_clock;
@@ -58,6 +56,7 @@ mod slip_pairing;
 mod slip_replay;
 mod slip_state;
 mod slip_vault;
+mod slip_wire;
 mod stale_roster;
 mod tier_floor;
 mod vault_api;
@@ -102,6 +101,7 @@ pub(crate) use claim_write::{
 };
 pub(crate) use first_seen_clock::*;
 pub(crate) use readonly_fold::authority_fold_readonly_for_store_in_txn;
+use readonly_fold::authority_log_rows_in_txn;
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.
@@ -114,6 +114,3 @@ use stale_roster::apply_stale_roster_window;
 use tier_floor::*;
 use wire_decode::*;
 use wire_encode::*;
-
-use self::door_slip::apply_door_slip;
-pub use self::door_slip::{AuthorityDoorSlip, FoldedDoorSlip};

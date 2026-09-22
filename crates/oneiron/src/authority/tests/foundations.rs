@@ -512,8 +512,6 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
     let owner_key = authority_key_from_ed(&owner);
     let zero_key = authority_key_from_ed(&zero);
     let state = FoldState {
-        door_slips: BTreeMap::new(),
-        spent_door_slips: BTreeSet::new(),
         slips: SlipAuthorityState::default(),
         vault_id: [40; 32],
         roster: BTreeMap::from([

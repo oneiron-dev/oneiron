@@ -44,7 +44,6 @@ pub(crate) fn authority_fold_readonly_for_store_in_txn(
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
 ) -> Result<AuthorityFold> {
-    let mut entries = Vec::new();
     let mut first_seen_at_secs = BTreeMap::new();
     let mut indeterminate = BTreeSet::new();
     let persisted_floor = store
@@ -61,26 +60,18 @@ pub(crate) fn authority_fold_readonly_for_store_in_txn(
         .is_some();
     let now_secs =
         authority_observation_secs(store, persisted_floor, store.clock.now_recorded_at());
-    for row in store.port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)? {
-        let id = row?;
-        let raw = store
-            .port_entity_record(txn, &id)?
-            .map(|row| row.encode())
-            .ok_or(Error::CorruptedIndex("type index row without entity"))?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
-            return Err(Error::CorruptedIndex("type index row kind mismatch"));
-        }
-        let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        let hash = authority_entry_hash(&entry)?;
+    let entries = authority_log_rows_in_txn(store, txn)?
+        .into_iter()
+        .map(|(_, body)| decode_authority_log_entry_body(&body))
+        .collect::<Result<Vec<_>>>()?;
+    for entry in &entries {
+        let hash = authority_entry_hash(entry)?;
         let (first_seen, observed_locally) =
             readonly_first_seen_for(store, txn, &hash, backfilled, now_secs)?;
         if !observed_locally {
             indeterminate.insert(hash);
         }
         first_seen_at_secs.insert(hash, first_seen);
-        entries.push(entry);
     }
     // Peer consent roots ride BOTH folds. This one authorizes, and a fold
     // used for authorization must never be weaker OR stronger than the one
@@ -176,4 +167,28 @@ fn readonly_first_seen_for(
         None if backfilled => Err(corrupt()),
         None => Ok((now_secs, false)),
     }
+}
+
+pub(super) fn authority_log_rows_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(crate::EntityId, Vec<u8>)>> {
+    let mut rows = Vec::new();
+    for row in store.port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)? {
+        let id = row?;
+        let raw = store
+            .port_entity_record(txn, &id)?
+            .map(|row| row.encode())
+            .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
+            return Err(Error::CorruptedIndex("type index row kind mismatch"));
+        }
+        let body = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("entity header"))?;
+        rows.push((id, body.to_vec()));
+    }
+    Ok(rows)
 }

@@ -8,16 +8,15 @@ use super::door_types::{
 };
 use crate::secret_lease::VaultInstant;
 
-/// The constructor fixes both the verb representation and the identifier namespace.
-/// A verified claims id is never a signed door-mint hash, even with identical bytes.
 #[derive(Debug, PartialEq, Eq)]
-enum DoorGrant {
-    Class(String),
-    Capability {
-        slip_id: [u8; 32],
-        vault_id: [u8; 32],
-        verbs: BTreeSet<String>,
+pub(super) enum DoorGrant {
+    Capability(Box<crate::authority::VerifiedSlip>),
+    Checkout {
+        ticket: String,
+        scope: crate::federation::Scope,
     },
+    #[cfg(test)]
+    Witnessed(crate::federation::Scope),
 }
 
 /// One presented capability slip, as the door sees it.
@@ -34,7 +33,7 @@ enum DoorGrant {
 pub(crate) struct DoorCredential {
     slip_id: String,
     holder_ref: String,
-    grant: DoorGrant,
+    pub(super) grant: DoorGrant,
     pub(super) records: BTreeSet<String>,
     pub(super) channels: BTreeSet<String>,
     issued_at: u64,
@@ -48,22 +47,10 @@ impl DoorCredential {
     /// The capability constructor accepts only a MAC/log/binding-verified slip.
     pub(crate) fn from_verified_slip(verified: &crate::authority::VerifiedSlip) -> Self {
         let claims = verified.claims();
-        let verbs = match &claims.scope.verbs {
-            crate::federation::ScopeAxis::Some(values) => values.clone(),
-            crate::federation::ScopeAxis::All => ["inject", "lease", "redeem", "receive-pack"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-            crate::federation::ScopeAxis::Bottom => BTreeSet::new(),
-        };
         Self {
             slip_id: claims.slip_id.iter().map(|b| format!("{b:02x}")).collect(),
             holder_ref: claims.holder_ref.clone(),
-            grant: DoorGrant::Capability {
-                slip_id: claims.slip_id,
-                vault_id: claims.vault_id,
-                verbs,
-            },
+            grant: DoorGrant::Capability(Box::new(verified.clone())),
             records: claims.records.clone(),
             channels: claims.channels.clone(),
             issued_at: claims.issued_at,
@@ -73,25 +60,21 @@ impl DoorCredential {
             ttl_cap: TtlCeiling::default().meet_secs(claims.ttl_secs),
         }
     }
-    /// The holder view of a slip whose proof the caller has ALREADY verified.
-    ///
-    /// Fail-closed defaults: no verbs, no records, no channels, no caveat, and
-    /// a TTL ceiling sitting at the floor ([`TtlCeiling::default`]) rather than
-    /// unbounded. A credential built and never narrowed authorizes nothing.
-    pub(super) fn from_witnessed_bounds(
-        slip_id: impl Into<String>,
-        holder_ref: impl Into<String>,
-        issued_at: u64,
-        expires_at: u64,
+    pub(super) fn from_checkout(
+        ticket: &str,
+        lease: &crate::checkout::lease::CheckoutLeaseAct,
     ) -> Self {
         Self {
-            slip_id: slip_id.into(),
-            holder_ref: holder_ref.into(),
-            grant: DoorGrant::Class("door.none".to_owned()),
-            records: BTreeSet::new(),
-            channels: BTreeSet::new(),
-            issued_at,
-            expires_at,
+            slip_id: format!("checkout:{ticket}"),
+            holder_ref: lease.holder_ref.clone(),
+            grant: DoorGrant::Checkout {
+                ticket: ticket.to_owned(),
+                scope: super::verb_class::preset("door.push").unwrap_or_default(),
+            },
+            records: [super::door_types::repo_record(&lease.repo_ref)].into(),
+            channels: [super::door_types::DOOR_RECEIVE_PACK_EFFECTOR.to_owned()].into(),
+            issued_at: lease.claimed_at,
+            expires_at: lease.lease_expires_at.unwrap_or(0),
             status: DoorCredentialStatus::Active,
             single_use: false,
             ttl_cap: TtlCeiling::default(),
@@ -106,85 +89,48 @@ impl DoorCredential {
         issued_at: u64,
         expires_at: u64,
     ) -> Self {
-        Self::from_witnessed_bounds(slip_id, holder_ref, issued_at, expires_at)
+        Self {
+            slip_id: slip_id.into(),
+            holder_ref: holder_ref.into(),
+            grant: DoorGrant::Witnessed(crate::federation::Scope::default()),
+            records: BTreeSet::new(),
+            channels: BTreeSet::new(),
+            issued_at,
+            expires_at,
+            status: DoorCredentialStatus::Active,
+            single_use: false,
+            ttl_cap: TtlCeiling::default(),
+        }
     }
 
     /// The claims namespace is carried by provenance, never inferred from hex text.
     pub(super) fn capability_identity(&self) -> Option<([u8; 32], [u8; 32])> {
         match &self.grant {
-            DoorGrant::Capability { slip_id, vault_id, .. } => Some((*slip_id, *vault_id)),
-            DoorGrant::Class(_) => None,
+            DoorGrant::Capability(verified) => {
+                Some((verified.claims().slip_id, verified.claims().vault_id))
+            }
+            DoorGrant::Checkout { .. } => None,
+            #[cfg(test)]
+            DoorGrant::Witnessed(_) => None,
         }
     }
 
-    /// Verbs the slip grants.
+    /// Verbs the fixture grants.
     #[cfg(test)]
     pub(super) fn with_verbs<I, S>(mut self, verbs: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self = self.with_verb_class(super::verb_class::fixture_class(
-            &verbs.into_iter().map(Into::into).collect(),
-        ));
-        self
-    }
-
-    pub(super) fn with_verb_class(mut self, class: impl Into<String>) -> Self {
-        // A class setter cannot change a verified capability's namespace or verbs.
-        if let DoorGrant::Class(value) = &mut self.grant {
-            *value = class.into();
+        if let DoorGrant::Witnessed(scope) = &mut self.grant {
+            scope.verbs =
+                crate::federation::ScopeAxis::Some(verbs.into_iter().map(Into::into).collect());
         }
         self
-    }
-
-    pub(super) fn from_mint(hash: &[u8; 32], scope: &crate::authority::AuthorityDoorSlip) -> Self {
-        let mut credential = Self::from_witnessed_bounds(
-            hash.iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>(),
-            scope.holder_ref.clone(),
-            scope.issued_at,
-            scope.expires_at,
-        )
-        .with_verb_class(scope.verb_class.clone())
-        .with_records(scope.records.clone())
-        .with_channels(scope.channels.clone());
-        credential.single_use = scope.single_use;
-        credential
-    }
-
-    pub(super) fn mint_hash(&self) -> DoorResult<[u8; 32]> {
-        if self.capability_identity().is_some()
-            || self.slip_id.len() != 64
-            || !self
-                .slip_id
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(CredentialDoorError::AuthorityRejected);
-        }
-        let mut hash = [0; 32];
-        for (i, byte) in hash.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&self.slip_id[2 * i..2 * i + 2], 16)
-                .map_err(|_| CredentialDoorError::AuthorityRejected)?;
-        }
-        Ok(hash)
-    }
-
-    /// Compares *every* caller-carried bound against the signed mint. A
-    /// reconstructed handle is not permission to expand a mint's authority.
-    pub(super) fn matches_mint(&self, scope: &crate::authority::AuthorityDoorSlip) -> bool {
-        self.holder_ref == scope.holder_ref
-            && matches!(&self.grant, DoorGrant::Class(class) if class == &scope.verb_class)
-            && self.records == scope.records
-            && self.channels == scope.channels
-            && self.issued_at == scope.issued_at
-            && self.expires_at == scope.expires_at
-            && self.single_use == scope.single_use
     }
 
     /// Records (repositories, secret names) the slip bounds.
+    #[cfg(test)]
     pub(super) fn with_records<I, S>(mut self, records: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -195,6 +141,7 @@ impl DoorCredential {
     }
 
     /// Channels (door effectors) the slip bounds.
+    #[cfg(test)]
     pub(super) fn with_channels<I, S>(mut self, channels: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -227,6 +174,7 @@ impl DoorCredential {
     }
 
     /// Attaches the single-use caveat.
+    #[cfg(test)]
     pub(super) fn with_single_use_caveat(mut self) -> Self {
         self.single_use = true;
         self
@@ -244,6 +192,7 @@ impl DoorCredential {
     /// minimum — which makes repeated attenuation idempotent, monotone, and
     /// independent of caveat order, and leaves the tightest caveat in the
     /// chain standing however late the loosest one arrives.
+    #[cfg(test)]
     pub(super) fn attenuate_lease_ttl(mut self, secs: u64) -> Self {
         self.ttl_cap = self.ttl_cap.meet_secs(secs);
         self
@@ -327,19 +276,20 @@ impl DoorCredential {
         if channel.is_empty() || !self.channels.contains(channel) {
             return deny(DoorDenyReason::ChannelOutsideSlip);
         }
-        let admits = match &self.grant {
-            DoorGrant::Class(class) => {
-                let Some(members) = super::verb_class::verb_class_members(class) else {
-                    return deny(DoorDenyReason::UnknownVerbClass);
-                };
-                members.contains(&verb)
-            }
-            DoorGrant::Capability { verbs, .. } => verbs.contains(verb),
-        };
+        let admits = self.scope().verbs.contains(&verb.to_owned());
         if !admits {
             return deny(DoorDenyReason::VerbNotInSlip);
         }
         Ok(())
+    }
+
+    fn scope(&self) -> &crate::federation::Scope {
+        match &self.grant {
+            DoorGrant::Capability(verified) => verified.scope(),
+            DoorGrant::Checkout { scope, .. } => scope,
+            #[cfg(test)]
+            DoorGrant::Witnessed(scope) => scope,
+        }
     }
 
     /// A slip may not reach a floor either. Verbs, records and channels are
@@ -355,12 +305,9 @@ impl DoorCredential {
                 Ok(())
             }
         };
-        match &self.grant {
-            DoorGrant::Class(class) => reject(class)?,
-            DoorGrant::Capability { verbs, .. } => {
-                for verb in verbs {
-                    reject(verb)?;
-                }
+        if let crate::federation::ScopeAxis::Some(verbs) = &self.scope().verbs {
+            for verb in verbs {
+                reject(verb)?;
             }
         }
         for token in self.records.iter().chain(self.channels.iter()) {

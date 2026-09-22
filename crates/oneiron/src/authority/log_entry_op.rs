@@ -21,16 +21,6 @@ use crate::error::RecordError;
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorityOp {
-    /// Immutable class-bound door capability, addressed by its signed mint-entry hash.
-    MintDoorSlip(AuthorityDoorSlip),
-    /// Issuer-serialized consume-once event. The log is the only spend ledger.
-    SpendDoorSlip {
-        mint_hash: AuthorityEntryHash,
-    },
-    /// Revokes a door slip and all descendants; merged by union.
-    RevokeDoorSlip {
-        mint_hash: AuthorityEntryHash,
-    },
     /// Mints a vault capability under its claims.slip_id; no MAC is stored in history.
     SlipMint(SlipMintAction),
     /// Revokes a capability and every descendant in the slip-id namespace.
@@ -311,14 +301,6 @@ pub(super) fn transcript_value_with_genesis_delay(
 
 pub(super) fn validate_op(op: &AuthorityOp) -> Result<()> {
     match op {
-        AuthorityOp::MintDoorSlip(scope) => scope.validate(),
-        AuthorityOp::SpendDoorSlip { mint_hash } | AuthorityOp::RevokeDoorSlip { mint_hash } => {
-            if *mint_hash == [0; 32] {
-                Err(invalid_authority())
-            } else {
-                Ok(())
-            }
-        }
         AuthorityOp::SlipMint(action) => action.validate(),
         AuthorityOp::SlipRevoke { slip_id } | AuthorityOp::SlipConsume { slip_id } => {
             if *slip_id == [0; 32] {

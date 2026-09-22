@@ -193,6 +193,3 @@ mod authority_log_fault_hook {
 
 #[cfg(test)]
 mod tests;
-
-pub(crate) use door_types::{DOOR_ONE_SHOT_MAX_LIFETIME_SECS, log_unreachable, names_a_floor};
-pub(crate) use verb_class::verb_class_members;
