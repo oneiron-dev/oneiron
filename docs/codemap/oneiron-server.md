@@ -99,7 +99,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/llm/tests.rs` | test | m | — | — | — |
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 9 crate-vis | — | Tool execution dispatch across actors |
 | `src/api/mcp_gateway/admission.rs` | src | s | 4 crate-vis | — | Scoped-call admission and actor resolution |
-| `src/api/mcp_gateway/agent_verbs.rs` | src | s | 1 crate-vis | — | MCP framing over the same generated agent SDK dispatcher as every other wire |
 | `src/api/mcp_gateway/board_observations.rs` | src | s | 3 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
 | `src/api/mcp_gateway/board_setup.rs` | src | m | 15 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/envelope.rs` | src | s | 14 crate-vis | — | JSON-RPC envelope types and request dispatch |
@@ -152,7 +151,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mcp_results_carrier.rs` | test | m | — | — | Negotiated result content, board omission/health axes, discover vocabulary, carrier drain, skills-pack onramp |
 | `src/api/tests/mcp_scoping.rs` | test | m | — | — | Legacy catalog retirement, actor-derived effective scopes, world/facet ceilings, board epoch monotonicity |
 | `src/api/tests/mcp_source_gate.rs` | test | s | — | — | — |
-| `src/api/tests/mcp_tool_endpoints.rs` | test | m | — | — | Tool-first vs /mcp listings, setup keyframe, execute_code retirement, narrowed admission, arg gating |
+| `src/api/tests/mcp_tool_endpoints.rs` | test | L | — | — | Tool-first vs /mcp listings, setup keyframe, execute_code retirement, narrowed admission, arg gating |
 | `src/api/tests/mcp_write_guards.rs` | test | L | — | — | Legacy MCP adapter read/edit/ask verbs, actor-scoped idempotency, spoof rejection, stale-edit/attest… |
 | `src/api/tests/memory_reason_repairs.rs` | test | m | — | — | — |
 | `src/api/tests/mod.rs` | test | L | 64 crate-vis | — | — |

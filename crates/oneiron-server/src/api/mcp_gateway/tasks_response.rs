@@ -28,11 +28,10 @@ fn execute_mcp_tasks_verb(
 ) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
     let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
     let arguments = &args.payload.arguments;
+    if oneiron::task_verb::sdk::AGENT_VERBS.contains(&args.tool.name) {
+        return execute_mcp_agent_verb(server, args, actor);
+    }
     match args.tool.binding {
-        crate::mcp::McpVerbBinding::TasksOutcomes
-        | crate::mcp::McpVerbBinding::TasksAsk
-        | crate::mcp::McpVerbBinding::TasksAnswer
-        | crate::mcp::McpVerbBinding::TasksWait => super::agent_verbs::execute(server, args, actor),
         crate::mcp::McpVerbBinding::TasksCheck => {
             let section = facade.tasks_check().map_err(mcp_facade_error)?;
             let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, section)?;
@@ -223,7 +222,7 @@ pub(crate) async fn execute_mcp_generated_verb(
                     (output, source, carrier, Some(epoch))
                 }
                 crate::mcp::McpVerbFamily::Rooms => {
-                    let (output, source) = super::agent_verbs::execute(server, &args, actor)?;
+                    let (output, source) = execute_mcp_agent_verb(server, &args, actor)?;
                     (output, source, McpCarrierPolicy::Drain, None)
                 }
                 crate::mcp::McpVerbFamily::Memory => {
@@ -300,6 +299,10 @@ pub(crate) async fn execute_mcp_generated_verb(
 /// A result that states `granted` and then ships more rows than that is the
 /// fail-open this closes; the row count it reports is the count it returned.
 fn mcp_cap_verb_rows(output: &mut Value, page: &McpPageBudget) {
+    if let Some(rows) = output.as_array_mut() {
+        *rows = page.cap(std::mem::take(rows));
+        return;
+    }
     for key in ["rows", "lines"] {
         let Some(rows) = output.get(key).and_then(Value::as_array).cloned() else {
             continue;
@@ -448,3 +451,161 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         },
     })
 }
+
+// BEGIN GENERATED MCP DISPATCH
+fn execute_mcp_agent_verb(
+    server: &SyncServer,
+    args: &McpVerbToolArgs,
+    actor: &McpResolvedActor,
+) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
+    let a = &args.payload.arguments;
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
+    match args.tool.name {
+        "tasks.ask" => {
+            let input: oneiron::task_verb::TaskAskSpec =
+                serde_json::from_value(a.spec.clone().ok_or_else(invalid)?)
+                    .map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::tasks_ask(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source))
+        }
+        "tasks.wait" => {
+            let input: oneiron::task_verb::sdk::TaskWaitRequest = serde_json::from_value(json!({"handle":{"task_ref":a.task_ref.clone().ok_or_else(invalid)?},"step_key":a.key.clone().ok_or_else(invalid)?})).map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::tasks_wait(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source))
+        }
+        "tasks.answer" => {
+            let input: oneiron::task_verb::sdk::TaskAnswerRequest =
+                serde_json::from_value(a.spec.clone().ok_or_else(invalid)?)
+                    .map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::tasks_answer(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source))
+        }
+        "tasks.outcomes" => {
+            let input: oneiron::task_verb::TaskAskHandle =
+                serde_json::from_value(json!({"task_ref":a.task_ref.clone().ok_or_else(invalid)?}))
+                    .map_err(|_| invalid())?;
+
+            let output = oneiron::task_verb::sdk::tasks_outcomes(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source))
+        }
+        "rooms.list" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(json!({})).map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::rooms_list(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source))
+        }
+        "rooms.messages" => {
+            let input: oneiron::task_verb::sdk::RoomRequest = serde_json::from_value(json!({"room_ref":a.room_ref.clone().ok_or_else(invalid)?,"after":a.turn_ref.clone()})).map_err(|_| invalid())?;
+
+            let output = oneiron::task_verb::sdk::rooms_messages(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.rows.len(),
+                0,
+                0,
+                output.next_after.is_none(),
+            );
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source))
+        }
+        "rooms.claim" => {
+            let input: oneiron::task_verb::sdk::RoomClaimRequest = serde_json::from_value(json!({"room_ref":a.room_ref.clone().ok_or_else(invalid)?,"turn_ref":a.turn_ref.clone().ok_or_else(invalid)?})).map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::rooms_claim(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source))
+        }
+        "rooms.speak" => {
+            let input: oneiron::memory::WitnessTurn =
+                serde_json::from_value(a.spec.clone().ok_or_else(invalid)?)
+                    .map_err(|_| invalid())?;
+            if a.room_ref.as_deref() != Some(input.conversation_ref.as_str()) {
+                return Err(invalid());
+            }
+            let output =
+                oneiron::task_verb::sdk::rooms_speak(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source))
+        }
+        _ => Err(invalid()),
+    }
+}
+
+// END GENERATED MCP DISPATCH

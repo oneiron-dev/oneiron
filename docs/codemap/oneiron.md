@@ -2545,7 +2545,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/route_receipts.rs` | src | s | 5 struct · 4 enum · 3 fn · 2 const · 1 crate-vis | TaskAckReceipt, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskResultInput, TaskRouteLane, TaskRouteOutcome +1 | — |
 | `src/task_verb/scheduling.rs` | src | s | 3 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
 | `src/task_verb/sdk.rs` | src | s | 8 struct | EmptyRequest, RecallRequest, ReceiptsRequest, RoomClaimRequest, RoomEntry, RoomRequest, TaskAnswerRequest, TaskWaitRequest | Shared typed agent-verb inputs and generated transport dispatch |
-| `src/task_verb/sdk_generated.rs` | src | s | 2 fn · 1 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | s | 19 fn · 1 const | — | — |
 | `src/task_verb/symbol_lease.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 crate-vis | SymbolLease, SymbolLeaseOutcome | Node-local time-held symbol declarations and atomic queue ordering |
 | `src/task_verb/symbol_lease_tests.rs` | test | s | — | — | — |
 | `src/task_verb/terminal_state.rs` | src | s | 1 struct · 4 enum · 4 fn · 3 crate-vis | ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord | — |
@@ -2686,7 +2686,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/project/tests.rs` | test | s | — | — | — |
 | `src/workspace_roster/records.rs` | src | s | 2 struct · 2 enum · 4 fn · 4 const · 5 crate-vis | MemberOnboardingOutcome, MemberOnboardingStep, WorkspaceRosterEntry, WorkspaceRosterRole | Pinned vault-meta prefixes, the step ladder, and stored roster/journal records |
 | `src/workspace_roster/rooms/history.rs` | src | s | 3 fn · 2 crate-vis | — | Bounded room-local history and transactional auxiliary-row cleanup |
-| `src/workspace_roster/rooms/mod.rs` | src | s | 2 struct · 1 enum · 4 fn · 2 crate-vis | RoomClaimOutcome, RoomClaimReceipt, RoomTurn | Room participation and addressed turn claims |
+| `src/workspace_roster/rooms/mod.rs` | src | s | 3 struct · 1 enum · 4 fn · 2 crate-vis | RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomTurn | Room participation and addressed turn claims |
 | `src/workspace_roster/rooms/tests.rs` | test | s | — | — | — |
 | `src/workspace_roster/rooms/verb_catalog.rs` | src | s | 1 const | — | — |
 | `src/workspace_roster/rooms/witness.rs` | src | s | 1 crate-vis | — | Claim-before-speaking guard inside the existing witness transaction |

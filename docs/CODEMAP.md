@@ -28,7 +28,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 2 | 0 | 0 |
 | [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 8 | 9 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 31 | 9 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 232 | 95 | 1 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 231 | 95 | 1 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 5 | 1 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 11 | 3 | 0 |
 
@@ -339,7 +339,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `actions` | file | 1 | s | Host-bound UI and agent action executor over the engine's one verb registry |
-| `api` | dir | 157 | L | HTTP query routes for web dashboard access |
+| `api` | dir | 156 | L | HTTP query routes for web dashboard access |
 | `auth` | file+dir | 5 | m | HTTP authentication for log-backed version-two capability slips |
 | `broadcast` | file | 1 | s | Broadcast group for multi-device fan-out with echo suppression |
 | `cli` | file+dir | 2 | m | — |

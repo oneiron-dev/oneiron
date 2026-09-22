@@ -31182,7 +31182,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "fn": 2
+      "fn": 19
      }
     },
     {
@@ -32802,6 +32802,7 @@
      "notable": [
       "RoomClaimOutcome",
       "RoomClaimReceipt",
+      "RoomPage",
       "RoomTurn"
      ],
      "path": "src/workspace_roster/rooms/mod.rs",
@@ -32810,7 +32811,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 4,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -39059,16 +39060,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/api/mcp_gateway/agent_verbs.rs",
-     "purpose": "MCP framing over the same generated agent SDK dispatcher as every other wire",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/api/mcp_gateway/board_observations.rs",
      "purpose": "Session-clock read observations and turn-local riders for MCP boards",
      "surface": {
@@ -39542,7 +39533,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/mcp_tool_endpoints.rs",
@@ -41640,7 +41631,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 157,
+     "files": 156,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41817,7 +41808,7 @@
    },
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 232,
+   "source_files": 231,
    "test_files": 95
   },
   "oneiron-uniffi": {

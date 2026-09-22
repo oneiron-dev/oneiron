@@ -22,7 +22,8 @@
       ],
       "admission": {
         "validate": "crate::memory::caps::check_witness_turn(&input)?;"
-      }
+      },
+      "mcp": "none"
     },
     {
       "name": "claim_upsert",
@@ -35,7 +36,8 @@
       ],
       "admission": {
         "validate": "crate::memory::caps::check_claim_input(&input)?;"
-      }
+      },
+      "mcp": "none"
     },
     {
       "name": "recall",
@@ -49,7 +51,8 @@
       "admission": {
         "unrestricted_record_scope": true,
         "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;"
-      }
+      },
+      "mcp": "none"
     },
     {
       "name": "receipts",
@@ -63,7 +66,8 @@
       "admission": {
         "unrestricted_record_scope": true,
         "validate": "crate::memory::caps::check_limit(input.limit.unwrap_or(100))?;"
-      }
+      },
+      "mcp": "none"
     },
     {
       "name": "key_value_get",
@@ -74,7 +78,8 @@
       "mcp_fields": [
         "spec"
       ],
-      "admission": {}
+      "admission": {},
+      "mcp": "none"
     },
     {
       "name": "key_value_put",
@@ -85,7 +90,8 @@
       "mcp_fields": [
         "spec"
       ],
-      "admission": {}
+      "admission": {},
+      "mcp": "none"
     },
     {
       "name": "key_value_delete",
@@ -96,7 +102,8 @@
       "mcp_fields": [
         "spec"
       ],
-      "admission": {}
+      "admission": {},
+      "mcp": "none"
     },
     {
       "name": "key_value_search",
@@ -107,7 +114,8 @@
       "mcp_fields": [
         "spec"
       ],
-      "admission": {}
+      "admission": {},
+      "mcp": "none"
     },
     {
       "name": "key_value_namespaces",
@@ -118,7 +126,8 @@
       "mcp_fields": [
         "spec"
       ],
-      "admission": {}
+      "admission": {},
+      "mcp": "none"
     },
     {
       "name": "tasks.ask",
@@ -126,9 +135,10 @@
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input)?",
       "scope": "Write",
-      "mcp_fields": [
-        "spec"
-      ]
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp": "tool-first"
     },
     {
       "name": "tasks.wait",
@@ -136,10 +146,11 @@
       "output": "crate::task_verb::TaskWaitOutcome",
       "call": "memory.tasks_wait_external(&input.handle, &input.step_key)?",
       "scope": "Write",
-      "mcp_fields": [
-        "task_ref",
-        "key"
-      ]
+      "mcp_fields": {
+        "task_ref": "handle.task_ref",
+        "key": "step_key"
+      },
+      "mcp": "tool-first"
     },
     {
       "name": "tasks.answer",
@@ -147,9 +158,10 @@
       "output": "crate::task_verb::TaskAskAnswer",
       "call": "memory.tasks_answer(&input.handle, crate::EntityId::from_hex(&input.result_ref)?)?",
       "scope": "Write",
-      "mcp_fields": [
-        "spec"
-      ]
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp": "tool-first"
     },
     {
       "name": "tasks.outcomes",
@@ -157,9 +169,10 @@
       "output": "Vec<crate::llm::decision::questions::CalibrationPair>",
       "call": "memory.tasks_ask_outcomes(&input)?",
       "scope": "Read",
-      "mcp_fields": [
-        "task_ref"
-      ]
+      "mcp_fields": {
+        "task_ref": "task_ref"
+      },
+      "mcp": "tool-first"
     },
     {
       "name": "rooms.list",
@@ -167,21 +180,27 @@
       "output": "Vec<crate::task_verb::sdk::RoomEntry>",
       "call": "memory.rooms_list()?.into_iter().map(|(id, room)| RoomEntry { id: id.to_hex(), room }).collect::<Vec<_>>()",
       "scope": "Read",
-      "mcp_fields": []
+      "mcp_fields": {},
+      "mcp": "tool-first"
     },
     {
       "name": "rooms.messages",
       "input": "RoomRequest",
-      "output": "Vec<crate::workspace_roster::RoomTurn>",
+      "output": "crate::workspace_roster::RoomPage",
       "call": "memory.rooms_messages_page(crate::EntityId::from_hex(&input.room_ref)?, input.after.as_deref().map(crate::EntityId::from_hex).transpose()?, input.limit.unwrap_or(256))?",
       "scope": "Read",
-      "mcp_fields": [
-        "room_ref",
-        "turn_ref"
-      ],
+      "mcp_fields": {
+        "room_ref": "room_ref",
+        "turn_ref": "after"
+      },
       "mcp_required_fields": [
         "room_ref"
-      ]
+      ],
+      "mcp": "tool-first",
+      "page": {
+        "rows": "rows",
+        "cursor": "next_after"
+      }
     },
     {
       "name": "rooms.claim",
@@ -189,10 +208,11 @@
       "output": "crate::workspace_roster::RoomClaimOutcome",
       "call": "memory.rooms_claim(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?, crate::unix_seconds_now())?",
       "scope": "Write",
-      "mcp_fields": [
-        "room_ref",
-        "turn_ref"
-      ]
+      "mcp_fields": {
+        "room_ref": "room_ref",
+        "turn_ref": "turn_ref"
+      },
+      "mcp": "tool-first"
     },
     {
       "name": "rooms.speak",
@@ -200,10 +220,11 @@
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.rooms_speak(&input)?",
       "scope": "Write",
-      "mcp_fields": [
-        "room_ref",
-        "spec"
-      ]
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=conversation_ref"
+      },
+      "mcp": "tool-first"
     }
   ]
 }

@@ -85,123 +85,157 @@ pub fn invoke(
     verb: &str,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    validate_input(verb, &value)?;
     match verb {
-        "witness" => {
-            let input: crate::memory::WitnessTurn = decode(value)?;
-            let output: crate::memory::WitnessReceipt = memory.witness(&input)?;
-            encode(output)
-        }
-        "claim_upsert" => {
-            let input: crate::memory::ClaimInput = decode(value)?;
-            let output: crate::memory::CommitReceipt = memory.claim_upsert(&input)?;
-            encode(output)
-        }
-        "recall" => {
-            let input: RecallRequest = decode(value)?;
-            let output: crate::memory::MemoryPack = memory.recall(
-                &input.query,
-                input.effort.unwrap_or(crate::memory::Effort::Medium),
-                &input.scope.unwrap_or_default(),
-                input.limit.unwrap_or(10),
-                input.format.as_deref(),
-                None,
-            )?;
-            encode(output)
-        }
-        "receipts" => {
-            let input: ReceiptsRequest = decode(value)?;
-            let output: Vec<crate::memory::MemoryReceipt> =
-                memory.receipts(input.limit.unwrap_or(100))?;
-            encode(output)
-        }
-        "key_value_get" => {
-            let input: crate::memory::KeyValueAddress = decode(value)?;
-            let output: Option<crate::memory::KeyValueItem> = memory.key_value_get(&input)?;
-            encode(output)
-        }
-        "key_value_put" => {
-            let input: crate::memory::KeyValuePut = decode(value)?;
-            let output: crate::memory::KeyValuePutReceipt = memory.key_value_put(&input)?;
-            encode(output)
-        }
-        "key_value_delete" => {
-            let input: crate::memory::KeyValueAddress = decode(value)?;
-            let output: crate::memory::KeyValueDeleteReceipt = memory.key_value_delete(&input)?;
-            encode(output)
-        }
-        "key_value_search" => {
-            let input: crate::memory::KeyValueSearch = decode(value)?;
-            let output: Vec<crate::memory::KeyValueItem> = memory.key_value_search(&input)?;
-            encode(output)
-        }
-        "key_value_namespaces" => {
-            let input: crate::memory::KeyValueNamespaces = decode(value)?;
-            let output: Vec<Vec<String>> = memory.key_value_namespaces(&input)?;
-            encode(output)
-        }
-        "tasks.ask" => {
-            let input: crate::task_verb::TaskAskSpec = decode(value)?;
-            let output: crate::task_verb::TaskAskReceipt = memory.tasks_ask(&input)?;
-            encode(output)
-        }
-        "tasks.wait" => {
-            let input: TaskWaitRequest = decode(value)?;
-            let output: crate::task_verb::TaskWaitOutcome =
-                memory.tasks_wait_external(&input.handle, &input.step_key)?;
-            encode(output)
-        }
-        "tasks.answer" => {
-            let input: TaskAnswerRequest = decode(value)?;
-            let output: crate::task_verb::TaskAskAnswer = memory
-                .tasks_answer(&input.handle, crate::EntityId::from_hex(&input.result_ref)?)?;
-            encode(output)
-        }
-        "tasks.outcomes" => {
-            let input: crate::task_verb::TaskAskHandle = decode(value)?;
-            let output: Vec<crate::llm::decision::questions::CalibrationPair> =
-                memory.tasks_ask_outcomes(&input)?;
-            encode(output)
-        }
-        "rooms.list" => {
-            let _input: EmptyRequest = decode(value)?;
-            let output: Vec<crate::task_verb::sdk::RoomEntry> = memory
-                .rooms_list()?
-                .into_iter()
-                .map(|(id, room)| RoomEntry {
-                    id: id.to_hex(),
-                    room,
-                })
-                .collect::<Vec<_>>();
-            encode(output)
-        }
-        "rooms.messages" => {
-            let input: RoomRequest = decode(value)?;
-            let output: Vec<crate::workspace_roster::RoomTurn> = memory.rooms_messages_page(
-                crate::EntityId::from_hex(&input.room_ref)?,
-                input
-                    .after
-                    .as_deref()
-                    .map(crate::EntityId::from_hex)
-                    .transpose()?,
-                input.limit.unwrap_or(256),
-            )?;
-            encode(output)
-        }
-        "rooms.claim" => {
-            let input: RoomClaimRequest = decode(value)?;
-            let output: crate::workspace_roster::RoomClaimOutcome = memory.rooms_claim(
-                crate::EntityId::from_hex(&input.room_ref)?,
-                crate::EntityId::from_hex(&input.turn_ref)?,
-                crate::unix_seconds_now(),
-            )?;
-            encode(output)
-        }
-        "rooms.speak" => {
-            let input: crate::memory::WitnessTurn = decode(value)?;
-            let output: crate::memory::WitnessReceipt = memory.rooms_speak(&input)?;
-            encode(output)
-        }
+        "witness" => encode(witness(memory, decode(value)?)?),
+        "claim_upsert" => encode(claim_upsert(memory, decode(value)?)?),
+        "recall" => encode(recall(memory, decode(value)?)?),
+        "receipts" => encode(receipts(memory, decode(value)?)?),
+        "key_value_get" => encode(key_value_get(memory, decode(value)?)?),
+        "key_value_put" => encode(key_value_put(memory, decode(value)?)?),
+        "key_value_delete" => encode(key_value_delete(memory, decode(value)?)?),
+        "key_value_search" => encode(key_value_search(memory, decode(value)?)?),
+        "key_value_namespaces" => encode(key_value_namespaces(memory, decode(value)?)?),
+        "tasks.ask" => encode(tasks_ask(memory, decode(value)?)?),
+        "tasks.wait" => encode(tasks_wait(memory, decode(value)?)?),
+        "tasks.answer" => encode(tasks_answer(memory, decode(value)?)?),
+        "tasks.outcomes" => encode(tasks_outcomes(memory, decode(value)?)?),
+        "rooms.list" => encode(rooms_list(memory, decode(value)?)?),
+        "rooms.messages" => encode(rooms_messages(memory, decode(value)?)?),
+        "rooms.claim" => encode(rooms_claim(memory, decode(value)?)?),
+        "rooms.speak" => encode(rooms_speak(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
     }
+}
+pub fn witness(
+    memory: &Memory<'_>,
+    input: crate::memory::WitnessTurn,
+) -> MemoryResult<crate::memory::WitnessReceipt> {
+    crate::memory::caps::check_witness_turn(&input)?;
+    Ok(memory.witness(&input)?)
+}
+pub fn claim_upsert(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimInput,
+) -> MemoryResult<crate::memory::CommitReceipt> {
+    crate::memory::caps::check_claim_input(&input)?;
+    Ok(memory.claim_upsert(&input)?)
+}
+pub fn recall(
+    memory: &Memory<'_>,
+    input: RecallRequest,
+) -> MemoryResult<crate::memory::MemoryPack> {
+    crate::memory::caps::check_query(&input.query)?;
+    crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;
+    Ok(memory.recall(
+        &input.query,
+        input.effort.unwrap_or(crate::memory::Effort::Medium),
+        &input.scope.unwrap_or_default(),
+        input.limit.unwrap_or(10),
+        input.format.as_deref(),
+        None,
+    )?)
+}
+pub fn receipts(
+    memory: &Memory<'_>,
+    input: ReceiptsRequest,
+) -> MemoryResult<Vec<crate::memory::MemoryReceipt>> {
+    crate::memory::caps::check_limit(input.limit.unwrap_or(100))?;
+    Ok(memory.receipts(input.limit.unwrap_or(100))?)
+}
+pub fn key_value_get(
+    memory: &Memory<'_>,
+    input: crate::memory::KeyValueAddress,
+) -> MemoryResult<Option<crate::memory::KeyValueItem>> {
+    Ok(memory.key_value_get(&input)?)
+}
+pub fn key_value_put(
+    memory: &Memory<'_>,
+    input: crate::memory::KeyValuePut,
+) -> MemoryResult<crate::memory::KeyValuePutReceipt> {
+    Ok(memory.key_value_put(&input)?)
+}
+pub fn key_value_delete(
+    memory: &Memory<'_>,
+    input: crate::memory::KeyValueAddress,
+) -> MemoryResult<crate::memory::KeyValueDeleteReceipt> {
+    Ok(memory.key_value_delete(&input)?)
+}
+pub fn key_value_search(
+    memory: &Memory<'_>,
+    input: crate::memory::KeyValueSearch,
+) -> MemoryResult<Vec<crate::memory::KeyValueItem>> {
+    Ok(memory.key_value_search(&input)?)
+}
+pub fn key_value_namespaces(
+    memory: &Memory<'_>,
+    input: crate::memory::KeyValueNamespaces,
+) -> MemoryResult<Vec<Vec<String>>> {
+    Ok(memory.key_value_namespaces(&input)?)
+}
+pub fn tasks_ask(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskAskSpec,
+) -> MemoryResult<crate::task_verb::TaskAskReceipt> {
+    Ok(memory.tasks_ask(&input)?)
+}
+pub fn tasks_wait(
+    memory: &Memory<'_>,
+    input: TaskWaitRequest,
+) -> MemoryResult<crate::task_verb::TaskWaitOutcome> {
+    Ok(memory.tasks_wait_external(&input.handle, &input.step_key)?)
+}
+pub fn tasks_answer(
+    memory: &Memory<'_>,
+    input: TaskAnswerRequest,
+) -> MemoryResult<crate::task_verb::TaskAskAnswer> {
+    Ok(memory.tasks_answer(&input.handle, crate::EntityId::from_hex(&input.result_ref)?)?)
+}
+pub fn tasks_outcomes(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskAskHandle,
+) -> MemoryResult<Vec<crate::llm::decision::questions::CalibrationPair>> {
+    Ok(memory.tasks_ask_outcomes(&input)?)
+}
+pub fn rooms_list(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::RoomEntry>> {
+    Ok(memory
+        .rooms_list()?
+        .into_iter()
+        .map(|(id, room)| RoomEntry {
+            id: id.to_hex(),
+            room,
+        })
+        .collect::<Vec<_>>())
+}
+pub fn rooms_messages(
+    memory: &Memory<'_>,
+    input: RoomRequest,
+) -> MemoryResult<crate::workspace_roster::RoomPage> {
+    Ok(memory.rooms_messages_page(
+        crate::EntityId::from_hex(&input.room_ref)?,
+        input
+            .after
+            .as_deref()
+            .map(crate::EntityId::from_hex)
+            .transpose()?,
+        input.limit.unwrap_or(256),
+    )?)
+}
+pub fn rooms_claim(
+    memory: &Memory<'_>,
+    input: RoomClaimRequest,
+) -> MemoryResult<crate::workspace_roster::RoomClaimOutcome> {
+    Ok(memory.rooms_claim(
+        crate::EntityId::from_hex(&input.room_ref)?,
+        crate::EntityId::from_hex(&input.turn_ref)?,
+        crate::unix_seconds_now(),
+    )?)
+}
+pub fn rooms_speak(
+    memory: &Memory<'_>,
+    input: crate::memory::WitnessTurn,
+) -> MemoryResult<crate::memory::WitnessReceipt> {
+    Ok(memory.rooms_speak(&input)?)
 }

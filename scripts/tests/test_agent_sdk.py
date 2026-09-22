@@ -28,6 +28,27 @@ class AgentSdkProjectionTests(unittest.TestCase):
         ]:
             self.assertNotIn(spelling, outputs[path], path)
 
+    def test_manifest_removal_suppresses_mcp_dispatch_and_catalog(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        generator.ROWS = [row for row in generator.ROWS if row["name"] != "rooms.claim"]
+        outputs = generator.outputs()
+        self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"])
+        self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/mcp/agent_catalog.rs"])
+
+    def test_mcp_none_suppresses_projection_but_keeps_sdk_method(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        for row in generator.ROWS:
+            if row["name"] == "rooms.claim":
+                row["mcp"] = "none"
+        outputs = generator.outputs()
+        self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"])
+        self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/mcp/agent_catalog.rs"])
+        self.assertIn('fn rooms_claim(', outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
+
     def test_python_ask_wait_answer_and_room_arguments(self):
         spec = importlib.util.spec_from_file_location("generated_agent_verbs", ROOT / "crates/oneiron-py/python/oneiron/agent_verbs.py")
         module = importlib.util.module_from_spec(spec)

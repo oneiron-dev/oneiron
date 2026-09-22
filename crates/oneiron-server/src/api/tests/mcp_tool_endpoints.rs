@@ -605,3 +605,223 @@ async fn mcp_endpoint_tool_args_are_gated_before_execution() {
     assert_mcp_structured_error(&body, "tool_args_invalid");
     assert_eq!(body["error"]["data"]["field"], Value::from("key"));
 }
+
+#[tokio::test]
+async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
+    use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    use oneiron::workspace_roster::{ProjectRecord, RoomClaimOutcome, RoomPage};
+
+    let (_dir, server) = auth_test_server();
+    let owner = seeded_test_entity_id(0x2510_0001);
+    let other = seeded_test_entity_id(0x2510_0002);
+    let credential = "mcp-agent-room-owner";
+    let other_credential = "mcp-agent-room-other";
+    for (actor, credential) in [(owner, credential), (other, other_credential)] {
+        register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    }
+    let project = oneiron::EntityId::now();
+    let root = server.vault.root_project().expect("root");
+    let mut record = ProjectRecord::new(project, Some(root), root, owner);
+    record.roster.push(other.to_hex());
+    server
+        .vault
+        .put_project(project, &record, 1)
+        .expect("project");
+    let room = oneiron::EntityId::from_hex(&record.home_room).expect("room");
+    let memory = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
+    let mut turns = Vec::new();
+    for at in 0..256 {
+        let turn = oneiron::EntityId::now();
+        memory
+            .rooms_speak(&WitnessTurn {
+                conversation_ref: room.to_hex(),
+                turn_ref: Some(turn.to_hex()),
+                messages: vec![WitnessMessage {
+                    id: Some(oneiron::EntityId::now().to_hex()),
+                    author: WitnessAuthor::User,
+                    message_type: "text".to_owned(),
+                    content: "room message".to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: at + 2,
+            })
+            .expect("speak");
+        turns.push(turn);
+    }
+    let (_, exact) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "room-exact",
+            "rooms.messages",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_room"),
+                json!({
+                    "arguments": {"room_ref": room.to_hex()},
+                    "page": {"limit": 256, "forceful_override": true},
+                }),
+            ),
+        ),
+    )
+    .await;
+    assert!(exact.get("error").is_none(), "{exact}");
+    let exact = &exact["result"]["structuredContent"];
+    let page: RoomPage = serde_json::from_value(exact["output"].clone()).expect("typed page");
+    assert_eq!(
+        page,
+        memory
+            .rooms_messages_page(room, None, 256)
+            .expect("engine page")
+    );
+    assert_eq!(page.rows.len(), 256);
+    assert_eq!(page.next_after, None);
+    assert_eq!(exact["meta"]["end"], "Complete");
+
+    let (_, first) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "room-first",
+            "rooms.messages",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_room"),
+                json!({
+                    "arguments": {"room_ref": room.to_hex()}, "page": {"limit": 50},
+                }),
+            ),
+        ),
+    )
+    .await;
+    let first = &first["result"]["structuredContent"];
+    let mut ids = first["output"]["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| row["turn_id"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 50);
+    let mut cursor = first["meta"]["page"]["cursor"].as_str().map(str::to_owned);
+    while let Some(handle) = cursor {
+        let (_, next) = route_json(
+            server.clone(),
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                credential,
+                "room-next",
+                "rooms.messages",
+                mcp_merge_args(
+                    mcp_endpoint_envelope(owner, "read_room"),
+                    json!({
+                        "arguments": {"room_ref": room.to_hex()},
+                        "page": {"limit": 50, "cursor": handle},
+                    }),
+                ),
+            ),
+        )
+        .await;
+        assert!(next.get("error").is_none(), "{next}");
+        let next = &next["result"]["structuredContent"];
+        ids.extend(
+            next["output"]["rows"]
+                .as_array()
+                .expect("rows")
+                .iter()
+                .map(|row| row["turn_id"].clone()),
+        );
+        cursor = next["meta"]["page"]["cursor"].as_str().map(str::to_owned);
+        if cursor.is_none() {
+            assert_eq!(next["meta"]["end"], "Complete");
+        }
+    }
+    assert_eq!(
+        ids,
+        turns
+            .iter()
+            .map(|turn| json!(turn.to_hex()))
+            .collect::<Vec<_>>()
+    );
+
+    for (actor, credential) in [(owner, credential), (other, other_credential)] {
+        let (_, claimed) = route_json(
+            server.clone(),
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                credential,
+                "room-claim",
+                "rooms.claim",
+                mcp_merge_args(
+                    mcp_endpoint_envelope(actor, "claim_turn"),
+                    json!({
+                        "arguments": {"room_ref": room.to_hex(), "turn_ref": turns[0].to_hex()},
+                    }),
+                ),
+            ),
+        )
+        .await;
+        assert!(claimed.get("error").is_none(), "{claimed}");
+        let result: RoomClaimOutcome =
+            serde_json::from_value(claimed["result"]["structuredContent"]["output"].clone())
+                .expect("typed claim outcome");
+        assert_eq!(
+            result,
+            server
+                .vault
+                .memory(actor, oneiron::EdgeActorClass::Human)
+                .rooms_claim(room, turns[0], 999)
+                .expect("engine claim")
+        );
+    }
+    let second_project = oneiron::EntityId::now();
+    let second = ProjectRecord::new(second_project, Some(root), root, owner);
+    server
+        .vault
+        .put_project(second_project, &second, 1)
+        .expect("second project");
+    let (_, rooms) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "room-list-first",
+            "rooms.list",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_room"),
+                json!({"page": {"limit": 1}}),
+            ),
+        ),
+    )
+    .await;
+    let rooms = &rooms["result"]["structuredContent"];
+    assert_eq!(
+        rooms["output"].as_array().expect("typed room list").len(),
+        1
+    );
+    assert_eq!(rooms["meta"]["end"], "More");
+    let cursor = rooms["meta"]["page"]["cursor"]
+        .as_str()
+        .expect("room-list cursor");
+    let (_, rest) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "room-list-next",
+            "rooms.list",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_room"),
+                json!({
+                    "page": {"limit": 1, "cursor": cursor},
+                }),
+            ),
+        ),
+    )
+    .await;
+    let rest = &rest["result"]["structuredContent"];
+    assert_eq!(rest["output"].as_array().expect("remaining room").len(), 1);
+    assert_eq!(rest["meta"]["end"], "Complete");
+    assert_ne!(rooms["output"][0]["id"], rest["output"][0]["id"]);
+}

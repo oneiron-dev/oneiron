@@ -325,7 +325,7 @@ impl OneironClient {
     pub fn rooms_messages(
         &self,
         input: &oneiron::task_verb::sdk::RoomRequest,
-    ) -> Result<Vec<oneiron::workspace_roster::RoomTurn>, MemoryError> {
+    ) -> Result<oneiron::workspace_roster::RoomPage, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

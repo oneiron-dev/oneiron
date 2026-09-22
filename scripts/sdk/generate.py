@@ -355,6 +355,57 @@ def python_facade(row):
         return PY_PUBLIC_BOUNDARIES[name]
     return f'    def {name}(self, input: object) -> Any:\n        return self._agent_verb("{name}", input)\n'
 
+def mcp_dispatch():
+    result = """fn execute_mcp_agent_verb(
+        server: &SyncServer,
+        args: &McpVerbToolArgs,
+        actor: &McpResolvedActor,
+    ) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
+        let a = &args.payload.arguments;
+        let invalid = || McpGatewayError::new(-32602, "tool_args_invalid", "invalid typed agent-verb argument");
+        let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
+        match args.tool.name {
+"""
+    for row in ROWS:
+        if row['mcp'] == 'none':
+            continue
+        fields = row['mcp_fields']
+        required = row.get('mcp_required_fields', fields)
+        tree = {}
+        root_value = None
+        equalities = []
+        for field, path in fields.items():
+            if path.startswith('='):
+                equalities.append(f'if a.{field}.as_deref() != Some(input.{path[1:]}.as_str()) {{ return Err(invalid()); }}')
+                continue
+            value = f'a.{field}.clone()'
+            if field in required:
+                value += '.ok_or_else(invalid)?'
+            if path == '$':
+                root_value = value
+            else:
+                target = tree
+                parts = path.split('.')
+                for part in parts[:-1]:
+                    target = target.setdefault(part, {})
+                target[parts[-1]] = value
+        def object_expr(tree):
+            return '{' + ','.join(json.dumps(k) + ':' + (object_expr(v) if isinstance(v, dict) else v) for k, v in tree.items()) + '}'
+        value = root_value if root_value is not None else 'json!(' + object_expr(tree) + ')'
+        result += f'{json.dumps(row["name"])} => {{\n'
+        result += f'let input: {rust_type(row["input"])} = serde_json::from_value({value}).map_err(|_| invalid())?;\n'
+        result += '\n'.join(equalities) + '\n'
+        result += f'let output = oneiron::task_verb::sdk::{row["name"].replace(".", "_")}(&memory, input).map_err(mcp_facade_error)?;\n'
+        if 'page' in row:
+            page = row['page']
+            result += f'let source = crate::mcp::McpPageSource::scoped_window(output.{page["rows"]}.len(), 0, 0, output.{page["cursor"]}.is_none());\n'
+        else:
+            count = 'output.len()' if row['output'].startswith('Vec<') else '1'
+            result += f'let source = crate::mcp::McpPageSource::complete({count});\n'
+        result += 'let value = serde_json::to_value(output).map_err(|_| McpGatewayError::new(-32603, "engine_error", "typed agent result cannot be encoded"))?; Ok((value, source)) },\n'
+    result += '_ => Err(invalid()), } }\n'
+    return result
+
 def outputs():
     core = HEADER + 'pub const AGENT_VERBS: &[&str] = &[' + ','.join(json.dumps(r['name']) for r in ROWS) + '];\n'
     core += "pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> { match verb {\n"
@@ -363,11 +414,16 @@ def outputs():
         binding = 'input' if checks else '_input'
         core += f'{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
     core += '_ => return Err(MemoryError::bad_request("unknown SDK agent verb")), } Ok(()) }\n'
-    core += "pub fn invoke(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<serde_json::Value> { validate_input(verb, &value)?; match verb {\n"
+    core += "pub fn invoke(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<serde_json::Value> { match verb {\n"
     for r in ROWS:
-        binding = '_input' if r['input'] == 'EmptyRequest' else 'input'
-        core += f'{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value)?; let output: {r["output"]} = {r["call"]}; encode(output) }},\n'
+        method = r['name'].replace('.', '_')
+        core += f'{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
     core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n}}\n'
+    for r in ROWS:
+        method = r['name'].replace('.', '_')
+        binding = '_input' if r['input'] == 'EmptyRequest' else 'input'
+        checks = r.get('admission', {}).get('validate', '')
+        core += f"pub fn {method}(memory: &Memory<'_>, {binding}: {r['input']}) -> MemoryResult<{r['output']}> {{ {checks} Ok({r['call']}) }}\n"
     server = HEADER + 'use super::*;\npub(super) fn routes() -> Router<Arc<SyncServer>> { Router::new()\n'
     for r in ROWS:
         method=r['name'].replace('.','_')
@@ -469,7 +525,7 @@ export function agentVerbs(invoke: AgentInvoke) {
             elif verb=='answer':decl='handle: TaskAskHandle, resultRef: string';value='{handle, result_ref: resultRef}';result='TaskAskAnswer'
             elif verb=='outcomes':decl='handle: TaskAskHandle';value='handle';result='CalibrationPair[]'
             elif verb=='list':decl='';value='{}';result='unknown[]'
-            elif verb=='messages':decl='roomRef: string, after?: string, limit?: number';value='{room_ref: roomRef, after, limit}';result='unknown[]'
+            elif verb=='messages':decl='roomRef: string, after?: string, limit?: number';value='{room_ref: roomRef, after, limit}';result='{rows: unknown[]; next_after: string | null}'
             elif verb=='claim':decl='roomRef: string, turnRef: string';value='{room_ref: roomRef, turn_ref: turnRef}';result='unknown'
             else: decl='turn: Record<string, unknown>';value='turn';result='unknown'
             ts += f'{verb}({decl}): {result} {{ return invoke("{method}", {value}) as {result} }},\n'
@@ -500,18 +556,20 @@ export function agentVerbs(invoke: AgentInvoke) {
     task_catalog += '#[must_use] pub const fn as_str(self) -> &' + "'static str { match self {\n"
     task_catalog += ''.join('Self::'+n.split('.')[1].title()+' => '+json.dumps(n)+',\n' for n in tasks)+'}}}\n'
     room_catalog=HEADER+f'pub const ROOMS_VERBS: [&str; {len(rooms)}] = '+json.dumps(rooms)+';\n'
-    mcp=HEADER+'pub(super) fn agent_binding(family: McpVerbFamily, verb: &str) -> Option<McpVerbBinding> { match (family, verb) {\n'
+    mcp_names = MANIFEST['legacy_mcp'] + [r['name'] for r in ROWS if r['mcp'] == 'tool-first']
+    mcp=HEADER+'const AGENT_MCP_VERBS: &[&str] = &'+json.dumps(mcp_names)+';\n'
+    mcp+='pub(super) fn agent_binding(family: McpVerbFamily, verb: &str) -> Option<McpVerbBinding> { match (family, verb) {\n'
     for r in ROWS:
-        if '.' not in r['name']: continue
+        if r['mcp'] == 'none': continue
         family,verb=r['name'].split('.')
         mcp+=f'(McpVerbFamily::{family.title()}, "{verb}") => Some(McpVerbBinding::{family.title()}{verb.title()}),\n'
     mcp+='_ => None, }}\n'
     for function, field in [('agent_argument_fields', 'mcp_fields'), ('agent_required_fields', 'mcp_required_fields')]:
         mcp += f"pub(super) const fn {function}(binding: McpVerbBinding) -> Option<&'static [&'static str]> {{ match binding {{\n"
         for r in ROWS:
-            if '.' not in r['name']: continue
+            if r['mcp'] == 'none': continue
             family, verb = r['name'].split('.')
-            mcp += f'McpVerbBinding::{family.title()}{verb.title()} => Some(&'+json.dumps(r.get(field, r['mcp_fields']))+'),\n'
+            mcp += f'McpVerbBinding::{family.title()}{verb.title()} => Some(&'+json.dumps(list(r.get(field, r['mcp_fields'])))+'),\n'
         mcp += '_ => None, }}\n'
     mcp += '#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum McpVerbBinding {\n'
     mcp += ''.join(''.join(part.title() for part in name.split('.'))+',\n' for name in NAMES)
@@ -543,6 +601,7 @@ export function agentVerbs(invoke: AgentInvoke) {
         'crates/oneiron-py/python/oneiron/agent_verbs.pyi':python_stub,
     }
     for path, start, end, body in [
+        ('crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs', '// BEGIN GENERATED MCP DISPATCH', '// END GENERATED MCP DISPATCH', mcp_dispatch()),
         ('crates/oneiron-py/python/oneiron/__init__.pyi', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', ''.join(PY_STUB_BOUNDARIES.get(r['name'], f"    def {r['name']}(self, input: object) -> Any: ...\n") for r in ROWS if '.' not in r['name'])),
         ('packages/oneiron/src/index.ts', '// BEGIN GENERATED FACADE VERBS', '// END GENERATED FACADE VERBS', ''.join(ts_facade(r) for r in ROWS if '.' not in r['name'])),
         ('crates/oneiron-py/python/oneiron/__init__.py', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', ''.join(python_facade(r) for r in ROWS if '.' not in r['name'])),

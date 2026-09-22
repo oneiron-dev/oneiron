@@ -1,9 +1,7 @@
 //! MCP endpoint surface: modes, verb bindings, and the registered tool listing.
 
 use super::endpoint_schema::{execute_code_tool_schema, setup_tool_schema, verb_tool_schema};
-use oneiron::board_verb::BOARD_VERBS;
 use oneiron::code_run::vault_read::{MEMORY_VERBS, VaultReadMethod};
-use oneiron::task_verb::TASKS_VERBS;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -156,21 +154,14 @@ pub enum McpSurfaceConstructionError {
     UnprojectableVerbRow { row: &'static str },
 }
 
-/// The ONE source of tool-first names: the engine's exported verb constants.
+/// The ONE source of tool-first names: the manifest and native read table.
 ///
 /// There is deliberately no server-owned name array beside this. Adding a verb
 /// row upstream adds a tool here with no curation decision to make.
 #[must_use]
 pub fn exported_verb_rows() -> Vec<&'static str> {
-    let mut rows = Vec::with_capacity(
-        BOARD_VERBS.len()
-            + TASKS_VERBS.len()
-            + oneiron::workspace_roster::ROOMS_VERBS.len()
-            + MEMORY_VERBS.len(),
-    );
-    rows.extend_from_slice(&BOARD_VERBS);
-    rows.extend_from_slice(&TASKS_VERBS);
-    rows.extend_from_slice(&oneiron::workspace_roster::ROOMS_VERBS);
+    let mut rows = Vec::with_capacity(AGENT_MCP_VERBS.len() + MEMORY_VERBS.len());
+    rows.extend_from_slice(AGENT_MCP_VERBS);
     rows.extend_from_slice(&MEMORY_VERBS);
     rows
 }

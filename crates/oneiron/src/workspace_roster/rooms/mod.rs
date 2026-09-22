@@ -80,6 +80,12 @@ pub struct RoomTurn {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct RoomPage {
+    pub rows: Vec<RoomTurn>,
+    pub next_after: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RoomClaimReceipt {
     pub room_id: String,
     pub turn_id: String,

@@ -26,6 +26,19 @@ request DTOs preserve the wire defaults. Language-specific DTO conversion stays
 in generator templates; only manifest rows select which methods are emitted. Language DTO declarations live in the generator;
 keep them aligned with the serde domain types when a domain shape changes.
 
+`mcp` selects `tool-first` or `none` for each SDK row. For projected rows,
+`mcp_fields` maps each MCP argument to a field path in the typed engine input.
+`$` decodes the whole input from that argument. `=field` requires an envelope
+argument to equal that field on the decoded input. Required arguments default
+to all mapped fields; `mcp_required_fields` can narrow that set. The generated
+MCP dispatcher calls the same typed SDK functions as the other transports and
+serializes their outputs without adding a per-verb result shape.
+
+A bounded output supplies `page: {"rows": "rows", "cursor": "next_after"}`.
+The cursor's presence, not a full row count, decides source exhaustion. A vector
+output is an exhaustive set. MCP can split either result into retained transport
+pages; drain `meta.page.cursor` before using an engine `next_after` cursor.
+
 ## Task handles
 
 `client.tasks.ask(spec)` returns `{handle, count, replayed}` immediately. The

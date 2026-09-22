@@ -17,7 +17,7 @@ outcomes(handle: TaskAskHandle): CalibrationPair[] { return invoke("tasksOutcome
 },
 rooms: {
 list(): unknown[] { return invoke("roomsList", {}) as unknown[] },
-messages(roomRef: string, after?: string, limit?: number): unknown[] { return invoke("roomsMessages", {room_ref: roomRef, after, limit}) as unknown[] },
+messages(roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} { return invoke("roomsMessages", {room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null} },
 claim(roomRef: string, turnRef: string): unknown { return invoke("roomsClaim", {room_ref: roomRef, turn_ref: turnRef}) as unknown },
 speak(turn: Record<string, unknown>): unknown { return invoke("roomsSpeak", turn) as unknown },
 },
