@@ -30,14 +30,8 @@ impl EntityStore for Vault {
             row.body = crate::entity_doc::resolve_record_body(&self.store, txn, id, &row.body)?;
             return Ok(Some(row));
         }
-        row.body = crate::note::live_body_in_txn(
-            &self.store,
-            txn,
-            id,
-            row.entity_type,
-            &row.body,
-        )?
-        .into_owned();
+        row.body = crate::note::live_body_in_txn(&self.store, txn, id, row.entity_type, &row.body)?
+            .into_owned();
         Ok(Some(row))
     }
     fn port_entity_put(
@@ -69,13 +63,32 @@ impl EntityStore for Vault {
         session: &EntityId,
     ) -> Result<Vec<EntityId>> {
         let mut result = Vec::new();
-        for id in type_ids(self, txn, ENTITY_TYPE_TURN)? {
-            if self.port_entity_get(txn, &id)?.is_some()
-                && crate::compaction::turn_session_membership_in_txn(&self.store, txn, &id)?
-                    == Some(*session)
-            {
-                result.push(id);
+        let prefix = [b"session_turns:v1:".as_slice(), session.as_bytes()].concat();
+        for (scanned, row) in self.store.vault_meta.prefix_iter(txn, &prefix)?.enumerate() {
+            if scanned >= 100_000 {
+                return Err(Error::IndexOverflow("session turns index"));
             }
+            let (key, value) = row?;
+            let id = key
+                .get(prefix.len()..)
+                .and_then(|bytes| <[u8; 16]>::try_from(bytes).ok())
+                .ok_or(Error::CorruptedIndex("session turns index"))?;
+            let id = EntityId::from_bytes(id)?;
+            if value.as_ref() != [1] {
+                return Err(Error::CorruptedIndex("session turns index"));
+            }
+            if !self
+                .port_entity_get(txn, &id)?
+                .is_some_and(|row| row.entity_type == ENTITY_TYPE_TURN)
+            {
+                continue;
+            }
+            if crate::compaction::turn_session_membership_in_txn(&self.store, txn, &id)?
+                != Some(*session)
+            {
+                return Err(Error::CorruptedIndex("session turns index"));
+            }
+            result.push(id);
         }
         Ok(result)
     }

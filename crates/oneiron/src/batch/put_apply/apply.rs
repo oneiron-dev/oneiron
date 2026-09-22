@@ -45,6 +45,7 @@ pub(in crate::batch) fn apply_put(
     allow_reserved_predicate: bool,
     replicated: bool,
     hub_sync_imported: bool,
+    hub_admission: Option<&crate::skill_hub::HubAdmissionProof>,
     has_later_covering_text_op: bool,
     write_policy: Option<&crate::gate::PolicyManifestResolution>,
     write_envelope: Option<&WriteEnvelope>,
@@ -252,8 +253,14 @@ pub(in crate::batch) fn apply_put(
         crate::skill_hub::decode_skill_hub_record(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let decoded = crate::skill::decode_skill_record(data)?;
-        hub_origin_marker =
-            crate::skill_hub::check_hub_skill_put(store, &*wtxn, &id, &decoded, hub_sync_imported)?;
+        hub_origin_marker = crate::skill_hub::check_hub_skill_put(
+            store,
+            &*wtxn,
+            &id,
+            &decoded,
+            hub_sync_imported,
+            hub_admission,
+        )?;
         new_skill_record = Some(decoded);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {
         let decoded = crate::agent_def::decode_agent_definition(data)?;

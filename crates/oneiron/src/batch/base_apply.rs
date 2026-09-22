@@ -72,6 +72,7 @@ pub(super) fn apply_ops_with_origin(
     gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
+    let hub_admission = gate_mode.hub_admission;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
@@ -182,6 +183,7 @@ pub(super) fn apply_ops_with_origin(
                     // body-changing overwrite, same-txn (ARCH-0031 amendment).
                     allow_maintenance && allow_reserved_predicate,
                     hub_sync_imported,
+                    hub_admission.as_ref(),
                     later_text_coverage_by_op[op_index],
                     write_policy.as_ref(),
                     materialization.as_ref().map(ClaimMaterialization::envelope),

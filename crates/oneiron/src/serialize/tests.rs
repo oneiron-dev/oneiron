@@ -2755,13 +2755,14 @@ fn provider_read_formats_have_wire_envelopes_and_null_secrets_before_truncation(
 }
 
 #[test]
-fn first_mention_uses_name_and_short_handle_then_bare_handles_in_each_format() {
+fn first_mention_renders_typed_names_without_rewriting_unrelated_text() {
     let mut pack = sample_pack();
     let person = &mut pack.neighbors[0];
     person.short_id = "pr12".into();
     let id = person.id.to_hex();
     person.fields = Some(HashMap::from([
         ("name".into(), Value::String("山田太郎".into())),
+        ("display_name".into(), Value::String("山田太郎".into())),
         (
             "identity_key".into(),
             Value::String("person:internal:yamada".into()),
@@ -2784,9 +2785,10 @@ fn first_mention_uses_name_and_short_handle_then_bare_handles_in_each_format() {
             1,
             "{format:?}: {rendered}"
         );
-        assert!(rendered.contains("pr12, pr12"), "{format:?}: {rendered}");
-        assert!(!rendered.contains(&id));
-        assert!(!rendered.contains("person:internal:yamada"));
+        assert!(
+            rendered.contains(&format!("{id}, person:internal:yamada, {id}")),
+            "{format:?}: {rendered}"
+        );
         assert!(!rendered.contains("identity_key"));
         assert!(rendered.contains("pr12:b3"), "citation gate remains intact");
     }
@@ -2937,4 +2939,44 @@ fn whole_vault_provenance_references_are_preserved_only_in_the_typed_value() {
     );
     let imported = crate::claim::decode_claim_body(&exported.to_bytes().unwrap(), false).unwrap();
     assert!(crate::provenance::decode_edge_provenance_body(&imported.value).is_err());
+}
+
+#[test]
+fn handle_names_with_shared_prefixes_leave_unrelated_values_intact() {
+    let mut pack = sample_pack();
+    pack.results.truncate(1);
+    let unrelated =
+        serde_json::json!({"name": "person:Ann", "text": "Ann and Anna know person:Ann."});
+    pack.results[0]
+        .fields
+        .as_mut()
+        .unwrap()
+        .insert("val".into(), unrelated.clone());
+    let mut person = pack.neighbors[0].clone();
+    person.short_id = "pr12".into();
+    person.fields = Some(HashMap::from([
+        ("name".into(), Value::String("Ann".into())),
+        ("identity_key".into(), Value::String("person:Ann".into())),
+    ]));
+    let mut other = person.clone();
+    other.id = EntityId::from_bytes_unchecked([0x77; 16]);
+    other.short_id = "pr13".into();
+    other.fields = Some(HashMap::from([
+        ("name".into(), Value::String("Anna".into())),
+        ("identity_key".into(), Value::String("person:Anna".into())),
+    ]));
+    pack.neighbors = vec![person, other];
+    let bytes = serialize_pack(&pack, &config(PackFormat::Json));
+    let decoded: Value = serde_json::from_slice(&bytes).unwrap();
+    let round_trip: Value = serde_json::from_slice(&serde_json::to_vec(&decoded).unwrap()).unwrap();
+    assert_eq!(round_trip, decoded);
+    assert_eq!(decoded["claims"][0]["val"], unrelated);
+    let mut found: Vec<_> = decoded["persons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["name"].as_str().unwrap())
+        .collect();
+    found.sort();
+    assert_eq!(found, ["Ann (pr12)", "Anna (pr13)"]);
 }

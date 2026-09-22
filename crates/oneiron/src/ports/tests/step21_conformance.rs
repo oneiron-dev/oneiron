@@ -35,6 +35,9 @@ fn entity_edge_place<P: Backend>(ports: &P) -> Result<()> {
     )?;
     ports.port_entity_put(&mut txn, &turn, &row(ENTITY_TYPE_TURN, b"turn"))?;
     ports.record_turn_session(&mut txn, &turn, &session)?;
+    let other_turn = id(8);
+    ports.port_entity_put(&mut txn, &other_turn, &row(ENTITY_TYPE_TURN, b"other turn"))?;
+    ports.record_turn_session(&mut txn, &other_turn, &id(9))?;
     ports.port_entity_put(
         &mut txn,
         &summary,
@@ -90,6 +93,16 @@ fn entity_edge_place<P: Backend>(ports: &P) -> Result<()> {
     ports.commit(txn)?;
     let txn = ports.read()?;
     assert_eq!(ports.port_place_get(&txn, &a)?, Some(place));
+    assert_eq!(
+        ports.port_list_turns_by_session(&txn, &session)?,
+        vec![turn]
+    );
+    drop(txn);
+    let mut txn = ports.write()?;
+    assert!(ports.port_entity_delete(&mut txn, &turn)?);
+    assert!(ports.port_list_turns_by_session(&txn, &session)?.is_empty());
+    ports.commit(txn)?;
+    let txn = ports.read()?;
     drop(txn);
     // Drop without commit must leave the prior entity and edge snapshot intact.
     let mut txn = ports.write()?;

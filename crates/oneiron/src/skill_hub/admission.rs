@@ -105,6 +105,7 @@ impl Vault {
                     &snapshot.record,
                     occurred,
                     learned_at,
+                    &authorization,
                 )?;
             }
             crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
@@ -131,18 +132,15 @@ impl Vault {
         record: &crate::skill::SkillRecord,
         occurred: TimeRange,
         learned_at: u64,
+        authorization: &crate::consent::ApproveOnceAuthorization,
     ) -> Result<()> {
         let mut admitted = record.clone();
         admitted.approval_status = ClaimApprovalStatus::Approved;
         admitted.lifecycle_status = SkillLifecycle::Active;
         let data = crate::skill::encode_skill_record(&admitted)?;
-        let ticket_key = super::admission_guard::ticket_key(candidate);
-        self.store
-            .vault_meta
-            .put(txn, &ticket_key, blake3::hash(&data).as_bytes())?;
-        self.apply_skill_record_body(txn, candidate, occurred, learned_at, data, false)?;
-        self.store.vault_meta.delete(txn, &ticket_key)?;
-        Ok(())
+        let proof =
+            super::admission_guard::HubAdmissionProof::consent(*candidate, &data, authorization);
+        self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
     }
     /// Reads the most recent hub admission ruling (including a scored refusal).
     pub fn hub_admission_receipt(

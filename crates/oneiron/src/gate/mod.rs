@@ -7,7 +7,7 @@ mod auto_signals;
 mod bundle;
 mod ceiling;
 pub(crate) mod manifest_authenticity;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
 pub(crate) use manifest_authenticity::trusted_manifest_key;
 mod confirm;

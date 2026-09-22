@@ -18,7 +18,7 @@ mod shared_delta;
 mod shared_gate;
 
 pub use admission::{HubAdmissionDisposition, HubAdmissionReceipt};
-pub(crate) use admission_guard::check_hub_skill_put;
+pub(crate) use admission_guard::{HubAdmissionProof, check_hub_skill_put};
 pub use admission_view::{HubActivationAsk, HubAskSurface, hub_ask_surface};
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;

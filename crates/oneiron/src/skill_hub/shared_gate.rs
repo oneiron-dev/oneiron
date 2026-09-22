@@ -145,6 +145,7 @@ impl Vault {
                     &snapshot.record,
                     occurred,
                     learned_at,
+                    &authorization,
                 )?;
                 self.supersede_skill_record_in_txn(
                     txn,

@@ -6,6 +6,7 @@ use super::ClaimMaterialization;
 
 #[derive(Debug)]
 pub(crate) struct ApplyOpsGateMode {
+    pub(super) hub_admission: Option<crate::skill_hub::HubAdmissionProof>,
     pub(super) record_decisions: bool,
     pub(super) persist_pending_consent: bool,
     pub(super) include_source_in_gate_input: bool,
@@ -18,6 +19,7 @@ pub(crate) struct ApplyOpsGateMode {
 impl ApplyOpsGateMode {
     pub(crate) fn new(record_decisions: bool, persist_pending_consent: bool) -> Self {
         Self {
+            hub_admission: None,
             record_decisions,
             persist_pending_consent,
             include_source_in_gate_input: false,
@@ -25,6 +27,11 @@ impl ApplyOpsGateMode {
             claim_materializations: VecDeque::new(),
             preflight_gate_decision_ids: HashMap::new(),
         }
+    }
+
+    pub(crate) fn with_hub_admission(mut self, proof: crate::skill_hub::HubAdmissionProof) -> Self {
+        self.hub_admission = Some(proof);
+        self
     }
 
     pub(super) fn with_claim_materializations(

@@ -20,7 +20,8 @@ pub(crate) fn apply(
         }
         state.drop_deleted(&dropped);
         state.validate()?;
-        // This namespace is deliberately not read by proposal review/landing.
+        // Erasure reads this namespace to find and purge workflow residue;
+        // proposal review/landing deliberately does not read it.
         // A future authenticated command may explicitly adopt a staged intent.
         // Peer metadata never mints a trusted fork, authorship or receipt.
         let payload = pack(&(state.docs, state.forks, state.receipts, state.bundles))?;

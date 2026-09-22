@@ -9,8 +9,62 @@ use crate::{
     store::Store,
 };
 
-pub(super) fn ticket_key(id: &EntityId) -> Vec<u8> {
-    key(b"skill_hub/admission-ticket/v1\0", id)
+/// Exact-record activation proof, issued after local consent and held-out replay,
+/// or at bootstrap: the vault's own genesis authorizes the embedded install set,
+/// which is why first-open seeding needs no separately minted owner consent.
+#[derive(Debug)]
+pub(crate) struct HubAdmissionProof {
+    id: EntityId,
+    binding: blake3::Hash,
+}
+impl HubAdmissionProof {
+    pub(super) fn consent(
+        id: EntityId,
+        data: &[u8],
+        _authorization: &crate::consent::ApproveOnceAuthorization,
+    ) -> Self {
+        Self {
+            id,
+            binding: blake3::hash(data),
+        }
+    }
+    pub(super) fn genesis(id: EntityId, data: &[u8]) -> Self {
+        Self {
+            id,
+            binding: blake3::hash(data),
+        }
+    }
+}
+
+impl crate::Vault {
+    pub(in crate::skill_hub) fn admit_hub_skill_record_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        occurred: crate::TimeRange,
+        learned_at: u64,
+        data: Vec<u8>,
+        proof: HubAdmissionProof,
+    ) -> Result<()> {
+        crate::batch::apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id: proof.id,
+                entity_type: crate::registry::ENTITY_TYPE_SKILL,
+                occurred,
+                learned_at,
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            crate::batch::ApplyOpsGateMode::new(false, true).with_hub_admission(proof),
+        )
+    }
 }
 fn origin_key(id: &EntityId) -> Vec<u8> {
     key(b"skill_hub/origin/v1\0", id)
@@ -35,6 +89,7 @@ pub(crate) fn check_hub_skill_put(
     id: &EntityId,
     record: &SkillRecord,
     replaces_source: bool,
+    proof: Option<&HubAdmissionProof>,
 ) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
     super::package_codec::check_source_binding_update(store, txn, id, record, replaces_source)?;
     let key = origin_key(id);
@@ -76,11 +131,11 @@ pub(crate) fn check_hub_skill_put(
             .transpose()?
             == Some(crate::skill_optimize::skill_body_binding_digest(record)?);
     if record.lifecycle_status == SkillLifecycle::Active && !unchanged_active {
-        let ticket = store.vault_meta.get(txn, &ticket_key(id))?.ok_or_else(|| {
+        let proof = proof.ok_or_else(|| {
             invalid("hub or fork activation requires local consent and held-out replay")
         })?;
         let encoded = crate::skill::encode_skill_record(record)?;
-        if ticket.as_ref() != blake3::hash(&encoded).as_bytes() {
+        if proof.id != *id || proof.binding != blake3::hash(&encoded) {
             return Err(invalid(
                 "hub admission ticket does not bind this exact record",
             ));

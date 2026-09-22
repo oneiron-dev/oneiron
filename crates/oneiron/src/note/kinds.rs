@@ -42,11 +42,81 @@ pub struct NoteKindDescriptor {
     pub archive_after_days: Option<u32>,
 }
 
+const SHIPPED: &[(
+    &str,
+    ExtractionDefault,
+    ContextDefault,
+    RetentionDefault,
+    Option<u32>,
+)] = &[
+    (
+        "scratchpad",
+        ExtractionDefault::AfterSeal,
+        ContextDefault::OwnerOnly,
+        RetentionDefault::SessionSealed,
+        None,
+    ),
+    (
+        "observation",
+        ExtractionDefault::Allowed,
+        ContextDefault::RelationshipScoped,
+        RetentionDefault::Durable,
+        None,
+    ),
+    (
+        "handoff",
+        ExtractionDefault::AfterSeal,
+        ContextDefault::RelationshipScoped,
+        RetentionDefault::ArchiveAfterDays,
+        Some(60),
+    ),
+    (
+        "research",
+        ExtractionDefault::AfterSeal,
+        ContextDefault::VaultReadable,
+        RetentionDefault::Durable,
+        None,
+    ),
+    (
+        "reflection",
+        ExtractionDefault::AfterSeal,
+        ContextDefault::OwnerOnly,
+        RetentionDefault::Durable,
+        None,
+    ),
+    (
+        "diary",
+        ExtractionDefault::PrivateStrategyOnly,
+        ContextDefault::OwnerOnly,
+        RetentionDefault::Durable,
+        None,
+    ),
+    (
+        "opinion/take",
+        ExtractionDefault::Allowed,
+        ContextDefault::RelationshipScoped,
+        RetentionDefault::Durable,
+        None,
+    ),
+];
+
 fn shipped() -> Vec<NoteKindDescriptor> {
-    serde_json::from_str(include_str!("kinds.json")).expect("shipped NOTE descriptors")
+    SHIPPED
+        .iter()
+        .map(
+            |&(kind, extraction, context, retention, archive_after_days)| NoteKindDescriptor {
+                pack: "core.notes".into(),
+                kind: kind.into(),
+                extraction,
+                context,
+                retention,
+                archive_after_days,
+            },
+        )
+        .collect()
 }
 pub(super) fn is_shipped_kind(raw: &str) -> bool {
-    shipped().iter().any(|descriptor| descriptor.kind == raw)
+    SHIPPED.iter().any(|(kind, ..)| *kind == raw)
 }
 pub(super) fn valid_name(s: &str) -> bool {
     !s.is_empty()
@@ -168,11 +238,8 @@ pub(super) fn context_in_txn(
     txn: &heed::RoTxn<'_>,
     kind: &str,
 ) -> Result<ContextDefault> {
-    if let Some(descriptor) = shipped()
-        .into_iter()
-        .find(|descriptor| descriptor.kind == kind)
-    {
-        return Ok(descriptor.context);
+    if let Some((_, _, context, _, _)) = SHIPPED.iter().find(|(name, ..)| *name == kind) {
+        return Ok(*context);
     }
     let Some(raw) = store.vault_meta().get(txn, &key(kind))? else {
         return match NoteKind::parse(kind) {

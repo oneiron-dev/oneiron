@@ -66,3 +66,34 @@ fn all_shipped_files_conform_and_import_unchanged() -> Result<()> {
     assert!(package("bad", "# Not a skill").is_err());
     Ok(())
 }
+
+#[test]
+fn bootstrap_proof_cannot_activate_changed_bytes() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let id = stable_id("judge")?;
+    let mut record = vault.get_skill_record(&id)?.expect("seeded");
+    record.lifecycle_status = SkillLifecycle::Stale;
+    vault.update_skill_record(&id, &record, TimeRange { start: 1, end: 1 }, 1)?;
+    let before = vault.get_raw(&id)?;
+    record.lifecycle_status = SkillLifecycle::Active;
+    let data = crate::skill::encode_skill_record(&record)?;
+    let proof = crate::skill_hub::admission_guard::HubAdmissionProof::genesis(id, &data);
+    record.desc.push_str(" changed");
+    let changed = crate::skill::encode_skill_record(&record)?;
+    assert!(
+        vault
+            .with_write_txn(|txn| {
+                vault.admit_hub_skill_record_in_txn(
+                    txn,
+                    TimeRange { start: 2, end: 2 },
+                    2,
+                    changed,
+                    proof,
+                )
+            })
+            .is_err()
+    );
+    assert_eq!(vault.get_raw(&id)?, before);
+    Ok(())
+}

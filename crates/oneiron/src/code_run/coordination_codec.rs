@@ -8,8 +8,8 @@ use crate::Result;
 use crate::agent_dispatch::AgentDispatchTarget;
 use crate::consent::ActionEnvelope;
 use crate::task_verb::{
-    ScopeTaskAskAnswer, ScopeTaskAskHandle, TaskAskHoldReason, ScopeTaskAskReceipt, ScopeTaskAskSpec, TaskAskStatus,
-    TaskAskTarget,
+    ScopeTaskAskAnswer, ScopeTaskAskHandle, ScopeTaskAskReceipt, ScopeTaskAskSpec,
+    TaskAskHoldReason, TaskAskStatus, TaskAskTarget,
 };
 use rmpv::Value;
 
@@ -137,7 +137,10 @@ pub(super) fn decode_spawn(value: &Value) -> Result<SelfAgentSpawnResult> {
 }
 
 fn hold_value(hold: Option<TaskAskHoldReason>) -> Value {
-    hold.map_or(Value::Nil, |_| Value::from("no_live_route"))
+    match hold {
+        None => Value::Nil,
+        Some(TaskAskHoldReason::NoLiveRoute) => Value::from("no_live_route"),
+    }
 }
 fn hold_decode(value: &Value) -> Result<Option<TaskAskHoldReason>> {
     match value {
@@ -208,5 +211,20 @@ pub(super) fn decode_status(value: &Value) -> Result<TaskAskStatus> {
             result_ref: entity_value(map_get(m, "result")?)?,
         })),
         _ => Err(invalid_code_run_replay("ask status")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_hold_reason_round_trips() -> Result<()> {
+        for hold in [None, Some(TaskAskHoldReason::NoLiveRoute)] {
+            let status = TaskAskStatus::Pending { hold };
+            assert_eq!(decode_status(&status_value(&status))?, status);
+        }
+        assert!(hold_decode(&Value::from("unknown")).is_err());
+        Ok(())
     }
 }

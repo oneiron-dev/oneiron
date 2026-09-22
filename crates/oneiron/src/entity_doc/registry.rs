@@ -1,9 +1,10 @@
-//! Bounded per-vault LRU residency; durable bytes, not the cache, own truth.
+//! Bounded per-vault insertion-ordered residency; durable bytes, not the cache, own truth.
 
 use super::{EntityDoc, invalid, storage};
 use crate::error::Result;
 use crate::{EntityId, Vault};
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 /// Observable registry residency and configured limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +17,7 @@ pub struct RegistryStatus {
 
 pub(crate) struct EntityDocRegistry {
     capacity: usize,
-    entries: HashMap<EntityId, (String, u64, EntityDoc)>,
+    entries: HashMap<EntityId, (String, u64, Arc<EntityDoc>)>,
     cold: VecDeque<EntityId>,
 }
 
@@ -55,7 +56,8 @@ impl EntityDocRegistry {
             }
         }
         self.cold.push_back(id);
-        self.entries.insert(id, (incarnation, generation, doc));
+        self.entries
+            .insert(id, (incarnation, generation, Arc::new(doc)));
     }
 }
 
@@ -109,24 +111,30 @@ impl Vault {
         entity: &EntityId,
         read: impl FnOnce(&EntityDoc) -> T,
     ) -> Result<T> {
-        let mut registry = self
-            .entity_docs
-            .lock()
-            .map_err(|_| invalid("document registry poisoned"))?;
         let txn = self.store.env.read_txn()?;
         let h = storage::head(&self.store, &txn, entity)?;
-        if let Some((incarnation, generation, doc)) = registry.entries.get(entity)
-            && *generation == h.generation
-            && *incarnation == h.incarnation
-        {
-            let out = read(doc);
-            registry.cold.retain(|candidate| candidate != entity);
-            registry.cold.push_back(*entity);
-            return Ok(out);
+        let cached = {
+            let registry = self
+                .entity_docs
+                .lock()
+                .map_err(|_| invalid("document registry poisoned"))?;
+            registry
+                .entries
+                .get(entity)
+                .filter(|(incarnation, generation, _)| {
+                    *generation == h.generation && *incarnation == h.incarnation
+                })
+                .map(|(_, _, doc)| Arc::clone(doc))
+        };
+        if let Some(doc) = cached {
+            return Ok(read(&doc));
         }
         let doc = storage::load(&self.store, &txn, &h)?;
         let out = read(&doc);
-        registry.insert(*entity, h.incarnation, h.generation, doc);
+        self.entity_docs
+            .lock()
+            .map_err(|_| invalid("document registry poisoned"))?
+            .insert(*entity, h.incarnation, h.generation, doc);
         Ok(out)
     }
 }

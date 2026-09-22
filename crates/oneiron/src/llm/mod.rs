@@ -18,7 +18,7 @@ mod call;
 mod defaults;
 #[cfg(test)]
 mod streaming_tests;
-pub use defaults::{PURPOSE_DEFAULTS, PurposeDefault};
+pub use defaults::PurposeDefault;
 pub mod scope;
 pub use self::scope::{Scope, ScopeResource};
 mod catalog;

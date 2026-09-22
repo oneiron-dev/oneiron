@@ -3011,7 +3011,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -15273,7 +15273,7 @@
       "RegistryStatus"
      ],
      "path": "src/entity_doc/registry.rs",
-     "purpose": "Bounded per-vault LRU residency; durable bytes, not the cache, own truth",
+     "purpose": "Bounded per-vault insertion-ordered residency; durable bytes, not the cache, own truth",
      "surface": {
       "crate-vis": 5,
       "fn": 5,
@@ -19818,7 +19818,6 @@
      "path": "src/llm/defaults.rs",
      "purpose": "Central purpose policy",
      "surface": {
-      "const": 1,
       "fn": 3,
       "struct": 1
      }
@@ -24279,7 +24278,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ports/lmdb_entity.rs",
@@ -27842,7 +27841,7 @@
      "path": "src/skill_hub/admission_guard.rs",
      "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {

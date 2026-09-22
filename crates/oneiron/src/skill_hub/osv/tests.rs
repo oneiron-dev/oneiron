@@ -162,23 +162,13 @@ fn hub_updates_scan_new_dependencies_before_exposing_them() -> Result<()> {
         TimeRange { start: 10, end: 10 },
         10,
     )?;
-    // Held-out admission ticket: the materialization door requires a bound
-    // ticket for any hub-origin activation, so the fixture mints and consumes
-    // its own exactly like the seed and scored-admission paths do.
     let mut active = vault.get_skill_record(&installed.entity)?.unwrap();
     active.lifecycle_status = SkillLifecycle::Active;
     active.approval_status = ClaimApprovalStatus::Auto;
     let data = crate::skill::encode_skill_record(&active)?;
+    let proof = super::super::admission_guard::HubAdmissionProof::genesis(installed.entity, &data);
     vault.with_write_txn(|txn| {
-        let ticket = super::super::admission_guard::ticket_key(&installed.entity);
-        vault.store.vault_meta.put(
-            txn,
-            &ticket,
-            blake3::hash(&data).as_bytes(),
-        )?;
-        vault.apply_skill_record_body(txn, &installed.entity, TimeRange { start: 11, end: 11 }, 11, data, false)?;
-        vault.store.vault_meta.delete(txn, &ticket)?;
-        Ok(())
+        vault.admit_hub_skill_record_in_txn(txn, TimeRange { start: 11, end: 11 }, 11, data, proof)
     })?;
     let mut incoming = package("4.17.20");
     incoming.record.version = "2.0.0".into();

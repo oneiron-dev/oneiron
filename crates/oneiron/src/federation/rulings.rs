@@ -113,7 +113,7 @@ impl Vault {
             .ok_or_else(invalid)?;
         let ruling = AdminRuling {
             ledger_order,
-            id: EntityId::now().to_hex(),
+            id: self.store.clock.entity_id()?.to_hex(),
             holder: holder.actor().to_hex(),
             grant_ref,
             vault_id,

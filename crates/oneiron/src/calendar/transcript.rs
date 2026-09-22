@@ -367,23 +367,17 @@ pub fn seed_file_drop_machine_fixture(
     rmpv::encode::write_value(&mut body, &manifest)
         .map_err(|_| crate::Error::InvariantViolation("fixture policy manifest encode"))?;
     let id = crate::EntityId::now();
-    let mut raw = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + body.len());
-    raw.push(crate::registry::ENTITY_TYPE_POLICY_MANIFEST);
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&body);
     vault.with_write_txn(|wtxn| {
-        crate::gate::stamp_manifest_origin(&vault.store, wtxn, &id, &body, false)?;
-        vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
-        vault.store.type_index.put(
-            wtxn,
-            &crate::store::Store::encode_type_key(
-                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+        vault
+            .batch_in()
+            .put(
                 &id,
-            ),
-            &[],
-        )?;
+                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                crate::temporal::TimeRange { start: at, end: at },
+                at,
+                &body,
+            )
+            .apply(wtxn)?;
         Ok(())
     })?;
     Ok(actor)
@@ -487,23 +481,17 @@ fn put_calendar_test_policy(vault: &crate::Vault, manifest: &rmpv::Value) -> cra
         .map_err(|_| crate::Error::InvariantViolation("fixture policy manifest encode"))?;
     let id = crate::EntityId::now();
     let at = 1_u64;
-    let mut raw = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + body.len());
-    raw.push(crate::registry::ENTITY_TYPE_POLICY_MANIFEST);
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&body);
     vault.with_write_txn(|wtxn| {
-        crate::gate::stamp_manifest_origin(&vault.store, wtxn, &id, &body, false)?;
-        vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
-        vault.store.type_index.put(
-            wtxn,
-            &crate::store::Store::encode_type_key(
-                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+        vault
+            .batch_in()
+            .put(
                 &id,
-            ),
-            &[],
-        )?;
+                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                crate::temporal::TimeRange { start: at, end: at },
+                at,
+                &body,
+            )
+            .apply(wtxn)?;
         Ok(())
     })
 }

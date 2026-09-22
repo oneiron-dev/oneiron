@@ -250,7 +250,8 @@ impl Vault {
             .get(txn, authority_first_seen_clock_sync_key())?
             .and_then(|raw| decode_authority_first_seen_secs(&raw))
             .unwrap_or(0);
-        let now = authority_observation_secs(&self.store, floor, crate::unix_seconds_now());
+        let now =
+            authority_observation_secs(&self.store, floor, self.store.clock.now_recorded_at());
         let peers = crate::federation::admitted_peer_consent_roots_in_txn(self, txn)?;
         Ok(fold_authority_log_for_posture(
             &entries,
