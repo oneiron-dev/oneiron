@@ -39,8 +39,9 @@ loss and 20% p99 increase from each phase. The converter checks the recorded
 ratio and samples; it does not confuse a valid baseline with a proven speedup.
 The separate hot-path optimization acceptance is still open.
 
-Source receipts: [fleet](evidence/W7-C10/fleet-macbook-before.json),
-[process](evidence/W7-C10/fleet-macbook-before-process.json). The binary BLAKE3 is
+Full fleet receipts with per-sample arrays are archived off-repo at
+`/Volumes/Cinema/archive/w7-evidence/W7-C10/` (checksums in `SHA256SUMS` there).
+The [process receipt](evidence/W7-C10/fleet-macbook-before-process.json) is committed. The binary BLAKE3 is
 `a455c0908e1c91b6c1b3fb9fb1bcfe811a44f5ffbc2bd3d0de717ead3dcdabd7`.
 The mirror has no Git metadata; its null revision/dirty fields are retained, not
 replaced with an inferred source revision. This artifact includes the telemetry
@@ -184,7 +185,8 @@ results. Keep before/after branch receipts for any later fleet-path change.
 
 A floor is created only by an explicit command against a successful, optimized,
 fleet-scale receipt. There is no checked-in guessed numeric baseline and no
-fallback zero floor. The floor retains the source receipt and its SHA-256 digest.
+fallback zero floor. The floor retains the source receipt without per-sample arrays;
+its `baseline_sha256` is the canonical-JSON SHA-256 of the full receipt.
 The explicit tolerances are regression budgets, restricted to 1–30%, not capacity
 guesses. The example accepts at most 15% throughput loss and 20% p99 increase:
 
@@ -305,8 +307,9 @@ optimization saves work only when that prior state already exists. Both figures
 are retained. This is a measured residual-resume gain, not proof of the later
 fresh-insert scan optimization.
 
-The [raw receipt](evidence/W7-C10/fleet-arch-before.json),
-[process outcome](evidence/W7-C10/fleet-arch-before-process.json) and
+The full receipt with per-sample arrays is archived off-repo at
+`/Volumes/Cinema/archive/w7-evidence/W7-C10/` (checksums in `SHA256SUMS` there).
+The [process outcome](evidence/W7-C10/fleet-arch-before-process.json) and
 [approved floor](evidence/W7-C10/fleet-arch-floor.json) are committed. The floor
 uses explicit 15% throughput-loss and 20% p99-growth regression budgets.
 

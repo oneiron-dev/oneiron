@@ -50,7 +50,10 @@ def write_new(path, value):
         target.write("\n")
 
 
-def validate(receipt):
+def validate(receipt, *, samples_required=True):
+    require(set(receipt) == {"schema", "status", "plan", "host", "revision", "dirty", "binary_blake3",
+                             "started_unix_ms", "held_sockets", "verified_writes", "verified_recalls",
+                             "hold_observed_ms", "metrics", "optimization"}, "receipt shape mismatch")
     require(receipt.get("schema") == SCHEMA and receipt.get("status") == "complete",
             "not a complete fleet receipt")
     plan, host = receipt["plan"], receipt["host"]
@@ -99,32 +102,38 @@ def validate(receipt):
     names.update(f"{verb}_{i}" for verb in ("write", "recall") for i in range(plan["rounds"]))
     require(set(metrics) == names, "missing or unexpected per-verb metrics")
     for name, metric in metrics.items():
-        validate_metric(name, metric, plan["ppr_samples"] if name.startswith("ppr_") else plan["agents"])
+        validate_metric(name, metric, plan["ppr_samples"] if name.startswith("ppr_") else plan["agents"],
+                        samples_required=samples_required)
     validate_optimization(receipt)
     return receipt
 
 
-def validate_metric(name, metric, count):
-    require(set(metric) == {"completed", "elapsed_seconds", "throughput_per_second", "p99_ms", "samples_ms"},
-            f"{name}: metric shape mismatch")
+def validate_metric(name, metric, count, *, samples_required=True):
+    keys = {"completed", "elapsed_seconds", "throughput_per_second", "p99_ms"}
+    if samples_required:
+        keys.add("samples_ms")
+    require(set(metric) == keys, f"{name}: metric shape mismatch")
     require(type(metric["completed"]) is int and metric["completed"] == count,
             f"{name}: incomplete operations")
-    samples = metric["samples_ms"]
-    require(isinstance(samples, list) and len(samples) == count and all(number(x) for x in samples),
-            f"{name}: missing or invalid raw samples")
-    require(samples == sorted(samples), f"{name}: samples not sorted")
     for key in ("elapsed_seconds", "throughput_per_second", "p99_ms"):
         require(number(metric[key]), f"{name}: invalid {key}")
     require(close(metric["throughput_per_second"], count / metric["elapsed_seconds"]),
             f"{name}: throughput inconsistent with observations")
-    require(close(metric["p99_ms"], samples[math.ceil(count * .99) - 1]),
-            f"{name}: p99 inconsistent with raw samples")
-    require(max(samples) <= metric["elapsed_seconds"] * 1000 * (1 + 1e-9),
-            f"{name}: sample exceeds phase duration")
+    if samples_required:
+        samples = metric["samples_ms"]
+        require(isinstance(samples, list) and len(samples) == count and all(number(x) for x in samples),
+                f"{name}: missing or invalid raw samples")
+        require(samples == sorted(samples), f"{name}: samples not sorted")
+        require(close(metric["p99_ms"], samples[math.ceil(count * .99) - 1]),
+                f"{name}: p99 inconsistent with raw samples")
+        require(max(samples) <= metric["elapsed_seconds"] * 1000 * (1 + 1e-9),
+                f"{name}: sample exceeds phase duration")
 
 
 def validate_optimization(receipt):
     opt, metrics = receipt["optimization"], receipt["metrics"]
+    require(set(opt) == {"route", "equivalent_pairs", "result_blake3", "incremental_speedup",
+                         "preparation_seconds", "preparation_included_speedup"}, "optimization shape mismatch")
     require(opt["route"] == "full-depth10-vs-depth5-resume-to10-v1", "unknown optimization route")
     require(opt["equivalent_pairs"] == receipt["plan"]["ppr_samples"], "PPR output equivalence missing")
     require(isinstance(opt["result_blake3"], str) and len(opt["result_blake3"]) == 64
@@ -135,22 +144,31 @@ def validate_optimization(receipt):
         require(number(opt[key]) and close(opt[key], expected), f"inconsistent {key}")
 
 
-def make_floor(receipt, throughput_loss, p99_increase):
-    validate(receipt)
+def validate_tolerances(throughput_loss, p99_increase):
     # The tolerance is an explicit regression budget, never an invented throughput target.
     for value in (throughput_loss, p99_increase):
         require(number(value) and .01 <= value <= .30, "tolerances must be 0.01..0.30")
+
+
+def make_floor(receipt, throughput_loss, p99_increase):
+    validate(receipt)
+    validate_tolerances(throughput_loss, p99_increase)
+    baseline = {**receipt, "metrics": {
+        name: {key: value for key, value in metric.items() if key != "samples_ms"}
+        for name, metric in receipt["metrics"].items()}}
     return {"schema": FLOOR_SCHEMA, "baseline_sha256": fingerprint(receipt),
             "throughput_loss": throughput_loss, "p99_increase": p99_increase,
-            "baseline_receipt": receipt}
+            "baseline_receipt": baseline}
 
 
 def validate_floor(floor):
     require(set(floor) == {"schema", "baseline_sha256", "throughput_loss", "p99_increase", "baseline_receipt"}
             and floor["schema"] == FLOOR_SCHEMA, "missing or invalid floor")
-    expected = make_floor(floor["baseline_receipt"], floor["throughput_loss"], floor["p99_increase"])
-    require(floor == expected, "floor does not match its measured baseline")
-    return floor["baseline_receipt"]
+    digest = floor["baseline_sha256"]
+    require(isinstance(digest, str) and len(digest) == 64
+            and all(c in "0123456789abcdef" for c in digest), "invalid baseline digest")
+    validate_tolerances(floor["throughput_loss"], floor["p99_increase"])
+    return validate(floor["baseline_receipt"], samples_required=False)
 
 
 def compare(floor, candidate):

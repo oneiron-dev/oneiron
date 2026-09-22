@@ -42,14 +42,6 @@ pub fn of360_metric_definitions() -> Of360Result<Of360MetricDefinitionSet> {
     Ok(definitions)
 }
 
-/// Loads the full, explicitly synthetic, owner-authorized 500-point corpus.
-pub fn of360_gold_corpus() -> Of360Result<Of360GoldDataset> {
-    let dataset = serde_json::from_str(include_str!("data/of360_gold.v1.json"))
-        .map_err(Of360EvalError::InvalidGoldDataset)?;
-    validate_dataset(&dataset)?;
-    Ok(dataset)
-}
-
 pub fn of360_gold_subset() -> Of360Result<Of360GoldDataset> {
     let dataset =
         serde_json::from_str(OF360_GOLD_SUBSET_JSON).map_err(Of360EvalError::InvalidGoldDataset)?;
@@ -296,7 +288,7 @@ fn validate_metric_definitions(metric_definitions: &Of360MetricDefinitionSet) ->
     Ok(())
 }
 
-fn validate_dataset(dataset: &Of360GoldDataset) -> Of360Result<()> {
+pub fn validate_dataset(dataset: &Of360GoldDataset) -> Of360Result<()> {
     if dataset.schema_version != OF360_SCHEMA_VERSION {
         return Err(Of360EvalError::UnsupportedGoldDatasetSchemaVersion {
             actual: dataset.schema_version,

@@ -317,8 +317,10 @@ fn extracted(
 
 #[test]
 fn full_500_point_corpus_clears_seed_warning_and_scores_all_lanes() {
-    use oneiron::extraction_eval::{Of360QaAnswer, of360_gold_corpus};
-    let dataset = of360_gold_corpus().unwrap();
+    use oneiron::extraction_eval::{Of360QaAnswer, validate_dataset};
+    let dataset = serde_json::from_str(include_str!("../fixtures/of360_gold.v1.json"))
+        .expect("full gold corpus");
+    validate_dataset(&dataset).expect("valid full gold corpus");
     assert!(!dataset.owner_corpus_missing);
     assert_eq!(
         dataset

@@ -16,7 +16,9 @@ fn rejects_unsupported_metric_definition_schema_version() {
 
 #[test]
 fn updating_and_qa_score_omissions_without_hiding_denominators() {
-    let mut dataset = super::of360_gold_corpus().unwrap();
+    let mut dataset = serde_json::from_str(include_str!("../../tests/fixtures/of360_gold.v1.json"))
+        .expect("full gold corpus");
+    validate_dataset(&dataset).expect("valid full gold corpus");
     dataset.cases.truncate(1);
     dataset.owner_corpus_missing = true;
     dataset.completeness = super::Of360DatasetCompleteness::SeedSubset;

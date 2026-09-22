@@ -38,6 +38,97 @@ class FleetRegressionTests(unittest.TestCase):
         self.receipt = fixture()
         self.floor = fleet.make_floor(self.receipt, .15, .20)
 
+    def test_floor_keeps_summary_and_full_receipt_digest_without_changing_receipt(self):
+        original = fixture()
+        expected = copy.deepcopy(original)
+        for metric in expected["metrics"].values():
+            del metric["samples_ms"]
+        self.assertEqual(self.floor["baseline_receipt"], expected)
+        self.assertEqual(fleet.validate_floor(self.floor), expected)
+        self.assertEqual(self.floor["baseline_sha256"], fleet.fingerprint(original))
+        self.assertNotEqual(self.floor["baseline_sha256"], fleet.fingerprint(expected))
+        self.assertEqual(self.receipt, original)
+
+    def test_floor_refuses_samples_in_any_metric(self):
+        for name, metric in self.receipt["metrics"].items():
+            floor = copy.deepcopy(self.floor)
+            floor["baseline_receipt"]["metrics"][name]["samples_ms"] = metric["samples_ms"]
+            with self.subTest(metric=name), self.assertRaises(ValueError):
+                fleet.validate_floor(floor)
+
+    def test_full_samples_are_required_to_create_floor_and_compare_candidate(self):
+        for name in self.receipt["metrics"]:
+            for samples in (None, [], [float("nan")], [float("inf")]):
+                receipt = copy.deepcopy(self.receipt)
+                if samples is None:
+                    del receipt["metrics"][name]["samples_ms"]
+                else:
+                    receipt["metrics"][name]["samples_ms"] = samples * receipt["metrics"][name]["completed"]
+                with self.subTest(metric=name, samples=samples):
+                    with self.assertRaises(ValueError):
+                        fleet.make_floor(receipt, .15, .20)
+                    with self.assertRaises(ValueError):
+                        fleet.compare(self.floor, receipt)
+
+    def test_floor_refuses_invalid_digest(self):
+        for digest in (None, 1, "", "a" * 63, "g" * 64, "A" * 64):
+            floor = copy.deepcopy(self.floor)
+            floor["baseline_sha256"] = digest
+            with self.subTest(digest=digest), self.assertRaises(ValueError):
+                fleet.validate_floor(floor)
+
+    def test_missing_and_unknown_keys_are_refused(self):
+        paths = ((), ("plan",), ("host",), ("metrics",), ("metrics", "write_0"), ("optimization",))
+        for trimmed in (False, True):
+            for path in paths:
+                receipt = self.floor["baseline_receipt"] if trimmed else self.receipt
+                node = receipt
+                for key in path:
+                    node = node[key]
+                for omitted in (*node, None):
+                    mutated = copy.deepcopy(receipt)
+                    target = mutated
+                    for key in path:
+                        target = target[key]
+                    if omitted is None:
+                        target["unexpected"] = 1
+                    else:
+                        del target[omitted]
+                    with self.subTest(trimmed=trimmed, path=path, omitted=omitted):
+                        with self.assertRaises(ValueError):
+                            if trimmed:
+                                fleet.validate_floor({**self.floor, "baseline_receipt": mutated})
+                            else:
+                                fleet.compare(self.floor, mutated)
+        for omitted in (*self.floor, None):
+            floor = copy.deepcopy(self.floor)
+            if omitted is None:
+                floor["unexpected"] = 1
+            else:
+                del floor[omitted]
+            with self.subTest(floor_key=omitted), self.assertRaises(ValueError):
+                fleet.validate_floor(floor)
+
+    def test_floor_refuses_invalid_summary_measurements(self):
+        mutations = [
+            lambda r: r["metrics"]["write_0"].update(completed=19999),
+            lambda r: r["metrics"]["write_0"].update(throughput_per_second=1),
+            lambda r: r["optimization"].update(incremental_speedup=2),
+            lambda r: r["optimization"].update(equivalent_pairs=0),
+            lambda r: r.update(verified_recalls=19999),
+        ]
+        for mutate in mutations:
+            floor = copy.deepcopy(self.floor)
+            mutate(floor["baseline_receipt"])
+            with self.subTest(mutation=mutate), self.assertRaises(ValueError):
+                fleet.validate_floor(floor)
+        for key in ("elapsed_seconds", "throughput_per_second", "p99_ms"):
+            for value in (0, -1, True, float("nan"), float("inf"), float("-inf")):
+                floor = copy.deepcopy(self.floor)
+                floor["baseline_receipt"]["metrics"]["write_0"][key] = value
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    fleet.validate_floor(floor)
+
     def test_source_archive_has_explicit_unknown_checkout_but_real_artifact_id(self):
         receipt = copy.deepcopy(self.receipt)
         receipt["revision"] = receipt["dirty"] = None
@@ -97,9 +188,14 @@ class FleetRegressionTests(unittest.TestCase):
                 fleet.compare(self.floor, candidate)
 
     def test_floor_cannot_disable_thresholds_or_omit_measurements(self):
-        for value in (0, 1, float("nan"), float("inf")):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                fleet.make_floor(self.receipt, value, .20)
+        for key in ("throughput_loss", "p99_increase"):
+            for value in (0, 1, float("nan"), float("inf")):
+                with self.subTest(key=key, value=value):
+                    tolerances = {"throughput_loss": .15, "p99_increase": .20, key: value}
+                    with self.assertRaises(ValueError):
+                        fleet.make_floor(self.receipt, **tolerances)
+                    with self.assertRaises(ValueError):
+                        fleet.validate_floor({**self.floor, **tolerances})
         floor = copy.deepcopy(self.floor)
         floor["baseline_receipt"]["metrics"]["write_0"]["p99_ms"] = 0
         with self.assertRaises(ValueError):
