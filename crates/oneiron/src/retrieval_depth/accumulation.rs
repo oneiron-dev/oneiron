@@ -318,10 +318,15 @@ mod receipt_tests {
         assert_eq!(result.revisions[&id], revision);
         assert_eq!(result.narrowing.len(), 2);
         assert_eq!(result.narrowing[0], receipt);
-        assert_eq!(
-            scoped.get_with_mode(&id, crate::vault::ReadMode::Pinned(revision))?,
-            Some(b"original".to_vec())
-        );
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = scoped.get_entity_parts_with_mode_with_receipt(
+            &id,
+            crate::vault::ReadMode::Pinned(revision),
+            None,
+        )?;
+        assert_eq!(value.map(|(_, _, body)| body), Some(b"original".to_vec()));
         Ok(())
     }
 }

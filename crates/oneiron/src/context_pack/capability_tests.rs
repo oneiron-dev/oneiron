@@ -192,13 +192,13 @@ fn capability_channel_keeps_memory_budget_and_revalidates_lifecycle() -> Result<
         .find(|hit| hit.entity_type == ENTITY_TYPE_SKILL)
         .unwrap()
         .id;
-    let mut skill = crate::skill::decode_skill_record(
-        &vault
-            .scoped_read(ScopedReadActorKey::new("viewer").unwrap())
-            .get_entity_parts(&retired)?
-            .unwrap()
-            .2,
-    )?;
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = vault
+        .scoped_read(ScopedReadActorKey::new("viewer").unwrap())
+        .get_entity_parts_with_receipt(&retired, None)?;
+    let mut skill = crate::skill::decode_skill_record(&value.unwrap().2)?;
     skill.lifecycle_status = SkillLifecycle::Superseded;
     vault.put_entity(
         &retired,

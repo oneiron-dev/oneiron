@@ -208,35 +208,6 @@ pub(super) fn managed_lease_scope(vault: &oneiron::Vault) -> Result<u64, Managed
         })
         .map_err(|error| ManagedError::VaultMeta(error.to_string()))
 }
-
-
-fn open_with_probe(
-    data_dir: &Path,
-    vault_config: oneiron::VaultConfig,
-    vault_name: &str,
-    credentials: &Credentials,
-    probe: &impl super::isolation::IsolationProbe,
-) -> Result<oneiron::Vault, ManagedError> {
-    let vault = oneiron::Vault::open_owned(data_dir, vault_config)
-        .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
-    let lease = vault
-        .writer_lease()
-        .ok_or_else(|| ManagedError::VaultMeta("managed vault has no writer lease".into()))?;
-    let directory = lease.directory_handle();
-    let isolated = probe.fscrypt(directory) && probe.dedicated_uid(directory, vault_name);
-    // The evidence and the Linux LMDB environment share the lease descriptor.
-    // Also refuse a renamed root, even if a canary marker would waive isolation.
-    lease
-        .validate_directory(data_dir)
-        .map_err(|_| ManagedError::ManagedRealTenantRefused {
-            vault: vault_name.to_owned(),
-            marker: CANARY_MARKER_KEY,
-        })?;
-    check_gates_with_isolation(&vault, vault_name, credentials, isolated)?;
-    Ok(vault)
-}
-
-
 #[cfg(test)]
 mod isolation_gate_tests {
     use super::*;
@@ -290,6 +261,21 @@ mod isolation_gate_tests {
                     DerivationOwner([9; 32])
                 );
                 drop(reopened);
+                let wrong = Credentials {
+                    dek: [10; DEK_LEN],
+                    token: credentials.token,
+                };
+                assert!(matches!(
+                    open_probed_vault(
+                        &path,
+                        oneiron::VaultConfig::device(),
+                        "real-vault",
+                        &wrong,
+                        evidence,
+                        DerivationOwner([9; 32]),
+                    ),
+                    Err(ManagedError::DekMacMismatch { .. })
+                ));
                 assert!(matches!(
                     open_probed_vault(
                         &path,
@@ -308,102 +294,5 @@ mod isolation_gate_tests {
                 ));
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    struct Probe(bool, bool);
-    impl super::super::isolation::IsolationProbe for Probe {
-        fn fscrypt(&self, _: &std::fs::File) -> bool {
-            self.0
-        }
-        fn dedicated_uid(&self, _: &std::fs::File, _: &str) -> bool {
-            self.1
-        }
-    }
-    #[test]
-    fn real_tenant_requires_both_probes_and_still_checks_dek() {
-        for encryption in [false, true] {
-            for uid in [false, true] {
-                let dir = tempfile::tempdir().unwrap();
-                let credentials = Credentials {
-                    dek: [7; 32],
-                    token: [8; 32],
-                };
-                let open = |creds: &Credentials| {
-                    open_with_probe(
-                        dir.path(),
-                        oneiron::VaultConfig::server(),
-                        "real-tenant",
-                        creds,
-                        &Probe(encryption, uid),
-                    )
-                };
-                let result = open(&credentials);
-                if encryption && uid {
-                    assert!(result.is_ok());
-                    drop(result);
-                    let wrong = Credentials {
-                        dek: [9; 32],
-                        token: [8; 32],
-                    };
-                    assert!(matches!(
-                        open(&wrong),
-                        Err(ManagedError::DekMacMismatch { .. })
-                    ));
-                } else {
-                    assert!(matches!(
-                        result,
-                        Err(ManagedError::ManagedRealTenantRefused { .. })
-                    ));
-                }
-            }
-        }
-    }
-    #[test]
-    fn managed_isolation_refuses_directory_swapped_during_probe() {
-        struct SwapProbe {
-            path: std::path::PathBuf,
-            moved: std::path::PathBuf,
-        }
-        impl super::super::isolation::IsolationProbe for SwapProbe {
-            fn fscrypt(&self, directory: &std::fs::File) -> bool {
-                use std::os::unix::fs::MetadataExt;
-                let pinned = directory.metadata().unwrap();
-                std::fs::rename(&self.path, &self.moved).unwrap();
-                std::fs::create_dir(&self.path).unwrap();
-                assert_eq!(directory.metadata().unwrap().ino(), pinned.ino());
-                assert_ne!(std::fs::metadata(&self.path).unwrap().ino(), pinned.ino());
-                true
-            }
-            fn dedicated_uid(&self, _: &std::fs::File, _: &str) -> bool {
-                true
-            }
-        }
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("vault");
-        let probe = SwapProbe {
-            path: path.clone(),
-            moved: root.path().join("original"),
-        };
-        let credentials = Credentials {
-            dek: [7; 32],
-            token: [8; 32],
-        };
-        assert!(matches!(
-            open_with_probe(
-                &path,
-                oneiron::VaultConfig::server(),
-                "tenant",
-                &credentials,
-                &probe
-            ),
-            Err(ManagedError::ManagedRealTenantRefused { .. })
-        ));
-        assert!(std::fs::read_dir(&path).unwrap().next().is_none());
-        let original = oneiron::Vault::open(&probe.moved, oneiron::VaultConfig::server()).unwrap();
-        assert!(original.sync_state_get(DEK_MAC_KEY).unwrap().is_none());
     }
 }

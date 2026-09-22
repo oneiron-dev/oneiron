@@ -61,9 +61,13 @@ impl BranchResources<'_> {
             .get_entity_type(&candidate.claim_id)?
             .is_some()
         {
-            let (kind, _, bytes) = self
+            let crate::claim::ScopedReadResult {
+                value,
+                receipt: _receipt,
+            } = self
                 .read
-                .get_entity_parts(&candidate.claim_id)?
+                .get_entity_parts_with_receipt(&candidate.claim_id, None)?;
+            let (kind, _, bytes) = value
                 .ok_or_else(|| invalid_consolidation("candidate vector entity is not readable"))?;
             if kind != ENTITY_TYPE_CLAIM {
                 return Err(invalid_consolidation(
@@ -93,7 +97,11 @@ impl BranchResources<'_> {
         if kind == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
             return Ok(false);
         }
-        let Some((_, _, bytes)) = self.read.get_entity_parts(id)? else {
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = self.read.get_entity_parts_with_receipt(id, None)?;
+        let Some((_, _, bytes)) = value else {
             return Ok(false);
         };
         let pinned = scope.allows_read(&document_version(*id, &bytes));

@@ -158,18 +158,20 @@ fn outcome_horizon_field_mutation_privacy_and_reopen_are_rechecked() -> Result<(
         },
         at + 9,
     )?;
-    assert!(
-        vault
-            .scoped_read(ScopedReadActorKey::new(owner.to_hex()).unwrap())
-            .get_entity_parts(&answer_id)?
-            .is_some()
-    );
-    assert!(
-        vault
-            .scoped_read(ScopedReadActorKey::new(stranger.to_hex()).unwrap())
-            .get_entity_parts(&answer_id)?
-            .is_none()
-    );
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = vault
+        .scoped_read(ScopedReadActorKey::new(owner.to_hex()).unwrap())
+        .get_entity_parts_with_receipt(&answer_id, None)?;
+    assert!(value.is_some());
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = vault
+        .scoped_read(ScopedReadActorKey::new(stranger.to_hex()).unwrap())
+        .get_entity_parts_with_receipt(&answer_id, None)?;
+    assert!(value.is_none());
     assert_eq!(facade.tasks_ask_outcomes(&receipt.handle)?, expected);
     assert_eq!(
         facade.tasks_wait_external(&receipt.handle, "reopen-step")?,

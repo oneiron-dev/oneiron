@@ -38,7 +38,11 @@ impl SessionReadSet {
     /// Record typed rows that survived the host's response projection.
     pub fn observe_rows(&mut self, read: &ScopedRead<'_>, ids: &[EntityId]) -> Result<()> {
         for id in ids {
-            if let Some((kind, _, body)) = read.get_entity_parts(id)? {
+            let crate::claim::ScopedReadResult {
+                value,
+                receipt: _receipt,
+            } = read.get_entity_parts_with_receipt(id, None)?;
+            if let Some((kind, _, body)) = value {
                 self.observe_snapshot(read, *id, kind, &body, false)?;
             }
         }
@@ -108,7 +112,11 @@ fn successor(read: &ScopedRead<'_>, id: EntityId, kind: u8) -> Result<Option<Ser
         if edge.kind != crate::EdgeKind::Supersedes {
             continue;
         }
-        let Some((next_kind, _, _)) = read.get_entity_parts(&edge.target)? else {
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = read.get_entity_parts_with_receipt(&edge.target, None)?;
+        let Some((next_kind, _, _)) = value else {
             continue;
         };
         if next_kind != kind {

@@ -55,7 +55,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AccessContext",
@@ -7565,7 +7565,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "Same-snapshot, receipted point and short-reference hydration doors",
      "surface": {
-      "fn": 10
+      "fn": 9
      }
     },
     {
@@ -7609,8 +7609,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 5,
-      "fn": 3
+      "crate-vis": 5
      }
     },
     {
@@ -10767,7 +10766,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 7,
-      "re-export": 17
+      "re-export": 16
      }
     },
     {
@@ -10997,15 +10996,14 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/room_verbs.rs",
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
-      "const": 1,
       "crate-vis": 1,
-      "fn": 5
+      "fn": 1
      }
     },
     {
@@ -19202,7 +19200,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 27,
-      "mod": 168,
+      "mod": 167,
       "re-export": 71
      }
     },
@@ -20776,7 +20774,7 @@
      "path": "src/memory/notes.rs",
      "purpose": "Agent-facing NOTE verbs; actor identity is bound to the memory facade",
      "surface": {
-      "fn": 4
+      "fn": 3
      }
     },
     {
@@ -21172,7 +21170,7 @@
      "path": "src/memory/witness/base.rs",
      "purpose": "Base witness program: container resolve, K7 door, batch write, text ops, session bump",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -21443,75 +21441,6 @@
       "fn": 6,
       "struct": 10,
       "trait": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "MessageStreamError"
-     ],
-     "path": "src/message_stream/mod.rs",
-     "purpose": "Memory-only MESSAGE streaming with atomic witnessed finality receipts",
-     "surface": {
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 7,
-      "re-export": 1,
-      "type": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/message_stream/policy.rs",
-     "purpose": "Actor-bound streaming policy persistence; overrides affect only future begins",
-     "surface": {
-      "crate-vis": 2,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/message_stream/receipts.rs",
-     "purpose": "Finality sidecars written inside the witness transaction",
-     "surface": {
-      "crate-vis": 1,
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/message_stream/tests.rs",
-     "purpose": "Caller-visible streaming laws; partial text never reaches storage",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "IdleMessageStreamOutcome",
-      "MessageFinality",
-      "MessageFinalityReceipt",
-      "MessageStreamFrame",
-      "MessageStreamHandle",
-      "MessageStreamPolicy",
-      "MessageWriteMode",
-      "StreamCadence",
-      "StreamCancelReason",
-      "StreamSyncVisibility"
-     ],
-     "path": "src/message_stream/types.rs",
-     "purpose": "Stream policy, ephemeral frames and durable finality receipts",
-     "surface": {
-      "enum": 5,
-      "fn": 9,
-      "struct": 5
      }
     },
     {
@@ -30899,7 +30828,7 @@
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
       "crate-vis": 1,
-      "fn": 4
+      "fn": 3
      }
     },
     {
@@ -30960,7 +30889,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -34572,13 +34501,6 @@
      "layout": "dir",
      "purpose": "Durable batched speculation over real detached worktrees"
     },
-    "message_stream": {
-     "files": 5,
-     "impl_vault": true,
-     "largest_src_bucket": "m",
-     "layout": "dir",
-     "purpose": "Memory-only MESSAGE streaming with atomic witnessed finality receipts"
-    },
     "note": {
      "files": 28,
      "impl_vault": true,
@@ -35093,8 +35015,8 @@
    },
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2075,
-   "test_files": 709
+   "source_files": 2071,
+   "test_files": 708
   },
   "oneiron-android": {
    "files": [
@@ -40758,7 +40680,7 @@
      "path": "src/managed/isolation.rs",
      "purpose": "Fail-closed Linux fscrypt and root-owned UID allocation probes",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 4
      }
     },
     {
@@ -40832,7 +40754,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/managed/vault_gates.rs",

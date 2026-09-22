@@ -224,8 +224,16 @@ mod tests {
         );
         let projected = GrantedData::new(result.value, result.receipt.suppressed_count);
         assert_eq!(projected.access_limited.unwrap().suppressed_count, 1);
-        assert!(reader.get_entity_parts(&message)?.is_some());
-        assert!(reader.get_entity_parts(&summary)?.is_none());
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = reader.get_entity_parts_with_receipt(&message, None)?;
+        assert!(value.is_some());
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = reader.get_entity_parts_with_receipt(&summary, None)?;
+        assert!(value.is_none());
         let fs = reader.graph_fs(crate::graph_fs::GraphFsOptions::default());
         let found = fs.find("/entities", Some(0), None)?;
         let paths = String::from_utf8(found.bytes().to_vec()).unwrap();
@@ -269,17 +277,29 @@ mod tests {
                     .value
                     .is_empty()
             );
-            assert!(reader.get_entity_parts(&malformed)?.is_none());
+            let crate::claim::ScopedReadResult {
+                value,
+                receipt: _receipt,
+            } = reader.get_entity_parts_with_receipt(&malformed, None)?;
+            assert!(value.is_none());
         }
         grant.expires_at = Some(2);
         vault.put_access_grant(&grant_ref, &grant)?;
-        assert!(reader.get_entity_parts(&message)?.is_none());
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = reader.get_entity_parts_with_receipt(&message, None)?;
+        assert!(value.is_none());
         let unbound = vault.scoped_read(
             ScopedReadActorKey::new("unbound")
                 .unwrap()
                 .require_access_grants(None),
         );
-        assert!(unbound.get_entity_parts(&message)?.is_none());
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = unbound.get_entity_parts_with_receipt(&message, None)?;
+        assert!(value.is_none());
         Ok(())
     }
 }

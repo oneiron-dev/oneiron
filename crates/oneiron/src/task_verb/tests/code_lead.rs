@@ -158,7 +158,7 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
         let mut context_refs = planned.consult.context_refs.clone();
         context_refs.extend_from_slice(extra);
         match dispatcher
-            .dispatch(SelfCall::Ask(ScopeTaskAskSpec {
+            .dispatch(SelfCall::TasksAsk(ScopeTaskAskSpec {
                 intent_key: format!("panel:{index}"),
                 target: TaskAskTarget::Responder(planned.responder),
                 question_ref: question,

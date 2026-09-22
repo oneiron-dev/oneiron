@@ -370,9 +370,11 @@ impl ScopedRead<'_> {
         person: &EntityId,
         scenario: Option<EntityId>,
     ) -> Result<CompiledPersona> {
-        let (kind, baseline_at, data) = self
-            .get_entity_parts(person)?
-            .ok_or(Error::EntityNotFound)?;
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = self.get_entity_parts_with_receipt(person, None)?;
+        let (kind, baseline_at, data) = value.ok_or(Error::EntityNotFound)?;
         if kind != ENTITY_TYPE_PERSON {
             return Err(Error::InvalidEntityType(kind));
         }
@@ -384,7 +386,11 @@ impl ScopedRead<'_> {
         let mut value = baseline.baseline;
         let mut changes = Vec::new();
         for id in self.vault().claims_for_subject(person)? {
-            let Some((_, _, data)) = self.get_entity_parts(&id)? else {
+            let crate::claim::ScopedReadResult {
+                value,
+                receipt: _receipt,
+            } = self.get_entity_parts_with_receipt(&id, None)?;
+            let Some((_, _, data)) = value else {
                 continue;
             };
             let body = decode_claim_body(&data, true)?;
@@ -415,9 +421,11 @@ impl ScopedRead<'_> {
             at = at.max(changed_at);
         }
         if let Some(facet) = scenario {
-            let (kind, learned_at, data) = self
-                .get_entity_parts(&facet)?
-                .ok_or(Error::EntityNotFound)?;
+            let crate::claim::ScopedReadResult {
+                value: parts,
+                receipt: _receipt,
+            } = self.get_entity_parts_with_receipt(&facet, None)?;
+            let (kind, learned_at, data) = parts.ok_or(Error::EntityNotFound)?;
             if kind != ENTITY_TYPE_FACET {
                 return Err(Error::InvalidEntityType(kind));
             }

@@ -500,10 +500,15 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
     assert_eq!(hit_ids(&result), vec![id]);
     assert_ne!(vault.indexed_revision(&id)?, Some(before));
     assert_eq!(result.revisions.get(&id), Some(&before));
-    assert_eq!(
-        scoped.get_with_mode(&id, crate::vault::ReadMode::Pinned(before))?,
-        Some(body)
-    );
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = scoped.get_entity_parts_with_mode_with_receipt(
+        &id,
+        crate::vault::ReadMode::Pinned(before),
+        None,
+    )?;
+    assert_eq!(value.map(|(_, _, body)| body), Some(body));
     Ok(())
 }
 
@@ -563,9 +568,10 @@ fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResu
     let old_result = search(world_a)?;
     assert_eq!(hit_ids(&old_result), vec![id]);
     assert_eq!(old_result.revisions[&id], old_pin);
-    let pinned_body = scoped
-        .get_with_mode(&id, ReadMode::Pinned(old_pin))?
-        .expect("selected body");
+    let pinned =
+        scoped.get_entity_parts_with_mode_with_receipt(&id, ReadMode::Pinned(old_pin), None)?;
+    assert!(old_result.narrowing.contains(&pinned.receipt));
+    let (_, _, pinned_body) = pinned.value.expect("selected body");
     assert_eq!(
         crate::claim::decode_claim_body(&pinned_body, true)?.world,
         Some(world_a)

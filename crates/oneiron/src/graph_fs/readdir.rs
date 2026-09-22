@@ -83,17 +83,16 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ["entities", entity] => {
                 let id = parse_entity_id(entity)?;
                 if self.scoped_read.is_entity_readable(&id)? {
+                    let crate::claim::ScopedReadResult {
+                        value,
+                        receipt: _receipt,
+                    } = self.scoped_read.get_entity_parts_with_receipt(&id, None)?;
                     Ok(self.fixed_page(
                         &normalized,
                         vec![
                             GraphFsEntry::directory("claims"),
                             GraphFsEntry::directory("backlinks"),
-                            GraphFsEntry::file(
-                                "body",
-                                self.scoped_read
-                                    .get_entity_parts(&id)?
-                                    .map(|(_, _, b)| b.len()),
-                            ),
+                            GraphFsEntry::file("body", value.map(|(_, _, b)| b.len())),
                         ],
                         cursor,
                     ))
@@ -139,7 +138,11 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             ["entities", entity, "body"] => {
                 let id = parse_entity_id(entity)?;
-                let Some((_, _, bytes)) = self.scoped_read.get_entity_parts(&id)? else {
+                let crate::claim::ScopedReadResult {
+                    value,
+                    receipt: _receipt,
+                } = self.scoped_read.get_entity_parts_with_receipt(&id, None)?;
+                let Some((_, _, bytes)) = value else {
                     return Ok(None);
                 };
                 Ok(Some(GraphFsFile {
@@ -209,8 +212,13 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         path: &str,
         claim_id: &EntityId,
     ) -> Result<Option<GraphFsFile>> {
-        let Some((entity_type, learned_at, body)) = self.scoped_read.get_entity_parts(claim_id)?
-        else {
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = self
+            .scoped_read
+            .get_entity_parts_with_receipt(claim_id, None)?;
+        let Some((entity_type, learned_at, body)) = value else {
             return Ok(None);
         };
         if entity_type != ENTITY_TYPE_CLAIM {

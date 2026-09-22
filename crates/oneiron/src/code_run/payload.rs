@@ -25,9 +25,7 @@ const CODE_RUN_REPLAY_CANONICAL_REQUEST_ACTOR: [u8; 16] = [0x42; 16];
 pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
     Ok(match call {
         SelfCall::AgentsSpawn(call) => super::coordination_codec::spawn_request(call)?,
-        SelfCall::Ask(call) | SelfCall::TasksAsk(call) => {
-            super::coordination_codec::ask_request(call)
-        }
+        SelfCall::TasksAsk(call) => super::coordination_codec::ask_request(call),
         SelfCall::TasksWait(handle) => {
             request_map(vec![("handle", entity_id_value(handle.group_ref))])
         }

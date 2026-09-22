@@ -14,11 +14,6 @@ impl ScopedRead<'_> {
         })
     }
 
-    /// Internal convenience. Consumer projections use the receipted door.
-    pub fn get_entity_parts(&self, id: &EntityId) -> Result<Option<EntityParts>> {
-        Ok(self.get_entity_parts_with_receipt(id, None)?.value)
-    }
-
     pub fn get_entity_parts_with_receipt(
         &self,
         id: &EntityId,

@@ -38,7 +38,11 @@ fn served_snapshot_resolves_real_supersession_and_loaded_requires_a_body() -> Re
     }
     let read = vault.scoped_read(ScopedReadActorKey::new("viewer").unwrap());
     let mut session = SessionReadSet::default();
-    let (kind, _, body) = read.get_entity_parts(&first)?.expect("readable claim");
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = read.get_entity_parts_with_receipt(&first, None)?;
+    let (kind, _, body) = value.expect("readable claim");
     session.observe_snapshot(&read, first, kind, &body, false)?;
     assert!(session.refresh(&read, 1)?.rows.is_empty());
     vault.supersede_claim(&next, &first, 3)?;

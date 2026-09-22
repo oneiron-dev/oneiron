@@ -258,19 +258,21 @@ fn pinned_claim_does_not_bypass_current_scoped_admission() {
         .unwrap();
     let pin = vault.pin_entity_revision(&claim).unwrap();
     let scoped = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
-    assert!(
-        scoped
-            .get_with_mode(&claim, ReadMode::Pinned(pin))
-            .unwrap()
-            .is_some()
-    );
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = scoped
+        .get_entity_parts_with_mode_with_receipt(&claim, ReadMode::Pinned(pin), None)
+        .unwrap();
+    assert!(value.is_some());
     vault.retract_claim(&claim, 2).unwrap();
-    assert!(
-        scoped
-            .get_with_mode(&claim, ReadMode::Pinned(pin))
-            .unwrap()
-            .is_none()
-    );
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = scoped
+        .get_entity_parts_with_mode_with_receipt(&claim, ReadMode::Pinned(pin), None)
+        .unwrap();
+    assert!(value.is_none());
 }
 
 #[test]

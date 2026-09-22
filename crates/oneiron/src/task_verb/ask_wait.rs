@@ -79,15 +79,6 @@ fn require_answerable(
 }
 
 impl Memory<'_> {
-    pub fn tasks_wait_in_step(
-        &self,
-        handle: &TaskAskHandle,
-        ctx: &DurableStepContext<'_>,
-        step_hash: [u8; 32],
-    ) -> MemoryResult<TaskWaitOutcome> {
-        self.wait_for_ask(handle, ctx, step_hash, false)
-    }
-
     fn wait_for_ask(
         &self,
         handle: &TaskAskHandle,
@@ -192,8 +183,7 @@ impl Memory<'_> {
 
 impl Memory<'_> {
     /// External SDK clients have no engine-owned run. Their stable step key
-    /// names a detached C9 step; native runners call tasks_wait_in_step with their
-    /// own DurableStepContext instead. No queue row or run is suspended.
+    /// names a detached C9 step. No queue row or run is suspended.
     pub fn tasks_wait_external(
         &self,
         handle: &TaskAskHandle,

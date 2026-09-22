@@ -96,24 +96,6 @@ impl ScopedRead<'_> {
         })
     }
 
-    /// Exact historical reads retain both current and historical authority.
-    /// Consumer projections use the receipted variant of this door.
-    pub fn get_with_mode(&self, id: &EntityId, mode: ReadMode) -> Result<Option<Vec<u8>>> {
-        Ok(self
-            .get_entity_parts_with_mode(id, mode)?
-            .map(|(_, _, body)| body))
-    }
-
-    pub fn get_entity_parts_with_mode(
-        &self,
-        id: &EntityId,
-        mode: ReadMode,
-    ) -> Result<Option<(u8, u64, Vec<u8>)>> {
-        Ok(self
-            .get_entity_parts_with_mode_with_receipt(id, mode, None)?
-            .value)
-    }
-
     /// Historical bytes never inherit a later live body's authority, or vice versa.
     pub(super) fn entity_raw_with_mode_in(
         &self,
@@ -164,17 +146,6 @@ impl ScopedRead<'_> {
             raw.extend_from_slice(&body);
         }
         Ok(Some(raw))
-    }
-
-    pub fn hydrate_short_id_with_mode(
-        &self,
-        short_id: &str,
-        content_hash: u8,
-        mode: ReadMode,
-    ) -> Result<Option<crate::HydratedShortId>> {
-        Ok(self
-            .hydrate_short_id_with_mode_with_receipt(short_id, content_hash, mode)?
-            .value)
     }
 
     pub(super) fn context_entity_revision_is_readable_in(

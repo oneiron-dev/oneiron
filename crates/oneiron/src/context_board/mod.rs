@@ -19,7 +19,6 @@ mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};
 pub use read_set::{ChangedLine, ServedLifecycle, SessionReadSet};
 pub use room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
-pub use room_verbs::ROOM_VERBS;
 pub use worlds::{WorldPresence, WorldsSection};
 mod frame;
 mod history;

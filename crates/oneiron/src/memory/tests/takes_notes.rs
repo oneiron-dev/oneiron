@@ -603,7 +603,11 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         .unwrap();
     let limited = vault.scoped_read(read_key(&narrowed));
     assert!(limited.get(&id).unwrap().is_none());
-    assert!(limited.get_entity_parts(&id).unwrap().is_none());
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = limited.get_entity_parts_with_receipt(&id, None).unwrap();
+    assert!(value.is_none());
     assert!(limited.memory_timeline(&id).unwrap().records.is_empty());
     assert_eq!(
         crate::note::decode_note_body(&owner_read.get(&id).expect("read").value.expect("body"))
@@ -611,7 +615,13 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         body
     );
     assert!(other_read.get(&id).expect("read").is_none());
-    assert!(other_read.get_entity_parts(&id).expect("parts").is_none());
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = other_read
+        .get_entity_parts_with_receipt(&id, None)
+        .expect("parts");
+    assert!(value.is_none());
     let (short, hash) =
         crate::entity_id::parse_short_ref_syntax(&receipt.entity_ref).expect("short ref");
     assert!(
@@ -646,10 +656,13 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         crate::vault::ReadMode::Indexed,
         crate::vault::ReadMode::Pinned(pin),
     ] {
-        let bytes = owner_read
-            .get_with_mode(&id, mode)
-            .expect("owner frontier read")
-            .expect("owner diary");
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = owner_read
+            .get_entity_parts_with_mode_with_receipt(&id, mode, None)
+            .expect("owner frontier read");
+        let (_, _, bytes) = value.expect("owner diary");
         assert_eq!(crate::note::decode_note_body(&bytes).expect("note"), body);
         assert!(
             owner_memory
@@ -671,18 +684,20 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             MEMORY_CODE_NOT_FOUND,
         );
         for reader in [&other_read, &classless, &wrong_class] {
-            assert!(
-                reader
-                    .get_with_mode(&id, mode)
-                    .expect("scoped frontier")
-                    .is_none()
-            );
-            assert!(
-                reader
-                    .hydrate_short_id_with_mode(short, hash, mode)
-                    .expect("scoped hydrate")
-                    .is_none()
-            );
+            let crate::claim::ScopedReadResult {
+                value,
+                receipt: _receipt,
+            } = reader
+                .get_entity_parts_with_mode_with_receipt(&id, mode, None)
+                .expect("scoped frontier");
+            assert!(value.is_none());
+            let crate::claim::ScopedReadResult {
+                value,
+                receipt: _receipt,
+            } = reader
+                .hydrate_short_id_with_mode_with_receipt(short, hash, mode)
+                .expect("scoped hydrate");
+            assert!(value.is_none());
         }
     }
 
@@ -1035,10 +1050,13 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
     let other_read = vault.scoped_read(
         ScopedReadActorKey::with_actor_class(other.to_hex(), "human").expect("other key"),
     );
-    let live = other_read
-        .get_with_mode(&id, ReadMode::Live)
-        .unwrap()
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = other_read
+        .get_entity_parts_with_mode_with_receipt(&id, ReadMode::Live, None)
         .unwrap();
+    let (_, _, live) = value.unwrap();
     assert_eq!(crate::note::decode_note_body(&live).unwrap(), public_body);
     let owner_memory = facade_for(&vault, owner);
     let other_memory = facade_for(&vault, other);
@@ -1055,7 +1073,11 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
                 .unwrap()
                 .is_some()
         );
-        assert!(other_read.get_with_mode(&id, mode).unwrap().is_none());
+        let denied = other_read
+            .get_entity_parts_with_mode_with_receipt(&id, mode, None)
+            .unwrap();
+        assert!(denied.value.is_none());
+        assert_eq!(denied.receipt.suppressed_count, 1);
         let denied = other_read
             .get_entities_parts_with_modes_with_receipt(&[(id, mode)], None)
             .unwrap();
@@ -1073,7 +1095,11 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
             .unwrap();
         assert!(permitted.value[0].is_some());
         assert_eq!(permitted.receipt.suppressed_count, 0);
-        let bytes = owner_read.get_with_mode(&id, mode).unwrap().unwrap();
+        let permitted = owner_read
+            .get_entity_parts_with_mode_with_receipt(&id, mode, None)
+            .unwrap();
+        assert_eq!(permitted.receipt.suppressed_count, 0);
+        let (_, _, bytes) = permitted.value.unwrap();
         assert_eq!(crate::note::decode_note_body(&bytes).unwrap(), private_body);
     }
 

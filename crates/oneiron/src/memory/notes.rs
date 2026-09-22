@@ -32,14 +32,3 @@ impl Memory<'_> {
         self.entity_ref_receipt(&id)
     }
 }
-
-impl Memory<'_> {
-    /// Sets the current actor's own streaming override for subsequent MESSAGEs.
-    pub fn set_message_stream_override(
-        &self,
-        mode: Option<crate::message_stream::MessageWriteMode>,
-    ) -> MemoryResult<()> {
-        self.vault
-            .set_buffered_agent_message_stream_override(mode, WriteActor::new(self.actor, self.actor_class))
-    }
-}

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::claim::{ScopedRead, decode_claim_body};
+use crate::claim::{ScopedRead, ScopedReadReceipt, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -43,13 +43,20 @@ pub fn narrow_to_session_scope(
     hits: Vec<ScoredEntity>,
     revisions: &HashMap<EntityId, RevisionRef>,
     scope: &SessionScope,
+    receipts: &mut Vec<ScopedReadReceipt>,
 ) -> Result<Vec<ScoredEntity>> {
     if scope.is_empty() {
         return Ok(hits);
     }
     let mut kept = Vec::with_capacity(hits.len());
     for hit in hits {
-        if hit_in_session_scope(scoped, &hit.id, revisions.get(&hit.id).copied(), scope)? {
+        if hit_in_session_scope(
+            scoped,
+            &hit.id,
+            revisions.get(&hit.id).copied(),
+            scope,
+            receipts,
+        )? {
             kept.push(hit);
         }
     }
@@ -61,9 +68,10 @@ fn hit_in_session_scope(
     id: &EntityId,
     revision: Option<RevisionRef>,
     scope: &SessionScope,
+    receipts: &mut Vec<ScopedReadReceipt>,
 ) -> Result<bool> {
     if let Some(world) = &scope.world_ref
-        && claim_world(scoped, id, revision)? != Some(*world)
+        && claim_world(scoped, id, revision, receipts)? != Some(*world)
     {
         return Ok(false);
     }
@@ -102,13 +110,15 @@ fn claim_world(
     scoped: &ScopedRead<'_>,
     id: &EntityId,
     revision: Option<RevisionRef>,
+    receipts: &mut Vec<ScopedReadReceipt>,
 ) -> Result<Option<EntityId>> {
     let Some(revision) = revision else {
         return Ok(None);
     };
-    let Some((entity_type, _, body)) =
-        scoped.get_entity_parts_with_mode(id, ReadMode::Pinned(revision))?
-    else {
+    let result =
+        scoped.get_entity_parts_with_mode_with_receipt(id, ReadMode::Pinned(revision), None)?;
+    receipts.push(result.receipt);
+    let Some((entity_type, _, body)) = result.value else {
         return Ok(None);
     };
     if entity_type != ENTITY_TYPE_CLAIM {
@@ -143,9 +153,10 @@ impl DepthSearchRequest<'_> {
         scoped: &ScopedRead<'_>,
         hits: Vec<ScoredEntity>,
         revisions: &HashMap<EntityId, RevisionRef>,
+        receipts: &mut Vec<ScopedReadReceipt>,
     ) -> Result<Vec<ScoredEntity>> {
         let mut hits = match self.session_scope {
-            Some(scope) => narrow_to_session_scope(scoped, hits, revisions, scope)?,
+            Some(scope) => narrow_to_session_scope(scoped, hits, revisions, scope, receipts)?,
             None => hits,
         };
         hits.truncate(self.limit);

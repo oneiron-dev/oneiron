@@ -238,30 +238,6 @@ impl Memory<'_> {
         )?))
     }
 
-    /// Host-side idle adapter. Opens a real durable C9 trap and parks only
-    /// `ctx.attempt_id`. A ready answer does not open or park anything.
-    pub fn tasks_wait_step(
-        &self,
-        handle: TaskAskHandle,
-        ctx: &crate::llm::DurableStepContext<'_>,
-        step_hash: [u8; 32],
-    ) -> MemoryResult<Option<crate::llm::TrapRef>> {
-        if !std::ptr::eq(self.vault(), ctx.vault)
-            || ctx.envelope_actor.entity_ref() != self.actor()
-            || ctx.envelope_actor.actor_class() != self.actor_class()
-        {
-            return Err(MemoryError::bad_request("ask wait host binding mismatch"));
-        }
-        match self.tasks_wait(handle)? {
-            TaskAskWait::Ready(_) => Ok(None),
-            TaskAskWait::Park(_) => Ok(Some(crate::llm::park_peer_result_step(
-                ctx,
-                handle.group_ref,
-                step_hash,
-            )?)),
-        }
-    }
-
     /// Call only when this step has no other work. `Park` is consumed by the
     /// host's C9 trap adapter, not a promise that reading this method waits.
     pub fn tasks_wait(&self, handle: TaskAskHandle) -> MemoryResult<TaskAskWait> {

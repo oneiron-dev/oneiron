@@ -19,8 +19,6 @@ pub enum SelfCall {
     AgentsSpawn(SelfAgentSpawnCall),
     /// Async question to live scope authority holders. Returns without waiting.
     TasksAsk(crate::task_verb::ScopeTaskAskSpec),
-    /// Concise code-mode spelling of the same typed async contract.
-    Ask(crate::task_verb::ScopeTaskAskSpec),
     /// Requests a C9 wait for this handle, only at the caller's idle point.
     TasksWait(crate::task_verb::ScopeTaskAskHandle),
     /// Fixture for `self.memory.search(...)`.
@@ -64,7 +62,7 @@ impl SelfCall {
     pub const fn effect(&self) -> SelfEffect {
         match self {
             Self::AgentsSpawn(_) => SelfEffect::AgentsSpawn,
-            Self::Ask(_) | Self::TasksAsk(_) => SelfEffect::TasksAsk,
+            Self::TasksAsk(_) => SelfEffect::TasksAsk,
             Self::TasksWait(_) => SelfEffect::TasksWait,
             Self::MemorySearch(_) => SelfEffect::MemorySearch,
             Self::MemoryWriteFixture(_) => SelfEffect::MemoryWriteFixture,

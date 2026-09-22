@@ -77,48 +77,6 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
         selected: Some(room_scope(&presence).unwrap()),
     };
     let memory = vault.memory(actor, EdgeActorClass::Human);
-    assert_eq!(memory.channel_rooms_list(10).unwrap()[0].id_hex, room.to_hex());
-    let receipt = memory
-        .channel_rooms_speak(
-            room,
-            &crate::memory::WitnessTurn {
-                conversation_ref: room.to_hex(),
-                turn_ref: None,
-                messages: vec![crate::memory::WitnessMessage {
-                    id: None,
-                    author: crate::memory::WitnessAuthor::User,
-                    message_type: "dialogue".into(),
-                    content: "hello room".into(),
-                    metadata: None,
-                    is_visible: true,
-                    order: 0,
-                }],
-                occurred_at: 2,
-            },
-        )
-        .unwrap();
-    assert_eq!(receipt.message_short_ids.len(), 1);
-    assert_eq!(
-        memory
-            .channel_rooms_messages(room, &presence, 10)
-            .unwrap()
-            .len(),
-        1
-    );
-    vault
-        .put_edge(&room, crate::EdgeKind::BelongsTo, &actor, 1.0)
-        .unwrap();
-    vault
-        .put_edge(&other, crate::EdgeKind::BelongsTo, &room, 1.0)
-        .unwrap();
-    assert_eq!(
-        memory
-            .channel_rooms_messages(room, &presence, 1)
-            .unwrap()
-            .len(),
-        1
-    );
-
     let input = crate::memory::ClaimInput {
         id: None,
         predicate: "room.posture.mode".into(),
@@ -135,10 +93,11 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
         learned_at: None,
         salience: None,
     };
-    let claim = memory.channel_rooms_claim(room, &input).unwrap();
+    let claim = memory.in_room(room).claim_upsert(&input).unwrap();
     // Earlier hidden rows may not consume the room's visible claim budget.
     for n in 1..=1000u16 {
         let mut bytes = [0u8; 16];
+        bytes[13] = 1;
         bytes[14..].copy_from_slice(&n.to_be_bytes());
         let mut hidden = crate::ClaimBody::new(
             "room.rule",
@@ -213,35 +172,5 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
             mode: RoomMode::AskedOnly,
             bar: RoomBar::High
         }
-    );
-
-    // A capped room read must not materialize the rest of a large inbound lane.
-    let edge_value = crate::edge::encode_edge_value(
-        crate::EdgeKind::BelongsTo,
-        1.0,
-        0,
-        crate::affect::Vad::NEUTRAL,
-        None,
-    )
-    .unwrap();
-    vault
-        .with_write_txn(|txn| {
-            for n in 0..=crate::vault::MAX_EDGE_QUERY_RESULTS {
-                let mut bytes = [0xff; 16];
-                bytes[8..].copy_from_slice(&(n as u64).to_be_bytes());
-                let peer = EntityId::from_bytes(bytes).unwrap();
-                let key =
-                    crate::store::Store::encode_edge_key(&room, crate::EdgeKind::BelongsTo, &peer);
-                vault.store.edges_in.put(txn, &key, &edge_value)?;
-            }
-            Ok(())
-        })
-        .unwrap();
-    assert_eq!(
-        memory
-            .channel_rooms_messages(room, &presence, 1)
-            .unwrap()
-            .len(),
-        1
     );
 }

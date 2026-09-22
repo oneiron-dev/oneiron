@@ -62,20 +62,12 @@ fn ask_returns_before_idle_and_multiple_steps_resume_from_one_answer_after_resta
     let now = crate::unix_seconds_now() * 1000;
     let one_ctx = ctx(&vault, &one, now);
     let two_ctx = ctx(&vault, &two, now);
-    let a = memory
-        .tasks_wait_step(ask.handle, &one_ctx, [1; 32])
-        .unwrap()
-        .unwrap();
-    let b = memory
-        .tasks_wait_step(ask.handle, &two_ctx, [2; 32])
-        .unwrap()
-        .unwrap();
+    let a = crate::llm::park_peer_result_step(&one_ctx, ask.handle.group_ref, [1; 32])?;
+    let b = crate::llm::park_peer_result_step(&two_ctx, ask.handle.group_ref, [2; 32])?;
     assert_ne!(a.trap_claim_id, b.trap_claim_id);
     assert_eq!(
-        memory
-            .tasks_wait_step(ask.handle, &one_ctx, [1; 32])
-            .unwrap(),
-        Some(a)
+        crate::llm::park_peer_result_step(&one_ctx, ask.handle.group_ref, [1; 32])?,
+        a
     );
     assert_eq!(runner.parked_attempt(other.attempt_id)?, None);
     assert!(consume_trap_signal(&vault, &runner, &a, now + 1).is_err());

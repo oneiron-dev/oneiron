@@ -252,7 +252,11 @@ fn legacy_evidence_and_other_principals_do_not_cross_the_miner_threshold() -> Re
     let other = vault.scoped_read(
         ScopedReadActorKey::with_actor_class(b.entity_ref().to_hex(), "human").expect("key"),
     );
-    assert!(other.get_entity_parts(id)?.is_none());
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = other.get_entity_parts_with_receipt(id, None)?;
+    assert!(value.is_none());
     Ok(())
 }
 

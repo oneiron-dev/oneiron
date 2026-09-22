@@ -9,7 +9,6 @@ use std::{collections::HashSet, sync::Mutex};
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_pack::{ContextEntity, ContextPack, EmptyContext, EmptyReason};
-use crate::deletion::{MemoryTimelineRecord, MemoryTimelineRecordState};
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -141,20 +140,6 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         Ok(fold.slip_is_live(&claims.slip_id))
-    }
-
-    fn deletion_metadata_allowed_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        id: &EntityId,
-    ) -> Result<bool> {
-        // The row's old position cannot be proved. Only authority covering every
-        // possible position may reveal deletion metadata, never a narrow grant.
-        let all_positions = crate::federation::scope_codec::read_preset();
-        Ok(self.credential_allows_id(id)
-            && self.proof_live_in(txn)?
-            && crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &all_positions))
     }
 
     #[must_use]
@@ -818,36 +803,6 @@ impl<'a> ScopedRead<'a> {
         Ok(())
     }
 
-    fn filter_memory_timeline_records(
-        &self,
-        records: Vec<MemoryTimelineRecord>,
-    ) -> Result<Vec<MemoryTimelineRecord>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        let policy = self.policy_manifest_in(&rtxn)?;
-        let mut kept = Vec::with_capacity(records.len());
-        for record in records {
-            let readable = match (record.state, record.entity_type) {
-                (MemoryTimelineRecordState::Missing, _) => false,
-                (MemoryTimelineRecordState::Deleted, _) => {
-                    self.deletion_metadata_allowed_in(&rtxn, &policy, &record.id)?
-                }
-                (_, Some(_)) => {
-                    self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
-                }
-                (_, None) => false,
-            };
-            if readable {
-                kept.push(record);
-            }
-        }
-        let kept_ids: HashSet<EntityId> = kept.iter().map(|record| record.id).collect();
-        for record in &mut kept {
-            record.supersedes.retain(|id| kept_ids.contains(id));
-            record.superseded_by.retain(|id| kept_ids.contains(id));
-        }
-        Ok(kept)
-    }
-
     pub(crate) fn policy_manifest_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -870,7 +825,7 @@ impl<'a> ScopedRead<'a> {
 /// it is already reading from, matching
 /// [`ScopedRead::filter_scored_entities`] and
 /// [`ScopedRead::filter_context_pack`]. That is why this is not
-/// `get_entity_parts`, which opens a transaction of its own.
+/// `get_entity_parts_with_receipt`, which opens a transaction of its own.
 impl crate::ppr::PprNodeVisibility for ScopedRead<'_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(txn)?;
@@ -893,7 +848,11 @@ impl ScopedRead<'_> {
             .vault
             .entities_by_type(crate::registry::ENTITY_TYPE_DIAGNOSTIC)?
         {
-            if let Some((_, _, body)) = self.get_entity_parts(&id)? {
+            let ScopedReadResult {
+                value,
+                receipt: _receipt,
+            } = self.get_entity_parts_with_receipt(&id, None)?;
+            if let Some((_, _, body)) = value {
                 events.push((id, crate::self_heal::decode_diagnostic_event_body(&body)?));
             }
         }

@@ -85,7 +85,7 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         before_txn: impl FnOnce(),
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, false, before_txn, None, |_| Ok(()))
+        self.witness_authorized(turn, session_route, false, before_txn, |_| Ok(()))
     }
 
     pub(crate) fn witness_host_executor(
@@ -93,32 +93,7 @@ impl Memory<'_> {
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, true, || {}, None, |_| Ok(()))
-    }
-
-    pub(crate) fn witness_stream_finality(
-        &self,
-        turn: &WitnessTurn,
-        receipt: &mut crate::message_stream::MessageFinalityReceipt,
-    ) -> MemoryResult<WitnessReceipt> {
-        self.witness_program(turn, None, || {}, Some(receipt))
-    }
-
-    fn witness_program(
-        &self,
-        turn: &WitnessTurn,
-        session_route: Option<&SessionWriteRoute>,
-        before_txn: impl FnOnce(),
-        stream_receipt: Option<&mut crate::message_stream::MessageFinalityReceipt>,
-    ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(
-            turn,
-            session_route,
-            false,
-            before_txn,
-            stream_receipt,
-            |_| Ok(()),
-        )
+        self.witness_authorized(turn, session_route, true, || {}, |_| Ok(()))
     }
 
     /// Stream terminal sidecars and EntityDoc birth share the canonical witness
@@ -130,7 +105,7 @@ impl Memory<'_> {
         before_txn: impl FnOnce(),
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, false, before_txn, None, effect)
+        self.witness_authorized(turn, session_route, false, before_txn, effect)
     }
 
     fn witness_authorized(
@@ -139,7 +114,6 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         host_executor: bool,
         before_txn: impl FnOnce(),
-        stream_receipt: Option<&mut crate::message_stream::MessageFinalityReceipt>,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         super::validate_witness_origin(turn, host_executor)?;
@@ -461,11 +435,6 @@ impl Memory<'_> {
                 &turn_id,
                 membership_session,
             )?;
-            if let Some(receipt) = stream_receipt {
-                crate::message_stream::write_receipt_in_txn(
-                    self.vault, wtxn, receipt, turn, self.actor,
-                )?;
-            }
             // LAST statement in the transaction, deliberately: a session
             // witness admitted on record must not commit base rows once the
             // room has flipped back off record (K10). Every earlier row is

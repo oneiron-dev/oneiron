@@ -396,7 +396,11 @@ fn keyed_bodies_never_surface_through_generic_facade_scoped_or_pack_reads() {
         let scoped = vault
             .scoped_read(ScopedReadActorKey::with_actor_class(actor.to_hex(), "human").unwrap());
         assert!(scoped.get(&id).unwrap().is_none());
-        assert!(scoped.get_entity_parts(&id).unwrap().is_none());
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = scoped.get_entity_parts_with_receipt(&id, None).unwrap();
+        assert!(value.is_none());
         assert!(scoped.hydrate_short_id(short, hash).unwrap().is_none());
         assert!(scoped.memory_timeline(&id).unwrap().records.is_empty());
         assert!(!scoped.is_entity_readable(&id).unwrap());

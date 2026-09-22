@@ -25,7 +25,11 @@ impl LensRenderFrame {
 
     pub fn scoped_body(&self, read: &ScopedRead<'_>, id: &EntityId) -> Result<Option<Vec<u8>>> {
         self.ensure_scoped_read_actor(read)?;
-        let Some((kind, _, body)) = read.get_entity_parts(id)? else {
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = read.get_entity_parts_with_receipt(id, None)?;
+        let Some((kind, _, body)) = value else {
             return Ok(None);
         };
         // Check the exact body admitted by ScopedRead, not a second raw read

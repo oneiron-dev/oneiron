@@ -2,104 +2,9 @@
 
 use super::room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
 use crate::EntityId;
-use crate::memory::{
-    ClaimInput, ClaimListFilter, CommitReceipt, EntityView, Memory, MemoryError, MemoryResult,
-    WitnessReceipt, WitnessTurn,
-};
-
-pub const ROOM_VERBS: [&str; 4] = ["rooms.list", "rooms.messages", "rooms.speak", "rooms.claim"];
+use crate::memory::{ClaimListFilter, EntityView, Memory, MemoryError, MemoryResult};
 
 impl Memory<'_> {
-    pub fn channel_rooms_list(&self, limit: usize) -> MemoryResult<Vec<EntityView>> {
-        bounded(limit)?;
-        let mut rooms = Vec::new();
-        for id in self
-            .vault()
-            .entities_by_type(crate::registry::ENTITY_TYPE_CONVERSATION)?
-        {
-            let Some(view) = self.get_entity(&id.to_hex())? else {
-                continue;
-            };
-            if view
-                .body
-                .as_ref()
-                .and_then(|body| body.get("kind"))
-                .and_then(serde_json::Value::as_str)
-                != Some("channel")
-            {
-                continue;
-            }
-            let members = member_ids(&view)?;
-            if members.contains(&self.actor()) {
-                rooms.push(view);
-            }
-            if rooms.len() == limit {
-                break;
-            }
-        }
-        Ok(rooms)
-    }
-
-    pub fn channel_rooms_messages(
-        &self,
-        room: EntityId,
-        presence: &[RoomPresence],
-        limit: usize,
-    ) -> MemoryResult<Vec<EntityView>> {
-        bounded(limit)?;
-        let section = self.rooms_render(room, presence)?;
-        if !section.scope.include_base() {
-            return Ok(Vec::new());
-        }
-        // Filter the inbound lane by MESSAGE kind before spending the result cap.
-        let ids = self.vault().sources_page(
-            &room,
-            crate::EdgeKind::BelongsTo,
-            Some(crate::registry::ENTITY_TYPE_MESSAGE),
-            None,
-            limit,
-        )?;
-        let mut messages = Vec::new();
-        for id in ids {
-            if let Some(entity) = self.get_entity(&id.to_hex())? {
-                messages.push(entity);
-                if messages.len() == limit {
-                    break;
-                }
-            }
-        }
-        messages.sort_by(|a, b| (a.occurred_start, &a.id_hex).cmp(&(b.occurred_start, &b.id_hex)));
-        Ok(messages)
-    }
-
-    pub fn channel_rooms_speak(
-        &self,
-        room: EntityId,
-        turn: &WitnessTurn,
-    ) -> MemoryResult<WitnessReceipt> {
-        require_member(self, room)?;
-        let mut turn = turn.clone();
-        turn.conversation_ref = room.to_hex();
-        self.in_room(room).witness(&turn)
-    }
-
-    pub fn channel_rooms_claim(
-        &self,
-        room: EntityId,
-        input: &ClaimInput,
-    ) -> MemoryResult<CommitReceipt> {
-        require_member(self, room)?;
-        if !input.predicate.starts_with("room.") {
-            return Err(MemoryError::bad_request_with(
-                "room rules require the room.* predicate namespace",
-                &[],
-            ));
-        }
-        let mut input = input.clone();
-        input.subject_ref = room.to_hex();
-        self.in_room(room).claim_upsert(&input)
-    }
-
     /// Presence is host state, while membership, authority and rules are fresh
     /// vault reads. No copy of the board or of posture is stored anywhere.
     pub fn rooms_render(
@@ -278,15 +183,6 @@ impl Memory<'_> {
     }
 }
 
-fn bounded(limit: usize) -> MemoryResult<()> {
-    if !(1..=1000).contains(&limit) {
-        return Err(MemoryError::bad_request_with(
-            "room limit must be 1..=1000",
-            &[],
-        ));
-    }
-    Ok(())
-}
 fn require_member(memory: &Memory<'_>, id: EntityId) -> MemoryResult<Vec<EntityId>> {
     let view = memory
         .get_entity(&id.to_hex())?

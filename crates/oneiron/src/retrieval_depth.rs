@@ -430,10 +430,9 @@ fn run_direct_channel(
             let hits =
                 scoped.search_text_revisioned(query, request.channel_limit(scoped, true)?, None)?;
             acc.narrowing.push(hits.receipt);
-            acc.merge_revisioned(
-                request.narrow_hits(scoped, hits.hits, &hits.revisions)?,
-                hits.revisions,
-            );
+            let narrowed =
+                request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
+            acc.merge_revisioned(narrowed, hits.revisions);
             acc.complete(RetrievalSignal::Text);
             acc.record_query(query.clone());
         }
@@ -446,10 +445,9 @@ fn run_direct_channel(
                 None,
             )?;
             acc.narrowing.push(hits.receipt);
-            acc.merge_revisioned(
-                request.narrow_hits(scoped, hits.hits, &hits.revisions)?,
-                hits.revisions,
-            );
+            let narrowed =
+                request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
+            acc.merge_revisioned(narrowed, hits.revisions);
             acc.complete(RetrievalSignal::Vector);
             // No query recorded: a float vector is not a string a later
             // channel could compare against, and `signals_used` is where a
@@ -485,10 +483,9 @@ fn run_subquery_channels(
         let hits =
             scoped.search_text_revisioned(&subquery, request.channel_limit(scoped, true)?, None)?;
         acc.narrowing.push(hits.receipt);
-        acc.merge_revisioned(
-            request.narrow_hits(scoped, hits.hits, &hits.revisions)?,
-            hits.revisions,
-        );
+        let narrowed =
+            request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
+        acc.merge_revisioned(narrowed, hits.revisions);
         acc.complete(RetrievalSignal::Text);
         acc.record_query(subquery);
     }
@@ -539,10 +536,8 @@ fn run_graph_expansion(
     }
     drop(rtxn);
     acc.retrieval_diagnostics.ppr_cache = Some(expanded.cache);
-    acc.merge_revisioned(
-        request.narrow_hits(scoped, expanded.scores, &revisions)?,
-        revisions,
-    );
+    let narrowed = request.narrow_hits(scoped, expanded.scores, &revisions, &mut acc.narrowing)?;
+    acc.merge_revisioned(narrowed, revisions);
     acc.complete(RetrievalSignal::Ppr);
     Ok(())
 }
@@ -590,10 +585,9 @@ fn run_deep_rounds(
                 None,
             )?;
             acc.narrowing.push(hits.receipt);
-            acc.merge_revisioned(
-                request.narrow_hits(scoped, hits.hits, &hits.revisions)?,
-                hits.revisions,
-            );
+            let narrowed =
+                request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
+            acc.merge_revisioned(narrowed, hits.revisions);
             acc.complete(RetrievalSignal::Text);
             acc.record_query(subquery);
         }

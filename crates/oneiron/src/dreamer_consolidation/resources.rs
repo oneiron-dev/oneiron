@@ -304,8 +304,11 @@ fn read_source(read: &ScopedRead<'_>, id: &EntityId) -> Result<(u8, u64, Vec<u8>
             "branch source is not a turn or conversation",
         ));
     }
-    read.get_entity_parts(id)?
-        .ok_or_else(|| invalid_consolidation("branch source is not readable"))
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = read.get_entity_parts_with_receipt(id, None)?;
+    value.ok_or_else(|| invalid_consolidation("branch source is not readable"))
 }
 
 pub(super) fn document_version(document: EntityId, body: &[u8]) -> ScopeResource {

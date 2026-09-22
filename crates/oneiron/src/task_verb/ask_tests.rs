@@ -1,8 +1,6 @@
 use super::*;
 use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
 use crate::edge::EdgeActorClass;
-use crate::llm::DurableStepContext;
-use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault, VaultConfig};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[test]
@@ -53,25 +51,10 @@ fn first_answer_and_both_wait_orders_resume_only_the_calling_step_once() -> Resu
         };
         let receipt = facade.tasks_ask(&spec)?;
         assert_eq!(facade.tasks_ask(&spec)?.handle, receipt.handle);
-        let ctx = DurableStepContext {
-            vault: &vault,
-            attempt_id: run.id,
-            run_id: run.run_id.clone(),
-            envelope_actor: WriteActor::new(owner, EdgeActorClass::Human),
-            subject: owner,
-            pinned_config: None,
-            deadline: None,
-            now_ms: now * 1000,
-        };
-        let hash = [u8::from(answer_first); 32];
         let mut pending_trap = None;
         if !answer_first {
-            assert!(matches!(
-                facade.tasks_wait_external(&receipt.handle, "external-step")?,
-                TaskWaitOutcome::Pending { .. }
-            ));
             let TaskWaitOutcome::Pending { trap_ref } =
-                facade.tasks_wait_in_step(&receipt.handle, &ctx, hash)?
+                facade.tasks_wait_external(&receipt.handle, "external-step")?
             else {
                 panic!("unanswered ask must wait");
             };
@@ -123,20 +106,12 @@ fn first_answer_and_both_wait_orders_resume_only_the_calling_step_once() -> Resu
         assert_eq!(terminal.disposition, TaskTerminalDisposition::Completed);
         assert_eq!(terminal.result_ref, Some(one));
         assert_eq!(
-            facade.tasks_wait_in_step(&receipt.handle, &ctx, hash)?,
+            facade.tasks_wait_external(&receipt.handle, "external-step")?,
             TaskWaitOutcome::Ready(winner.clone())
         );
         assert_eq!(
-            facade.tasks_wait_in_step(&receipt.handle, &ctx, hash)?,
+            facade.tasks_wait_external(&receipt.handle, "external-step")?,
             TaskWaitOutcome::AlreadyResumed(winner)
-        );
-        assert_eq!(
-            facade.tasks_wait_external(&receipt.handle, "external-step")?,
-            TaskWaitOutcome::Ready(late.clone())
-        );
-        assert_eq!(
-            facade.tasks_wait_external(&receipt.handle, "external-step")?,
-            TaskWaitOutcome::AlreadyResumed(late)
         );
         if let Some(trap_ref) = pending_trap {
             let mut head = EntityId::from_hex(&trap_ref)?;
@@ -243,14 +218,6 @@ fn unanswered_terminal_ask_refuses_both_wait_doors_without_a_trap() -> Result<()
         now,
     )?;
     let facade = vault.memory(owner, EdgeActorClass::Human);
-    let (EnqueueOutcome::Enqueued(run) | EnqueueOutcome::Existing(run)) = AttemptQueue::new(&vault)
-        .enqueue(EnqueueAttempt {
-            kind: "terminal-ask-fixture".into(),
-            payload: vec![],
-            dedupe_key: None,
-            run_id: None,
-            now,
-        })?;
     for cancel in [true, false] {
         let handle = facade
             .tasks_ask(&TaskAskSpec {
@@ -315,17 +282,6 @@ fn unanswered_terminal_ask_refuses_both_wait_doors_without_a_trap() -> Result<()
         let before = vault
             .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
             .len();
-        let ctx = DurableStepContext {
-            vault: &vault,
-            attempt_id: run.id,
-            run_id: None,
-            envelope_actor: WriteActor::new(owner, EdgeActorClass::Human),
-            subject: owner,
-            pinned_config: None,
-            deadline: None,
-            now_ms: now * 1000,
-        };
-        assert!(facade.tasks_wait_in_step(&handle, &ctx, [9; 32]).is_err());
         assert!(
             facade
                 .tasks_wait_external(&handle, "cancelled-step")
