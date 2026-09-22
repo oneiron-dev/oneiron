@@ -24,6 +24,7 @@ fn call(
         hygiene_headers: Default::default(),
         apns_interruption_level: None,
         calendar_invite: None,
+        space_posting: None,
     };
     transport.send_feedback_bundle(&FeedbackTransportRequest {
         execution: &execution,
