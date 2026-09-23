@@ -106,6 +106,7 @@ fn populated_v2_analyzer_manifest_fails_closed_on_open() -> Result<()> {
 #[test]
 fn local_overwrite_changed_body_without_text_drops_stale_text_postings_at_idle() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"payload-from-old-local")?;
     vault
@@ -247,6 +248,7 @@ fn local_metadata_only_reput_without_text_keeps_text_postings() -> Result<()> {
 #[test]
 fn local_changed_body_with_text_op_reindexes_new_terms() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"body-before-text")?;
     vault
@@ -278,6 +280,7 @@ fn local_changed_body_with_text_op_reindexes_new_terms() -> Result<()> {
 #[test]
 fn batch_put_text_put_deindexes_text_from_non_final_body() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     let other = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(0, 0), 0, b"payload-body-v0")?;
@@ -353,6 +356,7 @@ fn batch_put_text_put_deindexes_text_from_non_final_body() -> Result<()> {
 #[test]
 fn replicated_overwrite_changed_body_drops_loser_text_postings_at_idle() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"payload-from-loser")?;
     vault
@@ -446,6 +450,7 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_at_idle() -> Resu
 #[test]
 fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"stable-payload")?;
     vault

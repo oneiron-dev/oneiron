@@ -142,7 +142,7 @@ fn reply_corruption_and_replay_after_delete_never_publish() {
 }
 
 #[test]
-fn manifest_and_want_requests_enforce_grant_scope_and_asset_family() -> Result<()> {
+fn manifest_and_want_requests_enforce_grant_scope_and_silent_facet_bottom() -> Result<()> {
     use crate::error::{SyncError, SyncProtocolValidation, SyncSelectorValidation};
     use crate::federation::{
         FederationGrant, FederationGrantPreset, FederationGrantRole, SelectorRange,
@@ -190,18 +190,13 @@ fn manifest_and_want_requests_enforce_grant_scope_and_asset_family() -> Result<(
             have: vec![],
             want,
         };
-        let allowed =
-            serve_chunk_request(&vault, principal, scope, &encode_chunk_request(&request)?)?;
-        match decode::<ChunkSyncResponse>(&allowed)? {
-            ChunkSyncResponse::Manifest(bytes) => {
-                assert!(request.want.is_none());
-                assert_eq!(bytes, manifest.encode()?);
-            }
-            ChunkSyncResponse::Chunks(chunks) => {
-                assert!(request.want.is_some());
-                assert_eq!(chunks, vec![(manifest.chunks[0].hash, body.to_vec())]);
-            }
-        }
+        // Every grant, unpacted included, reads a silent facet axis as the
+        // lattice bottom, and an ASSET row cannot carry a FacetOf stamp: even
+        // the asset's own family band exports nothing through this lane.
+        assert!(matches!(
+            serve_chunk_request(&vault, principal, scope, &encode_chunk_request(&request)?),
+            Err(Error::Artifact(ArtifactError::InvalidLfsObject(_)))
+        ));
         assert!(matches!(
             serve_chunk_request(
                 &vault,

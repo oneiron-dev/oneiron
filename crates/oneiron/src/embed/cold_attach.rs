@@ -2,8 +2,8 @@
 use super::EMBED_PRIORITY_BACKFILL;
 #[cfg(feature = "sync")]
 use super::pending_embedding_lease_key;
-use crate::{Error, Result};
 use crate::ports::EntityStoreRead;
+use crate::{Error, Result};
 
 /// Marker set atomically with the first model identity, consumed by cold attach.
 pub(crate) const COLD_ATTACH_PENDING_KEY: &[u8] = b"cold_attach_pending";
@@ -98,6 +98,10 @@ mod tests {
         config.map_size = 64 * 1024 * 1024;
         config.embedding_model = None;
         let vault = Vault::open(dir.path(), config.clone())?;
+        // First open seeds the bootstrap skills, whose claims predate the embedder too.
+        let seeded_claims = vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+            .len();
         let subject = EntityId::now();
         vault.put_entity(
             &subject,
@@ -129,14 +133,18 @@ mod tests {
         drop(vault);
         config.embedding_model = Some("fixture/embedder@v1".into());
         let vault = Vault::open(dir.path(), config.clone())?;
-        assert_eq!(vault.cold_attach_embedder()?, 1);
+        assert_eq!(vault.cold_attach_embedder()?, seeded_claims + 1);
         drop(vault);
         let vault = Vault::open(dir.path(), config)?;
         // A serving build queued the work. A featureless build must leave the
         // one-time pass available so a later serving build can populate it.
         assert_eq!(
             vault.cold_attach_embedder()?,
-            if cfg!(feature = "sync") { 0 } else { 1 }
+            if cfg!(feature = "sync") {
+                0
+            } else {
+                seeded_claims + 1
+            }
         );
         Ok(())
     }

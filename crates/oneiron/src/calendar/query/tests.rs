@@ -524,8 +524,23 @@ fn withheld_exception_suppresses_only_its_own_series() {
     use crate::calendar::claims::*;
     let (_dir, vault) = open_calendar_vault();
     let start = 1_786_024_800_u64;
-    let a = CalendarEventFixture::new(0x81, "Series A", start, start + 3599).store(&vault);
-    let b = CalendarEventFixture::new(0x82, "Series B", start + 7200, start + 10799).store(&vault);
+    let granted_world = entity(0x91);
+    let a = store_split_grant_event(
+        &vault,
+        0x81,
+        at(start, start + 3599),
+        (PREDICATE_CALENDAR_TIME_KIND, time_kind_value("busy")),
+        None,
+        granted_world,
+    );
+    let b = store_split_grant_event(
+        &vault,
+        0x82,
+        at(start + 7200, start + 10799),
+        (PREDICATE_CALENDAR_TIME_KIND, time_kind_value("busy")),
+        None,
+        granted_world,
+    );
     for (seed, master, uid, starts) in [
         (0x81, a, "a@fixture", start),
         (0x82, b, "b@fixture", start + 7200),
@@ -541,7 +556,7 @@ fn withheld_exception_suppresses_only_its_own_series() {
                 ("dtstart_utc".into(), starts.into()),
                 ("tz".into(), "UTC".into()),
             ]),
-            None,
+            Some(granted_world),
         );
         let passport = CalendarPassportValue {
             system: "work".into(),
@@ -559,7 +574,7 @@ fn withheld_exception_suppresses_only_its_own_series() {
             master,
             PREDICATE_CALENDAR_PASSPORT,
             crate::calendar::passport::encode_passport_value(&passport),
-            None,
+            Some(granted_world),
         );
     }
     store_split_grant_event(
@@ -575,12 +590,12 @@ fn withheld_exception_suppresses_only_its_own_series() {
             ]),
         ),
         Some(entity(0x92)),
-        entity(0x91),
+        granted_world,
     );
     put_policy_manifest_bytes(
         &vault,
         entity(0x95),
-        &scoped_read_world_manifest(SCOPED_READER, entity(0x91)),
+        &scoped_read_world_manifest(SCOPED_READER, granted_world),
     )
     .unwrap();
     let lane = vault.scoped_read(ScopedReadActorKey::new(SCOPED_READER).unwrap());

@@ -84,12 +84,37 @@ mod tests {
         vault.put_claim(&id, &claim, when, 1)?;
         let reader = vault.scoped_read(ScopedReadActorKey::new("pin-reader").unwrap());
         assert!(reader.manifest_pinned_refs()?.value.is_empty());
+        let pin_reader_grant = |selectors: Option<rmpv::Value>| -> Result<rmpv::Value> {
+            let mut grant = vec![
+                (
+                    rmpv::Value::from("actor_ref"),
+                    rmpv::Value::from("pin-reader"),
+                ),
+                (
+                    rmpv::Value::from("effector"),
+                    rmpv::Value::from("core:read"),
+                ),
+                (
+                    rmpv::Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::read_preset(),
+                    )?,
+                ),
+                (
+                    rmpv::Value::from("receipt_required"),
+                    rmpv::Value::Boolean(false),
+                ),
+            ];
+            grant.extend(selectors.map(|selectors| (rmpv::Value::from("selectors"), selectors)));
+            Ok(rmpv::Value::Map(grant))
+        };
         let mut policy = rmpv::decode::read_value(&mut std::io::Cursor::new(
             crate::gate::default_policy_manifest(),
         ))
         .unwrap();
-        // Remove the normal-prefix rules: the declared critical default now
+        // Remove the normal `profile.` rule: the declared critical default now
         // classifies this existing approved row without rewriting its bytes.
+        // Seeded skill-hub claims keep their own normal rows.
         let rmpv::Value::Map(fields) = &mut policy else {
             unreachable!()
         };
@@ -97,7 +122,21 @@ mod tests {
             .iter_mut()
             .find(|(key, _)| key.as_str() == Some("rules"))
             .unwrap();
-        rules.1 = rmpv::Value::Array(Vec::new());
+        let rmpv::Value::Array(rows) = &mut rules.1 else {
+            unreachable!()
+        };
+        rows.retain(|row| {
+            row.as_map().is_none_or(|entries| {
+                !entries.iter().any(|(key, value)| {
+                    key.as_str() == Some("prefix") && value.as_str() == Some("profile.")
+                })
+            })
+        });
+        fields.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
+        fields.push((
+            rmpv::Value::from("scoped_grants"),
+            rmpv::Value::Array(vec![pin_reader_grant(None)?]),
+        ));
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, &policy).unwrap();
         crate::test_util::put_policy_manifest_bytes(
@@ -138,31 +177,13 @@ mod tests {
         let rmpv::Value::Map(fields) = &mut policy else {
             unreachable!()
         };
+        fields.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
         fields.push((
             rmpv::Value::from("scoped_grants"),
-            rmpv::Value::Array(vec![rmpv::Value::Map(vec![
-                (
-                    rmpv::Value::from("actor_ref"),
-                    rmpv::Value::from("pin-reader"),
-                ),
-                (
-                    rmpv::Value::from("effector"),
-                    rmpv::Value::from("core:read"),
-                ),
-                (
-                    rmpv::Value::from("scope"),
-                    rmpv::Value::Map(vec![(
-                        rmpv::Value::from("entity_types"),
-                        rmpv::Value::Array(vec![rmpv::Value::from(
-                            crate::registry::ENTITY_TYPE_PERSON,
-                        )]),
-                    )]),
-                ),
-                (
-                    rmpv::Value::from("receipt_required"),
-                    rmpv::Value::Boolean(false),
-                ),
-            ])]),
+            rmpv::Value::Array(vec![pin_reader_grant(Some(rmpv::Value::Map(vec![(
+                rmpv::Value::from("entity_types"),
+                rmpv::Value::Array(vec![rmpv::Value::from(crate::registry::ENTITY_TYPE_PERSON)]),
+            )])))?]),
         ));
         bytes.clear();
         rmpv::encode::write_value(&mut bytes, &policy).unwrap();

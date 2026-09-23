@@ -662,9 +662,6 @@ impl<'a> ScopedRead<'a> {
         ) {
             return Ok(false);
         }
-        if !claim_surfaceable(body) {
-            return Ok(false);
-        }
         let admitted = crate::pipeline::retrieval_claim_allowed(filter, body);
         if !admitted
             || !self.audience_readable_in(rtxn, id)?

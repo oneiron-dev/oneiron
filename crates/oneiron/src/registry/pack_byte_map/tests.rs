@@ -293,6 +293,7 @@ fn forged_legacy_registration_never_opens_the_pack_half() -> Result<()> {
     encoded.extend_from_slice(&(pack.len() as u16).to_le_bytes());
     encoded.extend_from_slice(b"qx");
     encoded.extend_from_slice(pack);
+    encoded.push(0);
     vault.with_write_txn(|txn| {
         vault.store.vault_meta.put(
             txn,

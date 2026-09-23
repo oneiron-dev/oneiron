@@ -1084,3 +1084,11 @@ pub(super) fn sync_state_snapshot(vault: &crate::Vault) -> Vec<(Vec<u8>, Vec<u8>
     drop(rtxn);
     rows
 }
+
+/// Opens a vault whose injected store clock reads `secs`; open seeds the
+/// vault's authority observation anchor from it.
+pub(super) fn open_vault_at(path: &std::path::Path, secs: u64) -> crate::Vault {
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = crate::ports::ManualClock::new(secs).bundle();
+    crate::Vault::open(path, config).unwrap()
+}

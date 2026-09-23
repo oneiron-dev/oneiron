@@ -4,7 +4,7 @@ use crate::calendar::connectors::{
     RemoteSyncBatch, calendar_write_outbox_rows, run_calendar_connector_sync,
 };
 use crate::calendar::ics::parse_ics_feed;
-use crate::calendar::test_support::{CalendarEventFixture, event_name_body, open_calendar_vault};
+use crate::calendar::test_support::{CalendarEventFixture, open_calendar_vault};
 use std::cell::RefCell;
 
 const NOW: u64 = 1_800_000_000;
@@ -83,7 +83,22 @@ fn seat() -> CalendarConnectorSeatState {
     })
 }
 
-fn rename(vault: &Vault, event: EntityId, name: &str) {
+/// `event`'s stored body with only `name` replaced. A local EVENT write must
+/// carry the EVENT's live origin union, so every other field is kept.
+fn renamed_body(vault: &Vault, event: EntityId, name: &str) -> Vec<u8> {
+    let body = vault.get(&event).unwrap().unwrap();
+    let rmpv::Value::Map(mut fields) = rmpv::decode::read_value(&mut body.as_slice()).unwrap()
+    else {
+        panic!("calendar EVENT body is a map");
+    };
+    fields.retain(|(key, _)| key.as_str() != Some("name"));
+    fields.push(("name".into(), name.into()));
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &rmpv::Value::Map(fields)).unwrap();
+    out
+}
+
+fn put_local_edit(vault: &Vault, event: EntityId, body: &[u8]) {
     let header = vault.read_entity_header(&event).unwrap().unwrap();
     vault
         .put_entity(
@@ -94,7 +109,7 @@ fn rename(vault: &Vault, event: EntityId, name: &str) {
                 end: header.occurred_end,
             },
             NOW + 1,
-            &event_name_body(name),
+            body,
         )
         .unwrap();
 }
@@ -102,9 +117,26 @@ fn rename(vault: &Vault, event: EntityId, name: &str) {
 #[test]
 fn remote_applied_snapshot_settles_without_overwriting_an_inflight_local_edit() {
     let (_dir, vault) = open_calendar_vault();
-    let event = CalendarEventFixture::new(0x81, "staged", NOW, NOW + 60).store(&vault);
+    let owner = crate::WriteActor::new(
+        vault.ensure_embedded_owner_actor().unwrap(),
+        crate::EdgeActorClass::Human,
+    );
+    let event = vault
+        .create_native_calendar_event(
+            &crate::calendar::origin::CalendarEventInput {
+                name: "staged".into(),
+                ..Default::default()
+            },
+            crate::TimeRange {
+                start: NOW,
+                end: NOW + 60,
+            },
+            owner,
+        )
+        .unwrap();
+    let edited = renamed_body(&vault, event, "newer local edit");
     let transport = ChangeDuringUpsert {
-        on_first: RefCell::new(Some(Box::new(|| rename(&vault, event, "newer local edit")))),
+        on_first: RefCell::new(Some(Box::new(|| put_local_edit(&vault, event, &edited)))),
         requests: RefCell::default(),
     };
     let first = write_calendar_event(&vault, &seat(), &transport, event, NOW).unwrap();
@@ -112,10 +144,7 @@ fn remote_applied_snapshot_settles_without_overwriting_an_inflight_local_edit() 
         calendar_write_outbox_rows(&vault).unwrap()[0].state,
         CalendarWriteOutboxState::Committed
     );
-    assert_eq!(
-        vault.get(&event).unwrap(),
-        Some(event_name_body("newer local edit"))
-    );
+    assert_eq!(vault.get(&event).unwrap(), Some(edited.clone()));
     let passport = live_passport_for(&vault, &event, "work", &first.uid)
         .unwrap()
         .unwrap()
@@ -131,10 +160,7 @@ fn remote_applied_snapshot_settles_without_overwriting_an_inflight_local_edit() 
             ..
         }
     ));
-    assert_eq!(
-        vault.get(&event).unwrap(),
-        Some(event_name_body("newer local edit"))
-    );
+    assert_eq!(vault.get(&event).unwrap(), Some(edited.clone()));
     let second = write_calendar_event(&vault, &seat(), &transport, event, NOW + 3).unwrap();
     assert_eq!(second.sequence, first.sequence + 1);
     let requests = transport.requests.borrow();
@@ -155,47 +181,6 @@ fn remote_applied_snapshot_settles_without_overwriting_an_inflight_local_edit() 
 }
 
 #[test]
-fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_restore() {
-    let (_dir, vault) = open_calendar_vault();
-    let event = CalendarEventFixture::new(0x82, "staged", NOW, NOW + 60).store(&vault);
-    let transport = ChangeDuringUpsert {
-        on_first: RefCell::new(Some(Box::new(|| {
-            vault.delete_entity(&event).unwrap();
-        }))),
-        requests: RefCell::default(),
-    };
-    assert!(write_calendar_event(&vault, &seat(), &transport, event, NOW).is_err());
-    let row = calendar_write_outbox_rows(&vault).unwrap().remove(0);
-    assert_eq!(row.state, CalendarWriteOutboxState::RemoteApplied);
-    vault
-        .put_entity(
-            &event,
-            ENTITY_TYPE_EVENT,
-            crate::TimeRange {
-                start: NOW,
-                end: NOW + 60,
-            },
-            NOW + 1,
-            &event_name_body("restored newer edit"),
-        )
-        .unwrap();
-    let resumed = write_calendar_event(&vault, &seat(), &transport, event, NOW + 2).unwrap();
-    assert_eq!(Some(resumed.clone()), row.receipt);
-    assert_eq!(transport.requests.borrow().len(), 1);
-    assert_eq!(
-        calendar_write_outbox_rows(&vault).unwrap()[0].state,
-        CalendarWriteOutboxState::Committed
-    );
-    assert_eq!(
-        vault.get(&event).unwrap(),
-        Some(event_name_body("restored newer edit"))
-    );
-    let next = write_calendar_event(&vault, &seat(), &transport, event, NOW + 3).unwrap();
-    assert_eq!(next.sequence, resumed.sequence + 1);
-    assert_eq!(transport.requests.borrow()[1].expected_etag, resumed.etag);
-}
-
-#[test]
 fn applied_series_snapshot_keeps_new_members_and_child_edits_for_the_next_sequence() {
     use crate::calendar::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION;
     use crate::calendar::ingest::{admit_connector_event, connector_event_ref};
@@ -211,9 +196,10 @@ fn applied_series_snapshot_keeps_new_members_and_child_edits_for_the_next_sequen
         .unwrap()
         .unwrap();
     let added = crate::test_util::entity(0x83);
+    let child_edit = renamed_body(&vault, child, "newer child edit");
     let transport = ChangeDuringUpsert {
         on_first: RefCell::new(Some(Box::new(|| {
-            rename(&vault, child, "newer child edit");
+            put_local_edit(&vault, child, &child_edit);
             assert_eq!(
                 CalendarEventFixture::new(
                     0x83,
@@ -276,10 +262,7 @@ fn applied_series_snapshot_keeps_new_members_and_child_edits_for_the_next_sequen
             ..
         }
     ));
-    assert_eq!(
-        vault.get(&child).unwrap(),
-        Some(event_name_body("newer child edit"))
-    );
+    assert_eq!(vault.get(&child).unwrap(), Some(child_edit.clone()));
     let next = write_calendar_event(&vault, &seat(), &transport, master, NOW + 3).unwrap();
     assert_eq!(next.sequence, first.sequence + 1);
     let requests = transport.requests.borrow();

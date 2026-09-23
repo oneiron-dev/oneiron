@@ -71,11 +71,9 @@ fn prior_head_judge_routes_merge_accumulate_escalate_and_down() -> Result<()> {
             now_ms: 21_000,
         };
         let outcome = block_on_ready(executor.execute(&admitted, &mut ctx))?;
-        if resolution == "down" {
-            assert!(matches!(outcome, DreamerAttemptExecution::Park { .. }));
-        } else {
-            assert!(matches!(outcome, DreamerAttemptExecution::Completed { .. }));
-        }
+        // A fatal judge runs the declared escalation fallback, so "down"
+        // completes like "escalate" and keeps the open question.
+        assert!(matches!(outcome, DreamerAttemptExecution::Completed { .. }));
         match resolution {
             "merge" | "accumulate" => {
                 let [result] = sink.accepted.as_slice() else {
@@ -102,7 +100,9 @@ fn manifest_single_value_skips_judge_only_at_sufficient_trust() -> Result<()> {
     for source in [ClaimSource::Inferred, ClaimSource::UserStated] {
         let (_dir, vault) = open_vault();
         let manifest_id = crate::gate::default_policy_manifest_id()?;
-        let raw = crate::gate::default_policy_manifest();
+        let raw = vault.get_raw(&manifest_id)?.expect("fixture manifest")
+            [crate::batch::ENTITY_METADATA_HEADER_LEN..]
+            .to_vec();
         let mut cursor = std::io::Cursor::new(&raw);
         let Value::Map(mut rows) = rmpv::decode::read_value(&mut cursor).expect("manifest decode")
         else {

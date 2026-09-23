@@ -220,6 +220,7 @@ mod tests {
                 )
                 .commit()?;
         }
+        crate::test_util::authorize_readers(&vault, &["reader"]);
         let scoped = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
         let ranker =
             ArousalReranker::from_scoped_edges(&scoped, &[anchor], ArousalFloor::new(0.5)?)?;

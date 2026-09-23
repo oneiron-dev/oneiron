@@ -114,7 +114,6 @@ pub fn admit_imported_evidence_claim_typed(
     source_record_id: &str,
     admission: &ImportedEvidenceAdmission,
 ) -> crate::Result<()> {
-
     admit_imported_evidence_claim_typed_guarded(
         vault,
         predicate,
@@ -179,6 +178,17 @@ fn admit_imported_evidence_claim_typed_guarded(
 
     if let Some(guard) = guard {
         return vault.with_write_txn(|txn| {
+            // Keyed ownership refuses before authorship, as the generic claim
+            // doors order it: no actor imports into or over a keyed revision.
+            if predicate == crate::claim::KEY_VALUE_PREDICATE
+                || vault
+                    .get_claim_in_txn(txn, &admission.claim_id)?
+                    .is_some_and(|body| !crate::claim::claim_generic_readable(&body))
+            {
+                return Err(crate::error::Error::Claim(
+                    crate::error::ClaimError::KeyValueWriteRequiresOwnedDoor,
+                ));
+            }
             guard(vault, txn, admission.actor, admission.claim_id)?;
             if vault.local_hard_delete_marker_exists_in_txn(txn, &admission.claim_id)? {
                 return Err(crate::error::ClaimError::ActorLacksClaimAuthority {

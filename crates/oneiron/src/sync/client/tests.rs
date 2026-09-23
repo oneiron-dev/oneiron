@@ -10,7 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::{GateDenialOutcome, GateDenialReason};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
 use crate::sync::bridge::Materializer;
-use crate::sync::loro_support::export_snapshot;
+use crate::sync::loro_support::{export_snapshot, replicated_deep_value};
 use crate::sync::schema::create_root_doc;
 use crate::temporal::TimeRange;
 
@@ -394,8 +394,8 @@ fn binary_vv_delta_round_trip_converges_with_smaller_payloads() {
 
     // Deep-value convergence on both sides.
     assert_eq!(
-        client.window(key).unwrap().doc.get_deep_value(),
-        server_doc.get_deep_value()
+        replicated_deep_value(&client.window(key).unwrap().doc),
+        replicated_deep_value(&server_doc)
     );
 }
 
@@ -547,8 +547,8 @@ fn vv_response_triggers_local_diff_update() {
     assert_eq!(sub, window_sub_tags::UPDATE);
     server_doc.import(delta).unwrap();
     assert_eq!(
-        client.window(key).unwrap().doc.get_deep_value(),
-        server_doc.get_deep_value()
+        replicated_deep_value(&client.window(key).unwrap().doc),
+        replicated_deep_value(&server_doc)
     );
 }
 
@@ -648,8 +648,8 @@ fn import_queued_update_applies_ops_and_rejects_garbage() {
 
     client.import_queued_update(key, &update).unwrap();
     assert_eq!(
-        client.window(key).unwrap().doc.get_deep_value(),
-        writer.get_deep_value(),
+        replicated_deep_value(&client.window(key).unwrap().doc),
+        replicated_deep_value(&writer),
         "queued ops must land in the local doc before replay"
     );
 

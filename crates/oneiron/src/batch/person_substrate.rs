@@ -133,6 +133,18 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             && let Some(bytes) =
                 crate::gate::normalize_policy_manifest_scope(&raw[ENTITY_METADATA_HEADER_LEN..])
         {
+            // A locally authored manifest keeps its origin across the upgrade;
+            // replayed bytes gain no trust stamp from it.
+            if crate::gate::manifest_authenticity::manifest_is_trusted(
+                store,
+                &txn,
+                &id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )? {
+                crate::gate::manifest_authenticity::stamp_manifest_origin(
+                    store, &mut txn, &id, &bytes, false,
+                )?;
+            }
             super::put_apply::stage_entity_body_row(
                 store,
                 &mut txn,

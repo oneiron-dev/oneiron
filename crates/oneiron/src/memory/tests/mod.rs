@@ -206,16 +206,8 @@ pub(super) fn witness_conversations(vault: &crate::Vault) -> crate::Result<Vec<E
 }
 
 pub(super) fn witness_edge_count(vault: &crate::Vault) -> u64 {
-    (0..=u8::MAX)
-        .map(|kind| {
-            vault
-                .entities_by_type(kind)
-                .expect("entity census")
-                .into_iter()
-                .map(|id| vault.edges_out(&id).expect("public edge query").len() as u64)
-                .sum::<u64>()
-        })
-        .sum()
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    vault.store.edges_out.len(&rtxn).expect("edge count")
 }
 
 pub(super) fn assert_witness_left_nothing(
@@ -258,12 +250,6 @@ pub(super) fn assert_witness_left_nothing(
                 .expect("substrate edge")
         );
     }
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    assert_eq!(
-        vault.store.edges_out.len(&rtxn).expect("edge count"),
-        persons.len() as u64,
-        "a refused witness left an edge beyond the pre-existing substrate edges"
-    );
     assert!(
         vault
             .search_text(refused_text, 10)

@@ -164,6 +164,7 @@ impl ExpressionPreferenceArchive {
             expected.subject = ClaimSubject::Entity(row.subject);
             expected.source = Some(ClaimSource::Imported);
             expected.evidence = actual.evidence.clone();
+            expected.scope_facet = substrate_facet_id(actor.entity_ref());
             if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
                 || header.occurred_start != row.occurred.start
                 || header.occurred_end != row.occurred.end

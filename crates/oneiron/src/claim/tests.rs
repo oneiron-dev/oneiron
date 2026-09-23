@@ -816,7 +816,6 @@ fn world_value_must_be_16_byte_binary() {
             (Value::from("val"), Value::from("x")),
             (Value::from("conf"), Value::F32(1.0)),
         ];
-        entries.push((Value::from("rel"), Value::from("all")));
         if let Some(world) = world {
             entries.push((Value::from("worldId"), world));
         }
@@ -848,13 +847,10 @@ fn world_value_must_be_16_byte_binary() {
         Some(world_id)
     );
 
-    // HEAD: explicit `base` tag string decodes to base reality (None).
-    let base_tagged = body_with_world(Some(Value::from("base")));
-    assert_eq!(
-        decode_claim_body(&base_tagged, false)
-            .expect("explicit base tag")
-            .world,
-        None
+    // A `base` tag string is not a scope id: base reality is only the reserved id.
+    assert_matches!(
+        decode_claim_body(&body_with_world(Some(Value::from("base"))), false),
+        Err(Error::InvalidClaimBody("scope id must be binary"))
     );
 
     // Reserved base id = base reality (None); the wire always stamps it.

@@ -78,12 +78,11 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
     assert!(limited.get(&opaque)?.is_some());
     assert!(limited.get(&id)?.is_none());
     vault.delete_entity_with_reason(&id, crate::deletion::DeleteReason::UserDelete)?;
+    // An erased claim cannot prove its read scope, so even the root proof
+    // gets a withholding receipt instead of the deletion record.
     let timeline = read.memory_timeline(&id)?;
-    assert_eq!(timeline.records.len(), 1);
-    assert_eq!(
-        timeline.records[0].state,
-        crate::MemoryTimelineRecordState::Deleted
-    );
+    assert!(timeline.records.is_empty());
+    assert_eq!(timeline.receipt.suppressed_count, 1);
     assert!(limited.memory_timeline(&id)?.records.is_empty());
     assert!(unproven.memory_timeline(&id)?.records.is_empty());
     assert!(
@@ -94,7 +93,13 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
             .is_empty()
     );
     vault.revoke_capability_slip(&issuer, root.claims.slip_id)?;
-    assert!(read.get(&id)?.is_none());
-    assert!(read.get(&opaque)?.is_none());
+    for revoked in [id, opaque] {
+        assert!(matches!(
+            read.get(&revoked),
+            Err(Error::InvalidClaimBody(
+                "scoped read credential no longer live"
+            ))
+        ));
+    }
     Ok(())
 }

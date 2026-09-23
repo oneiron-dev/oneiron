@@ -189,6 +189,7 @@ fn collected_chunk_can_serve_a_new_oid_without_reviving_deleted_object() {
 #[test]
 fn cross_transport_boundary_credentials_never_publish_assets() {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let assets_before = vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap();
     let mut bytes = vec![b' '; LFS_CHUNK_MAX - 10];
     bytes.extend_from_slice(b"ghp_0123456789abcdefghijklmnopqrstuvwxyz");
     let oid = LfsOid::digest(&bytes);
@@ -198,11 +199,9 @@ fn cross_transport_boundary_credentials_never_publish_assets() {
             .is_err()
     );
     assert!(vault.lfs_object(oid).unwrap().is_none());
-    assert!(
-        vault
-            .entities_by_type(ENTITY_TYPE_ASSET)
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap(),
+        assets_before
     );
     let mut scanner = scanner::CredentialStream::default();
     scanner.feed(b"-----BEGIN ").unwrap();

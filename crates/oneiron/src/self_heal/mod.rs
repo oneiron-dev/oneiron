@@ -112,6 +112,3 @@ use rmpv::{Integer, Value};
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::io::Cursor;
-
-#[cfg(test)]
-mod test_support;

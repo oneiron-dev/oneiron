@@ -12,6 +12,7 @@ fn native_interaction_requires_the_frame_target_and_produces_only_a_mediated_wri
     let (_tmp, vault) = test_vault();
     let target = test_entity_id(11);
     put_person(&vault, &target)?;
+    install_viewer_base_grant(&vault)?;
     let (key, mut frame) = viewer_frame("card-1")?;
     let read = vault.scoped_read(key);
     let token = frame.mint_backing_ref(

@@ -2266,7 +2266,7 @@
      "path": "src/authority/tests/support.rs",
      "purpose": "Shared fixtures and fold helpers for the authority tests",
      "surface": {
-      "crate-vis": 61
+      "crate-vis": 62
      }
     },
     {
@@ -19052,7 +19052,7 @@
      "path": "src/lens/tests/support.rs",
      "purpose": "Shared fixtures and helpers for the lens behaviour tests",
      "surface": {
-      "crate-vis": 54
+      "crate-vis": 56
      }
     },
     {
@@ -19114,7 +19114,7 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 29,
       "mod": 167,
       "re-export": 71
      }
@@ -21656,7 +21656,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/note/sync_tests.rs",
@@ -26037,9 +26037,7 @@
      "notable": [],
      "path": "src/retrieval_depth/tests.rs",
      "purpose": "—",
-     "surface": {
-      "crate-vis": 1
-     }
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -26872,16 +26870,6 @@
      "surface": {
       "fn": 3,
       "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/self_heal/test_support.rs",
-     "purpose": "Shared policy fixtures; never a production policy installation door",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -30067,7 +30055,7 @@
      "path": "src/sync/loro_support.rs",
      "purpose": "Loro-native helpers for the sync layer",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1
      }
     },
@@ -34658,7 +34646,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 24,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34926,7 +34914,7 @@
    },
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2065,
+   "source_files": 2064,
    "test_files": 705
   },
   "oneiron-android": {

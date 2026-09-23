@@ -175,6 +175,7 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
     for (id, state) in unavailable {
         make_unavailable(&vault, id, state);
     }
+    permit_reads(&vault, &[actor.entity_ref()]);
     let read = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap())
         .for_audience(&[actor.entity_ref()]);

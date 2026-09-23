@@ -9,6 +9,11 @@ use crate::{Error, Result, claim::ScopedReadActorKey, entity_id::EntityId};
 /// `read_preset` and the selector names base reality, so world-scoped rows
 /// stay denied. Installed per positive fixture; negatives keep no grant.
 pub(super) fn base_read_grant(actor_ref: &str) -> rmpv::Value {
+    world_read_grant(actor_ref, rmpv::Value::from("base"))
+}
+
+/// The same `core:read` grant with its selector naming one world.
+pub(super) fn world_read_grant(actor_ref: &str, world_ref: rmpv::Value) -> rmpv::Value {
     rmpv::Value::Map(vec![
         (rmpv::Value::from("actor_ref"), rmpv::Value::from(actor_ref)),
         (
@@ -24,10 +29,7 @@ pub(super) fn base_read_grant(actor_ref: &str) -> rmpv::Value {
         ),
         (
             rmpv::Value::from("selectors"),
-            rmpv::Value::Map(vec![(
-                rmpv::Value::from("world_ref"),
-                rmpv::Value::from("base"),
-            )]),
+            rmpv::Value::Map(vec![(rmpv::Value::from("world_ref"), world_ref)]),
         ),
         (
             rmpv::Value::from("receipt_required"),
@@ -36,7 +38,7 @@ pub(super) fn base_read_grant(actor_ref: &str) -> rmpv::Value {
     ])
 }
 
-fn encode_base_manifest(actor_ref: &str) -> Vec<u8> {
+fn encode_read_manifest(grants: Vec<rmpv::Value>) -> Vec<u8> {
     let value = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("schema_version"),
@@ -56,7 +58,7 @@ fn encode_base_manifest(actor_ref: &str) -> Vec<u8> {
         ),
         (
             rmpv::Value::from("scoped_grants"),
-            rmpv::Value::Array(vec![base_read_grant(actor_ref)]),
+            rmpv::Value::Array(grants),
         ),
     ]);
     let mut data = Vec::new();
@@ -66,6 +68,11 @@ fn encode_base_manifest(actor_ref: &str) -> Vec<u8> {
 
 /// Installs the base `core:read` grant for `viewer` via the batch write door.
 pub(super) fn install_viewer_base_grant(vault: &crate::Vault) -> Result<()> {
+    install_read_grants(vault, vec![base_read_grant("viewer")])
+}
+
+/// Installs one policy manifest carrying `grants` via the batch write door.
+pub(super) fn install_read_grants(vault: &crate::Vault, grants: Vec<rmpv::Value>) -> Result<()> {
     use crate::batch::{BatchOp, apply_ops};
     use crate::temporal::TimeRange;
     let ops = vec![BatchOp::Put {
@@ -73,7 +80,7 @@ pub(super) fn install_viewer_base_grant(vault: &crate::Vault) -> Result<()> {
         entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
         occurred: TimeRange { start: 1, end: 1 },
         learned_at: 1,
-        data: encode_base_manifest("viewer"),
+        data: encode_read_manifest(grants),
         allow_maintenance: true,
         allow_reserved_predicate: false,
         hub_sync_imported: false,

@@ -2579,6 +2579,7 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
         budget_id: "wake",
         now_ms: 21_000,
     };
+    let seeded = claim_predicates_in_store(&vault)?;
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
     assert!(matches!(
         execution,
@@ -2590,9 +2591,16 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
     assert_eq!(guard.read().reserved_units, 0);
     assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
 
-    // …and the module wrote ZERO belief claims itself: the only claims in
-    // the store are the step layer's dreamer.step runtime records.
-    let predicates = claim_predicates_in_store(&vault)?;
+    // …and the module wrote ZERO belief claims itself: the only claims it
+    // added to the store are the step layer's dreamer.step runtime records.
+    let mut predicates = claim_predicates_in_store(&vault)?;
+    for predicate in &seeded {
+        let index = predicates
+            .iter()
+            .position(|stored| stored == predicate)
+            .expect("seeded claim survives the attempt");
+        predicates.swap_remove(index);
+    }
     assert!(
         predicates
             .iter()

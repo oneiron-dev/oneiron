@@ -699,9 +699,10 @@ fn attempt_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
 
 #[test]
 fn redirect_preserves_the_first_claim_event() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
     let first = enqueued(&queue, 10)?;
+    clock.set(11);
     let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".into(),
         now: 11,
@@ -720,6 +721,7 @@ fn redirect_preserves_the_first_claim_event() -> Result<()> {
     };
     let original = claimed_event()?;
     assert_eq!(original.at, 11);
+    clock.set(12);
     queue.redirect(
         InterveneAttempt {
             id: first.id,
@@ -734,6 +736,7 @@ fn redirect_preserves_the_first_claim_event() -> Result<()> {
         },
     )?;
     assert_eq!(claimed_event()?, original);
+    clock.set(13);
     let ClaimOutcome::Claimed(reclaimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-b".into(),
         now: 13,

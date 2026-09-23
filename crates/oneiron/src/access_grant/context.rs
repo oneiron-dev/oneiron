@@ -203,6 +203,9 @@ mod tests {
         let context = vault.access_context(principal)?;
         assert!(!context.allows(ENTITY_TYPE_MESSAGE, None, false));
         assert!(!context.allows(ENTITY_TYPE_SUMMARY, None, false));
+        // A plain key reads nothing without a manifest grant; the relationship
+        // grant under test only narrows what that base read admits.
+        crate::test_util::authorize_readers(&vault, &["reader"]);
         let reader = vault.scoped_read(
             ScopedReadActorKey::new("reader")
                 .unwrap()

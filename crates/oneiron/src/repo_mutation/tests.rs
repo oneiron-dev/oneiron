@@ -1811,8 +1811,11 @@ fn repository_proposal_crash_rolls_forward_and_stale_base_never_rebases() {
 }
 
 fn stock_git(root: &std::path::Path, args: &[&str]) -> Vec<u8> {
+    // Host global and system config (commit signing, hooks) must not reach the fixture.
     let output = std::process::Command::new("git")
         .current_dir(root)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .args(args)
         .output()
         .unwrap();

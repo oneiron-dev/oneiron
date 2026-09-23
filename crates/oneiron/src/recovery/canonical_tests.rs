@@ -108,7 +108,7 @@ fn fixture() -> Result<Fixture> {
 fn canonical_carry_list_round_trips_with_blake3_and_fresh_documents() -> Result<()> {
     let fixture = fixture()?;
     let snapshot = &fixture.snapshot;
-    assert_eq!(snapshot.doc_snapshots.len(), 2);
+    assert_eq!(snapshot.doc_snapshots.len(), 1);
     assert_eq!(snapshot.head_move_receipts.len(), 1);
     assert_eq!(snapshot.tombstones.len(), 2);
     assert!(
@@ -234,11 +234,15 @@ fn redaction_preserves_unrelated_canonical_bytes_and_refuses_unresolved_copies()
     );
     let mut copies = snapshot.clone();
     copies
-        .doc_snapshots
+        .note_proposals
         .iter_mut()
-        .find(|row| row.head != *head.as_bytes())
+        .find(|row| {
+            row.landed
+                .iter()
+                .any(|receipt| receipt.note == fixture.note)
+        })
         .unwrap()
-        .text
+        .explainer
         .push_str(" 🦀 secret");
     assert!(
         copies
@@ -620,21 +624,22 @@ fn pending_merge_survives_reconstruction_and_stale_rows_converge() -> Result<()>
         snapshot
     );
 
-    // Stale fork, proposal and receipt rows, changed document text, and a
-    // mismatched head pointer must be replaced only inside the admitted scope.
-    let doc = target.note_program_document(fixture.note)?.unwrap();
+    // Stale fork, proposal, receipt and proposal-document rows must be
+    // replaced only inside the admitted scope.
     let stale = target
         .fork_note(
             fixture.note,
-            &NoteEdit::InsertAfter {
-                anchor: doc.anchor(0)?,
-                text: "stale ".into(),
+            &NoteEdit::Rewrite {
+                text: "stale".into(),
             },
             target_actor,
         )
         .unwrap();
     let stale_bundle = target
         .open_note_proposal(&[stale], "stale landed", target_actor)
+        .unwrap();
+    let stale_bundle = target
+        .review_note_proposal(stale_bundle.id, NoteVerdict::Reject, target_actor)
         .unwrap();
     assert_eq!(stale_bundle.landed.len(), 1);
     let extra = target
@@ -646,13 +651,6 @@ fn pending_merge_survives_reconstruction_and_stale_rows_converge() -> Result<()>
             target_actor,
         )
         .unwrap();
-    target.with_write_txn(|txn| {
-        target.store.vault_meta.put(
-            txn,
-            &[b"note_head:v1:".as_slice(), fixture.note.as_bytes()].concat(),
-            extra.as_bytes(),
-        )
-    })?;
     let stray_doc = snapshot.doc_snapshots[0]
         .rebuild()?
         .export(loro::ExportMode::Snapshot)
@@ -660,13 +658,8 @@ fn pending_merge_survives_reconstruction_and_stale_rows_converge() -> Result<()>
     target.with_write_txn(|txn| {
         target.store.sync_state.put(
             txn,
-            &format!("note_doc:v1:{}:{}", inline.to_hex(), extra.to_hex()),
+            &crate::note::documents::doc_key(inline, extra),
             &stray_doc,
-        )?;
-        target.store.vault_meta.put(
-            txn,
-            &[b"note_head:v1:".as_slice(), inline.as_bytes()].concat(),
-            extra.as_bytes(),
         )
     })?;
     let repaired = recover()?;

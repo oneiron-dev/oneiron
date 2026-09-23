@@ -469,9 +469,11 @@ fn interview_digest_rides_the_ed00_and_ed01_doors() {
     let previous_id = vault.new_entity_id().unwrap();
     let (session, mut digest) =
         open_interview(&vault, &topic, &reviewer, "the agent's draft digest").expect("open");
+    // The reviewer's peer binding claim and its audit mutation take the two
+    // injected ids before the digest's own.
     assert_eq!(
         u128::from_be_bytes(*session.digest_artifact.as_bytes()),
-        u128::from_be_bytes(*previous_id.as_bytes()) + 1,
+        u128::from_be_bytes(*previous_id.as_bytes()) + 3,
     );
     assert_eq!(session.topic_ref, topic);
     assert_eq!(session.state, InterviewState::Drafting);

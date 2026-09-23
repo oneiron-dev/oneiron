@@ -84,13 +84,7 @@ impl GitWire<'_> {
     }
 
     pub(crate) fn canonical_common_dir(&self, root: &Path) -> Result<PathBuf> {
-        // The ceiling guard makes this fail closed (not ancestor discovery)
-        // when the checkout lost its own .git entry: surface that as the
-        // binding error the cached-handle door expects.
-        let output = match self.run_at(root, &FrozenGitArgv::git_common_dir()) {
-            Ok(output) => output,
-            Err(_) => return Err(invalid("git wire repository binding changed")),
-        };
+        let output = self.run_at(root, &FrozenGitArgv::git_common_dir())?;
         let text = String::from_utf8_lossy(&output.stdout);
         let path = PathBuf::from(text.trim_end_matches(['\r', '\n']));
         let path = if path.is_absolute() {

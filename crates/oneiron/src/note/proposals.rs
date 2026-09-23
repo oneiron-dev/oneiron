@@ -1,7 +1,7 @@
 //! Grant-routed fork bundles, atomic verdicts and durable head-move receipts.
 
 use super::NoteProgramEdit;
-use super::documents::{NoteDocument, invalid, load_doc, load_head, store_doc};
+use super::documents::{NoteDocument, invalid, live_doc, load_doc, load_head, store_doc};
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
@@ -246,7 +246,7 @@ fn land(
         return Err(invalid("fork already decided"));
     }
     super::verbs::note_core(vault, txn, fork.note)?;
-    let current = load_doc(vault, txn, fork.note)?.ok_or(invalid("missing live document"))?;
+    let current = live_doc(vault, txn, fork.note)?;
     let proposed = load_head(vault, txn, fork.note, fork.fork)?;
     let text = match verdict {
         NoteVerdict::Merge => {

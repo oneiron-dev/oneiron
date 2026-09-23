@@ -141,6 +141,7 @@ mod tests {
             companion: None,
             disclosure: None,
         };
+        crate::test_util::authorize_readers(&vault, &["reader"]);
         let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
         let receipts = section.include_pinned_refs(&reader, &[reference])?;
         assert_eq!(receipts.len(), 1);

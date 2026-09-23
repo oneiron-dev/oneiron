@@ -543,7 +543,6 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
                 SelfEffect::MemorySupersedeClaim,
             ),
             ("self.memory.put_edge", SelfEffect::MemoryPutEdge),
-            ("self.report_blocked", SelfEffect::ReportBlocked),
         ]),
         "OF-060 P3: write imports must map exactly to the authorized memory effects",
     );

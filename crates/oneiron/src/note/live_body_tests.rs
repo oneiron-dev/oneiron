@@ -2,7 +2,7 @@
 
 use super::{NoteEdit, NoteEditOutcome, TakeTarget, decode_note_body};
 use crate::claim::ScopedReadActorKey;
-use crate::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use crate::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
 #[test]
 fn note_live_reads_survive_reopen_without_mirroring_projection_into_birth() {
@@ -17,6 +17,9 @@ fn note_live_reads_survive_reopen_without_mirroring_projection_into_birth() {
             1,
             b"person",
         )
+        .unwrap();
+    vault
+        .install_read_permit_for_test(WriteActor::new(actor, EdgeActorClass::Human))
         .unwrap();
     let memory = vault.memory(actor, EdgeActorClass::Human);
     let receipt = memory

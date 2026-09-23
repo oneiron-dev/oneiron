@@ -235,12 +235,9 @@ impl EsignState {
                 self.sealed_sha256 = item_sha256.clone();
                 self.reseal_pending = false;
             }
-            EsignEvent::ResealRequested {
-                owner,
-                authorization,
-            } => {
+            EsignEvent::ResealRequested { owner, authority } => {
                 reference(owner)?;
-                if authorization.is_empty()
+                if authority.is_empty()
                     || !matches!(
                         self.status,
                         DocumentStatus::Completed | DocumentStatus::Rejected

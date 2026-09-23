@@ -215,9 +215,15 @@ mod tests {
         vault.store.entities.put(&mut txn, id.as_bytes(), &raw)?;
         txn.commit()?;
         let bundle: Value = serde_json::from_slice(&vault.export_vault_json()?).unwrap();
-        assert_eq!(bundle["entities"][0]["body"]["safe"], "kept");
-        assert!(bundle["entities"][0]["body"]["nested"][0]["password"].is_null());
-        assert!(bundle["entities"][0]["body"]["encoded"].is_null());
+        let entity = bundle["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id.to_hex())
+            .unwrap();
+        assert_eq!(entity["body"]["safe"], "kept");
+        assert!(entity["body"]["nested"][0]["password"].is_null());
+        assert!(entity["body"]["encoded"].is_null());
         assert_eq!(bundle["manifest"]["secrets_nulled"]["payloads"], true);
         Ok(())
     }

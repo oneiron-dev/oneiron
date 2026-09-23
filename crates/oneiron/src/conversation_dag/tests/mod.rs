@@ -2,7 +2,7 @@
 
 use super::fixtures as support;
 use super::*;
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::{EdgeActorClass, EdgeKind, EntityId, ErrorKind, WriteActor};
 use proptest::prelude::*;
 use support::*;
@@ -183,6 +183,14 @@ fn legacy_migration_is_time_ordered_lazy_idempotent_and_maintainable() {
     vault
         .put_entity(&other, ENTITY_TYPE_CONVERSATION, time(1), 1, &body("other"))
         .unwrap();
+    // Maintenance adopts legacy content; an empty conversation has none.
+    let legacy = EntityId::now();
+    vault
+        .batch()
+        .put(&legacy, ENTITY_TYPE_TURN, time(1), 1, &body("legacy"))
+        .edge_checked(&legacy, &other, 1.0)
+        .commit()
+        .unwrap();
     assert_eq!(
         vault
             .maintain()
@@ -232,7 +240,24 @@ fn corrupted_cycle_cardinality_and_canonical_marks_fail_closed() {
             .kind(),
         ErrorKind::CycleDetected
     );
-    vault.delete_edge(&root, EdgeKind::Parent, &child).unwrap();
+    assert_eq!(
+        vault
+            .delete_edge(&root, EdgeKind::Parent, &child)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ReservedEdgeKind
+    );
+    // The forged Parent cannot be retired, so the canonical-mark fault gets a
+    // clean graph of its own.
+    let (_dir, vault, conv, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let child = vault
+        .append_dag_record(&input(conv, Some(root), true, actor))
+        .unwrap()
+        .id;
     vault
         .with_write_txn(|txn| {
             vault.store.vault_meta.put(
@@ -284,8 +309,12 @@ fn walk_work_cap_refuses_a_large_neighborhood_without_partial_results() {
 
 #[test]
 fn migration_backfills_forward_only_session_membership_and_rejects_bad_marker() {
-    let (_dir, vault, conv, actor) = fixture();
+    let (_dir, vault, conv, _actor) = fixture();
     let asking = EntityId::now();
+    let session = EntityId::now();
+    let child = EntityId::now();
+    // Spawning through the DAG door adopts the conversation and closes legacy
+    // ChildOf appends, so the whole legacy sub-session predates adoption.
     vault
         .batch()
         .put(
@@ -296,12 +325,19 @@ fn migration_backfills_forward_only_session_membership_and_rejects_bad_marker() 
             &body("legacy asking"),
         )
         .edge_checked(&asking, &conv, 1.0)
-        .commit()
-        .unwrap();
-    let session = vault.spawn_dag_sub_session(&asking, actor).unwrap();
-    let child = EntityId::now();
-    vault
-        .batch()
+        .put(
+            &session,
+            ENTITY_TYPE_SESSION,
+            time(1),
+            1,
+            &body("legacy session"),
+        )
+        .edge_with_value_fields(
+            &session,
+            EdgeKind::SpawnedBy,
+            &asking,
+            super::writes::value(1),
+        )
         .put(&child, ENTITY_TYPE_TURN, time(2), 2, &body("legacy worker"))
         .edge_checked(&child, &conv, 1.0)
         .edge_with_value_fields(&child, EdgeKind::Parent, &asking, super::writes::value(2))

@@ -923,20 +923,19 @@ fn conversation_edges_are_structural_door_only_and_non_traversed() -> Result<()>
             ),
             Err(Error::InvariantViolation(_))
         ));
-        if kind == EdgeKind::AddressedTo {
-            edge::validate_public_edge_creation_kind(kind)?;
-        } else {
-            assert_eq!(
-                vault
-                    .put_edge(&EntityId::now(), kind, &EntityId::now(), 1.0)
-                    .unwrap_err()
-                    .kind(),
-                crate::ErrorKind::ReservedEdgeKind
-            );
-        }
-        // Receive-side registry gates accept these bytes; topology readers
-        // subsequently prove membership/cardinality. No protocol bump needed.
-        edge::validate_public_edge_kind(kind)?;
+        assert_eq!(
+            vault
+                .put_edge(&EntityId::now(), kind, &EntityId::now(), 1.0)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ReservedEdgeKind
+        );
+        assert!(matches!(
+            edge::validate_public_edge_kind(kind),
+            Err(Error::Registry(
+                crate::error::RegistryError::ReservedEdgeKind("conversation_dag")
+            ))
+        ));
     }
     for (byte, kind) in PINNED_EDGE_KIND_DISCRIMINANTS {
         assert_eq!(EdgeKind::try_from_u8(byte), Some(kind));

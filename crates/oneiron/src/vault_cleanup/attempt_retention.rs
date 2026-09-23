@@ -40,8 +40,7 @@ fn eligible(
     }
     let record = decode_record(raw, id)?;
     Ok((record.state == AttemptState::Completed
-        && crate::unix_seconds_now().saturating_sub(record.updated_at)
-            > days.saturating_mul(86_400))
+        && vault.now_recorded_at().saturating_sub(record.updated_at) > days.saturating_mul(86_400))
     .then_some(record))
 }
 

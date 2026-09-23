@@ -224,6 +224,10 @@ fn stale_vector_fill_does_not_clear_or_overwrite_newer_claim_marker() -> Result<
     }
 
     let (_dir, vault) = open_test_vault();
+    // Open seeds bootstrap skills whose revisions wait for idle publication;
+    // publish them first so the idle pass below embeds only this claim.
+    vault.set_indexed_idle_delay_ms(0)?;
+    vault.refresh_staged_indexed_at_idle(u64::MAX)?;
     let claim = EntityId::now();
     commit_claim_candidate_with_value(&vault, claim, "Alice")?;
     let old_token = pending_embedding_token(&vault, &claim)?;
@@ -264,7 +268,6 @@ fn stale_vector_fill_does_not_clear_or_overwrite_newer_claim_marker() -> Result<
         vault.get_vector(&claim)?.as_deref(),
         Some([1.0, 0.0, 0.0, 0.0].as_slice())
     );
-    vault.set_indexed_idle_delay_ms(0)?;
     let idle = IdleFill {
         claim,
         body: vault.get(&claim)?.unwrap(),

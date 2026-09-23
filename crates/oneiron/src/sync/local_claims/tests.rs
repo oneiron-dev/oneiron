@@ -13,9 +13,11 @@ use crate::claim::{
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-    encode_federation_grant_body,
+    encode_federation_grant_body, selector_range_of,
 };
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON,
+};
 use crate::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use crate::sync::loro_support::{
     export_snapshot, import_doc, map_delete, map_get_bytes, map_insert_bytes,
@@ -316,6 +318,25 @@ fn esign_event_selector_excludes_injected_aliases_and_stale_local_identity() -> 
     let f = Fixture::new()?;
     let source = create_window_doc("selector-source", &f.key);
     let forbidden = f.contaminate(&source)?;
+    // Every grant reads an empty selector axis as bottom, so the ordinary
+    // claim reaches the peer only as the seed of a named facet.
+    let facet = EntityId::now();
+    f.vault.put_entity(
+        &facet,
+        ENTITY_TYPE_FACET,
+        TimeRange {
+            start: f.now,
+            end: f.now,
+        },
+        f.now,
+        b"facet",
+    )?;
+    map_insert_bytes(
+        &source.get_map("edges"),
+        &format_edge_key(&f.ordinary, EdgeKind::FacetOf, &facet),
+        &encode_edge_value_for_crdt(EdgeKind::FacetOf, 1.0, f.now, None, None)?,
+    )?;
+    source.commit();
     let scope = FederationGrantScope::vault(7);
     let member = EntityId::now();
     let grant_id = EntityId::now();
@@ -338,7 +359,13 @@ fn esign_event_selector_excludes_injected_aliases_and_stale_local_identity() -> 
             &encode_federation_grant_body(&grant)?,
         )
         .commit()?;
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![selector_range_of(ENTITY_TYPE_CLAIM).unwrap()],
+    );
     let filtered = filtered_window_doc(&f.vault, &source, &f.key, scope, &selector)?;
     let peer = create_window_doc("selector-peer", &f.key);
     import_doc(&peer, &export_snapshot(&filtered)?)?;

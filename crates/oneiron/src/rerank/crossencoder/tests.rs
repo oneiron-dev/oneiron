@@ -76,9 +76,9 @@ fn local_service_prepares_nonblocking_snapshot_and_pipeline_ladder() -> Result<(
     let range = crate::temporal::TimeRange { start: 1, end: 1 };
     vault
         .batch()
-        .put(&a, 4, range, 1, b"a")
+        .put(&a, crate::registry::ENTITY_TYPE_PERSON, range, 1, b"a")
         .text(&a, &[("body", "launch decision")])
-        .put(&b, 4, range, 1, b"b")
+        .put(&b, crate::registry::ENTITY_TYPE_PERSON, range, 1, b"b")
         .text(&b, &[("body", "launch decision decision")])
         .commit()?;
     let baseline = vault

@@ -5242,7 +5242,10 @@ fn explicit_crm_pack_registration_exports_by_family_after_reopen() {
     let (dir, vault, grant_id) = test_vault_with_grant(member);
     let slots: Vec<_> = (TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
         ..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
-        .filter(|byte| entity_type_registry_entry(*byte).is_none())
+        .filter(|byte| {
+            entity_type_registry_entry(*byte).is_none()
+                && vault.structural_kind_registration(*byte).is_none()
+        })
         .take(3)
         .collect();
     let pack = crate::campaign::register_crm_pack(
@@ -5276,32 +5279,51 @@ fn explicit_crm_pack_registration_exports_by_family_after_reopen() {
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let window = WindowKey::new("2026-03");
     let doc = create_window_doc("source", &window);
+    let facet = entity_id(0xD5);
+    let seed = entity_id(0xD6);
+    insert_entity(&doc, facet, ENTITY_TYPE_FACET, b"pack facet");
+    insert_blob(&doc, seed, &claim_blob(None));
+    insert_edge(&doc, seed, EdgeKind::FacetOf, facet);
+    seed_doc_stamps(&vault, &doc);
     for id in &ids {
         insert_blob(&doc, *id, &vault.get_raw(id).unwrap().unwrap());
+        insert_edge(&doc, seed, EdgeKind::Supports, *id);
     }
     doc.commit();
-    for bands in [
-        vec![],
-        vec![SelectorRange::Family(TypeByteFamily::Productivity)],
-    ] {
-        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], bands);
-        let filtered =
-            filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &selector).unwrap();
-        let exported = import_ids(&filtered.export(ExportMode::all_updates()).unwrap());
-        assert!(exported.contains(&ids[0]));
-        assert!(exported.contains(&ids[1]));
-        assert!(!exported.contains(&ids[2]));
-    }
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![
+            SelectorRange::Semantic,
+            SelectorRange::Family(TypeByteFamily::Productivity),
+        ],
+    );
+    let filtered =
+        filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &selector).unwrap();
+    let exported = import_ids(&filtered.export(ExportMode::all_updates()).unwrap());
+    assert!(exported.contains(&ids[0]));
+    assert!(exported.contains(&ids[1]));
+    assert!(!exported.contains(&ids[2]));
     let other_family = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
-        vec![],
-        vec![SelectorRange::Family(TypeByteFamily::Documents)],
+        vec![facet],
+        vec![
+            SelectorRange::Semantic,
+            SelectorRange::Family(TypeByteFamily::Documents),
+        ],
     );
     let filtered =
         filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &other_family).unwrap();
-    assert!(import_ids(&filtered.export(ExportMode::all_updates()).unwrap()).is_empty());
+    let exported = import_ids(&filtered.export(ExportMode::all_updates()).unwrap());
+    assert!(
+        exported.contains(&seed),
+        "the facet seed must cross, else this proves nothing"
+    );
+    assert!(ids.iter().all(|id| !exported.contains(id)));
 }
 
 #[test]
@@ -5608,7 +5630,7 @@ fn selector_custody_locality_uses_the_export_read_snapshot() {
         vec![
             SelectorRange::Semantic,
             SelectorRange::Core,
-            SelectorRange::Family(TypeByteFamily::Companion),
+            SelectorRange::Family(TypeByteFamily::AuthorityPolicyCustody),
         ],
     );
     let update = filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)

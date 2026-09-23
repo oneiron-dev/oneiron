@@ -3447,6 +3447,10 @@ fn forward_remat_refuses_replicated_message_bodies_before_any_mutation() -> Resu
 fn replicated_lww_overwrite_keeps_indexed_body_until_idle_removes_loser_bm25f() -> Result<()> {
     use crate::memory::ReadMode;
     let (_dir, vault) = test_vault();
+    // Vault::open seeds the bootstrap skills with staged revisions; publish
+    // them first so the idle report below covers only this entity.
+    vault.set_indexed_idle_delay_ms(0)?;
+    vault.refresh_staged_indexed_at_idle(u64::MAX)?;
     let id = EntityId::now();
     vault.put_entity(
         &id,
@@ -3490,7 +3494,6 @@ fn replicated_lww_overwrite_keeps_indexed_body_until_idle_removes_loser_bm25f() 
     let live = vault.get_raw_with_mode(&id, ReadMode::Live)?.unwrap();
     assert_eq!(&live[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"winner");
 
-    vault.set_indexed_idle_delay_ms(0)?;
     let report = vault.refresh_staged_indexed_at_idle(u64::MAX)?;
     assert_eq!(report.refreshed.len(), 1);
     assert_eq!(report.refreshed[0].0, id);
@@ -3508,7 +3511,10 @@ fn replicated_lww_overwrite_keeps_indexed_body_until_idle_removes_loser_bm25f() 
                 .get(txn, id.as_bytes())?
                 .is_none()
         );
-        assert!(vault.store.text_postings.iter(txn)?.next().is_none());
+        for item in vault.store.text_postings.iter(txn)? {
+            let (_term, posting) = item?;
+            assert!(!posting.starts_with(id.as_bytes()));
+        }
         let row = vault.store.entities.get(txn, id.as_bytes())?.unwrap();
         assert_eq!(&row[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"winner");
         Ok(())

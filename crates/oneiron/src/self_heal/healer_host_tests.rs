@@ -69,6 +69,9 @@ fn external_runner_reads_failure_corpus_and_patch_release_is_human_only() {
     let registration = v
         .register_dev_healer(HealerDeployment::Daemon, actor)
         .unwrap();
+    // The runner reads through its own scoped key, which reads nothing until
+    // the manifest grants it.
+    crate::test_util::authorize_readers(&v, &[actor.entity_ref().to_hex().as_str()]);
     assert_eq!(
         registration.failure_corpus().unwrap()[0].1.event_class,
         DiagnosticEventClass::TestFailure

@@ -18,6 +18,11 @@ pub(crate) fn live_body_in_txn<'b>(
         return Ok(Cow::Borrowed(body));
     }
     super::ensure_citations_ready(store, txn, *id)?;
+    // A migrated record keeps the EntityDoc codec; its head is not a NOTE document.
+    #[cfg(feature = "sync")]
+    if crate::entity_doc::has_record_head(store, txn, id)? {
+        return Ok(Cow::Borrowed(body));
+    }
     let note = super::decode_note_body_in_txn(store, txn, body)?;
     let has_snapshot = store
         .sync_state

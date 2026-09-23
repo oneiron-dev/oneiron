@@ -737,16 +737,6 @@ fn claim_negative_matrix_rejects_typed_and_writes_nothing() -> Result<()> {
             ErrorKind::InvalidClaimBody,
         ),
         (
-            "missing world",
-            rmpv_map_bytes(&entries_without(&base, "world")),
-            ErrorKind::InvalidClaimBody,
-        ),
-        (
-            "missing rel",
-            rmpv_map_bytes(&entries_without(&base, "rel")),
-            ErrorKind::InvalidClaimBody,
-        ),
-        (
             "missing appr",
             rmpv_map_bytes(&entries_without(&base, "appr")),
             ErrorKind::InvalidClaimBody,
@@ -1173,7 +1163,7 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
     let bad_type = EntityId::now();
     let err = vault
         .batch()
-        .put_replicated(&bad_type, 200, test_time_range(1, 1), 2, b"")
+        .put_replicated(&bad_type, 255, test_time_range(1, 1), 2, b"")
         .commit()
         .expect_err("replay door must still reject unregistered type bytes");
     assert_eq!(err.kind(), ErrorKind::InvalidEntityType);

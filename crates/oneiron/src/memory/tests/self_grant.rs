@@ -120,10 +120,25 @@ fn foreign_claim_upsert_retract_and_same_id_put_cannot_erase_history() {
     assert_eq!(vault.get_raw(&id(0x33)).unwrap(), before);
     assert!(vault.get_raw(&id(0x34)).unwrap().is_none());
 
-    // A new own revision still supersedes under the same ordinary door.
+    // A new own revision still supersedes under the same ordinary door. The
+    // default manifest declares no single-valued predicate, so the closure
+    // parks until the owner confirms the replacement.
     replacement.id = Some(id(0x35).to_hex());
-    facade_for(&vault, author)
+    let receipt = facade_for(&vault, author)
         .claim_upsert(&replacement)
+        .unwrap();
+    assert_eq!(receipt.approval, "proposed");
+    assert_eq!(
+        vault.get_claim(&id(0x33)).unwrap().unwrap().lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    let proposed = vault.get_claim(&id(0x35)).unwrap().unwrap();
+    vault
+        .approve_inbox_member_with_edit_at(
+            &id(0x35),
+            &crate::claim::encode_claim_body(&proposed).unwrap(),
+            102,
+        )
         .unwrap();
     assert_eq!(
         vault.get_claim(&id(0x33)).unwrap().unwrap().lifecycle,

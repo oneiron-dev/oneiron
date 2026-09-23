@@ -16,6 +16,7 @@ use crate::federation::{
 };
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::sync::bridge::parse_edge_key;
+use crate::sync::local_claims::withheld_claim_carriers;
 use crate::sync::loro_support::{
     map_for_each_tombstone_value, map_for_each_value_bytes, map_insert_bytes,
 };
@@ -257,6 +258,9 @@ pub(super) fn filter_window_doc(
         return Err(selector_err(SelectorError::GrantWrongType));
     }
     let grant = decode_federation_grant_body(&grant_raw[ENTITY_METADATA_HEADER_LEN..])?;
+    // Opens its own read txn, so it runs before the export snapshot below.
+    let (_, claims_withheld) =
+        withheld_claim_carriers(vault, &source.get_map("entities"), &source.get_map("edges"))?;
     // One read snapshot for the whole export: facet scope, coreference
     // consent, causal admission, and record stamps all read through this
     // `rtxn`. Opening nested read txns on this thread would fail with
@@ -317,7 +321,7 @@ pub(super) fn filter_window_doc(
         if id.to_hex() != raw_key {
             return;
         }
-        if custody_withheld.contains(&id) {
+        if custody_withheld.contains(&id) || claims_withheld.contains(&id) {
             return;
         }
         // Tombstoned rows still evaluate scope: their live bytes must not

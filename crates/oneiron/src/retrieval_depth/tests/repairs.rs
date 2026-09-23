@@ -452,6 +452,7 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
     struct PublishingBackend<'a> {
         vault: &'a Vault,
         id: EntityId,
+        replacement: Vec<u8>,
     }
     impl DeepSearchBackend for PublishingBackend<'_> {
         fn decompose(
@@ -471,11 +472,9 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
             _: Option<u64>,
             _: &BudgetLease,
         ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
-            let body = rmp_serde::to_vec_named(&serde_json::json!({"content": "replacement yak"}))
-                .unwrap();
             self.vault
                 .batch()
-                .put(&self.id, ENTITY_TYPE_PERSON, range(1), 1, &body)
+                .put_replicated(&self.id, ENTITY_TYPE_CLAIM, range(2), 2, &self.replacement)
                 .text(&self.id, &[("content", "replacement yak")])
                 .commit()?;
             self.vault.refresh_staged_indexed_at_idle(u64::MAX)?;
@@ -483,18 +482,35 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
         }
     }
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
-    let id = entity(0x72);
-    let body = rmp_serde::to_vec_named(&serde_json::json!({"content": "ranked zebra"})).unwrap();
+    super::authorize_readers(&vault, &[READER]);
+    let (id, subject) = (entity(0x72), entity(0x73));
+    // A claim revision carries its own record scope. An edited non-claim
+    // revision has no digest-bound stamp left to prove its historical read.
+    let claim = |value: &str| {
+        encode_claim_body(&ClaimBody::new(
+            "core.fact",
+            ClaimSubject::Entity(subject),
+            Value::from(value),
+            0.9,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        ))
+    };
+    let body = claim("ranked zebra")?;
     vault
         .batch()
-        .put(&id, ENTITY_TYPE_PERSON, range(1), 1, &body)
+        .put_replicated(&id, ENTITY_TYPE_CLAIM, range(1), 1, &body)
         .text(&id, &[("content", "ranked zebra")])
         .commit()?;
     vault.set_indexed_idle_delay_ms(0)?;
     let before = vault.indexed_revision(&id)?.unwrap();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).unwrap());
     let lease = minted_lease();
-    let backend = PublishingBackend { vault: &vault, id };
+    let backend = PublishingBackend {
+        vault: &vault,
+        id,
+        replacement: claim("replacement yak")?,
+    };
     let request = hosted_request("zebra", Effort::High, Some(&lease), Some(&backend));
     let result = scoped.search_with_effort(&request)?;
     assert_eq!(hit_ids(&result), vec![id]);
@@ -516,6 +532,8 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
 fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResult {
     use crate::vault::ReadMode;
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    super::authorize_readers(&vault, &[READER]);
+    crate::test_util::publish_seeded_revisions(&vault);
     let (id, subject, world_a, world_b) = (entity(0xB1), entity(0xB2), entity(0xB3), entity(0xB4));
     let mut body = ClaimBody::new(
         "core.fact",

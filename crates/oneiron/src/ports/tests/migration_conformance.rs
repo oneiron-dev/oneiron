@@ -1,6 +1,10 @@
 use super::super::*;
 use super::support::*;
-use crate::{EdgeKind, error::Result, registry::ENTITY_TYPE_PERSON};
+use crate::{
+    EdgeKind,
+    error::Result,
+    registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON},
+};
 
 fn query_and_regeneration<P: Backend>(ports: &P) -> Result<()> {
     let source = id(71);
@@ -12,12 +16,14 @@ fn query_and_regeneration<P: Backend>(ports: &P) -> Result<()> {
     };
     let mut txn = ports.write()?;
     let initial_count = ports.port_entity_count(&txn)?;
+    // The LMDB write door mints a substrate FACET beside every PERSON; ORG rows
+    // keep the counts and timelines below to these three.
     for id in [source, dependent, other] {
-        ports.port_entity_put(&mut txn, &id, &row(ENTITY_TYPE_PERSON, b"old"))?;
+        ports.port_entity_put(&mut txn, &id, &row(ENTITY_TYPE_ORG, b"old"))?;
     }
     assert_eq!(
         ports
-            .port_entity_ids_by_type(&txn, ENTITY_TYPE_PERSON, Some(source))?
+            .port_entity_ids_by_type(&txn, ENTITY_TYPE_ORG, Some(source))?
             .take(1)
             .collect::<Result<Vec<_>>>()?,
         vec![dependent]
@@ -47,7 +53,7 @@ fn query_and_regeneration<P: Backend>(ports: &P) -> Result<()> {
     assert_eq!(ports.port_entity_count(&txn)?, initial_count + 3);
     assert_eq!(
         ports
-            .port_entity_ids_by_type_descending(&txn, ENTITY_TYPE_PERSON)?
+            .port_entity_ids_by_type_descending(&txn, ENTITY_TYPE_ORG)?
             .take(2)
             .collect::<Result<Vec<_>>>()?,
         vec![other, dependent]
@@ -103,7 +109,7 @@ fn query_and_regeneration<P: Backend>(ports: &P) -> Result<()> {
     assert!(safe_read_text(ports, &txn, &dependent)?.is_none());
     assert!(ports.port_retrieval_vector_get(&txn, &dependent)?.is_none());
     assert!(!ports.port_dependency_complete_regeneration(&mut txn, &dependent, 1, &[span])?);
-    let mut fresh = row(ENTITY_TYPE_PERSON, b"new");
+    let mut fresh = row(ENTITY_TYPE_ORG, b"new");
     fresh.learned_at = 2;
     ports.port_entity_put(&mut txn, &dependent, &fresh)?;
     assert!(safe_read_text(ports, &txn, &dependent)?.is_none());

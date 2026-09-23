@@ -54,5 +54,5 @@ pub(super) fn task_is_past_retention(
         return Ok(false);
     };
     Ok(crate::task_verb::completed_task_at_in_txn(vault, txn, *id)?
-        .is_some_and(|finished| crate::unix_seconds_now().saturating_sub(finished) > age))
+        .is_some_and(|finished| vault.now_recorded_at().saturating_sub(finished) > age))
 }

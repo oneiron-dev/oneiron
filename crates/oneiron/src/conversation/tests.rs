@@ -47,6 +47,38 @@ fn record(vault: &Vault, room: EntityId, actor: WriteActor, at: u64) -> AppendRe
         actor,
     }
 }
+/// Scoped reads are default-deny: a reader needs an explicit `core:read` grant.
+/// The grants ride a second manifest so the fixture's write policy stays in
+/// force for later appends.
+fn permit_reads(vault: &Vault, readers: &[EntityId]) {
+    let scope = crate::federation::scope_codec::encode_scope_value(
+        &crate::federation::scope_codec::read_preset(),
+    )
+    .unwrap();
+    let grants = readers
+        .iter()
+        .map(|reader| {
+            rmpv::Value::Map(vec![
+                ("actor_ref".into(), reader.to_hex().into()),
+                ("effector".into(), "core:read".into()),
+                ("scope".into(), scope.clone()),
+                ("receipt_required".into(), false.into()),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let policy = rmpv::Value::Map(vec![
+        ("schema_version".into(), "1.2".into()),
+        ("pack_id".into(), "conversation-reader-test".into()),
+        ("pack_version".into(), "1".into()),
+        ("min_engine_version".into(), "0.0.0".into()),
+        ("defaults".into(), rmpv::Value::Map(vec![])),
+        ("rules".into(), rmpv::Value::Array(vec![])),
+        ("actor_ceilings".into(), rmpv::Value::Array(vec![])),
+        ("scoped_grants".into(), rmpv::Value::Array(grants)),
+    ]);
+    crate::test_util::put_policy_manifest_bytes(vault, EntityId::now(), &encode(&policy).unwrap())
+        .unwrap();
+}
 #[test]
 fn codec_defaults_validation_and_membership_are_atomic() {
     let (_dir, vault, actor, room, bob) = fixture();
@@ -298,6 +330,7 @@ fn audience_all_of_rechecks_ledger_after_kick() {
         .unwrap();
     let middle = record(&vault, room, actor, 4);
     let middle = vault.append_dag_record(&middle).unwrap();
+    permit_reads(&vault, &[actor.entity_ref()]);
     let key = crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap();
     let audience = vault
         .scoped_read(key.clone())
@@ -351,6 +384,7 @@ fn assembled_context_and_edge_peers_share_the_audience_predicate() {
     vault
         .put_edge(&late.id, EdgeKind::Mentions, &early.id, 0.6)
         .unwrap();
+    permit_reads(&vault, &[actor.entity_ref()]);
     let key = crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap();
     let read = vault
         .scoped_read(key)
@@ -419,6 +453,7 @@ fn audience_ledger_snapshot_budget_is_per_room_not_per_hit() {
         let r = vault.append_dag_record(&r).unwrap();
         ids.push(r.id);
     }
+    permit_reads(&vault, &[actor.entity_ref()]);
     let read = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap())
         .for_audience(&[bob]);
@@ -477,6 +512,7 @@ fn relationship_audience_is_all_of_and_unscoped_single_reader_is_unchanged() {
         .text(&id, &[("body", "private relationship memory")])
         .commit()
         .unwrap();
+    permit_reads(&vault, &[actor.entity_ref()]);
     let key = crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap();
     let before = vault.scoped_read(key.clone()).get(&id).unwrap();
     assert!(before.is_some());
@@ -532,6 +568,7 @@ fn membership_rows_without_their_revision_never_grant_audience_reads() {
         .unwrap();
     let row = record(&vault, room, actor, 3);
     let row = vault.append_dag_record(&row).unwrap();
+    permit_reads(&vault, &[bob]);
     let reader = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new(bob.to_hex()).unwrap())
         .for_audience(&[bob]);
@@ -660,6 +697,7 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
             Ok(())
         })
         .unwrap();
+    permit_reads(&vault, &[actor.entity_ref()]);
     let read = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap())
         .for_audience(&[actor.entity_ref()]);

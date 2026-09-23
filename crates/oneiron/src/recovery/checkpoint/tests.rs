@@ -348,6 +348,11 @@ fn checkpoint_requeues_nonempty_summary_vectors_for_embedding() {
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".into());
     let source = Vault::open(dir.path().join("source"), config.clone()).unwrap();
+    // The bootstrap skills' seeded claims are embedding sources as well.
+    let seeded_claims = source
+        .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)
+        .unwrap()
+        .len();
     let id = EntityId::now();
     source
         .put_entity(
@@ -373,6 +378,6 @@ fn checkpoint_requeues_nonempty_summary_vectors_for_embedding() {
         restored.get(&id).unwrap(),
         Some(b"summary rebuild source".to_vec())
     );
-    assert_eq!(report.pending_embeddings, 1);
+    assert_eq!(report.pending_embeddings, seeded_claims + 1);
     assert!(restored.get_vector(&id).unwrap().is_none());
 }

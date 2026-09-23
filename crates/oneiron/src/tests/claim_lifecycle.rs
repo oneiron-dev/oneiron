@@ -600,8 +600,6 @@ fn retract_claim_marks_retracted_and_preserves_record() -> Result<()> {
         ("val".into(), "osaka".into()),
         ("conf".into(), rmpv::Value::F32(0.9)),
         ("to".into(), rmpv::Value::from(NOW)),
-        ("world".into(), "base".into()),
-        ("rel".into(), "all".into()),
         (
             "worldId".into(),
             rmpv::Value::Binary(crate::claim::base_world_id().as_bytes().to_vec()),

@@ -1171,7 +1171,7 @@ fn edge_source_quarantine_terminally_discharges_source_rm_marker() {
 
     let src = EntityId::now();
     let tgt = EntityId::now();
-    let src_blob = entity_blob(200, valid_time_range(), LEARNED_AT, b"bad-src");
+    let src_blob = entity_blob(255, valid_time_range(), LEARNED_AT, b"bad-src");
     let tgt_blob = entity_blob(
         ENTITY_TYPE_TASK,
         valid_time_range(),
@@ -1401,7 +1401,7 @@ fn forward_remat_quarantines_rejected_rows() {
     map_insert_bytes(
         &entities,
         &EntityId::now().to_hex(),
-        &entity_blob(200, valid_time_range(), LEARNED_AT, b"bad"),
+        &entity_blob(255, valid_time_range(), LEARNED_AT, b"bad"),
     )
     .unwrap();
     map_insert_bytes(

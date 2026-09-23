@@ -16,6 +16,7 @@ fn shared_renderer_resolves_now_and_escapes_closed_atoms() -> crate::Result<()> 
     let (_dir, vault) = test_vault();
     let target = test_entity_id(61);
     put_person(&vault, &target)?;
+    install_viewer_base_grant(&vault)?;
     let read = vault.scoped_read(actor_key("viewer"));
     let mut frame = frame("viewer");
     frame.mint_backing_ref(
@@ -139,6 +140,7 @@ fn lenses_read_only_their_own_codebase_set() -> crate::Result<()> {
         vault.put_codebase_snapshot(&id, &snapshot, &|_| None)?;
         scope_keys.push(snapshot.scope_key);
     }
+    install_viewer_base_grant(&vault)?;
     let read = vault.scoped_read(actor_key("viewer"));
     let fa = frame("viewer").with_codebase_scope(scope_keys[0]);
     let fb = frame("viewer").with_codebase_scope(scope_keys[1]);
@@ -171,6 +173,9 @@ fn ordinary_world_sets_constrain_lens_reads_backing_refs_and_pipeline() -> crate
     let a = test_entity_id(93);
     let b = test_entity_id(94);
     let base = test_entity_id(95);
+    // Vault::open seeds the bootstrap skills' base-world claims at time 0, so
+    // the fixture claims live in their own window of the retrieval door.
+    let at: u64 = 10_000_000;
     put_person(&vault, &subject)?;
     for (id, world) in [(a, Some(world_a)), (b, Some(world_b)), (base, None)] {
         let mut body = ClaimBody::new(
@@ -182,10 +187,18 @@ fn ordinary_world_sets_constrain_lens_reads_backing_refs_and_pipeline() -> crate
             ClaimLifecycleStatus::Active,
         );
         body.world = world;
-        vault.put_claim(&id, &body, crate::TimeRange { start: 1, end: 1 }, 2)?;
+        vault.put_claim(&id, &body, crate::TimeRange { start: at, end: at }, at + 1)?;
     }
     let set_a = WorldAuthoritySet::new(false, [world_a])?;
     let set_b = WorldAuthoritySet::new(true, [world_b])?;
+    install_read_grants(
+        &vault,
+        vec![
+            base_read_grant("viewer"),
+            world_read_grant("viewer", rmpv::Value::from(world_a.to_hex())),
+            world_read_grant("viewer", rmpv::Value::from(world_b.to_hex())),
+        ],
+    )?;
     let read = vault.scoped_read(actor_key("viewer"));
     let mut fa = frame("viewer").with_world_set(set_a.clone());
     let fb = frame("viewer").with_world_set(set_b.clone());
@@ -238,7 +251,7 @@ fn ordinary_world_sets_constrain_lens_reads_backing_refs_and_pipeline() -> crate
     for (worlds, expected) in [(set_a, vec![a]), (set_b, vec![b, base])] {
         let results = vault
             .query()
-            .search_temporal(0, 10, 10)
+            .search_temporal(at, at + 10, 10)
             .filter_types(&[crate::registry::ENTITY_TYPE_CLAIM])
             .world(WorldScope::WorldSet(worlds))
             .limit(10)

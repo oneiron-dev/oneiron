@@ -31,6 +31,34 @@ fn document() -> DocsExport {
         }],
     }
 }
+fn grant_core_read(vault: &crate::Vault, actor_ref: &str) -> Result<()> {
+    use rmpv::Value;
+    let default = crate::gate::default_policy_manifest();
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut default.as_slice()).unwrap() else {
+        panic!("default policy manifest is a map");
+    };
+    entries.push((
+        Value::from("scoped_grants"),
+        Value::Array(vec![Value::Map(vec![
+            (Value::from("actor_ref"), Value::from(actor_ref)),
+            (Value::from("effector"), Value::from("core:read")),
+            (
+                Value::from("scope"),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::read_preset(),
+                )?,
+            ),
+            (Value::from("receipt_required"), Value::Boolean(false)),
+        ])]),
+    ));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).unwrap();
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )
+}
 #[test]
 fn docs_registry_thin_star_ids_do_not_depend_on_export_path() {
     let mut doc = document();
@@ -108,6 +136,7 @@ fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> R
     let annotation = vault.docs_annotation(&receipt.annotation_refs[0])?.unwrap();
     assert_eq!(annotation["derivation"]["source"], "imported");
     assert_eq!(annotation["annotation"]["label"], "suspected_injection");
+    grant_core_read(&vault, "owner")?;
     let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
     let source = reader
         .expand_doc_ref(&receipt.asset_refs[0])?

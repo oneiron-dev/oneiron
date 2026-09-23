@@ -184,6 +184,10 @@ fn document_grant(vault: &Vault, id: EntityId, grant: crate::federation::Federat
         .unwrap();
 }
 
+fn turn_band() -> crate::federation::SelectorRange {
+    crate::federation::selector_range_of(crate::registry::ENTITY_TYPE_TURN).unwrap()
+}
+
 fn peer_update(text: &str) -> Vec<u8> {
     let doc = LoroDoc::new();
     doc.get_text("body").insert(0, text).unwrap();
@@ -208,6 +212,19 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
     let id = EntityId::now();
     seed(&vault, id);
+    let facet = EntityId::now();
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .unwrap();
+    vault
+        .put_edge(&id, crate::EdgeKind::FacetOf, &facet, 1.0)
+        .unwrap();
     let grant_id = EntityId::now();
     let member = EntityId::now();
     let scope = crate::FederationGrantScope::vault(7);
@@ -218,7 +235,13 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
         FederationGrantPreset::Member,
     );
     document_grant(&vault, grant_id, grant.clone());
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![turn_band()],
+    );
     let registry = DocumentRegistry::new(vault.clone());
     let doc = registry.open(id).unwrap();
     let update = peer_update("accepted");
@@ -357,7 +380,7 @@ fn peer_import_live_facet_scope_cannot_be_preserved_by_an_old_subscription() {
         member,
         SyncSelectorWorld::All,
         vec![facet],
-        vec![],
+        vec![turn_band()],
     );
     let registry = DocumentRegistry::new(vault.clone());
     let doc = registry.open(id).unwrap();

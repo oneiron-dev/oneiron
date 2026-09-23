@@ -279,20 +279,35 @@ mod receipt_tests {
 
     #[test]
     fn finish_scoped_preserves_a_receipted_channel_revision_after_an_edit() -> Result<()> {
+        use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
         let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
         let id = EntityId::now();
-        let range = crate::TimeRange { start: 1, end: 1 };
+        let subject = EntityId::now();
+        // A claim revision carries its own record scope. An edited non-claim
+        // revision has no digest-bound stamp left to prove its historical read.
+        let claim = |value: &str| {
+            crate::claim::encode_claim_body(&ClaimBody::new(
+                "test.receipt",
+                ClaimSubject::Entity(subject),
+                rmpv::Value::from(value),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            ))
+        };
+        let original = claim("original")?;
         vault
             .batch()
-            .put(
+            .put_replicated(
                 &id,
-                crate::registry::ENTITY_TYPE_PERSON,
-                range,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                crate::TimeRange { start: 1, end: 1 },
                 1,
-                b"original",
+                &original,
             )
             .text(&id, &[("body", "original")])
             .commit()?;
+        crate::test_util::authorize_readers(&vault, &["receipt-reader"]);
         let scoped = vault.scoped_read(ScopedReadActorKey::new("receipt-reader").unwrap());
         let channel = scoped.search_text_revisioned("original", 10, None)?;
         assert_eq!(channel.hits.len(), 1);
@@ -303,15 +318,16 @@ mod receipt_tests {
         acc.merge_revisioned(channel.hits, channel.revisions);
         vault
             .batch()
-            .put(
+            .put_replicated(
                 &id,
-                crate::registry::ENTITY_TYPE_PERSON,
-                range,
-                1,
-                b"replacement",
+                crate::registry::ENTITY_TYPE_CLAIM,
+                crate::TimeRange { start: 2, end: 2 },
+                2,
+                &claim("replacement")?,
             )
             .text(&id, &[("body", "replacement")])
             .commit()?;
+        vault.set_indexed_idle_delay_ms(0)?;
         vault.refresh_staged_indexed_at_idle(u64::MAX)?;
         let result = acc.finish_scoped(&scoped, 10)?;
         assert_eq!(result.hits.len(), 1);
@@ -326,7 +342,7 @@ mod receipt_tests {
             crate::vault::ReadMode::Pinned(revision),
             None,
         )?;
-        assert_eq!(value.map(|(_, _, body)| body), Some(b"original".to_vec()));
+        assert_eq!(value.map(|(_, _, body)| body), Some(original));
         Ok(())
     }
 }

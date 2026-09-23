@@ -128,7 +128,13 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
                         ("actor_ref".into(), id.to_hex().into()),
                         ("actor_class".into(), "human".into()),
                         ("effector".into(), "core:read".into()),
-                        ("scope".into(), rmpv::Value::Map(vec![])),
+                        (
+                            "scope".into(),
+                            crate::federation::scope_codec::encode_scope_value(
+                                &crate::federation::scope_codec::read_preset(),
+                            )
+                            .unwrap(),
+                        ),
                         ("receipt_required".into(), false.into()),
                     ])
                 })

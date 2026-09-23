@@ -20,18 +20,18 @@ use super::*;
 /// ahead of anything it saw.
 #[test]
 fn two_open_vaults_observe_on_independent_authority_clocks() {
+    // Open anchors each vault on its own injected clock: the first ten days
+    // ahead of the second.
+    let seeded = 1_000;
+    let future = seeded + 10 * 24 * 60 * 60;
     let ahead_dir = tempfile::tempdir().unwrap();
-    let ahead = crate::Vault::open(ahead_dir.path(), crate::VaultConfig::device()).unwrap();
+    let ahead = open_vault_at(ahead_dir.path(), future);
     let behind_dir = tempfile::tempdir().unwrap();
-    let behind = crate::Vault::open(behind_dir.path(), crate::VaultConfig::device()).unwrap();
-
-    // Anchor the first vault ten days ahead of real Unix time.
-    let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
+    let behind = open_vault_at(behind_dir.path(), seeded);
     assert_eq!(authority_observation_secs(&ahead.store, 0, future), future);
 
-    // The second vault has observed nothing, so ITS first observation is its
+    // The second vault opened after the first, so ITS first observation is its
     // own candidate — not the neighbour's anchor.
-    let seeded = 1_000;
     assert_eq!(
         authority_observation_secs(&behind.store, 0, seeded),
         seeded,

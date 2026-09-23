@@ -222,11 +222,17 @@ fn message_stream_finalize_failure_retains_output_and_retry_is_lossless() {
         .append_to_stream(handle, "must survive refusal")
         .unwrap();
     // Remove the actor row to force the transaction-authoritative binding check.
-    vault
+    let actor_row = vault
         .with_write_txn(|txn| {
+            let row = vault
+                .store
+                .entities
+                .get(txn, actor.as_bytes())?
+                .map(std::borrow::Cow::into_owned);
             vault.store.entities.delete(txn, actor.as_bytes())?;
-            Ok(())
+            Ok(row)
         })
+        .unwrap()
         .unwrap();
     assert!(memory.finalize_stream(handle).is_err());
     assert_eq!(
@@ -243,13 +249,7 @@ fn message_stream_finalize_failure_retains_output_and_retry_is_lossless() {
     assert!(!vault.entity_exists(&handle.message_id()).unwrap());
     // Restore the exact actor fixture, not the buffered output.
     vault
-        .put_entity(
-            &actor,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )
+        .with_write_txn(|txn| vault.store.entities.put(txn, actor.as_bytes(), &actor_row))
         .unwrap();
     let receipt = memory.finalize_stream(handle).unwrap();
     assert_eq!(receipt.finality, StreamFinality::Final);

@@ -273,19 +273,33 @@ fn export_refuses_another_repository_before_objects_but_accepts_canonical_aliase
             .is_none()
     );
 
-    // A subdirectory and an old commit pin still designate the same mutation
-    // repository. Compare its resolved working root, not a raw RepoRef string.
+    // The repository search ceiling stops discovery at the working root, so a
+    // subdirectory is not a root of the repository that contains it.
     let nested = repo.path().join("nested");
     fs::create_dir(&nested).unwrap();
-    let alias_ref = RepoRef::LocalFolder {
+    let old_pin = RepoRef::parse(&proposal.repo)
+        .unwrap()
+        .commit_hash()
+        .unwrap()
+        .to_owned();
+    let subdirectory_ref = RepoRef::LocalFolder {
         path: nested.to_str().unwrap().to_owned(),
-        commit: RepoRef::parse(&proposal.repo)
-            .unwrap()
-            .commit_hash()
-            .unwrap()
-            .to_owned(),
+        commit: old_pin.clone(),
     };
-    let alias = git.open_repo(alias_ref, &nested.join(".")).unwrap();
+    assert!(matches!(
+        git.open_repo(subdirectory_ref, &nested),
+        Err(Error::Code(CodeError::RepoMutationFailed(_)))
+    ));
+
+    // Another spelling of the working root and an old commit pin still
+    // designate the same mutation repository. Compare its resolved working
+    // root, not a raw RepoRef string.
+    let spelled = nested.join("..");
+    let alias_ref = RepoRef::LocalFolder {
+        path: spelled.to_str().unwrap().to_owned(),
+        commit: old_pin,
+    };
+    let alias = git.open_repo(alias_ref, &spelled.join(".")).unwrap();
     let receipt = vault
         .export_engine_commit(&git, &alias, &request, None)
         .unwrap();

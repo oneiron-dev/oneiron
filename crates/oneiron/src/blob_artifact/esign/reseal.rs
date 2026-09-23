@@ -41,7 +41,7 @@ impl Vault {
                 document,
                 EsignEvent::ResealRequested {
                     owner: owner.actor().to_hex(),
-                    authorization: format!(
+                    authority: format!(
                         "grant:{grant_ref};owner_decision:{}",
                         owner.decision_id().to_hex()
                     ),

@@ -17,46 +17,12 @@ use crate::config::VaultConfig;
 use crate::llm::{BudgetExhaustionPolicy, BudgetGuard, BudgetLease};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
-use crate::test_util::{entity, open_test_vault_with};
+use crate::test_util::{authorize_readers, entity, open_test_vault_with};
 
 const READER: &str = "agent:one-207-reader";
 
 fn range(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
-}
-
-pub(super) fn authorize_readers(vault: &crate::Vault, readers: &[&str]) {
-    let authority = crate::federation::scope_codec::encode_scope_value(
-        &crate::federation::scope_codec::read_preset(),
-    )
-    .expect("read preset encodes");
-    let grants: Vec<Value> = readers
-        .iter()
-        .map(|reader| {
-            Value::Map(vec![
-                (Value::from("actor_ref"), Value::from(*reader)),
-                (Value::from("effector"), Value::from("core:read")),
-                (Value::from("scope"), authority.clone()),
-                (Value::from("receipt_required"), Value::Boolean(false)),
-            ])
-        })
-        .collect();
-    let bytes = crate::gate::default_policy_manifest();
-    let Value::Map(mut entries) =
-        rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
-    else {
-        panic!("manifest map");
-    };
-    entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
-    entries.push((Value::from("scoped_grants"), Value::Array(grants)));
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).expect("manifest encodes");
-    crate::test_util::put_policy_manifest_bytes(
-        vault,
-        crate::gate::default_policy_manifest_id().expect("manifest id"),
-        &bytes,
-    )
-    .expect("install read grants");
 }
 
 /// Three notes: two the direct query matches and one reachable only across

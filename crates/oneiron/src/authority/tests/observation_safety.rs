@@ -232,8 +232,7 @@ fn stale_approval_expires_by_first_seen_age_without_losing_descendant_revoke() {
 #[test]
 fn duration_v1_is_stored_and_changes_the_live_authority_fold() {
     let dir = tempfile::tempdir().unwrap();
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    authority_observation_secs(&vault.store, 0, 1_000);
+    let vault = open_vault_at(dir.path(), 1_000);
     let policy = AuthorityObservationPolicy {
         stale_roster_window_secs: 10,
         ..AuthorityObservationPolicy::default()
@@ -264,7 +263,7 @@ fn duration_v1_is_stored_and_changes_the_live_authority_fold() {
     assert_eq!(vault.authority_fold_readonly_in_txn(&txn).unwrap(), outside);
     drop(txn);
     drop(vault);
-    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let reopened = open_vault_at(dir.path(), 1_000);
     assert_eq!(reopened.authority_observation_policy().unwrap(), policy);
     assert_eq!(reopened.authority_fold().unwrap(), outside);
 }

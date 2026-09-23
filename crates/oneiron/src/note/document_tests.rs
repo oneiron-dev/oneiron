@@ -122,6 +122,9 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
     let author = person(&vault, 0x41);
+    vault
+        .install_read_permit_for_test(WriteActor::new(author, EdgeActorClass::Human))
+        .unwrap();
     let subject = person(&vault, 0x42);
     let first_claim = EntityId::from_bytes([0x43; 16]).unwrap();
     let second_claim = EntityId::from_bytes([0x44; 16]).unwrap();
@@ -208,10 +211,7 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
     };
     assert!(direct.markdown.ends_with(" appendix"));
     assert!(memory.purge_note_history(source, &direct.frontier).is_err());
-    let next = EntityId::from_bytes([0x45; 16]).unwrap();
-    memory
-        .claim_upsert(&claim_input(next, subject, "Ada updated"))
-        .unwrap();
+    memory.claim_retract(&first_claim.to_hex()).unwrap();
     let read_lane = vault.scoped_read(read_key);
     let after = vault
         .render_brief(brief, &frame, &read_lane)

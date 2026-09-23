@@ -173,7 +173,7 @@ pub enum EsignEvent {
     },
     ResealRequested {
         owner: String,
-        authorization: String,
+        authority: String,
     },
 }
 impl EsignEvent {

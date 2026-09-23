@@ -36,6 +36,7 @@ fn served_snapshot_resolves_real_supersession_and_loaded_requires_a_body() -> Re
             1,
         )?;
     }
+    crate::test_util::authorize_readers(&vault, &["viewer"]);
     let read = vault.scoped_read(ScopedReadActorKey::new("viewer").unwrap());
     let mut session = SessionReadSet::default();
     let crate::claim::ScopedReadResult {

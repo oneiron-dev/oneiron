@@ -748,6 +748,53 @@ pub(crate) mod test_util {
         })
     }
 
+    /// Installs the shipped default policy manifest carrying one unrestricted
+    /// schema-1.2 `core:read` grant per reader. A plain scoped-read key reads
+    /// nothing until a trusted manifest grants it.
+    pub(crate) fn authorize_readers(vault: &Vault, readers: &[&str]) {
+        let authority = crate::federation::scope_codec::encode_scope_value(
+            &crate::federation::scope_codec::read_preset(),
+        )
+        .expect("read preset encodes");
+        let grants: Vec<rmpv::Value> = readers
+            .iter()
+            .map(|reader| {
+                rmpv::Value::Map(vec![
+                    (rmpv::Value::from("actor_ref"), rmpv::Value::from(*reader)),
+                    (
+                        rmpv::Value::from("effector"),
+                        rmpv::Value::from("core:read"),
+                    ),
+                    (rmpv::Value::from("scope"), authority.clone()),
+                    (
+                        rmpv::Value::from("receipt_required"),
+                        rmpv::Value::Boolean(false),
+                    ),
+                ])
+            })
+            .collect();
+        let bytes = crate::gate::default_policy_manifest();
+        let rmpv::Value::Map(mut entries) =
+            rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
+        else {
+            panic!("manifest map");
+        };
+        entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
+        entries.push((
+            rmpv::Value::from("scoped_grants"),
+            rmpv::Value::Array(grants),
+        ));
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+            .expect("manifest encodes");
+        put_policy_manifest_bytes(
+            vault,
+            crate::gate::default_policy_manifest_id().expect("manifest id"),
+            &bytes,
+        )
+        .expect("install read grants");
+    }
+
     /// Canonical embedding-enabled test config: 16 MiB map, 4 dimensions,
     /// `test/model@v1` embedding model, 16 readers. Everything else is the
     /// `VaultConfig::device()` preset — HNSW and text-analyzer defaults
@@ -768,6 +815,19 @@ pub(crate) mod test_util {
         let vault = Vault::open(dir.path(), cfg).expect("open vault");
         clear_default_policy_manifest_for_legacy_tests(&vault);
         (dir, vault)
+    }
+
+    /// First open seeds the bootstrap skills, whose activation edits wait for
+    /// idle publication like any other revision. Publishes them through the
+    /// model-free drain so an idle-refresh law observes only its own entities.
+    /// Leaves the loop-owned idle delay at zero.
+    pub(crate) fn publish_seeded_revisions(vault: &Vault) {
+        vault.set_indexed_idle_delay_ms(0).expect("idle delay");
+        let seeded = vault
+            .refresh_staged_indexed_at_idle(u64::MAX)
+            .expect("seeded idle publication");
+        assert!(seeded.failed.is_empty(), "seeded revisions need no model");
+        assert!(seeded.superseded.is_empty());
     }
 
     /// Asserts `error` is the Gate secret-scan denial: [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected)

@@ -248,15 +248,31 @@ fn canonical_demotion_does_not_turn_exact_keys_into_recall_results() {
         .key_value_put(&input(&["long_term"], "k", "one", 1))
         .unwrap();
     let id = EntityId::from_hex(&receipt.item.revision).unwrap();
+    let decay = crate::claim::ClaimDemotionAction::Decay {
+        new_claim_of_weight: 0.1,
+    };
+    let now = vault.now_recorded_at();
+    // Keyed values sit at the default manifest's critical floor, so the
+    // demotion parks for a bound human clear before it touches the head.
+    assert_eq!(
+        vault
+            .apply_claim_demotion(&id, decay, now)
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::GateWriteRejected
+    );
+    assert_eq!(vault.pending_claim_demotion(&id).unwrap(), Some(decay));
+    assert_eq!(
+        memory.key_value_get(&address(&["long_term"], "k")).unwrap(),
+        Some(receipt.item.clone())
+    );
     vault
-        .apply_claim_demotion(
-            &id,
-            crate::claim::ClaimDemotionAction::Decay {
-                new_claim_of_weight: 0.1,
-            },
-            crate::unix_seconds_now(),
-        )
+        .with_write_txn(|txn| vault.complete_deferred_claim_in_txn(txn, &id, true, now))
         .unwrap();
+    assert_eq!(
+        crate::claim::claim_demotion_rung(&vault.get_claim(&id).unwrap().unwrap()).unwrap(),
+        Some(crate::claim::ClaimDemotionRung::Decayed)
+    );
     assert_eq!(
         memory.key_value_get(&address(&["long_term"], "k")).unwrap(),
         Some(receipt.item)

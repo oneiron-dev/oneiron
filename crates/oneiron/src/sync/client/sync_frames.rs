@@ -81,14 +81,16 @@ impl SyncClient {
     pub(in crate::sync) fn try_generate_initial_sync(
         &self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        // v9 carries own-device windows and grant-backed entity documents
+        // v10 carries own-device windows and grant-backed entity documents
         // on the same connection; authentication uses a paired capability.
         // Device lease requests are retired (C07); the NOTE session bind
         // (HEAD) still rides along when configured.
-        let mut messages = vec![transport::encode_protocol_hello()];
+        let mut messages = vec![transport::encode_chunk_full_window_protocol_hello()];
         if let Some(session) = &self.config.note_session {
             messages.push(super::note_session::bind_frame(session.token())?);
         }
+        messages
+            .extend(self.generate_phase_frames_with_extra_windows(std::iter::empty::<String>())?);
         Ok(messages)
     }
 

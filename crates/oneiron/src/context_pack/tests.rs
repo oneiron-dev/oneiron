@@ -4312,6 +4312,7 @@ fn retrieval_quality_old_empty_context_defaults_to_passthrough() {
 fn pack_vectors_follow_the_selected_indexed_frontier() -> Result<()> {
     use crate::vault::ReadMode;
     let (_dir, vault) = open_test_vault();
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     let old_vector = vec![1.0, 0.0, 0.0, 0.0];
     let new_vector = vec![0.0, 1.0, 0.0, 0.0];

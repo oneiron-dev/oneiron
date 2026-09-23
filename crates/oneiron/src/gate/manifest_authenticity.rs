@@ -42,7 +42,7 @@ pub(crate) fn stamp_manifest_origin(
     Ok(())
 }
 
-pub(in crate::gate) fn manifest_is_trusted(
+pub(crate) fn manifest_is_trusted(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,

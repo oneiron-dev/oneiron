@@ -623,11 +623,12 @@ fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
 #[test]
 fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
     let dir = tempfile::tempdir().unwrap();
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    // Park the authority clock far ahead of real Unix time, so every later
-    // observation is written from a future reading and `unix_seconds_now()` is
-    // the BACKWARD-skewed clock a reopen would otherwise trust.
-    let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
+    // Park the authority clock ten days ahead of the reopen's injected clock,
+    // so every later observation is written from a future reading and
+    // `rolled_back` is the BACKWARD-skewed clock a reopen would otherwise trust.
+    let rolled_back = 1_000;
+    let future = rolled_back + 10 * 24 * 60 * 60;
+    let vault = open_vault_at(dir.path(), future);
     assert!(authority_observation_secs(&vault.store, 0, future) >= future);
 
     let owner = ed_key(231);
@@ -698,7 +699,7 @@ fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
     // wall clock is the only other candidate reading — the persisted floor is
     // the sole thing keeping the enrollment matured.
     drop(vault);
-    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let reopened = open_vault_at(dir.path(), rolled_back);
     let rtxn = reopened.store.env.read_txn().unwrap();
     let after_reopen = reopened.authority_fold_readonly_in_txn(&rtxn).unwrap();
     drop(rtxn);

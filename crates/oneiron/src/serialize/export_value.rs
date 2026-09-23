@@ -27,7 +27,8 @@ pub enum ExportValue {
     F32(u32),
     F64(u64),
     String(String),
-    /// Only validated, fixed-width CLAIM references use this representation.
+    /// Only validated, fixed-width CLAIM references and a PERSON substrate
+    /// mask's PERSON id use this representation.
     EntityReference(Vec<u8>),
     /// Inspectable UTF-8 binary; the decoder restores MessagePack Binary.
     BinaryText(String),
@@ -79,8 +80,12 @@ impl ExportBody {
             if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                 export_provenance_references(bytes, &mut exported);
                 if let Ok(body) = crate::claim::decode_claim_body(bytes, true) {
+                    export_scope_references(&body, &mut exported);
                     super::export_actor_references::export_actor_references(&body, &mut exported);
                 }
+            }
+            if entity_type == crate::registry::ENTITY_TYPE_FACET {
+                export_substrate_reference(&value, &mut exported);
             }
             return Self::MessagePack(exported);
         }
@@ -132,6 +137,59 @@ impl ExportBody {
             ));
         }
         Ok(())
+    }
+}
+
+// The record-position scope stamp is required on every CLAIM; the decoded body
+// proves these top-level positions hold ids, not opaque bytes.
+fn export_scope_references(body: &crate::claim::ClaimBody, exported: &mut ExportValue) {
+    let ExportValue::Map(entries) = exported else {
+        return;
+    };
+    for (key, value) in entries.iter_mut() {
+        let ExportValue::String(key) = key else {
+            continue;
+        };
+        let id = match key.as_str() {
+            "worldId" => body.world.unwrap_or_else(crate::claim::base_world_id),
+            "scopeFacetId" => body.scope_facet,
+            "scopeProjectId" => body.scope_project,
+            "scopeRelationshipId" => {
+                if let Some(rel) = body.rel {
+                    *value = ExportValue::Array(vec![ExportValue::EntityReference(
+                        rel.as_bytes().to_vec(),
+                    )]);
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        *value = ExportValue::EntityReference(id.as_bytes().to_vec());
+    }
+}
+
+// A PERSON substrate mask names its PERSON by id; the FACET put door re-proves
+// that the mask id binds that PERSON before an imported row lands.
+fn export_substrate_reference(value: &Mp, exported: &mut ExportValue) {
+    let (Mp::Map(entries), ExportValue::Map(exported)) = (value, exported) else {
+        return;
+    };
+    if entries.len() != 3
+        || !entries
+            .iter()
+            .any(|(key, value)| key.as_str() == Some("kind") && value.as_str() == Some("substrate"))
+    {
+        return;
+    }
+    for ((key, value), (_, out)) in entries.iter().zip(exported.iter_mut()) {
+        if key.as_str() == Some("person_ref")
+            && let Mp::Binary(bytes) = value
+            && <[u8; 16]>::try_from(bytes.as_slice())
+                .is_ok_and(|id| crate::entity_id::EntityId::from_bytes(id).is_ok())
+            && scan_file_content("", bytes).is_none()
+        {
+            *out = ExportValue::EntityReference(bytes.clone());
+        }
     }
 }
 
@@ -226,7 +284,7 @@ fn reference_field(key: &str, bytes: &[u8], entity_type: u8, depth: usize) -> bo
     }
     match key {
         "subj" => crate::claim::ClaimSubject::decode(bytes).is_ok(),
-        "world" | "rel" | "actor_entity_ref" => <[u8; 16]>::try_from(bytes)
+        "actor_entity_ref" => <[u8; 16]>::try_from(bytes)
             .ok()
             .is_some_and(|id| crate::entity_id::EntityId::from_bytes(id).is_ok()),
         _ => false,

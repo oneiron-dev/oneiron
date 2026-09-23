@@ -185,6 +185,15 @@ impl ScopedRead<'_> {
                             .entity_types
                             .as_ref()
                             .is_none_or(|types| types.contains(&row.entity_type))
+                        // The row's old position cannot be proved. Only authority
+                        // covering every possible position may reveal deletion
+                        // metadata, never a narrow grant.
+                        && self.credential_allows_id(&row.id)
+                        && crate::gate::scoped_read_record_allowed(
+                            &policy,
+                            &self.actor_key,
+                            &crate::federation::scope_codec::read_preset(),
+                        )
                 };
                 if !allowed {
                     suppressed += usize::from(self.entity_record_in(&txn, &row.id)?.is_some());

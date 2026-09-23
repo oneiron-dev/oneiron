@@ -50,8 +50,9 @@ fn readonly_fold_matches_full_fold_and_writes_nothing() {
 #[test]
 fn readonly_fold_forward_wall_clock_skew_keeps_owner_enrollment_pending() {
     let dir = tempfile::tempdir().unwrap();
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    // Seed this vault's untouched monotonic clock far behind real Unix time.
+    // Open seeds this vault's monotonic clock from its injected clock, far
+    // behind real Unix time.
+    let vault = open_vault_at(dir.path(), 1_000);
     let seeded_at = authority_observation_secs(&vault.store, 0, 1_000);
     assert!(seeded_at >= 1_000);
     assert!(seeded_at < 1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS);
@@ -183,9 +184,10 @@ fn readonly_fold_for_store_uses_injected_clock_for_owner_enrollment() {
 #[test]
 fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
     let dir = tempfile::tempdir().unwrap();
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    // Real Unix time is behind the injected local authority clock.
-    let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
+    // The reopen's clock is ten days behind the injected local authority clock.
+    let rolled_back = 1_000;
+    let future = rolled_back + 10 * 24 * 60 * 60;
+    let vault = open_vault_at(dir.path(), future);
     let seeded_at = authority_observation_secs(&vault.store, 0, future);
     assert!(seeded_at >= future);
     assert!(seeded_at < future + DEFAULT_PENDING_WIDEN_DELAY_SECS);
@@ -274,7 +276,7 @@ fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
 
     // Reopen drops the old handle's clock; only the persisted floor remains.
     drop(vault);
-    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let reopened = open_vault_at(dir.path(), rolled_back);
     let rtxn = reopened.store.env.read_txn().unwrap();
     let after_reopen = reopened.authority_fold_readonly_in_txn(&rtxn).unwrap();
     drop(rtxn);
@@ -658,7 +660,7 @@ fn readonly_observation_secs(vault: &crate::Vault) -> u64 {
         .and_then(|raw| decode_authority_first_seen_secs(&raw))
         .unwrap_or(0);
     drop(rtxn);
-    authority_observation_secs(&vault.store, floor, crate::unix_seconds_now())
+    authority_observation_secs(&vault.store, floor, vault.now_recorded_at())
 }
 
 /// A sidecar missing AFTER the one-shot migration ran is unrecoverable, so the

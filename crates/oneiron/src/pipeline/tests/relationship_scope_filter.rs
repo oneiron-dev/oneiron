@@ -220,7 +220,6 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
                 rmpv::Value::Binary(base_world.as_bytes().to_vec()),
             ),
         ];
-        fields.push((rmpv::Value::from("world"), rmpv::Value::from("base")));
         if let Some(relationship) = relationship {
             fields.push((rmpv::Value::from("scopeRelationshipId"), relationship));
         }

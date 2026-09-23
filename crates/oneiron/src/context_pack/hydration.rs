@@ -342,12 +342,14 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     out
 }
 
-fn decode_entity_fields(raw: &[u8], entity_type: u8) -> Option<HashMap<String, serde_json::Value>> {
-    if raw.len() <= ENTITY_METADATA_HEADER_LEN {
+fn decode_entity_fields(
+    payload: &[u8],
+    entity_type: u8,
+) -> Option<HashMap<String, serde_json::Value>> {
+    if payload.is_empty() {
         return Some(HashMap::new());
     }
 
-    let payload = &raw[ENTITY_METADATA_HEADER_LEN..];
     if entity_type == ENTITY_TYPE_COMPANION_REGISTER
         || (entity_type == crate::registry::ENTITY_TYPE_FACET
             && crate::companion::is_identity_facet_body(payload))

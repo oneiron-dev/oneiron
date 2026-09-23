@@ -169,6 +169,8 @@ fn board_refuses_claims_withdrawn_before_recording_or_after_the_turn() {
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
     let turn = put(&vault, ENTITY_TYPE_TURN, "first");
+    // The board reads pinned claims with the owner's own scoped authority.
+    crate::test_util::authorize_readers(&vault, &[owner.to_hex().as_str()]);
     let selection = BoardSelection {
         pinned: BTreeSet::from([claim]),
         ..Default::default()

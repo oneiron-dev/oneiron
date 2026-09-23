@@ -174,7 +174,7 @@ fn set_bounds(v: &Vault, bounds: TripwireBounds) {
     ));
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &policy).unwrap();
-    super::test_support::replace_default_manifest(v, &bytes);
+    crate::test_util::put_policy_manifest_bytes(v, id, &bytes).unwrap();
 }
 #[test]
 fn retrieval_miss_reads_native_telemetry_and_malformed_projection_is_silent() {
@@ -249,7 +249,7 @@ fn predicate_write_rate_uses_manifest_criticality_actor_and_fixed_window() {
         ]));
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, &policy).unwrap();
-        super::test_support::replace_default_manifest(&v, &bytes);
+        crate::test_util::put_policy_manifest_bytes(&v, policy_id, &bytes).unwrap();
         let actor = EntityId::now();
         let mut receipts: Vec<_> = (0..bound)
             .map(|_| {

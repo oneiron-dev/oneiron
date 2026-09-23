@@ -46,6 +46,11 @@ impl IndexedRevisionEmbedder for Embed {
 fn live_indexed_pinned_and_pack_switch_only_at_manifest_debounced_idle() {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    assert!(matches!(
+        vault.refresh_staged_indexed_at_idle(0),
+        Err(crate::error::Error::InvalidConfig(_))
+    ));
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     put(&vault, &id, "alpha zebra");
     let citation = vault.cite_entity_text(&id, "content", 0, 5).unwrap();
@@ -97,10 +102,6 @@ fn live_indexed_pinned_and_pack_switch_only_at_manifest_debounced_idle() {
         expected: next,
         expected_body: body("beta yak"),
     };
-    assert!(matches!(
-        vault.refresh_indexed_at_idle(0, &embedder),
-        Err(crate::error::Error::InvalidConfig(_))
-    ));
     vault.set_indexed_idle_delay_ms(u64::MAX).unwrap();
     assert!(
         vault
@@ -174,6 +175,7 @@ impl IndexedRevisionEmbedder for EditingEmbedder<'_> {
 fn concurrent_edit_discards_embedding_without_advancing_indexed_frontier() {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     put(&vault, &id, "alpha zebra");
     let first = vault.indexed_revision(&id).unwrap();
@@ -257,6 +259,7 @@ fn pinned_claim_does_not_bypass_current_scoped_admission() {
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
     let pin = vault.pin_entity_revision(&claim).unwrap();
+    crate::test_util::authorize_readers(&vault, &["reader"]);
     let scoped = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
     let crate::claim::ScopedReadResult {
         value,
@@ -369,6 +372,7 @@ fn habit_derived_rewrite_retains_the_indexed_body_for_default_pack() {
 fn staged_text_and_vector_survive_reopen_and_publish_without_embedder() {
     let (dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     put(&vault, &id, "alpha");
     put(&vault, &id, "beta");
@@ -404,6 +408,7 @@ fn staged_text_and_vector_survive_reopen_and_publish_without_embedder() {
 #[test]
 fn staged_text_only_idle_does_not_need_an_embedding_model() {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     for text in ["initial", "changed"] {
         vault
@@ -437,6 +442,7 @@ fn staged_text_only_idle_does_not_need_an_embedding_model() {
 fn invalid_deferred_vector_is_refused_before_durable_staging() {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     put(&vault, &id, "initial");
     put(&vault, &id, "changed");
@@ -508,7 +514,7 @@ fn pack_level_pin_selects_its_entity_from_multiple_hits_and_neighbors() {
 fn metadata_only_put_advances_indexed_without_embedding_and_preserves_pins() {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    vault.set_indexed_idle_delay_ms(0).unwrap();
+    crate::test_util::publish_seeded_revisions(&vault);
     for pin_first in [false, true] {
         let id = EntityId::now();
         put(&vault, &id, "unchanged body");
@@ -569,6 +575,7 @@ fn metadata_only_put_advances_indexed_without_embedding_and_preserves_pins() {
 fn metadata_only_put_keeps_pending_content_and_staged_inputs_together() {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     put(&vault, &id, "original body");
     let indexed = vault.indexed_revision(&id).unwrap().unwrap();
@@ -649,6 +656,7 @@ fn a_rejected_revision_does_not_starve_later_idle_candidates() {
     }
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
     let a = EntityId::from_bytes([1; 16]).unwrap();
     let b = EntityId::from_bytes([2; 16]).unwrap();
     put(&vault, &a, "old first");

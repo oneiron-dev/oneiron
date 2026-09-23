@@ -192,6 +192,7 @@ fn capability_channel_keeps_memory_budget_and_revalidates_lifecycle() -> Result<
         .find(|hit| hit.entity_type == ENTITY_TYPE_SKILL)
         .unwrap()
         .id;
+    crate::test_util::authorize_readers(&vault, &["viewer"]);
     let crate::claim::ScopedReadResult {
         value,
         receipt: _receipt,
