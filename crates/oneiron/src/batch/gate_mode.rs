@@ -14,6 +14,9 @@ pub(crate) struct ApplyOpsGateMode {
     pub(super) claim_materializations: VecDeque<ClaimMaterialization>,
     pub(super) preflight_gate_decision_ids:
         HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
+    /// The caller's active mask: the FACET every NOTE and ASSET born in this
+    /// batch is stamped with. `None` stamps the vault default.
+    pub(super) birth_mask: Option<EntityId>,
 }
 
 impl ApplyOpsGateMode {
@@ -26,7 +29,13 @@ impl ApplyOpsGateMode {
             claim_gate_prechecked: false,
             claim_materializations: VecDeque::new(),
             preflight_gate_decision_ids: HashMap::new(),
+            birth_mask: None,
         }
+    }
+
+    pub(super) fn with_birth_mask(mut self, mask: Option<EntityId>) -> Self {
+        self.birth_mask = mask;
+        self
     }
 
     pub(crate) fn with_hub_admission(mut self, proof: crate::skill_hub::HubAdmissionProof) -> Self {

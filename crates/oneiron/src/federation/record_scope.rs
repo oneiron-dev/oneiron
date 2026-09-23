@@ -47,20 +47,36 @@ fn digest(kind: u8, data: &[u8]) -> [u8; 32] {
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
 }
-fn default_stamp(id: EntityId, kind: u8) -> Scope {
+fn default_stamp(kind: u8, facet: EntityId) -> Scope {
     Scope {
         worlds: singleton(ScopeId(crate::claim::base_world_id())),
-        facets: singleton(ScopeId(if kind == crate::registry::ENTITY_TYPE_FACET {
-            id
-        } else {
-            crate::claim::substrate_facet_id(id)
-        })),
+        facets: singleton(ScopeId(facet)),
         bands: singleton(kind),
         audience: singleton(ScopeId(crate::claim::default_project_id())),
         // The record itself is not a capability. The operation is bound at evaluation.
         verbs: ScopeAxis::Bottom,
         sensitivity: SensitivityCeiling::AtMost(Sensitivity::Sensitive),
     }
+}
+fn carries_birth_stamp(kind: u8) -> bool {
+    matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
+    )
+}
+/// The facet a NOTE or ASSET was born under: the target of its one stored
+/// `FacetOf` edge.
+pub(crate) fn birth_facet(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<EntityId>> {
+    let prefix = crate::vault::edge_kind_prefix(&id, crate::edge::EdgeKind::FacetOf);
+    let Some(row) = store.edges_out.prefix_iter(txn, &prefix)?.next() else {
+        return Ok(None);
+    };
+    let (key, value) = row?;
+    Ok(Some(crate::vault::parse_edge_record(&key, &value)?.target))
 }
 pub(crate) fn stamp_put(
     store: &Store,
@@ -83,8 +99,16 @@ pub(crate) fn stamp_put(
             store.vault_meta.delete(txn, &key(id))?;
         }
         return Ok(());
+    } else if kind == crate::registry::ENTITY_TYPE_FACET {
+        default_stamp(kind, id)
+    } else if carries_birth_stamp(kind) {
+        let Some(facet) = birth_facet(store, txn, id)? else {
+            store.vault_meta.delete(txn, &key(id))?;
+            return Ok(());
+        };
+        default_stamp(kind, facet)
     } else {
-        default_stamp(id, kind)
+        default_stamp(kind, crate::claim::substrate_facet_id(id))
     };
     if kind == crate::registry::ENTITY_TYPE_FACET
         && let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..])
@@ -146,6 +170,13 @@ pub(crate) fn scope_for_blob(
         return Ok(crate::claim::decode_claim_body(data, true)
             .ok()
             .map(|body| body.record_scope("read")));
+    }
+    if carries_birth_stamp(h.entity_type) {
+        return Ok(birth_facet(store, txn, id)?.map(|facet| {
+            let mut scope = default_stamp(h.entity_type, facet);
+            scope.verbs = singleton("read".to_owned());
+            scope
+        }));
     }
     let mut scope = stored_scope(store, txn, id, h.entity_type, data)?;
     if let Some(scope) = scope.as_mut() {

@@ -1,11 +1,12 @@
 //! Transaction-bound NOTE selector admission. No cached subscription is authority.
 
 use super::codec::SyncSelector;
-use super::document_admission::{DocumentGrant, authorize_in_txn};
+use super::document_admission::{admit_selected_in_txn, authorize_in_txn};
 use crate::error::Result;
-use crate::federation::{FederationGrantRole, FederationGrantScope};
+use crate::federation::{FederationDirectionScope, FederationGrantRole, FederationGrantScope};
 use crate::{EntityId, Vault};
 
+/// Admits NOTE `id` through `selector` and returns the position it resolved.
 pub(crate) fn admit_note_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -13,14 +14,8 @@ pub(crate) fn admit_note_in_txn(
     scope: FederationGrantScope,
     selector: &SyncSelector,
     writer: Option<EntityId>,
-) -> Result<()> {
-    let DocumentGrant { grant, fold, empty } =
-        authorize_in_txn(vault, txn, scope, selector, writer)?;
-    // NOTE has no legal FacetOf source stamp. Do not guess a one-hop closure
-    // from a stale window in a write transaction; narrowed facet lanes refuse.
-    if selector.facet_filter_active(empty) {
-        return Err(denied());
-    }
+) -> Result<FederationDirectionScope> {
+    let admission = authorize_in_txn(vault, txn, scope, selector, writer)?;
     let raw = vault.get_raw_in(txn, &id)?.ok_or_else(denied)?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
     if header.entity_type != crate::registry::ENTITY_TYPE_NOTE
@@ -30,30 +25,19 @@ pub(crate) fn admit_note_in_txn(
         return Err(denied());
     }
     let birth = crate::note::decode_note_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+    let fold = &admission.fold;
     if let Some(actor) = writer
         && actor != birth.author_ref
-        && (grant.role != FederationGrantRole::Owner
+        && (admission.grant.role != FederationGrantRole::Owner
             || fold.vault_id.is_none()
             || fold.vault_root_is_conflicted()
-            || !crate::authority::actor_binding_is_active(&fold, &actor, "human"))
+            || !crate::authority::actor_binding_is_active(fold, &actor, "human"))
     {
         // The embedded unrooted host fallback is not remote owner authority.
         return Err(denied());
     }
-    if super::scope::entity_selector_decision(
-        vault,
-        (&id, &raw),
-        scope,
-        selector,
-        &Default::default(),
-        empty,
-        &Default::default(),
-    )
-    .is_none()
-    {
-        return Err(denied());
-    }
-    Ok(())
+    admit_selected_in_txn(vault, txn, id, scope, selector, &admission)?;
+    Ok(admission.position)
 }
 
 fn denied() -> crate::Error {

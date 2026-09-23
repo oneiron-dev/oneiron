@@ -128,7 +128,7 @@ impl FederationScopeWorlds {
         }
     }
 
-    pub(super) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
+    pub(crate) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
         match (self, ceiling) {
             (Self::Bottom, _) | (_, Self::All) => true,
             (Self::All, _) | (_, Self::Bottom) => false,
@@ -176,7 +176,7 @@ impl FederationScopeFacets {
         }
     }
 
-    pub(super) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
+    pub(crate) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
         match (self, ceiling) {
             (_, Self::All) => true,
             (Self::Bottom, _) => true,
@@ -224,7 +224,7 @@ impl FederationScopeBands {
         }
     }
 
-    pub(super) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
+    pub(crate) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
         match (self, ceiling) {
             (_, Self::All) => true,
             (Self::Bottom, _) => true,

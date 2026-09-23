@@ -174,6 +174,37 @@ impl Memory<'_> {
         Ok(receipt)
     }
 
+    /// Host boundary for an own device on the owner lane. The actor must be
+    /// the vault owner and the NOTE must pass the owner export's refusals;
+    /// the operation applies with no grant.
+    #[cfg(feature = "sync")]
+    pub fn admit_owner_note_operation(
+        &self,
+        note: EntityId,
+        session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
+        operation: &NoteOperation,
+    ) -> MemoryResult<NoteOperationReceipt> {
+        let receipt = self.with_verified_actor_write_txn(|txn| {
+            if self
+                .vault()
+                .store
+                .sync_state
+                .get(txn, &format!("ds:e:{}", note.to_hex()))?
+                .is_some()
+            {
+                return Err(invalid("replica NOTE cannot act as an admission authority").into());
+            }
+            if !session_is_live(txn) {
+                return Err(invalid("NOTE session revoked").into());
+            }
+            self.verify_owner_in_txn(txn)?;
+            crate::sync::documents::owner_note_admission(self.vault(), txn, note)?;
+            self.apply_note_operation_in_txn(txn, note, operation, None)
+        })?;
+        self.vault().notify_note_document(note);
+        Ok(receipt)
+    }
+
     pub(super) fn apply_local_note_operation(
         &self,
         note: EntityId,

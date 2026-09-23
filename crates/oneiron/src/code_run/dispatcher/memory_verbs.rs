@@ -157,7 +157,12 @@ impl HostSelfDispatcher<'_> {
             None => *call.candidate,
         };
         let envelope = self.write_envelope(SelfEffect::MemoryPutClaim, admission.as_ref())?;
-        let gate_body = candidate.clone().into_claim_body(&envelope);
+        // The write gate reads no facet; the stored body takes the vault
+        // default when the write applies.
+        let gate_body = candidate.clone().into_claim_body(
+            &envelope,
+            crate::claim::substrate_facet_id(envelope.actor().entity_ref()),
+        );
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
         match &self.storage {
             ExecutorStorage::Canonical(vault) => vault

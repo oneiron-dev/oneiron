@@ -662,7 +662,9 @@ impl Memory<'_> {
                     let old = self
                         .vault
                         .require_named_claim_target_active_in(wtxn, &old_id)?;
-                    let probe = candidate.clone().into_claim_body(&envelope);
+                    let probe = candidate
+                        .clone()
+                        .into_claim_body(&envelope, self.vault.default_facet_in_txn(wtxn)?);
                     if !policy.is_single_valued_predicate(&input.predicate)
                         || crate::claim::claim_source_widens_beyond(
                             old.source.unwrap_or(ClaimSource::UserStated),

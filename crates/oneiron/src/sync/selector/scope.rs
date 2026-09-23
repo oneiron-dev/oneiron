@@ -12,13 +12,16 @@ use crate::companion::decode_companion_record_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::{FederationGrantScope, selector_range_of};
+use crate::federation::{
+    FederationDirectionScope, FederationGrantScope, FederationScopeBands, FederationScopeFacets,
+    SelectorRange, selector_range_of,
+};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_WORLD};
 use crate::sync::bridge::parse_edge_key;
 use crate::sync::local_claims::claim_sync_allowed;
 use crate::sync::loro_support::map_for_each_value_bytes;
 
-use super::codec::{EmptyAxis, SyncSelector, SyncSelectorWorld};
+use super::codec::{SyncSelector, SyncSelectorWorld};
 
 /// Which coreference material this ONE export request may carry (ONE-1414).
 ///
@@ -371,9 +374,13 @@ pub(super) fn facet_scope_by_source(
     rtxn: &heed::RoTxn<'_>,
     entities: &loro::LoroMap,
     edges: &loro::LoroMap,
-    selector: &SyncSelector,
+    position: &FederationDirectionScope,
 ) -> Result<HashMap<EntityId, FacetScope>> {
-    let selected: HashSet<EntityId> = selector.facets.iter().copied().collect();
+    let selected: HashSet<EntityId> = facet_filter(position)
+        .unwrap_or_default()
+        .iter()
+        .copied()
+        .collect();
     let mut scopes = HashMap::<EntityId, FacetScope>::new();
     if selected.is_empty() {
         return Ok(scopes);
@@ -501,13 +508,33 @@ fn mirrored_endpoint_type(
     Ok(resolved)
 }
 
+/// The facets a resolved position filters on. `None` filters nothing on the
+/// axis, and the ⊥ ceiling's empty list lets nothing pass.
+pub(super) fn facet_filter(position: &FederationDirectionScope) -> Option<&[EntityId]> {
+    match &position.facets {
+        FederationScopeFacets::All => None,
+        FederationScopeFacets::Some(facets) => Some(facets),
+        FederationScopeFacets::Bottom => Some(&[]),
+    }
+}
+
+/// The bands a resolved position filters on, read as [`facet_filter`] reads
+/// facets.
+pub(super) fn band_filter(position: &FederationDirectionScope) -> Option<&[SelectorRange]> {
+    match &position.bands {
+        FederationScopeBands::All => None,
+        FederationScopeBands::Some(bands) => Some(bands),
+        FederationScopeBands::Bottom => Some(&[]),
+    }
+}
+
 pub(super) fn entity_selector_decision(
     vault: &Vault,
     entity: (&EntityId, &[u8]),
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
     facet_scope: &HashMap<EntityId, FacetScope>,
-    empty: EmptyAxis,
+    position: &FederationDirectionScope,
     coreference: &CoreferenceExportContext,
 ) -> Option<EntitySelectorDecision> {
     let (id, blob) = entity;
@@ -539,18 +566,16 @@ pub(super) fn entity_selector_decision(
             .and_then(|registration| registration.family)
             .map(crate::federation::SelectorRange::Family)
     })?;
-    if selector.band_filter_active(empty)
-        && !selector.bands.iter().any(|band| band.includes(identity))
+    if band_filter(position).is_some_and(|bands| !bands.iter().any(|band| band.includes(identity)))
     {
         return None;
     }
-    if selector.facet_filter_active(empty)
-        && header.entity_type == ENTITY_TYPE_FACET
-        && !selector.facets.contains(id)
+    let facets = facet_filter(position);
+    if facets.is_some_and(|facets| header.entity_type == ENTITY_TYPE_FACET && !facets.contains(id))
     {
         return None;
     }
-    if selector.facet_filter_active(empty)
+    if facets.is_some()
         && facet_scope.get(id).is_some_and(|scope| {
             scope.malformed || scope.unselected || (scope.any && !scope.selected)
         })
@@ -572,11 +597,9 @@ pub(super) fn entity_selector_decision(
     ) {
         return None;
     }
-    let facet_visible = selector.facet_filter_active(empty)
-        && header.entity_type == ENTITY_TYPE_FACET
-        && selector.facets.contains(id);
-    let facet_seed = selector.facet_filter_active(empty)
-        && facet_scope.get(id).is_some_and(|scope| scope.selected);
+    let facet_visible =
+        facets.is_some_and(|facets| header.entity_type == ENTITY_TYPE_FACET && facets.contains(id));
+    let facet_seed = facets.is_some() && facet_scope.get(id).is_some_and(|scope| scope.selected);
     Some(EntitySelectorDecision {
         facet_visible,
         facet_seed,

@@ -79,7 +79,24 @@ pub(super) fn apply_claim_candidate(
             .into());
         }
     }
-    let body = candidate.into_claim_body(envelope);
+    // The default stamps a birth. A candidate re-put over a stored claim keeps
+    // the facet that claim was born with.
+    let stored_facet = store
+        .entities
+        .get(wtxn, id.as_bytes())?
+        .filter(|raw| {
+            EntityMetadataHeader::parse(raw)
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+        })
+        .and_then(|raw| {
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok()
+        })
+        .map(|stored| stored.scope_facet);
+    let default_facet = match stored_facet {
+        Some(facet) => facet,
+        None => crate::claim::default_facet_in(store, wtxn)?,
+    };
+    let body = candidate.into_claim_body(envelope, default_facet);
     let data = crate::claim::encode_claim_body(&body)?;
     let applied_put = apply_put(
         store,

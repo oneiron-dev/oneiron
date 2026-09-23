@@ -300,7 +300,7 @@ fn linkedin_preload_creates_no_counterparty_contact_rows() -> TestResult {
         before
     );
     assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ORG)?, 2);
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_PERSON)?, 4); // Includes actor.
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_PERSON)?, 5); // Includes actor and vault owner.
     for i in 1..=3 {
         let person = id(&key(true, i));
         let company = id(&key(false, if i < 3 { 1 } else { 2 }));

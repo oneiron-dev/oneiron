@@ -78,7 +78,10 @@ pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFac
         WriteProvenance::new(Value::from("dreamer-consolidation-probe"))?,
         ClaimApprovalStatus::Proposed,
     );
-    let body = candidate.clone().into_claim_body(&envelope);
+    let body = candidate.clone().into_claim_body(
+        &envelope,
+        crate::claim::substrate_facet_id(candidate_probe_actor()),
+    );
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(invalid_consolidation(
             "consolidation candidates must have entity subjects",

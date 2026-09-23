@@ -24,14 +24,17 @@ pub(super) fn load_seeded(
     id: EntityId,
     birth: impl FnOnce() -> Result<LoroDoc>,
 ) -> Result<LoroDoc> {
-    let hex = id.to_hex();
+    // A NOTE's text plane is its head's document.
+    let slot = super::documents::head_in(store, txn, id)?.0;
+    let hex = slot.to_hex();
     let doc = match store.sync_state.get(txn, &format!("d:e:{hex}"))? {
         Some(bytes) => {
             let doc = LoroDoc::new();
             import_complete(&doc, &bytes)?;
             doc
         }
-        None => birth()?,
+        None if slot == id => birth()?,
+        None => return Err(invalid("NOTE head document missing")),
     };
     let prefix = format!("u:e:{hex}:");
     for row in store.sync_state.prefix_iter(txn, &prefix)? {
@@ -62,7 +65,7 @@ pub(crate) fn snapshot(
     doc: &LoroDoc,
     shallow: bool,
 ) -> Result<()> {
-    let hex = id.to_hex();
+    let hex = slot(vault, txn, id)?.to_hex();
     let bytes = if shallow {
         state_copy(doc)?
     } else {
@@ -93,6 +96,11 @@ pub(crate) fn snapshot(
         vault.store.sync_state.delete(txn, &key)?;
     }
     Ok(())
+}
+
+/// The document slot of `id`: its head's document for a NOTE, else its own.
+pub(crate) fn slot(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<EntityId> {
+    Ok(super::documents::head_in(&vault.store, txn, id)?.0)
 }
 
 pub(crate) fn state_copy(doc: &LoroDoc) -> Result<Vec<u8>> {

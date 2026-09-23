@@ -31,6 +31,28 @@ pub(crate) fn delete_document_in_txn(
     for prefix in ["d:e:", "sv:e:", "ssv:e:", "m:u_seq:e:", "ds:e:"] {
         store.sync_state.delete(txn, &format!("{prefix}{hex}"))?;
     }
+    let heads_prefix = super::documents::head_doc_prefix(*id);
+    let heads = store
+        .vault_meta
+        .prefix_iter(txn, &heads_prefix)?
+        .map(|row| row.map(|(key, _)| key.to_vec()))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for key in heads {
+        let head = key
+            .get(heads_prefix.len()..)
+            .and_then(|bytes| bytes.try_into().ok())
+            .and_then(|bytes| EntityId::from_bytes(bytes).ok())
+            .ok_or(super::documents::invalid("NOTE head document index"))?
+            .to_hex();
+        for prefix in ["d:e:", "sv:e:", "ssv:e:", "m:u_seq:e:"] {
+            store.sync_state.delete(txn, &format!("{prefix}{head}"))?;
+        }
+        delete_sync_prefix(store, txn, &format!("u:e:{head}:"))?;
+        store.vault_meta.delete(txn, &key)?;
+    }
+    store
+        .vault_meta
+        .delete(txn, &super::documents::head_key(*id))?;
     for prefix in ["u:e:", "qd:e:", "ad:e:", "qn:e:", "nr:e:", "nc:e:"] {
         delete_sync_prefix(store, txn, &format!("{prefix}{hex}:"))?;
     }

@@ -61,6 +61,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
         }
     }
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
+    let default_facet = crate::claim::default_facet_in(store, &*wtxn)?;
     for op in ops {
         // The gap-decay op gates ONE decision per selected instance rather
         // than one per op, so it runs its own loop and never collapses the
@@ -74,7 +75,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
             for lapse in lapses {
                 let mut recorded_decision = None;
                 let lapse_id = lapse.id;
-                let body = lapse.candidate.into_claim_body(envelope);
+                let body = lapse.candidate.into_claim_body(envelope, default_facet);
                 let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,
@@ -155,7 +156,9 @@ pub(super) fn preflight_gate_decisions_in_txn(
                 internal_lexical_query_hint,
                 ..
             } if !*internal_lexical_query_hint => {
-                let body = (**candidate).clone().into_claim_body(envelope);
+                let body = (**candidate)
+                    .clone()
+                    .into_claim_body(envelope, default_facet);
                 let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,

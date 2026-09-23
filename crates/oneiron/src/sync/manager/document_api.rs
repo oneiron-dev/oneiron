@@ -22,6 +22,17 @@ impl WindowManager {
     pub(crate) fn notify_note(&self, id: crate::EntityId) {
         self.documents.notify_note(id);
     }
+    /// The owner lane's text-plane export for an own device: NOTE documents
+    /// only, with no selector, under the state-copy and resync rule of the
+    /// selector export.
+    pub fn export_owner_document(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        remote_vv: &[u8],
+    ) -> Result<Vec<u8>> {
+        self.documents.open(id)?.export_owner(remote_vv)
+    }
+
     /// Grant-backed text-plane export. The entity's canonical ledger supplies
     /// all world/facet/band decisions, never a peer-supplied substitute.
     pub fn export_document(

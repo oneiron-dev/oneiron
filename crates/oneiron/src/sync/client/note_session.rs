@@ -14,13 +14,33 @@ struct Envelope<T> {
     payload: T,
 }
 
-pub(super) fn bind_frame(token: &str) -> Result<Vec<u8>, TransportError> {
+/// A fresh holder proof on every bind: the proof is not a replacement bearer
+/// token.
+pub(super) fn bind_frame(session: &super::NoteSyncSession) -> Result<Vec<u8>, TransportError> {
+    use ed25519_dalek::Signer;
+    let timestamp = crate::unix_seconds_now();
+    let nonce = crate::EntityId::now().to_hex();
+    let slip =
+        crate::authority::CapabilitySlip::from_token(session.token()).map_err(|_| refused())?;
+    let transcript = slip
+        .binding_transcript(&crate::authority::holder_proof_challenge(timestamp, &nonce))
+        .map_err(|_| refused())?;
+    let signature: String = session
+        .key()
+        .sign(&transcript)
+        .to_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     let envelope = Envelope {
         kind: "rpc.req".into(),
         id: REQUEST_ID,
         seq: 0,
         last: true,
-        payload: serde_json::json!({"method":"auth.bind","params":{"token":token}}),
+        payload: serde_json::json!({"method":"auth.bind","params":{
+            "token": session.token(),
+            "binding": {"timestamp": timestamp, "nonce": nonce, "signature": signature},
+        }}),
     };
     let payload = rmp_serde::to_vec_named(&envelope).map_err(|_| refused())?;
     if payload.len() > crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES {

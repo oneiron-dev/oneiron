@@ -648,3 +648,37 @@ fn recovered_merge_refuses_ambiguous_overlap_without_losing_bundle_members() {
     assert_eq!(vault.note_proposal(bundle.id).unwrap().waiting.len(), 2);
     assert!(vault.note_proposal(bundle.id).unwrap().landed.is_empty());
 }
+
+fn switched_to_rewrite(vault: &Vault, actor: WriteActor, note: EntityId) -> EntityId {
+    let NoteEditOutcome::RewriteFork { fork } = vault
+        .edit_note(
+            note,
+            &NoteEdit::Rewrite {
+                text: "switched head".into(),
+            },
+            actor,
+        )
+        .unwrap()
+    else {
+        panic!("rewrite fork");
+    };
+    let bundle = vault
+        .open_note_proposal(&[fork], "Switch the head", actor)
+        .unwrap();
+    vault
+        .review_note_proposal(bundle.id, NoteVerdict::Switch, actor)
+        .unwrap();
+    fork
+}
+
+#[test]
+fn switch_moves_the_head_pointer_to_the_fork() {
+    let (_dir, vault, actor) = fixture();
+    let note = vault.create_note("research", "origin", actor).unwrap();
+    let fork = switched_to_rewrite(&vault, actor, note);
+
+    assert_eq!(
+        vault.note_program_document(note).unwrap().unwrap().head(),
+        fork
+    );
+}

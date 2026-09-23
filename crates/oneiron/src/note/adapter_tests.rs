@@ -102,10 +102,12 @@ fn canonical_adapter_switch_is_semantic_and_does_not_import_fork_authority() {
         .review_note_proposal(bundle.id, NoteVerdict::Switch, actor)
         .unwrap();
     assert!(landed.waiting.is_empty());
-    assert_eq!(landed.landed[0].head, note);
+    // A switch moves the head pointer to the fork; the fork's document, which
+    // carries no authority, becomes the NOTE's text plane.
+    assert_eq!(landed.landed[0].head, fork);
     assert_eq!(landed.landed[0].previous_head, note);
     assert_eq!(vault.note_text(note).unwrap(), "after");
-    assert_eq!(vault.note_document(note).unwrap().authorship.len(), 2);
+    assert!(vault.note_document(note).unwrap().authorship.is_empty());
     let txn = vault.store.env.read_txn().unwrap();
     assert!(
         vault
@@ -113,7 +115,7 @@ fn canonical_adapter_switch_is_semantic_and_does_not_import_fork_authority() {
             .sync_state
             .get(&txn, &documents::doc_key(note, fork))
             .unwrap()
-            .is_none()
+            .is_some()
     );
 }
 

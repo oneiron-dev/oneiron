@@ -290,6 +290,48 @@ pub(super) fn stamp(doc: &LoroDoc, actor: EntityId, at: u64, action: &str) {
 pub(crate) fn head_key(note: EntityId) -> Vec<u8> {
     [b"note_head:v1:".as_slice(), note.as_bytes()].concat()
 }
+/// One row per head a NOTE's text plane ever held, so erasure reaches every
+/// head document a `Switch` left behind.
+pub(crate) fn head_doc_prefix(note: EntityId) -> Vec<u8> {
+    [b"note_head_doc:v1:".as_slice(), note.as_bytes()].concat()
+}
+/// The NOTE's current head and head sequence. A NOTE that never switched is
+/// its own head at sequence 0.
+pub(crate) fn head_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+) -> Result<(EntityId, u64)> {
+    let Some(raw) = store.vault_meta.get(txn, &head_key(note))? else {
+        return Ok((note, 0));
+    };
+    let (head, seq) = raw
+        .split_at_checked(crate::entity_id::ENTITY_ID_LEN)
+        .ok_or(invalid("NOTE head row"))?;
+    let head = EntityId::from_bytes(head.try_into().map_err(|_| invalid("NOTE head row"))?)
+        .map_err(|_| invalid("NOTE head row"))?;
+    let seq = u64::from_be_bytes(seq.try_into().map_err(|_| invalid("NOTE head row"))?);
+    Ok((head, seq))
+}
+pub(crate) fn set_head(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    note: EntityId,
+    head: EntityId,
+    seq: u64,
+) -> Result<()> {
+    store.vault_meta.put(
+        txn,
+        &head_key(note),
+        &[head.as_bytes().as_slice(), &seq.to_be_bytes()].concat(),
+    )?;
+    store.vault_meta.put(
+        txn,
+        &[head_doc_prefix(note).as_slice(), head.as_bytes()].concat(),
+        &[],
+    )?;
+    Ok(())
+}
 pub(crate) fn doc_key(note: EntityId, head: EntityId) -> String {
     format!("note_proposal_doc:v1:{}:{}", note.to_hex(), head.to_hex())
 }
@@ -323,7 +365,7 @@ pub(crate) fn load_doc(
 ) -> Result<Option<NoteDocument>> {
     super::verbs::note_core(vault, txn, note)?;
     super::ensure_citations_ready(&vault.store, txn, note)?;
-    let hex = note.to_hex();
+    let hex = head_in(&vault.store, txn, note)?.0.to_hex();
     if vault
         .store
         .sync_state
@@ -350,7 +392,7 @@ pub(crate) fn live_doc(
     let canonical = super::document_store::load(vault, txn, note)?;
     Ok(NoteDocument {
         note,
-        head: note,
+        head: head_in(&vault.store, txn, note)?.0,
         doc: canonical.doc,
     })
 }
@@ -361,7 +403,7 @@ pub(crate) fn load_head(
     note: EntityId,
     head: EntityId,
 ) -> Result<NoteDocument> {
-    if head == note {
+    if head == head_in(&vault.store, txn, note)?.0 {
         return live_doc(vault, txn, note);
     }
     super::verbs::note_core(vault, txn, note)?;

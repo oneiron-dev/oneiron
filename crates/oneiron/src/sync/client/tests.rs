@@ -2592,3 +2592,40 @@ fn federation_import_needs_authenticated_principal_not_an_auth_token_string() {
     assert!(!client.replay_deferred_federation_update().unwrap());
     assert!(client.window("2026-01").is_none());
 }
+
+#[test]
+fn note_session_bind_frame_carries_a_holder_proof_the_vault_accepts() {
+    use crate::authority::HostSlipIssuer;
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let issuer = HostSlipIssuer::from_secret(b"note-session-host").unwrap();
+    let key = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+    let mut claims = vault.ensure_host_root_slip(&issuer).unwrap().claims;
+    claims.slip_id = [9; 32];
+    claims.parent_id = None;
+    claims.holder_ref = "note-holder".to_owned();
+    claims.binding_key = key.verifying_key().to_bytes();
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let session = NoteSyncSession::new(slip.to_token().unwrap(), key);
+    let frame = super::note_session::bind_frame(&session).unwrap();
+    let envelope: serde_json::Value = rmp_serde::from_slice(&frame[1..]).unwrap();
+    let binding = &envelope["payload"]["params"]["binding"];
+    let signature: Vec<u8> = (0..128)
+        .step_by(2)
+        .map(|at| {
+            u8::from_str_radix(&binding["signature"].as_str().unwrap()[at..at + 2], 16).unwrap()
+        })
+        .collect();
+
+    assert!(
+        vault
+            .authenticate_capability_slip(
+                &issuer,
+                &slip,
+                binding["timestamp"].as_u64().unwrap(),
+                &signature,
+                binding["nonce"].as_str().unwrap().as_bytes(),
+            )
+            .is_ok()
+    );
+}

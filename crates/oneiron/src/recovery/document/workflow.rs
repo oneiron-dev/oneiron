@@ -34,8 +34,10 @@ pub(super) fn bundle_notes(bundle: &NoteReviewBundle) -> BTreeSet<[u8; 16]> {
 /// Resolve the old history while it still exists. The artifact carries values,
 /// not frontiers that could refer to unrelated peers after reconstruction.
 pub(super) fn normalize(vault: &Vault, txn: &heed::RoTxn<'_>, fork: &NoteFork) -> Result<NoteFork> {
-    let _ = (vault, txn);
-    if fork.parent != fork.note
+    // A pending fork's basis is the live head; a decided one's may be a head a
+    // later switch replaced.
+    let head = crate::note::documents::head_in(&vault.store, txn, fork.note)?.0;
+    if (fork.parent != fork.note && (!fork.decided && fork.parent != head))
         || !fork.frontier.is_empty()
         || ((!fork.decided && !fork.rewrite) != fork.recovery_merge.is_some())
     {
@@ -122,6 +124,11 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         .map(|row| row.decode().map(|receipt| (receipt.id, receipt)))
         .collect::<Result<_>>()?;
     let mut receipt_forks = BTreeSet::new();
+    let heads: BTreeMap<_, _> = snapshot
+        .document_heads
+        .iter()
+        .map(|row| (row.entity_id, row.head))
+        .collect();
     for receipt in receipts.values() {
         let fork = forks
             .get(&receipt.fork)
@@ -161,17 +168,23 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
             }
         }
     }
+    let switched: BTreeSet<_> = receipts
+        .values()
+        .filter(|receipt| receipt.verdict == NoteVerdict::Switch)
+        .map(|receipt| (receipt.note, receipt.head))
+        .collect();
     for fork in &snapshot.note_forks {
         if !fork.frontier.is_empty()
-            || fork.parent != fork.note
+            || (fork.parent != fork.note && !switched.contains(&(fork.note, fork.parent)))
             || fork.fork == fork.parent
             || (!fork.decided && !fork.rewrite) != fork.recovery_merge.is_some()
         {
             return Err(invalid("canonical fork basis"));
         }
-        if !docs.contains_key(&(*fork.note.as_bytes(), *fork.parent.as_bytes()))
-            || (!fork.decided
-                && !docs.contains_key(&(*fork.note.as_bytes(), *fork.fork.as_bytes())))
+        // A decided fork's parent may be a head a later switch replaced.
+        if !fork.decided
+            && (!docs.contains_key(&(*fork.note.as_bytes(), *fork.parent.as_bytes()))
+                || !docs.contains_key(&(*fork.note.as_bytes(), *fork.fork.as_bytes())))
         {
             return Err(invalid("fork document reference"));
         }
@@ -191,6 +204,7 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     }
     for row in &snapshot.doc_snapshots {
         if row.head != row.entity_id
+            && heads.get(&row.entity_id) != Some(&row.head)
             && forks
                 .get(&crate::EntityId::from_bytes(row.head)?)
                 .is_none_or(|fork| fork.note.as_bytes() != &row.entity_id || fork.decided)

@@ -251,7 +251,13 @@ fn source_and_claim_erasure_keep_other_pin_prose_authorship_and_refuse_replay() 
         vault
             .sync_state_put(&format!("ds:e:{}", brief.to_hex()), b"desired subscription")
             .unwrap();
-        assert!(import_note_from_authority(&vault, brief, document_sub_tags::STATE, &raw).is_err());
+        // A NOTE frame names its head and head sequence before the Loro bytes.
+        let frame =
+            |bytes: &[u8]| [brief.as_bytes().as_slice(), &0u64.to_be_bytes(), bytes].concat();
+        assert!(
+            import_note_from_authority(&vault, brief, document_sub_tags::STATE, &frame(&raw))
+                .is_err()
+        );
         assert_eq!(vault.note_document(brief).unwrap(), durable);
         // A newer authority snapshot must not reintroduce the erased pin either.
         let replay = document::NoteDocument::load(
@@ -274,7 +280,7 @@ fn source_and_claim_erasure_keep_other_pin_prose_authorship_and_refuse_replay() 
                 &vault,
                 brief,
                 document_sub_tags::STATE,
-                &replay.snapshot().unwrap()
+                &frame(&replay.snapshot().unwrap())
             )
             .is_err()
         );
@@ -291,7 +297,7 @@ fn source_and_claim_erasure_keep_other_pin_prose_authorship_and_refuse_replay() 
             &vault,
             brief,
             document_sub_tags::STATE,
-            &replay.snapshot().unwrap(),
+            &frame(&replay.snapshot().unwrap()),
         )
         .unwrap();
         let accepted = vault.note_document(brief).unwrap();

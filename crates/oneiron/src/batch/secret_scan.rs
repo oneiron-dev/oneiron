@@ -40,7 +40,11 @@ pub(super) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
                 envelope,
                 ..
             } => {
-                let body = (**candidate).clone().into_claim_body(envelope);
+                // A facet id is no secret material; any stamp scans alike.
+                let body = (**candidate).clone().into_claim_body(
+                    envelope,
+                    crate::claim::substrate_facet_id(envelope.actor().entity_ref()),
+                );
                 let data = crate::claim::encode_claim_body(&body)?;
                 let _secrets_nulled = scan_payload(&data)?;
             }

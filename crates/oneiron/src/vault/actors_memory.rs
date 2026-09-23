@@ -162,42 +162,52 @@ impl Vault {
     #[doc(hidden)]
     pub fn ensure_embedded_owner_actor(&self) -> crate::memory::MemoryResult<EntityId> {
         let owner = embedded_owner_actor_id()?;
-        let now = self.store.clock.now_recorded_at();
         self.try_with_write_txn(|wtxn| {
             if self.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                 return Err(crate::memory::hard_deleted_refusal(&owner));
             }
-            match self.get_entity_type_in_txn(wtxn, &owner)? {
-                Some(crate::registry::ENTITY_TYPE_PERSON) => return Ok(owner),
-                // Present but not a PERSON: refuse, never retype. The typed
-                // engine error carries the occupant's byte, and the central
-                // `From<Error>` mapping renders it — no bespoke code is minted
-                // for a case the vocabulary already spells.
-                Some(existing) => {
-                    return Err(crate::memory::MemoryError::from(Error::Registry(
-                        RegistryError::EntityTypeImmutable {
-                            id: owner,
-                            existing,
-                            attempted: crate::registry::ENTITY_TYPE_PERSON,
-                        },
-                    )));
-                }
-                None => {}
-            }
-            self.batch_in()
-                .put(
-                    &owner,
-                    crate::registry::ENTITY_TYPE_PERSON,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode_embedded_owner_actor_body()?,
-                )
-                .apply(wtxn)?;
-            Ok(owner)
+            let now = self.store.clock.now_recorded_at();
+            Ok(self.stage_embedded_owner_actor_in_txn(wtxn, now)?)
         })
+    }
+
+    /// [`Vault::ensure_embedded_owner_actor`] inside the caller's transaction,
+    /// born at `now`, for the seeded open and any other door that must see the
+    /// owner PERSON before it writes.
+    pub(crate) fn stage_embedded_owner_actor_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        now: u64,
+    ) -> Result<EntityId> {
+        let owner = embedded_owner_actor_id()?;
+        match self.get_entity_type_in_txn(wtxn, &owner)? {
+            Some(crate::registry::ENTITY_TYPE_PERSON) => return Ok(owner),
+            // Present but not a PERSON: refuse, never retype. The typed
+            // engine error carries the occupant's byte, and the central
+            // `From<Error>` mapping renders it — no bespoke code is minted
+            // for a case the vocabulary already spells.
+            Some(existing) => {
+                return Err(Error::Registry(RegistryError::EntityTypeImmutable {
+                    id: owner,
+                    existing,
+                    attempted: crate::registry::ENTITY_TYPE_PERSON,
+                }));
+            }
+            None => {}
+        }
+        self.batch_in()
+            .put(
+                &owner,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &encode_embedded_owner_actor_body()?,
+            )
+            .apply(wtxn)?;
+        Ok(owner)
     }
 
     pub(crate) fn scoped_read_search_candidate_limit(

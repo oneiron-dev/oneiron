@@ -83,10 +83,12 @@ fn window_packing_door_skips_overlay_members_and_packs_commissioned_writes() -> 
 
     assert!(crate::sync::window::window_packing_excludes_entity(
         &vault,
+        &Default::default(),
         &room_member
     )?);
     assert!(!crate::sync::window::window_packing_excludes_entity(
         &vault,
+        &Default::default(),
         &commissioned
     )?);
 
@@ -116,6 +118,7 @@ fn window_packing_door_skips_overlay_members_and_packs_commissioned_writes() -> 
     session.close()?;
     assert!(!crate::sync::window::window_packing_excludes_entity(
         &vault,
+        &Default::default(),
         &room_member
     )?);
     assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 1);
@@ -3630,5 +3633,84 @@ fn diagnostic_update_admission_is_side_effect_free_and_checks_hidden_history() -
     ));
     assert_eq!(doc.oplog_vv(), before);
     assert!(map_get_bytes(&doc.get_map("entities"), "second").is_none());
+    Ok(())
+}
+
+/// A WORLD flagged device-only and a claim in it with an `About` edge to a
+/// PERSON, all learned in `window`.
+fn device_only_world_fixture(vault: &Vault, window: &WindowKey) -> Result<(EntityId, EntityId)> {
+    let at = window.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    let world = EntityId::from_bytes([0x71; 16])?;
+    let person = EntityId::from_bytes([0x72; 16])?;
+    let claim = EntityId::from_bytes([0x73; 16])?;
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        occurred,
+        at,
+        b"person",
+    )?;
+    vault.set_world_device_only(world, true)?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.device_only",
+        crate::claim::ClaimSubject::Entity(person),
+        Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, occurred, at)?;
+    vault
+        .batch()
+        .edge(&claim, EdgeKind::About, &person, 1.0)
+        .commit()?;
+    Ok((world, claim))
+}
+
+fn packed_device_only_window(vault: &Vault) -> Result<(LoroDoc, EntityId, EntityId)> {
+    let key = WindowKey::new("2026-03");
+    let (world, claim) = device_only_world_fixture(vault, &key)?;
+    let doc = crate::sync::schema::create_window_doc("device-only", &key);
+    reverse_rematerialize(vault, &doc, &key)?;
+    Ok((doc, world, claim))
+}
+
+#[test]
+fn packing_withholds_a_claim_in_a_device_only_world() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let (doc, _, claim) = packed_device_only_window(&vault)?;
+
+    assert!(map_get_bytes(&doc.get_map("entities"), &claim.to_hex()).is_none());
+    Ok(())
+}
+
+#[test]
+fn packing_withholds_the_world_row_flagged_device_only() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let (doc, world, _) = packed_device_only_window(&vault)?;
+
+    assert!(map_get_bytes(&doc.get_map("entities"), &world.to_hex()).is_none());
+    Ok(())
+}
+
+#[test]
+fn packing_withholds_edges_that_touch_a_device_only_world_row() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let (doc, _, claim) = packed_device_only_window(&vault)?;
+    let mut named = false;
+    crate::sync::loro_support::map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
+        named |= key.contains(&claim.to_hex());
+    });
+
+    assert!(!named);
     Ok(())
 }

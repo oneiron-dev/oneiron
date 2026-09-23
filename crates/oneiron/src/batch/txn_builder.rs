@@ -28,6 +28,7 @@ pub struct TxnBatchBuilder<'a> {
     ops: Vec<BatchOp>,
     validation_error: Option<Error>,
     origin: BaseWriteOrigin<'a>,
+    mask: Option<EntityId>,
     #[cfg(feature = "sync")]
     import_tier: crate::sync::client::ImportTier,
     #[cfg(feature = "sync")]
@@ -41,11 +42,19 @@ impl<'a> TxnBatchBuilder<'a> {
             ops: Vec::new(),
             validation_error: None,
             origin: BaseWriteOrigin::Ordinary,
+            mask: None,
             #[cfg(feature = "sync")]
             import_tier: crate::sync::client::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]
             federated_puts: Vec::new(),
         }
+    }
+
+    /// Sets the active mask every NOTE and ASSET this batch births is
+    /// stamped with. It must be a stored FACET row.
+    pub(crate) fn mask(mut self, mask: Option<EntityId>) -> Self {
+        self.mask = mask;
+        self
     }
 
     /// Stages phonetic codes in the caller-owned transaction.
@@ -106,6 +115,7 @@ impl<'a> TxnBatchBuilder<'a> {
             ops,
             validation_error: None,
             origin: BaseWriteOrigin::PromoteReplay(grant),
+            mask: None,
             #[cfg(feature = "sync")]
             import_tier: crate::sync::client::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]
@@ -717,7 +727,7 @@ impl<'a> TxnBatchBuilder<'a> {
             wtxn,
             this.ops,
             text_index_trusted,
-            gate_mode,
+            gate_mode.with_birth_mask(this.mask),
             this.origin,
         )?;
         // Queue only after admitted apply. The owner checks the final body and

@@ -13,6 +13,8 @@ pub(super) struct ConnState {
     windows_touched: HashSet<WindowKey>,
     pub(super) documents:
         std::collections::HashMap<oneiron::EntityId, oneiron::sync::SelectorVvRequest>,
+    /// Owner-lane NOTE subscriptions of an own device, with its last VV.
+    pub(super) owner_documents: std::collections::HashMap<oneiron::EntityId, Vec<u8>>,
     pub(super) window_sync_mode: WindowSyncMode,
     pub(super) lfs_owner_mode: bool,
     pub(super) protocol_version: u8,
@@ -25,6 +27,7 @@ impl ConnState {
         Self {
             windows_touched: HashSet::new(),
             documents: std::collections::HashMap::new(),
+            owner_documents: std::collections::HashMap::new(),
             window_sync_mode: WindowSyncMode::Unbound,
             lfs_owner_mode: false,
             protocol_version,

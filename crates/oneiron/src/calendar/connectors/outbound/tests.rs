@@ -279,3 +279,98 @@ fn applied_series_snapshot_keeps_new_members_and_child_edits_for_the_next_sequen
         Some("new local exception")
     );
 }
+
+#[test]
+fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
+    struct Unreachable;
+    impl CalendarRemoteTransport for Unreachable {
+        fn provider_key(&self) -> &'static str {
+            crate::calendar::caldav::CALDAV_PROVIDER_KEY
+        }
+        fn pull(
+            &self,
+            _secret_ref: &str,
+            _calendar_ref: &str,
+            _cursor: Option<&str>,
+        ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+            panic!("the failing write never pulls")
+        }
+        fn upsert(
+            &self,
+            _secret_ref: &str,
+            _calendar_ref: &str,
+            _request: &RemoteWriteRequest,
+        ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+            Err(CalendarConnectorError::Transport {
+                provider: crate::calendar::caldav::CALDAV_PROVIDER_KEY,
+                operation: "upsert",
+                detail: "provider unreachable".into(),
+            })
+        }
+        fn delete(
+            &self,
+            _secret_ref: &str,
+            _calendar_ref: &str,
+            _href: &str,
+            _expected_etag: Option<&str>,
+            _uid: &str,
+            _sequence: u32,
+        ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+            panic!("the failing write never deletes")
+        }
+    }
+    let (_dir, vault) = open_calendar_vault();
+    let owner = crate::WriteActor::new(
+        vault.ensure_embedded_owner_actor().unwrap(),
+        crate::EdgeActorClass::Human,
+    );
+    // A local edit carries the EVENT's live origin, so the EVENT is native.
+    let event = vault
+        .create_native_calendar_event(
+            &crate::calendar::origin::CalendarEventInput {
+                name: "staged".into(),
+                ..Default::default()
+            },
+            crate::TimeRange {
+                start: NOW,
+                end: NOW + 60,
+            },
+            owner,
+        )
+        .unwrap();
+    // An ordinary transport failure leaves the row prepared. The provider then
+    // applies the prepared request, and a crash before the local settle leaves
+    // it remote-applied.
+    assert!(write_calendar_event(&vault, &seat(), &Unreachable, event, NOW).is_err());
+    let mut row = calendar_write_outbox_rows(&vault).unwrap().remove(0);
+    let transport = ChangeDuringUpsert {
+        on_first: RefCell::new(None),
+        requests: RefCell::default(),
+    };
+    let uid = row.uid.clone();
+    let request = RemoteWriteRequest {
+        href: row.href.clone(),
+        expected_etag: row.expected_etag.clone(),
+        uid: uid.clone(),
+        sequence: row.sequence,
+        ics: render_owner_vevent(&vault, &event, &uid, row.sequence, NOW)
+            .unwrap()
+            .ics,
+    };
+    issue_prepared_upsert(&vault, &seat(), &transport, &uid, NOW, &mut row, &request).unwrap();
+    let row = calendar_write_outbox_rows(&vault).unwrap().remove(0);
+    assert_eq!(row.state, CalendarWriteOutboxState::RemoteApplied);
+    let edited = renamed_body(&vault, event, "newer local edit");
+    put_local_edit(&vault, event, &edited);
+    let resumed = write_calendar_event(&vault, &seat(), &transport, event, NOW + 2).unwrap();
+    assert_eq!(Some(resumed.clone()), row.receipt);
+    assert_eq!(transport.requests.borrow().len(), 1);
+    assert_eq!(
+        calendar_write_outbox_rows(&vault).unwrap()[0].state,
+        CalendarWriteOutboxState::Committed
+    );
+    assert_eq!(vault.get(&event).unwrap(), Some(edited));
+    let next = write_calendar_event(&vault, &seat(), &transport, event, NOW + 3).unwrap();
+    assert_eq!(next.sequence, resumed.sequence + 1);
+    assert_eq!(transport.requests.borrow()[1].expected_etag, resumed.etag);
+}

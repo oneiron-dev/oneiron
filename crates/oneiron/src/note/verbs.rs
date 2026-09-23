@@ -49,6 +49,162 @@ impl Vault {
             })
     }
 
+    /// Moves a NOTE, ASSET or CLAIM to another facet the only way a facet
+    /// moves: a birth under `facet` with the origin's current content and a
+    /// `DerivedFrom` edge to it. With `supersede` the fork also supersedes the
+    /// origin. The origin keeps its id and its stamp.
+    pub fn fork_to_facet(
+        &self,
+        origin: EntityId,
+        facet: EntityId,
+        supersede: bool,
+        actor: WriteActor,
+    ) -> MemoryResult<EntityId> {
+        let fork = self.store.clock.entity_id()?;
+        let at = self.store.clock.now_recorded_at();
+        let occurred = TimeRange { start: at, end: at };
+        self.memory(actor.entity_ref(), actor.actor_class())
+            .with_verified_actor_write_txn(|txn| {
+                let found = self.get_entity_type_in_txn(txn, &facet)?;
+                if found != Some(crate::registry::ENTITY_TYPE_FACET) {
+                    return Err(crate::Error::Registry(
+                        crate::error::RegistryError::InvalidFacet { facet, found },
+                    )
+                    .into());
+                }
+                let kind = self
+                    .get_entity_type_in_txn(txn, &origin)?
+                    .ok_or(crate::Error::EntityNotFound)?;
+                let owner = actor.actor_class() == crate::edge::EdgeActorClass::Human
+                    && crate::memory::verify_owner_actor_binding_in_txn(
+                        self,
+                        txn,
+                        actor.entity_ref(),
+                    )
+                    .is_ok();
+                match kind {
+                    ENTITY_TYPE_NOTE => {
+                        let (_, core) = note_core(self, txn, origin)?;
+                        if !owner && core.author_ref != actor.entity_ref() {
+                            return Err(
+                                invalid("NOTE fork requires its author or the owner").into()
+                            );
+                        }
+                        let body = encode_note_body(&NoteBody {
+                            source_revision_ref: *self.store.clock.entity_id()?.as_bytes(),
+                            kind: core.kind,
+                            author_ref: actor.entity_ref(),
+                            markdown: super::documents::live_doc(self, txn, origin)?.text(),
+                        })?;
+                        fork_links(
+                            self.batch_in()
+                                .mask(Some(facet))
+                                .put_authored_note(&fork, &actor.entity_ref(), occurred, at, &body)
+                                .edge(&fork, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0),
+                            fork,
+                            origin,
+                            supersede,
+                        )
+                        .apply(txn)?;
+                        let doc = super::document_store::load(self, txn, fork)?;
+                        super::document_store::persist(self, txn, &doc)?;
+                    }
+                    ENTITY_TYPE_ASSET => {
+                        if !owner {
+                            return Err(invalid("ASSET fork requires the owner").into());
+                        }
+                        let raw = self
+                            .get_raw_in(txn, &origin)?
+                            .ok_or(crate::Error::EntityNotFound)?;
+                        fork_links(
+                            self.batch_in().mask(Some(facet)).put(
+                                &fork,
+                                ENTITY_TYPE_ASSET,
+                                occurred,
+                                at,
+                                &raw[ENTITY_METADATA_HEADER_LEN..],
+                            ),
+                            fork,
+                            origin,
+                            supersede,
+                        )
+                        .apply(txn)?;
+                    }
+                    crate::registry::ENTITY_TYPE_CLAIM => {
+                        if !owner {
+                            return Err(invalid("CLAIM fork requires the owner").into());
+                        }
+                        let mut body = self
+                            .get_claim_in_txn(txn, &origin)?
+                            .ok_or(crate::Error::EntityNotFound)?;
+                        body.scope_facet = facet;
+                        self.put_claim_in_txn(txn, &fork, &body, occurred, at)?;
+                        self.batch_in()
+                            .edge(&fork, EdgeKind::DerivedFrom, &origin, 1.0)
+                            .apply(txn)?;
+                        if supersede {
+                            self.supersede_claim_in_txn(txn, &fork, &origin, at)?;
+                        }
+                    }
+                    other => return Err(crate::Error::InvalidEntityType(other).into()),
+                }
+                Ok(fork)
+            })
+    }
+
+    /// A proposed move of `origin` to `facet`: one pending
+    /// `facet.fork_suggested` CLAIM on the origin, stamped with the origin's
+    /// facet so it discloses no more than its origin. It forks nothing and
+    /// stamps nothing.
+    pub fn suggest_facet_fork(
+        &self,
+        origin: EntityId,
+        facet: EntityId,
+        actor: WriteActor,
+    ) -> MemoryResult<EntityId> {
+        let suggestion = self.store.clock.entity_id()?;
+        let at = self.store.clock.now_recorded_at();
+        self.memory(actor.entity_ref(), actor.actor_class())
+            .with_verified_actor_write_txn(|txn| {
+                let found = self.get_entity_type_in_txn(txn, &facet)?;
+                if found != Some(crate::registry::ENTITY_TYPE_FACET) {
+                    return Err(crate::Error::Registry(
+                        crate::error::RegistryError::InvalidFacet { facet, found },
+                    )
+                    .into());
+                }
+                let origin_facet = match self.get_entity_type_in_txn(txn, &origin)? {
+                    Some(ENTITY_TYPE_NOTE | ENTITY_TYPE_ASSET) => {
+                        crate::federation::record_scope::birth_facet(&self.store, txn, origin)?
+                    }
+                    Some(crate::registry::ENTITY_TYPE_CLAIM) => self
+                        .get_claim_in_txn(txn, &origin)?
+                        .map(|body| body.scope_facet),
+                    Some(other) => return Err(crate::Error::InvalidEntityType(other).into()),
+                    None => return Err(crate::Error::EntityNotFound.into()),
+                }
+                .ok_or(invalid("the origin carries no facet stamp"))?;
+                let mut body = crate::claim::ClaimBody::new(
+                    PREDICATE_FACET_FORK_SUGGESTED,
+                    crate::claim::ClaimSubject::Entity(origin),
+                    rmpv::Value::Binary(facet.as_bytes().to_vec()),
+                    1.0,
+                    crate::claim::ClaimApprovalStatus::Proposed,
+                    crate::claim::ClaimLifecycleStatus::Active,
+                );
+                body.source = Some(crate::claim::ClaimSource::Inferred);
+                body.scope_facet = origin_facet;
+                self.put_claim_in_txn(
+                    txn,
+                    &suggestion,
+                    &body,
+                    TimeRange { start: at, end: at },
+                    at,
+                )?;
+                Ok(suggestion)
+            })
+    }
+
     /// Edits operate on a transaction-local document. Rejected edits cannot
     /// leave pending ops that a later author would accidentally commit.
     pub fn edit_note(
@@ -87,7 +243,7 @@ impl Vault {
                         .apply_note_operation_in_txn(txn, note, &operation, None)?;
                     return Ok(match receipt.outcome {
                         super::NoteEditOutcome::Applied(_) => {
-                            NoteEditOutcome::Edited { head: note }
+                            NoteEditOutcome::Edited { head: doc.head }
                         }
                         super::NoteEditOutcome::Proposed(receipt) => {
                             NoteEditOutcome::ReviewRequired { receipt }
@@ -244,6 +400,24 @@ fn create_from_text_in_txn(
         .edge(&id, EdgeKind::DerivedFrom, &citation, 1.0)
         .apply(txn)?;
     Ok(id)
+}
+
+/// Engine-internal predicate of a pending facet-fork suggestion: subject the
+/// origin, value the proposed FACET id as 16 binary bytes.
+const PREDICATE_FACET_FORK_SUGGESTED: &str = "facet.fork_suggested";
+
+fn fork_links(
+    batch: crate::batch::TxnBatchBuilder<'_>,
+    fork: EntityId,
+    origin: EntityId,
+    supersede: bool,
+) -> crate::batch::TxnBatchBuilder<'_> {
+    let batch = batch.edge(&fork, EdgeKind::DerivedFrom, &origin, 1.0);
+    if supersede {
+        batch.edge(&fork, EdgeKind::Supersedes, &origin, 1.0)
+    } else {
+        batch
+    }
 }
 
 pub(super) fn note_core(

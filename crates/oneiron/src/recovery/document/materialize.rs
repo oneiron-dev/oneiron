@@ -49,10 +49,15 @@ fn plan(
     if admitted.is_empty() && snapshot.note_proposals.is_empty() {
         return Ok(cleanup);
     }
+    let live: BTreeSet<_> = snapshot
+        .document_heads
+        .iter()
+        .map(|row| (row.entity_id, row.head))
+        .collect();
     let expected_docs: BTreeSet<_> = snapshot
         .doc_snapshots
         .iter()
-        .filter(|row| row.head != row.entity_id)
+        .filter(|row| !live.contains(&(row.entity_id, row.head)))
         .map(|row| {
             Ok(crate::note::documents::doc_key(
                 id(row.entity_id)?,
@@ -271,13 +276,41 @@ pub(crate) fn run_in_txn(
     for key in cleanup.metadata {
         vault.store.vault_meta.delete(txn, &key)?;
     }
+    let heads: BTreeMap<_, _> = snapshot
+        .document_heads
+        .iter()
+        .map(|row| (row.entity_id, row.head))
+        .collect();
     for row in &snapshot.doc_snapshots {
         let note = id(row.entity_id)?;
         if !admitted.contains(&row.entity_id) {
             return Err(invalid("NOTE recovery scope incomplete"));
         }
-        if row.head == row.entity_id {
-            crate::note::recovery::restore(vault, txn, note, &row.text, &row.authorship)?;
+        if heads.get(&row.entity_id) == Some(&row.head) {
+            let head = id(row.head)?;
+            if crate::note::documents::head_in(&vault.store, txn, note)?.0 != head {
+                // Each switch raised the head sequence by one.
+                let seq = snapshot
+                    .head_move_receipts
+                    .iter()
+                    .filter(|receipt| receipt.entity_id == row.entity_id)
+                    .map(|receipt| receipt.decode())
+                    .collect::<Result<Vec<_>>>()?
+                    .iter()
+                    .filter(|receipt| receipt.verdict == crate::note::NoteVerdict::Switch)
+                    .count();
+                crate::note::recovery::restore_head(
+                    vault,
+                    txn,
+                    note,
+                    head,
+                    u64::try_from(seq).map_err(|_| invalid("NOTE head sequence"))?,
+                    &row.text,
+                    &row.authorship,
+                )?;
+            } else {
+                crate::note::recovery::restore(vault, txn, note, &row.text, &row.authorship)?;
+            }
         } else {
             let key = crate::note::documents::doc_key(note, id(row.head)?);
             // Proposal equality is a text-value claim, never proof that a

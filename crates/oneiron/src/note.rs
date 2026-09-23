@@ -129,6 +129,9 @@ pub struct NoteWriteEnvelope {
     pub scope: NoteScope,
     pub markdown: String,
     pub source_revision_ref: [u8; 16],
+    /// The active mask the NOTE is born under; `None` stamps the vault
+    /// default. It must be a stored FACET row.
+    pub mask: Option<EntityId>,
 }
 
 /// Encodes a NOTE body to the pinned four-key MessagePack map.

@@ -234,6 +234,7 @@ pub(super) fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
         || namespace == Some(RESERVED_SKILL_PREDICATE_NAMESPACE)
         || namespace == Some(RESERVED_ACTOR_PREDICATE_NAMESPACE)
         || predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE
+        || predicate == super::PREDICATE_VAULT_DEFAULT_FACET
         || matches!(predicate, "repo.proposed_diff" | "repo.session")
 }
 

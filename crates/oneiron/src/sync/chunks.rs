@@ -112,6 +112,22 @@ pub fn serve_chunk_request(
     let source = create_window_doc("lfs-chunk-scope", &WindowKey::new("1970-01"));
     let raw = vault.get_raw(&object.asset_id)?.ok_or_else(invalid)?;
     map_insert_bytes(&source.get_map("entities"), &object.asset_id.to_hex(), &raw)?;
+    // The ASSET's stored birth stamp rides with it, so a named facet can seed it.
+    for edge in vault.edges_out(&object.asset_id)? {
+        if edge.kind == crate::edge::EdgeKind::FacetOf {
+            map_insert_bytes(
+                &source.get_map("edges"),
+                &super::bridge::format_edge_key(&object.asset_id, edge.kind, &edge.target),
+                &super::bridge::encode_edge_value_for_crdt(
+                    edge.kind,
+                    edge.weight,
+                    edge.created_at,
+                    edge.vad,
+                    edge.provenance,
+                )?,
+            )?;
+        }
+    }
     source.commit();
     let selected =
         filtered_window_doc(vault, &source, &WindowKey::new("1970-01"), scope, &selector)?;

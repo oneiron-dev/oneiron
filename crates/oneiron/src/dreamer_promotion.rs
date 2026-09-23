@@ -168,6 +168,9 @@ fn promote_one(
     fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
 ) -> std::result::Result<ClaimApprovalStatus, String> {
     let retry = candidate.clone();
+    let default_facet = vault
+        .default_facet()
+        .map_err(|error| format!("default facet read failed: {error}"))?;
     // 1. Evidence admission (GATE-11 write-path consumption): drop refs
     // resolving to evidence-inadmissible CLAIM entities and refs that do
     // not resolve at all; zero survivors is a typed rejection.
@@ -247,7 +250,10 @@ fn promote_one(
             .supersession_requires_confirmation_in_txn(
                 &txn,
                 old,
-                &candidate.candidate.clone().into_claim_body(&envelope),
+                &candidate
+                    .candidate
+                    .clone()
+                    .into_claim_body(&envelope, default_facet),
             )
             .map_err(|error| error.to_string())?
     } else {
@@ -276,7 +282,10 @@ fn promote_one(
 
     // `ClaimCandidate` exposes no scope accessor, so the probe body is how
     // the writer reads the candidate's own scope before re-stamping it.
-    let probe_body = candidate.candidate.clone().into_claim_body(&envelope);
+    let probe_body = candidate
+        .candidate
+        .clone()
+        .into_claim_body(&envelope, default_facet);
     let claim_candidate = candidate
         .candidate
         .with_evidence(evidence_value)
@@ -292,7 +301,7 @@ fn promote_one(
     debug_assert!(!claim_source_widens_beyond(
         claim_candidate
             .clone()
-            .into_claim_body(&envelope)
+            .into_claim_body(&envelope, default_facet)
             .source
             .expect("consolidation envelope must stamp a source"),
         computed_meet

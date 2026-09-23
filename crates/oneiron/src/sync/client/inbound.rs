@@ -165,6 +165,8 @@ impl SyncClient {
         // Window updates leave newly deferred bytes for the next timer tick.
         if tag != TAG_WINDOW_SYNC {
             self.replay_deferred_federation_update()?;
+        } else {
+            responses.extend(self.owner_note_requests()?);
         }
         Ok(responses)
     }

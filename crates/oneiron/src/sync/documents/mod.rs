@@ -112,6 +112,47 @@ impl DocumentRegistry {
         Ok(())
     }
 
+    /// Subscribe an own device to a NOTE on the owner lane: a `ds:e:{id}` row
+    /// with an empty value, replayed as an owner REQUEST on every connect.
+    pub fn subscribe_owner(&self, id: EntityId) -> Result<()> {
+        self.vault.with_write_txn(|txn| {
+            owner_note_admission(&self.vault, txn, id)?;
+            self.vault
+                .store
+                .sync_state
+                .put(txn, &format!("ds:e:{}", id.to_hex()), &[])?;
+            Ok(())
+        })?;
+        let frame = self.owner_request_frame(id)?;
+        let _ = self.notices.send(frame);
+        Ok(())
+    }
+
+    /// Owner subscriptions for every NOTE row this device holds without one;
+    /// returns their REQUEST frames.
+    pub(crate) fn subscribe_owner_notes(&self) -> Result<Vec<Vec<u8>>> {
+        let mut out = Vec::new();
+        for id in self
+            .vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_NOTE)?
+        {
+            let subscribed = self.vault.with_write_txn(|txn| {
+                let key = format!("ds:e:{}", id.to_hex());
+                if self.vault.store.sync_state.get(txn, &key)?.is_some()
+                    || owner_note_admission(&self.vault, txn, id).is_err()
+                {
+                    return Ok(false);
+                }
+                self.vault.store.sync_state.put(txn, &key, &[])?;
+                Ok(true)
+            })?;
+            if subscribed {
+                out.push(self.owner_request_frame(id)?);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn request_frames(&self) -> Result<Vec<Vec<u8>>> {
         let rows: Vec<_> = {
             let txn = self.vault.store.env.read_txn()?;
@@ -125,9 +166,14 @@ impl DocumentRegistry {
         let mut out = Vec::new();
         for (key, bytes) in rows {
             let id = EntityId::from_hex(&key[5..])?;
-            let selector = super::selector::decode_sync_selector(&bytes)?;
             // A deleted/unshared entity never gets resurrected by reconnect.
-            if self.vault.get_raw(&id)?.is_some() {
+            if self.vault.get_raw(&id)?.is_none() {
+                continue;
+            }
+            if bytes.is_empty() {
+                out.push(self.owner_request_frame(id)?);
+            } else {
+                let selector = super::selector::decode_sync_selector(&bytes)?;
                 out.push(self.request_frame(id, &selector)?);
             }
         }
@@ -141,6 +187,17 @@ impl DocumentRegistry {
     ) -> Result<Vec<u8>> {
         let vv = self.open(id)?.version_vector()?;
         let payload = super::selector::encode_selector_vv_request(selector, &vv)?;
+        encode_document(id, document_sub_tags::REQUEST, &payload)
+            .into_result()
+            .map_err(|_| Error::InvariantViolation("document request exceeds wire limit"))
+    }
+
+    /// An owner REQUEST: a zero selector length, then the device's VV. The
+    /// selector decoder refuses that length, so neither request passes for
+    /// the other.
+    fn owner_request_frame(&self, id: EntityId) -> Result<Vec<u8>> {
+        let vv = self.open(id)?.version_vector()?;
+        let payload = [0u32.to_be_bytes().as_slice(), &vv].concat();
         encode_document(id, document_sub_tags::REQUEST, &payload)
             .into_result()
             .map_err(|_| Error::InvariantViolation("document request exceeds wire limit"))
@@ -332,36 +389,77 @@ impl EntityDocument {
         remote_vv: &[u8],
         scope: crate::FederationGrantScope,
     ) -> Result<Vec<u8>> {
+        self.export_admitted(admission_key, remote_vv, |txn| {
+            let selector = super::selector::decode_sync_selector(admission_key)?;
+            crate::note::validate_note_export(&self.vault, txn, self.id, scope, &selector)
+        })
+    }
+
+    /// The owner lane's export: NOTE documents only, under one owner admission
+    /// key and the owner export's refusals.
+    pub(crate) fn export_owner(&self, remote_vv: &[u8]) -> Result<Vec<u8>> {
+        if !self.is_note()? {
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::DocumentAdmissionDenied,
+            ));
+        }
+        self.export_admitted(OWNER_ADMISSION_KEY, remote_vv, |txn| {
+            owner_note_admission(&self.vault, txn, self.id)
+        })
+    }
+
+    fn export_admitted(
+        &self,
+        admission_key: &[u8],
+        remote_vv: &[u8],
+        admit_note: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<Vec<u8>> {
         let peer = storage::decode_vv(remote_vv)?;
         let resident = self.lock()?;
-        let key = format!(
-            "ad:e:{}:{}",
-            self.id.to_hex(),
-            blake3::hash(admission_key).to_hex()
-        );
         self.vault.with_write_txn(|txn| {
             eligible(&self.vault, txn, self.id)?;
             let note_doc;
+            let mut note_head = None;
             let doc = if self.vault.get_entity_type_in_txn(txn, &self.id)?
                 == Some(crate::registry::ENTITY_TYPE_NOTE)
             {
-                let selector = super::selector::decode_sync_selector(admission_key)?;
-                crate::note::validate_note_export(&self.vault, txn, self.id, scope, &selector)?;
+                admit_note(txn)?;
+                note_head = Some(crate::note::documents::head_in(
+                    &self.vault.store,
+                    txn,
+                    self.id,
+                )?);
                 note_doc = storage::load(&self.vault, txn, self.id)?;
                 &note_doc
             } else {
                 &*resident
+            };
+            // A NOTE's floor names its head, so a head move reaches every
+            // peer as a state-only copy.
+            let key = match note_head {
+                Some((head, _)) => format!(
+                    "ad:e:{}:{}:{}",
+                    self.id.to_hex(),
+                    head.to_hex(),
+                    blake3::hash(admission_key).to_hex()
+                ),
+                None => format!(
+                    "ad:e:{}:{}",
+                    self.id.to_hex(),
+                    blake3::hash(admission_key).to_hex()
+                ),
             };
             let admitted = self.vault.store.sync_state.get(txn, &key)?;
             let mut state_copy = match admitted {
                 Some(bytes) => !covers(&peer, &storage::decode_vv(&bytes)?),
                 None => true,
             };
+            let slot = note_head.map_or(self.id, |(head, _)| head);
             if let Some(bytes) = self
                 .vault
                 .store
                 .sync_state
-                .get(txn, &format!("ssv:e:{}", self.id.to_hex()))?
+                .get(txn, &format!("ssv:e:{}", slot.to_hex()))?
             {
                 state_copy |= !covers(&peer, &storage::decode_vv(&bytes)?);
             }
@@ -380,7 +478,14 @@ impl EntityDocument {
                         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?,
                 )
             };
-            encode_document(self.id, kind, &bytes)
+            // A NOTE's frames name their head and head sequence.
+            let payload = match note_head {
+                Some((head, seq)) => {
+                    [head.as_bytes().as_slice(), &seq.to_be_bytes(), &bytes].concat()
+                }
+                None => bytes,
+            };
+            encode_document(self.id, kind, &payload)
                 .into_result()
                 .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))
         })
@@ -437,6 +542,32 @@ impl EntityDocument {
             .lock()
             .map_err(|_| Error::InvariantViolation("entity document poisoned"))
     }
+}
+
+/// The owner lane's admission floor label. No selector encodes to it: an
+/// encoded selector is a MessagePack map.
+const OWNER_ADMISSION_KEY: &[u8] = b"owner";
+
+/// What an own device may never receive on the text plane.
+pub(crate) fn owner_note_admission(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<()> {
+    eligible(vault, txn, id)?;
+    if vault.get_entity_type_in_txn(txn, &id)? != Some(crate::registry::ENTITY_TYPE_NOTE)
+        || crate::settings::device_only_withholds(
+            &vault.store,
+            txn,
+            &crate::settings::device_only_worlds_in(&vault.store, txn)?,
+            &id,
+        )?
+    {
+        return Err(Error::sync_protocol(
+            SyncProtocolValidation::DocumentAdmissionDenied,
+        ));
+    }
+    Ok(())
 }
 
 fn covers(peer: &VersionVector, floor: &VersionVector) -> bool {

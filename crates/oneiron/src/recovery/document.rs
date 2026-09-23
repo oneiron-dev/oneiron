@@ -96,27 +96,34 @@ pub(super) fn capture(
             &entity.blob[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             crate::note::NoteKind::wire,
         )?;
+        // The live text plane is its head's document.
+        let (live_head, _) = crate::note::documents::head_in(&vault.store, txn, note)?;
         let live = crate::note::recovery::capture(vault, txn, note)?;
         snapshot.doc_snapshots.push(from_doc(
             entity.id,
-            entity.id,
+            *live_head.as_bytes(),
             &live,
+            true,
             *core.author_ref.as_bytes(),
             header.learned_at,
         )?);
         snapshot.document_heads.push(CanonicalHead {
             entity_id: entity.id,
-            head: entity.id,
+            head: *live_head.as_bytes(),
         });
         let prefix = format!("note_proposal_doc:v1:{}:", note.to_hex());
         for row in vault.store.sync_state.prefix_iter(txn, &prefix)? {
             let (key, bytes) = row?;
             let head = parse_id(&key[prefix.len()..])?;
+            if head == *live_head.as_bytes() {
+                continue;
+            }
             let doc = LoroDoc::from_snapshot(&bytes).map_err(|_| invalid("proposal document"))?;
             snapshot.doc_snapshots.push(from_doc(
                 entity.id,
                 head,
                 &doc,
+                false,
                 *core.author_ref.as_bytes(),
                 header.learned_at,
             )?);
@@ -155,11 +162,12 @@ pub(super) fn from_doc(
     entity_id: [u8; 16],
     head: [u8; 16],
     doc: &LoroDoc,
+    live: bool,
     birth_actor: [u8; 16],
     birth_at: u64,
 ) -> Result<CanonicalDocument> {
     let (text, authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
-    if head != entity_id && !authorship.is_empty() {
+    if !live && !authorship.is_empty() {
         return Err(invalid("proposal values cannot carry authority"));
     }
     Ok(CanonicalDocument {

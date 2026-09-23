@@ -762,6 +762,7 @@ mod tests {
                 scope: oneiron::note::NoteScope::ActorPrivate { owner_ref: owner },
                 source_revision_ref: [0x75; 16],
                 markdown: "private diary canary".into(),
+                mask: None,
             })
             .unwrap();
         let id = oneiron::EntityId::from_hex(&receipt.id_hex).unwrap();

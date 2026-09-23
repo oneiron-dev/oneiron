@@ -469,30 +469,10 @@ pub(in crate::store) fn decode_structural_kind_registration(
     key: &[u8],
     raw: &[u8],
 ) -> Result<StructuralKindRegistration> {
-    decode_registration(key, raw, false)
-}
-
-/// Only the ABI-17-to-18 re-key may read v2 records. The pre-v3 v1 format
-/// is unsupported and cannot re-enter through this decoder.
-pub(super) fn decode_structural_kind_registration_for_rekey(
-    key: &[u8],
-    raw: &[u8],
-) -> Result<StructuralKindRegistration> {
-    decode_registration(key, raw, true)
-}
-
-fn decode_registration(
-    key: &[u8],
-    raw: &[u8],
-    accept_v17: bool,
-) -> Result<StructuralKindRegistration> {
-    let version_accepted = raw.first().is_some_and(|version| {
-        *version == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION || (accept_v17 && *version == 2)
-    });
     if key.len() != STRUCTURAL_KIND_REGISTRY_KEY_LEN
         || !key.starts_with(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)
         || raw.len() < STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN
-        || !version_accepted
+        || raw.first() != Some(&STRUCTURAL_KIND_REGISTRY_RECORD_VERSION)
     {
         return Err(Error::CorruptedIndex("structural kind registry"));
     }
@@ -509,11 +489,7 @@ fn decode_registration(
             .try_into()
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?,
     ) as usize;
-    let current_record = raw[0] == STRUCTURAL_KIND_REGISTRY_RECORD_VERSION;
-    let expected_len = STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN
-        + prefix_len
-        + pack_len
-        + usize::from(current_record);
+    let expected_len = STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN + prefix_len + pack_len + 1;
     if raw.len() != expected_len {
         return Err(Error::CorruptedIndex("structural kind registry"));
     }
@@ -531,16 +507,12 @@ fn decode_registration(
         short_id_prefix,
         zone,
         pack,
-        family: if current_record {
-            match raw[expected_len - 1] {
-                0 => None,
-                code => Some(
-                    TypeByteFamily::from_code(code)
-                        .ok_or(Error::CorruptedIndex("structural kind family"))?,
-                ),
-            }
-        } else {
-            None
+        family: match raw[expected_len - 1] {
+            0 => None,
+            code => Some(
+                TypeByteFamily::from_code(code)
+                    .ok_or(Error::CorruptedIndex("structural kind family"))?,
+            ),
         },
     })
 }

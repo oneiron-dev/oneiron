@@ -155,6 +155,16 @@ pub(in crate::batch) fn apply_put(
         if is_lexical_query_hint_claim {
             super::lexical_hint::validate_lexical_query_hint(store, wtxn, id, &body, replicated)?;
         }
+        if let Some(prior) = store.entities.get(wtxn, id.as_bytes())?
+            && crate::batch::EntityMetadataHeader::parse(&prior)
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+            && crate::claim::decode_claim_body(&prior[ENTITY_METADATA_HEADER_LEN..], true)
+                .is_ok_and(|stored| stored.scope_facet != body.scope_facet)
+        {
+            return Err(Error::Registry(RegistryError::FacetStampImmutable {
+                src: id,
+            }));
+        }
         if body.session_tag.is_some()
             && !replicated
             && !claim_gate_prechecked

@@ -755,8 +755,9 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
         vault
             .edges_out(&neighbor_id)
             .expect("neighbor edges")
-            .is_empty(),
-        "no edge may reach the neighbor either"
+            .iter()
+            .all(|edge| edge.kind == crate::edge::EdgeKind::FacetOf),
+        "no edge may reach the neighbor either; it carries only its birth stamp"
     );
     let view_after = facade
         .get_entity(&victim.entity_ref)

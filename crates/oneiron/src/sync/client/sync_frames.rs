@@ -87,7 +87,7 @@ impl SyncClient {
         // (HEAD) still rides along when configured.
         let mut messages = vec![transport::encode_chunk_full_window_protocol_hello()];
         if let Some(session) = &self.config.note_session {
-            messages.push(super::note_session::bind_frame(session.token())?);
+            messages.push(super::note_session::bind_frame(session)?);
         }
         messages
             .extend(self.generate_phase_frames_with_extra_windows(std::iter::empty::<String>())?);
@@ -165,6 +165,7 @@ impl SyncClient {
             }
         }
 
+        self.owner_note_requests()?;
         messages.extend(
             self.manager
                 .documents()

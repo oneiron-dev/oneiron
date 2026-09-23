@@ -318,8 +318,8 @@ fn esign_event_selector_excludes_injected_aliases_and_stale_local_identity() -> 
     let f = Fixture::new()?;
     let source = create_window_doc("selector-source", &f.key);
     let forbidden = f.contaminate(&source)?;
-    // Every grant reads an empty selector axis as bottom, so the ordinary
-    // claim reaches the peer only as the seed of a named facet.
+    // The request names a facet, so the ordinary claim reaches the peer as the
+    // seed of that facet.
     let facet = EntityId::now();
     f.vault.put_entity(
         &facet,

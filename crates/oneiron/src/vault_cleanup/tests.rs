@@ -545,7 +545,9 @@ fn restore_archived_revives_the_row_without_minting_a_twin() {
 
     let after = vault.entities_by_type(ENTITY_TYPE_PERSON).expect("by type");
     assert_eq!(after, before, "restore creates no twin");
-    assert_eq!(after, vec![person]);
+    let mut expected = vec![person, crate::vault::embedded_owner_actor_id().unwrap()];
+    expected.sort_unstable();
+    assert_eq!(after, expected);
 
     // The revived shell is not the extraction revision. Do not immediately
     // re-archive an owner-restored row using evidence for its old body.

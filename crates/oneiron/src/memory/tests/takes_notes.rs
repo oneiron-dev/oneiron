@@ -46,7 +46,11 @@ fn two_actor_divergent_takes() {
         assert_eq!(body.author_ref, author, "takes must not cross-attribute");
 
         let edges = vault.edges_out(&note_id).expect("edges");
-        assert_eq!(edges.len(), 2, "a take writes exactly AuthoredBy + ClaimOf");
+        assert_eq!(
+            edges.len(),
+            3,
+            "a take writes exactly AuthoredBy + ClaimOf + its birth FacetOf stamp"
+        );
         let authored = edges
             .iter()
             .find(|edge| edge.kind == EdgeKind::AuthoredBy)
@@ -263,7 +267,7 @@ fn author_take_fails_closed_and_never_lets_a_caller_pick_the_author() {
     assert_eq!(body.author_ref, actor);
     assert_ne!(body.author_ref, impostor);
     let edges = vault.edges_out(&note_id).expect("edges");
-    assert_eq!(edges.len(), 2);
+    assert_eq!(edges.len(), 3);
     assert!(
         edges
             .iter()
@@ -539,6 +543,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             scope: NoteScope::ActorPrivate { owner_ref: owner },
             source_revision_ref: revision,
             markdown: "privatecanary journal".to_owned(),
+            mask: None,
         })
         .expect("diary via NOTE writer");
     let id = EntityId::from_hex(&receipt.id_hex).expect("note id");
@@ -914,6 +919,7 @@ fn diary_note_rejects_foreign_or_public_scope_without_writing() {
                 scope,
                 source_revision_ref: [0x66; 16],
                 markdown: "privatecanary".to_owned(),
+                mask: None,
             })
             .expect_err("scope mismatch");
         assert_eq!(error.code, MEMORY_CODE_FORBIDDEN);
@@ -949,6 +955,7 @@ fn diary_note_conjoins_actor_privacy_and_room_audience() {
             scope: NoteScope::ActorPrivate { owner_ref: owner },
             source_revision_ref: [0x73; 16],
             markdown: "private room diary".to_owned(),
+            mask: None,
         })
         .unwrap();
     let id = EntityId::from_hex(&receipt.id_hex).unwrap();
@@ -1012,4 +1019,135 @@ fn diary_note_conjoins_actor_privacy_and_room_audience() {
             allowed
         );
     }
+}
+
+#[test]
+fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
+    use crate::claim::ScopedReadActorKey;
+    use crate::context_pack::ContextEntity;
+    use crate::note::{NoteScope, NoteWriteEnvelope};
+    use crate::vault::ReadMode;
+
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x64);
+    let other = put_person(&vault, 0x65);
+    let receipt = facade_for(&vault, owner)
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::Diary,
+            scope: NoteScope::ActorPrivate { owner_ref: owner },
+            markdown: "private historic note".into(),
+            source_revision_ref: [0x66; 16],
+            mask: None,
+        })
+        .expect("private note");
+    let id = EntityId::from_hex(&receipt.id_hex).expect("id");
+    let pin = vault.pin_entity_revision(&id).expect("pin private body");
+    let private_body = note_body_of(&vault, &id);
+    // A NOTE birth body is immutable. A changed body is a new public take that
+    // derives from and supersedes the private one.
+    let public = facade_for(&vault, owner)
+        .author_take(TakeTarget::Subject(owner), "public current note")
+        .expect("public take");
+    let public_id = EntityId::from_hex(&public.id_hex).expect("public id");
+    vault
+        .batch()
+        .edge(&public_id, EdgeKind::DerivedFrom, &id, 1.0)
+        .edge(&public_id, EdgeKind::Supersedes, &id, 1.0)
+        .commit()
+        .expect("link the public take to the private note");
+    let public_body = note_body_of(&vault, &public_id);
+
+    // Scoped reads need logged proof; an asserted actor key alone reads nothing.
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"versioned notes fixture").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let read_key = |actor: EntityId| {
+        let mut claims = root.claims.clone();
+        claims.slip_id = *blake3::hash(actor.as_bytes()).as_bytes();
+        claims.holder_ref = actor.to_hex();
+        claims.actor_class = Some("human".into());
+        let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+        let signature = issuer.binding_proof(&slip, b"versioned-notes").unwrap();
+        let proof = vault
+            .verify_capability_slip(&issuer, &slip, b"versioned-notes", &signature)
+            .unwrap();
+        ScopedReadActorKey::from_verified_slip(&proof).unwrap()
+    };
+    let owner_read = vault.scoped_read(read_key(owner));
+    let other_read = vault.scoped_read(read_key(other));
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = other_read
+        .get_entity_parts_with_mode_with_receipt(&public_id, ReadMode::Live, None)
+        .unwrap();
+    let (_, _, live) = value.unwrap();
+    assert_eq!(crate::note::decode_note_body(&live).unwrap(), public_body);
+    let owner_memory = facade_for(&vault, owner);
+    let other_memory = facade_for(&vault, other);
+    for mode in [ReadMode::Indexed, ReadMode::Pinned(pin)] {
+        assert!(
+            other_memory
+                .get_entity_with_mode(&receipt.id_hex, mode)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            owner_memory
+                .get_entity_with_mode(&receipt.id_hex, mode)
+                .unwrap()
+                .is_some()
+        );
+        let denied = other_read
+            .get_entity_parts_with_mode_with_receipt(&id, mode, None)
+            .unwrap();
+        assert!(denied.value.is_none());
+        assert_eq!(denied.receipt.suppressed_count, 1);
+        let denied = other_read
+            .get_entities_parts_with_modes_with_receipt(&[(id, mode)], None)
+            .unwrap();
+        assert!(denied.value[0].is_none());
+        assert_eq!(denied.receipt.suppressed_count, 1);
+        assert!(
+            denied
+                .receipt
+                .narrowed_axes
+                .iter()
+                .any(|axis| axis == "row_authority")
+        );
+        let permitted = owner_read
+            .get_entities_parts_with_modes_with_receipt(&[(id, mode)], None)
+            .unwrap();
+        assert!(permitted.value[0].is_some());
+        assert_eq!(permitted.receipt.suppressed_count, 0);
+        let permitted = owner_read
+            .get_entity_parts_with_mode_with_receipt(&id, mode, None)
+            .unwrap();
+        assert_eq!(permitted.receipt.suppressed_count, 0);
+        let (_, _, bytes) = permitted.value.unwrap();
+        assert_eq!(crate::note::decode_note_body(&bytes).unwrap(), private_body);
+    }
+
+    let (_, hash) = crate::entity_id::parse_short_ref_syntax(&receipt.entity_ref).unwrap();
+    let mut pack = vault
+        .context_pack()
+        .search_text("no-such-note-probe", 1)
+        .run()
+        .unwrap();
+    pack.results = vec![ContextEntity {
+        id,
+        short_id: receipt.entity_ref,
+        content_hash: hash,
+        source_revision_ref: Some(pin.0),
+        entity_type: ENTITY_TYPE_NOTE,
+        score: 1.0,
+        critical: false,
+        fields: None,
+        edges: None,
+        vector: None,
+    }];
+    let mut owner_pack = pack.clone();
+    owner_read.filter_context_pack(&mut owner_pack).unwrap();
+    assert_eq!(owner_pack.results.len(), 1);
+    other_read.filter_context_pack(&mut pack).unwrap();
+    assert!(pack.results.is_empty());
 }

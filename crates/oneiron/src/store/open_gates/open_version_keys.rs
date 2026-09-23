@@ -10,6 +10,16 @@ use super::vault_root_bind::VaultRootIdentity;
 
 pub const MAX_DBS: u32 = 32;
 
+/// v19 (Wave 7): stored meanings changed with no version move — SlipMint
+/// authority rows, the esign `ResealRequested` event, `conversation.summary`
+/// covers and old room threads, the append pin for unmigrated records, and
+/// the new SESSION, ASSET and SUMMARY indexes, which have no backfill. Every
+/// NOTE and ASSET now carries one birth `FacetOf` stamp, the vault default
+/// facet is a `vault.default_facet` claim on the owner, and a NOTE's head
+/// pointer and head sequence are stored beside its documents. ABI 18 vaults
+/// fail closed at the ABI gate — there is no migration pass; rebuild the
+/// vault.
+///
 /// v18 (OF-494, ARCH-0058): byte-space v3.1 family reflow. Exactly ABI 17
 /// migrates, in one transaction over entity envelopes, type_index, sid_counter
 /// and kind_reg. Sources are staged before any deletes; ABI 16 and older fail
@@ -81,17 +91,9 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 18;
+pub const STORAGE_ABI_VERSION: u16 = 19;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
-
-/// Only ABI 17 is eligible for the v3.1 four-site re-key. Older vaults fail closed.
-pub(in crate::store) const STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR: u16 = 17;
-
-const _: () = assert!(
-    STORAGE_ABI_VERSION == 18,
-    "delete the v3.1 re-key branch before the next ABI bump"
-);
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

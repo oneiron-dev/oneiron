@@ -171,31 +171,44 @@ pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
                 return Err(invalid("NOTE birth provenance binding"));
             }
         }
-        if row.head != row.entity_id && !row.authorship.is_empty() {
+        if row.head != row.entity_id
+            && heads.get(&row.entity_id) != Some(&row.head)
+            && !row.authorship.is_empty()
+        {
             return Err(invalid("proposal value claims authority"));
         }
     }
+    // A switch moves the head to its fork; a merge or reject keeps it.
+    let mut switched = BTreeSet::new();
     for row in &snapshot.head_move_receipts {
         let receipt = row.decode()?;
-        if !cores.contains_key(&row.entity_id)
-            || receipt.previous_head != receipt.note
-            || receipt.head != receipt.note
-        {
+        let head_binding = match receipt.verdict {
+            crate::note::NoteVerdict::Switch => receipt.head == receipt.fork,
+            _ => receipt.head == receipt.previous_head,
+        };
+        if !cores.contains_key(&row.entity_id) || !head_binding {
             return Err(invalid("receipt canonical identity"));
         }
-        if docs.contains(&(row.entity_id, *receipt.fork.as_bytes())) {
+        if receipt.verdict == crate::note::NoteVerdict::Switch {
+            switched.insert((row.entity_id, *receipt.head.as_bytes()));
+        }
+        let fork = *receipt.fork.as_bytes();
+        if docs.contains(&(row.entity_id, fork)) && heads.get(&row.entity_id) != Some(&fork) {
             return Err(invalid("decided proposal retains text"));
         }
     }
     for entity in cores.keys() {
-        if heads.get(entity) != Some(entity) || !docs.contains(&(*entity, *entity)) {
+        if heads
+            .get(entity)
+            .is_none_or(|head| !docs.contains(&(*entity, *head)))
+        {
             return Err(invalid("live NOTE has no canonical document value"));
         }
     }
     for row in &snapshot.document_heads {
         if !cores.contains_key(&row.entity_id)
-            || row.head != row.entity_id
-            || !docs.contains(&(row.entity_id, row.entity_id))
+            || (row.head != row.entity_id && !switched.contains(&(row.entity_id, row.head)))
+            || !docs.contains(&(row.entity_id, row.head))
         {
             return Err(invalid("canonical document identity"));
         }

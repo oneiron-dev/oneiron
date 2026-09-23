@@ -26,7 +26,14 @@ pub(super) fn request_challenge(timestamp: u64, nonce: &[u8], now: u64) -> Resul
         return Err(invalid_authority());
     }
     let nonce = std::str::from_utf8(nonce).map_err(|_| invalid_authority())?;
-    Ok(format!("oneiron-request:{timestamp}:{nonce}").into_bytes())
+    Ok(holder_proof_challenge(timestamp, nonce))
+}
+
+/// The challenge a slip holder signs, through the slip's binding transcript,
+/// to prove it holds the binding key.
+#[must_use]
+pub fn holder_proof_challenge(timestamp: u64, nonce: &str) -> Vec<u8> {
+    format!("oneiron-request:{timestamp}:{nonce}").into_bytes()
 }
 
 /// Three fixed rows cover the previous/current/next signed minute. A slot can

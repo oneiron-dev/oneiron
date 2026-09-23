@@ -1,4 +1,4 @@
-//! Grant and pact authorization with EmptyAxis coupling, guest-share stripping, and the closed-subgraph filter pass.
+//! Grant and pact authorization resolving the requested position under the grant ceiling, guest-share stripping, and the closed-subgraph filter pass.
 
 use std::collections::BTreeSet;
 
@@ -23,8 +23,11 @@ use crate::sync::loro_support::{
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 
-use super::codec::{EmptyAxis, SyncSelector, SyncSelectorWorld, selector_err};
-use super::scope::{coreference_export_context, entity_selector_decision, facet_scope_by_source};
+use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
+use super::scope::{
+    band_filter, coreference_export_context, entity_selector_decision, facet_filter,
+    facet_scope_by_source,
+};
 
 /// Validates that a selector is backed by a matching federation grant, stays
 /// under the effective scope ceiling of every pact bound to that grant, and —
@@ -55,18 +58,14 @@ pub(super) fn authorize_sync_selector_at(
     authorize_selector_export(vault, grant_scope, selector, now_secs).map(|_| ())
 }
 
-/// [`authorize_sync_selector`], plus the [`EmptyAxis`] reading the export path
+/// [`authorize_sync_selector`], plus the resolved position the export path
 /// must then filter under.
-///
-/// Both answers come from ONE pass because both come from ONE fact — whether a
-/// pact binds this grant. Splitting them would let the filter read an axis the
-/// ceiling check credited differently, which is the whole OF-453 L3 defect.
 pub(super) fn authorize_selector_export(
     vault: &Vault,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
     now_secs: u64,
-) -> Result<EmptyAxis> {
+) -> Result<FederationDirectionScope> {
     let raw = vault
         .get_raw(&selector.grant_id)?
         .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
@@ -97,17 +96,9 @@ pub(super) fn authorize_selector_export(
     // Pact scope ceiling (ONE-1591): an operative pact-bound grant carries no
     // more than the meet of every bound pact's effective scope. The flat
     // `grant.scope` equality above answers a different question and is not a
-    // substitute for it. Unpacted grants have no pact and keep legacy-allow —
-    // on the export path too, which is what `EmptyAxis` carries out of here.
-    let empty = match effective_scope_for_grant(&fold, &selector.grant_id) {
-        None => EmptyAxis::Bottom,
-        Some(ceiling) => {
-            if !selector_direction_scope(selector).is_narrowing_of(&ceiling) {
-                return Err(selector_err(SelectorError::GrantScopeMismatch));
-            }
-            EmptyAxis::Bottom
-        }
-    };
+    // substitute for it.
+    let position =
+        resolve_selector_position(selector, &ceiling_for_grant(&fold, &selector.grant_id))?;
     // Delegate expiry (ONE-1409): the LAST arm of the door, so a delegate that
     // is also inactive or over its ceiling still denies for those reasons
     // first. Expiry is checked here rather than at mint time because a stored
@@ -118,33 +109,46 @@ pub(super) fn authorize_selector_export(
     if !grant.confers_at(now_secs) {
         return Err(selector_err(SelectorError::GrantExpired));
     }
-    Ok(empty)
+    Ok(position)
 }
 
-/// Reads a selector's wire semantics as a federation direction scope.
-///
-/// OF-453 L3 (owner ruling R-20260807 §6): an empty facet or band vector NEVER
-/// decodes as "everything". Both axes are kind-tagged, so silence maps to the
-/// lattice ⊥ — a narrowing of every ceiling that requests nothing — and `All`
-/// on either axis is reachable only from a pact, never from a selector.
-pub(super) fn selector_direction_scope(selector: &SyncSelector) -> FederationDirectionScope {
-    FederationDirectionScope {
-        worlds: match selector.world {
-            SyncSelectorWorld::All => FederationScopeWorlds::All,
-            SyncSelectorWorld::Base => FederationScopeWorlds::Base,
-            SyncSelectorWorld::World(id) => FederationScopeWorlds::Worlds(vec![id.entity_id()]),
-        },
-        facets: if selector.facets.is_empty() {
-            FederationScopeFacets::Bottom
-        } else {
-            FederationScopeFacets::Some(selector.facets.clone())
-        },
-        bands: if selector.bands.is_empty() {
-            FederationScopeBands::Bottom
-        } else {
-            FederationScopeBands::Some(selector.bands.clone())
-        },
+/// The position `selector` requests under `ceiling`: an unnarrowed axis takes
+/// the ceiling's, a named one keeps its set. A named axis outside the ceiling
+/// is refused, never clamped.
+pub(super) fn resolve_selector_position(
+    selector: &SyncSelector,
+    ceiling: &FederationDirectionScope,
+) -> Result<FederationDirectionScope> {
+    let worlds = match selector.world {
+        SyncSelectorWorld::All => FederationScopeWorlds::All,
+        SyncSelectorWorld::Base => FederationScopeWorlds::Base,
+        SyncSelectorWorld::World(id) => FederationScopeWorlds::Worlds(vec![id.entity_id()]),
+    };
+    if !worlds.is_narrowing_of(&ceiling.worlds)
+        || !selector.facets.within(&ceiling.facets)
+        || !selector.bands.within(&ceiling.bands)
+    {
+        return Err(selector_err(SelectorError::GrantScopeMismatch));
     }
+    Ok(FederationDirectionScope {
+        worlds,
+        facets: selector.facets.resolve(&ceiling.facets),
+        bands: selector.bands.resolve(&ceiling.bands),
+    })
+}
+
+/// The facet and band ceiling of `grant_id`: the meet of its bound pacts, or
+/// every axis open when it is unpacted. The grant's `authority_scope` still
+/// bounds each exported record.
+pub(super) fn ceiling_for_grant(
+    fold: &AuthorityFold,
+    grant_id: &EntityId,
+) -> FederationDirectionScope {
+    effective_scope_for_grant(fold, grant_id).unwrap_or(FederationDirectionScope {
+        worlds: FederationScopeWorlds::All,
+        facets: FederationScopeFacets::All,
+        bands: FederationScopeBands::All,
+    })
 }
 
 /// Axis-wise meet of the effective scope of every pact bound to `grant_id`, or
@@ -241,7 +245,7 @@ pub(super) fn filter_window_doc(
     key: &WindowKey,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
-    empty: EmptyAxis,
+    position: &FederationDirectionScope,
 ) -> Result<LoroDoc> {
     // A selector must not trigger Observer A with unselected NOTE sidecars.
     // Refresh a detached window, then copy only owners that pass this filter.
@@ -281,8 +285,9 @@ pub(super) fn filter_window_doc(
         tombstoned.insert(id);
     });
 
+    let facets = facet_filter(position);
     let facet_scope =
-        facet_scope_by_source(vault, &rtxn, &source_entities, &source_edges, selector)?;
+        facet_scope_by_source(vault, &rtxn, &source_entities, &source_edges, position)?;
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
     let mut custody_ids = BTreeSet::new();
     map_for_each_value_bytes(&source_entities, |key, blob| {
@@ -370,13 +375,13 @@ pub(super) fn filter_window_doc(
             grant_scope,
             selector,
             &facet_scope,
-            empty,
+            position,
             &coreference,
         ) else {
             return;
         };
         candidates.insert(id);
-        if selector.facet_filter_active(empty) {
+        if facets.is_some() {
             if decision.facet_visible {
                 kept.insert(id);
             }
@@ -398,7 +403,7 @@ pub(super) fn filter_window_doc(
         return Err(error);
     }
     drop(rtxn);
-    if selector.facet_filter_active(empty) {
+    if facets.is_some() {
         kept.extend(seeds.iter().copied());
         map_for_each_value_bytes(&source_edges, |raw_key, maybe_value| {
             if maybe_value.is_none() {
@@ -463,7 +468,11 @@ pub(super) fn filter_window_doc(
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
-        if kept.contains(&id) || !selector.any_filter_active(empty) {
+        if kept.contains(&id)
+            || (facets.is_none()
+                && band_filter(position).is_none()
+                && matches!(selector.world, SyncSelectorWorld::All))
+        {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);
         }
     });

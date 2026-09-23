@@ -101,6 +101,7 @@ pub enum ErrorKind {
     InvalidFacet,
     InvalidRelationship,
     InvalidFacetOfEdge,
+    FacetStampImmutable,
     InvalidClaimBody,
     InvalidPsychProfileBody,
     InvalidPersonaSnapshot,

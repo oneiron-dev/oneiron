@@ -1894,7 +1894,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 4,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -2007,7 +2007,8 @@
      "path": "src/authority/slip_replay.rs",
      "purpose": "Bounded, timestamp-bound replay windows for authenticated slip requests",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -2476,7 +2477,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/batch/base_apply.rs",
@@ -2988,7 +2989,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -3190,7 +3191,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/batch/tests/facet_taint_session.rs",
@@ -3298,7 +3299,7 @@
      "path": "src/batch/txn_builder.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 15,
       "struct": 1
      }
@@ -5176,7 +5177,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/calendar/connectors/outbound/tests.rs",
@@ -7432,12 +7433,13 @@
      "path": "src/claim/scope_stamp.rs",
      "purpose": "Required record-position Scope stamps and the versioned CLAIM wire upgrade",
      "surface": {
-      "crate-vis": 4,
-      "fn": 4
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 7
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/claim/scope_stamp/tests.rs",
@@ -15915,7 +15917,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Digest-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -20906,8 +20908,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 22,
-      "fn": 5,
+      "crate-vis": 23,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -21465,7 +21467,7 @@
      "path": "src/note/documents.rs",
      "purpose": "Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 19,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -21567,7 +21569,7 @@
      "surface": {
       "crate-vis": 7,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -21614,7 +21616,7 @@
      "path": "src/note/recovery.rs",
      "purpose": "Host-local history-free recovery of uncited NOTE values",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -21634,11 +21636,11 @@
      "path": "src/note/storage.rs",
      "purpose": "Canonical entity-document carriers shared by local NOTE edits and sync",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/note/sync_tests.rs",
@@ -21654,14 +21656,14 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/note/verbs.rs",
      "purpose": "Actor-bound NOTE creation, edit and source-entity bridge",
      "surface": {
       "crate-vis": 1,
-      "fn": 4
+      "fn": 6
      }
     },
     {
@@ -27336,8 +27338,9 @@
      "purpose": "Persisted customization settings and client-visible change events",
      "surface": {
       "const": 3,
+      "crate-vis": 2,
       "enum": 2,
-      "fn": 13,
+      "fn": 15,
       "mod": 1,
       "re-export": 1,
       "struct": 7
@@ -28829,7 +28832,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 11
      }
@@ -28861,7 +28864,7 @@
      "path": "src/store/open_gates/mod.rs",
      "purpose": "`Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "re-export": 1
      }
     },
@@ -28897,7 +28900,7 @@
      "purpose": "Version stamps, vault-meta key consts, HNSW layout consts, error strings, process locks, DB manifest, and…",
      "surface": {
       "const": 5,
-      "crate-vis": 42,
+      "crate-vis": 41,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -29165,9 +29168,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/structural_kind_registry/mod.rs",
-     "purpose": "Vault-scoped dynamic entity-type/kind registry: registration, load and rebuild, zone validation, and the…",
+     "purpose": "Vault-scoped dynamic entity-type/kind registry: registration, load and rebuild, and zone validation",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 2
      }
     },
     {
@@ -29177,17 +29180,7 @@
      "path": "src/store/structural_kind_registry/registry.rs",
      "purpose": "Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules",
      "surface": {
-      "crate-vis": 16
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/store/structural_kind_registry/rekey.rs",
-     "purpose": "One-shot byte-space v3.1 type-byte migration over entities, type_index, counters, and registry rows",
-     "surface": {
-      "crate-vis": 5
+      "crate-vis": 15
      }
     },
     {
@@ -29670,7 +29663,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/sync/chunks/tests.rs",
@@ -29698,7 +29691,7 @@
      "path": "src/sync/client/documents.rs",
      "purpose": "Document import and durable local-journal confirmation on the one socket",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -29799,7 +29792,7 @@
      "path": "src/sync/client/types.rs",
      "purpose": "Sync client configuration, events, and sync_state key constants",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 1,
       "struct": 2
@@ -29887,8 +29880,8 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 7,
-      "fn": 12,
+      "crate-vis": 10,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -30063,7 +30056,7 @@
      "purpose": "Entity document access through the vault's canonical window/selector owner",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -30373,9 +30366,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/authorize.rs",
-     "purpose": "Grant and pact authorization with EmptyAxis coupling, guest-share stripping, and the closed-subgraph filter…",
+     "purpose": "Grant and pact authorization resolving the requested position under the grant ceiling, guest-share…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -30383,6 +30376,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "RequestedAxis",
       "SelectorVvRequest",
       "SyncSelector",
       "SyncSelectorWorld"
@@ -30391,9 +30385,9 @@
      "purpose": "Selector wire types, strict MessagePack encode/decode with key validators, and the filtered-doc/envelope…",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
-      "enum": 1,
-      "fn": 8,
+      "crate-vis": 12,
+      "enum": 2,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -30404,7 +30398,7 @@
      "path": "src/sync/selector/document_admission.rs",
      "purpose": "Transaction-bound peer document admission from stored ledger truth",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -30445,7 +30439,7 @@
      "path": "src/sync/selector/scope.rs",
      "purpose": "Export scope tables: coreference consent context, per-source facet scope mirror, and per-entity decisions",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -30522,16 +30516,6 @@
       "crate-vis": 2,
       "fn": 9,
       "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/sync/window/abi18.rs",
-     "purpose": "One-shot conversion of persisted v17 live window envelopes before replay",
-     "surface": {
-      "crate-vis": 2
      }
     },
     {
@@ -30615,7 +30599,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 6,
       "mod": 1,
       "re-export": 5,
@@ -31699,7 +31683,7 @@
      "path": "src/vault/actors_memory.rs",
      "purpose": "Vault actor binding, structural kinds and code-memory attachment",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 22,
       "struct": 1
      }
@@ -31858,7 +31842,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 5,
       "struct": 1
      }
@@ -32867,7 +32851,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/write_envelope/tests.rs",
@@ -34723,7 +34707,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 49,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34751,7 +34735,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 101,
+     "files": 100,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34884,9 +34868,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 6,
+   "over_bar": 7,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
+   "source_files": 2061,
    "test_files": 703
   },
   "oneiron-android": {
@@ -40187,7 +40171,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/handler/documents.rs",
@@ -40255,11 +40239,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/handler/note_socket_tests.rs",
-     "purpose": "Document socket writes recheck the live grant, not the cached subscription",
+     "purpose": "Real websocket NOTE commands: actor binding, durable pins, reviewed edits",
      "surface": {}
     },
     {

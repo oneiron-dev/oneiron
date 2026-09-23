@@ -60,6 +60,7 @@ impl Memory<'_> {
             scope: NoteScope::About(target),
             markdown: markdown.into(),
             source_revision_ref: *self.vault.store.clock.entity_id()?.as_bytes(),
+            mask: None,
         })
     }
 
@@ -110,6 +111,7 @@ impl Memory<'_> {
             }
             self.vault
                 .batch_in()
+                .mask(envelope.mask)
                 .put_authored_note(&note_id, &self.actor, occurred, at, &body)
                 .edge(
                     &note_id,

@@ -17,13 +17,21 @@ pub(super) fn admit_pin_disclosure(
     pin: &NotePin,
 ) -> Result<()> {
     super::citation_erase::validate_pins(vault, txn, std::slice::from_ref(pin))?;
-    crate::sync::selector::admit_note_in_txn(vault, txn, pin.document, scope, selector, None)?;
+    let position =
+        crate::sync::selector::admit_note_in_txn(vault, txn, pin.document, scope, selector, None)?;
     let claim = vault
         .get_claim_in_txn(txn, &pin.claim)?
         .ok_or_else(|| invalid("citation claim missing"))?;
     let identity = crate::federation::selector_range_of(crate::registry::ENTITY_TYPE_CLAIM)
         .ok_or_else(|| invalid("citation claim outside selector"))?;
-    if !selector.bands.is_empty() && !selector.bands.iter().any(|band| band.includes(identity)) {
+    let band_passes = match &position.bands {
+        crate::federation::FederationScopeBands::All => true,
+        crate::federation::FederationScopeBands::Some(bands) => {
+            bands.iter().any(|band| band.includes(identity))
+        }
+        crate::federation::FederationScopeBands::Bottom => false,
+    };
+    if !band_passes {
         return Err(invalid("citation claim outside selector"));
     }
     if let Some(world) = claim.world {
@@ -66,6 +74,15 @@ pub(crate) fn import_note_from_authority(
     kind: u8,
     bytes: &[u8],
 ) -> Result<()> {
+    let (head, rest) = bytes
+        .split_at_checked(crate::entity_id::ENTITY_ID_LEN)
+        .ok_or_else(|| invalid("NOTE frame head"))?;
+    let (seq, bytes) = rest
+        .split_at_checked(8)
+        .ok_or_else(|| invalid("NOTE frame head"))?;
+    let head = EntityId::from_bytes(head.try_into().map_err(|_| invalid("NOTE frame head"))?)
+        .map_err(|_| invalid("NOTE frame head"))?;
+    let seq = u64::from_be_bytes(seq.try_into().map_err(|_| invalid("NOTE frame head"))?);
     vault.with_write_txn(|txn| {
         if vault
             .store
@@ -79,6 +96,19 @@ pub(crate) fn import_note_from_authority(
         if vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
             return Err(invalid("NOTE was erased"));
         }
+        // A new head arrives only as a STATE with a higher head sequence; an
+        // UPDATE must name the head this replica holds. A stale frame cannot
+        // undo a later switch.
+        let (own_head, own_seq) = super::documents::head_in(&vault.store, txn, id)?;
+        let new_head = match kind {
+            document_sub_tags::STATE if seq > own_seq => true,
+            document_sub_tags::STATE | document_sub_tags::UPDATE
+                if head == own_head && seq == own_seq =>
+            {
+                false
+            }
+            _ => return Err(invalid("stale NOTE head")),
+        };
         let staged = match kind {
             document_sub_tags::STATE => loro::LoroDoc::new(),
             document_sub_tags::UPDATE => {
@@ -87,6 +117,30 @@ pub(crate) fn import_note_from_authority(
             _ => return Err(invalid("invalid NOTE authority frame")),
         };
         crate::sync::documents::storage::import_complete(&staged, bytes)?;
+        if new_head {
+            // A STATE for a new head replaces the document; the checks below
+            // compare documents of one head.
+            super::documents::set_head(&vault.store, txn, id, head, seq)?;
+            let next = NoteDocument::from_loro(id, staged)?;
+            let floor_key = super::citation_scrub::authority_floor_key(id);
+            if vault
+                .store
+                .vault_meta
+                .get(txn, floor_key.as_bytes())?
+                .is_some()
+            {
+                vault.store.vault_meta.put(
+                    txn,
+                    floor_key.as_bytes(),
+                    &next.doc.oplog_vv().encode(),
+                )?;
+            }
+            super::citation_erase::validate_pins(vault, txn, &next.pins()?)?;
+            for pin in &next.view()?.pins {
+                pin.validate()?;
+            }
+            return persist(vault, txn, &next);
+        }
         let floor_key = super::citation_scrub::authority_floor_key(id);
         let authority_floor = vault.store.vault_meta.get(txn, floor_key.as_bytes())?;
         let required = match &authority_floor {

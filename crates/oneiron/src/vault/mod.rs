@@ -45,6 +45,7 @@ pub(crate) use self::entities::MAX_TYPE_QUERY_RESULTS;
 pub(crate) use self::entities::{
     LiveEntityRow, entity_id_from_type_index_key, live_entity_row_in_txn, require_key_len,
 };
+pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {

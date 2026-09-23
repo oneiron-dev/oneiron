@@ -99,16 +99,11 @@ impl State {
                 .forks
                 .get(&row.fork)
                 .ok_or(invalid("NOTE receipt fork absent"))?;
-            if !fork.decided
-                || fork.note != row.note
-                || !landed.insert(row.fork)
-                || row.previous_head != row.note
-                || row.head != row.note
-            {
+            if !fork.decided || fork.note != row.note || !landed.insert(row.fork) {
                 return Err(invalid("NOTE receipt binding"));
             }
             match row.verdict {
-                crate::note::NoteVerdict::Switch if row.head == row.note => {}
+                crate::note::NoteVerdict::Switch if row.head == row.fork => {}
                 crate::note::NoteVerdict::Merge
                     if !fork.rewrite && row.head == row.previous_head => {}
                 crate::note::NoteVerdict::Reject

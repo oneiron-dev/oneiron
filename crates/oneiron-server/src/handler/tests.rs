@@ -3726,7 +3726,7 @@ async fn document_batch_exchange(version: u8) {
                 &empty_selector,
                 &VersionVector::default().encode(),
             )
-            .is_err()
+            .is_ok()
     );
     manager.documents().subscribe_entity(id, &selector).unwrap();
     let requests = manager.documents().request_frames().unwrap();

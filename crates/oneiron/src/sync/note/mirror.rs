@@ -52,10 +52,16 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
     state.cores.retain(|note, _| !removed.contains(note));
     for note in local.difference(&removed) {
         let prefix = format!("note_proposal_doc:v1:{}:", note.to_hex());
+        // The head's document rides the text plane, never a window.
+        let (head, _) = crate::note::documents::head_in(&vault.store, &txn, *note)?;
         for row in vault.store.sync_state.prefix_iter(&txn, &prefix)? {
             let (key, raw) = row?;
+            let fork = id(&key[prefix.len()..])?;
+            if fork == head {
+                continue;
+            }
             state.docs.insert(
-                (*note, id(&key[prefix.len()..])?),
+                (*note, fork),
                 crate::note::documents::proposal_text(*note, &raw)?,
             );
         }

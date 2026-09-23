@@ -79,8 +79,10 @@ pub use predicate_grammar::*;
 pub use predicate_validators::*;
 pub(crate) use read::*;
 pub(crate) use scope::*;
-pub(crate) use scope_stamp::upgrade_pre_scope_body;
-pub use scope_stamp::{base_world_id, default_project_id, substrate_facet_id};
+pub use scope_stamp::{
+    PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
+};
+pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
 pub use scoped_read::*;
 pub use source_trust::*;
 pub use status::*;

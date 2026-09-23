@@ -73,6 +73,7 @@ pub(super) fn apply_ops_with_origin(
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
     let hub_admission = gate_mode.hub_admission;
+    let birth_mask = gate_mode.birth_mask;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
@@ -155,6 +156,59 @@ pub(super) fn apply_ops_with_origin(
                     allow_reserved_predicate,
                     hub_sync_imported,
                 )?;
+                let replicated = allow_maintenance && allow_reserved_predicate;
+                if let Some(facet) =
+                    birth_stamp_target(store, wtxn, id, entity_type, replicated, birth_mask)?
+                {
+                    let owner = crate::vault::embedded_owner_actor_id()?;
+                    if birth_mask.is_none()
+                        && facet == crate::claim::substrate_facet_id(owner)
+                        && stored_entity_type(store, wtxn, &owner)?.is_none()
+                    {
+                        apply_ops_with_origin(
+                            store,
+                            config,
+                            analyzer,
+                            wtxn,
+                            vec![BatchOp::Put {
+                                id: owner,
+                                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                                occurred,
+                                learned_at,
+                                data: crate::vault::encode_embedded_owner_actor_body()?,
+                                allow_maintenance: false,
+                                allow_reserved_predicate: false,
+                                hub_sync_imported: false,
+                            }],
+                            text_index_trusted,
+                            ApplyOpsGateMode::new(
+                                record_gate_decisions,
+                                persist_gate_pending_consent,
+                            ),
+                            origin,
+                        )?;
+                    }
+                    let found = stored_entity_type(store, wtxn, &facet)?;
+                    if found != Some(crate::registry::ENTITY_TYPE_FACET) {
+                        return Err(Error::Registry(RegistryError::InvalidFacet {
+                            facet,
+                            found,
+                        }));
+                    }
+                    apply_edge_with_created_at(
+                        store,
+                        wtxn,
+                        id,
+                        crate::edge::EdgeKind::FacetOf,
+                        facet,
+                        1.0,
+                        learned_at,
+                        crate::affect::Vad::NEUTRAL,
+                        None,
+                    )?;
+                    ppr::invalidate_ppr_for_edge(store, wtxn, &id, &facet)?;
+                    had_graph_mutation = true;
+                }
                 let preflight_decision_id = if entity_type == crate::registry::ENTITY_TYPE_CLAIM
                     && !allow_reserved_predicate
                 {
@@ -180,7 +234,7 @@ pub(super) fn apply_ops_with_origin(
                     // (`put_replicated` → here). The replicated arm of
                     // `apply_put` deindexes the loser's BM25F postings on a
                     // body-changing overwrite, same-txn (ARCH-0031 amendment).
-                    allow_maintenance && allow_reserved_predicate,
+                    replicated,
                     hub_sync_imported,
                     hub_admission.as_ref(),
                     later_text_coverage_by_op[op_index],
@@ -522,6 +576,18 @@ pub(super) fn apply_ops_with_origin(
                 had_vector_mutation |= had_vector;
             }
             BatchOp::DeleteEdge { src, kind, tgt } => {
+                // Deleting or purging the source removes its stamp with it;
+                // a live NOTE or ASSET keeps the one it was born with.
+                if kind == crate::edge::EdgeKind::FacetOf
+                    && matches!(
+                        stored_entity_type(store, wtxn, &src)?,
+                        Some(
+                            crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
+                        )
+                    )
+                {
+                    return Err(Error::Registry(RegistryError::FacetStampImmutable { src }));
+                }
                 if apply_delete_edge(store, wtxn, src, kind, tgt)? {
                     ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
                     had_graph_mutation = true;
@@ -775,4 +841,31 @@ fn validate_put_type(
         store.validate_public_entity_type(entity_type)?;
     }
     Ok((entity_type, data))
+}
+
+/// The FACET a NOTE or ASSET put at `id` is born under: the batch mask, else
+/// the vault default. `None` when the put births nothing that carries a stamp —
+/// a put over a stored row, another kind, or a replicated put, whose origin's
+/// `FacetOf` edge arrives in the same window.
+fn birth_stamp_target(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    replicated: bool,
+    mask: Option<EntityId>,
+) -> Result<Option<EntityId>> {
+    if replicated
+        || !matches!(
+            entity_type,
+            crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
+        )
+        || store.entities.get(txn, id.as_bytes())?.is_some()
+    {
+        return Ok(None);
+    }
+    match mask {
+        Some(mask) => Ok(Some(mask)),
+        None => crate::claim::default_facet_in(store, txn).map(Some),
+    }
 }

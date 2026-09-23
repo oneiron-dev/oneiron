@@ -430,6 +430,32 @@ impl Memory<'_> {
         self.actor_class
     }
 
+    /// The owner check: a human actor whose owner binding verifies.
+    pub fn verify_owner(&self) -> MemoryResult<()> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| MemoryError::from(crate::Error::from(error)))?;
+        self.verify_owner_in_txn(&txn)
+    }
+
+    pub(crate) fn verify_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+        if self.actor_class != EdgeActorClass::Human {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!(
+                    "actor class {} is not the vault owner",
+                    self.actor_class.gate_actor_class()
+                ),
+                &["Bind a human-class owner actor key."],
+            ));
+        }
+        verify_owner_actor_binding_in_txn(self.vault, txn, self.actor)
+    }
+
     pub(crate) fn with_verified_actor_write_txn<T>(
         &self,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,

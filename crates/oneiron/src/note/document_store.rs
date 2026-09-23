@@ -244,7 +244,10 @@ impl Memory<'_> {
             super::storage::snapshot(self.vault(), txn, note, &shallow.doc, false)?;
             self.vault().store.sync_state.put(
                 txn,
-                &format!("ssv:e:{}", note.to_hex()),
+                &format!(
+                    "ssv:e:{}",
+                    super::storage::slot(self.vault(), txn, note)?.to_hex()
+                ),
                 &shallow.doc.shallow_since_vv().to_vv().encode(),
             )?;
             Ok(())

@@ -437,7 +437,13 @@ impl ClaimCandidate {
         &self.predicate
     }
 
-    pub(crate) fn into_claim_body(self, envelope: &WriteEnvelope) -> ClaimBody {
+    /// The stored body. A candidate that names a facet keeps it; otherwise the
+    /// body carries `default_facet`, the vault default when the body is stored.
+    pub(crate) fn into_claim_body(
+        self,
+        envelope: &WriteEnvelope,
+        default_facet: EntityId,
+    ) -> ClaimBody {
         let mut body = ClaimBody::new(
             self.predicate,
             self.subject,
@@ -453,7 +459,7 @@ impl ClaimCandidate {
         body.source = Some(envelope.source());
         body.world = self.world;
         body.rel = self.relationship;
-        body.scope_facet = crate::claim::substrate_facet_id(envelope.actor().entity_ref());
+        body.scope_facet = default_facet;
         if let Some(Value::Map(entries)) = self.scope.as_ref() {
             for (key, value) in entries {
                 let id = match value {

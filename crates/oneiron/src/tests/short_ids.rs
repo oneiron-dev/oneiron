@@ -268,7 +268,7 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 18,
+        STORAGE_ABI_VERSION, 19,
         "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
@@ -303,7 +303,7 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
 #[test]
 fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 18,
+        STORAGE_ABI_VERSION, 19,
         "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
@@ -338,7 +338,7 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
 #[test]
 fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 18,
+        STORAGE_ABI_VERSION, 19,
         "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
@@ -373,7 +373,7 @@ fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<(
 #[test]
 fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 18,
+        STORAGE_ABI_VERSION, 19,
         "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
@@ -408,7 +408,7 @@ fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()>
 #[test]
 fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 18,
+        STORAGE_ABI_VERSION, 19,
         "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
@@ -443,7 +443,7 @@ fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<
 #[test]
 fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 18,
+        STORAGE_ABI_VERSION, 19,
         "ONE-1754 pins the current storage ABI at 17 for the byte-space v3 type-byte re-key",
     );
 
@@ -472,6 +472,32 @@ fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn open_rejects_an_abi_18_vault() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    {
+        let _vault = Vault::open(path, test_config())?;
+    }
+    set_raw_storage_abi_version(path, Some(18))?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to reject an ABI 18 vault"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::Store(StoreError::StorageAbiVersionChanged {
+                stored: Some(18),
+                current: STORAGE_ABI_VERSION,
+            })
+        ),
+        "{err:?}"
+    );
+    Ok(())
+}
+
 /// Both public and internal open paths must traverse the same strict ABI gate.
 /// The newer stored value exercises the anti-downgrade direction: an older
 /// reader whose `current` version is lower rejects a newer vault by the same
@@ -479,7 +505,7 @@ fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
 #[test]
 fn storage_abi_gate_runs_on_store_and_vault_open_paths() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 18,
+        STORAGE_ABI_VERSION, 19,
         "current readers must advertise ABI 17 after the byte-space v3 type-byte re-key",
     );
 

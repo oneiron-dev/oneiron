@@ -45,17 +45,22 @@ impl Default for SyncClientConfig {
     }
 }
 
-/// An actor credential for the explicit NOTE authority lane.
+/// An actor credential for the explicit NOTE authority lane: the slip token
+/// and the holder's signing key, whose public half is the slip's binding key.
 #[derive(Clone)]
 pub struct NoteSyncSession {
     token: String,
+    key: ed25519_dalek::SigningKey,
 }
 impl NoteSyncSession {
-    pub fn new(token: String) -> Self {
-        Self { token }
+    pub fn new(token: String, key: ed25519_dalek::SigningKey) -> Self {
+        Self { token, key }
     }
     pub(super) fn token(&self) -> &str {
         &self.token
+    }
+    pub(super) fn key(&self) -> &ed25519_dalek::SigningKey {
+        &self.key
     }
 }
 impl std::fmt::Debug for NoteSyncSession {

@@ -61,7 +61,7 @@ const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
 /// variant bits so the value is a well-formed UUID like every other
 /// [`EntityId`] — which also guarantees it can never collide with the
 /// all-zero/all-`0xFF` reserved sentinels [`EntityId::from_bytes`] rejects.
-pub(super) fn embedded_owner_actor_id() -> Result<EntityId> {
+pub(crate) fn embedded_owner_actor_id() -> Result<EntityId> {
     let digest = blake3::hash(EMBEDDED_OWNER_ACTOR_NAMESPACE);
     let mut bytes = [0u8; ENTITY_ID_LEN];
     bytes.copy_from_slice(&digest.as_bytes()[..ENTITY_ID_LEN]);
@@ -71,7 +71,7 @@ pub(super) fn embedded_owner_actor_id() -> Result<EntityId> {
 }
 
 /// Encodes the minimal PERSON body the bootstrap writes.
-pub(super) fn encode_embedded_owner_actor_body() -> Result<Vec<u8>> {
+pub(crate) fn encode_embedded_owner_actor_body() -> Result<Vec<u8>> {
     let value = rmpv::Value::Map(vec![(
         rmpv::Value::from("name"),
         rmpv::Value::from(EMBEDDED_OWNER_ACTOR_NAME),
@@ -589,10 +589,21 @@ impl Vault {
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
-        #[cfg(feature = "sync")]
-        crate::sync::window::upgrade_persisted_windows(&vault)?;
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
+            // The seeded births below stamp the owner's `substrate` FACET,
+            // which the owner PERSON put mints. Pinned at 0 like the bootstrap
+            // skills: the owner id is the same in every vault, so its seeded
+            // row is too, and a whole-vault import between vaults finds it
+            // unchanged.
+            // An erased owner stays erased.
+            vault.with_write_txn(|wtxn| {
+                let owner = embedded_owner_actor_id()?;
+                if !vault.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
+                    vault.stage_embedded_owner_actor_in_txn(wtxn, 0)?;
+                }
+                Ok(())
+            })?;
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::workspace_roster::seed_root_project(&vault)?;
         }

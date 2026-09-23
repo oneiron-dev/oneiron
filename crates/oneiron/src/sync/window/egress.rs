@@ -46,9 +46,18 @@ use loro::{CommitOptions, ExportMode, LoroDoc, VersionVector};
 /// normally. Edge targets are deliberately not re-tested: the K4 taint guard
 /// refuses any base edge naming a live overlay member, so `edges_out` over
 /// base rows cannot produce one.
-pub(super) fn window_packing_excludes_entity(vault: &Vault, id: &EntityId) -> Result<bool> {
+///
+/// A world flagged device-only (`device_only`, read once per packing pass)
+/// keeps its WORLD row, its claims and its NOTEs on this device too.
+pub(super) fn window_packing_excludes_entity(
+    vault: &Vault,
+    device_only: &std::collections::BTreeSet<EntityId>,
+    id: &EntityId,
+) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
-    if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, id)? {
+    if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, id)?
+        || crate::settings::device_only_withholds(&vault.store, &rtxn, device_only, id)?
+    {
         return Ok(true);
     }
     vault.store.off_record_sessions.contains_entity(id)
@@ -282,6 +291,10 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
     let entities_map = doc.get_map("entities");
     let tombstones_map = doc.get_map("tombstones");
     let edges_map = doc.get_map("edges");
+    let device_only = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::settings::device_only_worlds_in(&vault.store, &rtxn)?
+    };
 
     let mut replayed = 0u32;
 
@@ -304,7 +317,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         // Defer-sync egress door: a live overlay member is device-local until
         // explicit promotion. Keep the pending marker so the promoted turn can
         // flow through this ordinary path later.
-        if window_packing_excludes_entity(vault, id)? {
+        if window_packing_excludes_entity(vault, &device_only, id)? {
             continue;
         }
 
@@ -378,6 +391,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 // tombstone decodes HARD) once tombstone v2 lands in M4-06.
                 if !local_claim_sync_allowed(vault, &edge.target)?
                     || tombstone_map_contains_id(&tombstones_map, &edge.target)
+                    || window_packing_excludes_entity(vault, &device_only, &edge.target)?
                 {
                     continue;
                 }
@@ -430,6 +444,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             // the full mirror must not re-insert edges to deleted targets.
             if !local_claim_sync_allowed(vault, &edge.target)?
                 || tombstone_map_contains_id(&tombstones_map, &edge.target)
+                || window_packing_excludes_entity(vault, &device_only, &edge.target)?
             {
                 continue;
             }

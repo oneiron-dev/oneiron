@@ -343,3 +343,129 @@ fn note_core_rejects_a_parallel_document_head_field() {
     assert!(decode_note_body(&encode_map(fields.clone())).is_err());
     assert!(encode_note_body(&take("")).is_err());
 }
+
+fn facet_stamps(vault: &crate::Vault, id: EntityId) -> Vec<EntityId> {
+    vault
+        .edges_out(&id)
+        .unwrap()
+        .into_iter()
+        .filter(|edge| edge.kind == crate::edge::EdgeKind::FacetOf)
+        .map(|edge| edge.target)
+        .collect()
+}
+
+fn owner_fixture() -> (tempfile::TempDir, crate::Vault, crate::WriteActor) {
+    let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let actor = crate::WriteActor::new(owner, crate::edge::EdgeActorClass::Human);
+    (dir, vault, actor)
+}
+
+fn put_facet(vault: &crate::Vault, seed: u8) -> EntityId {
+    let facet = actor(seed);
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .unwrap();
+    facet
+}
+
+#[test]
+fn a_note_born_with_no_mask_carries_the_vault_default_facet() {
+    let (_dir, vault, owner) = owner_fixture();
+    let note = vault.create_note("research", "born", owner).unwrap();
+
+    assert_eq!(
+        facet_stamps(&vault, note),
+        vec![vault.default_facet().unwrap()]
+    );
+}
+
+#[test]
+fn a_note_born_under_a_mask_carries_that_mask() {
+    let (_dir, vault, owner) = owner_fixture();
+    let mask = put_facet(&vault, 0x51);
+    let receipt = vault
+        .memory(owner.entity_ref(), owner.actor_class())
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::Diary,
+            scope: NoteScope::ActorPrivate {
+                owner_ref: owner.entity_ref(),
+            },
+            markdown: "masked".to_owned(),
+            source_revision_ref: [0x52; 16],
+            mask: Some(mask),
+        })
+        .unwrap();
+    let note = EntityId::from_hex(&receipt.id_hex).unwrap();
+
+    assert_eq!(facet_stamps(&vault, note), vec![mask]);
+}
+
+#[test]
+fn fork_to_facet_births_a_linked_note_under_the_new_facet() {
+    let (_dir, vault, owner) = owner_fixture();
+    let note = vault.create_note("research", "origin", owner).unwrap();
+    let facet = put_facet(&vault, 0x53);
+    let fork = vault.fork_to_facet(note, facet, true, owner).unwrap();
+    let out: Vec<_> = vault
+        .edges_out(&fork)
+        .unwrap()
+        .into_iter()
+        .map(|edge| (edge.kind, edge.target))
+        .collect();
+
+    assert!(
+        out.contains(&(crate::edge::EdgeKind::FacetOf, facet))
+            && out.contains(&(crate::edge::EdgeKind::DerivedFrom, note))
+            && out.contains(&(crate::edge::EdgeKind::Supersedes, note))
+    );
+}
+
+#[test]
+fn fork_to_facet_leaves_the_origin_stamp_unchanged() {
+    let (_dir, vault, owner) = owner_fixture();
+    let note = vault.create_note("research", "origin", owner).unwrap();
+    let default = vault.default_facet().unwrap();
+    let facet = put_facet(&vault, 0x54);
+    vault.fork_to_facet(note, facet, true, owner).unwrap();
+
+    assert_eq!(facet_stamps(&vault, note), vec![default]);
+}
+
+#[test]
+fn a_pending_fork_suggestion_moves_nothing() {
+    let (_dir, vault, owner) = owner_fixture();
+    let note = vault.create_note("research", "origin", owner).unwrap();
+    let facet = put_facet(&vault, 0x55);
+    let agent = actor(0x56);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )
+        .unwrap();
+    vault
+        .suggest_facet_fork(
+            note,
+            facet,
+            crate::WriteActor::new(agent, crate::edge::EdgeActorClass::Agent),
+        )
+        .unwrap();
+
+    assert!(
+        vault
+            .edges_in(&note)
+            .unwrap()
+            .iter()
+            .all(|edge| edge.kind != crate::edge::EdgeKind::DerivedFrom)
+    );
+}

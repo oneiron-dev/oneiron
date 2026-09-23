@@ -142,7 +142,7 @@ fn reply_corruption_and_replay_after_delete_never_publish() {
 }
 
 #[test]
-fn manifest_and_want_requests_enforce_grant_scope_and_silent_facet_bottom() -> Result<()> {
+fn manifest_and_want_requests_enforce_grant_scope_and_asset_family() -> Result<()> {
     use crate::error::{SyncError, SyncProtocolValidation, SyncSelectorValidation};
     use crate::federation::{
         FederationGrant, FederationGrantPreset, FederationGrantRole, SelectorRange,
@@ -183,20 +183,26 @@ fn manifest_and_want_requests_enforce_grant_scope_and_silent_facet_bottom() -> R
         vec![SelectorRange::Family(TypeByteFamily::Content)],
     );
     for want in [None, Some(vec![manifest.chunks[0].hash])] {
-        selector.bands = vec![SelectorRange::Family(TypeByteFamily::Content)];
+        selector.bands =
+            crate::sync::RequestedAxis::Named(vec![SelectorRange::Family(TypeByteFamily::Content)]);
         let mut request = ChunkSyncRequest {
             oid: *oid.as_bytes(),
             selector: encode_sync_selector(&selector)?,
             have: vec![],
             want,
         };
-        // Every grant, unpacted included, reads a silent facet axis as the
-        // lattice bottom, and an ASSET row cannot carry a FacetOf stamp: even
-        // the asset's own family band exports nothing through this lane.
-        assert!(matches!(
-            serve_chunk_request(&vault, principal, scope, &encode_chunk_request(&request)?),
-            Err(Error::Artifact(ArtifactError::InvalidLfsObject(_)))
-        ));
+        let allowed =
+            serve_chunk_request(&vault, principal, scope, &encode_chunk_request(&request)?)?;
+        match decode::<ChunkSyncResponse>(&allowed)? {
+            ChunkSyncResponse::Manifest(bytes) => {
+                assert!(request.want.is_none());
+                assert_eq!(bytes, manifest.encode()?);
+            }
+            ChunkSyncResponse::Chunks(chunks) => {
+                assert!(request.want.is_some());
+                assert_eq!(chunks, vec![(manifest.chunks[0].hash, body.to_vec())]);
+            }
+        }
         assert!(matches!(
             serve_chunk_request(
                 &vault,
@@ -211,12 +217,116 @@ fn manifest_and_want_requests_enforce_grant_scope_and_silent_facet_bottom() -> R
             }))
         ));
         // This is a valid, principal-bound selector, but not for this asset.
-        selector.bands = vec![SelectorRange::Family(TypeByteFamily::People)];
+        selector.bands =
+            crate::sync::RequestedAxis::Named(vec![SelectorRange::Family(TypeByteFamily::People)]);
         request.selector = encode_sync_selector(&selector)?;
         assert!(matches!(
             serve_chunk_request(&vault, principal, scope, &encode_chunk_request(&request)?),
             Err(Error::Artifact(ArtifactError::InvalidLfsObject(_)))
         ));
     }
+    Ok(())
+}
+
+/// One stored object and a Viewer grant for `principal`, whose authority
+/// scope `narrow` may attenuate.
+fn chunk_grant_fixture(
+    narrow: impl FnOnce(&mut crate::federation::FederationGrant),
+) -> Result<(
+    tempfile::TempDir,
+    Vault,
+    LfsOid,
+    LfsManifest,
+    EntityId,
+    EntityId,
+)> {
+    use crate::federation::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, encode_federation_grant_body,
+    };
+    let (dir, vault) = open_test_vault_with(embedding_test_config());
+    let body = b"ceiling-scoped chunk bytes";
+    let oid = LfsOid::digest(body);
+    vault.put_lfs_object(oid, body, time(), time().start)?;
+    let manifest = vault.lfs_manifest(oid)?.expect("manifest");
+    let principal = EntityId::now();
+    let grant_id = EntityId::now();
+    let mut grant = FederationGrant::new(
+        FederationGrantScope::vault(7),
+        principal,
+        FederationGrantRole::Viewer,
+        FederationGrantPreset::ReadOnly,
+    );
+    narrow(&mut grant);
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            time(),
+            time().start,
+            &encode_federation_grant_body(&grant)?,
+        )
+        .commit()?;
+    Ok((dir, vault, oid, manifest, principal, grant_id))
+}
+
+fn manifest_request(oid: LfsOid, selector: &SyncSelector) -> Result<Vec<u8>> {
+    encode_chunk_request(&ChunkSyncRequest {
+        oid: *oid.as_bytes(),
+        selector: encode_sync_selector(selector)?,
+        have: vec![],
+        want: None,
+    })
+}
+
+#[test]
+fn chunk_request_outside_the_grant_ceiling_is_refused() -> Result<()> {
+    let (_dir, vault, oid, _, principal, grant_id) = chunk_grant_fixture(|grant| {
+        grant.authority_scope.bands =
+            crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+                crate::registry::ENTITY_TYPE_PERSON,
+            ]));
+    })?;
+    let selector = SyncSelector::new(
+        grant_id,
+        principal,
+        crate::sync::selector::SyncSelectorWorld::All,
+        vec![],
+        vec![],
+    );
+
+    assert!(matches!(
+        serve_chunk_request(
+            &vault,
+            principal,
+            FederationGrantScope::vault(7),
+            &manifest_request(oid, &selector)?
+        ),
+        Err(Error::Artifact(ArtifactError::InvalidLfsObject(_)))
+    ));
+    Ok(())
+}
+
+#[test]
+fn chunk_request_naming_the_asset_birth_facet_is_served() -> Result<()> {
+    let (_dir, vault, oid, manifest, principal, grant_id) = chunk_grant_fixture(|_| {})?;
+    let selector = SyncSelector::new(
+        grant_id,
+        principal,
+        crate::sync::selector::SyncSelectorWorld::All,
+        vec![vault.default_facet()?],
+        vec![],
+    );
+    let reply = serve_chunk_request(
+        &vault,
+        principal,
+        FederationGrantScope::vault(7),
+        &manifest_request(oid, &selector)?,
+    )?;
+
+    assert!(matches!(
+        decode::<ChunkSyncResponse>(&reply)?,
+        ChunkSyncResponse::Manifest(bytes) if bytes == manifest.encode()?
+    ));
     Ok(())
 }

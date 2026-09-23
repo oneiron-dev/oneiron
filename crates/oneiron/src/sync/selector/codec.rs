@@ -13,8 +13,8 @@ use crate::error::{
     SyncSelectorValidation as SelectorError,
 };
 use crate::federation::{
-    FederationGrantScope, GuestShareEnvelope, GuestShareEnvelopeBody, SelectorRange,
-    sign_guest_share_envelope,
+    FederationGrantScope, FederationScopeBands, FederationScopeFacets, GuestShareEnvelope,
+    GuestShareEnvelopeBody, SelectorRange, sign_guest_share_envelope,
 };
 use crate::sync::types::WindowKey;
 
@@ -74,16 +74,88 @@ pub struct SyncSelector {
     pub member_ref: EntityId,
     /// World filter applied to CLAIM bodies.
     pub world: SyncSelectorWorld,
-    /// Allowed `FacetOf` targets. Empty is read by `EmptyAxis`: the lattice ⊥
-    /// under a pact-bound grant, "no facet filter" under an unpacted one.
-    pub facets: Vec<EntityId>,
-    /// Allowed entity type-byte bands. Empty is read by `EmptyAxis`: the
-    /// lattice ⊥ under a pact-bound grant, "all bands" under an unpacted one.
-    pub bands: Vec<SelectorRange>,
+    /// Requested `FacetOf` targets.
+    pub facets: RequestedAxis<EntityId>,
+    /// Requested entity type-byte bands.
+    pub bands: RequestedAxis<SelectorRange>,
+}
+
+/// A requested position on one selector axis.
+///
+/// A request narrows the grant's ceiling or leaves it alone; it has no ⊥,
+/// because a peer that wants nothing sends no request. The ceiling keeps the
+/// lattice types, where ⊥ is a distinct value and an empty ceiling grants
+/// nothing (OF-453 L3), so neither can be passed where the other belongs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequestedAxis<T> {
+    /// No narrowing: the grant's ceiling alone bounds the answer.
+    Unnarrowed,
+    /// Exactly the named set (sorted, deduplicated, non-empty).
+    Named(Vec<T>),
+}
+
+impl RequestedAxis<EntityId> {
+    /// Whether this request sits within `ceiling`.
+    #[must_use]
+    pub fn within(&self, ceiling: &FederationScopeFacets) -> bool {
+        match self {
+            Self::Unnarrowed => true,
+            Self::Named(ids) => FederationScopeFacets::Some(ids.clone()).is_narrowing_of(ceiling),
+        }
+    }
+
+    /// The ceiling-typed axis the export filters under.
+    #[must_use]
+    pub fn resolve(&self, ceiling: &FederationScopeFacets) -> FederationScopeFacets {
+        match self {
+            Self::Unnarrowed => ceiling.clone(),
+            Self::Named(ids) => FederationScopeFacets::Some(ids.clone()),
+        }
+    }
+}
+
+impl RequestedAxis<SelectorRange> {
+    /// Whether this request sits within `ceiling`.
+    #[must_use]
+    pub fn within(&self, ceiling: &FederationScopeBands) -> bool {
+        match self {
+            Self::Unnarrowed => true,
+            Self::Named(bands) => {
+                FederationScopeBands::Some(bands.clone()).is_narrowing_of(ceiling)
+            }
+        }
+    }
+
+    /// The ceiling-typed axis the export filters under.
+    #[must_use]
+    pub fn resolve(&self, ceiling: &FederationScopeBands) -> FederationScopeBands {
+        match self {
+            Self::Unnarrowed => ceiling.clone(),
+            Self::Named(bands) => FederationScopeBands::Some(bands.clone()),
+        }
+    }
+}
+
+impl<T> RequestedAxis<T> {
+    fn from_set(set: Vec<T>) -> Self {
+        if set.is_empty() {
+            Self::Unnarrowed
+        } else {
+            Self::Named(set)
+        }
+    }
+
+    pub(super) fn named(&self) -> &[T] {
+        match self {
+            Self::Unnarrowed => &[],
+            Self::Named(set) => set,
+        }
+    }
 }
 
 impl SyncSelector {
-    /// Constructs a selector with stable, deduplicated facet/band sets.
+    /// Constructs a selector with stable, deduplicated facet/band sets. An
+    /// empty set requests no narrowing on its axis.
     #[must_use]
     pub fn new(
         grant_id: EntityId,
@@ -97,48 +169,14 @@ impl SyncSelector {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        let normalized_bands = SelectorRange::normalize(bands);
         Self {
             grant_id,
             member_ref,
             world,
-            facets,
-            bands: normalized_bands,
+            facets: RequestedAxis::from_set(facets),
+            bands: RequestedAxis::from_set(SelectorRange::normalize(bands)),
         }
     }
-
-    pub(super) fn facet_filter_active(&self, empty: EmptyAxis) -> bool {
-        !self.facets.is_empty() || empty == EmptyAxis::Bottom
-    }
-
-    pub(super) fn band_filter_active(&self, empty: EmptyAxis) -> bool {
-        !self.bands.is_empty() || empty == EmptyAxis::Bottom
-    }
-
-    pub(super) fn any_filter_active(&self, empty: EmptyAxis) -> bool {
-        self.facet_filter_active(empty)
-            || self.band_filter_active(empty)
-            || !matches!(self.world, SyncSelectorWorld::All)
-    }
-}
-
-/// How the EXPORT path reads an empty facet or band vector.
-///
-/// One wire field, two readers: [`selector_direction_scope`] answers the
-/// CEILING question and this answers the EXPORT question. OF-453 L3 is exactly
-/// the demand that the two agree. Reading silence as ⊥ for the ceiling and as
-/// "no filter" for the export is not a harmless mismatch — it IS the inversion
-/// the R-20260807 §6 re-pin exists to kill: the peer sends the DEFAULT wire
-/// shape, authorizes as "requests nothing" beneath any ceiling however narrow,
-/// and is then handed the whole window.
-///
-/// Every grant uses the same bottom reading, including unpacted grants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum EmptyAxis {
-    /// The lattice ⊥: the axis filter is ACTIVE with nothing named, so it
-    /// admits nothing. A selector that authorized as requesting nothing
-    /// exports nothing.
-    Bottom,
 }
 
 /// Decoded selector request payload.
@@ -205,6 +243,7 @@ pub fn encode_sync_selector(selector: &SyncSelector) -> Result<Vec<u8>> {
             Value::Array(
                 selector
                     .facets
+                    .named()
                     .iter()
                     .map(|facet| Value::from(facet.to_hex()))
                     .collect(),
@@ -215,6 +254,7 @@ pub fn encode_sync_selector(selector: &SyncSelector) -> Result<Vec<u8>> {
             Value::Array(
                 selector
                     .bands
+                    .named()
                     .iter()
                     .map(|band| Value::from(band_to_wire(*band)))
                     .collect(),
@@ -247,13 +287,13 @@ pub fn filtered_window_doc(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<LoroDoc> {
-    let empty = authorize_selector_export(
+    let position = authorize_selector_export(
         vault,
         grant_scope,
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    filter_window_doc(vault, source, key, grant_scope, selector, empty)
+    filter_window_doc(vault, source, key, grant_scope, selector, &position)
 }
 
 /// Builds and signs a guest-share envelope from selector-filtered window bytes.
@@ -284,13 +324,13 @@ pub fn guest_share_envelope_body(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<GuestShareEnvelopeBody> {
-    let empty = authorize_selector_export(
+    let position = authorize_selector_export(
         vault,
         grant_scope,
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    let filtered = filter_window_doc(vault, source, key, grant_scope, selector, empty)?;
+    let filtered = filter_window_doc(vault, source, key, grant_scope, selector, &position)?;
     let stripped = strip_guest_share_metadata(vault, &filtered, key)?;
     let update = stripped
         .export(ExportMode::all_updates())

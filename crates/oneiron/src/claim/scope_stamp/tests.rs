@@ -295,3 +295,92 @@ fn identity_facet_replay_and_export_use_content_sensitivity_not_export_classific
     );
     Ok(())
 }
+
+fn owner_actor(vault: &Vault) -> crate::WriteActor {
+    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
+    crate::WriteActor::new(owner, crate::EdgeActorClass::Human)
+}
+
+fn put_facet(vault: &Vault, facet: EntityId) -> Result<()> {
+    vault.put_entity(&facet, ENTITY_TYPE_FACET, AT, 10, b"facet")
+}
+
+#[test]
+fn default_facet_is_the_owner_substrate_facet_until_set() -> Result<()> {
+    let (_dir, vault) = vault()?;
+    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
+
+    assert_eq!(vault.default_facet()?, substrate_facet_id(owner));
+    Ok(())
+}
+
+#[test]
+fn set_default_facet_moves_the_default() -> Result<()> {
+    let (_dir, vault) = vault()?;
+    let facet = entity(41);
+    put_facet(&vault, facet)?;
+    vault
+        .set_default_facet(facet, owner_actor(&vault))
+        .expect("the owner sets the default");
+
+    assert_eq!(vault.default_facet()?, facet);
+    Ok(())
+}
+
+#[test]
+fn set_default_facet_refuses_an_id_that_is_not_a_facet() -> Result<()> {
+    let (_dir, vault) = vault()?;
+    let person = entity(42);
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, AT, 10, b"person")?;
+
+    assert!(
+        vault
+            .set_default_facet(person, owner_actor(&vault))
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn set_default_facet_refuses_a_caller_that_is_not_the_owner() -> Result<()> {
+    let (_dir, vault) = vault()?;
+    let facet = entity(43);
+    put_facet(&vault, facet)?;
+    let agent = entity(44);
+    vault.put_entity(&agent, ENTITY_TYPE_PERSON, AT, 10, b"agent")?;
+
+    assert!(
+        vault
+            .set_default_facet(
+                facet,
+                crate::WriteActor::new(agent, crate::EdgeActorClass::Agent)
+            )
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn fork_to_facet_births_a_claim_under_the_new_facet() -> Result<()> {
+    let (_dir, vault) = vault()?;
+    let owner = owner_actor(&vault);
+    let facet = entity(45);
+    put_facet(&vault, facet)?;
+    let claim = entity(46);
+    let mut origin = ClaimBody::new(
+        "test.fork",
+        ClaimSubject::Entity(owner.entity_ref()),
+        Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    origin.scope_facet = vault.default_facet()?;
+    vault.put_claim(&claim, &origin, AT, 10)?;
+    let fork = vault
+        .fork_to_facet(claim, facet, true, owner)
+        .expect("the owner forks the claim");
+
+    assert_eq!(vault.get_claim(&fork)?.expect("fork").scope_facet, facet);
+    Ok(())
+}

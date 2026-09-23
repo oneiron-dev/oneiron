@@ -1,8 +1,15 @@
 //! Required record-position Scope stamps and the versioned CLAIM wire upgrade.
-use super::{ClaimBody, ClaimSubject};
+use super::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+use crate::memory::{MemoryError, MemoryResult};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET};
+use crate::store::Store;
+use crate::write_envelope::WriteActor;
 use crate::{
-    EntityId,
+    EntityId, TimeRange,
     error::{Error, Result},
 };
 use rmpv::Value;
@@ -29,6 +36,119 @@ pub fn substrate_facet_id(person: EntityId) -> EntityId {
     bytes[8] = (bytes[8] & 63) | 0x80;
     EntityId::from_bytes(bytes).expect("derived UUID")
 }
+/// Engine-internal predicate of the vault default facet: subject the owner
+/// PERSON, value the FACET id as 16 binary bytes. A later set supersedes the
+/// earlier one, and claims sync, so every device reads the same default.
+pub const PREDICATE_VAULT_DEFAULT_FACET: &str = "vault.default_facet";
+
+/// The facet a write stamps when no mask is active: the newest active
+/// [`PREDICATE_VAULT_DEFAULT_FACET`] claim on the owner, else the owner's
+/// `substrate` FACET. Absence means that value, so nothing seeds it.
+pub(crate) fn default_facet_in(store: &Store, txn: &heed::RoTxn<'_>) -> Result<EntityId> {
+    let owner = crate::vault::embedded_owner_actor_id()?;
+    let mut newest: Option<((u64, EntityId), Value)> = None;
+    for edge in store.port_edges(
+        txn,
+        &owner,
+        EdgeDirection::In,
+        Some(EdgeKind::ClaimOf),
+        None,
+    )? {
+        let claim = edge?.target;
+        let Some(raw) = store.entities.get(txn, claim.as_bytes())? else {
+            continue;
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            continue;
+        }
+        let body = super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if body.predicate != PREDICATE_VAULT_DEFAULT_FACET
+            || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.stale
+        {
+            continue;
+        }
+        let order = (header.learned_at, claim);
+        if newest.as_ref().is_none_or(|(newest, _)| *newest < order) {
+            newest = Some((order, body.value));
+        }
+    }
+    match newest {
+        Some((_, value)) => scope_id(&value),
+        None => Ok(substrate_facet_id(owner)),
+    }
+}
+
+impl crate::Vault {
+    /// The vault default facet as of `txn`; see [`PREDICATE_VAULT_DEFAULT_FACET`].
+    pub fn default_facet_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<EntityId> {
+        default_facet_in(&self.store, txn)
+    }
+
+    /// The vault default facet; see [`PREDICATE_VAULT_DEFAULT_FACET`].
+    pub fn default_facet(&self) -> Result<EntityId> {
+        let txn = self.store.env.read_txn()?;
+        self.default_facet_in_txn(&txn)
+    }
+
+    /// Makes the stored FACET `facet` the vault default. Only the owner may
+    /// call it.
+    pub fn set_default_facet(&self, facet: EntityId, actor: WriteActor) -> MemoryResult<()> {
+        let owner = self.ensure_embedded_owner_actor()?;
+        let now = self.store.clock.now_recorded_at();
+        self.try_with_write_txn(|wtxn| {
+            if actor.actor_class() != EdgeActorClass::Human
+                || crate::memory::verify_owner_actor_binding_in_txn(self, wtxn, actor.entity_ref())
+                    .is_err()
+            {
+                return Err(MemoryError::from(Error::Claim(
+                    crate::error::ClaimError::ActorLacksClaimAuthority {
+                        reason: "only the vault owner sets the default facet",
+                    },
+                )));
+            }
+            let found = self.get_entity_type_in_txn(wtxn, &facet)?;
+            if found != Some(ENTITY_TYPE_FACET) {
+                return Err(MemoryError::from(Error::Registry(
+                    crate::error::RegistryError::InvalidFacet { facet, found },
+                )));
+            }
+            let previous = crate::ports::ClaimStore::port_claim_get_active(
+                self,
+                wtxn,
+                &owner,
+                PREDICATE_VAULT_DEFAULT_FACET,
+            )?;
+            let claim = self.store.clock.entity_id()?;
+            let mut body = ClaimBody::new(
+                PREDICATE_VAULT_DEFAULT_FACET,
+                ClaimSubject::Entity(owner),
+                id_value(facet),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            );
+            body.source = Some(ClaimSource::UserStated);
+            self.put_reserved_claim_in_txn(
+                wtxn,
+                &claim,
+                &body,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )?;
+            if let Some((previous, _)) = previous {
+                self.supersede_reserved_claim_in_txn(wtxn, &claim, &previous, now)?;
+            }
+            Ok(())
+        })
+    }
+}
+
 pub(super) fn subject_facet(subject: ClaimSubject) -> EntityId {
     substrate_facet_id(match subject {
         ClaimSubject::Entity(id) => id,

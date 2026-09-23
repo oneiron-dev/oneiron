@@ -619,6 +619,7 @@ fn selector_codec_round_trips_strict_payload() {
                 Value::Array(
                     selector
                         .facets
+                        .named()
                         .iter()
                         .map(|facet| Value::from(facet.to_hex()))
                         .collect(),
@@ -629,6 +630,7 @@ fn selector_codec_round_trips_strict_payload() {
                 Value::Array(
                     selector
                         .bands
+                        .named()
                         .iter()
                         .map(|band| Value::from(band_to_wire(*band)))
                         .collect(),
@@ -1387,10 +1389,9 @@ fn companion_register_api_selector_suppresses_local_only_records() {
         .commit()
         .unwrap();
 
-    // Unified Bottom: an empty facet vector requests NOTHING (the filter is
-    // active with nothing named), so all five FACET rows must be selected for
-    // the sensitivity and destination doors — not the facet door — to decide.
-    // Restricted content and content bound to another vault stay withheld.
+    // All five FACET rows are named, so the sensitivity and destination doors
+    // — not the facet door — decide. Restricted content and content bound to
+    // another vault stay withheld.
     let selector = SyncSelector::new(
         grant_id,
         member,
@@ -4009,10 +4010,11 @@ fn assert_grant_scope_mismatch(err: &Error, label: &str) {
     );
 }
 
-/// Empty wire axes request nothing under a pact; named worlds retain their
-/// export boundary, and wire round trips preserve independently expected sets.
+/// Empty wire axes request no narrowing, and a ⊥ ceiling axis still exports
+/// nothing to them; named worlds retain their export boundary, and wire round
+/// trips preserve independently expected sets.
 #[test]
-fn selector_direction_scope_decodes_wire_semantics() {
+fn selector_request_decodes_wire_semantics() {
     let member = entity_id(0x34);
     let grant = entity_id(0x35);
     let world = local_world_id(0x51);
@@ -4066,9 +4068,6 @@ fn selector_direction_scope_decodes_wire_semantics() {
         (SyncSelectorWorld::Base, false, false),
         (SyncSelectorWorld::World(world), true, false),
     ] {
-        // Facet-seeded world probe: the Bottom facet/band filters require
-        // explicit facets and bands, so the world axis is tested inside a
-        // seeded closure rather than through an empty (now ⊥) selector.
         let selector = SyncSelector::new(
             grant,
             member,
@@ -4097,10 +4096,13 @@ fn selector_direction_scope_decodes_wire_semantics() {
         vec![SelectorRange::Core, SelectorRange::Semantic],
     );
     let decoded = decode_sync_selector(&encode_sync_selector(&filtered).unwrap()).unwrap();
-    assert_eq!(decoded.facets, vec![entity_id(0x61), entity_id(0x62)]);
+    assert_eq!(
+        decoded.facets,
+        RequestedAxis::Named(vec![entity_id(0x61), entity_id(0x62)])
+    );
     assert_eq!(
         decoded.bands,
-        vec![SelectorRange::Semantic, SelectorRange::Core],
+        RequestedAxis::Named(vec![SelectorRange::Semantic, SelectorRange::Core]),
     );
 
     // Test each empty axis independently: the other axis remains populated.
@@ -4320,8 +4322,8 @@ fn selector_wider_than_pact_ceiling_on_any_axis_denies() {
 /// Done-means 4: the masking regression. Concurrent disjoint facet narrows and
 /// concurrent disjoint band narrows meet at ⊥, and ⊥ denies every
 /// content-carrying selector — a disjoint meet must never decode as an
-/// accidental widen. The empty-vector selector's vacuous pass is asserted
-/// alongside it so the decode is never mistaken for one.
+/// accidental widen. The unnarrowed selector's pass, which resolves to that
+/// ⊥, is asserted alongside it.
 #[test]
 fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     let member = entity_id(0x34);
@@ -4371,74 +4373,63 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
         assert_grant_scope_mismatch(&err, name);
     }
 
-    // The empty-vector selector decodes to ⊥ on both axes, so it narrows even a
-    // ⊥ ceiling. This pass is vacuous, not a widen — the EXPORT half of that
-    // claim ("can exfiltrate nothing") is proven by
-    // `pact_ceiling_binds_the_export_not_only_the_door`, which is where a
-    // ⊥-authorized selector is actually run through `filtered_window_doc`.
+    // The empty-vector selector requests no narrowing, so it sits within even a
+    // ⊥ ceiling and resolves to that ⊥. The EXPORT half ("can exfiltrate
+    // nothing") is proven by
+    // `bottom_ceiling_exports_nothing_to_an_unnarrowed_request`.
     let silent = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     assert_eq!(
-        selector_direction_scope(&silent).facets,
+        resolve_selector_position(&silent, &ceiling).unwrap().facets,
         FederationScopeFacets::Bottom
     );
     authorize_sync_selector(&vault, test_selector_scope(), &silent)
-        .expect("a ⊥ selector requests nothing and narrows every ceiling");
+        .expect("an unnarrowed request sits within every ceiling");
 }
 
-/// Done-means 4, export half (OF-453 L3): a selector authorized as ⊥ on an axis
-/// must EXPORT as ⊥ on that axis.
-///
-/// The regression this pins is the empty-decodes-as-everything inversion. One
-/// wire field had two readers that disagreed: `selector_direction_scope` read
-/// an empty facet/band vector as the lattice ⊥, which narrows every ceiling, so
-/// the DEFAULT wire shape sailed through `authorize_sync_selector` under any
-/// pact however narrow — and the filter then read that same emptiness as "no
-/// filter" and exported the whole window, including the Core-band and
-/// unnamed-facet content the ceiling exists to withhold. The ceiling check was
-/// decoration on exactly the selector a peer sends by default.
-///
-/// The unpacted arm is both the control (it proves the fixture carries content
-/// the pact arms could have leaked, so their emptiness is not vacuous) and the
-/// done-means 7 pin: a grant with no pact has no ceiling to escape, so silence
-/// keeps its legacy wire meaning and shipped guest grants do not brick.
-#[test]
-fn pact_ceiling_binds_the_export_not_only_the_door() {
-    let member = entity_id(0x3D);
+/// The source window the pact-ceiling export tests share. CLAIM is band
+/// Semantic, PERSON and FACET are band Core, and only `facet_named` (0x64) is
+/// inside the ceiling — so every leak is content the ceiling names as out of
+/// scope, not merely extra rows. The non-CLAIM rows are stamped so filtering,
+/// not a missing stamp, decides every verdict.
+fn pact_ceiling_source_doc(vault: &Vault, window_key: &WindowKey) -> LoroDoc {
     let facet_named = entity_id(0x64);
     let facet_unnamed = entity_id(0x65);
     let claim_named = entity_id(0x66);
     let claim_unnamed = entity_id(0x67);
-    let person = entity_id(0x68);
-    let deleted = entity_id(0x69);
+    let doc = create_window_doc("source", window_key);
+    insert_entity(&doc, facet_named, ENTITY_TYPE_FACET, b"facet-in");
+    insert_entity(&doc, facet_unnamed, ENTITY_TYPE_FACET, b"facet-out");
+    insert_blob(&doc, claim_named, &claim_blob(None));
+    insert_blob(&doc, claim_unnamed, &claim_blob(None));
+    insert_entity(&doc, entity_id(0x68), ENTITY_TYPE_PERSON, b"person");
+    insert_edge(&doc, claim_named, EdgeKind::FacetOf, facet_named);
+    insert_edge(&doc, claim_unnamed, EdgeKind::FacetOf, facet_unnamed);
+    insert_tombstone(&doc, entity_id(0x69));
+    doc.commit();
+    seed_doc_stamps(vault, &doc);
+    doc
+}
+
+/// Done-means 4, export half (OF-453 L3): the ceiling binds the export, not
+/// only the door. A request that leaves an axis unnarrowed resolves to the
+/// ceiling's axis, so it exports what the ceiling allows and none of the
+/// Core-band or unnamed-facet content the ceiling exists to withhold.
+#[test]
+fn pact_ceiling_binds_the_export_not_only_the_door() {
+    let member = entity_id(0x3D);
+    let facet_named = entity_id(0x64);
+    let claim_named = entity_id(0x66);
     let window_key = WindowKey::new("2026-12");
-
-    // CLAIM is band Semantic, PERSON and FACET are band Core, and only
-    // `facet_named` is inside the ceiling — so every leak below is content the
-    // ceiling names as out of scope, not merely extra rows.
-    let source_doc = || {
-        let doc = create_window_doc("source", &window_key);
-        insert_entity(&doc, facet_named, ENTITY_TYPE_FACET, b"facet-in");
-        insert_entity(&doc, facet_unnamed, ENTITY_TYPE_FACET, b"facet-out");
-        insert_blob(&doc, claim_named, &claim_blob(None));
-        insert_blob(&doc, claim_unnamed, &claim_blob(None));
-        insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
-        insert_edge(&doc, claim_named, EdgeKind::FacetOf, facet_named);
-        insert_edge(&doc, claim_unnamed, EdgeKind::FacetOf, facet_unnamed);
-        insert_tombstone(&doc, deleted);
-        doc.commit();
-        doc
-    };
-
     let ceiling = FederationDirectionScope {
         worlds: FederationScopeWorlds::All,
         facets: FederationScopeFacets::Some(vec![facet_named]),
         bands: FederationScopeBands::Some(vec![SelectorRange::Semantic]),
     };
     for (name, facets, bands) in [
-        ("both axes silent", Vec::new(), Vec::new()),
-        ("band axis silent", vec![facet_named], Vec::new()),
+        ("both axes unnarrowed", Vec::new(), Vec::new()),
+        ("band axis unnarrowed", vec![facet_named], Vec::new()),
         (
-            "facet axis silent",
+            "facet axis unnarrowed",
             Vec::new(),
             vec![SelectorRange::Semantic],
         ),
@@ -4446,49 +4437,55 @@ fn pact_ceiling_binds_the_export_not_only_the_door() {
         let (_dir, vault, grant_id) = test_vault_with_grant(member);
         seed_scoped_pacts_for_grant(&vault, grant_id, std::slice::from_ref(&ceiling));
         let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, facets, bands);
-        let doc = source_doc();
-        // Stamp the non-CLAIM rows so ⊥ filtering (not missing stamps)
-        // decides the empty verdict.
-        seed_doc_stamps(&vault, &doc);
+        let doc = pact_ceiling_source_doc(&vault, &window_key);
         let update =
             filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
-                .unwrap_or_else(|err| panic!("{name}: a ⊥ selector authorizes: {err:?}"))
+                .unwrap_or_else(|err| panic!("{name}: the request authorizes: {err:?}"))
                 .export(ExportMode::all_updates())
                 .unwrap();
 
-        assert_eq!(
-            import_ids(&update),
-            Vec::new(),
-            "{name}: a selector authorized as ⊥ must export nothing, not everything"
-        );
-        assert_eq!(
-            imported_tombstone_count(&update),
-            0,
-            "{name}: ⊥ is a filter, so the no-filter tombstone passthrough must not fire"
-        );
+        assert_eq!(import_ids(&update), vec![claim_named], "{name}");
     }
+}
 
-    // Unified Bottom (OF-453 L3): the same silent selector on an UNPACTED
-    // grant also exports nothing. There is no legacy-allow export path;
-    // silence is ⊥ for every grant, pact-bound or not.
+#[test]
+fn unnarrowed_request_under_an_unpacted_grant_narrows_no_facet() {
+    let member = entity_id(0x3D);
+    let window_key = WindowKey::new("2026-12");
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let doc = source_doc();
-    seed_doc_stamps(&vault, &doc);
+    let doc = pact_ceiling_source_doc(&vault, &window_key);
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
-        .expect("a ⊥ selector on an unpacted grant still authorizes")
+        .unwrap()
         .export(ExportMode::all_updates())
         .unwrap();
-    assert_eq!(
-        import_ids(&update),
-        Vec::new(),
-        "an unpacted grant reads silence as ⊥, so it exports nothing"
+    let ids = import_ids(&update);
+
+    assert!(ids.contains(&entity_id(0x66)) && ids.contains(&entity_id(0x67)));
+}
+
+#[test]
+fn bottom_ceiling_exports_nothing_to_an_unnarrowed_request() {
+    let member = entity_id(0x3D);
+    let window_key = WindowKey::new("2026-12");
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[FederationDirectionScope {
+            worlds: FederationScopeWorlds::All,
+            facets: FederationScopeFacets::Bottom,
+            bands: FederationScopeBands::All,
+        }],
     );
-    assert_eq!(
-        imported_tombstone_count(&update),
-        0,
-        "a ⊥ export carries no tombstones, pact-bound or not"
-    );
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let doc = pact_ceiling_source_doc(&vault, &window_key);
+    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+
+    assert!(import_ids(&update).is_empty());
 }
 
 /// Done-means 5: several Active pacts on one grant intersect into a single
@@ -5408,7 +5405,7 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
             result.unwrap();
             assert_eq!(doc.text().unwrap(), "admitted");
             let mut wider = selector.clone();
-            wider.facets.push(entity_id(0x43));
+            wider.facets = RequestedAxis::Named(vec![facet, entity_id(0x43)]);
             let error = doc
                 .import_from_peer(
                     document_sub_tags::UPDATE,
@@ -5642,4 +5639,122 @@ fn selector_custody_locality_uses_the_export_read_snapshot() {
     for (id, device_only) in secrets {
         assert_eq!(ids.contains(&id), !device_only);
     }
+}
+
+fn member_grant_vault(member: EntityId) -> (tempfile::TempDir, Vault, EntityId) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let grant_id = EntityId::now();
+    put_selector_test_federation_grant(
+        &vault,
+        &grant_id,
+        &FederationGrant::new(
+            test_selector_scope(),
+            member,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        ),
+        1,
+    )
+    .unwrap();
+    (dir, vault, grant_id)
+}
+
+fn note_window_export(vault: &Vault, note: EntityId, selector: &SyncSelector) -> Vec<u8> {
+    let raw = vault.get_raw(&note).unwrap().unwrap();
+    let key = WindowKey::from_timestamp(EntityMetadataHeader::parse(&raw).unwrap().learned_at);
+    let doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(vault, &doc, &key).unwrap();
+    filtered_window_doc(vault, &doc, &key, test_selector_scope(), selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap()
+}
+
+#[test]
+fn a_replica_serves_a_replicated_note_that_carries_its_stamp() {
+    let origin_dir = tempfile::tempdir().unwrap();
+    let origin = Vault::open(origin_dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = origin.ensure_embedded_owner_actor().unwrap();
+    let note = origin
+        .create_note(
+            "research",
+            "replicated birth",
+            crate::WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .unwrap();
+    let raw = origin.get_raw(&note).unwrap().unwrap();
+    let header = EntityMetadataHeader::parse(&raw).unwrap();
+    let stamp = origin
+        .edges_out(&note)
+        .unwrap()
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::FacetOf)
+        .unwrap();
+    let member = entity_id(0x3E);
+    let (_dir, host, grant_id) = member_grant_vault(member);
+    host.batch()
+        .put_replicated(
+            &note,
+            crate::registry::ENTITY_TYPE_NOTE,
+            TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )
+        .edge_with_value_fields(
+            &note,
+            EdgeKind::FacetOf,
+            &stamp.target,
+            crate::batch::EdgeValueFields {
+                weight: stamp.weight,
+                created_at: stamp.created_at,
+                vad: Vad::NEUTRAL,
+                provenance: None,
+            },
+        )
+        .commit()
+        .unwrap();
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+
+    assert!(import_ids(&note_window_export(&host, note, &selector)).contains(&note));
+}
+
+#[test]
+fn a_named_facet_request_selects_a_note_born_under_that_facet() {
+    let member = entity_id(0x3F);
+    let (_dir, vault, grant_id) = member_grant_vault(member);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let facet = entity_id(0x6A);
+    vault
+        .put_entity(
+            &facet,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .unwrap();
+    let receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .author_note(&crate::note::NoteWriteEnvelope {
+            kind: crate::note::NoteKind::OpinionTake,
+            scope: crate::note::NoteScope::About(crate::note::TakeTarget::Subject(owner)),
+            markdown: "masked take".to_owned(),
+            source_revision_ref: [0x6B; 16],
+            mask: Some(facet),
+        })
+        .unwrap();
+    let note = EntityId::from_hex(&receipt.id_hex).unwrap();
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![],
+    );
+
+    assert!(import_ids(&note_window_export(&vault, note, &selector)).contains(&note));
 }

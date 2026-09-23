@@ -210,6 +210,7 @@ impl Vault {
                 put(self, txn, &bundle_key(bundle.id), &bundle)?;
                 Ok(bundle)
             })
+            .inspect(|bundle| self.notify_landed(bundle))
     }
     pub fn note_proposal(&self, id: EntityId) -> Result<NoteReviewBundle> {
         let txn = self.store.env.read_txn()?;
@@ -236,6 +237,15 @@ impl Vault {
                 put(self, txn, &bundle_key(id), &bundle)?;
                 Ok(bundle)
             })
+            .inspect(|bundle| self.notify_landed(bundle))
+    }
+    fn notify_landed(&self, bundle: &NoteReviewBundle) {
+        #[cfg(feature = "sync")]
+        for receipt in &bundle.landed {
+            self.notify_note_document(receipt.note);
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = bundle;
     }
     /// Explicit fork at the current frontier. The live head is never edited.
     pub fn fork_note(
@@ -307,8 +317,7 @@ fn land(
                 Some(scratch.get_text("body").to_string())
             }
         }
-        NoteVerdict::Switch => Some(proposed.text()),
-        NoteVerdict::Reject => None,
+        NoteVerdict::Switch | NoteVerdict::Reject => None,
     };
     if let Some(text) = text {
         let operation = super::NoteOperation {
@@ -326,10 +335,34 @@ fn land(
             return Ok(None);
         }
     }
-    vault
-        .store
-        .sync_state
-        .delete(txn, &super::documents::doc_key(fork.note, fork.fork))?;
+    // A switch moves the head pointer to the fork, whose document becomes
+    // the NOTE's text plane. The previous head's document is never deleted.
+    let head = if verdict == NoteVerdict::Switch {
+        if vault
+            .store
+            .sync_state
+            .get(txn, &format!("ds:e:{}", fork.note.to_hex()))?
+            .is_some()
+        {
+            return Err(invalid(
+                "replica NOTE head moves require authenticated authority",
+            ));
+        }
+        let (_, seq) = super::documents::head_in(&vault.store, txn, fork.note)?;
+        let seq = seq
+            .checked_add(1)
+            .ok_or(invalid("NOTE head sequence exhausted"))?;
+        super::documents::set_head(&vault.store, txn, fork.note, fork.fork, seq)?;
+        let doc = super::document::NoteDocument::from_loro(fork.note, proposed.doc)?;
+        super::document_store::persist(vault, txn, &doc)?;
+        fork.fork
+    } else {
+        vault
+            .store
+            .sync_state
+            .delete(txn, &super::documents::doc_key(fork.note, fork.fork))?;
+        current.head
+    };
     fork.decided = true;
     fork.recovery_merge = None;
     put(vault, txn, &fork_key(fork.fork), fork)?;
@@ -338,7 +371,7 @@ fn land(
         note: fork.note,
         fork: fork.fork,
         previous_head: current.head,
-        head: current.head,
+        head,
         verdict,
         actor: actor.entity_ref(),
         at: mutation_recorded_at,

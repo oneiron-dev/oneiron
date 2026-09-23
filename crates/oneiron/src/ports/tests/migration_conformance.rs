@@ -166,16 +166,17 @@ fn lazy_type_cursor_does_not_decode_rows_past_the_caller_budget() -> Result<()> 
     let mut txn = vault.write()?;
     let good = id(74);
     vault.port_entity_put(&mut txn, &good, &row(ENTITY_TYPE_PERSON, b"good"))?;
-    // Later malformed storage is deliberately beyond the one-row page.
+    // Later malformed storage is deliberately beyond the two-row page: the
+    // seeded vault owner and `good`.
     vault
         .store
         .type_index
         .put(&mut txn, &[ENTITY_TYPE_PERSON, 255], &[])?;
     let page = vault
         .port_entity_ids_by_type(&txn, ENTITY_TYPE_PERSON, None)?
-        .take(1)
+        .take(2)
         .collect::<Result<Vec<_>>>()?;
-    assert_eq!(page, vec![good]);
+    assert_eq!(page, vec![crate::vault::embedded_owner_actor_id()?, good]);
     assert!(
         vault
             .port_entity_ids_by_type(&txn, ENTITY_TYPE_PERSON, None)?
@@ -219,7 +220,7 @@ fn storage_port_queries_read_one_composed_session_snapshot() -> Result<()> {
     assert_eq!(
         view.port_entity_ids_by_type(&txn, ENTITY_TYPE_PERSON, None)?
             .collect::<Result<Vec<_>>>()?,
-        vec![entity]
+        vec![crate::vault::embedded_owner_actor_id()?, entity]
     );
     drop(view);
     drop(txn);

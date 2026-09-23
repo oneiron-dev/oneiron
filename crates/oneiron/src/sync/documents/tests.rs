@@ -305,7 +305,8 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
         })
     ));
     let mut narrowed = selector.clone();
-    narrowed.bands = vec![crate::federation::SelectorRange::Maintenance];
+    narrowed.bands =
+        crate::sync::RequestedAxis::Named(vec![crate::federation::SelectorRange::Maintenance]);
     assert_document_denied(
         doc.import_from_peer(document_sub_tags::UPDATE, &next, scope, &narrowed)
             .unwrap_err(),
@@ -423,4 +424,124 @@ fn peer_import_live_facet_scope_cannot_be_preserved_by_an_old_subscription() {
     );
     assert_eq!(doc.text().unwrap(), "one hop");
     assert_eq!(doc.version_vector().unwrap(), before);
+}
+
+#[test]
+fn a_selector_peer_receives_a_state_only_copy_of_the_note_head_document() {
+    use crate::federation::{FederationGrant, FederationGrantPreset, FederationGrantRole};
+    use crate::note::{NoteProgramEdit, NoteProgramEditOutcome, NoteVerdict};
+    use crate::sync::{SyncSelector, SyncSelectorWorld, WindowManager, bridge::Materializer};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let actor = crate::WriteActor::new(owner, crate::EdgeActorClass::Human);
+    let note = vault.create_note("research", "origin", actor).unwrap();
+    let NoteProgramEditOutcome::RewriteFork { fork } = vault
+        .edit_note(
+            note,
+            &NoteProgramEdit::Rewrite {
+                text: "switched head".into(),
+            },
+            actor,
+        )
+        .unwrap()
+    else {
+        panic!("rewrite fork");
+    };
+    let bundle = vault
+        .open_note_proposal(&[fork], "Switch the head", actor)
+        .unwrap();
+    vault
+        .review_note_proposal(bundle.id, NoteVerdict::Switch, actor)
+        .unwrap();
+    for text in [" one", " two"] {
+        let doc = vault.note_program_document(note).unwrap().unwrap();
+        let anchor = doc.anchor(doc.text().chars().count()).unwrap();
+        vault
+            .edit_note(
+                note,
+                &NoteProgramEdit::InsertAfter {
+                    anchor,
+                    text: text.into(),
+                },
+                actor,
+            )
+            .unwrap();
+    }
+    let member = EntityId::now();
+    let grant_id = EntityId::now();
+    document_grant(
+        &vault,
+        grant_id,
+        FederationGrant::new(
+            crate::FederationGrantScope::vault(7),
+            member,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        ),
+    );
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let manager = Arc::new(WindowManager::new(
+        vault.clone(),
+        Arc::new(Materializer::new()),
+        "head",
+    ));
+    let reply = manager
+        .export_document(
+            note,
+            crate::FederationGrantScope::vault(7),
+            &selector,
+            &loro::VersionVector::new().encode(),
+        )
+        .unwrap();
+    let frame = decode_document(&reply[1..]).unwrap();
+    let shallow = LoroDoc::new();
+    shallow
+        .import(&frame.payload[crate::entity_id::ENTITY_ID_LEN + 8..])
+        .unwrap();
+
+    assert!(
+        shallow.is_shallow()
+            && shallow.get_text("body").to_string() == vault.note_text(note).unwrap()
+    );
+}
+
+#[test]
+fn an_own_device_never_receives_the_document_of_a_note_in_a_device_only_world() {
+    use crate::sync::{WindowManager, bridge::Materializer};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let note = vault
+        .create_note(
+            "research",
+            "kept here",
+            crate::WriteActor::new(owner, crate::EdgeActorClass::Human),
+        )
+        .unwrap();
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    vault
+        .put_edge(&note, crate::EdgeKind::InWorld, &world, 1.0)
+        .unwrap();
+    vault.set_world_device_only(world, true).unwrap();
+    let manager = Arc::new(WindowManager::new(
+        vault.clone(),
+        Arc::new(Materializer::new()),
+        "device-only",
+    ));
+
+    assert_document_denied(
+        manager
+            .export_owner_document(note, &loro::VersionVector::new().encode())
+            .unwrap_err(),
+    );
 }

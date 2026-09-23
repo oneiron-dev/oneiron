@@ -186,7 +186,7 @@ fn write(
         candidate = candidate.with_world(world);
     }
     if let Some(existing) = vault.get_claim_in_txn(txn, &id)? {
-        let mut expected = candidate.into_claim_body(envelope);
+        let mut expected = candidate.into_claim_body(envelope, vault.default_facet_in_txn(txn)?);
         // Approval is the gate's result, not part of the deterministic candidate.
         expected.approval = existing.approval;
         if existing != expected {

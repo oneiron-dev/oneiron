@@ -91,6 +91,7 @@ pub use slip::*;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPrincipal, pairing_binding_transcript,
 };
+pub use slip_replay::holder_proof_challenge;
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::HostSlipIssuer;
 

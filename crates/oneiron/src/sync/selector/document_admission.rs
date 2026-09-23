@@ -3,21 +3,23 @@
 //! Neither a remembered subscription nor a peer-controlled window map is
 //! authority to append text. Grant, pact and graph selection share the writer.
 
-use super::authorize::{effective_scope_for_grant, selector_direction_scope};
-use super::codec::{EmptyAxis, SyncSelector, selector_err};
-use super::scope::{CoreferenceExportContext, entity_selector_decision};
+use super::authorize::{ceiling_for_grant, resolve_selector_position};
+use super::codec::{SyncSelector, selector_err};
+use super::scope::{CoreferenceExportContext, entity_selector_decision, facet_filter};
 use crate::authority::{AuthorityFold, FederationGrantActivation, federation_grant_activation};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result, SyncSelectorValidation as SelectorError};
 use crate::federation::decode_federation_grant_body;
-use crate::federation::{FederationGrant, FederationGrantRole, FederationGrantScope};
+use crate::federation::{
+    FederationDirectionScope, FederationGrant, FederationGrantRole, FederationGrantScope,
+};
 use crate::{EntityId, Vault};
 
 pub(super) struct DocumentGrant {
     pub(super) grant: FederationGrant,
     pub(super) fold: AuthorityFold,
-    pub(super) empty: EmptyAxis,
+    pub(super) position: FederationDirectionScope,
 }
 
 pub(super) fn authorize_in_txn(
@@ -63,15 +65,13 @@ pub(super) fn authorize_in_txn(
             return Err(selector_err(SelectorError::GrantInactive));
         }
     }
-    // Unified bottom: unpacted grants also read as requesting nothing (staged
-    // selector codec has no Unfiltered variant).
-    if let Some(ceiling) = effective_scope_for_grant(&fold, &selector.grant_id)
-        && !selector_direction_scope(selector).is_narrowing_of(&ceiling)
-    {
-        return Err(selector_err(SelectorError::GrantScopeMismatch));
-    }
-    let empty = EmptyAxis::Bottom;
-    Ok(DocumentGrant { grant, fold, empty })
+    let position =
+        resolve_selector_position(selector, &ceiling_for_grant(&fold, &selector.grant_id))?;
+    Ok(DocumentGrant {
+        grant,
+        fold,
+        position,
+    })
 }
 
 pub(in crate::sync) fn admit_document_write_in_txn(
@@ -82,18 +82,31 @@ pub(in crate::sync) fn admit_document_write_in_txn(
     selector: &SyncSelector,
 ) -> Result<()> {
     let admission = authorize_in_txn(vault, txn, scope, selector, Some(selector.member_ref))?;
+    admit_selected_in_txn(vault, txn, id, scope, selector, &admission)
+}
+
+/// Whether `id` sits in the closed subgraph `admission` resolved, read from
+/// stored rows in this writer.
+pub(super) fn admit_selected_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    admission: &DocumentGrant,
+) -> Result<()> {
     let selection = StoredSelection {
         vault,
         txn,
         scope,
         selector,
-        admission: &admission,
+        admission,
     };
     let mut budget = crate::vault::MAX_EDGE_QUERY_RESULTS;
     let Some((visible, seed)) = selection.candidate(id, &mut budget)? else {
         return Err(denied());
     };
-    if !selector.facet_filter_active(admission.empty) || visible || seed {
+    if facet_filter(&admission.position).is_none() || visible || seed {
         return Ok(());
     }
     // The export's facet closure is ONE hop from a selected seed, never a
@@ -178,13 +191,13 @@ impl StoredSelection<'_, '_> {
             self.scope,
             self.selector,
             &Default::default(),
-            self.admission.empty,
+            &self.admission.position,
             &coreference,
         ) else {
             return Ok(None);
         };
         let mut seed = false;
-        if self.selector.facet_filter_active(self.admission.empty) {
+        if let Some(facets) = facet_filter(&self.admission.position) {
             let prefix = crate::vault::edge_kind_prefix(&id, EdgeKind::FacetOf);
             for row in self.vault.store.edges_out.prefix_iter(self.txn, &prefix)? {
                 spend(budget)?;
@@ -198,7 +211,7 @@ impl StoredSelection<'_, '_> {
                 }) {
                     continue;
                 }
-                if !self.selector.facets.contains(&edge.target) {
+                if !facets.contains(&edge.target) {
                     return Ok(None);
                 }
                 seed = true;

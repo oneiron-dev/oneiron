@@ -97,6 +97,24 @@ pub(crate) fn values(
     Ok((view.markdown, view.authorship))
 }
 
+/// Rebuilds a switched head's document where this vault has none: the head
+/// pointer is set first, so the document lands in the head's slot.
+#[cfg(feature = "sync")]
+pub(crate) fn restore_head(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    note: EntityId,
+    head: EntityId,
+    seq: u64,
+    text: &str,
+    authorship: &[super::NoteAuthorship],
+) -> Result<()> {
+    guard(vault, txn, note)?;
+    super::documents::set_head(&vault.store, txn, note, head, seq)?;
+    let doc = NoteDocument::from_loro(note, rebuild(note, text, authorship)?)?;
+    super::document_store::persist(vault, txn, &doc)
+}
+
 #[cfg(feature = "sync")]
 pub(crate) fn restore(
     vault: &Vault,
@@ -125,11 +143,12 @@ pub(crate) fn restore(
             &format!("{prefix}{}:", note.to_hex()),
         )?;
     }
+    let slot = super::storage::slot(vault, txn, note)?;
     for prefix in ["ssv:e:", "m:u_seq:e:"] {
         vault
             .store
             .sync_state
-            .delete(txn, &format!("{prefix}{}", note.to_hex()))?;
+            .delete(txn, &format!("{prefix}{}", slot.to_hex()))?;
     }
     super::document_store::persist(vault, txn, &doc)
 }

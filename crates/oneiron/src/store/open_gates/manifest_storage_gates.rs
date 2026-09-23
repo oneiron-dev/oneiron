@@ -24,8 +24,8 @@ use super::hnsw_model_gates::{
 use super::open_version_keys::{
     DB_MANIFEST, ERR_EXISTING_MISSING_HNSW_CONFIG, HnswCompatibilityState, LMDB_DATABASE_OPEN_LOCK,
     MODEL_ID_KEY, MODEL_ID_NONE, OPEN_STORE_PATHS, PersistedHnswCompatibility, STORAGE_ABI_VERSION,
-    STORAGE_ABI_VERSION_KEY, STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR, STORAGE_SCHEMA_VERSION,
-    STORAGE_SCHEMA_VERSION_KEY, StorageMigrationPlan, VAULT_ROOT_OPEN_LOCK,
+    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY,
+    StorageMigrationPlan, VAULT_ROOT_OPEN_LOCK,
 };
 use super::vault_root_bind::{VaultRootIdentity, duplicate_open_root, vault_root_preflight_error};
 use crate::error::StoreError;
@@ -537,7 +537,7 @@ pub(super) fn gate_storage_versions(
     wtxn: &mut RwTxn<'_>,
     new_vault: bool,
     storage_abi_version: u16,
-) -> Result<StorageAbiGate> {
+) -> Result<()> {
     let stored_abi = read_vault_meta_u16(
         vault_meta,
         &*wtxn,
@@ -576,7 +576,7 @@ pub(super) fn gate_storage_versions(
         }
     }
 
-    Ok(abi_gate)
+    Ok(())
 }
 
 /// What the storage-ABI handshake decided for this open.
@@ -586,23 +586,13 @@ pub(in crate::store) enum StorageAbiGate {
     Current,
     /// A genuinely new vault: stamp the current version.
     StampCurrent,
-    /// OF-494 ONLY: the vault is stamped at the immediate predecessor, so
-    /// the byte-space v3.1 re-key runs inside this open's transaction and the
-    /// current version is stamped after its assertions pass.
-    RekeyByteSpaceV31,
 }
 
 /// Applies the strict-equality storage-ABI handshake used by every
 /// [`Store::open`] call.
 ///
-/// The handshake still fails closed in both directions — including a
-/// prior-version reader opening a newer vault — with ONE sanctioned carve-out.
-/// A vault stamped at exactly [`STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR`]
-/// returns [`StorageAbiGate::RekeyByteSpaceV31`] instead of erroring, because
-/// the strict gate would otherwise refuse every ABI-17 vault BEFORE the
-/// re-key that makes it current could run. That carve-out is not a migration
-/// framework: it accepts exactly one stamp, and the caller stamps the new
-/// version only after the re-key's count and id-set assertions pass.
+/// The handshake fails closed in both directions — including a prior-version
+/// reader opening a newer vault.
 pub(in crate::store) fn gate_storage_abi_value(
     stored: Option<u16>,
     current: u16,
@@ -610,12 +600,6 @@ pub(in crate::store) fn gate_storage_abi_value(
 ) -> Result<StorageAbiGate> {
     match stored {
         Some(stored) if stored == current => Ok(StorageAbiGate::Current),
-        Some(stored)
-            if current == STORAGE_ABI_VERSION
-                && stored == STORAGE_ABI_VERSION_V31_REKEY_PREDECESSOR =>
-        {
-            Ok(StorageAbiGate::RekeyByteSpaceV31)
-        }
         Some(stored) => Err(Error::Store(StoreError::StorageAbiVersionChanged {
             stored: Some(stored),
             current,

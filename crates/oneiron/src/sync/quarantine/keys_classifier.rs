@@ -234,14 +234,19 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // rematerialization pass re-run the door when quota is under budget.
         | ErrorKind::MaintenanceIngestQuotaExceeded
         // ONE-1645: a replayed `FacetOf` edge whose endpoints fall outside
-        // the write-time type table (`CLAIM | TURN | EVENT -> FACET`) is a
-        // rejection of that remote op. The local batch door aborts on it,
+        // the write-time type table (`CLAIM | TURN | EVENT | NOTE | ASSET ->
+        // FACET`) is a rejection of that remote op. The local batch door aborts on it,
         // but the replay arm (`BatchOp::EdgeWithCreatedAt`) is ungated by
         // H2 design, so forward remat runs the table itself and needs the
         // typed reason here — off-table stamp quarantined, window continues.
         // Endpoint types are read AFTER the endpoint-existence check, so a
         // not-yet-arrived endpoint defers instead of reaching this arm.
         | ErrorKind::InvalidFacetOfEdge
+        // A replayed row that would move a record's birth facet — a second
+        // NOTE or ASSET stamp, a removal of a live one, or a CLAIM whose
+        // `scopeFacetId` differs from the stored body — is a rejection of
+        // that remote op: quarantine it and continue the window.
+        | ErrorKind::FacetStampImmutable
         // ONE-1686 (RT-04): a replicated MESSAGE is refused for every author
         // bucket — the sync door carries no verified source actor or peer
         // signer to run the witness ceiling against, so nothing there can bind

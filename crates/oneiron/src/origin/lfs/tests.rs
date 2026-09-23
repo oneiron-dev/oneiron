@@ -124,7 +124,9 @@ fn lfs_put_writes_asset_and_lookup_row_once() {
     assert_eq!(record, outcome.object, "the row carries the whole record");
     // The vault also holds the four seeded bootstrap source carriers; the
     // assertion is that this object's ASSET is present exactly once.
-    let assets = vault.entities_by_type(ENTITY_TYPE_ASSET).expect("scan assets");
+    let assets = vault
+        .entities_by_type(ENTITY_TYPE_ASSET)
+        .expect("scan assets");
     assert_eq!(
         assets.iter().filter(|id| **id == record.asset_id).count(),
         1,
@@ -234,9 +236,14 @@ fn lfs_put_dedup_second_upload_is_one_object() {
     assert!(!first.deduplicated);
     assert!(second.deduplicated, "the second upload stores nothing");
     assert_eq!(first.object, second.object, "one durable record survives");
-    let assets = vault.entities_by_type(ENTITY_TYPE_ASSET).expect("scan assets");
+    let assets = vault
+        .entities_by_type(ENTITY_TYPE_ASSET)
+        .expect("scan assets");
     assert_eq!(
-        assets.iter().filter(|id| **id == first.object.asset_id).count(),
+        assets
+            .iter()
+            .filter(|id| **id == first.object.asset_id)
+            .count(),
         1,
         "two identical uploads are one ASSET entity (plus four seed carriers)"
     );
@@ -459,4 +466,22 @@ fn lfs_admission_repository_large_returns_store_in_lfs() {
         .size_bytes,
         1
     );
+}
+
+#[test]
+fn an_asset_born_by_put_lfs_object_carries_the_vault_default_facet() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let body = b"stamped lfs object bytes";
+    let oid = LfsOid::digest(body);
+    vault.put_lfs_object(oid, body, test_time(), LEARNED_AT)?;
+    let asset = vault.lfs_manifest(oid)?.expect("manifest").asset_id()?;
+    let stamps: Vec<_> = vault
+        .edges_out(&asset)?
+        .into_iter()
+        .filter(|edge| edge.kind == crate::edge::EdgeKind::FacetOf)
+        .map(|edge| edge.target)
+        .collect();
+
+    assert_eq!(stamps, vec![vault.default_facet()?]);
+    Ok(())
 }

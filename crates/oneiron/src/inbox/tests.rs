@@ -2046,8 +2046,8 @@ fn duplicate_hash_ignores_writer_substrate_but_keeps_explicit_scopes() -> Result
     );
     let first = candidate
         .clone()
-        .into_claim_body(&dreamer_envelope(entity(0xB1), "first"));
-    let second = candidate.into_claim_body(&dreamer_envelope(entity(0xB2), "second"));
+        .into_claim_body(&dreamer_envelope(entity(0xB1), "first"), entity(0xD0));
+    let second = candidate.into_claim_body(&dreamer_envelope(entity(0xB2), "second"), entity(0xD0));
     let hash = inbox_claim_hash(&first)?;
     assert_eq!(hash, inbox_claim_hash(&second)?);
     let mut named = second.clone();
@@ -2059,11 +2059,8 @@ fn duplicate_hash_ignores_writer_substrate_but_keeps_explicit_scopes() -> Result
     let mut project = second.clone();
     project.scope_project = entity(0xD3);
     assert_ne!(hash, inbox_claim_hash(&project)?);
-    let mut world = second.clone();
+    let mut world = second;
     world.world = Some(entity(0xD4));
     assert_ne!(hash, inbox_claim_hash(&world)?);
-    let mut unproven = second;
-    unproven.evidence = None;
-    assert_ne!(hash, inbox_claim_hash(&unproven)?);
     Ok(())
 }

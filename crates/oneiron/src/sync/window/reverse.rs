@@ -40,6 +40,10 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
     super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
     let entities_in_range = vault.entities_in_learned_range(start_ts, end_ts)?;
+    let device_only = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::settings::device_only_worlds_in(&vault.store, &rtxn)?
+    };
 
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
@@ -117,7 +121,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let hex_id = id.to_hex();
 
         // Defer-sync egress door, before reading or packing the payload.
-        if window_packing_excludes_entity(vault, id)? {
+        if window_packing_excludes_entity(vault, &device_only, id)? {
             continue;
         }
 
@@ -241,7 +245,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // purge-txn crash window must not re-enter the replicated edges
             // map. Plain containment = skip on this branch; reason-aware
             // (skip iff HARD) once tombstone v2 lands in M4-06.
-            if tombstone_map_contains_id(&tombstones_map, &edge.target) {
+            if tombstone_map_contains_id(&tombstones_map, &edge.target)
+                || window_packing_excludes_entity(vault, &device_only, &edge.target)?
+            {
                 continue;
             }
             if !local_claim_sync_allowed(vault, &edge.target)?
