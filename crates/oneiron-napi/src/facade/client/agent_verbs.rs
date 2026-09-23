@@ -2,6 +2,37 @@
 use super::*;
 #[napi]
 impl NativeClient {
+    #[napi]
+    pub fn tasks_ack(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.ack", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.cancel", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_check(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.check", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_expand(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.expand", input)
+            .map_err(facade_error)
+    }
+
     /// Witnesses one conversational turn.
     #[napi]
     pub fn witness(&self, turn: NapiWitnessTurnInput) -> napi::Result<NapiWitnessReceipt> {

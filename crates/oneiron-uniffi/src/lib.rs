@@ -27,7 +27,6 @@ mod contract;
 mod dto;
 mod error;
 
-pub use contract::PINNED_HEAD_CONTRACT_VERBS;
 pub use dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, ClaimInput, ClaimListFilter,
     ClaimView, CommitReceipt, CompanionRecordInput, ConsolidationJobInput, DeleteReceipt,

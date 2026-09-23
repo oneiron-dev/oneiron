@@ -2,11 +2,10 @@
 use super::super::frame::BudgetPolicyRef;
 use super::errors::PluginResult;
 use super::install::PluginInstallTarget;
-use crate::board_verb::BOARD_VERBS;
 use crate::entity_id::EntityId;
 use crate::skill::SkillRecord;
 use crate::skill_hub::{HubPackage, HubRef};
-use crate::task_verb::TASKS_VERBS;
+use crate::task_verb::sdk::SECTION_VERBS;
 use crate::vault::Vault;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -91,9 +90,8 @@ impl SectionVerbAllowlist {
     #[must_use]
     pub fn from_exported_verbs() -> Self {
         Self(
-            BOARD_VERBS
+            SECTION_VERBS
                 .iter()
-                .chain(TASKS_VERBS.iter())
                 .map(|verb| SectionVerbRef((*verb).to_owned()))
                 .collect(),
         )

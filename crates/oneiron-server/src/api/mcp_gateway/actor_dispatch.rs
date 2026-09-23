@@ -295,12 +295,7 @@ pub(crate) async fn execute_mcp_tool(
     // and task detail/write facades have no recursive proof projection, so
     // they require an unrestricted record scope instead of dropping caveats.
     let filtered_read = matches!(&args, McpValidatedToolArgs::Setup(_))
-        || matches!(&args, McpValidatedToolArgs::Verb(verb) if matches!(verb.tool.binding,
-            crate::mcp::McpVerbBinding::TasksCheck
-            | crate::mcp::McpVerbBinding::BoardExpand
-            | crate::mcp::McpVerbBinding::BoardRefresh
-            | crate::mcp::McpVerbBinding::BoardSubscribe
-            | crate::mcp::McpVerbBinding::BoardUnsubscribe));
+        || matches!(&args, McpValidatedToolArgs::Verb(verb) if verb.tool.filtered_read());
     if !filtered_read {
         auth.require_unrestricted_record_scope().map_err(|_| {
             McpGatewayError::new(
@@ -316,9 +311,7 @@ pub(crate) async fn execute_mcp_tool(
             | McpValidatedToolArgs::Book(_)
             | McpValidatedToolArgs::ExecuteCode(_)
             | McpValidatedToolArgs::Calendar(_)
-    ) || matches!(&args, McpValidatedToolArgs::Verb(verb) if matches!(verb.tool.binding,
-            crate::mcp::McpVerbBinding::TasksCreate | crate::mcp::McpVerbBinding::TasksAck
-            | crate::mcp::McpVerbBinding::TasksCancel));
+    ) || matches!(&args, McpValidatedToolArgs::Verb(verb) if verb.tool.writes());
     auth.require(if writes {
         crate::auth::CoreScope::Write
     } else {

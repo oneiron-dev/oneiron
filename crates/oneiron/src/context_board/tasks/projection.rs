@@ -22,7 +22,7 @@ const _: () = assert!(TASKS_RENDER_ROW_CAP > 0);
 
 /// TASKS board status axis (08b §3): running / scheduled / queued / done /
 /// failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TaskBoardStatus {
     Running,
     Scheduled,
@@ -53,7 +53,7 @@ impl TaskBoardStatus {
 /// evidence has to reach the owner's own surface rather than a tracing span.
 /// Typed, not prose: the count, the threshold it crossed, and the worker's own
 /// last status are what an owner needs to decide between waiting and forcing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CancelRejectionPathology {
     /// The realizing ATTEMPT that is refusing, so the owner can address it.
     pub attempt_id: String,
@@ -75,7 +75,7 @@ impl CancelRejectionPathology {
 }
 
 /// One collapsed TASKS row.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TaskRow {
     pub id: String,
     pub line: String,
@@ -180,7 +180,7 @@ pub(super) fn ladder_board_projection(
 /// Deliberately not a [`TaskRow`] — it carries no task id, status, intent
 /// flag, or folded-job count, so nothing downstream can mistake the footer for
 /// work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TasksOverflow {
     /// Concrete rows already projected but omitted by the render row cap.
     pub known_omitted_rows: usize,
@@ -207,7 +207,7 @@ impl TasksOverflow {
 }
 
 /// Collapsed TASKS section.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TasksSection {
     pub rows: Vec<TaskRow>,
     /// Structural footer; never represented as a [`TaskRow`].

@@ -6,7 +6,8 @@ include!("verb_catalog.rs");
 
 /// Shape discriminator on the typed TASK body. Absent on a schema-v1 row,
 /// where it means [`TaskKind::Standard`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskKind {
     Standard,
     Consult,
@@ -104,9 +105,7 @@ impl TaskAssignee {
             | Self::AnswerHolders
             | Self::Peer { .. }
             | Self::Child { .. }
-            | Self::Human { .. } => {
-                stored.is_some()
-            }
+            | Self::Human { .. } => stored.is_some(),
         };
         if admitted {
             Ok(())

@@ -34,6 +34,23 @@ to all mapped fields; `mcp_required_fields` can narrow that set. The generated
 MCP dispatcher calls the same typed SDK functions as the other transports and
 serializes their outputs without adding a per-verb result shape.
 
+`context` defaults to `memory`. `context: "board"` selects the existing
+`BoardVerbContext` instead: its call runs over the gateway's credential-bound
+snapshot and STREAM registry. These rows expose typed context-taking engine
+functions and MCP tools, not Memory-only HTTP/remote/language methods that
+cannot carry that host state. `mcp_result` optionally selects a result projection
+when a credential-scoped producer must report omissions (the TASKS section).
+
+`section` selects the Context Board plugin allowlist independently of transport
+registration. Board, task, room, facade, and plugin catalogs are projections,
+not independently maintained name lists.
+
+`mcp_scope` is `filtered` for row-filtered board results, `target` for an
+addressed entity, and `unrestricted` for actor-wide execution. `mcp_page` can
+select a continuable producer whose output is not a vector or cursor page;
+otherwise continuation follows `page` or a vector output. Credential write
+admission follows `scope`, not a second hand-maintained list.
+
 Every row's `input` also selects its schemars input schema. MCP projects the
 same `mcp_fields` paths into that schema, including `$` and `=field`, and keeps
 the common envelope constraints. An unresolved input field refuses tool

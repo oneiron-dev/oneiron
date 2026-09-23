@@ -1,16 +1,157 @@
 {
-  "legacy_mcp": [
-    "board.expand",
-    "board.refresh",
-    "board.subscribe",
-    "board.unsubscribe",
-    "tasks.ack",
-    "tasks.cancel",
-    "tasks.check",
-    "tasks.create",
-    "tasks.expand"
-  ],
   "verbs": [
+    {
+      "name": "board.expand",
+      "input": "BoardExpandRequest",
+      "output": "crate::board_verb::BoardVerbOutput",
+      "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Expand { key: input.key, frame_epoch: input.frame_epoch })?",
+      "scope": "Read",
+      "context": "board",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "key": "key",
+        "frame_epoch": "frame_epoch"
+      },
+      "mcp_required_fields": [
+        "key"
+      ],
+      "mcp_scope": "filtered",
+      "mcp_page": true,
+      "section": true
+    },
+    {
+      "name": "board.refresh",
+      "input": "BoardRefreshRequest",
+      "output": "crate::board_verb::BoardVerbOutput",
+      "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Refresh { frame_epoch: input.frame_epoch })?",
+      "scope": "Read",
+      "context": "board",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "frame_epoch": "frame_epoch"
+      },
+      "mcp_required_fields": [],
+      "mcp_scope": "filtered",
+      "section": true
+    },
+    {
+      "name": "board.subscribe",
+      "input": "BoardSubscriptionRequest",
+      "output": "crate::board_verb::BoardVerbOutput",
+      "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Subscribe { scopes: input.scopes })?",
+      "scope": "Read",
+      "context": "board",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "scopes": "scopes"
+      },
+      "mcp_required_fields": [
+        "scopes"
+      ],
+      "mcp_scope": "filtered",
+      "section": true
+    },
+    {
+      "name": "board.unsubscribe",
+      "input": "BoardSubscriptionRequest",
+      "output": "crate::board_verb::BoardVerbOutput",
+      "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Unsubscribe { scopes: input.scopes })?",
+      "scope": "Read",
+      "context": "board",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "scopes": "scopes"
+      },
+      "mcp_required_fields": [
+        "scopes"
+      ],
+      "mcp_scope": "filtered",
+      "section": true
+    },
+    {
+      "name": "tasks.ack",
+      "input": "TaskRequest",
+      "output": "crate::task_verb::TaskAckReceipt",
+      "call": "memory.tasks_ack(crate::EntityId::from_hex(&input.task_ref)?)?",
+      "scope": "Write",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "task_ref": "task_ref"
+      },
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "target",
+      "section": true
+    },
+    {
+      "name": "tasks.cancel",
+      "input": "TaskRequest",
+      "output": "crate::task_verb::TaskCancelReceipt",
+      "call": "memory.tasks_cancel(crate::task_verb::TaskCancelTarget::Task(crate::EntityId::from_hex(&input.task_ref)?))?",
+      "scope": "Write",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "task_ref": "task_ref"
+      },
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "target",
+      "section": true
+    },
+    {
+      "name": "tasks.check",
+      "input": "EmptyRequest",
+      "output": "crate::context_board::TasksSection",
+      "call": "memory.tasks_check()?",
+      "scope": "Read",
+      "mcp": "tool-first",
+      "mcp_fields": {},
+      "mcp_result": "mcp_tasks_section(server, actor, output)?",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "mcp_page": true,
+      "section": true
+    },
+    {
+      "name": "tasks.create",
+      "input": "TaskCreateRequest",
+      "output": "crate::task_verb::TaskCreateReceipt",
+      "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::companion_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(crate::unix_seconds_now())))?",
+      "scope": "Write",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "spec": "spec",
+        "label": "label"
+      },
+      "mcp_required_fields": [
+        "spec"
+      ],
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "unrestricted",
+      "section": true
+    },
+    {
+      "name": "tasks.expand",
+      "input": "TaskRequest",
+      "output": "Vec<String>",
+      "call": "memory.tasks_expand(crate::EntityId::from_hex(&input.task_ref)?)?",
+      "scope": "Read",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "task_ref": "task_ref"
+      },
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "target",
+      "section": true
+    },
     {
       "name": "witness",
       "input": "crate::memory::WitnessTurn",
@@ -23,7 +164,9 @@
       "admission": {
         "validate": "crate::memory::caps::check_witness_turn(&input)?;"
       },
-      "mcp": "none"
+      "mcp": "none",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "claim_upsert",
@@ -37,7 +180,9 @@
       "admission": {
         "validate": "crate::memory::caps::check_claim_input(&input)?;"
       },
-      "mcp": "none"
+      "mcp": "none",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "recall",
@@ -52,7 +197,9 @@
         "unrestricted_record_scope": true,
         "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;"
       },
-      "mcp": "none"
+      "mcp": "none",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "receipts",
@@ -67,7 +214,9 @@
         "unrestricted_record_scope": true,
         "validate": "crate::memory::caps::check_limit(input.limit.unwrap_or(100))?;"
       },
-      "mcp": "none"
+      "mcp": "none",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "key_value_get",
@@ -79,7 +228,9 @@
         "spec"
       ],
       "admission": {},
-      "mcp": "none"
+      "mcp": "none",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "key_value_put",
@@ -91,7 +242,9 @@
         "spec"
       ],
       "admission": {},
-      "mcp": "none"
+      "mcp": "none",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "key_value_delete",
@@ -103,7 +256,9 @@
         "spec"
       ],
       "admission": {},
-      "mcp": "none"
+      "mcp": "none",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "key_value_search",
@@ -115,7 +270,9 @@
         "spec"
       ],
       "admission": {},
-      "mcp": "none"
+      "mcp": "none",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "key_value_namespaces",
@@ -127,7 +284,9 @@
         "spec"
       ],
       "admission": {},
-      "mcp": "none"
+      "mcp": "none",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "tasks.ask",
@@ -138,7 +297,9 @@
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp": "tool-first"
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": true
     },
     {
       "name": "tasks.wait",
@@ -150,7 +311,9 @@
         "task_ref": "handle.task_ref",
         "key": "step_key"
       },
-      "mcp": "tool-first"
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": true
     },
     {
       "name": "tasks.answer",
@@ -161,7 +324,9 @@
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp": "tool-first"
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": true
     },
     {
       "name": "tasks.outcomes",
@@ -172,7 +337,9 @@
       "mcp_fields": {
         "task_ref": "task_ref"
       },
-      "mcp": "tool-first"
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": true
     },
     {
       "name": "rooms.list",
@@ -181,7 +348,9 @@
       "call": "memory.rooms_list()?.into_iter().map(|(id, room)| RoomEntry { id: id.to_hex(), room }).collect::<Vec<_>>()",
       "scope": "Read",
       "mcp_fields": {},
-      "mcp": "tool-first"
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "rooms.messages",
@@ -200,7 +369,9 @@
       "page": {
         "rows": "rows",
         "cursor": "next_after"
-      }
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "rooms.claim",
@@ -212,7 +383,9 @@
         "room_ref": "room_ref",
         "turn_ref": "turn_ref"
       },
-      "mcp": "tool-first"
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "rooms.speak",
@@ -224,7 +397,9 @@
         "spec": "$",
         "room_ref": "=conversation_ref"
       },
-      "mcp": "tool-first"
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": false
     }
   ]
 }

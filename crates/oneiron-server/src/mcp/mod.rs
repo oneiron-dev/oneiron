@@ -44,8 +44,8 @@ pub use self::codec::McpToolArguments;
 pub(crate) use self::codec::mcp_raw_call_arguments;
 pub use self::endpoint_args::{
     MCP_CODE_TASK_MAX_CHARS, MCP_TASK_LABEL_MAX_BYTES, McpCacheHint, McpExecuteCodeToolArgs,
-    McpPageRequest, McpSetupToolArgs, McpSubscriptionScope, McpVerbArguments, McpVerbToolArgs,
-    McpVerbToolPayload, validate_mcp_endpoint_tool_args,
+    McpPageRequest, McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload,
+    validate_mcp_endpoint_tool_args,
 };
 pub use self::endpoint_schema::{
     MCP_BOARD_BUDGET_TOK_MAX, MCP_CACHE_TTL_MS_MAX, MCP_FRAME_EPOCH_MAX, MCP_PAGE_LIMIT_MAX,
@@ -77,8 +77,8 @@ pub use self::surface::{
     MCP_RESULT_CACHE_SCOPE, MCP_RESULT_META_SCHEMA_VERSION, MCP_RESULT_TTL_MS,
     MCP_SETUP_INSTRUCTIONS, MCP_SETUP_TOOL, MCP_STREAM_CONNECTION_PREFIX,
     MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool,
-    McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbBinding,
-    McpVerbFamily, exported_verb_rows, generated_verb_tools, project_verb_rows, registered_surface,
+    McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbFamily,
+    exported_verb_rows, generated_verb_tools, project_verb_rows, registered_surface,
 };
 pub use self::tool_catalog::{
     MCP_BOOK_OPERATIONS, MCP_CALENDAR_OPERATIONS, MCP_SERVER_NAME, MCP_TOOL_ARGS_SCHEMA_VERSION,

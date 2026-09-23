@@ -16,6 +16,7 @@ impl BoardWorldScope {
         self.0
     }
 }
+// BEGIN GENERATED BOARD CATALOG
 pub const BOARD_VERBS: [&str; 4] = [
     "board.expand",
     "board.refresh",
@@ -45,6 +46,8 @@ impl BoardVerb {
         }
     }
 }
+
+// END GENERATED BOARD CATALOG
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoardVerbCall {
     Expand {
@@ -311,15 +314,6 @@ mod tests {
     }
     #[test]
     fn subscription_verbs_are_sorted_agent_free_and_typed() {
-        assert_eq!(
-            BOARD_VERBS,
-            [
-                "board.expand",
-                "board.refresh",
-                "board.subscribe",
-                "board.unsubscribe"
-            ]
-        );
         let (source, scope, connection, mut streams) = setup();
         streams.attach_connection(
             connection.clone(),

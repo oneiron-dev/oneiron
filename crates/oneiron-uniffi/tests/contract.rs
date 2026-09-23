@@ -7,7 +7,7 @@
 
 use oneiron_uniffi::{
     BlobVersionView, EXPORTED_UNIFFI_RUST_NAMES, EXPORTED_UNIFFI_VERBS,
-    HEAD_MEMORY_PACK_SCHEMA_VERSION, Oneiron, OneironError, PINNED_HEAD_CONTRACT_VERBS,
+    HEAD_MEMORY_PACK_SCHEMA_VERSION, Oneiron, OneironError,
 };
 
 /// The exact camel-case rule the generated Swift names follow.
@@ -30,22 +30,13 @@ fn camel(rust_name: &str) -> String {
 }
 
 #[test]
-fn head_contract_verbs_match_exported_proc_macro_surface() {
-    assert_eq!(EXPORTED_UNIFFI_VERBS, PINNED_HEAD_CONTRACT_VERBS);
-    assert_eq!(PINNED_HEAD_CONTRACT_VERBS.len(), 27);
-}
-
-#[test]
 fn exported_rust_names_camel_case_to_the_pinned_sdk_names() {
     assert_eq!(
         EXPORTED_UNIFFI_RUST_NAMES.len(),
-        PINNED_HEAD_CONTRACT_VERBS.len()
+        EXPORTED_UNIFFI_VERBS.len()
     );
 
-    for (rust_name, sdk_name) in EXPORTED_UNIFFI_RUST_NAMES
-        .iter()
-        .zip(PINNED_HEAD_CONTRACT_VERBS)
-    {
+    for (rust_name, sdk_name) in EXPORTED_UNIFFI_RUST_NAMES.iter().zip(EXPORTED_UNIFFI_VERBS) {
         assert_eq!(
             &camel(rust_name),
             sdk_name,

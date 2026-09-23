@@ -164,6 +164,41 @@ impl NativeClient {
     }
 
     // BEGIN GENERATED AGENT VERBS
+    fn tasks_ack(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.ack")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.ack", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_cancel(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.cancel")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.cancel", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_check(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.check")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.check", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_expand(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.expand")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.expand", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
 
     /// Witnesses one conversational turn.
     fn witness(&self, py: Python<'_>, turn_json: &str) -> PyResult<String> {

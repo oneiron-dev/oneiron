@@ -21,7 +21,7 @@ pub enum TaskRouteLane {
 /// What routing one created TASK actually did. The peer variant naming zero
 /// attempts is the point: the synced entity IS the transport. The human variant
 /// names zero attempts for a different reason — a person is not a worker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TaskRouteOutcome {
     DreamerAttempt {
         attempt_ref: AttemptId,
@@ -69,7 +69,7 @@ impl TaskRouteOutcome {
 }
 
 /// Result of one `tasks.create` invocation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TaskCreateReceipt {
     pub task_ref: Option<EntityId>,
     pub proposal_ref: Option<EntityId>,
@@ -139,7 +139,7 @@ pub enum TaskCancelTarget {
 }
 
 /// Result of one `tasks.cancel` invocation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TaskCancelReceipt {
     pub approval: ClaimApprovalStatus,
     pub effected: bool,
@@ -158,7 +158,7 @@ pub struct TaskCancelReceipt {
 }
 
 /// Result of persisting one render-tier task acknowledgement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TaskAckReceipt {
     pub task_ref: EntityId,
     pub acked: bool,

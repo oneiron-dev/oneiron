@@ -3,10 +3,8 @@
 use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, execute_mcp_board_verb, mcp_current_board,
     mcp_endpoint_result, mcp_facade_error, mcp_page_cursor_error, mcp_preflight_page,
-    mcp_request_id, mcp_resolve_page, mcp_scoped_tasks_section, mcp_verb_family_error,
+    mcp_request_id, mcp_resolve_page, mcp_scoped_tasks_section,
 };
-use crate::api::parse_entity_id_param;
-use crate::api::unix_seconds_now;
 use crate::error::{ApiError, ApiErrorDetails, ErrorCode};
 use crate::mcp::McpActorClass;
 use crate::mcp::McpPageBudget;
@@ -19,151 +17,58 @@ use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
 
-/// `tasks.*`: dispatched through the engine's gated TASKS facades, under the
-/// credential's own world/facet ceiling.
-fn execute_mcp_tasks_verb(
+fn mcp_tasks_section(
     server: &Arc<SyncServer>,
-    args: &crate::mcp::McpVerbToolArgs,
     actor: &McpResolvedActor,
+    section: oneiron::context_board::TasksSection,
 ) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
-    let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
-    let arguments = &args.payload.arguments;
-    if oneiron::task_verb::sdk::AGENT_VERBS.contains(&args.tool.name) {
-        return execute_mcp_agent_verb(server, args, actor);
-    }
-    match args.tool.binding {
-        crate::mcp::McpVerbBinding::TasksCheck => {
-            let section = facade.tasks_check().map_err(mcp_facade_error)?;
-            let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, section)?;
-            // The footer type is `oneiron::context_board::tasks::TasksOverflow`,
-            // whose module is private and which `context_board` does not
-            // re-export, so the method item cannot be named from this crate.
-            // Matching states the same optional line without a closure.
-            let overflow_line = match section.overflow {
-                Some(overflow) => overflow.line(),
-                None => None,
-            };
-            // The producer's OWN honesty bits decide the end marker and the
-            // health: a capped scan is degraded and non-terminal, never a
-            // hard-coded healthy/complete. The render cap's omissions are a
-            // WINDOW fact and stay apart from the requested scope's filtering
-            // (ONE-1704 repair), so a caller can tell which one withheld rows.
-            let window_truncated = section
-                .overflow
-                .map_or(0, |overflow| overflow.known_omitted_rows);
-            let exhausted = section
-                .overflow
-                .is_none_or(|overflow| overflow.source_exhausted);
-            let rows = section
-                .rows
-                .iter()
-                .map(|row| {
-                    json!({
-                        "id": row.id,
-                        "line": row.line,
-                        "status": row.status.as_str(),
-                        "is_intent": row.is_intent,
-                    })
-                })
-                .collect::<Vec<_>>();
-            let source = crate::mcp::McpPageSource::scoped_window(
-                rows.len(),
-                scope_omitted,
-                window_truncated,
-                exhausted,
-            );
-            Ok((
-                json!({
-                    "kind": "tasks_section",
-                    "count": rows.len(),
-                    "rows": rows,
-                    "overflow": overflow_line,
-                }),
-                source,
-            ))
-        }
-        // A direct expand by id is a READ producer with an enumerable row set,
-        // so its whole result is retained and paged like any other continuable
-        // read (ONE-1704 repair). It inherits no board scan cap, so it states
-        // its own set complete.
-        crate::mcp::McpVerbBinding::TasksExpand => {
-            let lines = facade
-                .tasks_expand(mcp_task_ref(arguments)?)
-                .map_err(mcp_facade_error)?;
-            let source = crate::mcp::McpPageSource::complete(lines.len());
-            Ok((json!({ "kind": "expanded", "lines": lines }), source))
-        }
-        crate::mcp::McpVerbBinding::TasksAck => {
-            let receipt = facade
-                .tasks_ack(mcp_task_ref(arguments)?)
-                .map_err(mcp_facade_error)?;
-            Ok((
-                json!({
-                    "kind": "ack_receipt",
-                    "task_ref": receipt.task_ref.to_hex(),
-                    "acked": receipt.acked,
-                }),
-                crate::mcp::McpPageSource::complete(1),
-            ))
-        }
-        crate::mcp::McpVerbBinding::TasksCancel => {
-            let receipt = facade
-                .tasks_cancel(oneiron::task_verb::TaskCancelTarget::Task(mcp_task_ref(
-                    arguments,
-                )?))
-                .map_err(mcp_facade_error)?;
-            Ok((
-                json!({
-                    "kind": "cancel_receipt",
-                    "approval": receipt.approval.as_str(),
-                    "effected": receipt.effected,
-                    "proposal_ref": receipt.proposal_ref.map(|id| id.to_hex()),
-                    "gate_decision_ref": receipt.gate_decision_ref,
-                    "status": receipt
-                        .status
-                        .as_ref()
-                        .map(|status| format!("{status:?}").to_ascii_lowercase()),
-                }),
-                crate::mcp::McpPageSource::complete(1),
-            ))
-        }
-        crate::mcp::McpVerbBinding::TasksCreate => {
-            let spec = arguments.spec.as_ref().ok_or_else(|| {
-                McpGatewayError::new(-32602, "tool_args_invalid", "spec is required")
-                    .with_field("arguments.spec")
-            })?;
-            let spec = oneiron::task_verb::TaskCreateSpec::new(
-                oneiron::companion_value_from_json(spec).map_err(|error| {
-                    mcp_engine_error("mcp tasks.create spec conversion failed", error)
-                })?,
-                arguments.label.clone(),
-                Some(actor.actor_ref),
-                Some(unix_seconds_now()),
-            );
-            let receipt = facade.tasks_create(&spec).map_err(mcp_facade_error)?;
-            Ok((
-                json!({
-                    "kind": "create_receipt",
-                    "task_ref": receipt.task_ref.map(|id| id.to_hex()),
-                    "proposal_ref": receipt.proposal_ref.map(|id| id.to_hex()),
-                    "approval": receipt.approval.as_str(),
-                    "effected": receipt.effected,
-                }),
-                crate::mcp::McpPageSource::complete(1),
-            ))
-        }
-        _ => Err(mcp_verb_family_error(args)),
-    }
-}
-
-fn mcp_task_ref(
-    arguments: &crate::mcp::McpVerbArguments,
-) -> Result<oneiron::EntityId, McpGatewayError> {
-    let task_ref = arguments.task_ref.as_deref().ok_or_else(|| {
-        McpGatewayError::new(-32602, "tool_args_invalid", "task_ref is required")
-            .with_field("arguments.task_ref")
-    })?;
-    parse_entity_id_param(task_ref, "arguments.task_ref").map_err(mcp_api_error)
+    let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, section)?;
+    // The footer type is `oneiron::context_board::tasks::TasksOverflow`,
+    // whose module is private and which `context_board` does not
+    // re-export, so the method item cannot be named from this crate.
+    // Matching states the same optional line without a closure.
+    let overflow_line = match section.overflow {
+        Some(overflow) => overflow.line(),
+        None => None,
+    };
+    // The producer's OWN honesty bits decide the end marker and the
+    // health: a capped scan is degraded and non-terminal, never a
+    // hard-coded healthy/complete. The render cap's omissions are a
+    // WINDOW fact and stay apart from the requested scope's filtering
+    // (ONE-1704 repair), so a caller can tell which one withheld rows.
+    let window_truncated = section
+        .overflow
+        .map_or(0, |overflow| overflow.known_omitted_rows);
+    let exhausted = section
+        .overflow
+        .is_none_or(|overflow| overflow.source_exhausted);
+    let rows = section
+        .rows
+        .iter()
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "line": row.line,
+                "status": row.status.as_str(),
+                "is_intent": row.is_intent,
+            })
+        })
+        .collect::<Vec<_>>();
+    let source = crate::mcp::McpPageSource::scoped_window(
+        rows.len(),
+        scope_omitted,
+        window_truncated,
+        exhausted,
+    );
+    Ok((
+        json!({
+            "kind": "tasks_section",
+            "count": rows.len(),
+            "rows": rows,
+            "overflow": overflow_line,
+        }),
+        source,
+    ))
 }
 
 /// One GENERATED verb tool call.
@@ -177,15 +82,7 @@ pub(crate) async fn execute_mcp_generated_verb(
     // verb refuses a cursor at the pre-dispatch door below. `tasks.expand` is a
     // read whose rows are an enumerable set, so it continues under the same
     // retained-snapshot protocol as the board/task pages (ONE-1704 repair).
-    let continuable = matches!(
-        args.tool.binding,
-        crate::mcp::McpVerbBinding::BoardExpand
-            | crate::mcp::McpVerbBinding::TasksCheck
-            | crate::mcp::McpVerbBinding::TasksExpand
-            | crate::mcp::McpVerbBinding::TasksOutcomes
-            | crate::mcp::McpVerbBinding::RoomsList
-            | crate::mcp::McpVerbBinding::RoomsMessages
-    );
+    let continuable = args.tool.continuable();
     // This is deliberately before the board/tasks producer. A cursor presented
     // to a mutating or one-row verb is refused here, so it cannot hide a write
     // behind a later ToolMismatch/ArgumentsMismatch response.
@@ -215,40 +112,30 @@ pub(crate) async fn execute_mcp_generated_verb(
                 None,
             )
         } else {
-            let (output, source, carrier, producer_epoch) = match args.tool.family {
-                crate::mcp::McpVerbFamily::Board => {
-                    let (output, source, carrier, epoch) =
-                        execute_mcp_board_verb(server, &args, actor).await?;
-                    (output, source, carrier, Some(epoch))
-                }
-                crate::mcp::McpVerbFamily::Rooms => {
-                    let (output, source) = execute_mcp_agent_verb(server, &args, actor)?;
-                    (output, source, McpCarrierPolicy::Drain, None)
-                }
-                crate::mcp::McpVerbFamily::Memory => {
-                    let (output, capabilities) =
-                        super::memory_response::execute(server, &args, actor).await?;
-                    // One native response, with its own bounded query/batch
-                    // semantics. Do not invent an MCP cursor over nested DTOs.
-                    (
-                        output,
-                        crate::mcp::McpPageSource::complete(1),
-                        McpCarrierPolicy::DrainWithCapabilities(capabilities),
-                        None,
-                    )
-                }
-                crate::mcp::McpVerbFamily::Tasks => {
-                    // Establish the board epoch before reading a continuable
-                    // task set. The result itself is retained below, so a
-                    // later continuation never re-reads mutable task rows.
-                    let producer_epoch = if continuable {
+            let (output, source, carrier, producer_epoch) = if args.tool.memory_method().is_some() {
+                let (output, capabilities) =
+                    super::memory_response::execute(server, &args, actor).await?;
+                // One native response, with its own bounded query/batch
+                // semantics. Do not invent an MCP cursor over nested DTOs.
+                (
+                    output,
+                    crate::mcp::McpPageSource::complete(1),
+                    McpCarrierPolicy::DrainWithCapabilities(capabilities),
+                    None,
+                )
+            } else {
+                // Establish the board epoch before reading a continuable
+                // task set. The result itself is retained below, so a
+                // later continuation never re-reads mutable task rows.
+                let task_epoch =
+                    if args.tool.family == crate::mcp::McpVerbFamily::Tasks && continuable {
                         Some(mcp_current_board(server, actor).await?.epoch)
                     } else {
                         None
                     };
-                    let (output, source) = execute_mcp_tasks_verb(server, &args, actor)?;
-                    (output, source, McpCarrierPolicy::Drain, producer_epoch)
-                }
+                let (output, source, carrier, epoch) =
+                    execute_mcp_agent_verb(server, &args, actor).await?;
+                (output, source, carrier, epoch.or(task_epoch))
             };
             let snapshot = McpPageSnapshot {
                 output: output.clone(),
@@ -453,11 +340,19 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
 }
 
 // BEGIN GENERATED MCP DISPATCH
-fn execute_mcp_agent_verb(
-    server: &SyncServer,
+async fn execute_mcp_agent_verb(
+    server: &Arc<SyncServer>,
     args: &McpVerbToolArgs,
-    actor: &McpResolvedActor,
-) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
+    actor: &McpCallContext,
+) -> Result<
+    (
+        Value,
+        crate::mcp::McpPageSource,
+        McpCarrierPolicy,
+        Option<u64>,
+    ),
+    McpGatewayError,
+> {
     let a = &args.payload.arguments;
     let invalid = || {
         McpGatewayError::new(
@@ -468,6 +363,122 @@ fn execute_mcp_agent_verb(
     };
     let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
     match args.tool.name {
+        "board.expand" => {
+            let input: oneiron::task_verb::sdk::BoardExpandRequest = serde_json::from_value(json!({"key":a.key.clone().ok_or_else(invalid)?,"frame_epoch":a.frame_epoch.clone()})).map_err(|_| invalid())?;
+
+            return execute_mcp_board_verb(server, actor, |context| {
+                oneiron::task_verb::sdk::board_expand(context, input)
+            })
+            .await;
+        }
+        "board.refresh" => {
+            let input: oneiron::task_verb::sdk::BoardRefreshRequest =
+                serde_json::from_value(json!({"frame_epoch":a.frame_epoch.clone()}))
+                    .map_err(|_| invalid())?;
+
+            return execute_mcp_board_verb(server, actor, |context| {
+                oneiron::task_verb::sdk::board_refresh(context, input)
+            })
+            .await;
+        }
+        "board.subscribe" => {
+            let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
+                serde_json::from_value(json!({"scopes":a.scopes.clone().ok_or_else(invalid)?}))
+                    .map_err(|_| invalid())?;
+
+            return execute_mcp_board_verb(server, actor, |context| {
+                oneiron::task_verb::sdk::board_subscribe(context, input)
+            })
+            .await;
+        }
+        "board.unsubscribe" => {
+            let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
+                serde_json::from_value(json!({"scopes":a.scopes.clone().ok_or_else(invalid)?}))
+                    .map_err(|_| invalid())?;
+
+            return execute_mcp_board_verb(server, actor, |context| {
+                oneiron::task_verb::sdk::board_unsubscribe(context, input)
+            })
+            .await;
+        }
+        "tasks.ack" => {
+            let input: oneiron::task_verb::sdk::TaskRequest =
+                serde_json::from_value(json!({"task_ref":a.task_ref.clone().ok_or_else(invalid)?}))
+                    .map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::tasks_ack(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source, McpCarrierPolicy::Drain, None))
+        }
+        "tasks.cancel" => {
+            let input: oneiron::task_verb::sdk::TaskRequest =
+                serde_json::from_value(json!({"task_ref":a.task_ref.clone().ok_or_else(invalid)?}))
+                    .map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::tasks_cancel(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source, McpCarrierPolicy::Drain, None))
+        }
+        "tasks.check" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(json!({})).map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::tasks_check(&memory, input).map_err(mcp_facade_error)?;
+            let (value, source) = mcp_tasks_section(server, actor, output)?;
+            return Ok((value, source, McpCarrierPolicy::Drain, None));
+        }
+        "tasks.create" => {
+            let input: oneiron::task_verb::sdk::TaskCreateRequest = serde_json::from_value(
+                json!({"spec":a.spec.clone().ok_or_else(invalid)?,"label":a.label.clone()}),
+            )
+            .map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::tasks_create(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source, McpCarrierPolicy::Drain, None))
+        }
+        "tasks.expand" => {
+            let input: oneiron::task_verb::sdk::TaskRequest =
+                serde_json::from_value(json!({"task_ref":a.task_ref.clone().ok_or_else(invalid)?}))
+                    .map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::tasks_expand(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source, McpCarrierPolicy::Drain, None))
+        }
         "tasks.ask" => {
             let input: oneiron::task_verb::TaskAskSpec =
                 serde_json::from_value(a.spec.clone().ok_or_else(invalid)?)
@@ -483,7 +494,7 @@ fn execute_mcp_agent_verb(
                     "typed agent result cannot be encoded",
                 )
             })?;
-            Ok((value, source))
+            Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "tasks.wait" => {
             let input: oneiron::task_verb::sdk::TaskWaitRequest = serde_json::from_value(json!({"handle":{"task_ref":a.task_ref.clone().ok_or_else(invalid)?},"step_key":a.key.clone().ok_or_else(invalid)?})).map_err(|_| invalid())?;
@@ -498,7 +509,7 @@ fn execute_mcp_agent_verb(
                     "typed agent result cannot be encoded",
                 )
             })?;
-            Ok((value, source))
+            Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "tasks.answer" => {
             let input: oneiron::task_verb::sdk::TaskAnswerRequest =
@@ -515,7 +526,7 @@ fn execute_mcp_agent_verb(
                     "typed agent result cannot be encoded",
                 )
             })?;
-            Ok((value, source))
+            Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "tasks.outcomes" => {
             let input: oneiron::task_verb::TaskAskHandle =
@@ -532,7 +543,7 @@ fn execute_mcp_agent_verb(
                     "typed agent result cannot be encoded",
                 )
             })?;
-            Ok((value, source))
+            Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "rooms.list" => {
             let input: oneiron::task_verb::sdk::EmptyRequest =
@@ -548,7 +559,7 @@ fn execute_mcp_agent_verb(
                     "typed agent result cannot be encoded",
                 )
             })?;
-            Ok((value, source))
+            Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "rooms.messages" => {
             let input: oneiron::task_verb::sdk::RoomRequest = serde_json::from_value(json!({"room_ref":a.room_ref.clone().ok_or_else(invalid)?,"after":a.turn_ref.clone()})).map_err(|_| invalid())?;
@@ -568,7 +579,7 @@ fn execute_mcp_agent_verb(
                     "typed agent result cannot be encoded",
                 )
             })?;
-            Ok((value, source))
+            Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "rooms.claim" => {
             let input: oneiron::task_verb::sdk::RoomClaimRequest = serde_json::from_value(json!({"room_ref":a.room_ref.clone().ok_or_else(invalid)?,"turn_ref":a.turn_ref.clone().ok_or_else(invalid)?})).map_err(|_| invalid())?;
@@ -583,7 +594,7 @@ fn execute_mcp_agent_verb(
                     "typed agent result cannot be encoded",
                 )
             })?;
-            Ok((value, source))
+            Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "rooms.speak" => {
             let input: oneiron::memory::WitnessTurn =
@@ -602,7 +613,7 @@ fn execute_mcp_agent_verb(
                     "typed agent result cannot be encoded",
                 )
             })?;
-            Ok((value, source))
+            Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         _ => Err(invalid()),
     }

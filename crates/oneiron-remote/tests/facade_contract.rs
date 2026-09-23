@@ -19,6 +19,7 @@ fn facade_contract_catalog_is_exact() {
         .as_array()
         .expect("verb rows")
         .iter()
+        .filter(|row| row["context"].as_str().unwrap_or("memory") == "memory")
         .map(|row| row["name"].as_str().expect("verb name"))
         .collect();
     assert_eq!(FACADE_VERB_CATALOG.len(), expected.len());

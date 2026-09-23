@@ -566,10 +566,7 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
         panic!("tasks.expand must validate into the generated verb arm");
     };
     let digest = crate::mcp::mcp_page_argument_digest(&validated.payload);
-    let retained = json!({
-        "kind": "expanded",
-        "lines": ["task line", "  realizing job", "  result=abc"],
-    });
+    let retained = json!(["task line", "  realizing job", "  result=abc"]);
     let (connection, cursor) = {
         let mut registry = server.mcp_registry.lock().await;
         let connection = registry
@@ -641,7 +638,7 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
     );
     let structured = &continued["result"]["structuredContent"];
     assert_eq!(
-        structured["output"]["lines"],
+        structured["output"],
         json!(["  realizing job", "  result=abc"]),
         "page two is exactly the retained producer remainder: {structured:?}"
     );

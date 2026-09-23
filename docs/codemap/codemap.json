@@ -31159,6 +31159,9 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BoardExpandRequest",
+      "BoardRefreshRequest",
+      "BoardSubscriptionRequest",
       "EmptyRequest",
       "RecallRequest",
       "ReceiptsRequest",
@@ -31166,12 +31169,14 @@
       "RoomEntry",
       "RoomRequest",
       "TaskAnswerRequest",
+      "TaskCreateRequest",
+      "TaskRequest",
       "TaskWaitRequest"
      ],
      "path": "src/task_verb/sdk.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
-      "struct": 8
+      "struct": 13
      }
     },
     {
@@ -31181,8 +31186,8 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "const": 1,
-      "fn": 21
+      "const": 2,
+      "fn": 30
      }
     },
     {
@@ -37235,7 +37240,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 17
+      "fn": 22
      }
     },
     {
@@ -37520,7 +37525,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "fn": 18
+      "fn": 23
      }
     },
     {
@@ -39093,7 +39098,7 @@
      "path": "src/api/mcp_gateway/exec_board_verbs.rs",
      "purpose": "Execute-code and board-verb executors",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -40698,15 +40703,10 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "McpVerbBinding"
-     ],
+     "notable": [],
      "path": "src/mcp/agent_catalog.rs",
      "purpose": "—",
-     "surface": {
-      "crate-vis": 3,
-      "enum": 1
-     }
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -40767,7 +40767,6 @@
       "McpExecuteCodeToolArgs",
       "McpPageRequest",
       "McpSetupToolArgs",
-      "McpSubscriptionScope",
       "McpVerbArguments",
       "McpVerbToolArgs",
       "McpVerbToolPayload"
@@ -40776,9 +40775,8 @@
      "purpose": "Endpoint tool argument envelopes: setup, execute-code, paging, and verbs",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
-      "enum": 1,
-      "fn": 4,
+      "crate-vis": 2,
+      "fn": 3,
       "struct": 7
      }
     },
@@ -40989,9 +40987,9 @@
      "purpose": "MCP endpoint surface: modes, verb bindings, and the registered tool listing",
      "surface": {
       "const": 14,
-      "crate-vis": 2,
+      "crate-vis": 8,
       "enum": 4,
-      "fn": 15,
+      "fn": 16,
       "struct": 3
      }
     },
@@ -41828,7 +41826,7 @@
      "path": "src/contract.rs",
      "purpose": "Head-contract pins and the crate-private verb export macro",
      "surface": {
-      "const": 3,
+      "const": 2,
       "fn": 1
      }
     },
@@ -41907,7 +41905,7 @@
      "surface": {
       "const": 1,
       "fn": 3,
-      "re-export": 3,
+      "re-export": 2,
       "struct": 1
      }
     },

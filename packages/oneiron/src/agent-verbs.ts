@@ -10,6 +10,11 @@ export type TaskWaitOutcome = { Pending: {trap_ref: string} } | { Ready: TaskAsk
 export function agentVerbs(invoke: AgentInvoke) {
   return {
 tasks: {
+ack(turn: Record<string, unknown>): unknown { return invoke("tasksAck", turn) as unknown },
+cancel(turn: Record<string, unknown>): unknown { return invoke("tasksCancel", turn) as unknown },
+check(): unknown[] { return invoke("tasksCheck", {}) as unknown[] },
+create(turn: Record<string, unknown>): unknown { return invoke("tasksCreate", turn) as unknown },
+expand(turn: Record<string, unknown>): unknown { return invoke("tasksExpand", turn) as unknown },
 ask(spec: TaskAskSpec): TaskAskReceipt { return invoke("tasksAsk", spec) as TaskAskReceipt },
 wait(handle: TaskAskHandle, stepKey = "sdk.wait"): TaskWaitOutcome { return invoke("tasksWait", {handle, step_key: stepKey}) as TaskWaitOutcome },
 answer(handle: TaskAskHandle, resultRef: string): TaskAskAnswer { return invoke("tasksAnswer", {handle, result_ref: resultRef}) as TaskAskAnswer },

@@ -1,7 +1,7 @@
 //! Tool-first projections of the engine-owned typed read table.
 
 use super::{McpGatewayError, mcp_engine_error, mcp_scoped_read};
-use crate::mcp::{McpResolvedActor, McpVerbBinding, McpVerbToolArgs};
+use crate::mcp::{McpResolvedActor, McpVerbToolArgs};
 use crate::server::SyncServer;
 use oneiron::code_run::vault_read::{
     CoreEntityRecord, CoreHydrateResponse, CoreHydrateStatus, InProcessVaultReadAdapter,
@@ -60,7 +60,7 @@ fn execute_read(
     args: &McpVerbToolArgs,
     actor: &McpResolvedActor,
 ) -> Result<MemoryRead, McpGatewayError> {
-    let McpVerbBinding::Memory(method) = args.tool.binding else {
+    let Some(method) = args.tool.memory_method() else {
         return Err(super::mcp_verb_family_error(args));
     };
     let body = args.payload.arguments.request.clone().ok_or_else(|| {

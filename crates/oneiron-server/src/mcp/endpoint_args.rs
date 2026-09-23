@@ -6,7 +6,7 @@ use super::codec::deserialize_optional_u64;
 use super::codec::{McpToolArguments, schema_normalized_arguments};
 use super::surface::{
     MCP_BOARD_BUDGET_TOK, MCP_EXECUTE_CODE_TOOL, MCP_SETUP_TOOL, McpEndpointTool,
-    McpGeneratedVerbTool, McpVerbBinding,
+    McpGeneratedVerbTool,
 };
 use super::tool_catalog::{McpToolValidationError, McpValidatedToolArgs};
 use super::validators::{
@@ -174,35 +174,6 @@ impl McpExecuteCodeToolArgs {
     }
 }
 
-/// A subscription scope on the wire. Mirrors the engine enum one-for-one so a
-/// scope cannot be minted here.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum McpSubscriptionScope {
-    MyTasks,
-    MyChildren,
-    ConsultsToMe,
-    Memories,
-    Worlds,
-    Presence,
-    Counts,
-}
-
-impl McpSubscriptionScope {
-    #[must_use]
-    pub const fn engine(self) -> SubscriptionScope {
-        match self {
-            Self::MyTasks => SubscriptionScope::MyTasks,
-            Self::MyChildren => SubscriptionScope::MyChildren,
-            Self::ConsultsToMe => SubscriptionScope::ConsultsToMe,
-            Self::Memories => SubscriptionScope::Memories,
-            Self::Worlds => SubscriptionScope::Worlds,
-            Self::Presence => SubscriptionScope::Presence,
-            Self::Counts => SubscriptionScope::Counts,
-        }
-    }
-}
-
 /// The closed argument envelope every generated verb tool shares.
 ///
 /// One struct, per-binding admission: a field that belongs to another verb is
@@ -216,7 +187,7 @@ pub struct McpVerbArguments {
     #[serde(default, deserialize_with = "deserialize_optional_u64")]
     pub frame_epoch: Option<u64>,
     #[serde(default)]
-    pub scopes: Option<Vec<McpSubscriptionScope>>,
+    pub scopes: Option<Vec<SubscriptionScope>>,
     #[serde(default)]
     pub task_ref: Option<String>,
     #[serde(default)]
@@ -262,41 +233,6 @@ pub(super) const MCP_TASK_ROW_FIXED_TOKEN_BYTES: usize = 1_024;
 pub const MCP_TASK_LABEL_MAX_BYTES: usize =
     oneiron::context_board::MAX_BOARD_ROW_BYTES - MCP_TASK_ROW_FIXED_TOKEN_BYTES;
 
-pub(super) const fn verb_argument_fields(binding: McpVerbBinding) -> &'static [&'static str] {
-    if let Some(fields) = super::surface::agent_argument_fields(binding) {
-        return fields;
-    }
-    match binding {
-        McpVerbBinding::BoardExpand => &["key", "frame_epoch"],
-        McpVerbBinding::BoardRefresh => &["frame_epoch"],
-        McpVerbBinding::BoardSubscribe | McpVerbBinding::BoardUnsubscribe => &["scopes"],
-        McpVerbBinding::TasksAck | McpVerbBinding::TasksCancel | McpVerbBinding::TasksExpand => {
-            &["task_ref"]
-        }
-        McpVerbBinding::TasksCheck => &[],
-        McpVerbBinding::TasksCreate => &["spec", "label"],
-        McpVerbBinding::Memory(_) => &["request"],
-        _ => &[],
-    }
-}
-
-pub(super) const fn verb_required_fields(binding: McpVerbBinding) -> &'static [&'static str] {
-    if let Some(fields) = super::surface::agent_required_fields(binding) {
-        return fields;
-    }
-    match binding {
-        McpVerbBinding::BoardExpand => &["key"],
-        McpVerbBinding::BoardRefresh | McpVerbBinding::TasksCheck => &[],
-        McpVerbBinding::BoardSubscribe | McpVerbBinding::BoardUnsubscribe => &["scopes"],
-        McpVerbBinding::TasksAck | McpVerbBinding::TasksCancel | McpVerbBinding::TasksExpand => {
-            &["task_ref"]
-        }
-        McpVerbBinding::TasksCreate => &["spec"],
-        McpVerbBinding::Memory(_) => &["request"],
-        _ => &[],
-    }
-}
-
 impl McpVerbArguments {
     fn present_fields(&self) -> [(&'static str, bool); 9] {
         [
@@ -315,9 +251,9 @@ impl McpVerbArguments {
     fn validate(
         &self,
         tool: &'static str,
-        binding: McpVerbBinding,
+        verb: McpGeneratedVerbTool,
     ) -> Result<(), McpToolValidationError> {
-        let allowed = verb_argument_fields(binding);
+        let allowed = verb.argument_fields();
         for (field, present) in self.present_fields() {
             if present && !allowed.contains(&field) {
                 return Err(McpToolValidationError::field(
@@ -328,7 +264,7 @@ impl McpVerbArguments {
             }
         }
         for (field, present) in self.present_fields() {
-            if !present && verb_required_fields(binding).contains(&field) {
+            if !present && verb.required_fields().contains(&field) {
                 return Err(McpToolValidationError::field(tool, field, "is required"));
             }
         }
@@ -421,7 +357,7 @@ pub fn validate_mcp_endpoint_tool_args(
             validate_schema_version(tool.name, &payload.schema_version)?;
             payload.actor.validate(tool.name)?;
             payload.consent.validate(tool.name)?;
-            payload.arguments.validate(tool.name, tool.binding)?;
+            payload.arguments.validate(tool.name, tool)?;
             McpPageRequest::validate_optional(payload.page.as_ref(), tool.name)?;
             Ok(McpValidatedToolArgs::Verb(Box::new(McpVerbToolArgs {
                 tool,

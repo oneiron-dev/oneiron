@@ -63,7 +63,7 @@ pub(crate) fn mcp_admit_scoped_call(
         // no wire name resolves onto them at all.
         _ => return mcp_admit_unscoped_execution(actor, tool_name, "name"),
     };
-    if matches!(verb.tool.binding, crate::mcp::McpVerbBinding::Memory(_)) {
+    if verb.tool.memory_method().is_some() {
         // Actor-scoped reads do NOT by themselves carry a connector's narrower
         // ceiling. Never confuse the principal's grants with this credential.
         mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.request")?;
@@ -75,18 +75,7 @@ pub(crate) fn mcp_admit_scoped_call(
         let id = parse_entity_id_param(task_ref, "arguments.task_ref").map_err(mcp_api_error)?;
         mcp_admit_scoped_entity(server, actor, &id, "arguments.task_ref")?;
     }
-    if matches!(
-        verb.tool.binding,
-        crate::mcp::McpVerbBinding::TasksCreate
-            | crate::mcp::McpVerbBinding::TasksOutcomes
-            | crate::mcp::McpVerbBinding::TasksAnswer
-            | crate::mcp::McpVerbBinding::TasksAsk
-            | crate::mcp::McpVerbBinding::TasksWait
-            | crate::mcp::McpVerbBinding::RoomsList
-            | crate::mcp::McpVerbBinding::RoomsMessages
-            | crate::mcp::McpVerbBinding::RoomsSpeak
-            | crate::mcp::McpVerbBinding::RoomsClaim
-    ) {
+    if verb.tool.requires_unscoped() {
         mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.spec")?;
     }
     Ok(())
@@ -136,12 +125,11 @@ fn mcp_called_tool_name(args: &McpValidatedToolArgs) -> &'static str {
 /// credential was ATTACHED under.
 fn mcp_admit_subscription_scopes(
     actor: &McpCallContext,
-    requested: &[crate::mcp::McpSubscriptionScope],
+    requested: &[oneiron::context_board::SubscriptionScope],
 ) -> Result<(), McpGatewayError> {
     let asked = requested
         .iter()
         .copied()
-        .map(crate::mcp::McpSubscriptionScope::engine)
         .collect::<std::collections::BTreeSet<_>>();
     let admitted = actor.admitted_subscriptions(&asked);
     if admitted == asked {

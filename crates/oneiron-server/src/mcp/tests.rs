@@ -1877,29 +1877,29 @@ fn endpoint_census_args(tool: McpEndpointTool) -> Value {
 
 /// The minimal in-grammar `arguments` object for one generated verb.
 fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
-    match verb.binding {
-        McpVerbBinding::TasksOutcomes => json!({"task_ref":ACTOR_ID}),
-        McpVerbBinding::TasksAnswer => {
+    match verb.name {
+        "tasks.outcomes" => json!({"task_ref":ACTOR_ID}),
+        "tasks.answer" => {
             json!({"spec":{"handle":{"task_ref":ACTOR_ID},"result_ref":ACTOR_ID}})
         }
-        McpVerbBinding::TasksAsk => {
+        "tasks.ask" => {
             json!({"spec":{"question":{"text":"answer"},"holders":[ACTOR_ID],"idempotency_key":"ask-test","outcome_binding":null}})
         }
-        McpVerbBinding::TasksWait => json!({"task_ref":ACTOR_ID,"key":"step-one"}),
-        McpVerbBinding::RoomsList => json!({}),
-        McpVerbBinding::RoomsMessages => json!({"room_ref":ACTOR_ID}),
-        McpVerbBinding::RoomsClaim => json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID}),
-        McpVerbBinding::RoomsSpeak => json!({"room_ref":ACTOR_ID,"spec":{}}),
-        McpVerbBinding::BoardExpand => json!({ "key": "TASKS" }),
-        McpVerbBinding::BoardRefresh | McpVerbBinding::TasksCheck => json!({}),
-        McpVerbBinding::BoardSubscribe | McpVerbBinding::BoardUnsubscribe => {
+        "tasks.wait" => json!({"task_ref":ACTOR_ID,"key":"step-one"}),
+        "rooms.list" => json!({}),
+        "rooms.messages" => json!({"room_ref":ACTOR_ID}),
+        "rooms.claim" => json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID}),
+        "rooms.speak" => json!({"room_ref":ACTOR_ID,"spec":{}}),
+        "board.expand" => json!({ "key": "TASKS" }),
+        "board.refresh" | "tasks.check" => json!({}),
+        "board.subscribe" | "board.unsubscribe" => {
             json!({ "scopes": ["my_tasks"] })
         }
-        McpVerbBinding::TasksAck | McpVerbBinding::TasksCancel | McpVerbBinding::TasksExpand => {
+        "tasks.ack" | "tasks.cancel" | "tasks.expand" => {
             json!({ "task_ref": ACTOR_ID })
         }
-        McpVerbBinding::TasksCreate => json!({ "spec": { "kind": "review" } }),
-        McpVerbBinding::Memory(_) => json!({ "request": {} }),
+        "tasks.create" => json!({ "spec": { "kind": "review" } }),
+        _ => json!({ "request": {} }),
     }
 }
 
@@ -3010,7 +3010,7 @@ fn advertised_numeric_domains_equal_the_decoder_domains() {
             if matches!(
                 tool,
                 McpEndpointTool::Verb(McpGeneratedVerbTool {
-                    binding: McpVerbBinding::BoardExpand | McpVerbBinding::BoardRefresh,
+                    name: "board.expand" | "board.refresh",
                     ..
                 })
             ) {
@@ -3976,7 +3976,7 @@ fn memory_tool_census_keeps_native_names_schemas_and_reserved_refusals() {
         let McpEndpointTool::Verb(verb) = tool else {
             panic!("memory verb")
         };
-        assert_eq!(verb.binding, McpVerbBinding::Memory(method));
+        assert_eq!(verb.memory_method(), Some(method));
         assert_eq!(
             tool.schema().input_schema["properties"]["arguments"]["properties"]["request"],
             method.request_schema()
@@ -4044,8 +4044,29 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
             let expected = input.pointer(&pointer).expect("typed input field");
             assert_eq!(&projected["properties"][field], expected, "{name}.{field}");
             let shipped = &arguments["properties"][field];
-            let typed = shipped.pointer("/allOf/0").unwrap_or(shipped);
-            assert_eq!(typed, expected, "{name}.{field}");
+            if let Some(properties) = expected.as_object() {
+                for (key, value) in properties {
+                    if key == "type" && value.is_array() && shipped[key] != *value {
+                        assert!(value.as_array().expect("types").contains(&shipped[key]));
+                    } else {
+                        // Schemars stores numeric bounds as f64; the envelope
+                        // publishes exact integers. Compare their values, not
+                        // the spelling, without rounding through another f64.
+                        let expected = if matches!(key.as_str(), "minimum" | "maximum") {
+                            super::codec::schema_normalized_arguments(
+                                &json!({"type": "integer"}),
+                                value.clone().into(),
+                            )
+                            .expect("numeric schema bound")
+                        } else {
+                            value.clone()
+                        };
+                        assert_eq!(shipped[key], expected, "{name}.{field}.{key}");
+                    }
+                }
+            } else {
+                assert_eq!(shipped, expected, "{name}.{field}");
+            }
         }
     }
     assert!(oneiron::task_verb::sdk::input_schema("tasks.missing").is_none());
@@ -4087,4 +4108,22 @@ fn agent_verb_schema_publishes_nested_types_and_wire_defaults() {
     let empty = oneiron::task_verb::sdk::mcp_arguments_schema("rooms.list").expect("empty");
     assert_eq!(empty["properties"], json!({}));
     assert_eq!(empty["required"], json!([]));
+}
+
+#[test]
+fn agent_verb_board_schema_uses_the_engine_subscription_vocabulary() {
+    let schema = oneiron::task_verb::sdk::mcp_arguments_schema("board.subscribe").expect("schema");
+    let scopes = &schema["properties"]["scopes"];
+    let values =
+        serde_json::to_value(oneiron::context_board::SubscriptionScope::ALL).expect("scopes");
+    assert_eq!(scopes["items"]["enum"], values);
+    let input = json!({"scopes": ["my_tasks", "counts"]});
+    let decoded: oneiron::task_verb::sdk::BoardSubscriptionRequest =
+        serde_json::from_value(input.clone()).expect("typed subscription");
+    assert_eq!(decoded.scopes.len(), 2);
+    assert!(oneiron::task_verb::sdk::validate_input("board.subscribe", &input).is_ok());
+    assert!(
+        oneiron::task_verb::sdk::validate_input("board.subscribe", &json!({"scopes": ["unknown"]}))
+            .is_err()
+    );
 }

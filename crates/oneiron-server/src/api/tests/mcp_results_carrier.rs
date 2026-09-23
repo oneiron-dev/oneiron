@@ -134,9 +134,6 @@ async fn mcp_results_carry_usable_data_in_negotiated_content() {
 /// section was.
 #[test]
 fn mcp_board_page_omissions_count_requested_scope_only() {
-    let expand = crate::mcp::McpVerbBinding::BoardExpand;
-    let refresh = crate::mcp::McpVerbBinding::BoardRefresh;
-    let subscribe = crate::mcp::McpVerbBinding::BoardSubscribe;
     let healthy = crate::mcp::McpRetrievalHealth::Healthy;
     let omissions = McpBoardOmissions {
         scope_omitted: 3,
@@ -145,7 +142,7 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
     };
 
     let tasks = json!({ "kind": "expanded", "key": "TASKS", "lines": ["a", "b"] });
-    let source = mcp_board_verb_page_source(expand, &tasks, omissions);
+    let source = mcp_board_verb_page_source(&tasks, omissions);
     assert_eq!(source.produced, 2);
     assert_eq!(source.scope_omitted, 3);
     assert_eq!(source.window_truncated, 2);
@@ -155,7 +152,7 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
     // Another section's page is not partial because a TASKS row was outside
     // the credential's ceiling.
     let verbs = json!({ "kind": "expanded", "key": "VERBS", "lines": ["board.expand"] });
-    let source = mcp_board_verb_page_source(expand, &verbs, omissions);
+    let source = mcp_board_verb_page_source(&verbs, omissions);
     assert_eq!(source.produced, 1);
     assert_eq!(source.scope_omitted, 0);
     assert_eq!(source.window_truncated, 0);
@@ -163,7 +160,7 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
 
     // A refresh renders the whole board, so both axes ride it — apart.
     let frame = json!({ "kind": "frame", "frame": { "epoch": 1 } });
-    let source = mcp_board_verb_page_source(refresh, &frame, omissions);
+    let source = mcp_board_verb_page_source(&frame, omissions);
     assert_eq!(source.produced, 1);
     assert_eq!(source.scope_omitted, 3);
     assert_eq!(source.window_truncated, 2);
@@ -174,14 +171,14 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
         window_truncated: 4,
         source_exhausted: false,
     };
-    let capped = mcp_board_verb_page_source(refresh, &frame, capped_scan);
+    let capped = mcp_board_verb_page_source(&frame, capped_scan);
     assert_eq!(capped.scope_omitted, 0);
     assert_eq!(capped.window_truncated, 4);
     assert_eq!(capped.health(), crate::mcp::McpRetrievalHealth::Degraded);
 
     // A subscription receipt states itself completely on both axes.
     let receipt = json!({ "kind": "subscription", "active": [] });
-    let source = mcp_board_verb_page_source(subscribe, &receipt, omissions);
+    let source = mcp_board_verb_page_source(&receipt, omissions);
     assert_eq!(source.scope_omitted, 0);
     assert_eq!(source.window_truncated, 0);
     assert_eq!(source.health(), healthy);

@@ -34,6 +34,34 @@ pub struct RoomClaimRequest {
     pub turn_ref: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRequest {
+    pub task_ref: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCreateRequest {
+    pub spec: serde_json::Value,
+    pub label: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoardExpandRequest {
+    pub key: String,
+    pub frame_epoch: Option<u64>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoardRefreshRequest {
+    pub frame_epoch: Option<u64>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSubscriptionRequest {
+    pub scopes: std::collections::BTreeSet<crate::context_board::SubscriptionScope>,
+}
+
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> MemoryResult<T> {
     serde_json::from_value(value)
         .map_err(|_| MemoryError::bad_request("invalid typed SDK arguments"))

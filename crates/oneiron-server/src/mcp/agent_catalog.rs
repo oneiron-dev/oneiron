@@ -18,67 +18,91 @@ const AGENT_MCP_VERBS: &[&str] = &[
     "rooms.claim",
     "rooms.speak",
 ];
-pub(super) fn agent_binding(family: McpVerbFamily, verb: &str) -> Option<McpVerbBinding> {
-    match (family, verb) {
-        (McpVerbFamily::Tasks, "ask") => Some(McpVerbBinding::TasksAsk),
-        (McpVerbFamily::Tasks, "wait") => Some(McpVerbBinding::TasksWait),
-        (McpVerbFamily::Tasks, "answer") => Some(McpVerbBinding::TasksAnswer),
-        (McpVerbFamily::Tasks, "outcomes") => Some(McpVerbBinding::TasksOutcomes),
-        (McpVerbFamily::Rooms, "list") => Some(McpVerbBinding::RoomsList),
-        (McpVerbFamily::Rooms, "messages") => Some(McpVerbBinding::RoomsMessages),
-        (McpVerbFamily::Rooms, "claim") => Some(McpVerbBinding::RoomsClaim),
-        (McpVerbFamily::Rooms, "speak") => Some(McpVerbBinding::RoomsSpeak),
+fn agent_argument_fields(name: &str) -> Option<&'static [&'static str]> {
+    match name {
+        "board.expand" => Some(&["key", "frame_epoch"]),
+        "board.refresh" => Some(&["frame_epoch"]),
+        "board.subscribe" => Some(&["scopes"]),
+        "board.unsubscribe" => Some(&["scopes"]),
+        "tasks.ack" => Some(&["task_ref"]),
+        "tasks.cancel" => Some(&["task_ref"]),
+        "tasks.check" => Some(&[]),
+        "tasks.create" => Some(&["spec", "label"]),
+        "tasks.expand" => Some(&["task_ref"]),
+        "tasks.ask" => Some(&["spec"]),
+        "tasks.wait" => Some(&["task_ref", "key"]),
+        "tasks.answer" => Some(&["spec"]),
+        "tasks.outcomes" => Some(&["task_ref"]),
+        "rooms.list" => Some(&[]),
+        "rooms.messages" => Some(&["room_ref", "turn_ref"]),
+        "rooms.claim" => Some(&["room_ref", "turn_ref"]),
+        "rooms.speak" => Some(&["spec", "room_ref"]),
         _ => None,
     }
 }
-pub(super) const fn agent_argument_fields(
-    binding: McpVerbBinding,
-) -> Option<&'static [&'static str]> {
-    match binding {
-        McpVerbBinding::TasksAsk => Some(&["spec"]),
-        McpVerbBinding::TasksWait => Some(&["task_ref", "key"]),
-        McpVerbBinding::TasksAnswer => Some(&["spec"]),
-        McpVerbBinding::TasksOutcomes => Some(&["task_ref"]),
-        McpVerbBinding::RoomsList => Some(&[]),
-        McpVerbBinding::RoomsMessages => Some(&["room_ref", "turn_ref"]),
-        McpVerbBinding::RoomsClaim => Some(&["room_ref", "turn_ref"]),
-        McpVerbBinding::RoomsSpeak => Some(&["spec", "room_ref"]),
+fn agent_required_fields(name: &str) -> Option<&'static [&'static str]> {
+    match name {
+        "board.expand" => Some(&["key"]),
+        "board.refresh" => Some(&[]),
+        "board.subscribe" => Some(&["scopes"]),
+        "board.unsubscribe" => Some(&["scopes"]),
+        "tasks.ack" => Some(&["task_ref"]),
+        "tasks.cancel" => Some(&["task_ref"]),
+        "tasks.check" => Some(&[]),
+        "tasks.create" => Some(&["spec"]),
+        "tasks.expand" => Some(&["task_ref"]),
+        "tasks.ask" => Some(&["spec"]),
+        "tasks.wait" => Some(&["task_ref", "key"]),
+        "tasks.answer" => Some(&["spec"]),
+        "tasks.outcomes" => Some(&["task_ref"]),
+        "rooms.list" => Some(&[]),
+        "rooms.messages" => Some(&["room_ref"]),
+        "rooms.claim" => Some(&["room_ref", "turn_ref"]),
+        "rooms.speak" => Some(&["spec", "room_ref"]),
         _ => None,
     }
 }
-pub(super) const fn agent_required_fields(
-    binding: McpVerbBinding,
-) -> Option<&'static [&'static str]> {
-    match binding {
-        McpVerbBinding::TasksAsk => Some(&["spec"]),
-        McpVerbBinding::TasksWait => Some(&["task_ref", "key"]),
-        McpVerbBinding::TasksAnswer => Some(&["spec"]),
-        McpVerbBinding::TasksOutcomes => Some(&["task_ref"]),
-        McpVerbBinding::RoomsList => Some(&[]),
-        McpVerbBinding::RoomsMessages => Some(&["room_ref"]),
-        McpVerbBinding::RoomsClaim => Some(&["room_ref", "turn_ref"]),
-        McpVerbBinding::RoomsSpeak => Some(&["spec", "room_ref"]),
-        _ => None,
-    }
+fn agent_continuable(name: &str) -> bool {
+    matches!(
+        name,
+        "board.expand"
+            | "tasks.check"
+            | "tasks.expand"
+            | "tasks.outcomes"
+            | "rooms.list"
+            | "rooms.messages"
+    )
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum McpVerbBinding {
-    BoardExpand,
-    BoardRefresh,
-    BoardSubscribe,
-    BoardUnsubscribe,
-    TasksAck,
-    TasksCancel,
-    TasksCheck,
-    TasksCreate,
-    TasksExpand,
-    TasksAsk,
-    TasksWait,
-    TasksAnswer,
-    TasksOutcomes,
-    RoomsList,
-    RoomsMessages,
-    RoomsClaim,
-    RoomsSpeak,
-    Memory(VaultReadMethod),
+fn agent_filtered_read(name: &str) -> bool {
+    matches!(
+        name,
+        "board.expand" | "board.refresh" | "board.subscribe" | "board.unsubscribe" | "tasks.check"
+    )
+}
+fn agent_unscoped(name: &str) -> bool {
+    matches!(
+        name,
+        "tasks.create"
+            | "tasks.ask"
+            | "tasks.wait"
+            | "tasks.answer"
+            | "tasks.outcomes"
+            | "rooms.list"
+            | "rooms.messages"
+            | "rooms.claim"
+            | "rooms.speak"
+    )
+}
+fn agent_writes(name: &str) -> bool {
+    matches!(
+        name,
+        "tasks.ack"
+            | "tasks.cancel"
+            | "tasks.create"
+            | "tasks.ask"
+            | "tasks.wait"
+            | "tasks.answer"
+            | "rooms.claim"
+            | "rooms.speak"
+    )
 }

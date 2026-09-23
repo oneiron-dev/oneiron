@@ -12,7 +12,7 @@ def artifacts():
     ts = (ROOT / "packages/oneiron/src/types.ts").read_text()
     py = (ROOT / "crates/oneiron-py/python/oneiron/__init__.pyi").read_text()
     manifest = json.loads((ROOT / "scripts/sdk/agent-verbs.json").read_text())
-    verbs = [row["name"] for row in manifest["verbs"]]
+    verbs = [row["name"] for row in manifest["verbs"] if row.get("context", "memory") == "memory"]
     errors = (ROOT / "crates/oneiron/src/memory/error.rs").read_text()
     codes = re.findall(r'pub const MEMORY_CODE_\w+: &str = "([A-Z_]+)";', errors)
     remedies = {

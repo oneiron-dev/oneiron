@@ -128,13 +128,6 @@ impl McpVerbFamily {
     }
 }
 
-/// The engine seam one generated tool dispatches into.
-///
-/// This is a BINDING table, not a name table: it is keyed by an already
-/// exported row and can never introduce a tool name of its own. A row with no
-/// binding is unprojectable and fails endpoint construction rather than
-/// listing a tool nothing can execute.
-///
 /// One tool-first tool, generated 1:1 from one exported verb row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct McpGeneratedVerbTool {
@@ -143,7 +136,6 @@ pub struct McpGeneratedVerbTool {
     pub family: McpVerbFamily,
     /// The row's suffix, borrowed out of the row itself.
     pub verb: &'static str,
-    pub binding: McpVerbBinding,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -212,9 +204,13 @@ fn project_verb_row(
     let Some(family) = McpVerbFamily::from_prefix(prefix) else {
         return Err(unprojectable);
     };
-    let Some(binding) = verb_binding(family, verb) else {
+    if !AGENT_MCP_VERBS.contains(&row)
+        && !VaultReadMethod::ALL
+            .into_iter()
+            .any(|method| method.tool_name() == row)
+    {
         return Err(unprojectable);
-    };
+    }
     if oneiron::task_verb::sdk::AGENT_VERBS.contains(&row)
         && oneiron::task_verb::sdk::mcp_arguments_schema(row).is_none()
     {
@@ -224,31 +220,37 @@ fn project_verb_row(
         name: row,
         family,
         verb,
-        binding,
     })
 }
 
 include!("agent_catalog.rs");
 
-fn verb_binding(family: McpVerbFamily, verb: &str) -> Option<McpVerbBinding> {
-    if let Some(binding) = agent_binding(family, verb) {
-        return Some(binding);
-    }
-    match (family, verb) {
-        (McpVerbFamily::Board, "expand") => Some(McpVerbBinding::BoardExpand),
-        (McpVerbFamily::Board, "refresh") => Some(McpVerbBinding::BoardRefresh),
-        (McpVerbFamily::Board, "subscribe") => Some(McpVerbBinding::BoardSubscribe),
-        (McpVerbFamily::Board, "unsubscribe") => Some(McpVerbBinding::BoardUnsubscribe),
-        (McpVerbFamily::Tasks, "ack") => Some(McpVerbBinding::TasksAck),
-        (McpVerbFamily::Tasks, "cancel") => Some(McpVerbBinding::TasksCancel),
-        (McpVerbFamily::Tasks, "check") => Some(McpVerbBinding::TasksCheck),
-        (McpVerbFamily::Tasks, "create") => Some(McpVerbBinding::TasksCreate),
-        (McpVerbFamily::Tasks, "expand") => Some(McpVerbBinding::TasksExpand),
-        (McpVerbFamily::Memory, _) => VaultReadMethod::ALL
+impl McpGeneratedVerbTool {
+    pub fn memory_method(self) -> Option<VaultReadMethod> {
+        VaultReadMethod::ALL
             .into_iter()
-            .find(|method| method.tool_name().strip_prefix("memory.") == Some(verb))
-            .map(McpVerbBinding::Memory),
-        _ => None,
+            .find(|method| method.tool_name() == self.name)
+    }
+
+    pub(super) fn argument_fields(self) -> &'static [&'static str] {
+        agent_argument_fields(self.name).unwrap_or(&["request"])
+    }
+
+    pub(super) fn required_fields(self) -> &'static [&'static str] {
+        agent_required_fields(self.name).unwrap_or(&["request"])
+    }
+
+    pub(crate) fn continuable(self) -> bool {
+        agent_continuable(self.name)
+    }
+    pub(crate) fn filtered_read(self) -> bool {
+        agent_filtered_read(self.name)
+    }
+    pub(crate) fn requires_unscoped(self) -> bool {
+        agent_unscoped(self.name) || self.memory_method().is_some()
+    }
+    pub(crate) fn writes(self) -> bool {
+        agent_writes(self.name)
     }
 }
 
@@ -277,8 +279,9 @@ impl McpEndpointTool {
             // this release. The text states the shipped contract so a schema
             // dump can never read as an offer.
             Self::ExecuteCode => "Run a durable plain-JavaScript task in the verified QuickJS WASM sandbox. Reuse the same run_ref and task to resume; completed calls return their stored result without repeating effects.".to_owned(),
-            Self::Verb(McpGeneratedVerbTool { binding: McpVerbBinding::Memory(method), .. }) => format!(
-                "{} One atomic native response; nested arrays retain the native request budgets and result metadata. Narrow connector ceilings fail closed.", method.description()
+            Self::Verb(tool) if tool.memory_method().is_some() => format!(
+                "{} One atomic native response; nested arrays retain the native request budgets and result metadata. Narrow connector ceilings fail closed.",
+                tool.memory_method().map_or("", VaultReadMethod::description)
             ),
             Self::Verb(tool) => format!(
                 "Invoke the exported {family} verb {name} directly, with the same actor ceiling and gate every other door applies.",

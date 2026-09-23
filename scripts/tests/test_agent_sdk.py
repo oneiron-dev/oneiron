@@ -51,6 +51,36 @@ class AgentSdkProjectionTests(unittest.TestCase):
         self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/mcp/agent_catalog.rs"])
         self.assertIn('fn rooms_claim(', outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
 
+    def test_board_context_row_controls_engine_mcp_and_catalog_projections(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        outputs = generator.outputs()
+        core = outputs["crates/oneiron/src/task_verb/sdk_generated.rs"]
+        self.assertIn("pub fn board_expand<S:", core)
+        self.assertIn('"board.expand"', outputs["crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"])
+        self.assertNotIn("fn board_expand(", outputs["crates/oneiron-remote/src/agent_verbs.rs"])
+        generator.ROWS = [row for row in generator.ROWS if row["name"] != "board.expand"]
+        outputs = generator.outputs()
+        self.assertNotIn("pub fn board_expand<S:", outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
+        self.assertNotIn('"board.expand"', outputs["crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"])
+        self.assertNotIn('"board.expand"', outputs["crates/oneiron/src/board_verb.rs"])
+
+    def test_task_rows_forward_inputs_through_python_namespace(self):
+        spec = importlib.util.spec_from_file_location("generated_agent_verbs", ROOT / "crates/oneiron-py/python/oneiron/agent_verbs.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        calls = []
+        tasks = module.TasksVerbs(lambda name, value: calls.append((name, value)))
+        request = {"task_ref": "task"}
+        tasks.ack(request)
+        tasks.cancel(request)
+        tasks.expand(request)
+        create = {"spec": {"goal": "review"}, "label": "review"}
+        tasks.create(create)
+        tasks.check()
+        self.assertEqual(calls, [("tasks_ack", request), ("tasks_cancel", request), ("tasks_expand", request), ("tasks_create", create), ("tasks_check", {})])
+
     def test_python_ask_wait_answer_and_room_arguments(self):
         spec = importlib.util.spec_from_file_location("generated_agent_verbs", ROOT / "crates/oneiron-py/python/oneiron/agent_verbs.py")
         module = importlib.util.module_from_spec(spec)
