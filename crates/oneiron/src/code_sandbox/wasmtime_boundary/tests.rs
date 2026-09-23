@@ -224,3 +224,38 @@ fn foreign_proposal_paths_and_claims_are_validated_without_writing() {
     claim.subject = "not-json".into();
     assert!(validate_step_result(&output(claim), SandboxGuestTier::Foreign).is_err());
 }
+
+#[test]
+fn typed_call_post_return_trap_fails_closed() {
+    let boundary = WasmtimeBoundary::new().unwrap();
+    for tier in [
+        SandboxGuestTier::FirstPartyDreamer,
+        SandboxGuestTier::Foreign,
+        SandboxGuestTier::Untrusted,
+    ] {
+        for cleanup in ["", "unreachable"] {
+            let wat = format!(
+                r#"(component
+                    (core module $m
+                        (func (export "value") (result i32) i32.const 7)
+                        (func (export "after") (param i32) {cleanup}))
+                    (core instance $i (instantiate $m))
+                    (func (export "value") (result u32)
+                        (canon lift (core func $i "value")
+                            (post-return (core func $i "after")))))"#
+            );
+            let component = boundary.compile(wat.as_bytes()).unwrap();
+            let mut request = boundary.request(&component, tier, Host(123)).unwrap();
+            let result = request.call::<(), (u32,)>("value", ());
+            if cleanup.is_empty() {
+                assert_eq!(result.unwrap(), (7,));
+                assert_eq!(request.call::<(), (u32,)>("value", ()).unwrap(), (7,));
+            } else {
+                assert!(matches!(
+                    result.unwrap_err().downcast_ref::<wasmtime::Trap>(),
+                    Some(wasmtime::Trap::UnreachableCodeReached)
+                ));
+            }
+        }
+    }
+}

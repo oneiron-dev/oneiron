@@ -191,9 +191,9 @@ fn signed_credential(
     lifetime: u64,
     single_use: bool,
 ) -> DoorCredential {
+    use rand_core::RngCore;
     let issuer = crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap();
     let mut claims = vault.ensure_host_root_slip(&issuer).unwrap().claims;
-    use rand_core::RngCore;
     rand_core::OsRng.fill_bytes(&mut claims.slip_id);
     claims.parent_id = None;
     claims.holder_ref = "holder:tester".into();

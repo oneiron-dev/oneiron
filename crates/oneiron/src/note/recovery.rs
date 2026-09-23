@@ -97,6 +97,7 @@ pub(crate) fn values(
     Ok((view.markdown, view.authorship))
 }
 
+#[cfg(feature = "sync")]
 pub(crate) fn restore(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

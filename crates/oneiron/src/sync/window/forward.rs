@@ -80,7 +80,7 @@ fn forward_with_recovery(
             "note_forks",
             "note_proposals",
         ] {
-            if doc.get_map(name).len() != 0 {
+            if !doc.get_map(name).is_empty() {
                 return Err(crate::note::documents::invalid(
                     "peer window cannot authorize NOTE recovery",
                 ));

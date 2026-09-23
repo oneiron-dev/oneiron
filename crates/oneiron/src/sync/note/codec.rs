@@ -164,10 +164,10 @@ impl State {
             {
                 return Err(invalid("NOTE merge target differs from proposal value"));
             }
-            if !fork.decided {
-                if !documents.contains_key(&(fork.note, fork.fork)) || !fork.frontier.is_empty() {
-                    return Err(invalid("NOTE proposal value absent or carries raw history"));
-                }
+            if !fork.decided
+                && (!documents.contains_key(&(fork.note, fork.fork)) || !fork.frontier.is_empty())
+            {
+                return Err(invalid("NOTE proposal value absent or carries raw history"));
             }
         }
         for (note, head) in documents.keys() {

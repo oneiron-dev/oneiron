@@ -77,9 +77,9 @@ impl EntityStore for Vault {
             if value.as_ref() != [1] {
                 return Err(Error::CorruptedIndex("session turns index"));
             }
-            if !self
+            if self
                 .port_entity_get(txn, &id)?
-                .is_some_and(|row| row.entity_type == ENTITY_TYPE_TURN)
+                .is_none_or(|row| row.entity_type != ENTITY_TYPE_TURN)
             {
                 continue;
             }

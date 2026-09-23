@@ -109,11 +109,10 @@ impl<'a> ScopedRead<'a> {
         let Some(audience) = &self.audience else {
             return Ok(true);
         };
-        Ok(self
-            .audience_cache
+        self.audience_cache
             .lock()
             .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-            .readable(self.vault, txn, *id, audience)?)
+            .readable(self.vault, txn, *id, audience)
     }
 
     fn credential_allows_id(&self, id: &EntityId) -> bool {
@@ -583,12 +582,8 @@ impl<'a> ScopedRead<'a> {
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw, filter)
         } else {
-            let Some(scope) = crate::federation::record_scope::scope_for_blob(
-                &self.vault.store,
-                rtxn,
-                *id,
-                &raw,
-            )?
+            let Some(scope) =
+                crate::federation::record_scope::scope_for_blob(&self.vault.store, rtxn, *id, raw)?
             else {
                 return Ok(false);
             };

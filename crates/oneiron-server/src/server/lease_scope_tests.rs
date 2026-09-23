@@ -89,7 +89,7 @@ async fn scoped_doors_and_rotation_keep_old_key_terminal() {
 #[tokio::test]
 async fn api_router_rejects_unleased_and_cross_vault_credentials_before_reads() {
     use axum::{
-        body::Body,
+        body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
     use tower::ServiceExt;
@@ -99,6 +99,7 @@ async fn api_router_rejects_unleased_and_cross_vault_credentials_before_reads() 
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap()),
             SyncServerConfig {
                 lease_vault_id: 7,
+                oauth_resource_indicator: Some("https://oneiron.test".into()),
                 auth_secret: Some("owner-secret".into()),
                 ..Default::default()
             },
@@ -116,6 +117,36 @@ async fn api_router_rejects_unleased_and_cross_vault_credentials_before_reads() 
         request
     };
     let app = crate::build_app(server.clone());
+    // Both public metadata documents must bootstrap anonymously on a real hosted scope.
+    for application in ["native", "web"] {
+        let path = format!("/oauth/client/{application}.json");
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(&path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "public, max-age=300");
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["application_type"], application);
+        assert_eq!(body["client_id"], format!("https://oneiron.test{path}"));
+    }
+    // Even the owner credential alone must not bypass the private vault binding.
+    for owner_authenticated in [false, true] {
+        let mut private = Request::builder().uri("/v1/usage/owners/owner/vaults/local/rollup");
+        if owner_authenticated {
+            private = private.header("authorization", "Bearer owner-secret");
+        }
+        assert_eq!(
+            app.clone()
+                .oneshot(private.body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
     assert_eq!(
         app.clone().oneshot(request(7)).await.unwrap().status(),
         StatusCode::UNAUTHORIZED

@@ -11,7 +11,6 @@ use crate::batch::EntityMetadataHeader;
 use crate::deletion::TombstoneReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, MaintenanceError, Result};
-use crate::ports::EntityStoreRead;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------

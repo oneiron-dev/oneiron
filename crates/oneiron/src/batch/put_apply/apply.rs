@@ -8,12 +8,12 @@ use super::{
     AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,
     ENTITY_METADATA_HEADER_LEN, apply_short_id_plan, authority_observation_secs_for_write,
     check_authority_log_store_key, delete_short_id_rows_for_id,
-    evict_authority_log_store_key_squatter, parse_entity_metadata,
-    plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
-    stage_entity_body_row, stage_entity_index_rows, stage_optimizer_birth_marker_row,
-    validate_companion_register_put, validate_local_agent_definition_create,
-    validate_local_skill_create, validate_replicated_authority_log_for_local_vault,
-    validate_skill_body_overwrite, validate_task_checkin_immutable,
+    evict_authority_log_store_key_squatter, parse_entity_metadata, plan_short_id_update,
+    reject_overlay_member_base_write, stage_claim_projection, stage_entity_body_row,
+    stage_entity_index_rows, stage_optimizer_birth_marker_row, validate_companion_register_put,
+    validate_local_agent_definition_create, validate_local_skill_create,
+    validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
+    validate_task_checkin_immutable,
 };
 use crate::claim::ClaimApprovalStatus;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
@@ -69,17 +69,7 @@ pub(in crate::batch) fn apply_put(
         None
     };
     let data = normalized_policy.as_deref().unwrap_or(data);
-    if entity_type == crate::registry::ENTITY_TYPE_FACET {
-        super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
-    }
-    if crate::workspace_roster::is_project_type(store, entity_type) {
-        for referenced in crate::workspace_roster::validate_project_body(id, data)? {
-            reject_overlay_member_base_write(store, &referenced, origin)?;
-        }
-    }
-    if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
-        crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
-    }
+    super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
     super::owned_body::guard_storage_owned_body(store, wtxn, &id, entity_type, data, replicated)?;
     super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
@@ -757,7 +747,6 @@ fn validate_note_birth_put(
     Ok(())
 }
 
-
 fn validate_witness_message_body(data: &[u8], replicated: bool) -> Result<()> {
     // ONE-1686 (RT-04): the witness ENVELOPE law, at the one arm every
     // road to a MESSAGE body converges on — the witness door, promote
@@ -814,8 +803,7 @@ fn observe_authority_put(
     replicated: bool,
     mutation_recorded_at: u64,
 ) -> Result<()> {
-    let observed_secs =
-        authority_observation_secs_for_write(store, wtxn, mutation_recorded_at)?;
+    let observed_secs = authority_observation_secs_for_write(store, wtxn, mutation_recorded_at)?;
     if store.sync_state.get(wtxn, key)?.is_none() {
         let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
         store.sync_state.put(wtxn, key, &first_seen)?;
@@ -835,4 +823,3 @@ fn observe_authority_put(
     }
     Ok(())
 }
-

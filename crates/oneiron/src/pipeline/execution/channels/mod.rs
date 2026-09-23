@@ -546,40 +546,13 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
-            let mut capabilities = if self.context_pack_budget.is_some() {
-                partition_capabilities(&mut scores, &self.vault.store, rtxn)?
-            } else {
-                Vec::new()
-            };
-            if !overrides.skip_ret01_abstain
-                && context_pack_evidence_abstains(
-                    &capabilities,
-                    &acc.signal_components,
-                    self.text_search.as_ref().map(|(query, _)| query.as_str()),
-                    self.vector_search.is_some(),
-                )
-            {
-                capabilities.clear();
-            }
-
-            // RET-01: abstention is a context-pack assembly decision, never a
-            // mutation of stored memory or a behavior change for direct
-            // retrieval. Clear the candidate list structurally so hydration
-            // cannot surface weak evidence; `BelowThreshold` is carried to
-            // the public `ContextPack.empty` response as the typed confidence
-            // adjustment.
-            if !overrides.skip_ret01_abstain
-                && self.context_pack_budget.is_some()
-                && context_pack_evidence_abstains(
-                    &scores,
-                    &acc.signal_components,
-                    self.text_search.as_ref().map(|(query, _)| query.as_str()),
-                    self.vector_search.is_some(),
-                )
-            {
-                scores.clear();
-                empty_reason = Some(EmptyReason::BelowThreshold);
-            }
+            let capabilities = self.prepare_pack_candidates(
+                rtxn,
+                &mut scores,
+                &acc.signal_components,
+                &mut empty_reason,
+                overrides.skip_ret01_abstain,
+            )?;
 
             if let Some(context_pack_budget) = self.context_pack_budget {
                 apply_context_pack_retrieval_budget(
@@ -615,7 +588,7 @@ impl PipelineBuilder<'_> {
                 Some(self.assemble_retrieval_trace(TraceInputs {
                     derivation_owner: crate::federation::derivation::owner_in_txn(
                         &self.vault.store,
-                        &rtxn,
+                        rtxn,
                     )?,
                     scores: &scores,
                     trace_channels: acc.trace_channels,
@@ -641,7 +614,7 @@ impl PipelineBuilder<'_> {
             };
             let mut revisions = HashMap::new();
             for hit in &scores {
-                if let Some(revision) = self.vault.indexed_revision_in_txn(&rtxn, &hit.id)? {
+                if let Some(revision) = self.vault.indexed_revision_in_txn(rtxn, &hit.id)? {
                     revisions.insert(hit.id, revision);
                 }
             }
@@ -666,5 +639,50 @@ impl PipelineBuilder<'_> {
                 early_empty_no_telemetry: false,
             })
         }
+    }
+
+    fn prepare_pack_candidates(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        scores: &mut Vec<super::super::types::ScoredEntity>,
+        signal_components: &HashMap<crate::EntityId, Vec<crate::store::RetrievalScoreComponent>>,
+        empty_reason: &mut Option<EmptyReason>,
+        skip_ret01_abstain: bool,
+    ) -> Result<Vec<super::super::types::ScoredEntity>> {
+        let mut capabilities = if self.context_pack_budget.is_some() {
+            partition_capabilities(scores, &self.vault.store, rtxn)?
+        } else {
+            Vec::new()
+        };
+        if skip_ret01_abstain {
+            return Ok(capabilities);
+        }
+        if context_pack_evidence_abstains(
+            &capabilities,
+            signal_components,
+            self.text_search.as_ref().map(|(query, _)| query.as_str()),
+            self.vector_search.is_some(),
+        ) {
+            capabilities.clear();
+        }
+
+        // RET-01: abstention is a context-pack assembly decision, never a
+        // mutation of stored memory or a behavior change for direct
+        // retrieval. Clear the candidate list structurally so hydration
+        // cannot surface weak evidence; `BelowThreshold` is carried to
+        // the public `ContextPack.empty` response as the typed confidence
+        // adjustment.
+        if self.context_pack_budget.is_some()
+            && context_pack_evidence_abstains(
+                scores,
+                signal_components,
+                self.text_search.as_ref().map(|(query, _)| query.as_str()),
+                self.vector_search.is_some(),
+            )
+        {
+            scores.clear();
+            *empty_reason = Some(EmptyReason::BelowThreshold);
+        }
+        Ok(capabilities)
     }
 }

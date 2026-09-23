@@ -741,7 +741,6 @@ async fn selector_vv_request_sends_filtered_update_only() {
         oneiron::registry::ENTITY_TYPE_FACET,
         b"facet-b",
     );
-    let claim_body = |predicate: &str| selector_claim_body(person, predicate);
     insert_entity(
         &server_doc,
         claim_allowed,
@@ -2365,7 +2364,6 @@ fn protocol_hello_validation_literals() {
         Ok(protocol::LEGACY_SELECTOR_PROTOCOL_VERSION)
     );
     assert_eq!(
-
         validate_protocol_hello(&[3, 9]),
         Ok(protocol::PROTOCOL_VERSION)
     );

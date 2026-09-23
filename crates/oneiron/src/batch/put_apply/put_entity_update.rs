@@ -111,19 +111,3 @@ pub(super) fn validate_local_skill_create(
     }
     Ok(())
 }
-
-/// Decodes a predecessor without mistaking the recognized opaque form for corruption.
-pub(super) fn decode_previous_skill_record(
-    prior_body: &[u8],
-) -> Result<Option<crate::skill::SkillRecord>> {
-    match crate::skill::decode_skill_record(prior_body) {
-        Ok(record) => Ok(Some(record)),
-        Err(error)
-            if error.kind() == ErrorKind::InvalidSkillBody
-                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
-        {
-            Ok(None)
-        }
-        Err(error) => Err(error),
-    }
-}

@@ -747,17 +747,20 @@ mod program {
     #[cfg(feature = "sync")]
     use crate::deletion::{TombstoneReason, TombstoneValueV2};
     use crate::edge::EdgeActorClass;
+    use crate::note::NoteProgramEdit as NoteEdit;
     use crate::note::*;
-    use crate::note::{NoteProgramEdit as NoteEdit, NoteProgramEditOutcome as NoteEditOutcome};
     #[cfg(feature = "sync")]
     use crate::sync::note as sync;
     use crate::write_envelope::WriteActor;
     use crate::{Vault, VaultConfig};
 
     fn fixture() -> (tempfile::TempDir, Vault, WriteActor) {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
-        let owner = vault.ensure_embedded_owner_actor().unwrap();
+        let dir = tempfile::tempdir().expect("create note fixture directory");
+        let vault =
+            Vault::open(dir.path(), VaultConfig::default()).expect("open note fixture vault");
+        let owner = vault
+            .ensure_embedded_owner_actor()
+            .expect("create fixture owner");
         (dir, vault, WriteActor::new(owner, EdgeActorClass::Human))
     }
     fn rewrite(vault: &Vault, note: EntityId, text: &str, actor: WriteActor) -> EntityId {
@@ -769,16 +772,20 @@ mod program {
                 },
                 actor,
             )
-            .unwrap()
+            .expect("fork fixture note")
     }
     fn assert_erased(vault: &Vault, note: EntityId) {
-        let txn = vault.store.env.read_txn().unwrap();
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .expect("read erased-note fixture");
         assert!(
             vault
                 .store
                 .sync_state
                 .prefix_iter(&txn, &format!("note_doc:v1:{}:", note.to_hex()))
-                .unwrap()
+                .expect("scan erased-note documents")
                 .next()
                 .is_none()
         );
@@ -787,7 +794,7 @@ mod program {
                 .store
                 .vault_meta
                 .get(&txn, &documents::head_key(note))
-                .unwrap()
+                .expect("read erased-note head")
                 .is_none()
         );
         drop(txn);
@@ -884,16 +891,24 @@ mod program {
         use loro::{LoroDoc, VersionVector};
 
         fn window(vault: &Vault, note: EntityId) -> WindowKey {
-            let raw = vault.get_raw(&note).unwrap().unwrap();
-            WindowKey::from_timestamp(EntityMetadataHeader::parse(&raw).unwrap().learned_at)
+            let raw = vault
+                .get_raw(&note)
+                .expect("read fixture note")
+                .expect("fixture note exists");
+            WindowKey::from_timestamp(
+                EntityMetadataHeader::parse(&raw)
+                    .expect("fixture note header")
+                    .learned_at,
+            )
         }
         fn send(source: &Vault, doc: &LoroDoc, key: &WindowKey) -> Vec<u8> {
             export_window_updates_since(source, key, doc, &VersionVector::default().encode())
-                .unwrap()
+                .expect("export fixture window")
         }
         fn receive(peer: &Vault, bytes: &[u8], key: &WindowKey) -> LoroDoc {
-            let doc = LoroDoc::from_snapshot(bytes).unwrap();
-            forward_rematerialize(peer, &doc, &Materializer::new(), key).unwrap();
+            let doc = LoroDoc::from_snapshot(bytes).expect("decode fixture window");
+            forward_rematerialize(peer, &doc, &Materializer::new(), key)
+                .expect("materialize fixture window");
             doc
         }
 

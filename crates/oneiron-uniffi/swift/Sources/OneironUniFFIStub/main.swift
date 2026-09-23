@@ -60,7 +60,7 @@ func tierZeroCompiles(client: Oneiron) throws {
     let _: String? = scope.facet
     let pack: MemoryPack = try client.recall(
         query: "compile-only",
-        effort: .standard,
+        effort: .medium,
         scope: scope,
         limit: 10,
         format: nil
@@ -364,7 +364,8 @@ func recallDtosCompile() {
         sparse: true,
         totalCandidates: 1,
         claimsReturned: 1,
-        deepPending: nil
+        deepPending: nil,
+        partial: false
     )
     let _: UInt64 = meta.totalCandidates
     let pack = MemoryPack(
@@ -450,9 +451,9 @@ func outboundCompile(client: Oneiron) throws {
 // MARK: Closed vocabularies and the error shape
 
 func closedVocabulariesCompile() {
-    for effort in [Effort.minimal, .standard, .deep] {
+    for effort in [Effort.light, .medium, .high, .xhigh, .max] {
         switch effort {
-        case .minimal, .standard, .deep:
+        case .light, .medium, .high, .xhigh, .max:
             break
         }
     }

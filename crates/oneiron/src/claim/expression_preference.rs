@@ -299,7 +299,7 @@ impl Vault {
             }
             let old_learned_at = self
                 .store
-                .port_entity_record(&wtxn, &old_id)?
+                .port_entity_record(wtxn, &old_id)?
                 .map(|row| row.encode())
                 .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
                 .ok_or(Error::CorruptedIndex("expression preference header"))?;

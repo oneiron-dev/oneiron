@@ -92,14 +92,6 @@ impl SyncClient {
         Ok(messages)
     }
 
-    /// Phase 1-2 sync frames: root VV + default-window VV requests.
-    ///
-    /// Shared by the initial connection flow (which prepends the protocol
-    /// hello) and the forced re-bootstrap (which does not).
-    fn generate_phase_frames(&self) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        self.generate_phase_frames_with_extra_windows(std::iter::empty::<String>())
-    }
-
     fn generate_phase_frames_with_extra_windows<I>(
         &self,
         extra_windows: I,

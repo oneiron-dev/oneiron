@@ -67,9 +67,6 @@ impl CanonicalHeadMove {
 fn hex(value: [u8; 16]) -> String {
     value.iter().map(|byte| format!("{byte:02x}")).collect()
 }
-pub(super) fn head_key(entity: [u8; 16]) -> Vec<u8> {
-    [b"note_head:v1:".as_slice(), &entity].concat()
-}
 pub(super) fn receipt_key(receipt: [u8; 16]) -> Vec<u8> {
     [b"note_receipt:v1:".as_slice(), &receipt].concat()
 }

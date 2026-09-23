@@ -18,7 +18,6 @@ use crate::calendar::passport::live_passport_for;
 use crate::calendar::safeguard::{CalendarInboundBody, screen_then_claim};
 use crate::entity_id::EntityId;
 use crate::vault::Vault;
-use crate::write_envelope::WriteActor;
 
 /// Runs one connector sync for `seat`.
 ///

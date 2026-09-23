@@ -103,9 +103,7 @@ impl<H: 'static> WasmtimeRequest<H> {
         let function = self
             .instance
             .get_typed_func::<P, R>(&mut self.store, export)?;
-        let value = function.call(&mut self.store, params)?;
-        function.post_return(&mut self.store)?;
-        Ok(value)
+        function.call(&mut self.store, params)
     }
 
     /// Read the host's durable receipt/continuation state after the guest step.

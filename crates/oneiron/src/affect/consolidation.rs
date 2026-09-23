@@ -614,7 +614,7 @@ impl Vault {
 
         let raw = self
             .store
-            .port_entity_record(&wtxn, id)?
+            .port_entity_record(wtxn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =

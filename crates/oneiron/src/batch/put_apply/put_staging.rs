@@ -273,3 +273,25 @@ pub(super) fn remove_prior_temporal_index_rows(
     }
     Ok(())
 }
+
+pub(super) fn validate_scope_carriers(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    data: &[u8],
+    origin: super::BaseWriteOrigin<'_>,
+) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_FACET {
+        super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
+    }
+    if crate::workspace_roster::is_project_type(store, entity_type) {
+        for referenced in crate::workspace_roster::validate_project_body(id, data)? {
+            super::reject_overlay_member_base_write(store, &referenced, origin)?;
+        }
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
+        crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
+    }
+    Ok(())
+}

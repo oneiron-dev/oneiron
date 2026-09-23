@@ -561,7 +561,7 @@ fn a_rejected_signed_local_entry_still_advances_the_next_sequence() {
             .valid_entries
             .contains(&hash)
     );
-    let mut claims = root.claims.clone();
+    let mut claims = root.claims;
     claims.slip_id = [74; 32];
     let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
     let fold = vault.authority_fold().unwrap();
@@ -677,7 +677,7 @@ fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
         (Value::from("slip"), Value::Binary(vec![])),
     ]);
     assert!(super::super::decode_op(&blob).is_err());
-    let mut tampered = entry.clone();
+    let mut tampered = entry;
     if let AuthorityOp::SlipMint(action) = &mut tampered.op {
         action.claims.ttl_secs += 1;
     }
@@ -742,7 +742,7 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
             &proof,
         )
         .unwrap();
-    assert_eq!(checked.claims().pact, Some((grant, narrow.clone())));
+    assert_eq!(checked.claims().pact, Some((grant, narrow)));
     let decoded = CapabilitySlip::from_token(&slip.to_token().unwrap()).unwrap();
     assert_eq!(decoded, slip);
     fold.federation_pacts.get_mut(&[42; 32]).unwrap().status = FederationPactStatus::Disconnected;
@@ -843,7 +843,7 @@ fn pact_bound_mint_is_not_live_through_either_revalidation_door_without_its_pact
     let (_dir, vault, issuer, root) = fixture();
     let fold = vault.authority_fold().unwrap();
     let parent = fold.slips.mints[&root.claims.slip_id].entry_hash;
-    let mut claims = root.claims.clone();
+    let mut claims = root.claims;
     claims.slip_id = [71; 32];
     claims.pact = Some((
         crate::EntityId::from_bytes([51; 16]).unwrap(),

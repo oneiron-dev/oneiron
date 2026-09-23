@@ -26,29 +26,6 @@ fn open_vault(path: &Path) -> Vault {
     open_vault_with(path, VaultConfig::device())
 }
 
-/// Existing-only opens are descriptor-bound on Linux. Other hosts must
-/// refuse, rather than silently substituting the create-capable open door.
-fn assert_existing_cli_exit(exit: ExitCode, path: &Path, config: &VaultConfig) -> bool {
-    if cfg!(target_os = "linux") {
-        assert_eq!(exit, ExitCode::SUCCESS);
-        true
-    } else {
-        assert_eq!(exit, ExitCode::FAILURE);
-        assert!(matches!(
-            Vault::open_existing(path, config.clone()),
-            Err(oneiron::Error::Store(
-                oneiron::error::StoreError::VaultRootPreflight {
-                    problem: oneiron::error::VaultRootProblem::UnsupportedPlatform {
-                        entry: VaultRootEntry::Data,
-                    },
-                    ..
-                }
-            ))
-        ));
-        false
-    }
-}
-
 /// A valid vault whose persisted identity differs from the device preset
 /// in both of the fields the open gate compares by value: the HNSW
 /// dimension and the embedding model id. Opening it under the device

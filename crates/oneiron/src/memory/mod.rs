@@ -124,6 +124,3 @@ pub use crate::vault::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
 };
-
-#[cfg(test)]
-mod room_write_tests;

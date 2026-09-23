@@ -32,7 +32,7 @@ pub(crate) fn context_entity_matches_read_snapshot(
     raw: &[u8],
 ) -> Result<bool> {
     // The scoped caller supplies the admitted source frontier, not necessarily LIVE.
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != entity.entity_type {
         return Ok(false);
     }
@@ -342,10 +342,7 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     out
 }
 
-fn decode_entity_fields(
-    raw: &[u8],
-    entity_type: u8,
-) -> Option<HashMap<String, serde_json::Value>> {
+fn decode_entity_fields(raw: &[u8], entity_type: u8) -> Option<HashMap<String, serde_json::Value>> {
     if raw.len() <= ENTITY_METADATA_HEADER_LEN {
         return Some(HashMap::new());
     }

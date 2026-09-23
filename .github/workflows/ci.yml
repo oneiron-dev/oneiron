@@ -135,8 +135,7 @@ jobs:
     # rust-relevant diff (always on dispatch: a manual run is the full gate;
     # fail-open if the detector broke). Navigation/tool tests, typos and deny
     # always run, so a docs-only PR reports checks it really ran. Inside
-    # always(): dispatch is the deny gate's unconditional route (ONE-335,
-    # pinned by scripts/advisory-policy/test_policy.py), so a broken
+    # always(): dispatch is the deny gate's unconditional route (ONE-335), so a broken
     # `changes` job must not skip it; the pause/draft guard still applies.
     if: >-
       always()
@@ -198,22 +197,12 @@ jobs:
           cargo install --locked typos-cli@1.45.1 --root "$HOME/ci/tools"
           "$HOME/ci/tools/bin/typos" --version
           "$HOME/ci/tools/bin/typos"
-      # The policy wrapper (scripts/advisory-policy/check.py) requires the
-      # exact cargo-deny version it was validated against, and the host's
-      # own cargo-deny is whatever the developer keeps. So the pinned copy
-      # lives under ~/ci/tools: `cargo install` is a no-op once that exact
-      # version is there (one compile per host).
       - name: cargo-deny 0.19.4 (host-local pin under ~/ci/tools)
         if: ${{ !cancelled() }}
         run: |
           cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
-          echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
-      - name: Test exact maintenance-risk policy (offline fixtures)
-        if: ${{ !cancelled() }}
-        run: python3 -m unittest discover -s scripts/advisory-policy -p 'test_*.py' -v
-      - name: Check dependencies with expiring accepted-risk policy
-        if: ${{ !cancelled() }}
-        run: python3 scripts/advisory-policy/check.py
+          "$HOME/ci/tools/bin/cargo-deny" --version
+          "$HOME/ci/tools/bin/cargo-deny" check
 
       - name: Test build and navigation tools (no live cache changes)
         if: ${{ !cancelled() }}

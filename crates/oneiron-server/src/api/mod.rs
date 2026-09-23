@@ -377,8 +377,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())
         .nest("/v1/llm", self::llm::routes())
-        .route("/oauth/client/native.json", get(client_metadata::native))
-        .route("/oauth/client/web.json", get(client_metadata::web))
         .nest("/v1/core", core_routes)
         // ONE-1441: the facade projection is its own nest, not an arm inside
         // `core_routes`. Nesting expands each row into a concrete
@@ -397,6 +395,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             server.clone(),
             hosted_vault_binding,
         ))
+        // Config-only CIMD documents must be public before OAuth/lease bootstrap.
+        .route("/oauth/client/native.json", get(client_metadata::native))
+        .route("/oauth/client/web.json", get(client_metadata::web))
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::wire_telemetry::observe_http,

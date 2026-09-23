@@ -193,9 +193,7 @@ impl EdgeKind {
             // `pprWeight: null` set. Neither kind is traversed, and the one
             // validated door that may write them carries an explicit `1.0`
             // per edge rather than inheriting a prior from here.
-            Self::Fulfills | Self::DischargedBy | Self::Parent | Self::SpawnedBy => None,
-            Self::AddressedTo => Some(0.4),
-            Self::RepliesTo => Some(0.3),
+            Self::Fulfills | Self::DischargedBy => None,
         }
     }
 

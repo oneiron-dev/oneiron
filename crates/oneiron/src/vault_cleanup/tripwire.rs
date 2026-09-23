@@ -16,10 +16,9 @@ use crate::deletion::DeleteReason;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK};
-use crate::vault::{LiveEntityRow, edge_kind_prefix, live_entity_row_in_txn};
-use uuid::Uuid;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 // ---------------------------------------------------------------------------
 // The tripwire

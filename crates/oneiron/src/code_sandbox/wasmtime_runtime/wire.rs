@@ -228,8 +228,8 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             }
         },
         SelfDispatchOutcome::TaskAsk(value) => {
-            json!({"kind":"task_ask","group":value.handle.group_ref.to_hex(),"tasks":value.task_refs.iter().map(|id|id.to_hex()).collect::<Vec<_>>(),"hold":value.hold.as_ref().map(|_|"no_live_route"),"replay":value.idempotent_replay})
-        },
+            json!({"kind":"task_ask","group":value.handle.group_ref.to_hex(),"tasks":value.task_refs.iter().map(crate::entity_id::EntityId::to_hex).collect::<Vec<_>>(),"hold":value.hold.as_ref().map(|_|"no_live_route"),"replay":value.idempotent_replay})
+        }
         SelfDispatchOutcome::TaskAskStatus(value) => match value {
             crate::task_verb::TaskAskStatus::Pending { hold } => {
                 json!({"kind":"task_ask_status","state":"pending","hold":hold.as_ref().map(|_|"no_live_route")})

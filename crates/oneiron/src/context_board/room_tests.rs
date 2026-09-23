@@ -93,7 +93,7 @@ fn room_scope_narrows_and_rooms_verbs_round_trip() {
         learned_at: None,
         salience: None,
     };
-    let claim = memory.in_room(room).claim_upsert(&input).unwrap();
+    let claim = memory.claim_upsert(&input).unwrap();
     // Earlier hidden rows may not consume the room's visible claim budget.
     for n in 1..=1000u16 {
         let mut bytes = [0u8; 16];

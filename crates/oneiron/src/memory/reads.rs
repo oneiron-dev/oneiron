@@ -393,7 +393,7 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<EntityView>> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         let Some(raw) =
-            crate::vault::entity_revision::read_entity_revision_in_txn(&self.vault, &txn, id, mode)?
+            crate::vault::entity_revision::read_entity_revision_in_txn(self.vault, &txn, id, mode)?
         else {
             return Ok(None);
         };

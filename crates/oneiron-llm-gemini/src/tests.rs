@@ -333,8 +333,8 @@ fn consecutive_gemini_deltas_match_one_shot_reconstruction() {
     for (text, thought) in [
         ("think", true),
         (" more", true),
-        ("hel", false),
-        ("lo", false),
+        ("hello", false),
+        (" world", false),
     ] {
         events.extend(
             accumulator
@@ -348,7 +348,7 @@ fn consecutive_gemini_deltas_match_one_shot_reconstruction() {
     events.extend(accumulator.push(tail.clone()).unwrap());
     let mut one_shot = tail;
     one_shot["candidates"][0]["content"] =
-        json!({"parts":[{"text":"think more","thought":true},{"text":"hello"}]});
+        json!({"parts":[{"text":"think more","thought":true},{"text":"hello world"}]});
     let expected = parse_response(one_shot).unwrap();
     let Some(LlmStreamEvent::Done {
         message,

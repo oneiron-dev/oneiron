@@ -13,7 +13,6 @@ mod read_set;
 mod room;
 #[cfg(test)]
 mod room_tests;
-pub(crate) use room_verbs::require_room_member_in_txn;
 mod room_verbs;
 mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};

@@ -3118,7 +3118,7 @@
      "path": "src/batch/put_apply/put_entity_update.rs",
      "purpose": "SKILL body validators shared by the put and update arms",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -3128,7 +3128,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -7447,16 +7447,6 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/claim/scope_tag.rs",
-     "purpose": "Mandatory world and relationship tags on the claim wire ABI",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -10742,7 +10732,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "re-export": 16
      }
     },
@@ -10979,7 +10969,6 @@
      "path": "src/context_board/room_verbs.rs",
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
-      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -20842,14 +20831,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/memory/room_write_tests.rs",
-     "purpose": "The rooms facade rechecks membership in each committing writer transaction",
-     "surface": {}
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -20943,7 +20924,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 22,
       "fn": 5,
       "struct": 1
      }
@@ -25413,7 +25394,7 @@
      "path": "src/recovery/document.rs",
      "purpose": "Canonical entity-local documents and their bound workflows",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 3
      }
@@ -33840,7 +33821,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 37,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34421,7 +34402,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 75,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34948,8 +34929,8 @@
    },
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2067,
-   "test_files": 706
+   "source_files": 2066,
+   "test_files": 705
   },
   "oneiron-android": {
    "files": [

@@ -1,10 +1,7 @@
 //! Vault record APIs for companion profiles, relationships, and register snapshots.
 
 use super::codec::{decode_companion_record_body, encode_companion_record_body};
-use super::keys::{
-    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, COMPANION_TASK_ATTEMPT_KIND,
-    ENTITY_TYPE_COMPANION_REGISTER,
-};
+use super::keys::COMPANION_TASK_ATTEMPT_KIND;
 use super::model::{CompanionRecord, CompanionRecordKey, CompanionSubject};
 use super::queue::{
     CompanionTask, CompanionTaskKind, CompanionTaskStatus, EndCompanionRelationship,
@@ -17,9 +14,8 @@ use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
-use crate::error::{Error, RecordError, RegistryError, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::ports::EntityStoreRead;
-use crate::registry::{EntityClassification, TypeByteZone, entity_type_registry_entry};
 use crate::temporal::TimeRange;
 
 use rmpv::Value;
@@ -374,45 +370,6 @@ impl Vault {
         } else {
             Err(Error::InvalidEntityType(crate::registry::ENTITY_TYPE_FACET))
         }
-    }
-
-    fn companion_register_kind_registered(&self) -> Result<bool> {
-        let static_registered = entity_type_registry_entry(ENTITY_TYPE_COMPANION_REGISTER)
-            .is_some_and(|entry| {
-                entry.short_id_prefix == Some(COMPANION_REGISTER_SHORT_ID_PREFIX)
-                    && entry.classification == EntityClassification::Pack
-                    && entry.zone == TypeByteZone::CompiledProduct
-            });
-        if !static_registered {
-            return Ok(false);
-        }
-
-        if let Some(registration) = self
-            .store
-            .structural_kind_registration(ENTITY_TYPE_COMPANION_REGISTER)
-        {
-            let compatible_legacy_row = registration.short_id_prefix
-                == COMPANION_REGISTER_SHORT_ID_PREFIX
-                && registration.zone == TypeByteZone::CompiledProduct
-                && registration.pack == COMPANION_REGISTER_PACK_ID;
-            if !compatible_legacy_row {
-                tracing::warn!(
-                    type_byte = ENTITY_TYPE_COMPANION_REGISTER,
-                    short_id_prefix = %registration.short_id_prefix,
-                    pack = %registration.pack,
-                    "companion register static kind collides with incompatible dynamic metadata"
-                );
-                return Err(Error::Registry(
-                    RegistryError::StructuralKindTypeByteCollision(ENTITY_TYPE_COMPANION_REGISTER),
-                ));
-            }
-            tracing::warn!(
-                type_byte = ENTITY_TYPE_COMPANION_REGISTER,
-                "companion register static kind found a redundant legacy dynamic metadata row"
-            );
-        }
-
-        Ok(true)
     }
 
     fn read_companion_record_in_txn(

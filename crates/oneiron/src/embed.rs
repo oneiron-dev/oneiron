@@ -3,6 +3,7 @@ mod locality;
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_claims_pending_in_txn};
 pub(crate) use locality::clear_embedding_locality_in_txn;
 
+#[cfg(feature = "sync")]
 use crate::ports::EntityStoreRead;
 use std::borrow::Cow;
 

@@ -649,7 +649,7 @@ fn pending_merge_survives_reconstruction_and_stale_rows_converge() -> Result<()>
     target.with_write_txn(|txn| {
         target.store.vault_meta.put(
             txn,
-            &document::head_key(*fixture.note.as_bytes()),
+            &[b"note_head:v1:".as_slice(), fixture.note.as_bytes()].concat(),
             extra.as_bytes(),
         )
     })?;
@@ -665,7 +665,7 @@ fn pending_merge_survives_reconstruction_and_stale_rows_converge() -> Result<()>
         )?;
         target.store.vault_meta.put(
             txn,
-            &document::head_key(*inline.as_bytes()),
+            &[b"note_head:v1:".as_slice(), inline.as_bytes()].concat(),
             extra.as_bytes(),
         )
     })?;

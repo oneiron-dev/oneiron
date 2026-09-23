@@ -213,14 +213,6 @@ pub(crate) struct LeaseDecision {
 }
 
 impl LeaseDecision {
-    fn granted(expires_at: u64) -> Self {
-        Self {
-            granted: true,
-            expires_at,
-            root_update: None,
-        }
-    }
-
     pub(super) const fn rejected() -> Self {
         Self {
             granted: false,

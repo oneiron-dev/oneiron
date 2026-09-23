@@ -46,6 +46,7 @@ mis = "mis"
 pn = "pn"
 # Engine consent term (DEC-0006): a "non-rememberable" class can never back a standing grant.
 rememberable = "rememberable"
+relace = "relace"
 SINIC = "SINIC"
 unparseable = "unparseable"
 
