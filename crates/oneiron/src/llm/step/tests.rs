@@ -1154,7 +1154,7 @@ impl LlmBackend for ExpireThenCompleteBackend {
 }
 
 #[test]
-fn admitted_step_finishes_and_settles_after_deadline() -> Result<()> {
+fn expired_deadline_never_records_finished() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fixture = step_fixture(&vault, 10)?;
     let (elapsed, deadline) = injected_deadline(1_000, 180_000);
@@ -1162,23 +1162,31 @@ fn admitted_step_finishes_and_settles_after_deadline() -> Result<()> {
     ctx.deadline = Some(&deadline);
     let guard = guard_with_limit(10_000);
     let backend = ExpireThenCompleteBackend { clock: elapsed };
-    let outcome = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
-        .expect("an admitted call must finish");
-    assert!(matches!(
-        outcome,
-        StepOutcome::Finished {
-            memoized: false,
-            ..
-        }
-    ));
-    assert_eq!(guard.read().reserved_units, 0);
-    assert_eq!(guard.read().used_units, 150);
+    // The response ARRIVES, but only after the ceiling passed. Expiry is
+    // checked before the completion poll, so the call loses the race — it
+    // must never be recorded as a finished step.
+    let error = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect_err("expired call must never finish");
+    assert!(matches!(error, DurableStepError::DeadlineHardCut));
     let hash = request_fixture().canonical_hash().expect("hash");
-    assert!(step_index_lookup(&vault, fixture.attempt_id, &hash)?.is_some());
     assert!(
-        DreamerRunnerStore::new(&vault)
-            .parked_attempt(fixture.attempt_id)?
-            .is_none()
+        step_index_lookup(&vault, fixture.attempt_id, &hash)?.is_none(),
+        "no terminal step claim for an expired call"
+    );
+    assert_eq!(guard.read().reserved_units, 0, "lease aborted");
+    assert_eq!(guard.read().used_units, 0, "no spend recorded");
+    let parked = DreamerRunnerStore::new(&vault)
+        .parked_attempt(fixture.attempt_id)?
+        .expect("attempt parked");
+    assert_eq!(
+        parked.reason,
+        crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON
+    );
+    // The deadline hard-cut park must also store parked_at in Unix SECONDS:
+    // now_ms=10_000 lands as 10, not 10_000 (#480-1).
+    assert_eq!(
+        parked.parked_at, 10,
+        "deadline hard-cut park must store parked_at in seconds, not milliseconds"
     );
     let mut next = request_fixture();
     next.model = ModelId::new("other/model@r9").expect("model");
@@ -1186,7 +1194,7 @@ fn admitted_step_finishes_and_settles_after_deadline() -> Result<()> {
         block_on(call_as_step(&ctx, &backend, &guard, next)),
         Err(DurableStepError::FinalizeRefused)
     ));
-    assert_eq!(guard.read().used_units, 150);
+    assert_eq!(guard.read().used_units, 0);
     Ok(())
 }
 

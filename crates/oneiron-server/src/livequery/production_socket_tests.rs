@@ -128,11 +128,13 @@ async fn connect(f: &Fixture, class: &str) -> Socket {
 }
 
 async fn open(socket: &mut Socket, id: u64, query: &str, cursor: Value) {
+    // Light recall's temporal channel also returns the AUTHORITY_LOG rows
+    // this fixture's slip mints stamp at now; these views are the messages.
     send(
         socket,
         TAG_SUB,
         json!({"method":"sub.open","subscriptionId":id,
-        "scopedView":{"query":query},"cursor":cursor}),
+        "scopedView":{"query":query,"filter":{"kind":"MESSAGE"}},"cursor":cursor}),
     )
     .await;
 }

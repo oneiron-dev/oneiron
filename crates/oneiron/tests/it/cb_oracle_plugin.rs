@@ -1045,16 +1045,6 @@ mod plugin_fixture {
                 .expect("seed the proposing actor");
             // The claim subject for an UNINSTALLED package is the existing
             // hub/provider entity — never the unwritten skill row.
-            vault
-                .put_entity(
-                    &hub_id,
-                    oneiron::registry::ENTITY_TYPE_PERSON,
-                    occurred,
-                    now,
-                    b"crm hub",
-                )
-                .expect("seed the hub entity");
-
             let package = crm_package();
             let admission = super::admission::Admission::new(&vault, hub_id, &package);
             let content_hash_hex = package.content_hash().expect("canonical hash").to_hex();

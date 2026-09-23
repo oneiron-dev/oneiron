@@ -1166,7 +1166,10 @@ fn eval_existing_vault_refuses_unsupported_platform_without_writing() {
 fn scoped_read_receipt_drives_a_non_widening_replan() {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = open_vault(dir.path());
-    let reader = vault.scoped_read(oneiron::claim::ScopedReadActorKey::new("eval-reader").unwrap());
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"eval-reader").unwrap();
+    let proof = vault.verified_host_root_slip(&issuer).unwrap();
+    let reader =
+        vault.scoped_read(oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof).unwrap());
     let request = oneiron::RetrievalFilter {
         include_stale: Some(true),
         ..Default::default()

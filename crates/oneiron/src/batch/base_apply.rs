@@ -185,7 +185,9 @@ pub(super) fn apply_ops_with_origin(
                     hub_admission.as_ref(),
                     later_text_coverage_by_op[op_index],
                     write_policy.as_ref(),
-                    materialization.as_ref().map(ClaimMaterialization::envelope),
+                    materialization
+                        .as_ref()
+                        .and_then(ClaimMaterialization::gate_envelope),
                     false,
                     record_gate_decisions,
                     persist_gate_pending_consent,

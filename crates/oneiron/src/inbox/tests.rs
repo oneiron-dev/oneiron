@@ -1568,6 +1568,70 @@ fn an_untouched_approval_carries_no_delta() -> Result<()> {
     Ok(())
 }
 
+/// An approval never removes the author, and the approver's write is not
+/// judged against the agent author's own Proposed ceiling. An amended body is
+/// the approver's text, so it keeps no single author.
+#[test]
+fn an_untouched_approval_keeps_the_agent_author_and_an_amended_one_does_not() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let author = |claim_id: EntityId| -> Result<Option<EntityId>> {
+        let body = vault.get_claim(&claim_id)?.expect("claim");
+        let txn = vault.store.env.read_txn()?;
+        Ok(
+            crate::batch::authenticated_claim_author_in_txn(&vault.store, &txn, &claim_id, &body)?
+                .map(WriteActor::entity_ref),
+        )
+    };
+    let untouched = amended_proposal(&vault)?;
+    assert_eq!(author(untouched)?, Some(entity(0xB5)));
+    vault.resolve_inbox_group_at("run-amend", InboxBulkVerb::AcceptAll, None, 20)?;
+    assert_eq!(
+        vault.get_claim(&untouched)?.expect("approved").approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert_eq!(author(untouched)?, Some(entity(0xB5)));
+    {
+        use crate::ports::{ChangeLogStore, ChangeOp};
+        let txn = vault.store.env.read_txn()?;
+        let updates = |records: Vec<crate::ports::ChangeLogRecord>| {
+            records
+                .into_iter()
+                .filter(|record| record.entity == untouched && record.op == ChangeOp::Update)
+                .count()
+        };
+        assert_eq!(
+            updates(vault.port_changelog_list_by_entity(&txn, &untouched, 100)?),
+            1
+        );
+        assert_eq!(
+            updates(vault.port_changelog_list_by_actor(&txn, &entity(0xB5), 100)?),
+            0,
+            "the approval is the approver's write, never the author's"
+        );
+    }
+
+    let edited = entity(0xB7);
+    write_dreamer_proposal(
+        &vault,
+        edited,
+        entity(0xB5),
+        entity(0xB8),
+        "core.role",
+        "draft",
+        "run-edit",
+        30,
+        &[REASON_CHECKER],
+    )?;
+    let amended = edited_body(&vault, edited, "revised by the owner")?;
+    vault.approve_inbox_member_with_edit_at(&edited, &amended, 40)?;
+    assert_eq!(
+        vault.get_claim(&edited)?.expect("approved").approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert_eq!(author(edited)?, None);
+    Ok(())
+}
+
 /// An amendment NARROWS the review it belongs to. Moving the predicate or the
 /// subject would land a claim under exception classes and a consent binding
 /// that were derived from the ORIGINAL pair — a substitution wearing an

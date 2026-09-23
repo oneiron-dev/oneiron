@@ -1,4 +1,4 @@
-//! Explicit actor-bound read policy for cross-crate integration fixtures.
+//! Explicit actor-bound read policy and foreign Grants for cross-crate integration fixtures.
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::{Error, Result, TimeRange, Vault, WriteActor};
@@ -6,6 +6,24 @@ use rmpv::Value;
 use std::sync::atomic::Ordering;
 
 impl Vault {
+    /// Mints the foreign Grant for one transport principal string.
+    /// TEST-SUPPORT ONLY: the embedded owner authenticates, and the Grant is
+    /// exactly the owner verb's write; nothing wider is installed.
+    #[doc(hidden)]
+    pub fn install_foreign_grant_for_test(&self, principal: &str) -> Result<()> {
+        let owner = self
+            .ensure_embedded_owner_actor()
+            .map_err(|_| Error::InvariantViolation("fixture owner actor"))?;
+        let owner = self.authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
+        )?;
+        self.grant_foreign_principal(&owner, principal)?;
+        Ok(())
+    }
+
     /// Installs one read-only, actor/class-bound grant in the stock manifest.
     /// TEST-SUPPORT ONLY: no write ceiling, source permit, or approval is added.
     /// Refuses a missing/customized policy or a missing/class-mismatched actor.

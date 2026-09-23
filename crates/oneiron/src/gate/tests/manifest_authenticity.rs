@@ -121,3 +121,87 @@ fn product_band_permit_needs_explicit_owner_reauthoring() -> Result<()> {
     crate::gate::resolution::check_claim_source_trust(&body, None, &resolve(&vault)?, None)?;
     Ok(())
 }
+
+#[test]
+fn owner_mints_one_foreign_principal_grant_into_the_trusted_default_policy() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    let owner_ref = test_id(0x52);
+    let subject = test_id(0x53);
+    for id in [owner_ref, subject] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            test_time(1),
+            1,
+            b"person",
+        )?;
+    }
+    let owner = vault.authenticate_owner(
+        owner_ref,
+        &owner_ref.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let relay = "oauth-relay:relay-subject";
+    let reads = |principal: &str| -> Result<bool> {
+        Ok(vault
+            .scoped_read(ScopedReadActorKey::new(principal).expect("principal key"))
+            .get(&subject)?
+            .value
+            .is_some())
+    };
+    assert!(
+        !reads(relay)?,
+        "a transport identity alone is not authority"
+    );
+    let receipt = vault.grant_foreign_principal(&owner, relay)?;
+    assert_eq!(
+        receipt.grant_ref.as_deref(),
+        Some("foreign:oauth-relay:relay-subject")
+    );
+    assert_eq!(receipt.actor_ref, Some(owner_ref.to_hex()));
+    assert!(reads(relay)?);
+    assert!(!reads("oauth-relay:other-subject")?);
+    assert_eq!(
+        resolve(&vault)?.actor_ceiling("agent", Some(relay)),
+        PolicyApprovalCeiling::Proposed
+    );
+    vault.grant_foreign_principal(&owner, relay)?;
+    let policy = resolve(&vault)?;
+    assert_eq!(
+        policy
+            .scoped_grants()
+            .iter()
+            .filter(|grant| grant.actor_ref.as_deref() == Some(relay))
+            .count(),
+        1,
+        "reminting keeps one Grant"
+    );
+    assert_eq!(
+        vault
+            .store
+            .gate_decisions_for_grant_ref("foreign:oauth-relay:relay-subject")?
+            .len(),
+        2,
+        "every mint leaves its receipt"
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &crate::gate::default_policy_manifest_id()?,
+            ENTITY_TYPE_POLICY_MANIFEST,
+            test_time(1),
+            1,
+            &crate::gate::default_policy_manifest(),
+        )
+        .commit()?;
+    assert!(
+        matches!(
+            vault.grant_foreign_principal(&owner, "oauth-relay:late-subject"),
+            Err(crate::Error::InvalidConfig(_))
+        ),
+        "a replicated default policy is never re-stamped as trusted"
+    );
+    Ok(())
+}

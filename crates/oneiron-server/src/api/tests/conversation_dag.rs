@@ -387,20 +387,14 @@ async fn records_thread_and_canonical_share_the_typed_dag() {
         }),
     )
     .await;
+    let thread_path = format!("{path}/records/{}/thread", root["id"].as_str().unwrap());
     let reply = post(
         &server,
-        &format!("{path}/records"),
-        json!({
-            "parent": root["id"], "reply_to": root["id"], "advance": false,
-            "body": {"txt": "answer"}, "actor": actor
-        }),
+        &thread_path,
+        json!({"advance": false, "body": {"txt": "answer"}, "actor": actor}),
     )
     .await;
-    let thread = get(
-        &server,
-        &format!("{path}/records/{}/thread", root["id"].as_str().unwrap()),
-    )
-    .await;
+    let thread = get(&server, &thread_path).await;
     assert_eq!(thread["replies"], json!([reply["id"]]));
     assert_eq!(thread["count"], 1);
     let canonical = get(&server, &format!("{path}/canonical")).await;

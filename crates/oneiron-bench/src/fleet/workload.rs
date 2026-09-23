@@ -92,19 +92,22 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
         .map(|address| format!("ws://{address}/ws"))
         .collect::<Vec<_>>();
     let endpoint = format!("http://{}/v1/core/facade/witness", addresses[0]);
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    let credentials = (0..plan.agents)
+        .map(|index| super::wire::credential(&vault, &issuer, &id(0x31, index)?.to_hex()))
+        .collect::<Result<Vec<_>>>()?;
     let client_sockets = super::wire::client_sockets(plan.agents, plan.listeners)?;
     let start = Instant::now();
     let mut opened = 0;
-    let connected: Vec<_> = stream::iter(client_sockets.into_iter().enumerate())
-        .map(|(index, tcp)| {
+    let connected: Vec<_> = stream::iter(client_sockets.into_iter().zip(credentials).enumerate())
+        .map(|(index, (tcp, credential))| {
             let url = &urls[index % urls.len()];
             let address = addresses[index % addresses.len()];
             let secret = &secret;
             async move {
-                let token = super::wire::token(secret, &id(0x31, index)?.to_hex());
                 let start = Instant::now();
                 let agent =
-                    Agent::connect(index, url, address, tcp, secret, token, timeout).await?;
+                    Agent::connect(index, url, address, tcp, secret, credential, timeout).await?;
                 Ok::<_, super::Error>((agent, start.elapsed().as_secs_f64() * 1000.0))
             }
         })
@@ -184,7 +187,9 @@ async fn write_phase(
             "occurred_at":AT + round as u64,
             "messages":[{"id":message_id,"author":"companion","message_type":"dialogue",
                 "content":needle(agent.index, round),"metadata":null,"is_visible":true,"order":0}]});
-        let response = http.post(endpoint).bearer_auth(&agent.token).json(&body).send().await?;
+        let binding = agent.binding()?.to_string();
+        let response = http.post(endpoint).bearer_auth(&agent.token)
+            .header("x-oneiron-binding", binding).json(&body).send().await?;
         let status = response.status();
         let bytes = response.bytes().await?;
         if !status.is_success() {

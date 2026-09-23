@@ -243,6 +243,49 @@ fn public_booking_publication_is_durable_and_retraction_does_not_revive_old_allo
 }
 
 #[test]
+fn owner_keeps_authorship_of_each_confirmed_publication_revision() {
+    let (_dir, vault) = open();
+    let owner = vault.memory(id(2), EdgeActorClass::Human);
+    owner.claim_upsert(&input(publication())).expect("publish");
+    let mut head = String::new();
+    for display in ["First edit", "Second edit"] {
+        let mut edited = publication();
+        edited.owner_display = display.to_owned();
+        let receipt = owner
+            .claim_upsert(&input(edited.clone()))
+            .expect("the owner edits its own confirmed publication");
+        assert_eq!(receipt.approval, "proposed");
+        head = owner
+            .confirm_booking_publication(&receipt.claim_short_id, vault.now_recorded_at())
+            .expect("confirm owner revision")
+            .claim_id;
+        assert_eq!(
+            load_public_booking_page(&vault, id(1), 150).expect("live"),
+            Some(edited)
+        );
+        let claim = crate::memory::resolve_entity_ref(&vault, &head).expect("confirmed id");
+        let body = vault.get_claim(&claim).expect("read").expect("claim");
+        assert_eq!(body.approval, ClaimApprovalStatus::Approved);
+        let txn = vault.store.env.read_txn().expect("read txn");
+        assert_eq!(
+            crate::batch::authenticated_claim_author_in_txn(&vault.store, &txn, &claim, &body)
+                .expect("author")
+                .map(crate::write_envelope::WriteActor::entity_ref),
+            Some(id(2)),
+            "an approval never removes the author"
+        );
+    }
+    owner
+        .claim_retract(&head)
+        .expect("owner retracts its own revision");
+    assert!(
+        load_public_booking_page(&vault, id(1), 150)
+            .expect("revoked")
+            .is_none()
+    );
+}
+
+#[test]
 fn public_booking_publication_rejects_agent_and_invalid_claim_shapes_at_write_door() {
     let (_dir, vault) = open();
     let value = input(publication());

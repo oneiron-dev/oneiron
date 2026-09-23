@@ -29,7 +29,7 @@ fn deep_map_bytes(doc: &LoroDoc, map: &str, key: &str) -> Option<Vec<u8>> {
     Some(value.to_vec())
 }
 
-fn seed_historical_lease(
+pub(super) fn seed_historical_lease(
     server: &SyncServer,
     vault_id: u64,
     client: u64,

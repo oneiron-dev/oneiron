@@ -195,7 +195,7 @@ async fn handle_connection(
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-    let mut conn_state = ConnState::new(server.config.max_messages_per_sec, protocol_version);
+    let mut conn_state = ConnState::new(protocol_version);
 
     let mut app_connection = crate::livequery::connection::Connection::new(
         crate::livequery::connection::Hub::for_server(&server),
@@ -393,25 +393,9 @@ async fn handle_connection(
                 break;
             }
             Ok(WsMessage::Ping(_)) | Ok(WsMessage::Pong(_)) => {
-                if !conn_state.record_inbound_message() {
-                    tracing::warn!(
-                        conn_id,
-                        max = server.config.max_messages_per_sec,
-                        "message rate limit exceeded by control frame — closing"
-                    );
-                    break;
-                }
                 continue;
             }
             Ok(WsMessage::Text(_)) => {
-                if !conn_state.record_inbound_message() {
-                    tracing::warn!(
-                        conn_id,
-                        max = server.config.max_messages_per_sec,
-                        "message rate limit exceeded — closing"
-                    );
-                    break;
-                }
                 tracing::warn!(conn_id, "received unexpected text message");
                 continue;
             }
@@ -420,15 +404,6 @@ async fn handle_connection(
                 break;
             }
         };
-
-        if !conn_state.record_inbound_message() {
-            tracing::warn!(
-                conn_id,
-                max = server.config.max_messages_per_sec,
-                "message rate limit exceeded — closing"
-            );
-            break;
-        }
 
         // Size check
         if data.len() > server.config.max_frame_size {

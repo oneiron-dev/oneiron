@@ -58,7 +58,12 @@ fn factory() -> QuickJsRuntimeFactory {
     for (i, byte) in hash.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).unwrap();
     }
-    QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap()
+    // Explicit native-interpreter budget, not a change to other lanes.
+    let budget = ComponentBudget {
+        fuel: 100_000_000,
+        ..ComponentBudget::default()
+    };
+    QuickJsRuntimeFactory::from_component(&bytes, hash, budget).unwrap()
 }
 
 #[tokio::test]
@@ -110,7 +115,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         SyncServer::new(
             vault.clone(),
             SyncServerConfig {
-                allow_unauthenticated: true,
+                auth_secret: Some("secret".to_owned()),
                 ..Default::default()
             },
         )
@@ -136,7 +141,11 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     ] {
         let (status, body) = route_json(
             server.clone(),
-            Request::builder().uri(path).body(Body::empty()).unwrap(),
+            Request::builder()
+                .uri(path)
+                .header(AUTHORIZATION, owner_bearer())
+                .body(Body::empty())
+                .unwrap(),
         )
         .await;
         assert_eq!(status, StatusCode::OK);

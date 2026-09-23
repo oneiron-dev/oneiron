@@ -917,9 +917,21 @@ pub(super) fn enqueue_sibling(queue: &AttemptQueue<'_>, task_hex: &str, now: u64
 
 /// Outcome fixtures make deliberate Approved writes. Keep the shipped policy
 /// and its actor ceilings; classify only these fixture predicates as normal.
-pub(in crate::task_verb) fn permit_outcome_fixture_predicates(vault: &Vault) -> crate::Result<()> {
+/// Outcome labels are scoped reads by the asking principal, so it alone holds
+/// an unrestricted `core:read` grant.
+pub(in crate::task_verb) fn permit_outcome_fixture_predicates(
+    vault: &Vault,
+    principal: EntityId,
+) -> crate::Result<()> {
     let bytes = crate::gate::default_policy_manifest();
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
+    manifest["scoped_grants"] = serde_json::json!([{
+        "actor_ref": principal.to_hex(),
+        "effector": "core:read",
+        "scope": serde_json::to_value(crate::federation::scope_codec::read_preset())
+            .expect("read preset"),
+        "receipt_required": false,
+    }]);
     let rules = manifest["rules"].as_array_mut().expect("policy rules");
     for predicate in [
         "outcome.earned",

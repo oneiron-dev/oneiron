@@ -60,7 +60,8 @@ async fn org_admin_routes_render_only_setup_powers_and_refuse_excluded_operation
             &signature.to_bytes(),
         )
         .unwrap();
-    let bind = |request| crate::test_credentials::bind_slip_request(&slip, &holder, request);
+    let bind =
+        |request| crate::test_credentials::bind_slip_request(&server, &slip, &holder, request);
     let (status, body) = route_json(
         server.clone(),
         bind(

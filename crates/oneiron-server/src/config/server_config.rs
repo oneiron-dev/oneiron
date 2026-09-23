@@ -17,9 +17,8 @@ use crate::usage::UsageMode;
 /// - `max_update_payload` — ENFORCED at the WindowSync UPDATE chokepoint
 ///   (oversized updates close the connection before any state mutates).
 /// - `max_frame_size` — ENFORCED on the WebSocket frame size.
-/// - `max_messages_per_sec` — ENFORCED as a per-connection inbound message
-///   rate limit. Per-user limits still need per-user identity (Phase-1 auth is
-///   a single shared secret).
+/// - `max_messages_per_sec` — retained for configuration compatibility only.
+///   RC42 counters ask typed questions and never refuse calls for rate.
 /// - `max_windows_per_connection` — ENFORCED as a generous per-connection
 ///   distinct-window touch cap. The default is intentionally high enough for
 ///   legitimate historical-window tombstone sync; it stops fabricated-key

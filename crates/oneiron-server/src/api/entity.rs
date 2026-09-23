@@ -187,7 +187,12 @@ mod credential_tests {
     }
     #[tokio::test]
     async fn edge_transport_keeps_its_array_and_receipts_missing_and_live_sources() {
-        let (_dir, server) = crate::api::tests::test_server();
+        let (_dir, server) = crate::api::tests::auth_test_server();
+        let mut owner = HeaderMap::new();
+        owner.insert(
+            axum::http::header::AUTHORIZATION,
+            crate::api::tests::owner_bearer().parse().unwrap(),
+        );
         let id = oneiron::EntityId::from_bytes([0x31; 16]).unwrap();
         for present in [false, true] {
             if present {
@@ -203,7 +208,7 @@ mod credential_tests {
                     .unwrap();
             }
             let response = get_edges(
-                HeaderMap::new(),
+                owner.clone(),
                 State(server.clone()),
                 Path(id.to_hex()),
                 Ok(Query(ViewQuery {
@@ -232,9 +237,12 @@ mod credential_tests {
                 let body = axum::body::to_bytes(response.into_body(), usize::MAX)
                     .await
                     .unwrap();
+                let edges = serde_json::from_slice::<Value>(&body).unwrap();
+                assert_eq!(edges.as_array().unwrap().len(), 1);
+                assert_eq!(edges[0]["kind"], oneiron::EdgeKind::HasFacet as u8);
                 assert_eq!(
-                    serde_json::from_slice::<Value>(&body).unwrap(),
-                    serde_json::json!([])
+                    edges[0]["target"],
+                    oneiron::claim::substrate_facet_id(id).to_hex()
                 );
             }
         }

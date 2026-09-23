@@ -93,7 +93,7 @@ pub(in crate::sync) fn admit_work(
         key,
         kind,
         payload,
-        (writes, crate::unix_seconds_now()),
+        (writes, vault.now_recorded_at()),
     )
 }
 

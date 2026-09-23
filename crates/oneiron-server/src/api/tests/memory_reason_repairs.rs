@@ -373,7 +373,6 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         );
     }
     assert_eq!(*backend.candidates.lock().unwrap(), vec![inside]);
-    let original = server.vault.get(&inside).unwrap().unwrap();
     let changed =
         rmp_serde::to_vec_named(&json!({"txt": "changed", "spkr": "user", "at": 701_u64})).unwrap();
     server
@@ -391,27 +390,33 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         )
         .commit()
         .unwrap();
+    // A non-claim record stamp binds only the current body, so row authority
+    // withholds the edited TURN's pinned revision instead of serving it.
     for path in ["/v1/core/hydrate", "/v1/core/batch/shortId/hydrate"] {
-        let payload = if path.contains("/batch/") {
+        let batch = path.contains("/batch/");
+        let payload = if batch {
             json!({"refs": [pinned_ref.clone()]})
         } else {
             json!({"ref": pinned_ref.clone()})
         };
-        let (status, body) = route_json(server.clone(), json_request("POST", path, payload)).await;
-        assert_eq!(status, StatusCode::OK, "{path}: {body:?}");
-        let item = if path.contains("/batch/") {
-            &body["results"][0]["result"]["item"]
+        let (status, body) =
+            route_json_auth(server.clone(), json_request("POST", path, payload)).await;
+        if batch {
+            assert_eq!(status, StatusCode::OK, "{path}: {body:?}");
+            assert_eq!(
+                body["results"][0]["result"],
+                Value::Null,
+                "{path}: {body:?}"
+            );
         } else {
-            &body["item"]
-        };
-        let expected = crate::projection::project_entity_parts(
-            &inside,
-            ENTITY_TYPE_TURN,
-            700,
-            &original,
-            crate::projection::View::Full,
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body:?}");
+        }
+        assert_eq!(body["narrowing"]["suppressed_count"], 1, "{path}: {body:?}");
+        assert_eq!(
+            body["narrowing"]["narrowed_axes"],
+            json!(["row_authority"]),
+            "{path}: {body:?}"
         );
-        assert_eq!(item, &expected, "{path}: {body:?}");
     }
 }
 

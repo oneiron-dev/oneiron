@@ -19,6 +19,7 @@ serde_bytes = "0.11"
 oneiron = { path = "../oneiron", features = ["sync"] }
 oneiron-llm-openai = { path = "../oneiron-llm-openai" }
 blake3.workspace = true
+ed25519-dalek.workspace = true
 rand = "0.8"
 rmp-serde.workspace = true
 # ONE-1579: the perf harness builds `ClaimCandidate` / `WriteProvenance`

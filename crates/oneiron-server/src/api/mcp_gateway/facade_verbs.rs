@@ -780,31 +780,52 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
         let id = oneiron::EntityId::now();
-        for name in ["navanchor original", "unmatched replacement"] {
-            let body = rmp_serde::to_vec_named(&json!({"name": name})).unwrap();
-            vault
-                .batch()
-                .put(
-                    &id,
-                    oneiron::registry::ENTITY_TYPE_EVENT,
-                    oneiron::TimeRange { start: 1, end: 1 },
-                    1,
-                    &body,
-                )
-                .text(&id, &[("name", name)])
-                .commit()
-                .unwrap();
-        }
-        let reader =
-            vault.scoped_read(oneiron::claim::ScopedReadActorKey::new("nav-reader").unwrap());
+        let subject = oneiron::EntityId::now();
+        vault
+            .put_entity(
+                &subject,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"subject",
+            )
+            .unwrap();
+        // A claim revision carries its own record scope. An edited non-claim
+        // revision has no digest-bound stamp left to prove its historical read.
+        let claim = |predicate: &str| {
+            oneiron::ClaimBody::new(
+                predicate,
+                oneiron::ClaimSubject::Entity(subject),
+                rmpv::Value::from(predicate),
+                1.0,
+                oneiron::ClaimApprovalStatus::Auto,
+                oneiron::ClaimLifecycleStatus::Active,
+            )
+        };
+        let at = |second| oneiron::TimeRange {
+            start: second,
+            end: second,
+        };
+        vault
+            .put_claim(&id, &claim("navanchor.original"), at(1), 1)
+            .unwrap();
+        vault
+            .batch()
+            .text(&id, &[("name", "navanchor original")])
+            .commit()
+            .unwrap();
+        vault
+            .put_claim(&id, &claim("unmatched.replacement"), at(2), 2)
+            .unwrap();
+        let reader = vault.scoped_read(crate::test_credentials::host_reader(&vault));
         let hits = reader.search_text("navanchor", 10, None).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, id);
         let (items, _receipt) = project_nav_results(&reader, hits).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["label"], "navanchor original");
+        assert_eq!(items[0]["label"], "navanchor.original");
         let live = reader.get(&id).unwrap().value.unwrap();
-        let live: Value = rmp_serde::from_slice(&live).unwrap();
-        assert_eq!(live["name"], "unmatched replacement");
+        let live: rmpv::Value = rmp_serde::from_slice(&live).unwrap();
+        assert_eq!(live["pred"].as_str(), Some("unmatched.replacement"));
     }
 }

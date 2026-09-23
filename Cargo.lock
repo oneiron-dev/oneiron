@@ -6418,6 +6418,7 @@ dependencies = [
  "axum",
  "blake3",
  "criterion",
+ "ed25519-dalek",
  "futures-util",
  "loro",
  "oneiron",

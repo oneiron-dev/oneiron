@@ -97,13 +97,16 @@ fn mine_attempt_count(vault: &Vault) -> usize {
 
 fn seed_conversation(vault: &Vault, seed: u8) -> EntityId {
     let id = EntityId::from_bytes([seed; 16]).expect("conversation id");
+    let body = oneiron::conversation::ConversationBody::default()
+        .to_bytes()
+        .expect("conversation body encode");
     vault
         .put_entity(
             &id,
             ENTITY_TYPE_CONVERSATION,
             TimeRange { start: 1, end: 1 },
             1,
-            b"conversation",
+            &body,
         )
         .expect("seed conversation");
     id

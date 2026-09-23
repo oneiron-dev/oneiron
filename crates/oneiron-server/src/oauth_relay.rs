@@ -392,32 +392,52 @@ mod tests {
             )
             .unwrap();
         let server = Arc::new(crate::server::SyncServer::new(vault.clone(), cfg).unwrap());
-        for (scope, path, payload, expected) in [
+        // The relay's transport token is not authority: until the owner mints
+        // its Grant it cannot read the subject, so it cannot propose about it.
+        let mut minted = false;
+        for (granted, scope, path, payload, expected) in [
             (
+                false,
+                "propose",
+                "/v1/core/propose",
+                serde_json::json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"A"}),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                true,
                 "read",
                 "/v1/core/propose",
                 serde_json::json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"A"}),
                 StatusCode::FORBIDDEN,
             ),
             (
+                true,
                 "propose",
                 "/v1/core/propose",
                 serde_json::json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"A"}),
                 StatusCode::OK,
             ),
             (
+                true,
                 "propose",
                 "/v1/core/batch",
                 serde_json::json!({"entities":[]}),
                 StatusCode::FORBIDDEN,
             ),
             (
+                true,
                 "propose",
                 "/v1/core/propose",
                 serde_json::json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"A","approval":"auto"}),
                 StatusCode::BAD_REQUEST,
             ),
         ] {
+            if granted && !minted {
+                vault
+                    .install_foreign_grant_for_test("oauth-relay:relay-subject")
+                    .unwrap();
+                minted = true;
+            }
             let jwt = token("https://issuer.example", "https://api.example", scope);
             let response = crate::api::api_routes(server.clone())
                 .oneshot(

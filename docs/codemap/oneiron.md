@@ -231,7 +231,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/builder/puts.rs` | src | s | 2 fn · 3 crate-vis | — | Entity-put builder doors including the sync/test replicated door |
 | `src/batch/child_of_overlay.rs` | src | m | 17 crate-vis | — | — |
 | `src/batch/claim_candidate_apply.rs` | src | s | 3 crate-vis | — | — |
-| `src/batch/claim_materialization.rs` | src | m | 12 crate-vis | — | Exact-operation envelope handoff |
+| `src/batch/claim_materialization.rs` | src | m | 14 crate-vis | — | Exact-operation envelope handoff |
 | `src/batch/claim_materialization/tests.rs` | test | s | — | — | — |
 | `src/batch/claim_materialization/tests/freshness.rs` | test | m | — | — | Binding freshness after authorized replacements and unbound writes |
 | `src/batch/claim_materialization/tests/lifecycle_actor_regressions.rs` | test | m | — | — | Actor lifecycle counterexamples and controls |
@@ -1319,7 +1319,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/effect/effect_contacts.rs` | src | s | 1 crate-vis | — | Counterparty hydration plus send-override and do-not-contact fold |
 | `src/gate/effect/effect_grants.rs` | src | s | 3 crate-vis | — | Standing-grant resolution plus scoped-MCP channel check and grant touch |
 | `src/gate/effect/mod.rs` | src | m | 10 crate-vis | — | — |
-| `src/gate/foreign_agent.rs` | src | s | 2 fn · 1 crate-vis | — | Owner-bound foreign introductions |
+| `src/gate/foreign_agent.rs` | src | m | 3 fn · 1 crate-vis | — | Owner-bound foreign introductions |
 | `src/gate/grants.rs` | src | m | 8 crate-vis | — | — |
 | `src/gate/input.rs` | src | m | 15 crate-vis | — | — |
 | `src/gate/manifest_authenticity.rs` | src | s | 1 struct · 3 fn · 5 crate-vis | ManifestContribution | Local write-door authentication for manifest contributions |
@@ -2612,7 +2612,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/mod.rs` | src | s | 1 struct · 5 re-export · 5 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `src/vault/open.rs` | src | m | 12 fn · 10 crate-vis | — | Vault open and bootstrap: open doors, privacy posture and live-window attachment |
 | `src/vault/places.rs` | src | s | 5 fn | — | Geographic entity doors consume PlaceStore, never concrete database handles |
-| `src/vault/read_fixture.rs` | src | s | 1 fn | — | Explicit actor-bound read policy for cross-crate integration fixtures |
+| `src/vault/read_fixture.rs` | src | s | 2 fn | — | Explicit actor-bound read policy and foreign Grants for cross-crate integration fixtures |
 | `src/vault/search_retrieval.rs` | src | m | 21 fn · 5 crate-vis | — | Vault text and vector search, batch and query builders, and retrieval telemetry |
 | `src/vault/tests.rs` | test | L | — | — | — |
 | `src/vault/transactions.rs` | src | m | 18 fn | — | Vault maintenance, learned-at range scans, transaction helpers and sync state |

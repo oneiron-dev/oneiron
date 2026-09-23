@@ -137,8 +137,6 @@ async fn public_batch_lineage_source_gate_is_consistent() {
         (rmpv::Value::from("conf"), rmpv::Value::F32(0.8)),
         (rmpv::Value::from("appr"), rmpv::Value::from("proposed")),
         (rmpv::Value::from("life"), rmpv::Value::from("active")),
-        (rmpv::Value::from("world"), rmpv::Value::from("base")),
-        (rmpv::Value::from("rel"), rmpv::Value::from("all")),
         (
             rmpv::Value::from("scope"),
             oneiron::companion_value_from_json(&json!({ "sensitivity": 1 }))

@@ -46,6 +46,7 @@ impl WitnessAuthor {
 
 /// One message inside a witnessed turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WitnessMessage {
     /// Caller-supplied deterministic 32-hex entity id; `None` ⇒ generated.
     pub id: Option<String>,
@@ -66,6 +67,7 @@ pub struct WitnessMessage {
 /// One conversational turn to witness: create-or-get CONVERSATION/TURN plus
 /// gated MESSAGE puts, edges, and text indexing in ONE batch (B2).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WitnessTurn {
     /// CONVERSATION ref: short-id ref or 32-hex id (create-or-get for hex).
     pub conversation_ref: String,

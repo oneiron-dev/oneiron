@@ -449,10 +449,23 @@ fn rung0_attach_uses_priority_three_without_migration_or_double_fill() -> Result
 
     // ─── Phase 1: rung-0 writes, one physical vault, no embedder ───
     let fixture;
+    let pre_attach_claims: BTreeSet<EntityId>;
     let models_before;
     {
         let vault = Arc::new(Vault::open(dir.path(), rung0_config())?);
         fixture = write_rung0_fixture(&vault)?;
+        // First open seeds the bootstrap skills, whose claims predate the embedder too.
+        pre_attach_claims = vault
+            .entities_by_type(ENTITY_TYPE_CLAIM)?
+            .into_iter()
+            .collect();
+        assert!(
+            fixture
+                .claims()
+                .iter()
+                .all(|id| pre_attach_claims.contains(id)),
+            "every fixture claim is a pre-attach claim"
+        );
         assert_eq!(
             vault.doctor()?.embedding_model_id,
             None,
@@ -477,7 +490,8 @@ fn rung0_attach_uses_priority_three_without_migration_or_double_fill() -> Result
 
     // ─── Phase 2: attach one embedder over the same physical vault ───
     let vault = Arc::new(Vault::open(dir.path(), attached_config())?);
-    assert_eq!(vault.cold_attach_embedder()?, 3);
+    let pre_attach = pre_attach_claims.len();
+    assert_eq!(vault.cold_attach_embedder()?, pre_attach);
     assert_eq!(vault.cold_attach_embedder()?, 0);
 
     let queue = SyncQueue::new(Arc::clone(&vault))?;
@@ -485,14 +499,14 @@ fn rung0_attach_uses_priority_three_without_migration_or_double_fill() -> Result
     let queued: BTreeSet<EntityId> = jobs.iter().map(|job| job.entity_id).collect();
     assert_eq!(
         jobs.len(),
-        3,
+        pre_attach,
         "cold attach must enqueue exactly one job per pre-attach claim; queue dump: [{}]",
         dump_jobs(&jobs)
     );
     assert_eq!(
         queued,
-        fixture.claims().into_iter().collect::<BTreeSet<_>>(),
-        "cold attach must enqueue exactly the pre-attach fixture claims and nothing else; \
+        pre_attach_claims,
+        "cold attach must enqueue exactly the pre-attach claims and nothing else; \
          queue dump: [{}]",
         dump_jobs(&jobs)
     );
@@ -517,13 +531,13 @@ fn rung0_attach_uses_priority_three_without_migration_or_double_fill() -> Result
     let first = reconciler.reconcile_once()?;
     assert_eq!(
         (first.leased, first.embedded, first.filled),
-        (3, 3, 3),
+        (pre_attach, pre_attach, pre_attach),
         "one attached embedder must backfill every pre-attach claim: {first:?}"
     );
     assert_eq!(first.stale_fills, 0, "no stale fills on cold attach");
 
     let expected_counts: BTreeMap<EntityId, usize> =
-        fixture.claims().into_iter().map(|id| (id, 1)).collect();
+        pre_attach_claims.iter().map(|id| (*id, 1)).collect();
     assert_eq!(
         embedder.counts(),
         expected_counts,

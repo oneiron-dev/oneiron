@@ -495,13 +495,24 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
 async fn receipt_limit_is_applied_after_actor_scoping() {
     let (_dir, server) = server();
     claim(&server);
+    let other = EntityId::from_hex("55555555555555555555555555555555").unwrap();
     server
         .vault()
-        .memory(EntityId::from_hex(MACHINE).unwrap(), EdgeActorClass::System)
+        .put_entity(
+            &other,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::temporal::TimeRange { start: AT, end: AT },
+            AT,
+            b"fixture actor",
+        )
+        .unwrap();
+    server
+        .vault()
+        .memory(other, EdgeActorClass::Human)
         .claim_upsert(&ClaimInput {
             id: None,
             predicate: "profile.name".to_owned(),
-            subject_ref: MACHINE.to_owned(),
+            subject_ref: other.to_hex(),
             value: json!("Newer unrelated actor"),
             confidence: 1.0,
             source: "imported".to_owned(),
@@ -703,14 +714,14 @@ async fn disjoint_entity_document_subscriptions_only_push_the_changed_view() {
     let author = EntityId::from_hex(ACTOR).unwrap();
     let a = EntityId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
     let b = EntityId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
-    let put = |id: EntityId, predicate: &str, value: &str| {
+    let put = |id: EntityId, subject: &str, predicate: &str, value: &str| {
         server
             .vault()
             .memory(author, EdgeActorClass::Human)
             .claim_upsert(&ClaimInput {
                 id: Some(id.to_hex()),
                 predicate: predicate.into(),
-                subject_ref: ACTOR.into(),
+                subject_ref: subject.into(),
                 value: json!(value),
                 confidence: 1.0,
                 source: "user_stated".into(),
@@ -737,8 +748,8 @@ async fn disjoint_entity_document_subscriptions_only_push_the_changed_view() {
         filter: Some(json!({"kind":"CLAIM", "predicate":predicate})),
         ..Default::default()
     };
-    put(a, "profile.alpha", "first");
-    put(b, "profile.beta", "second");
+    put(a, ACTOR, "profile.alpha", "first");
+    put(b, ACTOR, "profile.beta", "second");
     for (id, predicate, entity) in [(1, "profile.alpha", a), (2, "profile.beta", b)] {
         let derived = source.derive(&view(predicate), Channel::View).unwrap();
         assert!(
@@ -768,7 +779,9 @@ async fn disjoint_entity_document_subscriptions_only_push_the_changed_view() {
     }
     queries.refresh().unwrap();
     let a_next = EntityId::from_hex("cccccccccccccccccccccccccccccccc").unwrap();
-    put(a_next, "profile.alpha", "new first");
+    // Another subject: a second value for one subject and predicate is a
+    // Proposed supersession, which no view surfaces until it is confirmed.
+    put(a_next, MACHINE, "profile.alpha", "new first");
     queries.refresh().unwrap();
     assert_eq!(queries.pending(1).unwrap().len(), 1);
     assert!(queries.pending(2).unwrap().is_empty());
@@ -779,6 +792,7 @@ async fn disjoint_entity_document_subscriptions_only_push_the_changed_view() {
     queries.ack(3, &frames[0].cursor).unwrap();
     put(
         EntityId::from_hex("dddddddddddddddddddddddddddddddd").unwrap(),
+        ACTOR,
         "profile.gamma",
         "third",
     );

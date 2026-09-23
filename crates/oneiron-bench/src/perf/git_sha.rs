@@ -570,7 +570,6 @@ mod tests {
 
         // Make the missing build path sit under a real checkout regardless of
         // TMPDIR, so lexical ancestor discovery cannot accidentally pass.
-        std::fs::create_dir(root.path().join(".git")).expect("ancestor git dir");
         std::fs::write(root.path().join(".git/HEAD"), format!("{SHA}\n")).expect("ancestor HEAD");
         let missing_build = root.path().join("packaged/no/source");
         assert!(git_sha_from_provenance(&missing_build, None).sha.is_none());

@@ -5,7 +5,7 @@ async fn fifty_thousand_agents_are_observed_not_refused_and_manifest_is_live() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
     let config = crate::config::SyncServerConfig {
-        auth_secret: Some("test-secret".into()),
+        allow_unauthenticated: true,
         ..Default::default()
     };
     let server = Arc::new(crate::server::SyncServer::new(vault, config).unwrap());
@@ -29,7 +29,7 @@ async fn fifty_thousand_agents_are_observed_not_refused_and_manifest_is_live() {
     for i in 1..=50_000 {
         let router = router.clone();
         let token = crate::auth::mint_core_token_v2(
-            "test-secret",
+            "unused-in-dev",
             &format!("scope=core:read;principal_ref={i:032x}"),
         );
         tasks.spawn(async move {

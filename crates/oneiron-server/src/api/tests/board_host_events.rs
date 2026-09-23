@@ -41,6 +41,14 @@ fn seed_board_skill(server: &SyncServer, id: oneiron::EntityId, needle: &str) ->
         .text(&id, &[("body", needle)])
         .commit()
         .expect("index admitted skill");
+    server
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("idle delay");
+    server
+        .vault
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .expect("publish admitted skill");
     oneiron::retrieval_depth::short_ref_or_hex(&server.vault, &id).expect("skill short ref")
 }
 
@@ -243,7 +251,9 @@ async fn board_mcp_call(
 async fn enqueue_board_frame(server: &Arc<SyncServer>, credential: &str, kind: FrameKind) {
     let mut registry = server.mcp_registry.lock().await;
     let connection = registry
-        .resolve(credential, 1, |_, _| true)
+        .resolve(&mcp_registered_credential(server, credential), 1, |_, _| {
+            true
+        })
         .unwrap()
         .stream_connection;
     registry.enqueue_stream_frame(&connection, BoardStreamFrame { epoch: 88, kind });
@@ -374,7 +384,7 @@ async fn board_host_mcp_get_loaded_and_changed_only_ride_existing_frames() {
 
 #[tokio::test]
 async fn board_host_capabilities_are_turn_local_and_shed_before_carried_memory() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor = seeded_test_entity_id(0x2477_4001);
     let skill = seeded_test_entity_id(0x2477_4002);
     let agent = seeded_test_entity_id(0x2477_4003);
@@ -519,7 +529,7 @@ async fn board_host_capabilities_are_turn_local_and_shed_before_carried_memory()
 
 #[tokio::test]
 async fn board_host_narrow_connector_never_delivers_a_rider() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor = seeded_test_entity_id(0x2477_5001);
     let scope =
         crate::mcp::McpConnectorScope::scoped(Some(seeded_test_entity_id(0x2477_5002)), None);

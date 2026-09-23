@@ -501,8 +501,6 @@ fn claim_body(text: &str) -> Vec<u8> {
             (rmpv::Value::from("conf"), rmpv::Value::F32(0.9)),
             (rmpv::Value::from("appr"), rmpv::Value::from("auto")),
             (rmpv::Value::from("life"), rmpv::Value::from("active")),
-            (rmpv::Value::from("world"), rmpv::Value::from("base")),
-            (rmpv::Value::from("rel"), rmpv::Value::from("all")),
             (
                 rmpv::Value::from("worldId"),
                 rmpv::Value::Binary(oneiron::claim::base_world_id().as_bytes().to_vec()),
@@ -1003,9 +1001,16 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
         let remote = MockEndpoint::start(MockBehaviour::Ok);
         let dir = tempfile::tempdir().unwrap();
         let vault = test_vault(dir.path());
+        let seeded = vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+            .unwrap()
+            .len();
         let allow = put_claim(&vault, 0x91, "allow this row");
         let deny = put_claim(&vault, 0x92, "deny this row");
         let unknown = put_claim(&vault, 0x93, "no verdict row");
+        let mut late = [0x94; 16];
+        late[0] = 0x7e;
+        let late = oneiron::EntityId::from_bytes(late).unwrap();
         let mut config = endpoint_config(&local.base);
         config.remote = Some(RemoteEmbedderConfig {
             endpoint: remote.base.clone(),
@@ -1016,7 +1021,7 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
             lease_ms: 120_000,
             timeout_ms: 1000,
             egress: Some(EgressPolicy {
-                allow: vec![allow.to_hex()],
+                allow: vec![allow.to_hex(), late.to_hex()],
                 deny: vec![deny.to_hex()],
                 allow_all: false,
             }),
@@ -1035,7 +1040,7 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
                 report.egress_no_verdict,
                 report.filled
             ),
-            (1, 1, 1, 3)
+            (1, 1, 1 + seeded, 3 + seeded)
         );
         let expected = if locality == Locality::OwnerServer {
             EmbedderLocality::OwnerServer
@@ -1052,11 +1057,14 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
             Some(EmbedderLocality::OnDevice)
         );
         remote.set_behaviour(MockBehaviour::ServerError);
-        put_claim(&vault, 0x91, "updated row while remote is down");
+        assert_eq!(
+            put_claim(&vault, 0x94, "row put while remote is down"),
+            late
+        );
         let report = reconciler.reconcile_once().unwrap();
         assert_eq!((report.remote_failed_fallback_local, report.filled), (1, 1));
         assert_eq!(
-            vault.embedding_locality(&allow).unwrap(),
+            vault.embedding_locality(&late).unwrap(),
             Some(EmbedderLocality::OnDevice)
         );
         assert_eq!(reconciler.reconcile_once().unwrap().filled, 0);
@@ -1099,6 +1107,10 @@ fn remote_endpoint_init_config_drives_egress_and_semantic_queries_without_manual
     .unwrap();
     let vault =
         Arc::new(oneiron::Vault::open_owned(&config.vault_path, config.vault_config()).unwrap());
+    let seeded = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+        .unwrap()
+        .len();
     let allowed = put_claim(&vault, 0xA9, "remote onboarding claim");
     assert_eq!(allowed, id);
     let unknown = put_claim(&vault, 0xAA, "keep this claim on device");
@@ -1117,7 +1129,7 @@ fn remote_endpoint_init_config_drives_egress_and_semantic_queries_without_manual
             report.egress_no_verdict,
             report.filled
         ),
-        (1, 1, 2)
+        (1, 1 + seeded, 2 + seeded)
     );
     assert_eq!(
         vault.embedding_locality(&id).unwrap(),
@@ -1128,7 +1140,7 @@ fn remote_endpoint_init_config_drives_egress_and_semantic_queries_without_manual
         Some(oneiron::embed::EmbedderLocality::OnDevice)
     );
     let query = slot.embed_query("remote onboarding claim").unwrap();
-    let hits = vault.search_vector(&query, 5).unwrap();
+    let hits = vault.search_vector(&query, 2 + seeded).unwrap();
     assert!(hits.iter().any(|hit| hit.id == id));
 }
 

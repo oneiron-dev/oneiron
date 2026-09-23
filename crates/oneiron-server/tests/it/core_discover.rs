@@ -502,6 +502,7 @@ async fn discover_requires_auth_and_returns_bootstrap_contract() {
         (oneiron::registry::ENTITY_TYPE_SKILL, 4),
         (oneiron::registry::ENTITY_TYPE_CLAIM, 8),
         (oneiron::registry::ENTITY_TYPE_SKILL_CONTENT_ANCHOR, 4),
+        (oneiron::registry::ENTITY_TYPE_ASSET, 4),
         (oneiron::registry::ENTITY_TYPE_CONVERSATION, 1),
         (vault.project_type_byte().unwrap(), 1),
     ];

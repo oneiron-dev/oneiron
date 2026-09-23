@@ -363,23 +363,7 @@ pub fn seed_file_drop_machine_fixture(
             ]),
         ),
     ]);
-    let mut body = Vec::new();
-    rmpv::encode::write_value(&mut body, &manifest)
-        .map_err(|_| crate::Error::InvariantViolation("fixture policy manifest encode"))?;
-    let id = crate::EntityId::now();
-    vault.with_write_txn(|wtxn| {
-        vault
-            .batch_in()
-            .put(
-                &id,
-                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
-                crate::temporal::TimeRange { start: at, end: at },
-                at,
-                &body,
-            )
-            .apply(wtxn)?;
-        Ok(())
-    })?;
+    put_calendar_test_policy(vault, &manifest, at)?;
     Ok(actor)
 }
 
@@ -429,7 +413,7 @@ pub fn permit_imported_calendar_source_for_test(
             )]),
         ),
     ]);
-    put_calendar_test_policy(vault, &manifest)
+    put_calendar_test_policy(vault, &manifest, 1)
 }
 
 /// Grants only an actor's calendar fixture reads. This contributes no write,
@@ -471,28 +455,41 @@ pub fn permit_calendar_read_for_test(
             ])]),
         ),
     ]);
-    put_calendar_test_policy(vault, &manifest)
+    put_calendar_test_policy(vault, &manifest, 1)
 }
 
 #[cfg(feature = "test-support")]
-fn put_calendar_test_policy(vault: &crate::Vault, manifest: &rmpv::Value) -> crate::Result<()> {
+fn put_calendar_test_policy(
+    vault: &crate::Vault,
+    manifest: &rmpv::Value,
+    at: u64,
+) -> crate::Result<()> {
     let mut body = Vec::new();
     rmpv::encode::write_value(&mut body, manifest)
         .map_err(|_| crate::Error::InvariantViolation("fixture policy manifest encode"))?;
     let id = crate::EntityId::now();
-    let at = 1_u64;
     vault.with_write_txn(|wtxn| {
-        vault
-            .batch_in()
-            .put(
-                &id,
-                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
-                crate::temporal::TimeRange { start: at, end: at },
-                at,
-                &body,
-            )
-            .apply(wtxn)?;
-        Ok(())
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            wtxn,
+            vec![crate::batch::BatchOp::Put {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                occurred: crate::temporal::TimeRange { start: at, end: at },
+                learned_at: at,
+                data: body,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            true,
+            true,
+        )
     })
 }
 

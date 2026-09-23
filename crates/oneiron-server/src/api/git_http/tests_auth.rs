@@ -531,6 +531,17 @@ mod tests {
         let pusher = principal();
         let token = scoped_token(&config, "core:read,core:write", Some(&pusher));
         let server = Arc::new(SyncServer::new(Arc::clone(&vault), config).unwrap());
+        let headers = bearer(&server, &token);
+        let token = headers[AUTHORIZATION]
+            .to_str()
+            .unwrap()
+            .strip_prefix("Bearer ")
+            .unwrap()
+            .to_owned();
+        let binding = format!(
+            "http.extraHeader=X-Oneiron-Binding: {}",
+            headers["x-oneiron-binding"].to_str().unwrap()
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/git", listener.local_addr().unwrap());
         let serving = tokio::spawn(async move {
@@ -614,7 +625,15 @@ mod tests {
             let auth = format!("http.extraHeader=Authorization: Bearer {token}");
             stock_git(
                 &tree,
-                &["-c", &auth, "push", "origin", "HEAD:refs/heads/lease"],
+                &[
+                    "-c",
+                    &auth,
+                    "-c",
+                    &binding,
+                    "push",
+                    "origin",
+                    "HEAD:refs/heads/lease",
+                ],
             );
             assert_eq!(
                 stock_git(&repo_dir, &["rev-parse", "refs/heads/lease"]),
@@ -646,7 +665,15 @@ mod tests {
                 .unwrap();
             let stale = std::process::Command::new("git")
                 .current_dir(&tree)
-                .args(["-c", &auth, "push", "origin", "HEAD:refs/heads/stale"])
+                .args([
+                    "-c",
+                    &auth,
+                    "-c",
+                    &binding,
+                    "push",
+                    "origin",
+                    "HEAD:refs/heads/stale",
+                ])
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .output()
                 .unwrap();

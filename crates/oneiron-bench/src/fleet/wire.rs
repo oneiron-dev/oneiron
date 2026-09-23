@@ -1,9 +1,12 @@
 //! Real app-tier WebSocket client using the shipped server protocol version.
+use ed25519_dalek::{Signer, SigningKey};
 use futures_util::{SinkExt, StreamExt};
+use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
+use oneiron::federation::ScopeAxis;
 use oneiron::sync::transport::{PROTOCOL_VERSION, TAG_PROTOCOL_HELLO, TAG_RPC};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
 use super::Result;
@@ -45,6 +48,8 @@ pub(super) struct Agent {
     pub index: usize,
     pub token: String,
     pub expected_message: String,
+    slip: CapabilitySlip,
+    key: SigningKey,
     socket: Socket,
     timeout: Duration,
 }
@@ -60,17 +65,20 @@ struct Envelope<T> {
     payload: T,
 }
 
-pub(super) fn token(secret: &str, actor: &str) -> String {
-    // Same public v2 wire grammar and MAC domain used by the shipped mint CLI.
-    let claims = format!("scope=core:read,core:write;principal_ref={actor};actor_class=agent");
-    let key = blake3::derive_key(
-        "oneiron-server 2026-07 core-token-v2 mac",
-        secret.as_bytes(),
-    );
-    format!(
-        "v2.{claims}.{}",
-        blake3::keyed_hash(&key, claims.as_bytes()).to_hex()
-    )
+/// Mints one logged read/write agent slip, bound to the agent's own holder key.
+pub(super) fn credential(
+    vault: &oneiron::Vault,
+    issuer: &HostSlipIssuer,
+    actor: &str,
+) -> Result<(CapabilitySlip, SigningKey)> {
+    let key = SigningKey::from_bytes(&rand::random());
+    let mut claims = vault.ensure_host_root_slip(issuer)?.claims;
+    claims.slip_id = rand::random();
+    claims.holder_ref = actor.to_owned();
+    claims.binding_key = key.verifying_key().to_bytes();
+    claims.actor_class = Some("agent".into());
+    claims.scope.verbs = ScopeAxis::Some(["read".into(), "write".into()].into());
+    Ok((vault.mint_capability_slip(issuer, claims)?, key))
 }
 
 impl Agent {
@@ -80,7 +88,7 @@ impl Agent {
         address: std::net::SocketAddr,
         tcp: tokio::net::TcpSocket,
         secret: &str,
-        token: String,
+        (slip, key): (CapabilitySlip, SigningKey),
         timeout: Duration,
     ) -> Result<Self> {
         tokio::time::timeout(timeout, async {
@@ -110,13 +118,20 @@ impl Agent {
             }
             let mut agent = Self {
                 index,
-                token,
+                token: slip.to_token()?,
                 expected_message: String::new(),
+                slip,
+                key,
                 socket,
                 timeout,
             };
+            let binding = agent.binding()?;
             let bound = agent
-                .rpc_inner(0, "auth.bind", json!({"token":agent.token}))
+                .rpc_inner(
+                    0,
+                    "auth.bind",
+                    json!({"token":agent.token,"binding":binding}),
+                )
                 .await?;
             if !bound.is_null() {
                 return Err("auth.bind did not return null".into());
@@ -124,6 +139,21 @@ impl Agent {
             Ok(agent)
         })
         .await?
+    }
+
+    /// A fresh holder proof over the whole slip: each request and bind spends one nonce.
+    pub(super) fn binding(&self) -> Result<Value> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let nonce = oneiron::EntityId::now().to_hex();
+        let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+        let signature: String = self
+            .key
+            .sign(&self.slip.binding_transcript(challenge.as_bytes())?)
+            .to_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        Ok(json!({"timestamp":timestamp,"nonce":nonce,"signature":signature}))
     }
 
     pub(super) async fn recall(&mut self, round: usize, query: &str) -> Result<()> {

@@ -99,17 +99,15 @@ pub(crate) fn bind_request(server: &SyncServer, request: Request<Body>) -> Reque
         return request;
     };
     let (slip, key) = credential(server, &recipe);
-    bind_slip_request(&slip, &key, request)
+    bind_slip_request(server, &slip, &key, request)
 }
 pub(crate) fn bind_slip_request(
+    server: &SyncServer,
     slip: &CapabilitySlip,
     key: &SigningKey,
     mut request: Request<Body>,
 ) -> Request<Body> {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let timestamp = server.vault().now_recorded_at();
     let nonce = oneiron::EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
     let signature = hex(&key
@@ -129,6 +127,13 @@ pub(crate) fn bind_slip_request(
             .unwrap(),
     );
     request
+}
+/// Engine-level reads carry the logged host root, as the authenticated server
+/// does. A plain actor key reads nothing until a trusted manifest grants it.
+pub(crate) fn host_reader(vault: &oneiron::Vault) -> oneiron::claim::ScopedReadActorKey {
+    let issuer = HostSlipIssuer::from_secret(b"oneiron-test-host-reader").unwrap();
+    let proof = vault.verified_host_root_slip(&issuer).unwrap();
+    oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof).unwrap()
 }
 pub(crate) fn revoke(server: &SyncServer, recipe: &str) {
     let (slip, _) = credential(server, recipe);

@@ -458,7 +458,15 @@ fn propose_entity_rejects_impossible_occurrence_range() {
 fn assert_closed_object_schemas(value: &Value, path: &str) {
     match value {
         Value::Object(map) => {
-            if matches!(map.get("type"), Some(Value::String(kind)) if kind == "object") {
+            // A typed map (the ask's disclosure) keys on data, not fields;
+            // every value is still constrained by its item schema.
+            let typed_map = map.get("properties").is_none()
+                && map
+                    .get("additionalProperties")
+                    .is_some_and(Value::is_object);
+            if matches!(map.get("type"), Some(Value::String(kind)) if kind == "object")
+                && !typed_map
+            {
                 assert_eq!(
                     map.get("additionalProperties"),
                     Some(&Value::Bool(false)),
@@ -4092,9 +4100,15 @@ fn agent_verb_schema_publishes_nested_types_and_wire_defaults() {
     let spec = &speak["properties"]["arguments"]["properties"]["spec"];
     assert_eq!(spec["properties"]["messages"]["type"], "array");
     let message = &spec["properties"]["messages"]["items"];
+    let authors: Vec<Value> = message["properties"]["author"]["oneOf"]
+        .as_array()
+        .expect("documented author variants")
+        .iter()
+        .flat_map(|variant| variant["enum"].as_array().expect("variant value").clone())
+        .collect();
     assert_eq!(
-        message["properties"]["author"]["enum"],
-        json!(["user", "companion", "system"])
+        authors,
+        [json!("user"), json!("companion"), json!("system")]
     );
     assert_eq!(message["properties"]["is_visible"]["type"], "boolean");
     assert!(

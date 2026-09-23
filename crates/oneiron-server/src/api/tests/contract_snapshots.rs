@@ -1093,14 +1093,12 @@ async fn core_hydrate_absence_retains_receipt_without_counting_missing_refs() {
 
 #[tokio::test]
 async fn core_memory_timeline_receipt_covers_absent_and_live_results() {
-    let (_dir, server) = test_server();
-    let (status, body) = route_json(
+    let (_dir, server) = auth_test_server();
+    let (status, body) = owner_json(
         server.clone(),
-        json_request(
-            "GET",
-            "/v1/core/memory/03030303030303030303030303030303/timeline",
-            json!(null),
-        ),
+        "GET",
+        "/v1/core/memory/03030303030303030303030303030303/timeline",
+        None,
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -1119,13 +1117,11 @@ async fn core_memory_timeline_receipt_covers_absent_and_live_results() {
             &payload,
         )
         .unwrap();
-    let (status, body) = route_json(
+    let (status, body) = owner_json(
         server,
-        json_request(
-            "GET",
-            "/v1/core/memory/03030303030303030303030303030303/timeline?view=full",
-            json!(null),
-        ),
+        "GET",
+        "/v1/core/memory/03030303030303030303030303030303/timeline?view=full",
+        None,
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");

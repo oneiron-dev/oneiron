@@ -46,11 +46,12 @@ async fn scoped_doors_and_rotation_keep_old_key_terminal() {
     let old = SigningKey::from_bytes(&[7; 32]);
     let new = SigningKey::from_bytes(&[8; 32]);
     assert!(a.require_vault_binding(&headers(1, 10, &old)).is_err());
-    assert!(
-        a.register_lease(10, &old.verifying_key().to_bytes(), &proof(10, &old))
-            .await
-            .unwrap()
-            .granted
+    super::tests::seed_historical_lease(
+        &a,
+        1,
+        10,
+        old.verifying_key().to_bytes(),
+        oneiron::sync::lease::LeaseStatus::Active,
     );
     assert!(a.require_vault_binding(&headers(1, 10, &old)).is_ok());
     assert!(b.require_vault_binding(&headers(1, 10, &old)).is_err());
@@ -77,11 +78,12 @@ async fn scoped_doors_and_rotation_keep_old_key_terminal() {
             .granted
     );
     // An independent vault's lease is not poisoned by the old-key revocation.
-    assert!(
-        b.register_lease(10, &old.verifying_key().to_bytes(), &proof(10, &old))
-            .await
-            .unwrap()
-            .granted
+    super::tests::seed_historical_lease(
+        &b,
+        2,
+        10,
+        old.verifying_key().to_bytes(),
+        oneiron::sync::lease::LeaseStatus::Active,
     );
     assert!(b.require_vault_binding(&headers(2, 10, &old)).is_ok());
 }
@@ -151,10 +153,13 @@ async fn api_router_rejects_unleased_and_cross_vault_credentials_before_reads() 
         app.clone().oneshot(request(7)).await.unwrap().status(),
         StatusCode::UNAUTHORIZED
     );
-    server
-        .register_lease(22, &key.verifying_key().to_bytes(), &proof(22, &key))
-        .await
-        .unwrap();
+    super::tests::seed_historical_lease(
+        &server,
+        7,
+        22,
+        key.verifying_key().to_bytes(),
+        oneiron::sync::lease::LeaseStatus::Active,
+    );
     assert_eq!(
         app.clone().oneshot(request(8)).await.unwrap().status(),
         StatusCode::UNAUTHORIZED
@@ -235,6 +240,34 @@ async fn granted_world_is_read_locally_but_never_by_a_cross_vault_lease() {
             b"granted foreign WORLD",
         )
         .unwrap();
+    // An empty selector axis is the lattice bottom, so the WORLD travels by
+    // one-hop closure from an event stamped with the selected facet.
+    let facet = EntityId::now();
+    let event = EntityId::now();
+    let at = TimeRange {
+        start: now,
+        end: now,
+    };
+    a.vault()
+        .batch()
+        .put(
+            &facet,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            at,
+            now,
+            b"granted facet",
+        )
+        .put(
+            &event,
+            oneiron::registry::ENTITY_TYPE_EVENT,
+            at,
+            now,
+            b"granted event",
+        )
+        .edge(&event, oneiron::EdgeKind::FacetOf, &facet, 1.0)
+        .edge(&event, oneiron::EdgeKind::Supports, &world, 1.0)
+        .commit()
+        .unwrap();
     let member = EntityId::now();
     let grant_id = EntityId::now();
     let scope = FederationGrantScope::vault(1);
@@ -252,8 +285,11 @@ async fn granted_world_is_read_locally_but_never_by_a_cross_vault_lease() {
         grant_id,
         member,
         SyncSelectorWorld::World(oneiron::entity_id::LocalWorldId::from_entity_id(world).unwrap()),
-        vec![],
-        vec![oneiron::federation::SelectorRange::Core],
+        vec![facet],
+        vec![
+            oneiron::federation::SelectorRange::Semantic,
+            oneiron::federation::SelectorRange::Core,
+        ],
     );
     let selected = filtered_window_doc(a.vault(), &doc, &window, scope, &selector).unwrap();
     let payload = selected.export(loro::ExportMode::all_updates()).unwrap();
@@ -262,19 +298,51 @@ async fn granted_world_is_read_locally_but_never_by_a_cross_vault_lease() {
         Arc::new(oneiron::sync::bridge::Materializer::new()),
         "subscriber",
     ));
-    let (mut client, _events) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    put_selector_test_federation_grant(b.vault(), &grant_id, &grant, now).unwrap();
+    let peer = oneiron::sync::federation_burst::FederationPeer::authorize(
+        b.vault(),
+        member,
+        scope,
+        &selector,
+    )
+    .unwrap();
+    let (mut client, _events) = SyncClient::new(
+        manager,
+        SyncClientConfig {
+            federation_peer: Some(peer),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     client.ensure_window(window.as_str()).unwrap();
     client
         .import_federated_window_update(window.as_str(), &payload, FederationAdmissionRole::Member)
         .unwrap();
+    client.replay_deferred_federation_update().unwrap();
     assert_eq!(
         b.vault().get(&world).unwrap(),
         Some(b"granted foreign WORLD".to_vec())
     );
-    let key = SigningKey::from_bytes(&[42; 32]);
-    b.register_lease(42, &key.verifying_key().to_bytes(), &proof(42, &key))
-        .await
+    // Replicated bytes carry no record stamp. The local owner verifies the
+    // granted row with a put of the same bytes before scoped reads serve it.
+    assert_eq!(b.vault().record_scope(&world).unwrap(), None);
+    b.vault()
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            at,
+            now,
+            b"granted foreign WORLD",
+        )
         .unwrap();
+    let key = SigningKey::from_bytes(&[42; 32]);
+    super::tests::seed_historical_lease(
+        b,
+        2,
+        42,
+        key.verifying_key().to_bytes(),
+        oneiron::sync::lease::LeaseStatus::Active,
+    );
     let request = |vault_id| {
         let mut request = Request::builder()
             .uri(format!("/api/entity/{}", world.to_hex()))
@@ -359,9 +427,16 @@ async fn lease_json_round_trips_large_vault_and_client_ids_through_rotation() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), 4096).await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(body["granted"], true);
+    assert_eq!(body["granted"], false);
     let scope = body["vault_id"].as_str().expect("opaque scope is a string");
     assert_eq!(scope, "fedcba9876543210");
+    super::tests::seed_historical_lease(
+        &server,
+        vault_id,
+        client_id,
+        key.verifying_key().to_bytes(),
+        oneiron::sync::lease::LeaseStatus::Active,
+    );
     let mut binding = headers(vault_id, client_id, &key);
     binding.insert("x-oneiron-vault", scope.parse().unwrap());
     assert!(server.require_vault_binding(&binding).is_ok());

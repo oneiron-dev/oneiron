@@ -2589,7 +2589,7 @@
      "path": "src/batch/claim_materialization.rs",
      "purpose": "Exact-operation envelope handoff",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -16485,14 +16485,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/foreign_agent.rs",
      "purpose": "Owner-bound foreign introductions",
      "surface": {
       "crate-vis": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -31888,9 +31888,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/vault/read_fixture.rs",
-     "purpose": "Explicit actor-bound read policy for cross-crate integration fixtures",
+     "purpose": "Explicit actor-bound read policy and foreign Grants for cross-crate integration fixtures",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -35490,7 +35490,7 @@
      "path": "src/fleet/wire.rs",
      "purpose": "Real app-tier WebSocket client using the shipped server protocol version",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -40170,9 +40170,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/handler/conn_state.rs",
-     "purpose": "Per-connection budgets, quotas, rate limit, and sync-mode binding",
+     "purpose": "Per-connection budgets, quotas, and sync-mode binding",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -40254,11 +40254,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/handler/note_socket_tests.rs",
-     "purpose": "Real websocket NOTE commands: actor binding, durable pins, reviewed edits",
+     "purpose": "Document socket writes recheck the live grant, not the cached subscription",
      "surface": {}
     },
     {
@@ -40388,7 +40388,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/livequery/production_tests.rs",
@@ -41210,7 +41210,9 @@
      "notable": [],
      "path": "src/server/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -41257,7 +41259,7 @@
      "path": "src/test_credentials.rs",
      "purpose": "Request fixtures mint real logged slips before crossing the production router",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {

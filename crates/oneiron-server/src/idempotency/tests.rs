@@ -122,6 +122,7 @@ async fn http_post_to(
     http_post_with_headers(addr, path, body, key, &auth_header).await
 }
 async fn http_post_bound(
+    server: &SyncServer,
     addr: SocketAddr,
     path: &str,
     body: &str,
@@ -130,6 +131,7 @@ async fn http_post_bound(
     holder: &ed25519_dalek::SigningKey,
 ) -> Vec<u8> {
     let request = crate::test_credentials::bind_slip_request(
+        server,
         slip,
         holder,
         axum::http::Request::new(Body::empty()),
@@ -308,6 +310,7 @@ async fn same_key_and_body_are_isolated_by_principal() {
     let (read, read_key) = crate::test_credentials::credential(&server, "scope=core:read");
     let (write, write_key) = crate::test_credentials::credential(&server, "scope=core:write");
     let first = http_post_bound(
+        &server,
         addr,
         "/v1/core/mutate",
         r#"{"value":1}"#,
@@ -317,6 +320,7 @@ async fn same_key_and_body_are_isolated_by_principal() {
     )
     .await;
     let second = http_post_bound(
+        &server,
         addr,
         "/v1/core/mutate",
         r#"{"value":1}"#,
@@ -344,6 +348,7 @@ async fn same_key_and_body_are_isolated_by_principal() {
         })
         .unwrap();
     let third = http_post_bound(
+        &server,
         addr,
         "/v1/core/mutate",
         r#"{"value":1}"#,
@@ -355,6 +360,7 @@ async fn same_key_and_body_are_isolated_by_principal() {
     assert_eq!(status(&third), 200);
     assert_ne!(body(&first), body(&third));
     let replay = http_post_bound(
+        &server,
         addr,
         "/v1/core/mutate",
         r#"{"value":1}"#,
@@ -393,6 +399,7 @@ async fn non_core_route_rejects_scoped_token_and_accepts_owner_grade() {
     .unwrap();
     let (scoped, key) = crate::test_credentials::credential(&server, "scope=core:write");
     let rejected = http_post_bound(
+        &server,
         addr,
         "/mutate",
         r#"{"value":1}"#,

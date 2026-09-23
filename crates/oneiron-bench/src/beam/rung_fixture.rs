@@ -85,7 +85,7 @@ pub(super) fn run() -> BeamResult<RungReport> {
     config.embedding_model = None;
     let subject = EntityId::now();
     let claim_ids = [EntityId::now(), EntityId::now(), EntityId::now()];
-    let before = {
+    let (before, claims) = {
         let vault = Vault::open(dir.path(), config)?;
         vault.put_entity(
             &subject,
@@ -97,10 +97,15 @@ pub(super) fn run() -> BeamResult<RungReport> {
         for (index, id) in claim_ids.iter().enumerate() {
             put_claim(&vault, id, subject, &format!("rung transition {index}"))?;
         }
-        ids(&vault)?
+        (
+            ids(&vault)?,
+            vault
+                .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)?
+                .len(),
+        )
     };
     let vault = Arc::new(Vault::open(dir.path(), beam_vault_config())?);
-    if vault.cold_attach_embedder()? != 3 {
+    if vault.cold_attach_embedder()? != claims {
         return Err(super::BeamError::Comparability {
             reason: "cold attach did not queue every claim".into(),
         });

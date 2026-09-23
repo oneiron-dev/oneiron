@@ -62,6 +62,10 @@ async fn context_board_hides_fresh_default_policy_manifest() {
                 Value::from(4)
             ),
             (
+                oneiron::registry::ENTITY_TYPE_ASSET.to_string(),
+                Value::from(4)
+            ),
+            (
                 oneiron::registry::ENTITY_TYPE_CONVERSATION.to_string(),
                 Value::from(1)
             ),

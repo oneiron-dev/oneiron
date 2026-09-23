@@ -33,7 +33,7 @@ fn server() -> (tempfile::TempDir, SyncServer) {
 }
 
 fn state(version: u8) -> ConnState {
-    ConnState::new(1000, version)
+    ConnState::new(version)
 }
 
 fn token() -> String {

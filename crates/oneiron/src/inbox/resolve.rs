@@ -478,30 +478,37 @@ fn accept_member_with_amendment_in_txn(
         rebind_amended_consent(vault, wtxn, &pending, &approved)?;
     }
     if amended_approval || reviewed.approval != ClaimApprovalStatus::Approved {
-        apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            vec![BatchOp::Put {
-                id: *id,
-                entity_type: ENTITY_TYPE_CLAIM,
-                occurred: TimeRange {
-                    start: raw.occurred.start,
-                    end: raw.occurred.end,
-                },
-                learned_at: raw.learned_at,
-                data: approved,
-                allow_maintenance: false,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
+        let unamended = approved == approved_body(&reviewed)?;
+        let put = BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred: TimeRange {
+                start: raw.occurred.start,
+                end: raw.occurred.end,
+            },
+            learned_at: raw.learned_at,
+            data: approved,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        };
+        if unamended {
+            crate::batch::ClaimMaterialization::apply_approval(vault, wtxn, put, true)?;
+        } else {
+            // The approver rewrote the text: the landed body has no single author.
+            apply_ops(
+                &vault.store,
+                &vault.config,
+                &vault.analyzer,
+                wtxn,
+                vec![put],
+                vault
+                    .text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                true,
+            )?;
+        }
     }
 
     vault.complete_deferred_claim_in_txn(wtxn, id, false, now)?;

@@ -57,11 +57,14 @@ async fn v1_core_run_tree_reads_attempt_queue_rows() {
     assert_eq!(roots[0]["children"], json!([]));
 
     let response = api_routes(server.clone())
-        .oneshot(core_request(
-            "GET",
-            "/v1/core/run-tree/observe?run_id=run-api",
-            "core:read",
-            None,
+        .oneshot(slip_credentials::bind_request(
+            &server,
+            core_request(
+                "GET",
+                "/v1/core/run-tree/observe?run_id=run-api",
+                "core:read",
+                None,
+            ),
         ))
         .await
         .unwrap();
@@ -396,12 +399,21 @@ async fn v1_core_run_tree_redirect_is_durable_idempotent_and_fences_workers() {
     assert_eq!(projected["parent_id"], attempt_id_hex(parent.id));
     assert_eq!(projected["worker"], "new-worker");
     assert_eq!(projected["status"], "queued");
+    let (slip, _) = slip_credentials::credential(&server, "scope=core:write");
+    let principal = format!(
+        "slip:{}",
+        slip.claims
+            .slip_id
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
     assert!(
         projected["events"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|e| e["kind"] == "redirected" && e["actor"] == "bearer")
+            .any(|e| e["kind"] == "redirected" && e["actor"] == principal.as_str())
     );
     let (status, again) = core_json(
         server.clone(),
@@ -508,7 +520,10 @@ async fn v1_core_run_tree_observe_requires_read_scope_and_run_id() {
         ),
     ] {
         let response = api_routes(server.clone())
-            .oneshot(core_request("GET", uri, scope, None))
+            .oneshot(slip_credentials::bind_request(
+                &server,
+                core_request("GET", uri, scope, None),
+            ))
             .await
             .unwrap();
         assert_eq!(response.status(), expected);

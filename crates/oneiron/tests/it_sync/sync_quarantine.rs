@@ -210,8 +210,6 @@ fn edge_provenance_claim_body_with(
         ),
         (rmpv::Value::from("val"), val),
         (rmpv::Value::from("conf"), rmpv::Value::F32(conf)),
-        (rmpv::Value::from("world"), rmpv::Value::from("base")),
-        (rmpv::Value::from("rel"), rmpv::Value::from("all")),
     ];
     if let Some(evid) = evid {
         entries.push((rmpv::Value::from("evid"), evid));
@@ -337,6 +335,17 @@ fn each_gate_rejection_class_produces_exactly_one_quarantine_record() {
             name: "entity_unknown_type_byte",
             container: QuarantineContainer::Entities,
             expected_reason: "InvalidEntityType",
+            setup: |_vault, doc| {
+                let id = EntityId::now();
+                let blob = entity_blob(99, valid_time_range(), LEARNED_AT, b"x");
+                insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
+                (id.to_hex(), blob)
+            },
+        },
+        GateCase {
+            name: "entity_pack_handle_malformed_envelope",
+            container: QuarantineContainer::Entities,
+            expected_reason: "InvalidPackByteMap",
             setup: |_vault, doc| {
                 let id = EntityId::now();
                 let blob = entity_blob(200, valid_time_range(), LEARNED_AT, b"x");
@@ -908,7 +917,7 @@ fn poisoned_entity_op_does_not_abort_the_batch() {
     insert_bytes(
         &entities,
         &bad_id.to_hex(),
-        &entity_blob(200, valid_time_range(), LEARNED_AT, b"bad"),
+        &entity_blob(99, valid_time_range(), LEARNED_AT, b"bad"),
     );
     insert_bytes(
         &entities,

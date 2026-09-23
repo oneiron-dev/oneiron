@@ -218,7 +218,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
 | `src/handler/app_tier.rs` | src | s | 4 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
-| `src/handler/conn_state.rs` | src | s | 6 crate-vis | — | Per-connection budgets, quotas, rate limit, and sync-mode binding |
+| `src/handler/conn_state.rs` | src | s | 5 crate-vis | — | Per-connection budgets, quotas, and sync-mode binding |
 | `src/handler/connection.rs` | src | m | 3 crate-vis | — | Upgrade route, hello bootstrap, and the single-owner connection event loop |
 | `src/handler/documents.rs` | src | s | 2 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
 | `src/handler/ephemeral.rs` | src | s | 4 crate-vis | — | Ephemeral presence lane: validation, hub budget, and canonical fan-out frames |
@@ -227,7 +227,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/lfs_chunks.rs` | src | s | 1 crate-vis | — | Versioned owner-authenticated chunk requests, disjoint from selector window mode |
 | `src/handler/message_stream_tests.rs` | test | s | — | — | Streaming text stays on the existing opaque, budgeted ephemeral hub lane |
 | `src/handler/mod.rs` | src | s | 2 crate-vis | — | WebSocket upgrade handler and connection lifecycle |
-| `src/handler/note_socket_tests.rs` | test | m | — | — | Real websocket NOTE commands: actor binding, durable pins, reviewed edits |
+| `src/handler/note_socket_tests.rs` | test | s | — | — | Document socket writes recheck the live grant, not the cached subscription |
 | `src/handler/tests.rs` | test | XL | — | — | — |
 | `src/handler/transport.rs` | src | m | 11 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
 | `src/handler/window_sync.rs` | src | s | 4 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
@@ -241,7 +241,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/history.rs` | src | s | 6 crate-vis | — | Retained scoped app payloads live in the cursor document, not the delivery ring |
 | `src/livequery/membership.rs` | src | s | 1 crate-vis | — | Insertion/edge membership checks, separate from served entity dependencies |
 | `src/livequery/production_socket_tests.rs` | test | m | — | — | Full production socket + Hub + BoundSource + engine writes |
-| `src/livequery/production_tests.rs` | test | m | 8 crate-vis | — | Real vault, verified slips and production facade/source; no injected read source |
+| `src/livequery/production_tests.rs` | test | L | 8 crate-vis | — | Real vault, verified slips and production facade/source; no injected read source |
 | `src/livequery/reads.rs` | src | s | 5 crate-vis | — | The eight existing WS read verbs call the engine facade, without write aliases |
 | `src/livequery/remediation_tests.rs` | test | s | — | — | — |
 | `src/livequery/routing.rs` | src | s | 3 crate-vis | — | Private routing header for the EXISTING server broadcast channel |
@@ -303,12 +303,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/lifecycle.rs` | src | s | 12 crate-vis | — | Periodic lifecycle jobs: lease expiry and reassert-drain with debounce |
 | `src/server/message_stream.rs` | src | s | 1 crate-vis | — | Host-owned stream timer and local presence relay |
 | `src/server/mod.rs` | src | s | 1 re-export · 2 crate-vis | — | Sync server state and maintenance jobs, split by concern |
-| `src/server/tests.rs` | test | L | — | — | — |
+| `src/server/tests.rs` | test | L | 1 crate-vis | — | — |
 | `src/server/vault_binding.rs` | src | s | 4 crate-vis | — | Hosted API and socket binding to one local vault and one registered device key |
 | `src/server/windows.rs` | src | s | 7 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
 | `src/server/windows/tests.rs` | test | s | — | — | — |
 | `src/skills_pack.rs` | src | s | 5 crate-vis | — | — |
-| `src/test_credentials.rs` | src | s | 7 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
+| `src/test_credentials.rs` | src | s | 8 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
 | `src/usage/keys.rs` | src | s | 9 crate-vis | — | Owner/vault keys and validation for the durable meter queue |
 | `src/usage/ledger.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | UsageLedger | Durable idempotent provider-list meters, aggregated only per owner and vault |

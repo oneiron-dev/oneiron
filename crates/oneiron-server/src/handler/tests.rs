@@ -40,6 +40,21 @@ fn client_window_doc() -> LoroDoc {
     doc
 }
 
+/// Deep value without empty root maps: `get_map` registers a root on the
+/// local doc at first read, so an empty root is not replicated state.
+fn replicated_deep_value(doc: &LoroDoc) -> LoroValue {
+    match doc.get_deep_value() {
+        LoroValue::Map(roots) => LoroValue::Map(
+            roots
+                .iter()
+                .filter(|(_, value)| !matches!(value, LoroValue::Map(map) if map.is_empty()))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 fn expect_window_sync(data: &[u8]) -> (String, u8, Vec<u8>) {
     let parsed = protocol::parse_message(data).unwrap();
     let SyncMessage::WindowSync {
@@ -54,16 +69,11 @@ fn expect_window_sync(data: &[u8]) -> (String, u8, Vec<u8>) {
 }
 
 fn test_legacy_conn_state() -> ConnState {
-    let config = SyncServerConfig::default();
-    ConnState::new(
-        config.max_messages_per_sec,
-        protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
-    )
+    ConnState::new(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
 }
 
 fn test_selector_conn_state() -> ConnState {
-    let config = SyncServerConfig::default();
-    ConnState::new(config.max_messages_per_sec, protocol::PROTOCOL_VERSION)
+    ConnState::new(protocol::PROTOCOL_VERSION)
 }
 
 #[test]
@@ -89,13 +99,13 @@ fn oversized_late_join_ephemeral_snapshot_is_skipped() {
 }
 
 fn bind_selector_test_auth(server: &SyncServer, state: &mut ConnState, member: oneiron::EntityId) {
-    let token = crate::auth::mint_core_token_v2(
-        server.config.auth_secret.as_deref().unwrap(),
+    let params = crate::test_credentials::bind_payload(
+        server,
         &format!("scope=core:read;principal_ref={}", member.to_hex()),
     );
     let payload = crate::livequery::test_wire::request(
         protocol::TAG_RPC,
-        serde_json::json!({"requestId": 1, "method": "auth.bind", "params": {"token": token}}),
+        serde_json::json!({"requestId": 1, "method": "auth.bind", "params": params}),
     );
     let (tx, mut rx) = mpsc::unbounded_channel();
     handle_app_message(server, state, protocol::TAG_RPC, &payload[1..], &tx).unwrap();
@@ -359,7 +369,10 @@ async fn vv_request_sends_delta_and_vv_response() {
         server_all.len()
     );
     client_doc.import(&delta).unwrap();
-    assert_eq!(client_doc.get_deep_value(), server_doc.get_deep_value());
+    assert_eq!(
+        replicated_deep_value(&client_doc),
+        replicated_deep_value(&server_doc)
+    );
 
     // Message 2: the server's VV so the client can push its local diff.
     let (k1, sub1, vv_payload) = expect_window_sync(&direct_rx.try_recv().unwrap());
@@ -444,7 +457,10 @@ async fn vv_response_sends_local_diff_only() {
     assert_eq!(k, key);
     assert_eq!(sub, window_sub_tags::UPDATE);
     client_doc.import(&delta).unwrap();
-    assert_eq!(client_doc.get_deep_value(), server_doc.get_deep_value());
+    assert_eq!(
+        replicated_deep_value(&client_doc),
+        replicated_deep_value(&server_doc)
+    );
 
     assert!(
         direct_rx.try_recv().is_err(),
@@ -569,8 +585,8 @@ async fn imported_update_is_visible_exportable_and_vv_advanced_without_commit() 
         )
         .unwrap();
     assert_eq!(
-        fresh.get_deep_value(),
-        server_doc.get_deep_value(),
+        replicated_deep_value(&fresh),
+        replicated_deep_value(&server_doc),
         "a fresh peer must reconstruct the imported state with no intervening local commit"
     );
 
@@ -3481,7 +3497,19 @@ async fn a_silent_peer_gets_re_consulted_on_the_tick_during_the_pre_handover_dra
 
 #[tokio::test]
 async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause() {
-    let (_dir, server) = test_server();
+    let dir = tempfile::tempdir().unwrap();
+    // The whole burst lands in one store-clock second, however long this
+    // build takes to verify the logged slips.
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = oneiron::store::ports::ManualClock::new(1_772_000_000).bundle();
+    let server = SyncServer::new(
+        Arc::new(oneiron::Vault::open(dir.path(), config).unwrap()),
+        SyncServerConfig {
+            auth_secret: Some("federation-test-root".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let member = entity_id(0x45);
     let grant_id = oneiron::EntityId::now();
     let grant = oneiron::federation::FederationGrant::new(
@@ -3505,6 +3533,12 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut state = test_selector_conn_state();
     bind_selector_test_auth(&server, &mut state, member);
+    // Holder proofs are dated by the held store clock but checked against the
+    // authority clock, which keeps real time: bind every connection up front.
+    let mut impostor = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46));
+    let mut reconnected = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut reconnected, member);
     let mut saw_defer = false;
     // More than the retired 64-window quota. Every valid request completes,
     // either immediately or by redeeming its durable response identity.
@@ -3535,8 +3569,6 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
             );
             // Same credential can reconnect. A different principal cannot
             // redeem this ticket even if it knows the request and its id.
-            let mut impostor = test_selector_conn_state();
-            bind_selector_test_auth(&server, &mut impostor, entity_id(0x46));
             assert!(matches!(
                 handle_window_sync(
                     &server,
@@ -3551,8 +3583,6 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
                 Err(ProtocolError::InvalidPayload(_))
             ));
             assert!(rx.try_recv().is_err());
-            let mut reconnected = test_selector_conn_state();
-            bind_selector_test_auth(&server, &mut reconnected, member);
             handle_window_sync(
                 &server,
                 3,
@@ -3704,7 +3734,6 @@ async fn document_batch_exchange(version: u8) {
     let (direct, mut replies) = mpsc::unbounded_channel();
     let mut state = test_selector_conn_state();
     state.protocol_version = version;
-    bind_selector_test_auth(&server, &mut state, member);
     assert!(matches!(
         handle_sync_message(
             &server,
@@ -3717,6 +3746,21 @@ async fn document_batch_exchange(version: u8) {
         Err(ProtocolError::RpcNoPrincipal)
     ));
     assert!(replies.try_recv().is_err());
+    let mut impostor = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46));
+    assert!(matches!(
+        handle_sync_message(
+            &server,
+            1,
+            protocol::parse_message(&batch).unwrap(),
+            &direct,
+            &mut impostor,
+        )
+        .await,
+        Err(ProtocolError::InvalidPayload(_))
+    ));
+    assert!(replies.try_recv().is_err());
+    bind_selector_test_auth(&server, &mut state, member);
     handle_sync_message(
         &server,
         1,
@@ -3758,17 +3802,13 @@ async fn document_batch_exchange(version: u8) {
         Err(ProtocolError::RpcNoPrincipal)
     ));
     assert_eq!(source.text().unwrap(), "shared");
-    let token = crate::auth::mint_core_token_v2(
-        server.config.auth_secret.as_deref().unwrap(),
+    state.bound_auth = Some(crate::test_credentials::authenticate(
+        &server,
         &format!(
             "scope=core:read,core:write;principal_ref={}",
             member.to_hex()
         ),
-    );
-    state.bound_auth = Some(
-        crate::auth::CoreAuth::from_bind_token(&token, &server.config, server.vault().as_ref())
-            .unwrap(),
-    );
+    ));
     handle_sync_message(
         &server,
         1,

@@ -96,5 +96,5 @@ pub(super) fn bind_mcp_request(server: &SyncServer, request: Request<Body>) -> R
     };
     let key = holder_key(label);
     let slip = CapabilitySlip::from_token(std::str::from_utf8(&token).unwrap()).unwrap();
-    crate::test_credentials::bind_slip_request(&slip, &key, request)
+    crate::test_credentials::bind_slip_request(server, &slip, &key, request)
 }

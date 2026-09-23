@@ -164,7 +164,8 @@ mod cb_x {
     fn tool_first_variant_is_generated_one_tool_per_verb() {
         let variant = arm_generated_tool_variant();
         // The census is REGENERATED from the exported constants rather than
-        // restated: the MCP projection and `MEMORY_VERBS`, sorted.
+        // restated: the MCP projection of the board, tasks and rooms verbs,
+        // and `MEMORY_VERBS`, sorted.
         let mut expected = oneiron::task_verb::sdk::AgentVerb::ALL
             .iter()
             .filter(|verb| verb.is_mcp())

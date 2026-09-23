@@ -1,8 +1,6 @@
-//! Per-connection budgets, quotas, rate limit, and sync-mode binding.
+//! Per-connection budgets, quotas, and sync-mode binding.
 
 use std::collections::HashSet;
-
-use tokio::time::{Duration, Instant};
 
 use oneiron::sync::WindowKey;
 
@@ -15,7 +13,6 @@ pub(super) struct ConnState {
     windows_touched: HashSet<WindowKey>,
     pub(super) documents:
         std::collections::HashMap<oneiron::EntityId, oneiron::sync::SelectorVvRequest>,
-    rate_limiter: MessageRateLimiter,
     pub(super) window_sync_mode: WindowSyncMode,
     pub(super) lfs_owner_mode: bool,
     pub(super) protocol_version: u8,
@@ -24,20 +21,15 @@ pub(super) struct ConnState {
 }
 
 impl ConnState {
-    pub(super) fn new(max_messages_per_sec: u32, protocol_version: u8) -> Self {
+    pub(super) fn new(protocol_version: u8) -> Self {
         Self {
             windows_touched: HashSet::new(),
             documents: std::collections::HashMap::new(),
-            rate_limiter: MessageRateLimiter::new(max_messages_per_sec),
             window_sync_mode: WindowSyncMode::Unbound,
             lfs_owner_mode: false,
             protocol_version,
             bound_auth: None,
         }
-    }
-
-    pub(super) fn record_inbound_message(&mut self) -> bool {
-        self.rate_limiter.allow(Instant::now())
     }
 
     pub(super) fn touch_window(
@@ -113,38 +105,4 @@ pub(super) enum WindowSyncMode {
     Unbound,
     FullWindow,
     Selector,
-}
-
-struct MessageRateLimiter {
-    max_messages_per_sec: u32,
-    window_start: Instant,
-    messages_seen: u32,
-}
-
-impl MessageRateLimiter {
-    fn new(max_messages_per_sec: u32) -> Self {
-        Self {
-            max_messages_per_sec,
-            window_start: Instant::now(),
-            messages_seen: 0,
-        }
-    }
-
-    fn allow(&mut self, now: Instant) -> bool {
-        if self.max_messages_per_sec == 0 {
-            return false;
-        }
-
-        if now.duration_since(self.window_start) >= Duration::from_secs(1) {
-            self.window_start = now;
-            self.messages_seen = 0;
-        }
-
-        if self.messages_seen >= self.max_messages_per_sec {
-            return false;
-        }
-
-        self.messages_seen += 1;
-        true
-    }
 }

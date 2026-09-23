@@ -7,7 +7,8 @@ use super::{
     reject_overlay_member_base_write,
 };
 use crate::claim::{
-    ClaimBody, ClaimLifecycleStatus, ClaimSource, decode_claim_body, encode_claim_body,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, decode_claim_body,
+    encode_claim_body,
 };
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -27,6 +28,7 @@ pub(crate) struct ClaimMaterialization {
     reserved: bool,
     envelope: WriteEnvelope,
     prior: Option<[u8; 32]>,
+    approval: bool,
 }
 
 impl ClaimMaterialization {
@@ -54,6 +56,7 @@ impl ClaimMaterialization {
             reserved: true,
             envelope,
             prior,
+            approval: false,
         })
     }
 
@@ -122,6 +125,7 @@ impl ClaimMaterialization {
             reserved: false,
             envelope,
             prior: Some(row_digest(&raw)),
+            approval: false,
         };
         // Retraction records a gate decision before consuming the Put. Check
         // the reconstructed actor now, before any non-transactional metrics.
@@ -177,6 +181,7 @@ impl ClaimMaterialization {
                 reserved: false,
                 envelope,
                 prior: Some(row_digest(&raw)),
+                approval: false,
             };
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);
@@ -197,6 +202,77 @@ impl ClaimMaterialization {
         )
     }
 
+    /// Admit only the current row's unamended approval: the stored body with
+    /// its approval set to Approved. An approval never removes the author, so
+    /// the author binding is rebuilt from the stored row and refreshed on the
+    /// approved row. The Put stays the approver's write: it is gated and
+    /// audited as before, never against the author's own approval ceiling.
+    pub(crate) fn apply_approval(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        op: BatchOp,
+        persist_pending: bool,
+    ) -> Result<()> {
+        let BatchOp::Put {
+            id,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        } = &op
+        else {
+            return Err(binding_error());
+        };
+        let raw = vault
+            .store
+            .entities
+            .get(txn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+            || occurred.start != header.occurred_start
+            || occurred.end != header.occurred_end
+            || *learned_at != header.learned_at
+        {
+            return Err(binding_error());
+        }
+        let prior = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        let mut expected = prior.clone();
+        expected.approval = ClaimApprovalStatus::Approved;
+        if encode_claim_body(&expected)? != *data {
+            return Err(binding_error());
+        }
+        let mut bindings = Vec::new();
+        if let Some(envelope) = lifecycle_envelope(&vault.store, txn, id, &prior)? {
+            let binding = Self {
+                id: *id,
+                occurred: *occurred,
+                learned_at: *learned_at,
+                data: data.clone(),
+                reserved: false,
+                envelope,
+                prior: Some(row_digest(&raw)),
+                approval: true,
+            };
+            binding.validate_actor(&vault.store, txn)?;
+            bindings.push(binding);
+        }
+        super::apply_ops_with_gate_mode(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![op],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            ApplyOpsGateMode::new(false, persist_pending).with_claim_materializations(bindings),
+        )
+    }
+
     pub(super) fn matches_op(&self, op: &BatchOp) -> bool {
         matches!(op, BatchOp::Put { id, entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred, learned_at, data, allow_maintenance: false,
@@ -207,6 +283,11 @@ impl ClaimMaterialization {
 
     pub(crate) fn envelope(&self) -> &WriteEnvelope {
         &self.envelope
+    }
+
+    /// The envelope the Put is gated and audited under; none for an approval.
+    pub(super) fn gate_envelope(&self) -> Option<&WriteEnvelope> {
+        (!self.approval).then_some(&self.envelope)
     }
 
     pub(super) fn validate_actor(&self, store: &Store, txn: &heed::RoTxn<'_>) -> Result<()> {

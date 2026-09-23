@@ -56,8 +56,8 @@ fn answered_at(vault: &Vault, owner: EntityId, handle: TaskAskHandle) -> u64 {
         .created_at
 }
 
-fn actors(vault: &Vault, ids: &[EntityId]) -> Result<()> {
-    super::tests::support::permit_outcome_fixture_predicates(vault)?;
+fn actors(vault: &Vault, principal: EntityId, ids: &[EntityId]) -> Result<()> {
+    super::tests::support::permit_outcome_fixture_predicates(vault, principal)?;
     let now = crate::unix_seconds_now();
     for id in ids {
         vault.put_entity(
@@ -92,7 +92,7 @@ fn outcome_horizon_field_mutation_privacy_and_reopen_are_rechecked() -> Result<(
     let holder = EntityId::now();
     let stranger = EntityId::now();
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    actors(&vault, &[owner, holder, stranger])?;
+    actors(&vault, owner, &[owner, holder, stranger])?;
     let facade = vault.memory(owner, EdgeActorClass::Human);
     let receipt = facade.tasks_ask(&spec(&vault, holder))?;
     let answer = vault
@@ -250,7 +250,7 @@ fn bound_ask_first_answer_cas_has_one_version_claim_and_resolved_result() -> Res
     let owner = EntityId::now();
     let one = EntityId::now();
     let two = EntityId::now();
-    actors(&vault, &[owner, one, two])?;
+    actors(&vault, owner, &[owner, one, two])?;
     let mut ask = spec(&vault, one);
     let auth = vault.authenticate_owner(
         one,
@@ -351,7 +351,7 @@ fn invalid_binding_and_unreadable_result_do_not_bind_an_ask() -> Result<()> {
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let owner = EntityId::now();
     let holder = EntityId::now();
-    actors(&vault, &[owner, holder])?;
+    actors(&vault, owner, &[owner, holder])?;
     let facade = vault.memory(owner, EdgeActorClass::Human);
     for source in [
         OutcomeSource::Claim {
@@ -444,7 +444,7 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
     let unit = EntityId::now();
     let linked = EntityId::now();
     let campaign = EntityId::now();
-    actors(&vault, &[owner, unit, linked, campaign])?;
+    actors(&vault, owner, &[owner, unit, linked, campaign])?;
     vault
         .batch()
         .edge(&unit, EdgeKind::About, &linked, 1.0)

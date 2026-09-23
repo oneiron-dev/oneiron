@@ -447,22 +447,28 @@ async fn lfs_upload_download_streams_past_sixteen_mib() {
         futures_util::stream::iter((0..count).map(move |_| Ok::<_, std::io::Error>(part.clone())));
     let response = lfs_routes()
         .with_state(Arc::clone(&server))
-        .oneshot(request(
-            "PUT",
-            &object_uri(&oid.to_hex()),
-            Some(&token),
-            Body::from_stream(stream),
+        .oneshot(crate::test_credentials::bind_request(
+            &server,
+            request(
+                "PUT",
+                &object_uri(&oid.to_hex()),
+                Some(&token),
+                Body::from_stream(stream),
+            ),
         ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let response = lfs_routes()
         .with_state(Arc::clone(&server))
-        .oneshot(request(
-            "GET",
-            &object_uri(&oid.to_hex()),
-            Some(&reader_token()),
-            Body::empty(),
+        .oneshot(crate::test_credentials::bind_request(
+            &server,
+            request(
+                "GET",
+                &object_uri(&oid.to_hex()),
+                Some(&reader_token()),
+                Body::empty(),
+            ),
         ))
         .await
         .unwrap();
