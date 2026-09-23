@@ -198,4 +198,4 @@ export class Oneiron {
 export { OneironError }
 export type * from "./types.js"
 
-export type { OutcomeBinding, CalibrationPair, TaskAskSpec, TaskAskHandle, TaskAskReceipt, TaskAskAnswer, TaskWaitOutcome } from "./agent-verbs.js"
+export type { OutcomeBinding, CalibrationPair, TaskAssignee, ConsultPayloadRef, TaskAskOptionId, TaskAskTarget, TaskAskQuestion, TaskAskElectorate, TaskAskNeed, TaskAskDecide, TaskAskDefault, TaskAskDisagree, TaskAskClass, TaskAskSpec, TaskAskHandle, TaskAskReceipt, TaskAskWord, TaskAskAnswer, TaskAskCoverage, TaskAskDecision, TaskAskFallback, TaskAskEvidence, TaskAskSettlement, TaskAskResult, TaskAskStatus, TaskAskWait } from "./agent-verbs.js"

@@ -18,9 +18,9 @@ pub enum SelfCall {
     /// Typed bounded dispatch. Parent/run identity comes from the host binding.
     AgentsSpawn(SelfAgentSpawnCall),
     /// Async question to live scope authority holders. Returns without waiting.
-    TasksAsk(crate::task_verb::ScopeTaskAskSpec),
+    TasksAsk(crate::task_verb::TaskAskSpec),
     /// Requests a C9 wait for this handle, only at the caller's idle point.
-    TasksWait(crate::task_verb::ScopeTaskAskHandle),
+    TasksWait(crate::task_verb::TaskAskHandle),
     /// Fixture for `self.memory.search(...)`.
     MemorySearch(SelfMemorySearchCall),
     /// Internal fixture proving dispatcher-stamped writes use the batch/gate path.
@@ -106,7 +106,7 @@ impl SelfCall {
 }
 
 /// Host effect class routed by the dispatcher.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SelfEffect {
     AgentsSpawn,
     TasksAsk,
@@ -391,7 +391,7 @@ impl SelfFixtureEffectCall {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelfDispatchOutcome {
     AgentSpawn(SelfAgentSpawnResult),
-    TaskAsk(crate::task_verb::ScopeTaskAskReceipt),
+    TaskAsk(crate::task_verb::TaskAskReceipt),
     TaskAskStatus(crate::task_verb::TaskAskStatus),
     MemorySearch(SelfMemorySearchResult),
     MemoryWrite(SelfMemoryWriteResult),
@@ -475,7 +475,7 @@ pub struct SelfFailedResult {
 }
 
 /// Durable wait produced for effects that need human/external resolution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SelfDurableWait {
     pub wait_id: EntityId,
     pub effect: SelfEffect,
@@ -484,7 +484,7 @@ pub struct SelfDurableWait {
 }
 
 /// Why a dispatched effect parked instead of committing immediately.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SelfDurableWaitReason {
     HumanInput,
     DestructiveEffect,

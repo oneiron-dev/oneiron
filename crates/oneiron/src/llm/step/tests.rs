@@ -93,7 +93,6 @@ fn ctx<'a>(vault: &'a Vault, fixture: &StepFixture, now_ms: u64) -> DurableStepC
         run_id: Some("run-test".to_owned()),
         envelope_actor: fixture.actor,
         subject: fixture.subject,
-        pinned_config: None,
         deadline: None,
         now_ms,
     }
@@ -1625,20 +1624,6 @@ fn a_consent_trap_cannot_register_a_delegation_wait() -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// ONE-1344: opt-in per-call pinned-model admission + WITH-WHAT provenance
-// ---------------------------------------------------------------------------
-
-fn pinned_config(allowed: &[&str], background_tier_enabled: bool) -> PinnedModelConfig {
-    PinnedModelConfig {
-        allowed: allowed
-            .iter()
-            .map(|id| ModelId::new(*id).expect("pinned model id"))
-            .collect(),
-        background_tier_enabled,
-    }
-}
-
 /// Reads every claim attached to `subject` back out of the vault and decodes
 /// the `dreamer.step` rows — never a mock, never the in-memory outcome.
 fn terminal_step_claims(vault: &Vault, subject: &EntityId) -> Result<Vec<DecodedStepClaim>> {
@@ -1749,185 +1734,13 @@ fn provenance_recorded_for_every_call() -> Result<()> {
     Ok(())
 }
 
-/// A pinned model whose purpose is in the background tier is refused when the
-/// tier is disabled — before hashing, memo, state, budget, and backend — and
-/// leaves zero durable and zero private residue. Only the purpose changes for
-/// the admitted half: `Eval` is outside the background tier.
-#[test]
-fn purity_gate_blocks_background_tier() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let fixture = step_fixture(&vault, 10)?;
-    let config = pinned_config(&["test/model@r1"], false);
-    let mut ctx = ctx(&vault, &fixture, 10_000);
-    ctx.pinned_config = Some(&config);
-    let backend = ScriptedBackend::new(vec![Ok(response_fixture("admitted answer"))]);
-    let guard = guard_with_limit(10_000);
-
-    let refused = request_fixture();
-    let refused_hash = refused.canonical_hash().expect("hash");
-    let error = block_on(call_as_step(&ctx, &backend, &guard, refused))
-        .expect_err("background-tier purpose must be refused while the tier is disabled");
-    assert!(
-        matches!(
-            error,
-            DurableStepError::PinnedConfig(PinnedConfigViolation::BackgroundTierDisabled {
-                purpose: CallPurpose::Consolidation
-            })
-        ),
-        "expected BackgroundTierDisabled, got {error:?}"
-    );
-
-    assert_eq!(backend.calls(), 0, "no backend invocation");
-    let read = guard.read();
-    assert_eq!(read.used_units, 0, "no units spent");
-    assert_eq!(read.reserved_units, 0, "no lease reserved");
-    assert!(
-        step_state_read(&vault, fixture.attempt_id, &refused_hash)?.is_none(),
-        "no private step state"
-    );
-    assert!(
-        step_index_lookup(&vault, fixture.attempt_id, &refused_hash)?.is_none(),
-        "no memo index row"
-    );
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
-        0,
-        "no terminal step claim"
-    );
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_TRAP_PREDICATE)?,
-        0,
-        "no trap claim"
-    );
-
-    let mut admitted = request_fixture();
-    admitted.envelope.purpose = CallPurpose::Eval;
-    let outcome =
-        block_on(call_as_step(&ctx, &backend, &guard, admitted)).expect("Eval must be admitted");
-    let StepOutcome::Finished {
-        response, memoized, ..
-    } = outcome
-    else {
-        panic!("expected finished step");
-    };
-    assert!(!memoized);
-    assert_eq!(response, response_fixture("admitted answer"));
-    assert_eq!(backend.calls(), 1, "exactly one backend call");
-    let read = guard.read();
-    assert_eq!(read.used_units, 150, "usage settled");
-    assert_eq!(read.reserved_units, 0, "lease settled");
-
-    let claims = terminal_step_claims(&vault, &fixture.subject)?;
-    assert_eq!(claims.len(), 1, "one readable terminal claim");
-    assert_eq!(claims[0].purpose, "eval");
-    Ok(())
-}
-
-/// Membership is checked BEFORE background-tier classification, and admission
-/// runs BEFORE the memo lookup: an already-memoized step is still refused.
-#[test]
-fn unpinned_model_rejected() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let fixture = step_fixture(&vault, 10)?;
-    // Allows a DIFFERENT model with the background tier disabled, so the
-    // Consolidation request on `test/model@r1` fails BOTH checks; reporting
-    // ModelNotPinned proves membership is evaluated first.
-    let config = pinned_config(&["other/model@r9"], false);
-    let mut pinned_ctx = ctx(&vault, &fixture, 10_000);
-    pinned_ctx.pinned_config = Some(&config);
-    let backend = ScriptedBackend::new(vec![Ok(response_fixture("terminal answer"))]);
-    let guard = guard_with_limit(10_000);
-    let step_hash = request_fixture().canonical_hash().expect("hash");
-
-    let error = block_on(call_as_step(
-        &pinned_ctx,
-        &backend,
-        &guard,
-        request_fixture(),
-    ))
-    .expect_err("an unpinned model must be refused");
-    match &error {
-        DurableStepError::PinnedConfig(PinnedConfigViolation::ModelNotPinned { model }) => {
-            assert_eq!(*model, ModelId::new("test/model@r1").expect("model id"));
-        }
-        other => panic!("expected ModelNotPinned before the tier check, got {other:?}"),
-    }
-
-    assert_eq!(backend.calls(), 0, "no backend invocation");
-    assert_eq!(guard.read().used_units, 0, "no units spent");
-    assert_eq!(guard.read().reserved_units, 0, "no lease reserved");
-    assert!(step_state_read(&vault, fixture.attempt_id, &step_hash)?.is_none());
-    assert!(step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.is_none());
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
-        0
-    );
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_TRAP_PREDICATE)?,
-        0
-    );
-
-    // Run the identical request unpinned to completion, so the memo index and
-    // a terminal claim exist for this exact step hash.
-    let open_ctx = ctx(&vault, &fixture, 10_000);
-    let outcome = block_on(call_as_step(&open_ctx, &backend, &guard, request_fixture()))
-        .expect("unpinned execution");
-    assert!(matches!(
-        outcome,
-        StepOutcome::Finished {
-            memoized: false,
-            ..
-        }
-    ));
-    assert_eq!(backend.calls(), 1);
-    assert!(
-        step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.is_some(),
-        "memo index populated"
-    );
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
-        1
-    );
-    let used_after_execution = guard.read().used_units;
-
-    // The byte-identical request under the rejecting config must still be a
-    // typed refusal — NOT a memoized StepOutcome::Finished.
-    let error = block_on(call_as_step(
-        &pinned_ctx,
-        &backend,
-        &guard,
-        request_fixture(),
-    ))
-    .expect_err("admission must precede the memo lookup");
-    assert!(
-        matches!(
-            error,
-            DurableStepError::PinnedConfig(PinnedConfigViolation::ModelNotPinned { .. })
-        ),
-        "expected ModelNotPinned on the memoized step, got {error:?}"
-    );
-    assert_eq!(backend.calls(), 1, "backend count unchanged");
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
-        1,
-        "terminal claim count unchanged"
-    );
-    assert_eq!(guard.read().used_units, used_after_execution);
-    Ok(())
-}
-
-/// With `pinned_config: None` the ONE-1343 path is byte-for-byte unchanged:
-/// one call executes and settles, the identical repeat memo-hits with zero
+/// One call executes and settles, the identical repeat memo-hits with zero
 /// re-spend and no second claim.
 #[test]
 fn no_pin_no_change() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fixture = step_fixture(&vault, 10)?;
     let ctx = ctx(&vault, &fixture, 10_000);
-    assert!(
-        ctx.pinned_config.is_none(),
-        "the helper context stays unpinned by default"
-    );
     // A single scripted response: any second backend call would panic.
     let backend = ScriptedBackend::new(vec![Ok(response_fixture("unpinned answer"))]);
     let guard = guard_with_limit(10_000);

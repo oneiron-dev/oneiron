@@ -171,6 +171,16 @@ pub(super) fn validate_task_create(
     spec: &TaskCreateSpec,
     now: u64,
 ) -> MemoryResult<ValidatedTaskCreate> {
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    validate_task_create_in(vault, &txn, spec, now)
+}
+
+pub(super) fn validate_task_create_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    spec: &TaskCreateSpec,
+    now: u64,
+) -> MemoryResult<ValidatedTaskCreate> {
     match (
         spec.kind.unwrap_or(TaskKind::Standard),
         &spec.consult,
@@ -194,11 +204,11 @@ pub(super) fn validate_task_create(
                 ));
             }
             payload.validate()?;
-            assignee.validate(vault)?;
+            assignee.validate_in(vault, txn)?;
             for payload_ref in
                 std::iter::once(payload.question_ref).chain(payload.context_refs.iter().copied())
             {
-                require_resolved_payload_ref(vault, payload_ref)?;
+                require_resolved_payload_ref_in(vault, txn, payload_ref)?;
             }
             Ok(ValidatedTaskCreate {
                 kind: TaskKind::Consult,
@@ -222,7 +232,7 @@ pub(super) fn validate_task_create(
                 // inside the create transaction, so a known-but-unreachable
                 // person rolls the whole create back instead of leaving a human
                 // task nothing is tracking.
-                assignee.validate(vault)?;
+                assignee.validate_in(vault, txn)?;
             }
             Ok(ValidatedTaskCreate {
                 kind: TaskKind::Standard,
@@ -243,7 +253,18 @@ pub(super) fn require_resolved_payload_ref(
     vault: &Vault,
     payload_ref: ConsultPayloadRef,
 ) -> MemoryResult<()> {
-    if vault.get_entity_type(&payload_ref.entity_ref())? == Some(payload_ref.entity_type()) {
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    require_resolved_payload_ref_in(vault, &txn, payload_ref)
+}
+
+fn require_resolved_payload_ref_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    payload_ref: ConsultPayloadRef,
+) -> MemoryResult<()> {
+    if vault.get_entity_type_in_txn(txn, &payload_ref.entity_ref())?
+        == Some(payload_ref.entity_type())
+    {
         Ok(())
     } else {
         Err(MemoryError::bad_request(
@@ -362,7 +383,6 @@ pub(crate) fn task_human_assignee(vault: &Vault, task_ref: EntityId) -> Result<O
             None
             | Some(
                 TaskAssignee::Dreamer
-                | TaskAssignee::AnswerHolders
                 | TaskAssignee::AgentDef { .. }
                 | TaskAssignee::Peer { .. }
                 | TaskAssignee::Child { .. },

@@ -1,6 +1,6 @@
 //! Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome.
 
-use super::super::{LlmError, LlmResponse, PinnedConfigViolation, PinnedModelConfig};
+use super::super::{LlmError, LlmResponse};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline};
@@ -170,11 +170,6 @@ pub enum DurableStepError {
     /// lease was aborted and the attempt parked at the hard cut (ONE-1305).
     #[error("durable step hard cut at the wake-pass deadline")]
     DeadlineHardCut,
-    /// The request was refused by the caller's opt-in pinned-model config
-    /// (ONE-1344) before any hashing, memo lookup, state write, spend, or
-    /// claim — the refusal leaves zero durable and zero private residue.
-    #[error(transparent)]
-    PinnedConfig(#[from] PinnedConfigViolation),
 }
 
 /// Live progression of one durable step, stored as `u8` in the private
@@ -310,9 +305,6 @@ pub struct DurableStepContext<'a> {
     pub run_id: Option<String>,
     pub envelope_actor: WriteActor,
     pub subject: EntityId,
-    /// Opt-in pinned-model admission policy (ONE-1344): checked before
-    /// hashing, memo, state, budget, backend, and claims. None = no policy.
-    pub pinned_config: Option<&'a PinnedModelConfig>,
     /// The wake-pass deadline (ONE-1305): Some inside wake passes. Enables
     /// the finalize-window refusal for NEW steps, the mid-call deadline
     /// race, and the budget legibility envelope on finished outcomes.

@@ -307,10 +307,19 @@ impl Vault {
         counterparty: &str,
     ) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
         let rtxn = self.store.env.read_txn()?;
+        self.find_counterparty_contact_in_txn(&rtxn, identity_ref, counterparty)
+    }
+
+    pub(crate) fn find_counterparty_contact_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        identity_ref: &EntityId,
+        counterparty: &str,
+    ) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
         let index_key = counterparty_contact_index_key(identity_ref, counterparty)?;
-        if let Some(raw_id) = self.store.vault_meta.get(&rtxn, &index_key)? {
+        if let Some(raw_id) = self.store.vault_meta.get(rtxn, &index_key)? {
             let id = decode_counterparty_contact_index_value(&raw_id)?;
-            let Some(raw) = self.store.port_entity_record(&rtxn, &id)? else {
+            let Some(raw) = self.store.port_entity_record(rtxn, &id)? else {
                 return Err(Error::CorruptedIndex(
                     "counterparty contact lookup index entity row",
                 ));
@@ -332,10 +341,10 @@ impl Vault {
 
         for entry in
             self.store
-                .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)?
+                .port_entity_ids_by_type(rtxn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)?
         {
             let id = entry?;
-            let Some(raw) = self.store.port_entity_record(&rtxn, &id)? else {
+            let Some(raw) = self.store.port_entity_record(rtxn, &id)? else {
                 return Err(Error::CorruptedIndex("counterparty contact entity row"));
             };
 

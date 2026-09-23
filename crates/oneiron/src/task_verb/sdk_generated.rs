@@ -81,8 +81,12 @@ pub fn input_schema(verb: &str) -> Option<serde_json::Value> {
         "tasks.ask" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskSpec>()
         }
-        "tasks.wait" => crate::code_run::vault_read::request_schema::<TaskWaitRequest>(),
-        "tasks.answer" => crate::code_run::vault_read::request_schema::<TaskAnswerRequest>(),
+        "tasks.wait" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::TaskWaitRequest>()
+        }
+        "tasks.answer" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::TaskAnswerRequest,
+        >(),
         "tasks.outcomes" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskHandle>()
         }
@@ -166,28 +170,16 @@ pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
             &["spec"]
         }
         "tasks.wait" => {
-            properties.insert(
-                "task_ref".to_owned(),
-                schema
-                    .pointer("/properties/handle/properties/task_ref")?
-                    .clone(),
-            );
-            properties.insert(
-                "key".to_owned(),
-                schema.pointer("/properties/step_key")?.clone(),
-            );
-            &["task_ref", "key"]
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "tasks.answer" => {
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
         "tasks.outcomes" => {
-            properties.insert(
-                "task_ref".to_owned(),
-                schema.pointer("/properties/task_ref")?.clone(),
-            );
-            &["task_ref"]
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "rooms.list" => &[],
         "rooms.messages" => {
@@ -291,10 +283,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::TaskAskSpec = decode(value.clone())?;
         }
         "tasks.wait" => {
-            let _input: TaskWaitRequest = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::TaskWaitRequest = decode(value.clone())?;
         }
         "tasks.answer" => {
-            let _input: TaskAnswerRequest = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::TaskAnswerRequest = decode(value.clone())?;
         }
         "tasks.outcomes" => {
             let _input: crate::task_verb::TaskAskHandle = decode(value.clone())?;
@@ -501,15 +493,15 @@ pub fn tasks_ask(
 }
 pub fn tasks_wait(
     memory: &Memory<'_>,
-    input: TaskWaitRequest,
-) -> MemoryResult<crate::task_verb::TaskWaitOutcome> {
-    Ok(memory.tasks_wait_external(&input.handle, &input.step_key)?)
+    input: crate::task_verb::sdk::TaskWaitRequest,
+) -> MemoryResult<crate::task_verb::TaskAskWait> {
+    Ok(memory.tasks_wait(input.handle, Some(&input.step_key))?)
 }
 pub fn tasks_answer(
     memory: &Memory<'_>,
-    input: TaskAnswerRequest,
+    input: crate::task_verb::sdk::TaskAnswerRequest,
 ) -> MemoryResult<crate::task_verb::TaskAskAnswer> {
-    Ok(memory.tasks_answer(&input.handle, crate::EntityId::from_hex(&input.result_ref)?)?)
+    Ok(memory.tasks_answer(&input.handle, &input.word)?)
 }
 pub fn tasks_outcomes(
     memory: &Memory<'_>,

@@ -91,11 +91,12 @@ class AgentSdkProjectionTests(unittest.TestCase):
             return {"method":method,"value":payload}
         tasks=module.TasksVerbs(invoke)
         rooms=module.RoomsVerbs(invoke)
-        question={"question":{"text":"Proceed?"},"holders":["person"],"idempotency_key":"one"}
-        handle={"task_ref":"task"}
+        question={"intent_key":"one","who":{"people":["person"]},"what":{"reference":{"turn":"question"},"revision":1,"options":{},"context_refs":[]},"until":100,"decide":"first"}
+        handle={"group_ref":"group"}
         self.assertEqual(tasks.ask(question)["value"],question)
         self.assertEqual(tasks.wait(handle,"step-b")["value"],{"handle":handle,"step_key":"step-b"})
-        self.assertEqual(tasks.answer(handle,"result")["value"],{"handle":handle,"result_ref":"result"})
+        word={"result_ref":"result","option":None}
+        self.assertEqual(tasks.answer(handle,word)["value"],{"handle":handle,"word":word})
         self.assertEqual(tasks.outcomes(handle)["value"],handle)
         rooms.list();rooms.messages("room");rooms.claim("room","turn");rooms.speak({"conversation_ref":"room"})
         self.assertEqual([name for name,_ in calls],["tasks_ask","tasks_wait","tasks_answer","tasks_outcomes","rooms_list","rooms_messages","rooms_claim","rooms_speak"])
@@ -112,7 +113,7 @@ class AgentSdkProjectionTests(unittest.TestCase):
                 return NativeClient()
             def tasks_ask(self, value):
                 calls.append(json.loads(value))
-                return json.dumps({"handle": {"task_ref": "task"}, "count": 1, "replayed": False})
+                return json.dumps({"handle": {"group_ref": "group"}, "task_refs": ["task"], "hold": None, "idempotent_replay": False})
             def tasks_wait(self, value):
                 raise RuntimeError(json.dumps({"code": "FORBIDDEN", "message": "denied", "suggestions": ["Use the owning actor."]}))
             def rooms_list(self, value):
@@ -125,10 +126,10 @@ class AgentSdkProjectionTests(unittest.TestCase):
         with patch.dict(sys.modules, {name: package, name + "._native": native}):
             spec.loader.exec_module(package)
             client = package.Oneiron.connect("https://example.invalid", "credential")
-            question = {"question": {"text": "Proceed?"}, "holders": ["person"], "idempotency_key": "one"}
+            question = {"intent_key":"one","who":{"people":["person"]},"what":{"reference":{"turn":"question"},"revision":1,"options":{},"context_refs":[]},"until":100,"decide":"first"}
             receipt = client.tasks.ask(question)
             self.assertEqual(calls, [question])
-            self.assertEqual(receipt["handle"], {"task_ref": "task"})
+            self.assertEqual(receipt["handle"], {"group_ref": "group"})
             self.assertEqual(client.rooms.list(), [])
             with self.assertRaises(package.OneironError) as refusal:
                 client.tasks.wait(receipt["handle"])

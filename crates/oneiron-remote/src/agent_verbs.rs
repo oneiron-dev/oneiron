@@ -348,7 +348,7 @@ impl OneironClient {
     pub fn tasks_wait(
         &self,
         input: &oneiron::task_verb::sdk::TaskWaitRequest,
-    ) -> Result<oneiron::task_verb::TaskWaitOutcome, MemoryError> {
+    ) -> Result<oneiron::task_verb::TaskAskWait, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

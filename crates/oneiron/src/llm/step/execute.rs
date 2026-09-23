@@ -57,13 +57,6 @@ pub async fn call_as_step_with_fallbacks(
     request: LlmRequest,
     fallbacks: &super::super::FallbackRegistry,
 ) -> DurableStepResult<StepOutcome> {
-    // Purity gate (ONE-1344): the FIRST executable branch, so a refused
-    // request never hashes, never reads the memo index, never writes private
-    // step state, never reserves budget, and never reaches the backend.
-    if let Some(pinned) = ctx.pinned_config {
-        pinned.admit(&request)?;
-    }
-
     let step_hash = request.canonical_hash()?;
 
     // Memo-hit provenance check (ONE-1344): a stored terminal response is

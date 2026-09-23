@@ -1878,14 +1878,16 @@ fn endpoint_census_args(tool: McpEndpointTool) -> Value {
 /// The minimal in-grammar `arguments` object for one generated verb.
 fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
     match verb.name {
-        "tasks.outcomes" => json!({"task_ref":ACTOR_ID}),
+        "tasks.outcomes" => json!({"spec":{"group_ref":ACTOR_ID}}),
         "tasks.answer" => {
-            json!({"spec":{"handle":{"task_ref":ACTOR_ID},"result_ref":ACTOR_ID}})
+            json!({"spec":{"handle":{"group_ref":ACTOR_ID},"word":{"result_ref":ACTOR_ID,"option":null,"inform_for":null,"provenance_refs":[]}}})
         }
         "tasks.ask" => {
-            json!({"spec":{"question":{"text":"answer"},"holders":[ACTOR_ID],"idempotency_key":"ask-test","outcome_binding":null}})
+            json!({"spec":{"intent_key":"ask-test","who":{"responder":{"human":{"actor_ref":ACTOR_ID}}},"what":{"reference":{"turn":ACTOR_ID},"revision":1,"options":{},"context_refs":[],"label":null,"outcome_binding":null},"until":9999999999_u64,"decide":"first"}})
         }
-        "tasks.wait" => json!({"task_ref":ACTOR_ID,"key":"step-one"}),
+        "tasks.wait" => {
+            json!({"spec":{"handle":{"group_ref":ACTOR_ID},"step_key":"step-one"}})
+        }
         "rooms.list" => json!({}),
         "rooms.messages" => json!({"room_ref":ACTOR_ID}),
         "rooms.claim" => json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID}),
@@ -4096,8 +4098,14 @@ fn agent_verb_schema_publishes_nested_types_and_wire_defaults() {
             .contains(&json!("occurred_at"))
     );
     let wait = oneiron::task_verb::sdk::mcp_arguments_schema("tasks.wait").expect("wait");
-    assert_eq!(wait["properties"]["task_ref"]["type"], "string");
-    assert_eq!(wait["properties"]["key"]["type"], "string");
+    assert_eq!(
+        wait["properties"]["spec"]["properties"]["handle"]["properties"]["group_ref"]["type"],
+        "string"
+    );
+    assert_eq!(
+        wait["properties"]["spec"]["properties"]["step_key"]["type"],
+        "string"
+    );
     let room = oneiron::task_verb::sdk::input_schema("rooms.messages").expect("room");
     assert_eq!(room["required"], json!(["room_ref"]));
     assert_eq!(room["properties"]["limit"]["default"], Value::Null);

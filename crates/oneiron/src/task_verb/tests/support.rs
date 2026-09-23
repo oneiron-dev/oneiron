@@ -81,7 +81,7 @@ pub(super) const CONSULT_NOW: u64 = 1_772_400_000;
 
 pub(super) const CONSULT_DEADLINE: u64 = CONSULT_NOW + 60;
 
-pub(super) fn consult_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
+pub(in crate::task_verb) fn consult_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
     let turn_ref = EntityId::from_bytes([seed; 16]).expect("turn id");
     let mut body = Vec::new();
     rmpv::encode::write_value(

@@ -200,10 +200,14 @@ impl Memory<'_> {
                     "Read the settled ladder record; a settled ladder is immutable, and the follow-on task carries the case.",
                 ));
             }
-            super::ask_record::record_answer(self.vault(), wtxn, task_ref, &body, self.actor(), landed, at)?;
+            let ask_group = super::ask_record::record_answer(self.vault(), wtxn, task_ref, &body, crate::WriteActor::new(self.actor(), self.actor_class()), landed, at)?;
             body.state = Some(TaskExecutionState::Terminal(landed.clone()));
             let encoded = encode_task_verb_body(body);
             self.put_task_body_in_txn(wtxn, task_ref, &encoded, at)?;
+            if let Some(group) = ask_group {
+                super::ask_settlement::settle_in(self.vault(), wtxn, group, self.vault().store.clock.now_recorded_at())?;
+            }
+
             // ONE-1702 SEAM (own-task settlement → WAKE/CARRIER): this is the
             // producer call site for `mint_own_task_event` → `route_event`.
             // ONE-1702 has not landed on this base and owns both signatures and
@@ -231,11 +235,6 @@ impl Memory<'_> {
     /// addressed executor, or the owner when the assignee is the local Dreamer,
     /// which has no actor row of its own.
     fn require_execution_writer(&self, body: &TaskVerbBody) -> MemoryResult<()> {
-        if body.assignee == Some(TaskAssignee::AnswerHolders) {
-            return Err(MemoryError::bad_request(
-                "asks settle through their first-answer door",
-            ));
-        }
         let expected = match body.assignee.and_then(TaskAssignee::entity_ref) {
             Some(entity_ref) => entity_ref,
             None => EntityId::from_hex(&body.owner_ref).map_err(|_| {
@@ -255,5 +254,57 @@ impl Memory<'_> {
                 "Write as the actor the task is addressed to.",
             ))
         }
+    }
+}
+
+impl Memory<'_> {
+    pub fn tasks_answer(
+        &self,
+        handle: &super::TaskAskHandle,
+        word: &super::TaskAskWord,
+    ) -> MemoryResult<super::TaskAskAnswer> {
+        let answer = self.with_verified_actor_write_txn(|txn| {
+            let group = super::ask_record::read_group(self.vault(), txn, handle.group_ref)?
+                .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+            let now = self.vault().store.clock.now_recorded_at();
+            let answer = super::ask_record::admit_word(
+                self.vault(),
+                txn,
+                handle.group_ref,
+                &group,
+                crate::WriteActor::new(self.actor(), self.actor_class()),
+                word,
+                now,
+            )?;
+            if word.inform_for.is_none() {
+                let mut body = consult_body_in_txn(self.vault(), txn, answer.task_ref)?;
+                if body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
+                    body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+                        disposition: TaskTerminalDisposition::Completed,
+                        result_ref: Some(word.result_ref),
+                        summary: Some(super::ConsultResultSummary::Answer {
+                            evidence_refs: word.provenance_refs.iter().copied().collect(),
+                        }),
+                        finished_at: now,
+                        ladder: None,
+                        counter_task_ref: None,
+                    }));
+                    self.put_task_body_in_txn(
+                        txn,
+                        answer.task_ref,
+                        &encode_task_verb_body(body),
+                        now,
+                    )?;
+                }
+            }
+            super::ask_settlement::settle_in(self.vault(), txn, handle.group_ref, now)?;
+            Ok(answer)
+        })?;
+        send_peer_result_signal(
+            self.vault(),
+            handle.group_ref,
+            self.vault().store.clock.now_recorded_at(),
+        )?;
+        Ok(answer)
     }
 }

@@ -6,10 +6,8 @@ use super::support::{
 use super::{SelfAgentSpawnCall, SelfAgentSpawnResult};
 use crate::Result;
 use crate::agent_dispatch::AgentDispatchTarget;
-use crate::consent::ActionEnvelope;
 use crate::task_verb::{
-    ScopeTaskAskAnswer, ScopeTaskAskHandle, ScopeTaskAskReceipt, ScopeTaskAskSpec,
-    TaskAskHoldReason, TaskAskStatus, TaskAskTarget,
+    TaskAskHandle, TaskAskHoldReason, TaskAskReceipt, TaskAskSpec, TaskAskStatus,
 };
 use rmpv::Value;
 
@@ -50,57 +48,11 @@ pub(super) fn spawn_request(call: &SelfAgentSpawnCall) -> Result<Value> {
     ]))
 }
 
-fn envelope_value(e: &ActionEnvelope) -> Value {
-    request_map(vec![
-        (
-            "selectors",
-            Value::Array(
-                e.selectors()
-                    .iter()
-                    .map(|s| Value::from(s.as_str()))
-                    .collect(),
-            ),
-        ),
-        ("target", e.target().map_or(Value::Nil, Value::from)),
-        ("budget", e.budget().map_or(Value::Nil, Value::from)),
-        ("receipt_required", Value::Boolean(e.receipt_required())),
-    ])
-}
-
-pub(super) fn ask_request(call: &ScopeTaskAskSpec) -> Value {
-    let target = match &call.target {
-        TaskAskTarget::Authority(scope) => request_map(vec![
-            ("kind", Value::from("authority")),
-            ("class", Value::from(scope.class.as_str())),
-            ("envelope", envelope_value(&scope.envelope)),
-        ]),
-        TaskAskTarget::Responder(assignee) => request_map(vec![
-            ("kind", Value::from(assignee.as_str())),
-            (
-                "actor",
-                assignee.entity_ref().map_or(Value::Nil, entity_id_value),
-            ),
-        ]),
-    };
-    request_map(vec![
-        ("intent_key", Value::from(call.intent_key.as_str())),
-        ("target", target),
-        ("question", Value::from(call.question_ref.short_ref())),
-        (
-            "context",
-            Value::Array(
-                call.context_refs
-                    .iter()
-                    .map(|r| Value::from(r.short_ref()))
-                    .collect(),
-            ),
-        ),
-        ("deadline", Value::from(call.deadline_at)),
-        (
-            "label",
-            call.label.as_deref().map_or(Value::Nil, Value::from),
-        ),
-    ])
+pub(super) fn ask_request(call: &TaskAskSpec) -> Result<Value> {
+    let bytes =
+        rmp_serde::to_vec_named(call).map_err(|_| invalid_code_run_replay("ask request encode"))?;
+    rmpv::decode::read_value(&mut bytes.as_slice())
+        .map_err(|_| invalid_code_run_replay("ask request encode"))
 }
 
 pub(super) fn spawn_value(result: &SelfAgentSpawnResult) -> Value {
@@ -151,7 +103,7 @@ fn hold_decode(value: &Value) -> Result<Option<TaskAskHoldReason>> {
         _ => Err(invalid_code_run_replay("ask hold")),
     }
 }
-pub(super) fn ask_value(result: &ScopeTaskAskReceipt) -> Value {
+pub(super) fn ask_value(result: &TaskAskReceipt) -> Value {
     request_map(vec![
         ("kind", Value::from("task_ask")),
         ("group", entity_id_value(result.handle.group_ref)),
@@ -170,10 +122,10 @@ pub(super) fn ask_value(result: &ScopeTaskAskReceipt) -> Value {
         ("replay", Value::Boolean(result.idempotent_replay)),
     ])
 }
-pub(super) fn decode_ask(value: &Value) -> Result<ScopeTaskAskReceipt> {
+pub(super) fn decode_ask(value: &Value) -> Result<TaskAskReceipt> {
     let m = expect_map(value, "ask outcome map")?;
-    Ok(ScopeTaskAskReceipt {
-        handle: ScopeTaskAskHandle {
+    Ok(TaskAskReceipt {
+        handle: TaskAskHandle {
             group_ref: entity_value(map_get(m, "group")?)?,
         },
         task_refs: decode_array(map_get(m, "tasks")?, entity_value)?,
@@ -181,37 +133,21 @@ pub(super) fn decode_ask(value: &Value) -> Result<ScopeTaskAskReceipt> {
         idempotent_replay: bool_value(map_get(m, "replay")?)?,
     })
 }
-pub(super) fn status_value(result: &TaskAskStatus) -> Value {
-    let mut m = vec![("kind", Value::from("task_ask_status"))];
-    match result {
-        TaskAskStatus::Pending { hold } => {
-            m.push(("state", Value::from("pending")));
-            m.push(("hold", hold_value(*hold)));
-        }
-        TaskAskStatus::Exhausted => m.push(("state", Value::from("exhausted"))),
-        TaskAskStatus::Answered(a) => {
-            m.push(("state", Value::from("answered")));
-            m.push(("task", entity_id_value(a.task_ref)));
-            m.push(("actor", entity_id_value(a.actor_ref)));
-            m.push(("result", entity_id_value(a.result_ref)));
-        }
-    }
-    request_map(m)
+pub(super) fn status_value(result: &TaskAskStatus) -> Result<Value> {
+    let bytes = rmp_serde::to_vec_named(result)
+        .map_err(|_| invalid_code_run_replay("ask result encode"))?;
+    let value = rmpv::decode::read_value(&mut bytes.as_slice())
+        .map_err(|_| invalid_code_run_replay("ask result encode"))?;
+    Ok(request_map(vec![
+        ("kind", Value::from("task_ask_status")),
+        ("status", value),
+    ]))
 }
 pub(super) fn decode_status(value: &Value) -> Result<TaskAskStatus> {
-    let m = expect_map(value, "ask status map")?;
-    match str_value(map_get(m, "state")?)? {
-        "pending" => Ok(TaskAskStatus::Pending {
-            hold: hold_decode(map_get(m, "hold")?)?,
-        }),
-        "exhausted" => Ok(TaskAskStatus::Exhausted),
-        "answered" => Ok(TaskAskStatus::Answered(ScopeTaskAskAnswer {
-            task_ref: entity_value(map_get(m, "task")?)?,
-            actor_ref: entity_value(map_get(m, "actor")?)?,
-            result_ref: entity_value(map_get(m, "result")?)?,
-        })),
-        _ => Err(invalid_code_run_replay("ask status")),
-    }
+    let fields = expect_map(value, "ask status map")?;
+    let bytes = rmp_serde::to_vec_named(map_get(fields, "status")?)
+        .map_err(|_| invalid_code_run_replay("ask result encode"))?;
+    rmp_serde::from_slice(&bytes).map_err(|_| invalid_code_run_replay("ask result decode"))
 }
 
 #[cfg(test)]
@@ -222,7 +158,7 @@ mod tests {
     fn every_hold_reason_round_trips() -> Result<()> {
         for hold in [None, Some(TaskAskHoldReason::NoLiveRoute)] {
             let status = TaskAskStatus::Pending { hold };
-            assert_eq!(decode_status(&status_value(&status))?, status);
+            assert_eq!(decode_status(&status_value(&status)?)?, status);
         }
         assert!(hold_decode(&Value::from("unknown")).is_err());
         Ok(())

@@ -174,6 +174,31 @@ impl<'a> TxnBatchBuilder<'a> {
         )
     }
 
+    /// Engine-authored TASK facts cannot pass a raw put, which refuses their
+    /// reserved role. The materialization checks still run at apply time.
+    pub(crate) fn put_task_fact(mut self, id: &EntityId, data: &[u8], at: u64) -> Self {
+        if self.validation_error.is_none() {
+            self.validation_error = match crate::habit::task_role_from_body_bytes(data) {
+                Ok(crate::habit::TaskRole::AuthorityFact) => None,
+                Ok(_) => Some(Error::Record(crate::error::RecordError::InvalidTaskBody(
+                    "task fact requires AuthorityFact role",
+                ))),
+                Err(error) => Some(error),
+            };
+        }
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_TASK,
+            occurred: TimeRange { start: at, end: at },
+            learned_at: at,
+            data: data.to_vec(),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        });
+        self
+    }
+
     /// The ONE-1686 witness MESSAGE put: the only door that stages an
     /// `ENTITY_TYPE_MESSAGE` row.
     ///

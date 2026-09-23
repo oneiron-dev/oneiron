@@ -22,17 +22,25 @@ fn grant_scope(vault: &Vault, owner: EntityId, delegate: EntityId, class: &str) 
     reference
 }
 
-fn scope_spec(vault: &Vault, key: &str) -> ScopeTaskAskSpec {
-    ScopeTaskAskSpec {
+fn scope_spec(vault: &Vault, key: &str) -> TaskAskSpec {
+    TaskAskSpec {
         intent_key: key.to_owned(),
-        target: TaskAskTarget::Authority(AskAuthorityScope {
-            class: ActionClass::new("review").unwrap(),
-            envelope: ActionEnvelope::new(["project:alpha".to_owned()]).unwrap(),
-        }),
-        question_ref: consult_turn(vault, 0x81),
-        context_refs: vec![],
-        deadline_at: unix_seconds_now() + 3600,
-        label: None,
+        ..crate::task_verb::TaskAskSpec::shorthand(
+            Some(TaskAskTarget::Authority(AskAuthorityScope {
+                class: ActionClass::new("review").unwrap(),
+                envelope: ActionEnvelope::new(["project:alpha".to_owned()]).unwrap(),
+            })),
+            crate::task_verb::TaskAskQuestion {
+                reference: consult_turn(vault, 0x81),
+                revision: 1,
+                options: Default::default(),
+                context_refs: vec![],
+                label: None,
+                outcome_binding: None,
+            },
+            Some(unix_seconds_now() + 3600),
+            crate::task_verb::TaskAskDefault::AskMe,
+        )
     }
 }
 
@@ -70,7 +78,7 @@ fn ask_resolves_live_holders_delegate_first_and_retries_one_intent() {
     assert_eq!(replay.handle, receipt.handle);
     assert!(replay.idempotent_replay);
     let mut changed = input.clone();
-    changed.label = Some("different".to_owned());
+    changed.what.label = Some("different".to_owned());
     assert!(memory.tasks_ask(&changed).is_err());
     let auth = vault
         .authenticate_owner(
@@ -104,14 +112,14 @@ fn abstention_is_not_winner_late_answers_keep_evidence_and_forged_siblings_do_no
             &TaskCreateSpec::new(Value::Nil, None, None, Some(unix_seconds_now()))
                 .with_kind(TaskKind::Consult)
                 .with_consult(ConsultPayload::question(
-                    input.question_ref,
+                    input.what.reference,
                     vec![],
                     receipt.handle.group_ref,
                 ))
                 .with_assignee(TaskAssignee::Peer {
                     actor_ref: delegate,
                 })
-                .with_ttl(TaskTtl::at(input.deadline_at)),
+                .with_ttl(TaskTtl::at(input.until.unwrap())),
         )
         .unwrap()
         .task_ref
@@ -121,7 +129,7 @@ fn abstention_is_not_winner_late_answers_keep_evidence_and_forged_siblings_do_no
         .land_consult_result(forged, &answer_input(result_a.entity_ref(), result_a))
         .unwrap();
     assert!(matches!(
-        memory.tasks_wait(receipt.handle).unwrap(),
+        memory.tasks_wait(receipt.handle, None).unwrap(),
         TaskAskWait::Park(_)
     ));
     vault
@@ -138,7 +146,7 @@ fn abstention_is_not_winner_late_answers_keep_evidence_and_forged_siblings_do_no
         )
         .unwrap();
     assert!(matches!(
-        memory.tasks_wait(receipt.handle).unwrap(),
+        memory.tasks_wait(receipt.handle, None).unwrap(),
         TaskAskWait::Park(_)
     ));
     vault
@@ -148,11 +156,13 @@ fn abstention_is_not_winner_late_answers_keep_evidence_and_forged_siblings_do_no
             &answer_input(result_b.entity_ref(), result_b),
         )
         .unwrap();
-    let expected = TaskAskStatus::Answered(ScopeTaskAskAnswer {
-        task_ref: receipt.task_refs[1],
-        actor_ref: owner,
-        result_ref: result_b.entity_ref(),
-    });
+    let expected = memory.tasks_ask_status(receipt.handle).unwrap();
+    assert_first(
+        &expected,
+        receipt.task_refs[1],
+        owner,
+        result_b.entity_ref(),
+    );
     for actor in [asker, delegate, owner] {
         assert_eq!(
             vault
@@ -212,11 +222,11 @@ fn first_landed_answer_wins_over_backdated_later_answer_and_survives_reopen() {
         .memory(delegate, EdgeActorClass::Human)
         .land_consult_result(receipt.task_refs[0], &late)
         .unwrap();
-    let winner = TaskAskStatus::Answered(ScopeTaskAskAnswer {
-        task_ref: receipt.task_refs[1],
-        actor_ref: owner,
-        result_ref: a.entity_ref(),
-    });
+    let winner = vault
+        .memory(asker, EdgeActorClass::Agent)
+        .tasks_ask_status(receipt.handle)
+        .unwrap();
+    assert_first(&winner, receipt.task_refs[1], owner, a.entity_ref());
     assert_eq!(
         vault
             .memory(asker, EdgeActorClass::Agent)
@@ -279,6 +289,11 @@ fn ask_winner_and_membership_survive_replicated_rows_in_either_order() {
             &answer_input(result.entity_ref(), result),
         )
         .unwrap();
+    let settled = source
+        .memory(asker, EdgeActorClass::Agent)
+        .tasks_ask_status(receipt.handle)
+        .unwrap();
+    assert_first(&settled, receipt.task_refs[1], owner, result.entity_ref());
     let ids = source
         .entities_by_type_page(ENTITY_TYPE_TASK, None, 256)
         .unwrap();
@@ -315,11 +330,76 @@ fn ask_winner_and_membership_survive_replicated_rows_in_either_order() {
                 .memory(asker, EdgeActorClass::Agent)
                 .tasks_ask_status(receipt.handle)
                 .unwrap(),
-            TaskAskStatus::Answered(ScopeTaskAskAnswer {
-                task_ref: receipt.task_refs[1],
-                actor_ref: owner,
-                result_ref: result.entity_ref()
-            })
+            settled
         );
     }
+}
+
+#[test]
+fn ask_facts_are_named_messagepack_and_reject_unknown_or_duplicate_fields() {
+    let (_dir, vault) = open_vault();
+    let asker = own_agent(&vault);
+    let delegate = consult_peer(&vault, 0xB3);
+    let owner = consult_peer(&vault, 0xB4);
+    grant_scope(&vault, owner, delegate, "review");
+    let memory = vault.memory(asker, EdgeActorClass::Agent);
+    let receipt = memory.tasks_ask(&scope_spec(&vault, "record-map")).unwrap();
+    let raw = vault.get_raw(&receipt.handle.group_ref).unwrap().unwrap();
+    let encoded = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    let Value::Map(fields) = rmpv::decode::read_value(&mut &encoded[..]).unwrap() else {
+        panic!("ask fact must be a map");
+    };
+    assert!(
+        fields
+            .iter()
+            .any(|(key, value)| key.as_str() == Some("members") && value.is_array())
+    );
+    assert!(!fields.iter().any(|(key, _)| key.as_str() == Some("record")));
+    assert!(matches!(
+        memory.tasks_ask_status(receipt.handle).unwrap(),
+        TaskAskStatus::Pending { .. }
+    ));
+    for extra in [
+        (Value::from("unexpected"), Value::Nil),
+        (Value::from("owner"), Value::from(asker.to_hex())),
+        (Value::from("schema_version"), Value::from(1)),
+    ] {
+        let mut bad = fields.clone();
+        bad.push(extra);
+        let bad = canonical_bytes(&Value::Map(bad));
+        let refused = vault
+            .batch()
+            .put_replicated(
+                &EntityId::now(),
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &bad,
+            )
+            .commit();
+        assert!(matches!(
+            refused,
+            Err(crate::Error::Record(
+                crate::error::RecordError::InvalidTaskBody(_)
+            ))
+        ));
+        assert!(matches!(
+            memory.tasks_ask_status(receipt.handle).unwrap(),
+            TaskAskStatus::Pending { .. }
+        ));
+    }
+}
+
+fn assert_first(status: &TaskAskStatus, task: EntityId, actor: EntityId, result: EntityId) {
+    let TaskAskStatus::Settled(result_state) = status else {
+        panic!("settled ask")
+    };
+    let TaskAskDecision::First(answer) = &result_state.decision else {
+        panic!("first human word")
+    };
+    assert_eq!(
+        (answer.task_ref, answer.actor_ref, answer.result_ref),
+        (task, actor, result)
+    );
+    assert!(result_state.coverage.met);
 }

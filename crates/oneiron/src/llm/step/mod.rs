@@ -76,7 +76,7 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::llm::{
     BudgetGuard, CallClass, CallPurpose, LlmBackend, LlmError, LlmRequest, LlmResponse,
-    PinnedConfigViolation, PinnedModelConfig, canonical_json_bytes,
+    canonical_json_bytes,
 };
 #[cfg(test)]
 use crate::temporal::TimeRange;

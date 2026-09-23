@@ -215,6 +215,9 @@ pub(super) fn validate_domain_carriers(
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_TASK {
+        crate::task_verb::guard_ask_fact_put(store, txn, id, data)?;
+    }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
         crate::conversation_dag::validate_session_carrier(store, txn, id, data, replicated)?;
     }

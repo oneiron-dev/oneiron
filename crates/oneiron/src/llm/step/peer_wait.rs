@@ -81,6 +81,7 @@ pub fn send_peer_result_signal(
     task_ref: EntityId,
     now: u64,
 ) -> Result<Option<EntityId>> {
+    crate::task_verb::settle_ask_if_due(vault, task_ref)?;
     if !crate::task_verb::task_is_terminal(vault, task_ref)? {
         return Ok(None);
     }
@@ -117,6 +118,7 @@ pub fn send_peer_result_signal(
 /// Wired at Dreamer wake-pass admission. The host may also call it after a
 /// sync batch; a missing immediate call is recovered by the next wake pass.
 pub fn reconcile_peer_result_signals(vault: &Vault, now: u64) -> Result<usize> {
+    crate::task_verb::settle_waiting_asks(vault)?;
     let mut sent = 0;
     let handles: std::collections::BTreeSet<_> = peer_wait_bindings(vault)?
         .into_iter()

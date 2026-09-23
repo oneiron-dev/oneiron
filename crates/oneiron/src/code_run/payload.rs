@@ -25,7 +25,7 @@ const CODE_RUN_REPLAY_CANONICAL_REQUEST_ACTOR: [u8; 16] = [0x42; 16];
 pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
     Ok(match call {
         SelfCall::AgentsSpawn(call) => super::coordination_codec::spawn_request(call)?,
-        SelfCall::TasksAsk(call) => super::coordination_codec::ask_request(call),
+        SelfCall::TasksAsk(call) => super::coordination_codec::ask_request(call)?,
         SelfCall::TasksWait(handle) => {
             request_map(vec![("handle", entity_id_value(handle.group_ref))])
         }
@@ -128,12 +128,12 @@ fn canonical_replay_request_envelope() -> Result<WriteEnvelope> {
     ))
 }
 
-pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Value {
-    match outcome {
+pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Result<Value> {
+    Ok(match outcome {
         SelfDispatchOutcome::AgentSpawn(result) => super::coordination_codec::spawn_value(result),
         SelfDispatchOutcome::TaskAsk(result) => super::coordination_codec::ask_value(result),
         SelfDispatchOutcome::TaskAskStatus(result) => {
-            super::coordination_codec::status_value(result)
+            super::coordination_codec::status_value(result)?
         }
         SelfDispatchOutcome::MemorySearch(result) => request_map(vec![
             ("kind", Value::from("memory_search")),
@@ -214,7 +214,7 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Valu
             ("is_visible", Value::Boolean(result.is_visible)),
             ("emitted", Value::Boolean(result.emitted)),
         ]),
-    }
+    })
 }
 
 pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatchOutcome> {

@@ -9,21 +9,51 @@ use crate::llm::decision::questions::{
 use crate::{EntityId, TimeRange, Vault, VaultConfig};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-fn spec(holder: EntityId) -> TaskAskSpec {
+fn spec(vault: &Vault, holder: EntityId) -> TaskAskSpec {
     TaskAskSpec {
-        question: serde_json::json!({"text":"Choose a result"}),
-        holders: [holder.to_hex()].into(),
-        idempotency_key: "bound-ask".into(),
-        outcome_binding: Some(OutcomeBinding {
-            source: OutcomeSource::Claim {
-                predicate: "outcome.earned".into(),
+        intent_key: "bound-ask".into(),
+        ..crate::task_verb::TaskAskSpec::shorthand(
+            Some(TaskAskTarget::Responder(TaskAssignee::Human {
+                actor_ref: holder,
+            })),
+            crate::task_verb::TaskAskQuestion {
+                reference: super::tests::support::consult_turn(vault, 0xFE),
+                revision: 1,
+                options: Default::default(),
+                context_refs: Vec::new(),
+                label: None,
+                outcome_binding: Some(OutcomeBinding {
+                    source: OutcomeSource::Claim {
+                        predicate: "outcome.earned".into(),
+                    },
+                    horizon: 60,
+                    mapping: [("won".into(), true), ("lost".into(), false)].into(),
+                    noise_weight: 0.8,
+                    linked_by: None,
+                }),
             },
-            horizon: 60,
-            mapping: [("won".into(), true), ("lost".into(), false)].into(),
-            noise_weight: 0.8,
-            linked_by: None,
-        }),
+            Some(u64::MAX),
+            crate::task_verb::TaskAskDefault::AskMe,
+        )
     }
+}
+
+fn settled(vault: &Vault, owner: EntityId, handle: TaskAskHandle) -> TaskAskResult {
+    let TaskAskStatus::Settled(result) = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_ask_status(handle)
+        .unwrap()
+    else {
+        panic!("settled ask")
+    };
+    *result
+}
+
+fn answered_at(vault: &Vault, owner: EntityId, handle: TaskAskHandle) -> u64 {
+    read_question(vault, owner, handle.group_ref, None)
+        .unwrap()
+        .unwrap()
+        .created_at
 }
 
 fn actors(vault: &Vault, ids: &[EntityId]) -> Result<()> {
@@ -64,18 +94,24 @@ fn outcome_horizon_field_mutation_privacy_and_reopen_are_rechecked() -> Result<(
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     actors(&vault, &[owner, holder, stranger])?;
     let facade = vault.memory(owner, EdgeActorClass::Human);
-    let receipt = facade.tasks_ask(&spec(holder))?;
+    let receipt = facade.tasks_ask(&spec(&vault, holder))?;
     let answer = vault
         .memory(holder, EdgeActorClass::Human)
-        .tasks_answer(&receipt.handle, holder)?;
-    let task = EntityId::from_hex(&receipt.handle.task_ref)?;
-    let answer_id = EntityId::from_hex(answer.answer_ref.as_deref().expect("answer claim"))?;
+        .tasks_answer(&receipt.handle, &TaskAskWord::new(holder))?;
+    let task = receipt.handle.group_ref;
+    let answer_id = settled(&vault, owner, receipt.handle)
+        .settlement
+        .outcome_answer_ref
+        .expect("answer claim");
     let fact_id = EntityId::now();
     let body = fact(holder);
-    let at = answer.at + 60;
+    let at = answered_at(&vault, owner, receipt.handle) + 60;
     let occurred = TimeRange { start: at, end: at };
     // Before the answer and one second past the horizon cannot label it.
-    for time in [answer.at - 1, answer.at + 61] {
+    for time in [
+        answered_at(&vault, owner, receipt.handle) - 1,
+        answered_at(&vault, owner, receipt.handle) + 61,
+    ] {
         vault.put_claim(
             &EntityId::now(),
             &body,
@@ -153,8 +189,8 @@ fn outcome_horizon_field_mutation_privacy_and_reopen_are_rechecked() -> Result<(
         &answer_id,
         &prediction,
         TimeRange {
-            start: answer.at,
-            end: answer.at,
+            start: answered_at(&vault, owner, receipt.handle),
+            end: answered_at(&vault, owner, receipt.handle),
         },
         at + 9,
     )?;
@@ -174,8 +210,8 @@ fn outcome_horizon_field_mutation_privacy_and_reopen_are_rechecked() -> Result<(
     assert!(value.is_none());
     assert_eq!(facade.tasks_ask_outcomes(&receipt.handle)?, expected);
     assert_eq!(
-        facade.tasks_wait_external(&receipt.handle, "reopen-step")?,
-        TaskWaitOutcome::Ready(answer.clone())
+        facade.tasks_wait(receipt.handle, Some("reopen-step"))?,
+        TaskAskWait::Ready(Box::new(settled(&vault, owner, receipt.handle)))
     );
     drop(vault);
 
@@ -183,16 +219,26 @@ fn outcome_horizon_field_mutation_privacy_and_reopen_are_rechecked() -> Result<(
     let facade = reopened.memory(owner, EdgeActorClass::Human);
     assert_eq!(facade.tasks_ask_outcomes(&receipt.handle)?, expected);
     assert_eq!(
-        facade.tasks_wait_external(&receipt.handle, "reopen-step")?,
-        TaskWaitOutcome::AlreadyResumed(answer.clone())
+        facade.tasks_wait(receipt.handle, Some("reopen-step"))?,
+        TaskAskWait::Ready(Box::new(settled(&reopened, owner, receipt.handle)))
     );
-    assert_eq!(
-        reopened
-            .memory(holder, EdgeActorClass::Human)
-            .tasks_answer(&receipt.handle, stranger)?,
-        answer
+    let before_late = settled(&reopened, owner, receipt.handle);
+    let late = reopened
+        .memory(holder, EdgeActorClass::Human)
+        .tasks_answer(&receipt.handle, &TaskAskWord::new(stranger))?;
+    assert_ne!(late.word_ref, answer.word_ref);
+    assert_eq!(settled(&reopened, owner, receipt.handle), before_late);
+    assert!(
+        facade
+            .tasks_ask_evidence(receipt.handle)?
+            .iter()
+            .any(|entry| entry.answer == late && entry.reason == TaskAskEvidenceReason::Late)
     );
-    assert!(facade.tasks_ask(&spec(holder))?.replayed);
+    assert!(
+        facade
+            .tasks_ask(&spec(&reopened, holder))?
+            .idempotent_replay
+    );
     assert_eq!(project_bound_outcomes(&reopened, owner, task)?, 0);
     Ok(())
 }
@@ -205,8 +251,25 @@ fn bound_ask_first_answer_cas_has_one_version_claim_and_resolved_result() -> Res
     let one = EntityId::now();
     let two = EntityId::now();
     actors(&vault, &[owner, one, two])?;
-    let mut ask = spec(one);
-    ask.holders.insert(two.to_hex());
+    let mut ask = spec(&vault, one);
+    let auth = vault.authenticate_owner(
+        one,
+        &one.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let class = crate::consent::ActionClass::new("review")?;
+    let envelope = crate::consent::ActionEnvelope::new(["project:alpha".into()])?;
+    let bound = crate::consent::GrantBound::action(
+        crate::consent::ActorBound::new(two.to_hex())?,
+        class.clone(),
+        envelope.clone(),
+    )?;
+    vault.create_standing_grant(&auth, bound)?;
+    ask.who = Some(TaskAskTarget::Authority(AskAuthorityScope {
+        class,
+        envelope,
+    }));
     let handle = vault
         .memory(owner, EdgeActorClass::Human)
         .tasks_ask(&ask)?
@@ -215,12 +278,12 @@ fn bound_ask_first_answer_cas_has_one_version_claim_and_resolved_result() -> Res
         let a = scope.spawn(|| {
             vault
                 .memory(one, EdgeActorClass::Human)
-                .tasks_answer(&handle, one)
+                .tasks_answer(&handle, &TaskAskWord::new(one))
         });
         let b = scope.spawn(|| {
             vault
                 .memory(two, EdgeActorClass::Human)
-                .tasks_answer(&handle, two)
+                .tasks_answer(&handle, &TaskAskWord::new(two))
         });
         [
             a.join().expect("first holder"),
@@ -228,10 +291,17 @@ fn bound_ask_first_answer_cas_has_one_version_claim_and_resolved_result() -> Res
         ]
     });
     let [first, second] = answers;
-    let winner = first?;
-    assert_eq!(winner, second?);
-    let unit = EntityId::from_hex(&winner.result_ref)?;
-    let question = EntityId::from_hex(&handle.task_ref)?;
+    let first = first?;
+    let second = second?;
+    assert_ne!(first.task_ref, second.task_ref);
+    assert_eq!((first.result_ref, second.result_ref), (one, two));
+    let result = settled(&vault, owner, handle);
+    let TaskAskDecision::First(winner) = result.decision else {
+        panic!("first human word")
+    };
+    assert!(result.settlement.outcome_answer_ref.is_some());
+    let unit = winner.result_ref;
+    let question = handle.group_ref;
     let record = read_question(&vault, owner, question, None)?.expect("question");
     assert_eq!(record.definition.question.version, 1);
     assert_eq!(record.definition.units, vec![unit]);
@@ -251,10 +321,10 @@ fn bound_ask_first_answer_cas_has_one_version_claim_and_resolved_result() -> Res
     assert_eq!(
         vault
             .memory(owner, EdgeActorClass::Human)
-            .tasks_wait_external(&handle, "winner")?,
-        TaskWaitOutcome::Ready(winner.clone())
+            .tasks_wait(handle, Some("winner"))?,
+        TaskAskWait::Ready(Box::new(settled(&vault, owner, handle)))
     );
-    let at = winner.at + 1;
+    let at = answered_at(&vault, owner, handle) + 1;
     vault.put_claim(
         &EntityId::now(),
         &fact(unit),
@@ -265,7 +335,13 @@ fn bound_ask_first_answer_cas_has_one_version_claim_and_resolved_result() -> Res
         .memory(owner, EdgeActorClass::Human)
         .tasks_ask_outcomes(&handle)?;
     assert_eq!(pairs.len(), 1);
-    assert_eq!(pairs[0].outcome.answer.to_hex(), winner.answer_ref.unwrap());
+    assert_eq!(
+        pairs[0].outcome.answer,
+        settled(&vault, owner, handle)
+            .settlement
+            .outcome_answer_ref
+            .unwrap()
+    );
     Ok(())
 }
 
@@ -288,12 +364,12 @@ fn invalid_binding_and_unreadable_result_do_not_bind_an_ask() -> Result<()> {
             relation: "unknown".into(),
         },
     ] {
-        let mut ask = spec(holder);
-        ask.outcome_binding.as_mut().unwrap().source = source;
+        let mut ask = spec(&vault, holder);
+        ask.what.outcome_binding.as_mut().unwrap().source = source;
         assert!(facade.tasks_ask(&ask).is_err());
     }
-    let mut zero = spec(holder);
-    zero.outcome_binding.as_mut().unwrap().horizon = 0;
+    let mut zero = spec(&vault, holder);
+    zero.what.outcome_binding.as_mut().unwrap().horizon = 0;
     assert!(facade.tasks_ask(&zero).is_err());
     let private = EntityId::now();
     let now = crate::unix_seconds_now();
@@ -312,36 +388,43 @@ fn invalid_binding_and_unreadable_result_do_not_bind_an_ask() -> Result<()> {
         now,
     )?;
     for bound in [false, true] {
-        let mut ask = spec(holder);
-        ask.idempotency_key = format!("private-{bound}");
+        let mut ask = spec(&vault, holder);
+        ask.intent_key = format!("private-{bound}");
         if !bound {
-            ask.outcome_binding = None;
+            ask.what.outcome_binding = None;
         }
         let handle = facade.tasks_ask(&ask)?.handle;
         assert!(
             vault
                 .memory(holder, EdgeActorClass::Human)
-                .tasks_answer(&handle, private)
+                .tasks_answer(&handle, &TaskAskWord::new(private))
                 .is_err()
         );
-        let task = EntityId::from_hex(&handle.task_ref)?;
+        let task = handle.group_ref;
         assert!(read_question(&vault, owner, task, None)?.is_none());
         assert!(matches!(
-            facade.tasks_wait_external(&handle, "retry")?,
-            TaskWaitOutcome::Pending { .. }
+            facade.tasks_wait(handle, Some("retry"))?,
+            TaskAskWait::Pending { .. }
         ));
         // Rejection rolled back every piece. A readable answer still wins later.
         let answer = vault
             .memory(holder, EdgeActorClass::Human)
-            .tasks_answer(&handle, holder)?;
-        assert_eq!(answer.question_version, bound.then_some(1));
+            .tasks_answer(&handle, &TaskAskWord::new(holder))?;
         assert_eq!(
-            facade.tasks_wait_external(&handle, "retry")?,
-            TaskWaitOutcome::Ready(answer)
+            settled(&vault, owner, handle)
+                .settlement
+                .outcome_answer_ref
+                .is_some(),
+            bound
+        );
+        assert_eq!(answer.result_ref, holder);
+        assert_eq!(
+            facade.tasks_wait(handle, Some("retry"))?,
+            TaskAskWait::Ready(Box::new(settled(&vault, owner, handle)))
         );
         if bound {
             let mut changed = ask;
-            changed.outcome_binding.as_mut().unwrap().noise_weight = 0.4;
+            changed.what.outcome_binding.as_mut().unwrap().noise_weight = 0.4;
             assert!(facade.tasks_ask(&changed).is_err());
         }
     }
@@ -367,9 +450,9 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
         .edge(&unit, EdgeKind::About, &linked, 1.0)
         .commit()?;
     let facade = vault.memory(owner, EdgeActorClass::Human);
-    let mut event = spec(unit);
-    event.idempotency_key = "event-outcome".into();
-    let binding = event.outcome_binding.as_mut().unwrap();
+    let mut event = spec(&vault, unit);
+    event.intent_key = "event-outcome".into();
+    let binding = event.what.outcome_binding.as_mut().unwrap();
     binding.source = OutcomeSource::Event {
         predicate: "outcome.earned".into(),
     };
@@ -377,8 +460,9 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
     let handle = facade.tasks_ask(&event)?.handle;
     let answer = vault
         .memory(unit, EdgeActorClass::Human)
-        .tasks_answer(&handle, unit)?;
-    let at = answer.at + 1;
+        .tasks_answer(&handle, &TaskAskWord::new(unit))?;
+    assert_eq!(answer.result_ref, unit);
+    let at = answered_at(&vault, owner, handle) + 1;
     let occurred = TimeRange { start: at, end: at };
     let body = fact(linked);
     let fact_id = EntityId::now();
@@ -413,9 +497,9 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
         .batch()
         .edge(&unit, EdgeKind::About, &linked, 1.0)
         .commit()?;
-    let mut edge = spec(unit);
-    edge.idempotency_key = "edge-outcome".into();
-    let binding = edge.outcome_binding.as_mut().unwrap();
+    let mut edge = spec(&vault, unit);
+    edge.intent_key = "edge-outcome".into();
+    let binding = edge.what.outcome_binding.as_mut().unwrap();
     binding.source = OutcomeSource::Edge {
         relation: "about".into(),
     };
@@ -423,8 +507,9 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
     let edge_handle = facade.tasks_ask(&edge)?.handle;
     let answer = vault
         .memory(unit, EdgeActorClass::Human)
-        .tasks_answer(&edge_handle, unit)?;
-    let at = answer.at + 1;
+        .tasks_answer(&edge_handle, &TaskAskWord::new(unit))?;
+    assert_eq!(answer.result_ref, unit);
+    let at = answered_at(&vault, owner, edge_handle) + 1;
     let edge_fact = EntityId::now();
     let mut provenance = EdgeProvenanceClaimBody::new(owner, 1.0, SupersessionStatus::Confirmed);
     provenance.valid_from = Some(at);
@@ -439,9 +524,9 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
     assert_eq!(pairs.len(), 1);
     assert_eq!(pairs[0].outcome.fact, edge_fact);
 
-    let mut stage = spec(unit);
-    stage.idempotency_key = "stage-outcome".into();
-    let binding = stage.outcome_binding.as_mut().unwrap();
+    let mut stage = spec(&vault, unit);
+    stage.intent_key = "stage-outcome".into();
+    let binding = stage.what.outcome_binding.as_mut().unwrap();
     binding.source = OutcomeSource::Stage {
         campaign: campaign.to_hex(),
     };
@@ -449,8 +534,9 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
     let stage_handle = facade.tasks_ask(&stage)?.handle;
     let answer = vault
         .memory(unit, EdgeActorClass::Human)
-        .tasks_answer(&stage_handle, unit)?;
-    let at = answer.at + 1;
+        .tasks_answer(&stage_handle, &TaskAskWord::new(unit))?;
+    assert_eq!(answer.result_ref, unit);
+    let at = answered_at(&vault, owner, stage_handle) + 1;
     let stage_fact = EntityId::now();
     let mut body = fact(unit);
     body.predicate = "crm.stage".into();

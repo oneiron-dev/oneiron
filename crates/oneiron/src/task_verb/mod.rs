@@ -5,6 +5,7 @@
 
 mod ask_facade;
 mod ask_record;
+mod ask_settlement;
 mod ask_types;
 mod consts;
 mod consult_fanout_admission;
@@ -99,71 +100,22 @@ mod production_ports_tests;
 
 pub(crate) use symbol_lease::forget_symbols;
 
-mod ask;
-mod ask_wait;
-pub use ask::{TaskAskAnswer, TaskAskHandle, TaskAskReceipt, TaskAskSpec};
-pub use ask_wait::TaskWaitOutcome;
-
-#[cfg(test)]
-mod ask_tests;
-
 pub mod sdk;
 
 #[cfg(test)]
 mod ask_outcome_tests;
+#[cfg(test)]
+mod ask_tests;
 
-// Scope asks retain their own payload and group identity. They are not holder-list asks.
+pub(crate) use ask_facade::settle_waiting_asks;
+pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put};
+pub(crate) use ask_settlement::settle_ask_if_due;
+
 pub use ask_types::{
-    AskAuthorityScope, TaskAskAnswer as ScopeTaskAskAnswer, TaskAskHandle as ScopeTaskAskHandle,
-    TaskAskHoldReason, TaskAskReceipt as ScopeTaskAskReceipt, TaskAskSpec as ScopeTaskAskSpec,
-    TaskAskStatus, TaskAskTarget, TaskAskWait,
+    AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide,
+    TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskElectorate, TaskAskEvidence,
+    TaskAskEvidenceReason, TaskAskFallback, TaskAskHandle, TaskAskHoldReason, TaskAskNeed,
+    TaskAskOptionId, TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult,
+    TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus,
+    TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
-
-mod ask_request_sealed {
-    pub trait Sealed {}
-}
-
-/// One admitted ask request family, with its matching receipt type.
-///
-/// This trait is sealed. It does not let callers add a new authority lane.
-pub trait TaskAskRequest: ask_request_sealed::Sealed {
-    type Receipt;
-
-    #[doc(hidden)]
-    fn submit(&self, memory: &crate::memory::Memory<'_>)
-    -> crate::memory::MemoryResult<Self::Receipt>;
-}
-
-impl ask_request_sealed::Sealed for TaskAskSpec {}
-impl TaskAskRequest for TaskAskSpec {
-    type Receipt = TaskAskReceipt;
-
-    fn submit(
-        &self,
-        memory: &crate::memory::Memory<'_>,
-    ) -> crate::memory::MemoryResult<Self::Receipt> {
-        memory.tasks_ask_holders(self)
-    }
-}
-
-impl ask_request_sealed::Sealed for ScopeTaskAskSpec {}
-impl TaskAskRequest for ScopeTaskAskSpec {
-    type Receipt = ScopeTaskAskReceipt;
-
-    fn submit(
-        &self,
-        memory: &crate::memory::Memory<'_>,
-    ) -> crate::memory::MemoryResult<Self::Receipt> {
-        memory.tasks_ask_scope(self)
-    }
-}
-
-impl crate::memory::Memory<'_> {
-    /// Admit an ask and return its handle immediately, without waiting.
-    pub fn tasks_ask<S: TaskAskRequest>(
-        &self,
-        spec: &S,
-    ) -> crate::memory::MemoryResult<S::Receipt> {
-        spec.submit(self)
-    }
-}

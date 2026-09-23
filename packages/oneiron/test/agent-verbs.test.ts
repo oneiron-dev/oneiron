@@ -1,19 +1,37 @@
 import { expect, test } from "bun:test"
 import { agentVerbs } from "../src/agent-verbs"
+import type { TaskAskAnswer, TaskAskResult, TaskAskSpec, TaskAskWord } from "../src/agent-verbs"
 
-test("generated task and room projections keep the caller step and winner data", () => {
+test("generated task and room projections keep the caller step and settlement data", () => {
   const calls: [string, unknown][] = []
-  const winner = { task_ref: "task", actor_ref: "first", result_ref: "result", at: 1, answer_ref: null, question_version: null }
+  const actor = "11".repeat(16), question = "22".repeat(16), group = "33".repeat(16)
+  const spec: TaskAskSpec = {
+    intent_key: "one", who: { people: [actor] },
+    what: { reference: { turn: question }, revision: 1, options: { yes: "Yes" }, context_refs: [] },
+    until: 100, decide: "first",
+  }
+  const word: TaskAskWord = { result_ref: question, option: "yes" }
+  const answer: TaskAskAnswer = { task_ref: "44".repeat(16), actor_ref: actor, result_ref: question, word_ref: "55".repeat(16) }
+  const result: TaskAskResult = {
+    coverage: { met: true, required: 1, responded: [actor], unknown: [], unmet_people: [] },
+    decision: { first: answer }, fallback: null,
+    evidence: [{ answer, word, source: "human", person_ref: actor, order: 1, reason: "counted" }],
+    settlement: { group_ref: group, reference: "66".repeat(16), revision: 1, at: 2, cutoff_order: 1,
+      reason: "first_word", requested: spec, effective: { ...spec, default: "ask_me", need: { count: 1, of: "any" }, provisional: "inform", on_disagree: { branch: "hold", surface: "card" }, remind: [] },
+      base_policy_version: 1, electorate: [actor], question_digest: Array(32).fill(0), unmet_sources: [], outcome_answer_ref: null },
+  }
   const api = agentVerbs((method, input) => {
     calls.push([method, input])
-    if (method === "tasksAsk") return { handle: { task_ref: "task" }, count: 1, replayed: false }
-    if (method === "tasksWait") return { Ready: winner }
-    return winner
+    if (method === "tasksAsk") return { handle: { group_ref: group }, task_refs: [answer.task_ref], hold: null, idempotent_replay: false }
+    if (method === "tasksWait") return { Ready: result }
+    return answer
   })
-  const receipt = api.tasks.ask({ question: { text: "Proceed?" }, holders: ["first"], idempotency_key: "one" })
-  expect(api.tasks.wait(receipt.handle, "step-two")).toEqual({ Ready: winner })
-  expect(api.tasks.answer(receipt.handle, "result")).toEqual(winner)
+  const receipt = api.tasks.ask(spec)
+  expect(api.tasks.wait(receipt.handle, "step-two")).toEqual({ Ready: result })
+  expect(api.tasks.answer(receipt.handle, word)).toEqual(answer)
   api.rooms.claim("room", "turn")
+  expect(calls[0]).toEqual(["tasksAsk", spec])
   expect(calls[1]).toEqual(["tasksWait", { handle: receipt.handle, step_key: "step-two" }])
+  expect(calls[2]).toEqual(["tasksAnswer", { handle: receipt.handle, word }])
   expect(calls[3]).toEqual(["roomsClaim", { room_ref: "room", turn_ref: "turn" }])
 })

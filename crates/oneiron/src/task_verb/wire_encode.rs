@@ -35,7 +35,7 @@ pub(super) fn entity_ref_value(entity_ref: EntityId) -> Value {
 pub(super) fn task_assignee_value(assignee: TaskAssignee) -> Value {
     let mut entries = vec![(Value::from("kind"), Value::from(assignee.as_str()))];
     match assignee {
-        TaskAssignee::Dreamer | TaskAssignee::AnswerHolders => {}
+        TaskAssignee::Dreamer => {}
         TaskAssignee::AgentDef { agent_def_ref } => entries.push((
             Value::from("agent_def_ref"),
             entity_ref_value(agent_def_ref),

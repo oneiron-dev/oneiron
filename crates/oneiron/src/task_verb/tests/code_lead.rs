@@ -67,13 +67,23 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     let origin_question = consult_turn(&vault, 0xAC);
     let origin = vault
         .memory(originator, EdgeActorClass::Agent)
-        .tasks_ask(&ScopeTaskAskSpec {
+        .tasks_ask(&TaskAskSpec {
             intent_key: "panel-origin".to_owned(),
-            target: TaskAskTarget::Responder(TaskAssignee::Child { actor_ref: lead }),
-            question_ref: origin_question,
-            context_refs: vec![],
-            deadline_at: unix_seconds_now() + 3600,
-            label: None,
+            ..crate::task_verb::TaskAskSpec::shorthand(
+                Some(TaskAskTarget::Responder(TaskAssignee::Child {
+                    actor_ref: lead,
+                })),
+                crate::task_verb::TaskAskQuestion {
+                    reference: origin_question,
+                    revision: 1,
+                    options: Default::default(),
+                    context_refs: vec![],
+                    label: None,
+                    outcome_binding: None,
+                },
+                Some(unix_seconds_now() + 3600),
+                crate::task_verb::TaskAskDefault::AskMe,
+            )
         })
         .unwrap();
     let dispatcher = HostSelfDispatcher::for_agent_attempt(
@@ -158,13 +168,21 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
         let mut context_refs = planned.consult.context_refs.clone();
         context_refs.extend_from_slice(extra);
         match dispatcher
-            .dispatch(SelfCall::TasksAsk(ScopeTaskAskSpec {
+            .dispatch(SelfCall::TasksAsk(TaskAskSpec {
                 intent_key: format!("panel:{index}"),
-                target: TaskAskTarget::Responder(planned.responder),
-                question_ref: question,
-                context_refs,
-                deadline_at: unix_seconds_now() + 3600,
-                label: None,
+                ..crate::task_verb::TaskAskSpec::shorthand(
+                    Some(TaskAskTarget::Responder(planned.responder)),
+                    crate::task_verb::TaskAskQuestion {
+                        reference: question,
+                        revision: 1,
+                        options: Default::default(),
+                        context_refs: context_refs,
+                        label: None,
+                        outcome_binding: None,
+                    },
+                    Some(unix_seconds_now() + 3600),
+                    crate::task_verb::TaskAskDefault::AskMe,
+                )
             }))
             .unwrap()
         {
@@ -196,7 +214,7 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
             dispatcher
                 .dispatch(SelfCall::TasksWait(receipt.handle))
                 .unwrap(),
-            SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Answered(_))
+            SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Settled(_))
         ));
         results.push(result);
     }
@@ -219,13 +237,26 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
             &answer_input(report.entity_ref(), report),
         )
         .unwrap();
-    let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Answered(answer)) = dispatcher
+    let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Settled(result)) = dispatcher
         .dispatch(SelfCall::TasksWait(synthesis.handle))
         .unwrap()
     else {
         panic!("panel did not complete")
     };
+    assert!(
+        result
+            .evidence
+            .iter()
+            .any(|entry| entry.answer.result_ref == report.entity_ref())
+    );
+    let TaskAskDecision::First(answer) = &result.decision else {
+        panic!("the synthesis was submitted as a human word")
+    };
+    assert_eq!(answer.actor_ref, peers[3]);
+    assert_eq!(answer.task_ref, synthesis.task_refs[0]);
     assert_eq!(answer.result_ref, report.entity_ref());
+    assert!(result.coverage.met);
+    assert!(result.fallback.is_none());
     vault
         .memory(lead, EdgeActorClass::Agent)
         .land_consult_result(
@@ -233,13 +264,18 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
             &answer_input(report.entity_ref(), report),
         )
         .unwrap();
-    assert!(matches!(
-        vault
-            .memory(originator, EdgeActorClass::Agent)
-            .tasks_wait(origin.handle)
-            .unwrap(),
-        TaskAskWait::Ready(TaskAskStatus::Answered(_))
-    ));
+    let TaskAskWait::Ready(origin_result) = vault
+        .memory(originator, EdgeActorClass::Agent)
+        .tasks_wait(origin.handle, None)
+        .unwrap()
+    else {
+        panic!("the lead's result is durable evidence")
+    };
+    assert_eq!(origin_result.decision, TaskAskDecision::Unknown);
+    assert!(origin_result.coverage.responded.is_empty());
+    assert!(origin_result.evidence.iter().any(|entry| {
+        entry.source == TaskAskSource::Executor && entry.answer.result_ref == report.entity_ref()
+    }));
     // Earlier member inputs remain blind after the downstream passes.
     for member in members {
         assert_eq!(

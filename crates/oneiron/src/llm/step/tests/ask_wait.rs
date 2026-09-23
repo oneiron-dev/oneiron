@@ -1,7 +1,7 @@
 use super::*;
 use crate::task_verb::{
-    ConsultPayloadRef, ConsultResultInput, ConsultResultKind, ScopeTaskAskSpec, TaskAskStatus,
-    TaskAskTarget, TaskAskWait, TaskAssignee,
+    ConsultPayloadRef, ConsultResultInput, ConsultResultKind, TaskAskSpec, TaskAskTarget,
+    TaskAskWait, TaskAssignee,
 };
 
 fn turn(vault: &Vault) -> ConsultPayloadRef {
@@ -46,13 +46,23 @@ fn ask_returns_before_idle_and_multiple_steps_resume_from_one_answer_after_resta
     let question = turn(&vault);
     let memory = vault.memory(one.actor.entity_ref(), one.actor.actor_class());
     let ask = memory
-        .tasks_ask(&ScopeTaskAskSpec {
+        .tasks_ask(&TaskAskSpec {
             intent_key: "idle-only".to_owned(),
-            target: TaskAskTarget::Responder(TaskAssignee::Peer { actor_ref: peer }),
-            question_ref: question,
-            context_refs: vec![],
-            deadline_at: crate::unix_seconds_now() + 3600,
-            label: None,
+            ..crate::task_verb::TaskAskSpec::shorthand(
+                Some(TaskAskTarget::Responder(TaskAssignee::Peer {
+                    actor_ref: peer,
+                })),
+                crate::task_verb::TaskAskQuestion {
+                    reference: question,
+                    revision: 1,
+                    options: Default::default(),
+                    context_refs: vec![],
+                    label: None,
+                    outcome_binding: None,
+                },
+                Some(crate::unix_seconds_now() + 3600),
+                crate::task_verb::TaskAskDefault::AskMe,
+            )
         })
         .expect("ask queued");
     let runner = DreamerRunnerStore::new(&vault);
@@ -86,8 +96,8 @@ fn ask_returns_before_idle_and_multiple_steps_resume_from_one_answer_after_resta
         )
         .expect("answer lands");
     assert!(matches!(
-        memory.tasks_wait(ask.handle).unwrap(),
-        TaskAskWait::Ready(TaskAskStatus::Answered(_))
+        memory.tasks_wait(ask.handle, None).unwrap(),
+        TaskAskWait::Ready(_)
     ));
     // A crash here leaves two durable signals and owner-checked parks, not a
     // lost callback. Startup maintenance consumes both without parking the run.

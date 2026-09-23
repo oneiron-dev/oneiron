@@ -142,6 +142,8 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
 
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     Ok(match name {
+        "tasks.ask" => SelfCall::TasksAsk(parse::<crate::task_verb::TaskAskSpec>(input)?),
+        "tasks.wait" => SelfCall::TasksWait(parse::<crate::task_verb::TaskAskHandle>(input)?),
         "self.memory.put_claim" => {
             let args: Claim = parse(input)?;
             let occurred = args.occurred.unwrap_or(Occurred {
@@ -234,11 +236,8 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             crate::task_verb::TaskAskStatus::Pending { hold } => {
                 json!({"kind":"task_ask_status","state":"pending","hold":hold.as_ref().map(|_|"no_live_route")})
             }
-            crate::task_verb::TaskAskStatus::Exhausted => {
-                json!({"kind":"task_ask_status","state":"exhausted"})
-            }
-            crate::task_verb::TaskAskStatus::Answered(answer) => {
-                json!({"kind":"task_ask_status","state":"answered","task":answer.task_ref.to_hex(),"actor":answer.actor_ref.to_hex(),"result":answer.result_ref.to_hex()})
+            crate::task_verb::TaskAskStatus::Settled(result) => {
+                json!({"kind":"task_ask_status","state":"settled","result":result})
             }
         },
         SelfDispatchOutcome::Speech(value) => {
@@ -343,4 +342,37 @@ pub(super) fn edge_kind(name: &str) -> Result<EdgeKind> {
         "discharged_by" => EdgeKind::DischargedBy,
         _ => return Err(failure("invalid edge kind")),
     })
+}
+
+#[cfg(test)]
+#[test]
+fn ask_and_wait_bridge_decode_the_engine_spec_without_guest_host_fields() {
+    let id = EntityId::now();
+    let spec = crate::task_verb::TaskAskSpec::shorthand(
+        None,
+        crate::task_verb::TaskAskQuestion::new(crate::task_verb::ConsultPayloadRef::Turn(id)),
+        Some(100),
+        crate::task_verb::TaskAskDefault::Hold,
+    );
+    let input = serde_json::to_string(&spec).unwrap();
+    assert_eq!(
+        self_call("tasks.ask", &input, 1).unwrap(),
+        SelfCall::TasksAsk(spec)
+    );
+    let handle = crate::task_verb::TaskAskHandle { group_ref: id };
+    assert_eq!(
+        self_call("tasks.wait", &serde_json::to_string(&handle).unwrap(), 1).unwrap(),
+        SelfCall::TasksWait(handle)
+    );
+    assert!(
+        self_call(
+            "tasks.wait",
+            &json!({"group_ref": id.to_hex(), "step_key": "guest"}).to_string(),
+            1
+        )
+        .is_err()
+    );
+    let mut forged: Value = serde_json::from_str(&input).unwrap();
+    forged["actor"] = Value::from(id.to_hex());
+    assert!(self_call("tasks.ask", &forged.to_string(), 1).is_err());
 }

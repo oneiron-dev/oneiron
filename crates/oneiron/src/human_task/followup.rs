@@ -16,6 +16,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::OutboundDraftInput;
 use crate::outbound::outbound_verb_contract;
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use crate::task_verb::{
     task_create_owner, task_follow_up_dedupe_key, task_human_assignee, task_is_terminal,
@@ -50,16 +51,31 @@ pub fn resolve_native_human_route(
     vault: &Vault,
     person_ref: EntityId,
 ) -> HumanTaskResult<NativeHumanRoute> {
-    if vault.get_entity_type(&person_ref)? != Some(ENTITY_TYPE_PERSON) {
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    resolve_native_human_route_in(vault, &txn, person_ref)
+}
+
+pub(crate) fn resolve_native_human_route_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person_ref: EntityId,
+) -> HumanTaskResult<NativeHumanRoute> {
+    if vault.get_entity_type_in_txn(txn, &person_ref)? != Some(ENTITY_TYPE_PERSON) {
         return Err(HumanTaskError::NotAPerson);
     }
-    let Some(party_key) = comm_party_key(vault, person_ref)? else {
+    let Some(party_key) = comm_party_key(vault, txn, person_ref)? else {
         return Err(HumanTaskError::NotNativelyReachable);
     };
-    let vetoed = vetoed_channel_classes(vault, person_ref, vault.store.clock.now_recorded_at())?;
+    let vetoed =
+        vetoed_channel_classes(vault, txn, person_ref, vault.store.clock.now_recorded_at())?;
 
-    for channel_identity_ref in vault.entities_by_type(ENTITY_TYPE_CHANNEL_IDENTITY)? {
-        let Some(identity) = vault.get_channel_identity(&channel_identity_ref)? else {
+    for channel_identity_ref in
+        vault
+            .store
+            .port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)?
+    {
+        let channel_identity_ref = channel_identity_ref?;
+        let Some(identity) = vault.get_channel_identity_in_txn(txn, &channel_identity_ref)? else {
             continue;
         };
         if identity.state != ChannelIdentityState::Active || vetoed.contains(&identity.channel) {
@@ -71,7 +87,7 @@ pub fn resolve_native_human_route(
             continue;
         }
         let Some((_, contact)) =
-            vault.find_counterparty_contact(&channel_identity_ref, &party_key)?
+            vault.find_counterparty_contact_in_txn(txn, &channel_identity_ref, &party_key)?
         else {
             continue;
         };
@@ -91,8 +107,12 @@ pub fn resolve_native_human_route(
 /// The comm-owned PERSON's `party_key` — the address the identity plane already
 /// knows this person by. Absent means the PERSON was minted by some other
 /// surface and carries no communication address.
-fn comm_party_key(vault: &Vault, person_ref: EntityId) -> Result<Option<String>> {
-    let Some(raw) = vault.get_raw(&person_ref)? else {
+fn comm_party_key(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person_ref: EntityId,
+) -> Result<Option<String>> {
+    let Some(raw) = vault.get_raw_in(txn, &person_ref)? else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -122,12 +142,13 @@ fn comm_party_key(vault: &Vault, person_ref: EntityId) -> Result<Option<String>>
 /// an active opt-out, or an explicit "not reachable here".
 fn vetoed_channel_classes(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     person_ref: EntityId,
     now: u64,
 ) -> Result<BTreeSet<String>> {
     let mut vetoed = BTreeSet::new();
-    for claim_ref in vault.claims_for_subject(&person_ref)? {
-        let Some(body) = vault.get_claim(&claim_ref)? else {
+    for claim_ref in vault.claims_for_subject_in_txn(txn, &person_ref)? {
+        let Some(body) = vault.get_claim_in_txn(txn, &claim_ref)? else {
             continue;
         };
         if body.predicate != PREDICATE_COMM_REACHABLE_VIA
@@ -187,6 +208,10 @@ pub(crate) fn register_human_followup_in_txn(
     if followup_record_in_txn(vault, &*wtxn, task_ref)?.is_some() {
         return Ok(());
     }
+    let next_due_at = crate::task_verb::ask_notice_at_in(vault, wtxn, task_ref, 0)?.map_or_else(
+        || now.saturating_add(REMINDER_AFTER_SECONDS),
+        |(notice, deadline)| notice.map_or(deadline, |at| at.min(deadline)),
+    );
     put_followup_record_in_txn(
         vault,
         wtxn,
@@ -196,7 +221,7 @@ pub(crate) fn register_human_followup_in_txn(
             assignee_ref,
             stage: HumanFollowupStage::Tracking,
             stage_generation: 0,
-            next_due_at: Some(now.saturating_add(REMINDER_AFTER_SECONDS)),
+            next_due_at: Some(next_due_at),
             reminders_sent: 0,
             last_receipt_ref: None,
             completed_at: None,
@@ -267,6 +292,32 @@ impl<'a> HumanTaskFollowupDriver<'a> {
             };
             if ask_settled || task_is_terminal(self.vault, record.task_ref)? {
                 self.complete(&record, now)?;
+                continue;
+            }
+            let ask_schedule = {
+                let txn = self.vault.store.env.read_txn()?;
+                crate::task_verb::ask_notice_at_in(
+                    self.vault,
+                    &txn,
+                    record.task_ref,
+                    record.reminders_sent,
+                )?
+            };
+            if let Some((notice, _)) = ask_schedule {
+                if notice.is_none_or(|at| at > now) {
+                    continue;
+                }
+                let stage = HumanFollowupStage::ReminderDue;
+                let token = format!(
+                    "{}:{}",
+                    super::model::HUMAN_FOLLOWUP_STAGE_REMINDER,
+                    record.reminders_sent
+                );
+                let Some(dispatch) = self.schedule(&record, stage, &token)? else {
+                    continue;
+                };
+                self.advance(&record, stage, 0, now, &dispatch.intent_ref)?;
+                dispatched.push(dispatch);
                 continue;
             }
             let Some((next_stage, family, interval)) = record.stage.advance() else {
@@ -397,16 +448,27 @@ impl<'a> HumanTaskFollowupDriver<'a> {
         } else {
             record.stage_generation
         };
-        let next = HumanTaskFollowupRecord {
-            stage,
-            stage_generation,
-            next_due_at: Some(now.saturating_add(interval)),
-            reminders_sent,
-            last_receipt_ref: Some(intent_ref.to_owned()),
-            ..record.clone()
-        };
-        self.vault
-            .with_write_txn(|wtxn| put_followup_record_in_txn(self.vault, wtxn, &next))
+        self.vault.with_write_txn(|wtxn| {
+            let next_due_at = crate::task_verb::ask_notice_at_in(
+                self.vault,
+                wtxn,
+                record.task_ref,
+                reminders_sent,
+            )?
+            .map_or_else(
+                || now.saturating_add(interval),
+                |(notice, deadline)| notice.map_or(deadline, |at| at.min(deadline)),
+            );
+            let next = HumanTaskFollowupRecord {
+                stage,
+                stage_generation,
+                next_due_at: Some(next_due_at),
+                reminders_sent,
+                last_receipt_ref: Some(intent_ref.to_owned()),
+                ..record.clone()
+            };
+            put_followup_record_in_txn(self.vault, wtxn, &next)
+        })
     }
 
     fn complete(&self, record: &HumanTaskFollowupRecord, now: u64) -> Result<()> {

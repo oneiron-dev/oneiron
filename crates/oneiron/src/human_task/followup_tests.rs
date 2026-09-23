@@ -215,7 +215,6 @@ pub(super) fn park_on_human(
         run_id: Some("human-run".to_owned()),
         envelope_actor: WriteActor::new(fixture.owner, EdgeActorClass::Agent),
         subject: fixture.person,
-        pinned_config: None,
         deadline: None,
         now_ms: NOW,
     };
@@ -287,7 +286,6 @@ pub(super) fn open_test_trap(
         run_id: Some("human-run".to_owned()),
         envelope_actor: WriteActor::new(fixture.owner, EdgeActorClass::Agent),
         subject: fixture.person,
-        pinned_config: None,
         deadline: None,
         now_ms: NOW,
     };

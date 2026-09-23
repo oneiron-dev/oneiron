@@ -166,17 +166,50 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
         )
         .unwrap(),
     );
+    let question = EntityId::now();
+    vault
+        .put_entity(
+            &question,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &[0xc0],
+        )
+        .unwrap();
+    let auth = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let bound = oneiron::consent::GrantBound::action(
+        oneiron::consent::ActorBound::new(second.to_hex()).unwrap(),
+        oneiron::consent::ActionClass::new("review").unwrap(),
+        oneiron::consent::ActionEnvelope::new(["project:alpha".into()]).unwrap(),
+    )
+    .unwrap();
+    vault.create_standing_grant(&auth, bound).unwrap();
+    let ask_spec = |key: String| {
+        json!({
+            "intent_key": key,
+            "who": {"authority": {"class": "review", "selectors": ["project:alpha"], "target": null, "budget": null, "receipt_required": false}},
+            "what": {"reference": {"turn": question.to_hex()}, "revision": 1, "options": {}, "context_refs": [], "label": null, "outcome_binding": null},
+            "until": u64::MAX, "decide": "first",
+        })
+    };
     let app = crate::build_app(server);
     let (status, _) = post(app.clone(), SECRET, "tasks.ask", json!({})).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     for answer_first in [false, true] {
-        let spec = json!({"question":{"text":"Proceed?"},"holders":[owner.to_hex(),second.to_hex()],"idempotency_key":format!("order-{answer_first}"),"outcome_binding":null});
+        let spec = ask_spec(format!("order-{answer_first}"));
         let (status, receipt) = post(app.clone(), &owner_token, "tasks.ask", spec.clone()).await;
         assert_eq!(status, StatusCode::OK, "{receipt}");
         let handle = receipt["handle"].clone();
         let (_, retry) = post(app.clone(), &owner_token, "tasks.ask", spec).await;
         assert_eq!(retry["handle"], handle);
-        assert_eq!(retry["replayed"], true);
+        assert_eq!(retry["idempotent_replay"], true);
         let wait = json!({"handle":handle,"step_key":"caller-step"});
         let (status, _) = post(
             app.clone(),
@@ -192,14 +225,20 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
             assert_eq!(status, StatusCode::OK, "{pending}");
             assert!(pending.get("Pending").is_some());
             // Only that logical step waited: the caller can issue another ask now.
-            let (status,other)=post(app.clone(),&owner_token,"tasks.ask",json!({"question":{"text":"Unrelated"},"holders":[owner.to_hex()],"idempotency_key":"kept-working","outcome_binding":null})).await;
+            let (status, other) = post(
+                app.clone(),
+                &owner_token,
+                "tasks.ask",
+                ask_spec("kept-working".into()),
+            )
+            .await;
             assert_eq!(status, StatusCode::OK, "{other}");
         }
         let (status, first) = post(
             app.clone(),
             &owner_token,
             "tasks.answer",
-            json!({"handle":handle,"result_ref":owner.to_hex()}),
+            json!({"handle":handle,"word":{"result_ref":owner.to_hex(),"option":null,"inform_for":null,"provenance_refs":[]}}),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{first}");
@@ -207,20 +246,28 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
             app.clone(),
             &second_token,
             "tasks.answer",
-            json!({"handle":handle,"result_ref":second.to_hex()}),
+            json!({"handle":handle,"word":{"result_ref":second.to_hex(),"option":null,"inform_for":null,"provenance_refs":[]}}),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{second_answer}");
-        assert_eq!(second_answer, first);
+        assert_eq!(second_answer["actor_ref"], second.to_hex());
+        assert_eq!(second_answer["result_ref"], second.to_hex());
+        assert_ne!(second_answer["task_ref"], first["task_ref"]);
         let (_, ready) = post(app.clone(), &owner_token, "tasks.wait", wait.clone()).await;
-        assert_eq!(ready["Ready"], first);
+        assert_eq!(ready["Ready"]["decision"]["first"], first);
         let (_, replayed) = post(app.clone(), &owner_token, "tasks.wait", wait).await;
-        assert_eq!(replayed["AlreadyResumed"], first);
+        assert_eq!(replayed["Ready"], ready["Ready"]);
     }
     for i in 0..12 {
-        let (status,body)=post(app.clone(),&owner_token,"tasks.ask",json!({"question":{"text":"burst"},"holders":[owner.to_hex()],"idempotency_key":format!("burst-{i}"),"outcome_binding":null})).await;
+        let (status, body) = post(
+            app.clone(),
+            &owner_token,
+            "tasks.ask",
+            ask_spec(format!("burst-{i}")),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert!(body["count"].as_u64().unwrap() > 0);
+        assert_eq!(body["task_refs"].as_array().unwrap().len(), 2);
     }
 }
 

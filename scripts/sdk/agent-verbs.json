@@ -303,13 +303,12 @@
     },
     {
       "name": "tasks.wait",
-      "input": "TaskWaitRequest",
-      "output": "crate::task_verb::TaskWaitOutcome",
-      "call": "memory.tasks_wait_external(&input.handle, &input.step_key)?",
+      "input": "crate::task_verb::sdk::TaskWaitRequest",
+      "output": "crate::task_verb::TaskAskWait",
+      "call": "memory.tasks_wait(input.handle, Some(&input.step_key))?",
       "scope": "Write",
       "mcp_fields": {
-        "task_ref": "handle.task_ref",
-        "key": "step_key"
+        "spec": "$"
       },
       "mcp": "tool-first",
       "mcp_scope": "unrestricted",
@@ -317,9 +316,9 @@
     },
     {
       "name": "tasks.answer",
-      "input": "TaskAnswerRequest",
+      "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
-      "call": "memory.tasks_answer(&input.handle, crate::EntityId::from_hex(&input.result_ref)?)?",
+      "call": "memory.tasks_answer(&input.handle, &input.word)?",
       "scope": "Write",
       "mcp_fields": {
         "spec": "$"
@@ -335,7 +334,7 @@
       "call": "memory.tasks_ask_outcomes(&input)?",
       "scope": "Read",
       "mcp_fields": {
-        "task_ref": "task_ref"
+        "spec": "$"
       },
       "mcp": "tool-first",
       "mcp_scope": "unrestricted",

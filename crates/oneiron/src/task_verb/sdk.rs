@@ -13,7 +13,7 @@ pub struct TaskWaitRequest {
 #[serde(deny_unknown_fields)]
 pub struct TaskAnswerRequest {
     pub handle: TaskAskHandle,
-    pub result_ref: String,
+    pub word: super::TaskAskWord,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

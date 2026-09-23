@@ -1572,7 +1572,7 @@ fn self_context_calls_replay_through_the_pinned_codec() -> Result<()> {
     assert_eq!(self_call_request_value(&call)?, request);
 
     let outcome = SelfDispatchOutcome::Context(SelfContextResult { spec });
-    let encoded = self_dispatch_outcome_value(&outcome);
+    let encoded = self_dispatch_outcome_value(&outcome).unwrap();
     assert_eq!(decode_self_dispatch_outcome(&encoded)?, outcome);
     Ok(())
 }
@@ -1674,7 +1674,7 @@ fn self_speech_calls_round_trip_without_disturbing_landed_tokens() -> Result<()>
             is_visible: effect.speech_utterance().expect("utterance").is_visible(),
             emitted: true,
         });
-        let encoded = self_dispatch_outcome_value(&outcome);
+        let encoded = self_dispatch_outcome_value(&outcome).unwrap();
         assert_eq!(decode_self_dispatch_outcome(&encoded)?, outcome);
     }
 
@@ -1684,7 +1684,8 @@ fn self_speech_calls_round_trip_without_disturbing_landed_tokens() -> Result<()>
         order: 0,
         is_visible: true,
         emitted: true,
-    }));
+    }))
+    .unwrap();
     let Value::Map(mut entries) = forged else {
         panic!("speech outcome encodes as a map");
     };
@@ -1821,7 +1822,7 @@ fn speech_replay_rejects_successful_non_speech_outcome() -> Result<()> {
         seq: 0,
         effect: SelfEffect::Speak,
         request: self_call_request_value(&call)?,
-        outcome: self_dispatch_outcome_value(&outcome),
+        outcome: self_dispatch_outcome_value(&outcome).unwrap(),
         started_at_ms,
         finished_at_ms: started_at_ms,
     };
@@ -2872,7 +2873,7 @@ fn report_blocked_dispatch_witnesses_fenced_receipt_and_only_projects_to_issues(
     );
     assert_eq!(dispatcher.dispatch(call)?, outcome);
     assert_eq!(
-        decode_self_dispatch_outcome(&self_dispatch_outcome_value(&outcome))?,
+        decode_self_dispatch_outcome(&self_dispatch_outcome_value(&outcome).unwrap())?,
         outcome
     );
     assert!(
@@ -3072,6 +3073,52 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
     let task = EntityId::now();
     let actor = EntityId::now();
     let result = EntityId::now();
+    let spec = crate::task_verb::TaskAskSpec::shorthand(
+        None,
+        crate::task_verb::TaskAskQuestion::new(crate::task_verb::ConsultPayloadRef::Turn(result)),
+        Some(100),
+        crate::task_verb::TaskAskDefault::Hold,
+    );
+    let answer = crate::task_verb::TaskAskAnswer {
+        task_ref: task,
+        actor_ref: actor,
+        result_ref: result,
+        word_ref: EntityId::now(),
+    };
+    let ask_result = crate::task_verb::TaskAskResult {
+        coverage: crate::task_verb::TaskAskCoverage {
+            met: true,
+            required: 1,
+            responded: [actor].into(),
+            unknown: Default::default(),
+            unmet_people: Default::default(),
+        },
+        decision: crate::task_verb::TaskAskDecision::First(answer),
+        fallback: None,
+        evidence: vec![crate::task_verb::TaskAskEvidence {
+            answer,
+            word: crate::task_verb::TaskAskWord::new(result),
+            source: crate::task_verb::TaskAskSource::Human,
+            person_ref: actor,
+            order: 1,
+            reason: crate::task_verb::TaskAskEvidenceReason::Counted,
+        }],
+        settlement: crate::task_verb::TaskAskSettlement {
+            group_ref: group,
+            reference: EntityId::now(),
+            revision: 1,
+            at: 1,
+            cutoff_order: 1,
+            reason: crate::task_verb::TaskAskSettlementReason::FirstWord,
+            requested: spec.clone(),
+            effective: spec,
+            base_policy_version: 1,
+            electorate: [actor].into(),
+            question_digest: [0; 32],
+            unmet_sources: Default::default(),
+            outcome_answer_ref: None,
+        },
+    };
     let outcomes = vec![
         SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued {
             attempt_ref: crate::attempt_queue::AttemptId::now(),
@@ -3079,8 +3126,8 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
         SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::ProposedWiden {
             proposal_ref: "proposal:bounded".to_owned(),
         }),
-        SelfDispatchOutcome::TaskAsk(crate::task_verb::ScopeTaskAskReceipt {
-            handle: crate::task_verb::ScopeTaskAskHandle { group_ref: group },
+        SelfDispatchOutcome::TaskAsk(crate::task_verb::TaskAskReceipt {
+            handle: crate::task_verb::TaskAskHandle { group_ref: group },
             task_refs: vec![task],
             hold: Some(crate::task_verb::TaskAskHoldReason::NoLiveRoute),
             idempotent_replay: false,
@@ -3088,18 +3135,13 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
         SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Pending {
             hold: Some(crate::task_verb::TaskAskHoldReason::NoLiveRoute),
         }),
-        SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Answered(
-            crate::task_verb::ScopeTaskAskAnswer {
-                task_ref: task,
-                actor_ref: actor,
-                result_ref: result,
-            },
-        )),
-        SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Exhausted),
+        SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Settled(Box::new(
+            ask_result,
+        ))),
     ];
     for outcome in outcomes {
         assert_eq!(
-            decode_self_dispatch_outcome(&self_dispatch_outcome_value(&outcome)).unwrap(),
+            decode_self_dispatch_outcome(&self_dispatch_outcome_value(&outcome).unwrap()).unwrap(),
             outcome
         );
     }

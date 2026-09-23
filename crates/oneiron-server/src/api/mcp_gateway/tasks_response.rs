@@ -497,7 +497,9 @@ async fn execute_mcp_agent_verb(
             Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "tasks.wait" => {
-            let input: oneiron::task_verb::sdk::TaskWaitRequest = serde_json::from_value(json!({"handle":{"task_ref":a.task_ref.clone().ok_or_else(invalid)?},"step_key":a.key.clone().ok_or_else(invalid)?})).map_err(|_| invalid())?;
+            let input: oneiron::task_verb::sdk::TaskWaitRequest =
+                serde_json::from_value(a.spec.clone().ok_or_else(invalid)?)
+                    .map_err(|_| invalid())?;
 
             let output =
                 oneiron::task_verb::sdk::tasks_wait(&memory, input).map_err(mcp_facade_error)?;
@@ -530,7 +532,7 @@ async fn execute_mcp_agent_verb(
         }
         "tasks.outcomes" => {
             let input: oneiron::task_verb::TaskAskHandle =
-                serde_json::from_value(json!({"task_ref":a.task_ref.clone().ok_or_else(invalid)?}))
+                serde_json::from_value(a.spec.clone().ok_or_else(invalid)?)
                     .map_err(|_| invalid())?;
 
             let output = oneiron::task_verb::sdk::tasks_outcomes(&memory, input)

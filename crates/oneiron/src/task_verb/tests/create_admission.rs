@@ -573,3 +573,77 @@ fn caller_time_variation_does_not_bypass_one_engine_rate_window() {
     );
     assert_eq!(vault.task_create_count(own, u64::MAX).unwrap(), 4);
 }
+
+#[test]
+fn task_rate_limit_window_rollover_and_actor_isolation() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let other = EntityId::now();
+    put_person(&vault, other);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 0);
+    vault.with_write_txn(|txn| {
+        assert!(consume_create_rate_slot(&vault, txn, actor, 0, rate)?);
+        assert!(!consume_create_rate_slot(&vault, txn, actor, 0, rate)?);
+        assert_eq!(record_task_create(&vault, txn, actor, 0, rate)?, 2);
+        assert!(consume_create_rate_slot(&vault, txn, other, 0, rate)?);
+        Ok(())
+    })?;
+    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 2);
+    assert_eq!(vault.task_create_count(other, rate.window_seconds)?, 1);
+    vault.with_write_txn(|txn| {
+        assert!(consume_create_rate_slot(
+            &vault,
+            txn,
+            actor,
+            u64::MAX,
+            rate
+        )?);
+        assert_eq!(record_task_create(&vault, txn, actor, u64::MAX, rate)?, 2);
+        Ok(())
+    })?;
+    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 0);
+    assert_eq!(vault.task_create_count(other, rate.window_seconds)?, 1);
+    vault.with_write_txn(|txn| {
+        assert_eq!(record_task_create(&vault, txn, actor, 0, rate)?, 1);
+        Ok(())
+    })?;
+    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 1);
+    Ok(())
+}
+
+#[test]
+fn task_rate_limit_corruption_fails_all_readers_closed() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    for len in [0, 8, 15, 17] {
+        vault.with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &task_create_rate_key(actor, rate.window_seconds),
+                &vec![0; len],
+            )?;
+            Ok(())
+        })?;
+        assert!(matches!(
+            vault.task_create_count(actor, rate.window_seconds),
+            Err(crate::Error::CorruptedIndex(_))
+        ));
+        assert!(matches!(
+            vault.with_write_txn(|txn| record_task_create(&vault, txn, actor, 0, rate)),
+            Err(crate::Error::CorruptedIndex(_))
+        ));
+        assert!(matches!(
+            vault.with_write_txn(|txn| consume_create_rate_slot(&vault, txn, actor, 0, rate)),
+            Err(crate::Error::CorruptedIndex(_))
+        ));
+    }
+    Ok(())
+}

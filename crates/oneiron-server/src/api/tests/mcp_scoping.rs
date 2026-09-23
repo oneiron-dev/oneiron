@@ -380,7 +380,7 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
                 "tasks.wait",
                 mcp_merge_args(
                     mcp_scoped_envelope(actor_ref, "read_tasks", scope),
-                    json!({"arguments": {"task_ref": target.to_hex(), "key": "scoped-wait"}}),
+                    json!({"arguments": {"spec": {"handle": {"group_ref": target.to_hex()}, "step_key": "scoped-wait"}}}),
                 ),
             ),
         )

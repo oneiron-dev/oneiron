@@ -93,11 +93,6 @@ impl Memory<'_> {
         // The typed shape is settled BEFORE any write transaction opens: an
         // invalid consult never reaches the TASK write, so a rejected request
         // leaves no partial entity and burns no rate slot.
-        if spec.assignee == Some(TaskAssignee::AnswerHolders) {
-            return Err(crate::memory::MemoryError::bad_request(
-                "answer-holder tasks use tasks.ask",
-            ));
-        }
         let validated = validate_task_create(self.vault(), spec, now)?;
         let direct = self.with_verified_actor_write_txn(|wtxn| {
             let ceiling =
@@ -318,9 +313,6 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<TaskRouteOutcome> {
         match validated.assignee {
-            Some(TaskAssignee::AnswerHolders) => Err(crate::memory::MemoryError::bad_request(
-                "asks have no realizing attempt",
-            )),
             // Absent assignee is the schema-v1 representation of the Dreamer
             // lane and routes identically — old rows are never rewritten.
             None | Some(TaskAssignee::Dreamer) => {

@@ -51,21 +51,7 @@ pub(super) fn record_task_create(
     // resets the count, so elapsed windows overwrite the same key instead of
     // leaving a per-window residue that grows unbounded over the vault's life.
     let key = task_create_rate_key(actor, window_seconds);
-    let count = match vault.store.vault_meta.get(&*wtxn, key.as_slice())? {
-        Some(raw) => {
-            let stored: [u8; 16] = raw
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("tasks.create.rate"))?;
-            let stored_window = u64::from_le_bytes(stored[..8].try_into().expect("rate window"));
-            if stored_window == window {
-                u64::from_le_bytes(stored[8..].try_into().expect("rate count"))
-            } else {
-                0
-            }
-        }
-        None => 0,
-    };
+    let count = read_window(vault, wtxn, &key, window)?;
     let mut value = [0u8; 16];
     value[..8].copy_from_slice(&window.to_le_bytes());
     value[8..].copy_from_slice(&count.saturating_add(1).to_le_bytes());
@@ -87,21 +73,7 @@ pub(super) fn consume_create_rate_slot(
     let window_seconds = rate_limit.window_seconds.max(1);
     let window = now / window_seconds;
     let key = task_create_rate_key(actor, window_seconds);
-    let count = match vault.store.vault_meta.get(&*wtxn, key.as_slice())? {
-        Some(raw) => {
-            let stored: [u8; 16] = raw
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("tasks.create.rate"))?;
-            let stored_window = u64::from_le_bytes(stored[..8].try_into().expect("rate window"));
-            if stored_window == window {
-                u64::from_le_bytes(stored[8..].try_into().expect("rate count"))
-            } else {
-                0
-            }
-        }
-        None => 0,
-    };
+    let count = read_window(vault, wtxn, &key, window)?;
     if count >= rate_limit.limit as u64 {
         return Ok(false);
     }
@@ -109,6 +81,23 @@ pub(super) fn consume_create_rate_slot(
     Ok(true)
 }
 
+fn read_window(vault: &Vault, txn: &heed::RoTxn<'_>, key: &[u8], window: u64) -> Result<u64> {
+    let Some(raw) = vault.store.vault_meta.get(txn, key)? else {
+        return Ok(0);
+    };
+    let stored: &[u8; 16] = raw
+        .as_ref()
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("tasks.create.rate"))?;
+    let [stored_window, count] = stored.as_chunks::<8>().0 else {
+        return Err(Error::CorruptedIndex("tasks.create.rate"));
+    };
+    Ok(if u64::from_le_bytes(*stored_window) == window {
+        u64::from_le_bytes(*count)
+    } else {
+        0
+    })
+}
 
 pub(super) fn task_create_rate_key(actor: EntityId, window_seconds: u64) -> Vec<u8> {
     let mut key = Vec::with_capacity(
@@ -155,22 +144,11 @@ impl Vault {
     pub fn task_create_count(&self, actor: EntityId, window_seconds: u64) -> Result<u64> {
         let window_seconds = window_seconds.max(1);
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&txn, &task_create_rate_key(actor, window_seconds))?
-        else {
-            return Ok(0);
-        };
-        let raw: [u8; 16] = raw
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("tasks.create.rate"))?;
-        if u64::from_le_bytes(raw[..8].try_into().expect("window"))
-            != crate::unix_seconds_now() / window_seconds
-        {
-            return Ok(0);
-        }
-        Ok(u64::from_le_bytes(raw[8..].try_into().expect("count")))
+        read_window(
+            self,
+            &txn,
+            &task_create_rate_key(actor, window_seconds),
+            crate::unix_seconds_now() / window_seconds,
+        )
     }
 }

@@ -10,8 +10,8 @@ pub(crate) const ENTITY_ID_LEN: usize = 16;
 static LAST_ULID: std::sync::Mutex<u128> = std::sync::Mutex::new(0);
 
 /// An opaque time-ordered ULID. Existing 16-byte UUIDv7 rows remain valid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EntityId([u8; ENTITY_ID_LEN]);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, schemars::JsonSchema)]
+pub struct EntityId(#[schemars(with = "String")] [u8; ENTITY_ID_LEN]);
 
 impl EntityId {
     /// Creates an opaque ULID: 48-bit Unix milliseconds and 80 random bits.

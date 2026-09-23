@@ -49,7 +49,6 @@ fn fixture(vault: &Vault) -> Result<DurableStepContext<'_>> {
         run_id: status.attempt.run_id,
         envelope_actor: WriteActor::new(actor, EdgeActorClass::Agent),
         subject: actor,
-        pinned_config: None,
         deadline: None,
         now_ms: 10_000,
     })

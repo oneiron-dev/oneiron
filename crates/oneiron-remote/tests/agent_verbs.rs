@@ -1,43 +1,73 @@
 //! Generated SDK calls preserve handles and durable C9 wait results.
 use oneiron::task_verb::sdk::{TaskAnswerRequest, TaskWaitRequest};
-use oneiron::task_verb::{TaskAskSpec, TaskWaitOutcome};
+use oneiron::task_verb::{
+    ConsultPayloadRef, TaskAskSpec, TaskAskTarget, TaskAskWait, TaskAssignee,
+};
 use oneiron_remote::{OneironClient, OpenOptions};
-use std::collections::BTreeSet;
 #[test]
 fn generated_sdk_ask_answer_and_wait_round_trip() {
     let dir = tempfile::tempdir().unwrap();
+    let question = oneiron::EntityId::now();
+    {
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
+        vault
+            .put_entity(
+                &question,
+                oneiron::registry::ENTITY_TYPE_TURN,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                &[0xc0],
+            )
+            .unwrap();
+    }
     let client = OneironClient::open(Some(dir.path()), &OpenOptions::default()).unwrap();
     let actor = client.actor_ref().unwrap();
     let spec = TaskAskSpec {
-        question: serde_json::json!({"text":"Proceed?"}),
-        holders: BTreeSet::from([actor.clone()]),
-        idempotency_key: "sdk-one".into(),
-        outcome_binding: None,
+        intent_key: "sdk-one".into(),
+        ..oneiron::task_verb::TaskAskSpec::shorthand(
+            Some(TaskAskTarget::Responder(TaskAssignee::Human {
+                actor_ref: oneiron::EntityId::from_hex(&actor).unwrap(),
+            })),
+            oneiron::task_verb::TaskAskQuestion {
+                reference: ConsultPayloadRef::Turn(question),
+                revision: 1,
+                options: Default::default(),
+                context_refs: Vec::new(),
+                label: None,
+                outcome_binding: None,
+            },
+            Some(u64::MAX),
+            oneiron::task_verb::TaskAskDefault::AskMe,
+        )
     };
     let receipt = client.tasks_ask(&spec).unwrap();
     assert_eq!(client.tasks_ask(&spec).unwrap().handle, receipt.handle);
     let wait = TaskWaitRequest {
-        handle: receipt.handle.clone(),
+        handle: receipt.handle,
         step_key: "step-one".into(),
     };
     assert!(matches!(
         client.tasks_wait(&wait).unwrap(),
-        TaskWaitOutcome::Pending { .. }
+        TaskAskWait::Pending { .. }
     ));
     let answer = client
         .tasks_answer(&TaskAnswerRequest {
             handle: receipt.handle,
-            result_ref: actor,
+            word: oneiron::task_verb::TaskAskWord::new(
+                oneiron::EntityId::from_hex(&actor).unwrap(),
+            ),
         })
         .unwrap();
+    let expected = client.tasks_wait(&wait).unwrap();
+    let TaskAskWait::Ready(result) = &expected else {
+        panic!("settled wait")
+    };
     assert_eq!(
-        client.tasks_wait(&wait).unwrap(),
-        TaskWaitOutcome::Ready(answer.clone())
+        result.decision,
+        oneiron::task_verb::TaskAskDecision::First(answer)
     );
-    assert_eq!(
-        client.tasks_wait(&wait).unwrap(),
-        TaskWaitOutcome::AlreadyResumed(answer)
-    );
+    assert!(result.coverage.met);
+    assert_eq!(client.tasks_wait(&wait).unwrap(), expected);
     assert!(
         client
             .agent_verb("not.a.verb", serde_json::json!({}))

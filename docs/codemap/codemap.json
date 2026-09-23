@@ -3122,7 +3122,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/put_apply/put_staging.rs",
@@ -3298,7 +3298,7 @@
      "path": "src/batch/txn_builder.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 15,
       "struct": 1
      }
@@ -6638,7 +6638,7 @@
      "path": "src/channel_identity/vault_doors.rs",
      "purpose": "Vault doors for ChannelIdentity create, provision, transition, reads, and body apply",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -11954,7 +11954,7 @@
      "path": "src/counterparty_contact/doors.rs",
      "purpose": "Counterparty contact Vault doors: create, opt-out, revoke, reads, and claim apply",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6
      }
     },
@@ -17588,7 +17588,7 @@
      "path": "src/human_task/followup.rs",
      "purpose": "Native-human routing, follow-up cursor lifecycle and the wake driver",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6,
       "struct": 1
      }
@@ -30714,29 +30714,12 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "TaskAskAnswer",
-      "TaskAskHandle",
-      "TaskAskReceipt",
-      "TaskAskSpec"
-     ],
-     "path": "src/task_verb/ask.rs",
-     "purpose": "Immediate ask handles, immutable responder sets, and first-answer CAS",
-     "surface": {
-      "crate-vis": 6,
-      "fn": 2,
-      "struct": 4
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3
+      "crate-vis": 2,
+      "fn": 6
      }
     },
     {
@@ -30754,11 +30737,21 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 19
      }
     },
     {
      "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_settlement.rs",
+     "purpose": "Atomic ask cutoffs and the fixed human-word reducers",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/ask_tests.rs",
@@ -30766,38 +30759,47 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AskAuthorityScope",
       "TaskAskAnswer",
+      "TaskAskBranch",
+      "TaskAskClass",
+      "TaskAskCoverage",
+      "TaskAskDecide",
+      "TaskAskDecision",
+      "TaskAskDefault",
+      "TaskAskDisagree",
+      "TaskAskElectorate",
+      "TaskAskEvidence",
+      "TaskAskEvidenceReason",
+      "TaskAskFallback",
       "TaskAskHandle",
       "TaskAskHoldReason",
+      "TaskAskNeed",
+      "TaskAskOptionId",
+      "TaskAskProvisional",
+      "TaskAskQuestion",
       "TaskAskReceipt",
+      "TaskAskResult",
+      "TaskAskSettlement",
+      "TaskAskSettlementReason",
+      "TaskAskSource",
       "TaskAskSpec",
       "TaskAskStatus",
+      "TaskAskSurface",
       "TaskAskTarget",
-      "TaskAskWait"
+      "TaskAskWait",
+      "TaskAskWord"
      ],
      "path": "src/task_verb/ask_types.rs",
-     "purpose": "Addressable scope asks: immutable membership, durable handles, and first-answer projection",
+     "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
-      "enum": 4,
-      "struct": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "TaskWaitOutcome"
-     ],
-     "path": "src/task_verb/ask_wait.rs",
-     "purpose": "A wait suspends its calling C9 step, never the enclosing attempt or run",
-     "surface": {
-      "crate-vis": 1,
-      "enum": 1,
-      "fn": 1
+      "crate-vis": 2,
+      "enum": 14,
+      "fn": 5,
+      "struct": 16
      }
     },
     {
@@ -30955,7 +30957,7 @@
      "path": "src/task_verb/create_validation.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -30992,13 +30994,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/lifecycle_facade.rs",
      "purpose": "—",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -31018,18 +31020,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "Sealed",
-      "TaskAskRequest"
-     ],
+     "notable": [],
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 7,
-      "fn": 1,
+      "crate-vis": 10,
       "mod": 1,
-      "re-export": 17,
-      "trait": 2
+      "re-export": 15
      }
     },
     {
@@ -31347,7 +31344,7 @@
      "path": "src/task_verb/verb_kind.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 6,
       "struct": 1
@@ -34808,7 +34805,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 57,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34929,7 +34926,7 @@
    },
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2066,
+   "source_files": 2065,
    "test_files": 705
   },
   "oneiron-android": {

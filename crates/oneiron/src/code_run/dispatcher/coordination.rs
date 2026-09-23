@@ -11,7 +11,7 @@ use crate::code_run::{
 };
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{ArtifactError, Error, Result};
-use crate::task_verb::{ScopeTaskAskHandle, ScopeTaskAskSpec, TaskAskWait};
+use crate::task_verb::{TaskAskHandle, TaskAskSpec, TaskAskWait};
 use crate::{Vault, WriteActor};
 
 fn invalid() -> Error {
@@ -103,8 +103,20 @@ impl<'a> HostSelfDispatcher<'a> {
         }))
     }
 
-    pub(super) fn dispatch_tasks_ask(&self, call: ScopeTaskAskSpec) -> Result<SelfDispatchOutcome> {
+    pub(super) fn dispatch_tasks_ask(&self, mut call: TaskAskSpec) -> Result<SelfDispatchOutcome> {
         let vault = self.coordination_vault()?;
+        if let Some(parent) = self.agent_parent {
+            let live = DreamerRunnerStore::new(vault)
+                .status(parent)?
+                .ok_or_else(invalid)?;
+            if let Some(task) = live.attempt.task_ref.as_deref() {
+                let task = crate::EntityId::from_hex(task)?;
+                if call.task_ref.is_some_and(|requested| requested != task) {
+                    return Err(invalid());
+                }
+                call.task_ref = Some(task);
+            }
+        }
         let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
         Ok(match memory.tasks_ask(&call) {
             Ok(receipt) => SelfDispatchOutcome::TaskAsk(receipt),
@@ -112,12 +124,18 @@ impl<'a> HostSelfDispatcher<'a> {
         })
     }
 
-    pub(super) fn dispatch_tasks_wait(&self, handle: ScopeTaskAskHandle) -> Result<SelfDispatchOutcome> {
+    pub(super) fn dispatch_tasks_wait(&self, handle: TaskAskHandle) -> Result<SelfDispatchOutcome> {
         let vault = self.coordination_vault()?;
         let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
-        Ok(match memory.tasks_wait(handle) {
-            Ok(TaskAskWait::Ready(status)) => SelfDispatchOutcome::TaskAskStatus(status),
+        Ok(match memory.tasks_wait(handle, None) {
+            Ok(TaskAskWait::Ready(result)) => {
+                SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Settled(result))
+            }
             Ok(TaskAskWait::Park(wait)) => SelfDispatchOutcome::DurableWait(wait),
+            Ok(TaskAskWait::Pending { .. }) => failed(
+                SelfEffect::TasksWait,
+                crate::memory::MemoryError::bad_request("external wait on engine step"),
+            ),
             Err(error) => failed(SelfEffect::TasksWait, error),
         })
     }

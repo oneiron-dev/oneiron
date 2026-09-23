@@ -530,11 +530,30 @@ def outputs():
     ts = HEADER + 'export type AgentInvoke = (method: string, input: unknown) => unknown;\n'
     ts += '''export interface OutcomeBinding { source: {kind: "claim" | "event"; predicate: string} | {kind: "edge"; relation: string} | {kind: "stage"; campaign: string}; horizon: number; mapping: Record<string, boolean>; noise_weight: number; linked_by?: string | null }
 export interface CalibrationPair { prediction: unknown; probability: number; outcome: {answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number} }
-export interface TaskAskSpec { question: Record<string, unknown>; holders: string[]; idempotency_key: string; outcome_binding?: OutcomeBinding | null }
-export interface TaskAskHandle { task_ref: string }
-export interface TaskAskReceipt { handle: TaskAskHandle; count: number; replayed: boolean }
-export interface TaskAskAnswer { task_ref: string; actor_ref: string; result_ref: string; at: number; answer_ref: string | null; question_version: number | null }
-export type TaskWaitOutcome = { Pending: {trap_ref: string} } | { Ready: TaskAskAnswer } | { AlreadyResumed: TaskAskAnswer };
+export type TaskAssignee = "dreamer" | {agent_def: {agent_def_ref: string}} | {peer: {actor_ref: string}} | {child: {actor_ref: string}} | {human: {actor_ref: string}};
+export type ConsultPayloadRef = {claim: string} | {turn: string};
+export type TaskAskOptionId = string;
+export type TaskAskTarget = {responder: TaskAssignee} | {people: string[]} | {authority: {class: string; selectors: string[]; target: string | null; budget: number | null; receipt_required: boolean}};
+export interface TaskAskQuestion { reference: ConsultPayloadRef; revision: number; options: Record<TaskAskOptionId, string>; context_refs: ConsultPayloadRef[]; label?: string | null; outcome_binding?: OutcomeBinding | null }
+export type TaskAskElectorate = "any" | {people: string[]};
+export interface TaskAskNeed {count: number; of?: TaskAskElectorate}
+export type TaskAskDecide = "first" | {all: {of: TaskAskElectorate; answer: TaskAskOptionId}} | {at_least: {count: number; of: TaskAskElectorate; answer: TaskAskOptionId}};
+export type TaskAskDefault = "proceed" | "hold" | "ask_me";
+export interface TaskAskDisagree {branch: "hold" | "proceed"; surface: "card" | "none"}
+export interface TaskAskClass {key: string; version: number; governance: boolean; deadline_seconds: number; allowed_recipients: string[]; required_people: string[]; minimum_responses: number; required_sources: ConsultPayloadRef[]; decision: TaskAskDecide | null; disclosure: Record<string, ConsultPayloadRef[]>; fallback: TaskAskDefault[]; remind: number[]}
+export interface TaskAskSpec { intent_key: string; task_ref?: string | null; class?: TaskAskClass | null; who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault; need?: TaskAskNeed; decide?: TaskAskDecide | null; provisional?: "inform"; on_disagree?: TaskAskDisagree; remind?: number[] | null }
+export interface TaskAskHandle { group_ref: string }
+export interface TaskAskReceipt { handle: TaskAskHandle; task_refs: string[]; hold: "NoLiveRoute" | null; idempotent_replay: boolean }
+export interface TaskAskWord {result_ref: string; option?: TaskAskOptionId | null; inform_for?: string | null; provenance_refs?: ConsultPayloadRef[]}
+export interface TaskAskAnswer { task_ref: string; actor_ref: string; result_ref: string; word_ref: string }
+export interface TaskAskCoverage {met: boolean; required: number; responded: string[]; unknown: string[]; unmet_people: string[]}
+export type TaskAskDecision = "collected" | {first: TaskAskAnswer} | {answer: TaskAskOptionId} | "no" | "conflict" | "unknown";
+export interface TaskAskFallback {branch: TaskAskDefault; surface: "card" | "none"}
+export interface TaskAskEvidence {answer: TaskAskAnswer; word: TaskAskWord; source: "human" | "inform" | "executor"; person_ref: string; order: number; reason: "counted" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"}
+export interface TaskAskSettlement {group_ref: string; reference: string; revision: number; at: number; cutoff_order: number; reason: "first_word" | "all_responded" | "deadline" | "stale"; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: string[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref: string | null}
+export interface TaskAskResult {coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
+export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Settled: TaskAskResult};
+export type TaskAskWait = { Pending: {trap_ref: string} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
 export function agentVerbs(invoke: AgentInvoke) {
   return {
 '''
@@ -545,8 +564,8 @@ export function agentVerbs(invoke: AgentInvoke) {
             if fam != family: continue
             method=fam+verb.title()
             if verb=='ask': decl='spec: TaskAskSpec'; value='spec'; result='TaskAskReceipt'
-            elif verb=='wait': decl='handle: TaskAskHandle, stepKey = "sdk.wait"';value='{handle, step_key: stepKey}';result='TaskWaitOutcome'
-            elif verb=='answer':decl='handle: TaskAskHandle, resultRef: string';value='{handle, result_ref: resultRef}';result='TaskAskAnswer'
+            elif verb=='wait': decl='handle: TaskAskHandle, stepKey = "sdk.wait"';value='{handle, step_key: stepKey}';result='TaskAskWait'
+            elif verb=='answer':decl='handle: TaskAskHandle, word: TaskAskWord';value='{handle, word}';result='TaskAskAnswer'
             elif verb=='outcomes':decl='handle: TaskAskHandle';value='handle';result='CalibrationPair[]'
             elif verb in ['list', 'check']:decl='';value='{}';result='unknown[]'
             elif verb=='messages':decl='roomRef: string, after?: string, limit?: number';value='{room_ref: roomRef, after, limit}';result='{rows: unknown[]; next_after: string | null}'
@@ -563,7 +582,7 @@ export function agentVerbs(invoke: AgentInvoke) {
             fam, _, verb=r['name'].partition('.')
             if fam!=family:continue
             if verb=='wait':params='handle, step_key="sdk.wait"';value='{"handle": handle, "step_key": step_key}'
-            elif verb=='answer':params='handle, result_ref';value='{"handle": handle, "result_ref": result_ref}'
+            elif verb=='answer':params='handle, word';value='{"handle": handle, "word": word}'
             elif verb=='outcomes':params='handle';value='handle'
             elif verb in ['list', 'check']:params='';value='{}'
             elif verb=='messages':params='room_ref, after=None, limit=None';value='{"room_ref": room_ref, "after": after, "limit": limit}'
@@ -608,7 +627,7 @@ export function agentVerbs(invoke: AgentInvoke) {
             fam, _, verb=row['name'].partition('.')
             if fam!=family:continue
             if verb=='wait': args='handle: dict[str, Any], step_key: str = "sdk.wait"'
-            elif verb=='answer':args='handle: dict[str, Any], result_ref: str'
+            elif verb=='answer':args='handle: dict[str, Any], word: dict[str, Any]'
             elif verb=='messages':args='room_ref: str, after: str | None = None, limit: int | None = None'
             elif verb=='claim':args='room_ref: str, turn_ref: str'
             elif verb=='outcomes':args='handle: dict[str, Any]'

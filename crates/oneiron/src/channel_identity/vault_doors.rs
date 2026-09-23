@@ -224,9 +224,17 @@ impl Vault {
     /// Reads and decodes a ChannelIdentity record.
     pub fn get_channel_identity(&self, id: &EntityId) -> Result<Option<ChannelIdentity>> {
         let rtxn = self.store.env.read_txn()?;
+        self.get_channel_identity_in_txn(&rtxn, id)
+    }
+
+    pub(crate) fn get_channel_identity_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<ChannelIdentity>> {
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, id)?
+            .port_entity_record(rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);
