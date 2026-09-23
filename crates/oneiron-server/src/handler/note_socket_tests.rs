@@ -728,7 +728,7 @@ async fn owner_document_lane_refuses_a_principal_that_is_not_the_owner() {
         )
         .unwrap();
     let server = SyncServer::new(
-        vault.clone(),
+        vault,
         SyncServerConfig {
             auth_secret: Some(SECRET.into()),
             ..Default::default()

@@ -534,7 +534,7 @@ fn an_own_device_never_receives_the_document_of_a_note_in_a_device_only_world() 
         .unwrap();
     vault.set_world_device_only(world, true).unwrap();
     let manager = Arc::new(WindowManager::new(
-        vault.clone(),
+        vault,
         Arc::new(Materializer::new()),
         "device-only",
     ));

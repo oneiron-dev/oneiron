@@ -16,7 +16,7 @@ use super::{
     validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
     validate_task_checkin_immutable,
 };
-use crate::claim::ClaimApprovalStatus;
+use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, ErrorKind, RecordError, RegistryError, Result};
@@ -360,44 +360,8 @@ pub(in crate::batch) fn apply_put(
     // decides whether the body changed, so nothing downstream ever sees the
     // discarded counters.
     let data = task_body_without_streaks.as_deref().unwrap_or(data);
-    // A sync replay deliberately bypasses the local claim gate. If it changes
-    // a claim with a persisted critical-confirm attachment, that attachment
-    // binds the old body and cannot authorize the new one. Delete it in this
-    // same write transaction and demote an inbound Auto status; notably, do
-    // not derive a replacement binding from the changed peer body.
     let reconciled_critical_claim_body = if replicated && entity_type == ENTITY_TYPE_CLAIM {
-        let body_changed = store
-            .entities
-            .get(wtxn, id.as_bytes())?
-            .map(|old| {
-                old.get(ENTITY_METADATA_HEADER_LEN..)
-                    .ok_or(Error::CorruptedIndex("entity header"))
-                    .map(|body| body != data)
-            })
-            .transpose()?
-            // A live attachment can outlast an entity row during deletion or
-            // rematerialization; recreating that row is an overwrite of the
-            // ceremony-bound state, not an authority restoration.
-            .unwrap_or(true);
-        if crate::gate::reconcile_critical_write_confirm_on_replicated_overwrite(
-            store,
-            wtxn,
-            &id,
-            data,
-            body_changed,
-        )? {
-            let mut reconciled = decoded_claim_body
-                .as_ref()
-                .ok_or(Error::InvariantViolation("validated CLAIM body missing"))?
-                .clone();
-            if reconciled.approval == ClaimApprovalStatus::Auto {
-                reconciled.approval = ClaimApprovalStatus::Proposed;
-            }
-            decoded_claim_body = Some(reconciled.clone());
-            Some(crate::claim::encode_claim_body(&reconciled)?)
-        } else {
-            None
-        }
+        reconcile_replicated_critical_confirm(store, wtxn, &id, data, &mut decoded_claim_body)?
     } else {
         None
     };
@@ -736,6 +700,54 @@ pub(in crate::batch) fn apply_put(
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })
+}
+
+/// A sync replay deliberately bypasses the local claim gate. If it changes a
+/// claim with a persisted critical-confirm attachment, that attachment binds
+/// the old body and cannot authorize the new one. Delete it in this same write
+/// transaction and demote an inbound Auto status; notably, do not derive a
+/// replacement binding from the changed peer body. Returns the demoted body's
+/// bytes, which the put stores instead of `data`, and leaves
+/// `decoded_claim_body` holding the demoted body.
+fn reconcile_replicated_critical_confirm(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    data: &[u8],
+    decoded_claim_body: &mut Option<ClaimBody>,
+) -> Result<Option<Vec<u8>>> {
+    let body_changed = store
+        .entities
+        .get(wtxn, id.as_bytes())?
+        .map(|old| {
+            old.get(ENTITY_METADATA_HEADER_LEN..)
+                .ok_or(Error::CorruptedIndex("entity header"))
+                .map(|body| body != data)
+        })
+        .transpose()?
+        // A live attachment can outlast an entity row during deletion or
+        // rematerialization; recreating that row is an overwrite of the
+        // ceremony-bound state, not an authority restoration.
+        .unwrap_or(true);
+    if crate::gate::reconcile_critical_write_confirm_on_replicated_overwrite(
+        store,
+        wtxn,
+        id,
+        data,
+        body_changed,
+    )? {
+        let mut reconciled = decoded_claim_body
+            .as_ref()
+            .ok_or(Error::InvariantViolation("validated CLAIM body missing"))?
+            .clone();
+        if reconciled.approval == ClaimApprovalStatus::Auto {
+            reconciled.approval = ClaimApprovalStatus::Proposed;
+        }
+        *decoded_claim_body = Some(reconciled.clone());
+        Ok(Some(crate::claim::encode_claim_body(&reconciled)?))
+    } else {
+        Ok(None)
+    }
 }
 
 // The ledger is immutable birth identity, never a second text plane. This

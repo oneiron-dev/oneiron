@@ -644,6 +644,7 @@ fn device_only_world_key(world: EntityId) -> String {
 }
 
 /// Every world flagged device-only on this device.
+#[cfg(feature = "sync")]
 pub(crate) fn device_only_worlds_in(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
@@ -666,6 +667,7 @@ pub(crate) fn device_only_worlds_in(
 /// Whether a device-only world keeps `id` on this device: the flagged WORLD
 /// row itself, a CLAIM whose `worldId` is flagged, or a NOTE with a stored
 /// `InWorld` edge to a flagged world.
+#[cfg(feature = "sync")]
 pub(crate) fn device_only_withholds(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,

@@ -152,7 +152,6 @@ pub(in crate::store) use pending_embedding::*;
 pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
 pub use short_id_alias::*;
-#[cfg(feature = "sync")]
 use structural_kind_registry::*;
 #[cfg(test)]
 pub(crate) use structural_kind_registry::{

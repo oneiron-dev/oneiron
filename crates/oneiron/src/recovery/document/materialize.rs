@@ -294,7 +294,7 @@ pub(crate) fn run_in_txn(
                     .head_move_receipts
                     .iter()
                     .filter(|receipt| receipt.entity_id == row.entity_id)
-                    .map(|receipt| receipt.decode())
+                    .map(super::CanonicalHeadMove::decode)
                     .collect::<Result<Vec<_>>>()?
                     .iter()
                     .filter(|receipt| receipt.verdict == crate::note::NoteVerdict::Switch)
