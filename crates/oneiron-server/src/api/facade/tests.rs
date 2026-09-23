@@ -569,3 +569,173 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
         assert_eq!(response.status(), status, "{verb}");
     }
 }
+
+/// Actor A holds an unrestricted-record-scope slip, and the policy manifest
+/// gives A one read grant whose entity types exclude TASK. One TASK T exists,
+/// and it has failed. Returns the server, A's recipe, the owner and T.
+fn task_outside_read_floor() -> (
+    tempfile::TempDir,
+    Arc<SyncServer>,
+    String,
+    EntityId,
+    EntityId,
+) {
+    use oneiron::attempt_queue::{ClaimAttempt, ClaimOutcome, FailAttempt};
+    use oneiron::federation::{Scope, ScopeAxis};
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let reader = EntityId::now();
+    vault
+        .put_entity(
+            &reader,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )
+        .unwrap();
+    let mut read = Scope::top();
+    read.verbs = ScopeAxis::Some(["read".to_owned()].into());
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        &vault,
+        EntityId::now(),
+        &json!({
+            "schema_version": "1.2", "pack_id": "task-read-floor", "pack_version": "1",
+            "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
+            "scoped_grants": [{
+                "actor_ref": reader.to_hex(),
+                "effector": "core:read",
+                "scope": serde_json::to_value(read).unwrap(),
+                "selectors": {"entity_types": [oneiron::registry::ENTITY_TYPE_PERSON]},
+                "receipt_required": false,
+            }],
+        }),
+    )
+    .unwrap();
+    let task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_create(&oneiron::task_verb::TaskCreateSpec::new(
+            rmpv::Value::from("unit-task"),
+            None,
+            None,
+            None,
+        ))
+        .unwrap()
+        .task_ref
+        .unwrap();
+    let queue = oneiron::AttemptQueue::new(&vault);
+    let now = vault.now_recorded_at();
+    let ClaimOutcome::Claimed(claimed) = queue
+        .claim_kind(
+            "tasks.realize",
+            ClaimAttempt {
+                lease_owner: "worker".to_owned(),
+                now,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("the created task's realization is claimable");
+    };
+    queue
+        .fail(FailAttempt {
+            id: claimed.id,
+            lease_owner: "worker".to_owned(),
+            attempt_count: claimed.attempt_count,
+            reason: "failed".to_owned(),
+            now,
+        })
+        .unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            crate::config::SyncServerConfig {
+                auth_secret: Some("task-read-floor".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let recipe = format!(
+        "{}scope=core:read,core:write;principal_ref={};actor_class=human",
+        crate::test_credentials::RECIPE_PREFIX,
+        reader.to_hex()
+    );
+    (dir, server, recipe, owner, task)
+}
+
+async fn post_task_verb(
+    server: &Arc<SyncServer>,
+    recipe: &str,
+    verb: &str,
+    input: Value,
+) -> (StatusCode, Value) {
+    let response = crate::build_app(Arc::clone(server))
+        .oneshot(crate::test_credentials::bind_request(
+            server,
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Authorization", recipe)
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&input).unwrap()))
+                .unwrap(),
+        ))
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[tokio::test]
+async fn http_tasks_check_omits_a_task_outside_the_callers_read_floor() {
+    let (_dir, server, recipe, _, task) = task_outside_read_floor();
+    let (_, section) = post_task_verb(&server, &recipe, "tasks.check", json!({})).await;
+    assert!(
+        section["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["id"] != task.to_hex()),
+        "{section}"
+    );
+}
+
+#[tokio::test]
+async fn http_tasks_expand_refuses_a_task_outside_the_callers_read_floor() {
+    let (_dir, server, recipe, _, task) = task_outside_read_floor();
+    let (status, _) = post_task_verb(
+        &server,
+        &recipe,
+        "tasks.expand",
+        json!({"task_ref": task.to_hex()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn http_tasks_ack_writes_nothing_on_a_task_outside_the_callers_read_floor() {
+    let (_dir, server, recipe, owner, task) = task_outside_read_floor();
+    post_task_verb(
+        &server,
+        &recipe,
+        "tasks.ack",
+        json!({"task_ref": task.to_hex()}),
+    )
+    .await;
+    // A failed task stays on the owner's board until its ack bit is set.
+    assert!(
+        server
+            .vault
+            .memory(owner, EdgeActorClass::Human)
+            .tasks_check()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.id == task.to_hex())
+    );
+}

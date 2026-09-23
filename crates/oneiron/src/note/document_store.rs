@@ -285,7 +285,14 @@ pub(super) fn require_note_writer(
         return Err(invalid("NOTE was erased").into());
     }
     let (_, body) = super::verbs::note_core(memory.vault(), txn, id)?;
-    if body.author_ref != memory.actor() {
+    if body.author_ref != memory.actor()
+        && !super::proposals::automatic_edit_grant(
+            memory.vault(),
+            txn,
+            id,
+            crate::WriteActor::new(memory.actor(), memory.actor_class()),
+        )?
+    {
         if memory.actor_class() != EdgeActorClass::Human {
             return Err(MemoryError::bad_request_with(
                 "NOTE edit requires its author or a bound owner",

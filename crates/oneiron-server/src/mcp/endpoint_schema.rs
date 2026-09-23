@@ -1,6 +1,6 @@
 //! JSON schemas for endpoint tools: setup, execute-code, paging, and verbs.
 
-use super::endpoint_args::{MCP_CODE_TASK_MAX_CHARS, MCP_TASK_LABEL_MAX_BYTES};
+use super::endpoint_args::MCP_CODE_TASK_MAX_CHARS;
 use super::schema_parts::{
     actor_schema, closed_object_schema, consent_schema, entity_id_schema, nonblank_string_schema,
     schema_version_property, tool_schema_root,
@@ -190,7 +190,7 @@ fn verb_argument_field_schema(field: &str) -> Value {
             "type": "string",
             "minLength": 1,
             "pattern": "\\S",
-            "maxLength": MCP_TASK_LABEL_MAX_BYTES,
+            "maxLength": oneiron::context_board::TASK_LABEL_MAX_BYTES,
         }),
         _ => json!({}),
     }

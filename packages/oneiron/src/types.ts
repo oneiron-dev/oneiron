@@ -92,7 +92,7 @@ export type CommitReceipt = {
   receiptRef: string
 }
 
-/** Retrieval effort dial. `deep` is lease-gated and returns `LEASE_REQUIRED`. */
+/** Retrieval effort dial. `high`, `xhigh` and `max` need a budget lease and return `LEASE_REQUIRED` without one. */
 export type Effort = "light" | "medium" | "high" | "xhigh" | "max"
 
 /** Rendered pack formats; these are the engine's exact tokens. */
@@ -106,7 +106,7 @@ export type RecallScope = {
 
 /** Options for {@link Oneiron.recall}. */
 export type RecallOptions = {
-  /** Defaults to `standard`. */
+  /** Defaults to `medium`. */
   effort?: Effort
   /** Defaults to the vault floor. */
   scope?: RecallScope

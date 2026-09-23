@@ -183,8 +183,12 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         task: Option<EntityId>,
     ) -> MemoryResult<Option<TaskAskClass>> {
-        let Some(task) = task else {
-            return Ok(None);
+        let task = match task {
+            Some(task) => task,
+            None => match self.governed_task_in_txn(txn)? {
+                Some(task) => task,
+                None => return Ok(None),
+            },
         };
         let body = super::create_validation::task_body_in_txn(self.vault(), txn, task)?;
         let authority = self
@@ -217,6 +221,63 @@ impl Memory<'_> {
         rmp_serde::from_slice(&bytes)
             .map(Some)
             .map_err(|_| MemoryError::bad_request("invalid task ask class binding"))
+    }
+
+    /// The task context of an ask that omits `task_ref`: the one live TASK
+    /// assigned to this actor whose spec binds an `ask_class`.
+    ///
+    /// A walk the scan cap stops before the TASK index ends cannot prove that
+    /// no governed task exists, so the omission is refused, never admitted.
+    fn governed_task_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<Option<EntityId>> {
+        let name_the_task = |message: &str| {
+            MemoryError::bad_request_with(message, &["Name the governing task in task_ref."])
+        };
+        let scan = super::presence_scan::scan_task_entity_pages(
+            super::presence_scan::TASK_PRESENCE_PAGE_SIZE,
+            super::presence_scan::TASK_PRESENCE_SCAN_CAP,
+            |after, limit| {
+                crate::ports::EntityStoreRead::port_entity_ids_by_type(
+                    &self.vault().store,
+                    txn,
+                    crate::registry::ENTITY_TYPE_TASK,
+                    after.copied(),
+                )?
+                .take(limit)
+                .collect()
+            },
+        )?;
+        if !scan.source_exhausted {
+            return Err(name_the_task(
+                "too many tasks to find this ask's task context",
+            ));
+        }
+        let mut found = None;
+        for task in scan.pages.into_iter().flatten() {
+            let Ok(Some(body)) = super::wire_decode::task_verb_body_in(self.vault(), txn, task)
+            else {
+                continue;
+            };
+            if body.assignee.and_then(TaskAssignee::entity_ref) != Some(self.actor())
+                || body.terminal().is_some()
+                || !body.spec.as_map().is_some_and(|fields| {
+                    fields
+                        .iter()
+                        .any(|(key, _)| key.as_str() == Some("ask_class"))
+                })
+                || self
+                    .vault()
+                    .task_authority_state_in(txn, task)?
+                    .is_some_and(|authority| authority.cancelled)
+            {
+                continue;
+            }
+            if found.replace(task).is_some() {
+                return Err(name_the_task(
+                    "more than one governed task could bind this ask",
+                ));
+            }
+        }
+        Ok(found)
     }
 
     /// Owner and admitted responders see the same winner, including its actor.

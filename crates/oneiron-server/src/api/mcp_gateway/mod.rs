@@ -13,7 +13,7 @@ pub(crate) use self::actor_dispatch::{
     resolve_mcp_gateway_actor,
 };
 pub(crate) use self::admission::mcp_admit_scoped_call;
-use self::admission::{mcp_scope_covers_entity, mcp_validated_call_args};
+use self::admission::{mcp_credential_reads, mcp_scope_covers_entity, mcp_validated_call_args};
 pub(crate) use self::board_setup::{McpBoardOmissions, execute_mcp_setup};
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,

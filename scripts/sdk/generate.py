@@ -2,6 +2,7 @@
 'Generate agent SDK transports from agent-verbs.json; --check never writes.'
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
@@ -286,13 +287,21 @@ def outputs():
     for r in facade_rows:
         method=r['name'].replace('.','_')
         if r['name'] == 'recall': server += SERVER_RECALL_DOC
+        # `readable` names the credential read check: a caller-named ref is
+        # refused before the engine call, and `rows` filters the typed result.
+        readable = r.get('admission', {}).get('readable')
+        guard, result = '', f'oneiron::task_verb::sdk::invoke(&server.vault.memory(actor,class), "{r["name"]}", value)?'
+        if readable == 'rows':
+            result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&server.vault.memory(actor,class), facade_input(value)?)?)?'
+        elif readable:
+            guard = f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
         server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
         auth.require(CoreScope::{r["scope"]})?;
         {'auth.require_unrestricted_record_scope()?;' if r.get('admission', {}).get('unrestricted_record_scope') else ''}
         let value = facade_json(payload)?;
         {f'oneiron::task_verb::sdk::validate_input("{r["name"]}", &value)?;' if 'admission' in r else ''}
-        let (actor, class) = facade_actor(&auth)?;
-        Ok(Json(oneiron::task_verb::sdk::invoke(&server.vault.memory(actor,class), "{r["name"]}", value)?))
+        let (actor, class) = facade_actor(&auth)?;{guard}
+        Ok(Json({result}))
         }}\n'''
     remote = HEADER + 'use super::*;\n'
     remote += 'impl OneironClient {\n'
@@ -310,9 +319,14 @@ def outputs():
         method=r['name'].replace('.','_')
         out=r['output'].replace('crate::', 'oneiron::')
         declaration, input_value, value_input = remote_boundary(r)
+        # The typed check runs before encoding: JSON has no NaN, so a
+        # non-finite float would reach validate_input as null.
+        checks = r.get('admission', {}).get('validate', '').replace('crate::', 'oneiron::')
+        if not value_input.startswith('&'):
+            checks = re.sub(r'&?\binput\b', value_input, checks)
         remote += r.get('binding', {}).get('docs', {}).get('remote', '')
         remote += f'''pub fn {method}(&self, {declaration}) -> Result<{out}, MemoryError> {{
-            {input_value}
+            {input_value}{checks}
             let value = serde_json::to_value({value_input}).map_err(|_| crate::error::bad_request("SDK input encoding failed", &["Send the documented typed SDK input."]))?;
             let result = self.agent_verb("{r["name"]}", value)?;
             serde_json::from_value(result).map_err(|_| crate::error::bad_request("SDK output decoding failed", &["Report this SDK response mismatch."]))
@@ -365,7 +379,8 @@ export function agentVerbs(invoke: AgentInvoke) {
             elif verb=='wait': decl='handle: TaskAskHandle, stepKey = "sdk.wait"';value='{handle, step_key: stepKey}';result='TaskAskWait'
             elif verb=='answer':decl='handle: TaskAskHandle, word: TaskAskWord';value='{handle, word}';result='TaskAskAnswer'
             elif verb=='outcomes':decl='handle: TaskAskHandle';value='handle';result='CalibrationPair[]'
-            elif verb in ['list', 'check']:decl='';value='{}';result='unknown[]'
+            elif verb=='list':decl='';value='{}';result='unknown[]'
+            elif verb=='check':decl='';value='{}';result='{rows: unknown[]; overflow: unknown | null}'
             elif verb=='messages':decl='roomRef: string, after?: string, limit?: number';value='{room_ref: roomRef, after, limit}';result='{rows: unknown[]; next_after: string | null}'
             elif verb=='claim':decl='roomRef: string, turnRef: string';value='{room_ref: roomRef, turn_ref: turnRef}';result='unknown'
             else: decl='turn: Record<string, unknown>';value='turn';result='unknown'

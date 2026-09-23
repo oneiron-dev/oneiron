@@ -31,14 +31,6 @@ fn artifact(tier: &str) -> (Vec<u8>, [u8; 32]) {
     (bytes, hash)
 }
 
-// Explicit native-interpreter budget, not a change to other lanes.
-fn interpreter_budget() -> ComponentBudget {
-    ComponentBudget {
-        fuel: 100_000_000,
-        ..ComponentBudget::default()
-    }
-}
-
 #[derive(Default)]
 struct Host {
     calls: Vec<SelfCall>,
@@ -87,7 +79,7 @@ fn run(
 fn quickjs_real_language_typed_writes_determinism_and_escape_refusal() {
     let (bytes, hash) = artifact("first-party");
     let factory =
-        QuickJsRuntimeFactory::from_component(&bytes, hash, interpreter_budget()).unwrap();
+        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap();
     let mut runtime = factory.runtime().unwrap();
     let mut host = Host::default();
     let language = run(
@@ -147,11 +139,21 @@ fn quickjs_real_language_typed_writes_determinism_and_escape_refusal() {
 }
 
 #[test]
+fn default_budget_passes_the_readiness_probe() {
+    let (bytes, hash) = artifact("first-party");
+    assert!(
+        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).is_ok()
+    );
+}
+
+#[test]
 fn quickjs_pin_and_instruction_limits_fail_closed() {
     let (bytes, hash) = artifact("first-party");
-    assert!(QuickJsRuntimeFactory::from_component(&bytes, [0; 32], interpreter_budget()).is_err());
+    assert!(
+        QuickJsRuntimeFactory::from_component(&bytes, [0; 32], ComponentBudget::default()).is_err()
+    );
     let factory =
-        QuickJsRuntimeFactory::from_component(&bytes, hash, interpreter_budget()).unwrap();
+        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap();
     assert!(
         run(
             &mut factory.runtime().unwrap(),
@@ -306,7 +308,7 @@ fn quickjs_concurrent_handles_do_not_interrupt_each_other() {
     }
     let (bytes, hash) = artifact("first-party");
     let factory =
-        QuickJsRuntimeFactory::from_component(&bytes, hash, interpreter_budget()).unwrap();
+        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap();
     let mut left = factory.runtime().unwrap();
     let mut right = factory.runtime().unwrap();
     let (ready, received) = mpsc::sync_channel(1);

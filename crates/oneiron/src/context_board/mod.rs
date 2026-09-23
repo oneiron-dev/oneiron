@@ -57,8 +57,8 @@ pub use frame::{
     BoardFrameError, BoardLegend, BoardRender, BoardRenderMetadata, BoardSection, BudgetPolicyRef,
     CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES, PLUGIN_SECTION_BUDGET_POLICY_REF,
     SHED_ORDER, SectionPolicy, SectionView, ShedOutcome, ShedRank, ShedSection,
-    assemble_task_agent_sections, render_board_block, resolve_board_budget,
-    section_policy_for_budget_ref, shed,
+    TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES, assemble_task_agent_sections,
+    render_board_block, resolve_board_budget, section_policy_for_budget_ref, shed,
 };
 pub use hydration::{
     AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem,

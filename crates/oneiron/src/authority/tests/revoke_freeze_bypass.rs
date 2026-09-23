@@ -602,7 +602,7 @@ fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
 /// rolled-back wall clock, which is what makes the write fold's floor
 /// persistence load-bearing in the GRANT direction.
 ///
-/// `readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied`
+/// `readonly_fold_rolled_back_injected_clock_keeps_elapsed_rotation_applied`
 /// already pins the revoke direction: a matured `RotateKey` must stay applied, or
 /// the retired key's owner binding comes back. That test cannot catch a
 /// regression in the other direction, because a lost floor pushes a rotation back

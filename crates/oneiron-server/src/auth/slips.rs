@@ -177,6 +177,23 @@ impl CoreAuth {
         }
         Ok(())
     }
+    /// May this credential read `id`? A verified slip reads through the
+    /// actor-scoped lane its own proof builds, so its policy floor applies on
+    /// every route. A credential with no verified slip is the owner's server
+    /// secret and reads every entity.
+    pub(crate) fn can_read_entity(
+        &self,
+        vault: &oneiron::Vault,
+        id: &oneiron::EntityId,
+    ) -> oneiron::Result<bool> {
+        let Some(proof) = self.verified_slip() else {
+            return Ok(true);
+        };
+        let Some(key) = oneiron::claim::ScopedReadActorKey::from_verified_slip(proof) else {
+            return Ok(false);
+        };
+        vault.scoped_read(key).is_entity_readable(id)
+    }
     pub(crate) fn credential_is_live_in_write_txn(
         &self,
         vault: &oneiron::Vault,

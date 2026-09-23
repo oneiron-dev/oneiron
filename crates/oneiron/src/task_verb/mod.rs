@@ -55,6 +55,7 @@ pub use consult_result::{
     ConsultResultInput, ConsultResultKind, TaskResultReceipt,
 };
 pub use create_spec::{TaskCreateRateLimit, TaskCreateSpec};
+pub use create_validation::check_task_label;
 pub use dormant_magistrate::{
     apply_magistrate_verdict, decide_magistrate, decode_human_verdict, enqueue_magistrate,
     human_verdict_value, ladder_terminal_from_task_terminal, project_consult_task_to_a2a,

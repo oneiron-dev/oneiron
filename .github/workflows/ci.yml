@@ -202,7 +202,7 @@ jobs:
         run: |
           cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
           "$HOME/ci/tools/bin/cargo-deny" --version
-          "$HOME/ci/tools/bin/cargo-deny" check
+          "$HOME/ci/tools/bin/cargo-deny" --locked check
 
       - name: Test build and navigation tools (no live cache changes)
         if: ${{ !cancelled() }}

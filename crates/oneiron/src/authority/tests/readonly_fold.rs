@@ -48,7 +48,7 @@ fn readonly_fold_matches_full_fold_and_writes_nothing() {
 }
 
 #[test]
-fn readonly_fold_forward_wall_clock_skew_keeps_owner_enrollment_pending() {
+fn readonly_fold_injected_clock_behind_real_time_keeps_owner_enrollment_pending() {
     let dir = tempfile::tempdir().unwrap();
     // Open seeds this vault's monotonic clock from its injected clock, far
     // behind real Unix time.
@@ -115,7 +115,7 @@ fn readonly_fold_forward_wall_clock_skew_keeps_owner_enrollment_pending() {
     assert!(!readonly.roster.contains_key(&second_key));
     assert!(
         !actor_binding_is_active(&readonly, &actor, "human"),
-        "wall-clock skew must not expose an owner binding inside the veto window",
+        "an injected clock behind real time must not expose an owner binding inside the veto window",
     );
     assert_eq!(
         sync_state_snapshot(&vault),
@@ -182,7 +182,7 @@ fn readonly_fold_for_store_uses_injected_clock_for_owner_enrollment() {
 }
 
 #[test]
-fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
+fn readonly_fold_rolled_back_injected_clock_keeps_elapsed_rotation_applied() {
     let dir = tempfile::tempdir().unwrap();
     // The reopen's clock is ten days behind the injected local authority clock.
     let rolled_back = 1_000;
@@ -271,7 +271,7 @@ fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
     );
     assert!(
         !actor_binding_is_active(&readonly, &actor, "human"),
-        "wall-clock rollback must not resurrect the retired key's owner binding",
+        "a rolled-back injected clock must not resurrect the retired key's owner binding",
     );
 
     // Reopen drops the old handle's clock; only the persisted floor remains.
@@ -293,7 +293,7 @@ fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
     );
     assert!(
         !actor_binding_is_active(&after_reopen, &actor, "human"),
-        "a reopen under wall-clock rollback must not resurrect the owner binding",
+        "a reopen under a rolled-back injected clock must not resurrect the owner binding",
     );
 }
 

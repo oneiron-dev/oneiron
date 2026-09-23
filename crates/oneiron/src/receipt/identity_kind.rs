@@ -104,11 +104,14 @@ fn companion_lifecycle_receipt(
 /// order, this bounded scan can starve an older-minted in-window receipt;
 /// avoiding that requires an `at`-ordered index or cursor pagination. The
 /// family is engine-authored and door-validated: an undecodable row is
-/// corruption, never skipped.
+/// corruption, never skipped. Production passes [`MAX_RECEIPT_QUERY_SCAN`] as
+/// `scan_cap`; local tests inject a small cap to prove the bound without a
+/// 100k-row vault.
 pub(super) fn identity_topology_receipts(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     query: &ReceiptQuery,
+    scan_cap: usize,
 ) -> Result<Vec<ReceiptRecord>> {
     let mut receipts = Vec::new();
     for entry in vault
@@ -117,7 +120,7 @@ pub(super) fn identity_topology_receipts(
             rtxn,
             crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
         )?
-        .take(MAX_RECEIPT_QUERY_SCAN)
+        .take(scan_cap)
     {
         let event_id = entry?;
         let record = vault

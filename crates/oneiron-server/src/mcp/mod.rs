@@ -43,8 +43,8 @@ pub use self::args::{
 pub use self::codec::McpToolArguments;
 pub(crate) use self::codec::mcp_raw_call_arguments;
 pub use self::endpoint_args::{
-    MCP_CODE_TASK_MAX_CHARS, MCP_TASK_LABEL_MAX_BYTES, McpCacheHint, McpExecuteCodeToolArgs,
-    McpPageRequest, McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload,
+    MCP_CODE_TASK_MAX_CHARS, McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest,
+    McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload,
     validate_mcp_endpoint_tool_args,
 };
 pub use self::endpoint_schema::{
@@ -90,7 +90,7 @@ pub use self::tool_catalog::{
 mod tests;
 
 #[cfg(test)]
-use self::{codec::*, endpoint_args::*, schema_parts::*, schema_tools::*, tool_catalog::*};
+use self::{codec::*, schema_parts::*, schema_tools::*, tool_catalog::*};
 
 #[cfg(test)]
 use oneiron::context_board::{BoardBlockHeader, BoardBudgetRequest, StreamConnectionId};

@@ -518,11 +518,7 @@ fn native_quickjs_component_write_lands_through_gate() -> Result<()> {
     let mut runtime = WasmtimeComponentRuntime::from_component(
         &bytes,
         *blake3::hash(&bytes).as_bytes(),
-        // Explicit native-interpreter budget, not a change to other lanes.
-        ComponentBudget {
-            fuel: 100_000_000,
-            ..ComponentBudget::default()
-        },
+        ComponentBudget::default(),
     )?;
     let (_dir, vault, actor, subject, claim) = gate_fixture()?;
     let input = serde_json::json!({

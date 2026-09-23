@@ -3,6 +3,7 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::context_board::TASK_LABEL_MAX_BYTES;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::human_task::HumanTaskError;
@@ -159,6 +160,20 @@ pub(super) struct ValidatedTaskCreate {
     pub(super) spec: Value,
 }
 
+/// Refuses a TASK label the board cannot render: a present label must carry a
+/// non-whitespace character and fit [`TASK_LABEL_MAX_BYTES`].
+pub fn check_task_label(label: &str) -> MemoryResult<()> {
+    if label.trim().is_empty() {
+        return Err(MemoryError::bad_request("task label must not be blank"));
+    }
+    if label.len() > TASK_LABEL_MAX_BYTES {
+        return Err(MemoryError::bad_request(format!(
+            "task label must be at most {TASK_LABEL_MAX_BYTES} bytes"
+        )));
+    }
+    Ok(())
+}
+
 /// Settles `(kind, consult, assignee, ttl)` into one legal shape.
 ///
 /// Two branches: a peer-addressed consult with a typed payload, a future
@@ -181,6 +196,9 @@ pub(super) fn validate_task_create_in(
     spec: &TaskCreateSpec,
     now: u64,
 ) -> MemoryResult<ValidatedTaskCreate> {
+    if let Some(label) = spec.label.as_deref() {
+        check_task_label(label)?;
+    }
     match (
         spec.kind.unwrap_or(TaskKind::Standard),
         &spec.consult,

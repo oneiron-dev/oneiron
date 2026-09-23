@@ -120,10 +120,50 @@ pub(super) fn grant_allows(
     actor: WriteActor,
 ) -> Result<bool> {
     let (_, core) = super::verbs::note_core(vault, txn, note)?;
-    Ok(core.author_ref == actor.entity_ref()
+    if core.author_ref == actor.entity_ref()
         || (actor.actor_class() == EdgeActorClass::Human
             && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref())
-                .is_ok()))
+                .is_ok())
+    {
+        return Ok(true);
+    }
+    automatic_edit_grant(vault, txn, note, actor)
+}
+
+/// True when the policy manifest gives `actor` an automatic `note.edit` grant
+/// that names `note`.
+pub(super) fn automatic_edit_grant(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    actor: WriteActor,
+) -> Result<bool> {
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    if policy.is_fail_closed() {
+        return Ok(false);
+    }
+    Ok(policy.scoped_grants().iter().any(|g| {
+        if g.effector != "note.edit"
+            || g.budget.is_some()
+            || g.actor_class
+                .as_deref()
+                .is_some_and(|c| c != actor.actor_class().gate_actor_class())
+            || g.actor_ref.as_deref() != Some(actor.entity_ref().to_hex().as_str())
+        {
+            return false;
+        }
+        let Some(rmpv::Value::Map(scope)) = g.scope.as_ref() else {
+            return false;
+        };
+        !scope.is_empty()
+            && scope.iter().all(|(k, v)| {
+                k.as_str() == Some("entity_refs")
+                    && v.as_array().is_some_and(|refs| {
+                        refs.iter()
+                            .any(|v| v.as_str() == Some(note.to_hex().as_str()))
+                    })
+            })
+    }))
 }
 
 impl Vault {

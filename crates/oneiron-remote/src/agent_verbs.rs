@@ -122,6 +122,7 @@ impl OneironClient {
         &self,
         turn: &oneiron::memory::WitnessTurn,
     ) -> Result<oneiron::memory::WitnessReceipt, MemoryError> {
+        oneiron::memory::caps::check_witness_turn(turn)?;
         let value = serde_json::to_value(turn).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -141,6 +142,7 @@ impl OneironClient {
         &self,
         claim: &oneiron::memory::ClaimInput,
     ) -> Result<oneiron::memory::CommitReceipt, MemoryError> {
+        oneiron::memory::caps::check_claim_input(claim)?;
         let value = serde_json::to_value(claim).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -176,6 +178,8 @@ impl OneironClient {
             limit: Some(limit),
             format: format.map(str::to_owned),
         };
+        oneiron::memory::caps::check_query(&input.query)?;
+        oneiron::memory::caps::check_limit(input.limit.unwrap_or(10))?;
         let value = serde_json::to_value(&input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -196,6 +200,7 @@ impl OneironClient {
         limit: usize,
     ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
         let input = oneiron::task_verb::sdk::ReceiptsRequest { limit: Some(limit) };
+        oneiron::memory::caps::check_limit(input.limit.unwrap_or(100))?;
         let value = serde_json::to_value(&input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

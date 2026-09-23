@@ -327,3 +327,19 @@ fn adoption_pins_an_imported_root_without_freezing_unadopted_turns() {
         ErrorKind::InvalidConversationDag
     );
 }
+
+#[test]
+fn gdpr_delete_after_user_delete_purges_a_dag_record() {
+    let (_dir, vault, conv, actor) = fixture();
+    let id = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    vault
+        .delete_entity_with_reason(&id, crate::DeleteReason::UserDelete)
+        .unwrap();
+    vault
+        .delete_entity_with_reason(&id, crate::DeleteReason::GdprDelete)
+        .unwrap();
+    assert!(vault.get(&id).unwrap().is_none());
+}

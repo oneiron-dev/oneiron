@@ -105,6 +105,32 @@ fn embedded_backend_calls_memory_facade() {
     assert_eq!(client.base_url(), None);
 }
 
+#[test]
+fn claim_upsert_refuses_non_finite_salience_before_encoding() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let client = OneironClient::open(Some(&dir.path().join("vault")), &OpenOptions::default())
+        .expect("open");
+    let error = client
+        .claim_upsert(&oneiron::memory::ClaimInput {
+            id: None,
+            predicate: "test.salience".to_owned(),
+            subject_ref: client.actor_ref().expect("owner"),
+            value: serde_json::json!("small"),
+            confidence: 1.0,
+            source: "user_stated".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: Some(f32::NAN),
+        })
+        .expect_err("a NaN salience is refused");
+    assert_eq!(error.message, "salience must be a finite number");
+}
+
 /// The caps are enforced before dispatch, not after (I11).
 #[test]
 fn boundary_caps_refuse_before_dispatch() {

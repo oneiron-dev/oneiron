@@ -301,7 +301,12 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     if query.includes_kind(ReceiptKind::IdentityLifecycle)
         || query.includes_kind(ReceiptKind::ProposalOutcome)
     {
-        records.extend(identity_topology_receipts(vault, &rtxn, query)?);
+        records.extend(identity_topology_receipts(
+            vault,
+            &rtxn,
+            query,
+            MAX_RECEIPT_QUERY_SCAN,
+        )?);
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);

@@ -23,6 +23,7 @@ const _: () = assert!(TASKS_RENDER_ROW_CAP > 0);
 /// TASKS board status axis (08b §3): running / scheduled / queued / done /
 /// failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TaskBoardStatus {
     Running,
     Scheduled,

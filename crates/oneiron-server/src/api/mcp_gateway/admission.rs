@@ -5,6 +5,7 @@ use super::{
     mcp_scoped_read, mcp_tool_validation_error,
 };
 use crate::api::parse_entity_id_param;
+use crate::mcp::McpResolvedActor;
 use crate::mcp::McpSurfaceMode;
 use crate::mcp::McpValidatedToolArgs;
 use crate::server::SyncServer;
@@ -155,8 +156,7 @@ fn mcp_admit_scoped_entity(
     field: &'static str,
 ) -> Result<(), McpGatewayError> {
     let scoped_read = mcp_scoped_read(&server.vault, actor)?;
-    let readable = scoped_read
-        .is_entity_readable(id)
+    let readable = mcp_credential_reads(&server.vault, actor, id)
         .map_err(|error| mcp_engine_error("mcp scope admission read failed", error))?;
     if !readable || !mcp_scope_covers_entity(&scoped_read, &actor.scope, id)? {
         return Err(McpGatewayError::new(
@@ -167,6 +167,20 @@ fn mcp_admit_scoped_entity(
         .with_field(field));
     }
     Ok(())
+}
+
+/// The readability half of MCP admission: the same predicate the HTTP task
+/// routes ask. A connector without a credential reads nothing here; its call
+/// was already refused by [`mcp_scoped_read`].
+pub(super) fn mcp_credential_reads(
+    vault: &oneiron::Vault,
+    actor: &McpResolvedActor,
+    id: &oneiron::EntityId,
+) -> oneiron::Result<bool> {
+    actor
+        .auth
+        .as_ref()
+        .map_or(Ok(false), |auth| auth.can_read_entity(vault, id))
 }
 
 /// True when the registered world/facet ceiling covers this entity.

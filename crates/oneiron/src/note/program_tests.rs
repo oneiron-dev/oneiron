@@ -199,9 +199,8 @@ fn five_forks_route_two_to_land_and_three_to_one_bundle_merge_keeps_concurrent_e
         )
         .unwrap();
     let agent = WriteActor::new(agent_id, EdgeActorClass::Agent);
-    let notes: Vec<_> = [agent, agent, owner, owner, owner]
-        .into_iter()
-        .map(|author| vault.create_note("observation", "base", author).unwrap())
+    let notes: Vec<_> = (0..5)
+        .map(|_| vault.create_note("observation", "base", owner).unwrap())
         .collect();
     let mut forks = Vec::new();
     for note in &notes {
@@ -224,6 +223,53 @@ fn five_forks_route_two_to_land_and_three_to_one_bundle_merge_keeps_concurrent_e
                 .unwrap(),
         );
     }
+    let mut manifest = crate::gate::default_policy_manifest();
+    let rmpv::Value::Map(ref mut entries) =
+        rmpv::decode::read_value(&mut manifest.as_slice()).unwrap()
+    else {
+        panic!("manifest map");
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
+    entries.push((
+        rmpv::Value::from("scoped_grants"),
+        rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("actor_ref"),
+                rmpv::Value::from(agent_id.to_hex()),
+            ),
+            (
+                rmpv::Value::from("effector"),
+                rmpv::Value::from("note.edit"),
+            ),
+            (
+                rmpv::Value::from("scope"),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::effect_preset(),
+                )
+                .unwrap(),
+            ),
+            (
+                rmpv::Value::from("selectors"),
+                rmpv::Value::Map(vec![(
+                    rmpv::Value::from("entity_refs"),
+                    rmpv::Value::Array(
+                        notes[..2]
+                            .iter()
+                            .map(|id| rmpv::Value::from(id.to_hex()))
+                            .collect(),
+                    ),
+                )]),
+            ),
+        ])]),
+    ));
+    manifest.clear();
+    rmpv::encode::write_value(&mut manifest, &rmpv::Value::Map(entries.clone())).unwrap();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().unwrap(),
+        &manifest,
+    )
+    .unwrap();
     let bundle = vault
         .open_note_proposal(&forks, "Five edits", agent)
         .unwrap();

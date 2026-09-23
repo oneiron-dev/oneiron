@@ -901,6 +901,52 @@ fn scope_summary_and_merge_header_require_every_covered_membership_window() {
 }
 
 #[test]
+fn conversation_summary_claim_needs_every_covered_turn_readable() {
+    let (_dir, vault, actor, room, bob) = fixture();
+    vault
+        .join_member(room, actor.entity_ref(), actor, 1, HistoryChoice::Share)
+        .unwrap();
+    let turn = vault
+        .append_dag_record(&record(&vault, room, actor, 10))
+        .unwrap()
+        .id;
+    vault
+        .join_member(room, bob, actor, 100, HistoryChoice::None)
+        .unwrap();
+    let claim = EntityId::now();
+    let mut body = crate::ClaimBody::new(
+        "conversation.summary",
+        crate::ClaimSubject::Entity(room),
+        rmpv::Value::Map(vec![
+            ("text".into(), "summary of the early turns".into()),
+            (
+                "covers".into(),
+                rmpv::Value::Array(vec![rmpv::Value::Binary(turn.as_bytes().to_vec())]),
+            ),
+        ]),
+        1.0,
+        crate::ClaimApprovalStatus::Auto,
+        crate::ClaimLifecycleStatus::Active,
+    );
+    body.source = Some(crate::ClaimSource::Observed);
+    vault
+        .batch()
+        .put_replicated(
+            &claim,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange {
+                start: 150,
+                end: 150,
+            },
+            150,
+            &crate::claim::encode_claim_body(&body).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    assert!(!audience_admits(&vault, claim, bob).unwrap());
+}
+
+#[test]
 fn thread_metadata_survives_reopen_without_side_tables() {
     let (dir, vault, actor, room, _) = fixture();
     let trunk = vault

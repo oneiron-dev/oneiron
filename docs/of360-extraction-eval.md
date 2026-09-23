@@ -61,10 +61,11 @@ ONE-1524. The fixture metadata keeps `owner_corpus_missing = true` and
 `generate_of360_seeded_gold_subset` performs deterministic subset selection from
 the bundled seed rows. It does not synthesize replacement gold labels.
 
-`crates/oneiron/src/data/of360_gold.v1.json` supplies the full v1 fixture through
-`of360_gold_corpus()`: 500 memory points across 50 scenarios, plus grounded QA
+`crates/oneiron/tests/fixtures/of360_gold.v1.json` supplies the full v1 fixture,
+read by `crates/oneiron/tests/it/of360_extraction_eval.rs`; the library has no
+full loader. It holds 500 memory points across 50 scenarios, plus grounded QA
 items. It was authored for this ticket and is explicitly synthetic, not private
-owner data. The full loader reports `owner_corpus_missing = false` and no seed
+owner data. The full fixture carries `owner_corpus_missing = false` and no seed
 warning. The original subset and its warning remain available for smoke tests.
 
 The 500-point integration fixture supplies exact extraction matches and QA

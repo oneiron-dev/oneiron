@@ -204,35 +204,6 @@ pub struct McpVerbArguments {
     pub label: Option<String>,
 }
 
-/// Bytes of one rendered TASKS intent row that belong to tokens the WRITER does
-/// not supply.
-///
-/// The engine's `intent_row` joins, with single spaces, the task's 32-byte hex
-/// id, the caller's label, an optional resolved `assignee=<handle>` token, the
-/// status token (at most `scheduled`, nine bytes), any cause/ladder tokens, a
-/// `jobs=<count>` token, and the `cancel-refused=<n>/<m>` pathology token —
-/// then hands the line to the board renderer, which refuses ANY row over
-/// [`oneiron::context_board::MAX_BOARD_ROW_BYTES`]. Every one of those tokens
-/// is bounded far inside a kibibyte, so reserving one keeps the writer's label
-/// from being the reason the whole TASKS section is rejected at render time.
-pub(super) const MCP_TASK_ROW_FIXED_TOKEN_BYTES: usize = 1_024;
-
-/// Hard ceiling on one `tasks.create` label, in BYTES (ONE-1704 repair).
-///
-/// The engine's row ceiling is the ONE limit system here: this is that ceiling
-/// less the row's own fixed tokens, not a second budget. Enforcing it at the
-/// writer is what keeps an oversized label from being persisted and then making
-/// the rendered row — and with it the whole TASKS section — unrenderable for
-/// every later reader of that board.
-///
-/// The bound is on BYTES because [`oneiron::context_board::MAX_BOARD_ROW_BYTES`]
-/// is; the advertised closed schema states the same number as a Draft 2020-12
-/// `maxLength`, which is the closest a code-point keyword comes to it. A
-/// multi-byte label inside that code-point ceiling is still refused here, with
-/// the established typed argument error, before anything is written.
-pub const MCP_TASK_LABEL_MAX_BYTES: usize =
-    oneiron::context_board::MAX_BOARD_ROW_BYTES - MCP_TASK_ROW_FIXED_TOKEN_BYTES;
-
 impl McpVerbArguments {
     fn present_fields(&self) -> [(&'static str, bool); 9] {
         [
@@ -269,21 +240,14 @@ impl McpVerbArguments {
             }
         }
         validate_optional_nonblank(tool, "arguments.key", self.key.as_deref())?;
-        validate_optional_nonblank(tool, "arguments.label", self.label.as_deref())?;
         // The WRITER's bound, applied before any persistence: a label the
         // engine's board row ceiling cannot render is refused here rather than
         // stored and then made to reject the whole TASKS section on every later
         // render (ONE-1704 repair).
-        if self
-            .label
-            .as_deref()
-            .is_some_and(|label| label.len() > MCP_TASK_LABEL_MAX_BYTES)
-        {
-            return Err(McpToolValidationError::field(
-                tool,
-                "arguments.label",
-                format!("must be at most {MCP_TASK_LABEL_MAX_BYTES} bytes"),
-            ));
+        if let Some(label) = self.label.as_deref() {
+            oneiron::task_verb::check_task_label(label).map_err(|error| {
+                McpToolValidationError::field(tool, "arguments.label", error.message)
+            })?;
         }
         validate_optional_entity_ref(tool, "arguments.task_ref", self.task_ref.as_deref())?;
         validate_optional_entity_ref(tool, "arguments.room_ref", self.room_ref.as_deref())?;

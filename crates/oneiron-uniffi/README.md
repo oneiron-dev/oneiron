@@ -110,8 +110,9 @@ The first runtime consumer — an app binding that needs the generated Swift
 or Kotlin surface against a live vault — replaces the definition-only
 bodies with actor-scoped core facade calls. It preserves the declared verbs,
 DTOs, error shape, and the coverage tests exactly; any desired surface
-change is a head-contract amendment that moves the pinned list, the macro
-invocation, the Rust-name drift guard, and the Swift compile probe
-together. Populating live `pack_version` values and the live Swift throw
+change is a head-contract amendment that moves the manifest row in
+`scripts/sdk/agent-verbs.json`, the generated facade file
+(`src/facade_generated.rs`) with its macro invocation, the Rust-name drift
+guard, and the Swift compile probe together. Populating live `pack_version` values and the live Swift throw
 path are first-consumer scope, explicitly not claimed by this compile-only
 lane.

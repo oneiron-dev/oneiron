@@ -36,7 +36,9 @@ That is **not** a demonstrated speedup. The lower resume p99 does not erase the
 mean slowdown. It remains valid measured baseline data: the committed
 [floor](evidence/W7-C10/fleet-macbook-floor.json) permits at most 15% throughput
 loss and 20% p99 increase from each phase. The converter checks the recorded
-ratio and samples; it does not confuse a valid baseline with a proven speedup.
+ratio and, on a fresh receipt, the samples. A committed floor carries no samples, so
+its summary numbers are checked for shape only. It does not confuse a valid baseline
+with a proven speedup.
 The separate hot-path optimization acceptance is still open.
 
 Full fleet receipts with per-sample arrays are archived off-repo at
@@ -207,7 +209,8 @@ python3 scripts/fleet-regression.py ci --floor floor.json --bench target/release
 It then runs the full plan and compares the resulting receipt. Exit codes:
 0 = pass; 1 = measured regression; 2 = missing/incompatible/invalid evidence or
 failed load. Every per-verb and PPR phase must meet its positive throughput floor
-and finite p99 ceiling. Sample counts, quantiles and arithmetic are revalidated.
+and finite p99 ceiling. A fresh receipt's sample counts, quantiles and arithmetic are
+revalidated; the floor carries no samples, so its summary numbers are checked for shape only.
 Missing verbs, incomplete writes/recalls, fixture receipts, output changes,
 host/build settings changes and profile changes cannot pass. Revision and binary
 digest may change; workload, host, and optimization output must not.

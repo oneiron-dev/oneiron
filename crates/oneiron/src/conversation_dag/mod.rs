@@ -7,7 +7,8 @@
 mod admission;
 mod graph;
 pub(crate) use admission::{
-    guard_record_put, pin_membership, pin_typed_record, validate_local_membership,
+    guard_record_put, keep_membership_pin, pin_membership, pin_typed_record,
+    validate_local_membership,
 };
 mod membership;
 mod migration;

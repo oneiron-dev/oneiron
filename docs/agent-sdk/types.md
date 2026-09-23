@@ -97,7 +97,7 @@ export type CommitReceipt = {
   receiptRef: string
 }
 
-/** Retrieval effort dial. `deep` is lease-gated and returns `LEASE_REQUIRED`. */
+/** Retrieval effort dial. `high`, `xhigh` and `max` need a budget lease and return `LEASE_REQUIRED` without one. */
 export type Effort = "light" | "medium" | "high" | "xhigh" | "max"
 
 /** Rendered pack formats; these are the engine's exact tokens. */
@@ -111,7 +111,7 @@ export type RecallScope = {
 
 /** Options for {@link Oneiron.recall}. */
 export type RecallOptions = {
-  /** Defaults to `standard`. */
+  /** Defaults to `medium`. */
   effort?: Effort
   /** Defaults to the vault floor. */
   scope?: RecallScope
@@ -390,15 +390,7 @@ class Oneiron:
     # BEGIN GENERATED FACADE VERBS
     def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
     def claim_upsert(self, claim: ClaimInput) -> CommitReceipt: ...
-    def recall(
-        self,
-        query: str,
-        *,
-        effort: Effort = "medium",
-        scope: RecallScope | None = None,
-        limit: int = 10,
-        format: PackFormat | None = None,
-    ) -> MemoryPack: ...
+    def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None) -> MemoryPack: ...
     def receipts(self, limit: int = 100) -> list[FacadeReceipt]: ...
     def key_value_get(self, request: KeyValueAddress) -> KeyValueItem | None: ...
     def key_value_put(self, request: KeyValuePut) -> KeyValuePutReceipt: ...

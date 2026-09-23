@@ -31,7 +31,7 @@ export function agentVerbs(invoke: AgentInvoke) {
 tasks: {
 ack(turn: Record<string, unknown>): unknown { return invoke("tasksAck", turn) as unknown },
 cancel(turn: Record<string, unknown>): unknown { return invoke("tasksCancel", turn) as unknown },
-check(): unknown[] { return invoke("tasksCheck", {}) as unknown[] },
+check(): {rows: unknown[]; overflow: unknown | null} { return invoke("tasksCheck", {}) as {rows: unknown[]; overflow: unknown | null} },
 create(turn: Record<string, unknown>): unknown { return invoke("tasksCreate", turn) as unknown },
 expand(turn: Record<string, unknown>): unknown { return invoke("tasksExpand", turn) as unknown },
 ask(spec: TaskAskSpec): TaskAskReceipt { return invoke("tasksAsk", spec) as TaskAskReceipt },

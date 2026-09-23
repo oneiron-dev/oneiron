@@ -1062,3 +1062,103 @@ fn ask_authority_schema_matches_the_serialized_scope_not_its_private_fields() ->
     assert_eq!(serde_json::from_value::<AskAuthorityScope>(wire)?, scope);
     Ok(())
 }
+
+/// Agent A, an auto-ceiling asker holding one live TASK whose spec binds the
+/// fixture's governance class over both people.
+fn governed_agent(fixture: &RuledAskFixture) -> Result<(EntityId, TaskAskClass)> {
+    let agent = EntityId::now();
+    fixture.vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        b"agent",
+    )?;
+    let mut manifest: serde_json::Value =
+        rmp_serde::from_slice(&crate::gate::default_policy_manifest())?;
+    manifest["actor_ceilings"]
+        .as_array_mut()
+        .ok_or("default actor ceilings")?
+        .push(serde_json::json!({"actor_class": "agent", "actor_ref": agent.to_hex(), "ceiling": "auto"}));
+    crate::test_util::put_policy_manifest_bytes(
+        &fixture.vault,
+        crate::gate::default_policy_manifest_id()?,
+        &rmp_serde::to_vec_named(&manifest)?,
+    )?;
+    let class = fixture.policy(true);
+    assign_governed_task(fixture, agent, &class)?;
+    Ok((agent, class))
+}
+
+fn assign_governed_task(
+    fixture: &RuledAskFixture,
+    agent: EntityId,
+    class: &TaskAskClass,
+) -> Result<()> {
+    let value = rmpv::decode::read_value(&mut rmp_serde::to_vec_named(class)?.as_slice())?;
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_create(
+            &TaskCreateSpec::new(
+                rmpv::Value::Map(vec![(rmpv::Value::from("ask_class"), value)]),
+                None,
+                None,
+                Some(1_000),
+            )
+            .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+        )?;
+    Ok(())
+}
+
+#[test]
+fn omitted_task_ref_binds_the_class_of_the_callers_governed_task() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let (agent, class) = governed_agent(&fixture)?;
+    let mut spec = fixture.all();
+    spec.default = TaskAskDefault::Hold;
+    let receipt = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .tasks_ask(&spec)?;
+    let txn = fixture.vault.store.env.read_txn()?;
+    let group = super::ask_record::read_group(&fixture.vault, &txn, receipt.handle.group_ref)?
+        .ok_or("stored ask group")?;
+    assert_eq!(group.context_class, Some(class));
+    Ok(())
+}
+
+#[test]
+fn omitted_task_ref_cannot_admit_proceed_on_a_governed_task() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let (agent, _) = governed_agent(&fixture)?;
+    let mut spec = fixture.spec();
+    spec.default = TaskAskDefault::Proceed;
+    spec.decide = Some(TaskAskDecide::First);
+    let refused = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .tasks_ask(&spec)
+        .expect_err("a governed task's class binds and refuses proceed");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    Ok(())
+}
+
+#[test]
+fn omitted_task_ref_is_refused_when_two_governed_tasks_could_bind() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let (agent, class) = governed_agent(&fixture)?;
+    assign_governed_task(&fixture, agent, &class)?;
+    let mut spec = fixture.all();
+    spec.default = TaskAskDefault::Hold;
+    let refused = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .tasks_ask(&spec)
+        .expect_err("two governed tasks cannot both bind one ask");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    Ok(())
+}

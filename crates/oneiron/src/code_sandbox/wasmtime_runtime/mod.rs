@@ -45,7 +45,9 @@ pub struct ComponentBudget {
 impl Default for ComponentBudget {
     fn default() -> Self {
         Self {
-            fuel: 10_000_000,
+            // The QuickJS factory's readiness probe alone burns 12,684,552 fuel
+            // on the pinned first-party artifact; the default must admit it.
+            fuel: 100_000_000,
             memory_bytes: 64 * 1024 * 1024,
             wall_time: Duration::from_secs(5),
             host_calls: 256,

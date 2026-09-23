@@ -3885,10 +3885,11 @@ fn retained_continuations_are_bounded_per_connection() {
 /// — unrenderable for every later reader of that board.
 #[test]
 fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
+    use oneiron::context_board::{TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES};
     // One limit system: the bound IS the engine's row ceiling less the fixed
     // tokens the rendered row adds beside the label.
     assert_eq!(
-        MCP_TASK_LABEL_MAX_BYTES + MCP_TASK_ROW_FIXED_TOKEN_BYTES,
+        TASK_LABEL_MAX_BYTES + TASK_ROW_FIXED_TOKEN_BYTES,
         oneiron::context_board::MAX_BOARD_ROW_BYTES,
         "the label ceiling is derived from the row ceiling, not invented beside it",
     );
@@ -3910,11 +3911,11 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
     let schema = create.schema().input_schema;
     assert_eq!(
         schema["properties"]["arguments"]["properties"]["label"]["maxLength"],
-        Value::from(MCP_TASK_LABEL_MAX_BYTES),
+        Value::from(TASK_LABEL_MAX_BYTES),
     );
 
     // Exactly at the boundary: admitted, and carried through unchanged.
-    let boundary = "x".repeat(MCP_TASK_LABEL_MAX_BYTES);
+    let boundary = "x".repeat(TASK_LABEL_MAX_BYTES);
     let McpValidatedToolArgs::Verb(verb) =
         decode(&boundary).expect("a label exactly at the ceiling is admitted")
     else {
@@ -3928,7 +3929,7 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
 
     // One byte over: the established typed argument error, on the label's own
     // field, before any facade is reached.
-    let over = "x".repeat(MCP_TASK_LABEL_MAX_BYTES + 1);
+    let over = "x".repeat(TASK_LABEL_MAX_BYTES + 1);
     let error = decode(&over).expect_err("a label one byte over the ceiling is refused");
     assert!(
         matches!(
@@ -3941,12 +3942,12 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
 
     // The bound is on BYTES because the row ceiling is: a multi-byte label
     // inside the advertised code-point ceiling is still refused here.
-    let multibyte = "é".repeat(MCP_TASK_LABEL_MAX_BYTES / 2 + 1);
+    let multibyte = "é".repeat(TASK_LABEL_MAX_BYTES / 2 + 1);
     assert!(
-        multibyte.chars().count() <= MCP_TASK_LABEL_MAX_BYTES,
+        multibyte.chars().count() <= TASK_LABEL_MAX_BYTES,
         "the multi-byte case is inside the advertised code-point ceiling",
     );
-    assert!(multibyte.len() > MCP_TASK_LABEL_MAX_BYTES);
+    assert!(multibyte.len() > TASK_LABEL_MAX_BYTES);
     decode(&multibyte).expect_err("a multi-byte label over the byte ceiling is refused");
 
     // Every ordinary label an actual caller writes is untouched, and a blank

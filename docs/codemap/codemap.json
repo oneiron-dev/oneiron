@@ -10589,7 +10589,7 @@
      "path": "src/context_board/frame.rs",
      "purpose": "Board frame — the canonical `<memory surface=\"board\">` envelope over typed sections, plus the adaptive…",
      "surface": {
-      "const": 5,
+      "const": 7,
       "crate-vis": 1,
       "enum": 4,
       "fn": 14,
@@ -11754,7 +11754,7 @@
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -11852,7 +11852,7 @@
      "path": "src/conversation_dag/test_support.rs",
      "purpose": "Test-only policy fixture shared by engine and HTTP acceptance tests",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -21434,7 +21434,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/note/document_store.rs",
@@ -21601,7 +21601,7 @@
      "path": "src/note/proposals.rs",
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -30927,7 +30927,8 @@
      "path": "src/task_verb/create_validation.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 18,
+      "fn": 1
      }
     },
     {
@@ -30996,7 +30997,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 1,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -38778,7 +38779,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade.rs",
@@ -38994,7 +38995,7 @@
      "path": "src/api/mcp_gateway/admission.rs",
      "purpose": "Scoped-call admission and actor resolution",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -39646,7 +39647,7 @@
      "path": "src/auth/slips.rs",
      "purpose": "HTTP/session holder proof and projection of the single log-backed slip",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -40702,8 +40703,8 @@
      "path": "src/mcp/endpoint_args.rs",
      "purpose": "Endpoint tool argument envelopes: setup, execute-code, paging, and verbs",
      "surface": {
-      "const": 2,
-      "crate-vis": 2,
+      "const": 1,
+      "crate-vis": 1,
       "fn": 3,
       "struct": 7
      }

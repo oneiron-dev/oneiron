@@ -29,7 +29,7 @@ fn test_vault_config() -> VaultConfig {
 
 fn large_test_vault_config() -> VaultConfig {
     let mut config = test_vault_config();
-    config.map_size = 256 * 1024 * 1024;
+    config.map_size = VaultConfig::device().map_size;
     config
 }
 

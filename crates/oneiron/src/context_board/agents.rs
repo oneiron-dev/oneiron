@@ -21,7 +21,7 @@ impl AgentLane {
             Self::Child => "child",
             Self::Peer => "peer",
             Self::Cand => "cand",
-            Self::Fanout => "fanout", 
+            Self::Fanout => "fanout",
         }
     }
 }

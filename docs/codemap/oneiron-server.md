@@ -76,7 +76,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign.rs` | src | m | 1 crate-vis | — | Public session-less signing lens |
 | `src/api/esign/editor_budget.rs` | src | s | 3 crate-vis | — | Router-owned admission for public, capability-free editor computation |
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
-| `src/api/facade.rs` | src | s | 1 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | m | 1 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/agent_verbs.rs` | src | m | 1 crate-vis | — | — |
 | `src/api/facade/tests.rs` | test | m | — | — | — |
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
@@ -98,7 +98,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/llm.rs` | src | s | 1 crate-vis | — | Owner-authenticated raw inference |
 | `src/api/llm/tests.rs` | test | m | — | — | — |
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 9 crate-vis | — | Tool execution dispatch across actors |
-| `src/api/mcp_gateway/admission.rs` | src | s | 4 crate-vis | — | Scoped-call admission and actor resolution |
+| `src/api/mcp_gateway/admission.rs` | src | s | 5 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/board_observations.rs` | src | s | 3 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
 | `src/api/mcp_gateway/board_setup.rs` | src | m | 15 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/envelope.rs` | src | s | 14 crate-vis | — | JSON-RPC envelope types and request dispatch |
@@ -170,7 +170,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/vad.rs` | src | m | 9 crate-vis | — | — |
 | `src/auth.rs` | src | m | 31 crate-vis | — | HTTP authentication for log-backed version-two capability slips |
 | `src/auth/binding_admission.rs` | src | s | 1 crate-vis | — | Consume holder proofs at the network door, once per request or upgrade |
-| `src/auth/slips.rs` | src | s | 9 crate-vis | — | HTTP/session holder proof and projection of the single log-backed slip |
+| `src/auth/slips.rs` | src | s | 10 crate-vis | — | HTTP/session holder proof and projection of the single log-backed slip |
 | `src/auth/tests.rs` | test | m | — | — | Authentication tests use real logged mints and holder signatures |
 | `src/auth/tests/pairing.rs` | test | m | — | — | Owner-approved principal delivery through the actual pairing HTTP routes |
 | `src/bin/oneiron.rs` | src | s | — | — | — |
@@ -265,7 +265,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/actors.rs` | src | s | 5 struct · 3 enum · 16 fn · 6 crate-vis | McpBoardSnapshot, McpConnectorActorRecord, McpConnectorActorRegistrationError, McpConnectorActorResolutionError, McpConnectorActorRevokeStatus, McpConnectorScope, McpCredentialHashKey, McpResolvedActor | MCP connector actor types: credentials, scopes, records, and resolution |
 | `src/mcp/args.rs` | src | m | 17 struct · 7 enum · 7 fn | McpActorClass, McpActorMetadata, McpAskEffort, McpAskRoute, McpAskToolArgs, McpBookOperation, McpBookToolArgs, McpCalendarOperation +16 | MCP tool argument envelopes: the request shapes for every tool verb |
 | `src/mcp/codec.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | McpToolArguments | MCP argument codecs: parsed-value and raw-JSON integer normalization |
-| `src/mcp/endpoint_args.rs` | src | m | 7 struct · 3 fn · 2 const · 2 crate-vis | McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest, McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload | Endpoint tool argument envelopes: setup, execute-code, paging, and verbs |
+| `src/mcp/endpoint_args.rs` | src | m | 7 struct · 3 fn · 1 const · 1 crate-vis | McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest, McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload | Endpoint tool argument envelopes: setup, execute-code, paging, and verbs |
 | `src/mcp/endpoint_schema.rs` | src | s | 5 const · 3 crate-vis | — | JSON schemas for endpoint tools: setup, execute-code, paging, and verbs |
 | `src/mcp/exec_host.rs` | src | m | 2 struct · 1 enum · 2 trait · 6 fn | McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpEngineNativeCodeHost | MCP code-execution host seam and the engine-native host binding |
 | `src/mcp/mod.rs` | src | s | 2 mod · 12 re-export · 4 crate-vis | — | MCP connector actor registry |

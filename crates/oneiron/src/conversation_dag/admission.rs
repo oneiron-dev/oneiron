@@ -136,30 +136,41 @@ pub(crate) fn guard_record_put(
     Ok(())
 }
 
-pub(crate) fn pin_record(
+/// The pin of the TURN stored at `id` now, or `None` when `id` holds no TURN.
+fn stored_record_pin(
     store: &impl ManifestDbs,
-    txn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     id: &EntityId,
-) -> Result<()> {
+) -> Result<Option<[u8; 32]>> {
     let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
-        return Ok(());
+        return Ok(None);
     };
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("DAG record header"))?;
     if header.entity_type != ENTITY_TYPE_TURN {
-        return Ok(());
+        return Ok(None);
     }
     let body = raw
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
         .ok_or(Error::CorruptedIndex("DAG record body"))?;
-    let pin = body_pin(
+    Ok(Some(body_pin(
         header.entity_type,
         crate::TimeRange {
             start: header.occurred_start,
             end: header.occurred_end,
         },
         body,
-    );
+    )))
+}
+
+pub(crate) fn pin_record(
+    store: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(pin) = stored_record_pin(store, txn, id)? else {
+        return Ok(());
+    };
     let key = pin_key(id);
     if let Some(prior) = store.vault_meta().get(txn, &key)? {
         if prior.as_ref() != pin {
@@ -171,14 +182,13 @@ pub(crate) fn pin_record(
     Ok(())
 }
 
-pub(crate) fn pin_membership(
+fn is_dag_membership(
     store: &impl ManifestDbs,
-    txn: &mut heed::RwTxn<'_>,
-    record: &EntityId,
+    txn: &heed::RoTxn<'_>,
     kind: EdgeKind,
     conversation: &EntityId,
-) -> Result<()> {
-    if kind == EdgeKind::ChildOf
+) -> Result<bool> {
+    Ok(kind == EdgeKind::ChildOf
         && store
             .vault_meta()
             .get(txn, &key(MIGRATED, conversation))?
@@ -186,9 +196,42 @@ pub(crate) fn pin_membership(
         && store
             .entities()
             .get(txn, conversation.as_bytes())?
-            .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
-    {
+            .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION)))
+}
+
+pub(crate) fn pin_membership(
+    store: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    record: &EntityId,
+    kind: EdgeKind,
+    conversation: &EntityId,
+) -> Result<()> {
+    if is_dag_membership(store, txn, kind, conversation)? {
         pin_record(store, txn, record)?;
+    }
+    Ok(())
+}
+
+/// The delete path's pin: written when none is stored, never compared.
+///
+/// A purge may meet a record `user_delete` already reduced to its shell, whose
+/// bytes no longer hash to the pin written at append. The stored pin stays as
+/// it is, so a re-creation after the purge is still refused.
+pub(crate) fn keep_membership_pin(
+    store: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    record: &EntityId,
+    kind: EdgeKind,
+    conversation: &EntityId,
+) -> Result<()> {
+    if !is_dag_membership(store, txn, kind, conversation)? {
+        return Ok(());
+    }
+    let key = pin_key(record);
+    if store.vault_meta().get(txn, &key)?.is_none()
+        && let Some(pin) = stored_record_pin(store, txn, record)?
+    {
+        store.vault_meta().put(txn, &key, &pin)?;
     }
     Ok(())
 }

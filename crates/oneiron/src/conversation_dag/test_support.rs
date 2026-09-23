@@ -19,9 +19,18 @@ pub fn put_dag_test_policy(vault: &Vault, actor: WriteActor, allow: bool) -> cra
         "source_trust": {"generated": {"max_auto_sensitivity": 2,
             "actor_ref": actor.entity_ref().to_hex(), "receipted": true, "warned": true}}
     });
-    let bytes = rmp_serde::to_vec_named(&policy)
+    put_test_policy_manifest(vault, crate::gate::default_policy_manifest_id()?, &policy)
+}
+
+/// Installs `policy` at `id` as a locally authored manifest. The default id
+/// replaces the shipped policy; a fresh id folds beside it.
+pub fn put_test_policy_manifest(
+    vault: &Vault,
+    id: EntityId,
+    policy: &serde_json::Value,
+) -> crate::Result<()> {
+    let bytes = rmp_serde::to_vec_named(policy)
         .map_err(|_| crate::Error::InvariantViolation("test policy encode"))?;
-    let id: EntityId = crate::gate::default_policy_manifest_id()?;
     vault.with_write_txn(|txn| {
         crate::batch::apply_ops(
             &vault.store,

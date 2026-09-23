@@ -1,8 +1,8 @@
 //! Board state, setup grammar, and page preflight.
 
 use super::{
-    McpCallContext, McpGatewayError, mcp_actor_result, mcp_engine_error, mcp_facade_error,
-    mcp_scope_covers_entity, mcp_scoped_read, mcp_text_content,
+    McpCallContext, McpGatewayError, mcp_actor_result, mcp_credential_reads, mcp_engine_error,
+    mcp_facade_error, mcp_scope_covers_entity, mcp_scoped_read, mcp_text_content,
 };
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpPageCursorState;
@@ -311,7 +311,7 @@ pub(super) fn mcp_scoped_tasks_section(
     let mut kept = Vec::with_capacity(section.rows.len());
     let mut omitted = 0_usize;
     for row in section.rows {
-        if mcp_scope_admits_row(&scoped_read, &actor.scope, &row.id)? {
+        if mcp_scope_admits_row(&server.vault, actor, &scoped_read, &row.id)? {
             kept.push(row);
         } else {
             omitted += 1;
@@ -331,17 +331,17 @@ pub(super) fn mcp_scoped_tasks_section(
 /// A row whose id is not an entity id cannot be proven in scope, so a narrowed
 /// credential does not see it: this fails closed.
 fn mcp_scope_admits_row(
+    vault: &oneiron::Vault,
+    actor: &McpResolvedActor,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
-    scope: &crate::mcp::McpConnectorScope,
     row_id: &str,
 ) -> Result<bool, McpGatewayError> {
     let Ok(id) = oneiron::EntityId::from_hex(row_id) else {
         return Ok(false);
     };
-    let readable = scoped_read
-        .is_entity_readable(&id)
+    let readable = mcp_credential_reads(vault, actor, &id)
         .map_err(|error| mcp_engine_error("mcp board row admission failed", error))?;
-    Ok(readable && mcp_scope_covers_entity(scoped_read, scope, &id)?)
+    Ok(readable && mcp_scope_covers_entity(scoped_read, &actor.scope, &id)?)
 }
 
 /// What a caller can actually DO next on this endpoint.

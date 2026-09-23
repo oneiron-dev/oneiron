@@ -58,12 +58,7 @@ fn factory() -> QuickJsRuntimeFactory {
     for (i, byte) in hash.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).unwrap();
     }
-    // Explicit native-interpreter budget, not a change to other lanes.
-    let budget = ComponentBudget {
-        fuel: 100_000_000,
-        ..ComponentBudget::default()
-    };
-    QuickJsRuntimeFactory::from_component(&bytes, hash, budget).unwrap()
+    QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap()
 }
 
 #[tokio::test]

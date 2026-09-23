@@ -111,7 +111,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     )?
     .collect::<Result<Vec<_>>>()?;
     for edge in memberships {
-        crate::conversation_dag::pin_membership(store, wtxn, id, edge.kind, &edge.target)?;
+        crate::conversation_dag::keep_membership_pin(store, wtxn, id, edge.kind, &edge.target)?;
     }
 
     // Clean secondary indexes unconditionally — they may exist even without an

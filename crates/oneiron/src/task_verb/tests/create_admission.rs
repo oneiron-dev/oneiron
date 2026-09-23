@@ -57,6 +57,37 @@ fn task_creation_is_counted_and_receipted_at_every_rate() {
     assert_eq!(task_entity_census(&vault), 15);
 }
 
+#[test]
+fn create_refuses_a_label_the_board_cannot_render() {
+    let (_dir, vault) = open_vault();
+    let label = "x".repeat(crate::context_board::TASK_LABEL_MAX_BYTES + 1);
+    let refused = vault
+        .memory(own_agent(&vault), EdgeActorClass::Agent)
+        .tasks_create(&TaskCreateSpec::new(
+            Value::from("unit-task"),
+            Some(label),
+            None,
+            Some(120),
+        ))
+        .expect_err("an oversized label is refused");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+}
+
+#[test]
+fn create_refuses_a_blank_label() {
+    let (_dir, vault) = open_vault();
+    let refused = vault
+        .memory(own_agent(&vault), EdgeActorClass::Agent)
+        .tasks_create(&TaskCreateSpec::new(
+            Value::from("unit-task"),
+            Some("   ".to_owned()),
+            None,
+            Some(120),
+        ))
+        .expect_err("a blank label is refused");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+}
+
 /// A STANDARD task with a deadline already past is born expired, so the same
 /// refusal the consult branch gives applies here. A future deadline passes,
 /// and no deadline at all still means no TTL.

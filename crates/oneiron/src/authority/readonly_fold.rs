@@ -91,7 +91,7 @@ pub(crate) fn authority_fold_readonly_for_store_in_txn(
     // An indeterminate row is only a problem where its delay actually
     // decides something. `now_secs` is the maximum-delay assumption, so any
     // affected DELAYABLE widen lands in `pending_widens` — and pending is
-    // fail-OPEN for `RotateKey`/`RecoveryReboot`, which revoke as they
+    // fail-OPEN for `RotateKey`/`ReRoot`, which revoke as they
     // grant. Refuse there rather than authorize against a roster still
     // holding a key a matured rotation may already have retired. Rows whose
     // first-seen time the fold never consults (every non-delayable op, and
@@ -119,7 +119,7 @@ pub(crate) fn authority_fold_readonly_for_store_in_txn(
 /// what the naive version got wrong. A sidecar-less delayable widen folds to
 /// `eligible_at_secs: None`, which pins it PENDING forever — and "pending"
 /// is only conservative for widens that GRANT (EnrollDevice, SetTierFloor).
-/// `RotateKey` and `RecoveryReboot` also REVOKE: an un-applied rotation
+/// `RotateKey` and `ReRoot` also REVOKE: an un-applied rotation
 /// leaves the retired owner key in the roster with its actor binding Active.
 /// On a legacy vault whose matured rotation K→K2 never got a sidecar, an
 /// attacker still holding K could file a sibling `BindActor(K, …, "human")`
