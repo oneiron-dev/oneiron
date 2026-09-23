@@ -4,7 +4,7 @@ use super::*;
 use crate::ports::EntityStoreRead;
 
 /// `vault_meta` key prefix of the durable optimizer-BIRTH marker: this prefix ‖
-/// the entity id, exactly the [`admission_ticket_key`] key pattern.
+/// the entity id, exactly the [`optimizer_origin_marker_key`] key pattern.
 ///
 /// Written beside a LOCAL create whose record is optimizer-born, and never
 /// again for the life of that id. It is what makes optimizer origin survive
@@ -19,17 +19,6 @@ const OPTIMIZER_ORIGIN_MARKER_PREFIX: &[u8] = b"skill_optimize/origin/v1\0";
 const ORIGIN_MARKER_SCHEMA_VERSION: u64 = 1;
 
 const ORIGIN_MARKER_LABEL: &str = "skill optimizer origin marker";
-
-/// `vault_meta` key prefix of the same-transaction admission precheck.
-///
-/// NOT a capability token: the ticket is written, consumed and deleted inside
-/// ONE write transaction by [`admit_optimized_skill_revision`], so it cannot
-/// outlive the admission it authorizes — a rollback takes it with the body.
-/// It exists because the chokepoint that must refuse a bare flip
-/// ([`check_optimizer_admission_in_txn`]) sees a `Store` and a transaction, not
-/// a `Vault`, and re-deriving the whole gate verdict there would be a second
-/// implementation of this module's decision.
-const ADMISSION_TICKET_PREFIX: &[u8] = b"skill_optimize/admission_ticket/v1\0";
 
 // ---------------------------------------------------------------------------
 // Admission
@@ -63,71 +52,67 @@ pub fn admit_optimized_skill_revision(
     learned_at: u64,
 ) -> Result<()> {
     let refused = vault.with_write_txn(|wtxn| {
-        let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
-        require_open_optimizer_proposal(&staged)?;
-        let target = target_of(&staged)?;
-
-        // The gate's standing answer, read from the ledger rather than
-        // recomputed: re-scoring here would ask the LLM tier a second time and
-        // could answer differently, which would make "passed the gate" a claim
-        // no receipt backs. The WHOLE verdict is read, not just its
-        // disposition — the scores, the evidence identity, the bound tier and
-        // the two body digests are what the checks below are against, and what
-        // a refusal from here carries forward.
-        //
-        // Read BEFORE the target, deliberately: a target that has been purged
-        // since the acceptance is a refusal this door must be able to WRITE,
-        // and it can only write one derived from the acceptance it supersedes.
-        // Exiting on a bare `EntityNotFound` instead left the acceptance
-        // standing, the proposal open, and the real score pair unrecorded.
-        let Some(accepted) = standing_verdict_in_txn(vault, &*wtxn, proposal)?
-            .filter(|verdict| verdict.disposition.admits())
-        else {
-            return Err(invalid(
-                "an optimizer-born candidate is admitted only on a standing accepted gate verdict",
-            ));
-        };
-        let current = readable_target(vault.read_skill_record_in_txn(&*wtxn, &target).map(Some))?;
-        let refusal = admission_refusal_in_txn(
-            vault,
-            &*wtxn,
-            proposal,
-            &staged,
-            current.as_ref(),
-            &target,
-            &accepted,
-            learned_at,
-        )?;
-        if let Some(verdict) = refusal {
-            return record_refusal_in_txn(vault, wtxn, verdict);
-        }
-
-        let mut admitted = staged.clone();
-        admitted.approval_status = ClaimApprovalStatus::Approved;
-        admitted.lifecycle_status = SkillLifecycle::Active;
-        validate_skill_update(&staged, &admitted)?;
-        let data = crate::skill::encode_skill_record(&admitted)?;
-        // Written, consumed and deleted inside this transaction: the ticket is
-        // how the chokepoint below knows this flip came through this door, and
-        // it cannot outlive the flip it authorizes.
-        vault.store.vault_meta.put(
-            wtxn,
-            &admission_ticket_key(proposal),
-            admitted.version.as_bytes(),
-        )?;
-        let landed =
-            vault.apply_skill_record_body(wtxn, proposal, occurred, learned_at, data, false);
-        vault
-            .store
-            .vault_meta
-            .delete(wtxn, &admission_ticket_key(proposal))?;
-        landed?;
-        Ok(None)
+        vault.admit_optimized_skill_in_txn(wtxn, proposal, occurred, learned_at)
     })?;
     match refused {
         Some(disposition) => Err(disposition.refusal_error()),
         None => Ok(()),
     }
+}
+
+pub(crate) fn with_optimized_skill_admission(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    proposal: &EntityId,
+    learned_at: u64,
+    apply: impl FnOnce(&mut heed::RwTxn<'_>, Vec<u8>) -> Result<()>,
+) -> Result<Option<SkillEditDisposition>> {
+    let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
+    require_open_optimizer_proposal(&staged)?;
+    let target = target_of(&staged)?;
+
+    // The gate's standing answer, read from the ledger rather than
+    // recomputed: re-scoring here would ask the LLM tier a second time and
+    // could answer differently, which would make "passed the gate" a claim
+    // no receipt backs. The WHOLE verdict is read, not just its
+    // disposition — the scores, the evidence identity, the bound tier and
+    // the two body digests are what the checks below are against, and what
+    // a refusal from here carries forward.
+    //
+    // Read BEFORE the target, deliberately: a target that has been purged
+    // since the acceptance is a refusal this door must be able to WRITE,
+    // and it can only write one derived from the acceptance it supersedes.
+    // Exiting on a bare `EntityNotFound` instead left the acceptance
+    // standing, the proposal open, and the real score pair unrecorded.
+    let Some(accepted) = standing_verdict_in_txn(vault, &*wtxn, proposal)?
+        .filter(|verdict| verdict.disposition.admits())
+    else {
+        return Err(invalid(
+            "an optimizer-born candidate is admitted only on a standing accepted gate verdict",
+        ));
+    };
+    let current = readable_target(vault.read_skill_record_in_txn(&*wtxn, &target).map(Some))?;
+    let refusal = admission_refusal_in_txn(
+        vault,
+        &*wtxn,
+        proposal,
+        &staged,
+        current.as_ref(),
+        &target,
+        &accepted,
+        learned_at,
+    )?;
+    if let Some(verdict) = refusal {
+        return record_refusal_in_txn(vault, wtxn, verdict);
+    }
+
+    let mut admitted = staged.clone();
+    admitted.approval_status = ClaimApprovalStatus::Approved;
+    admitted.lifecycle_status = SkillLifecycle::Active;
+    validate_skill_update(&staged, &admitted)?;
+    let data = crate::skill::encode_skill_record(&admitted)?;
+    apply(wtxn, data)?;
+    Ok(None)
 }
 
 /// Every reason a standing acceptance is still refused at the door.
@@ -314,10 +299,10 @@ fn decode_origin_marker(raw: &[u8]) -> Result<Vec<Option<String>>> {
 /// [`check_optimizer_admission_in_txn`] freezes origin provenance for the life
 /// of an entity by comparing a create-against-prior pair — but DELETION ends
 /// that life while the id survives, and the id is what the verdict ledger, the
-/// admission ticket and every "this proposal was accepted" row are keyed by. So
+/// admission proof and every "this proposal was accepted" row are keyed by. So
 /// `delete` + same-id `put` used to launder an optimizer-born id into an
 /// ordinary candidate, which the owner's own door then walked to `active` with
-/// no ticket and no verdict: two writes, no gate, and a gate history that still
+/// no proof and no verdict: two writes, no gate, and a gate history that still
 /// said yes.
 ///
 /// The marker closes that road by outliving the body. It is written beside the
@@ -402,8 +387,8 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
 ///   laundering loop the create-side marker opens the other end of: strip the
 ///   birth path on one replica and the stripped body used to travel back and
 ///   overwrite an optimizer-born record at its origin, gate history intact.
-/// - `candidate → active` asks for the same-transaction ticket LOCALLY. A
-///   replicated row cannot show one — the ticket lives and dies inside the
+/// - `candidate → active` asks for the same-transaction proof LOCALLY. A
+///   replicated row cannot show one — the proof lives and dies inside the
 ///   admitting device's transaction and the verdict ledger is `vault_meta`,
 ///   which does not travel — so demanding it would quarantine every lawfully
 ///   admitted edit a peer sends and permanently diverge the replicas. What
@@ -442,8 +427,7 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
 /// road with a durable marker no delete clears.
 ///
 /// Read-only by construction: it runs while the prior body is still borrowed
-/// from the transaction, and the ticket it verifies is deleted by the door that
-/// wrote it.
+/// from the transaction, with the exact-record proof the admission door issued.
 ///
 /// # Errors
 ///
@@ -453,12 +437,11 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
 /// this revision in this transaction, and when a REPLICATED one is activated by
 /// anything other than a pure state flip of the body this vault holds.
 pub(crate) fn check_optimizer_admission_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
     id: &EntityId,
     prior: &SkillRecord,
     updated: &SkillRecord,
     replicated: bool,
+    proof: Option<&crate::skill_hub::HubAdmissionProof>,
 ) -> Result<()> {
     if !born_on_optimize_road(prior) {
         return if born_on_optimize_road(updated) {
@@ -496,24 +479,17 @@ pub(crate) fn check_optimizer_admission_in_txn(
         }
         return Ok(());
     }
-    let Some(ticket) = store.vault_meta.get(txn, &admission_ticket_key(id))? else {
+    let Some(proof) = proof else {
         return Err(invalid(
             "an optimizer-born candidate is admitted by the ONE-1449 score gate, not by a bare state flip",
         ));
     };
-    if ticket.as_ref() != updated.version.as_bytes() {
+    if !proof.binds(id, &crate::skill::encode_skill_record(updated)?) {
         return Err(invalid(
-            "the optimizer admission ticket does not name this revision",
+            "the optimizer admission proof does not bind this revision",
         ));
     }
     Ok(())
-}
-
-fn admission_ticket_key(proposal: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(ADMISSION_TICKET_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(ADMISSION_TICKET_PREFIX);
-    key.extend_from_slice(proposal.as_bytes());
-    key
 }
 
 // ---------------------------------------------------------------------------

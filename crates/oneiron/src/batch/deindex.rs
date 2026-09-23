@@ -101,6 +101,19 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     let mut had_graph_mutation = false;
     let mut neighbors = Vec::new();
 
+    let memberships = crate::ports::EdgeStoreRead::port_edges(
+        store,
+        wtxn,
+        id,
+        crate::ports::EdgeDirection::Out,
+        Some(crate::EdgeKind::ChildOf),
+        None,
+    )?
+    .collect::<Result<Vec<_>>>()?;
+    for edge in memberships {
+        crate::conversation_dag::pin_membership(store, wtxn, id, edge.kind, &edge.target)?;
+    }
+
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     let (room_vector, room_graph, room_neighbors) =
@@ -189,6 +202,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::dreamer_runner::deindex_dreamer_milestone_claim(store, wtxn, id)?;
     crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;
     crate::ingest::reindex_identity_hints(store, wtxn, id, None)?;
+    crate::ports::reindex_named_entities(store, wtxn, id, None)?;
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
     store
         .sync_state

@@ -227,10 +227,6 @@ pub(crate) fn room_for_record_in(
     Ok(room)
 }
 impl Vault {
-    pub fn record_visible_to(&self, record: EntityId, person: EntityId) -> Result<bool> {
-        let txn = self.store.env.read_txn()?;
-        AudienceCache::default().readable(self, &txn, record, &[person])
-    }
     /// The room audience is membership, never runtime presence.
     pub fn scoped_read_for_room(
         &self,

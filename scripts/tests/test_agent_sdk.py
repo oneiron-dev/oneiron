@@ -28,6 +28,26 @@ class AgentSdkProjectionTests(unittest.TestCase):
         ]:
             self.assertNotIn(spelling, outputs[path], path)
 
+    def test_facade_row_name_drives_every_binding_body(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        for row in generator.ROWS:
+            if row["name"] == "witness":
+                row["name"] = "observe"
+        outputs = generator.outputs()
+        for path, spelling in [
+            ("crates/oneiron-remote/src/agent_verbs.rs", "pub fn observe("),
+            ("crates/oneiron-napi/src/facade/client/agent_verbs.rs", "pub fn observe("),
+            ("crates/oneiron-py/src/lib.rs", "fn observe("),
+            ("crates/oneiron-uniffi/src/facade_generated.rs", "fn observe("),
+            ("packages/oneiron/src/index.ts", "observe(turn: WitnessTurn)"),
+            ("packages/oneiron/src/native.ts", "observe(turn: WitnessTurn)"),
+            ("crates/oneiron-py/python/oneiron/__init__.py", "def observe("),
+            ("crates/oneiron-py/python/oneiron/__init__.pyi", "def observe("),
+        ]:
+            self.assertIn(spelling, outputs[path], path)
+
     def test_manifest_removal_suppresses_mcp_dispatch_and_catalog(self):
         spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
         generator = importlib.util.module_from_spec(spec)
@@ -36,7 +56,7 @@ class AgentSdkProjectionTests(unittest.TestCase):
         outputs = generator.outputs()
         self.assertNotIn('"rooms.claim"', outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
         self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"])
-        self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/mcp/agent_catalog.rs"])
+        self.assertNotIn('"rooms.claim"', outputs["crates/oneiron/src/task_verb/verb_catalog.rs"])
 
     def test_mcp_none_suppresses_projection_but_keeps_sdk_method(self):
         spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
@@ -48,7 +68,6 @@ class AgentSdkProjectionTests(unittest.TestCase):
         outputs = generator.outputs()
         self.assertIn('"rooms.claim"', outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
         self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"])
-        self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/mcp/agent_catalog.rs"])
         self.assertIn('fn rooms_claim(', outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
 
     def test_board_context_row_controls_engine_mcp_and_catalog_projections(self):
@@ -64,7 +83,7 @@ class AgentSdkProjectionTests(unittest.TestCase):
         outputs = generator.outputs()
         self.assertNotIn("pub fn board_expand<S:", outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
         self.assertNotIn('"board.expand"', outputs["crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"])
-        self.assertNotIn('"board.expand"', outputs["crates/oneiron/src/board_verb.rs"])
+        self.assertNotIn('"board.expand"', outputs["crates/oneiron/src/task_verb/verb_catalog.rs"])
 
     def test_task_rows_forward_inputs_through_python_namespace(self):
         spec = importlib.util.spec_from_file_location("generated_agent_verbs", ROOT / "crates/oneiron-py/python/oneiron/agent_verbs.py")

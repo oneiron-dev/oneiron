@@ -2,6 +2,11 @@ use super::*;
 use crate::conversation_dag::AppendRecord;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::{EdgeActorClass, EdgeKind, ErrorKind, TimeRange, VaultConfig};
+fn audience_admits(vault: &Vault, record: EntityId, person: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    visibility::AudienceCache::default().readable(vault, &txn, record, &[person])
+}
+
 fn fixture() -> (tempfile::TempDir, Vault, WriteActor, EntityId, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let config = VaultConfig {
@@ -163,16 +168,16 @@ fn membership_windows_survive_kick_rejoin_and_history_revoke() {
         .unwrap();
     let during = record(&vault, room, actor, 4);
     let during = vault.append_dag_record(&during).unwrap();
-    assert!(!vault.record_visible_to(before.id, bob).unwrap());
-    assert!(vault.record_visible_to(during.id, bob).unwrap());
+    assert!(!audience_admits(&vault, before.id, bob).unwrap());
+    assert!(audience_admits(&vault, during.id, bob).unwrap());
     vault
         .set_history_visibility(room, bob, actor, 5, 0)
         .unwrap();
-    assert!(vault.record_visible_to(before.id, bob).unwrap());
+    assert!(audience_admits(&vault, before.id, bob).unwrap());
     vault
         .set_history_visibility(room, bob, actor, 6, 3)
         .unwrap();
-    assert!(!vault.record_visible_to(before.id, bob).unwrap());
+    assert!(!audience_admits(&vault, before.id, bob).unwrap());
     vault.leave_member(room, bob, actor, 7).unwrap();
     let gap = record(&vault, room, actor, 8);
     let gap = vault.append_dag_record(&gap).unwrap();
@@ -181,9 +186,9 @@ fn membership_windows_survive_kick_rejoin_and_history_revoke() {
         .unwrap();
     let after = record(&vault, room, actor, 10);
     let after = vault.append_dag_record(&after).unwrap();
-    assert!(vault.record_visible_to(during.id, bob).unwrap());
-    assert!(!vault.record_visible_to(gap.id, bob).unwrap());
-    assert!(vault.record_visible_to(after.id, bob).unwrap());
+    assert!(audience_admits(&vault, during.id, bob).unwrap());
+    assert!(!audience_admits(&vault, gap.id, bob).unwrap());
+    assert!(audience_admits(&vault, after.id, bob).unwrap());
     assert_eq!(vault.windows(room, bob).unwrap().len(), 2);
     for kind in [
         ConversationKind::Channel,
@@ -639,11 +644,7 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
                 .into(),
         )];
         let child = vault.append_dag_record(&child).unwrap();
-        assert!(
-            vault
-                .record_visible_to(child.id, actor.entity_ref())
-                .unwrap()
-        );
+        assert!(audience_admits(&vault, child.id, actor.entity_ref()).unwrap());
         missing.push(if missing_room { broken_room } else { parent.id });
         hidden.push(child.id);
     }
@@ -824,11 +825,11 @@ fn thread_replies_obey_membership_time_windows() {
     );
     assert_eq!(vault.head(&room).unwrap(), Some(trunk.id));
     // Visibility is evaluated at each reply's time, not at the older trunk/root.
-    assert!(!vault.record_visible_to(trunk.id, bob).unwrap());
-    assert!(!vault.record_visible_to(before, bob).unwrap());
-    assert!(vault.record_visible_to(during, bob).unwrap());
-    assert!(!vault.record_visible_to(gap, bob).unwrap());
-    assert!(vault.record_visible_to(after, bob).unwrap());
+    assert!(!audience_admits(&vault, trunk.id, bob).unwrap());
+    assert!(!audience_admits(&vault, before, bob).unwrap());
+    assert!(audience_admits(&vault, during, bob).unwrap());
+    assert!(!audience_admits(&vault, gap, bob).unwrap());
+    assert!(audience_admits(&vault, after, bob).unwrap());
 }
 
 #[test]
@@ -866,8 +867,8 @@ fn scope_summary_and_merge_header_require_every_covered_membership_window() {
     );
     assert_eq!(vault.drill(&claim).unwrap(), [before, after]);
     for id in [summary, claim, record] {
-        assert!(vault.record_visible_to(id, actor.entity_ref()).unwrap());
-        assert!(!vault.record_visible_to(id, bob).unwrap());
+        assert!(audience_admits(&vault, id, actor.entity_ref()).unwrap());
+        assert!(!audience_admits(&vault, id, bob).unwrap());
     }
     let reader = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new(bob.to_hex()).unwrap())
@@ -885,17 +886,17 @@ fn scope_summary_and_merge_header_require_every_covered_membership_window() {
         .set_history_visibility(room, bob, actor, 5, 0)
         .unwrap();
     for id in [summary, claim, record] {
-        assert!(vault.record_visible_to(id, bob).unwrap());
+        assert!(audience_admits(&vault, id, bob).unwrap());
     }
     vault
         .set_history_visibility(room, bob, actor, 6, 3)
         .unwrap();
     for id in [summary, claim, record] {
-        assert!(!vault.record_visible_to(id, bob).unwrap());
+        assert!(!audience_admits(&vault, id, bob).unwrap());
     }
     vault.batch().delete(&before).commit().unwrap();
     for id in [summary, claim, record] {
-        assert!(!vault.record_visible_to(id, actor.entity_ref()).unwrap());
+        assert!(!audience_admits(&vault, id, actor.entity_ref()).unwrap());
     }
 }
 
@@ -985,7 +986,7 @@ fn summary_families_and_unavailable_dependencies_do_not_hide_healthy_hits() {
     let read = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new(bob.to_hex()).unwrap())
         .for_audience(&[bob]);
-    assert!(vault.record_visible_to(summary, bob).unwrap());
+    assert!(audience_admits(&vault, summary, bob).unwrap());
     assert!(read.get(&summary).unwrap().is_none());
     let read_scope = crate::federation::scope_codec::encode_scope_value(
         &crate::federation::scope_codec::read_preset(),
@@ -1036,7 +1037,7 @@ fn summary_families_and_unavailable_dependencies_do_not_hide_healthy_hits() {
         .collect();
     assert_eq!(hits, [turn, ordinary, epoch].into());
     let malformed = EntityId::now();
-    vault
+    let error = vault
         .put_entity(
             &malformed,
             crate::registry::ENTITY_TYPE_SUMMARY,
@@ -1044,6 +1045,7 @@ fn summary_families_and_unavailable_dependencies_do_not_hide_healthy_hits() {
             2,
             &encode(&serde_json::json!({"scope": "broken", "text": "needle"})).unwrap(),
         )
-        .unwrap();
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::InvalidScopeSummary);
     assert!(read.get(&malformed).unwrap().is_none());
 }

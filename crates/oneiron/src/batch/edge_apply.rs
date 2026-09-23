@@ -132,6 +132,7 @@ pub(super) fn apply_set_edge_weight(
     value[0..4].copy_from_slice(&weight.to_le_bytes());
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
+    crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
     Ok(())
 }
 
@@ -166,6 +167,7 @@ pub(super) fn apply_set_edge_vad(
     value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
+    crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
     Ok(())
 }
 

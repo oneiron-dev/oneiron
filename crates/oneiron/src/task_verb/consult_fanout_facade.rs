@@ -21,7 +21,7 @@ impl Memory<'_> {
     /// compare-and-set to terminal `Expired` with a durable expiry artifact,
     /// then ONE ARCH-0046 digest per task through the existing outbound facade.
     ///
-    /// Engine-owned; it never enters `TASKS_VERBS`. It walks TASK ids through
+    /// Engine-owned; it never enters the task catalog. It walks TASK ids through
     /// the bounded `entities_by_type_page` primitive rather than adding another
     /// unpaged TASK scan, and it re-drives an already-expired task whose digest
     /// marker is absent — closing the crash window between terminalization and

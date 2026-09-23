@@ -141,7 +141,10 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
         source_exhausted: true,
     };
 
-    let tasks = json!({ "kind": "expanded", "key": "TASKS", "lines": ["a", "b"] });
+    let tasks = oneiron::board_verb::BoardVerbOutput::Expanded {
+        key: "TASKS".into(),
+        lines: vec!["a".into(), "b".into()],
+    };
     let source = mcp_board_verb_page_source(&tasks, omissions);
     assert_eq!(source.produced, 2);
     assert_eq!(source.scope_omitted, 3);
@@ -151,7 +154,10 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
 
     // Another section's page is not partial because a TASKS row was outside
     // the credential's ceiling.
-    let verbs = json!({ "kind": "expanded", "key": "VERBS", "lines": ["board.expand"] });
+    let verbs = oneiron::board_verb::BoardVerbOutput::Expanded {
+        key: "VERBS".into(),
+        lines: vec!["board.expand".into()],
+    };
     let source = mcp_board_verb_page_source(&verbs, omissions);
     assert_eq!(source.produced, 1);
     assert_eq!(source.scope_omitted, 0);
@@ -159,7 +165,11 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
     assert_eq!(source.health(), healthy);
 
     // A refresh renders the whole board, so both axes ride it — apart.
-    let frame = json!({ "kind": "frame", "frame": { "epoch": 1 } });
+    let frame =
+        oneiron::board_verb::BoardVerbOutput::Frame(oneiron::context_board::BoardStreamFrame {
+            epoch: 1,
+            kind: oneiron::context_board::FrameKind::Keyframe("board".into()),
+        });
     let source = mcp_board_verb_page_source(&frame, omissions);
     assert_eq!(source.produced, 1);
     assert_eq!(source.scope_omitted, 3);
@@ -177,7 +187,12 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
     assert_eq!(capped.health(), crate::mcp::McpRetrievalHealth::Degraded);
 
     // A subscription receipt states itself completely on both axes.
-    let receipt = json!({ "kind": "subscription", "active": [] });
+    let receipt = oneiron::board_verb::BoardVerbOutput::Subscription(
+        oneiron::context_board::SubscriptionReceipt {
+            connection: oneiron::context_board::StreamConnectionId("test".into()),
+            active: Default::default(),
+        },
+    );
     let source = mcp_board_verb_page_source(&receipt, omissions);
     assert_eq!(source.scope_omitted, 0);
     assert_eq!(source.window_truncated, 0);

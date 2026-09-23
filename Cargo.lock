@@ -6639,6 +6639,7 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "half",
+ "heed",
  "hmac",
  "jsonwebtoken",
  "libc",

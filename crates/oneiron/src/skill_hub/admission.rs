@@ -108,7 +108,9 @@ impl Vault {
                     &authorization,
                 )?;
             }
-            crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
+            if !receipt.accepted {
+                crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
+            }
             let encoded_receipt = serde_json::to_vec(&receipt)
                 .map_err(|_| invalid("admission receipt encode failed"))?;
             let mut history_key = b"skill_hub/admission-history/v1\0".to_vec();
@@ -139,7 +141,7 @@ impl Vault {
         admitted.lifecycle_status = SkillLifecycle::Active;
         let data = crate::skill::encode_skill_record(&admitted)?;
         let proof =
-            super::admission_guard::HubAdmissionProof::consent(*candidate, &data, authorization);
+            super::HubAdmissionProof::consent(&self.store, txn, *candidate, &data, authorization)?;
         self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
     }
     /// Reads the most recent hub admission ruling (including a scored refusal).

@@ -1,10 +1,4 @@
-//! CSTDY-02 unit tests: the T0 door composition (the egress gets bytes, the
-//! caller gets a receipt), default-deny credential evaluation with no
-//! loopback bypass, lease-ticket TTL/scope discipline against a narrow-only
-//! dial, the catastrophe floors proving themselves independent of every row
-//! and every slip, the pre-receive verdict (detector hit, clean push,
-//! fail-closed scanner, binary reject-all), and the one-shot hatch with its
-//! recorded mint stop.
+//! Checkout receive-pack, catastrophe policy, closed scope, and pre-receive scan laws.
 
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -14,11 +8,6 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
-use crate::secret_custody::{
-    CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor,
-    SecretCustodyRecord, SecretCustodyStatus,
-};
-use crate::secret_lease::{SECRET_LEASE_KEY_PREFIX, SECRET_MATERIALIZATION_RECEIPT_PREFIX};
 
 /// The custody name and value the door tests lease and inject. Benign bytes:
 /// nothing detector-shaped ever goes into the vault.
@@ -48,30 +37,6 @@ fn temp_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
     (tmp, Arc::new(vault))
-}
-
-fn register_door_secret(vault: &Vault) {
-    let binding = SecretBinding {
-        effector: EFFECTOR.to_owned(),
-        tier_ceiling: CustodyTier::T2LocalRegistered,
-        scopes: vec!["read".to_owned()],
-    };
-    let rec = SecretCustodyRecord {
-        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
-        name: DOOR_SECRET.to_owned(),
-        class: CustodyClass::CustodyPortable,
-        device_only: false,
-        value_bytes: SECRET_VALUE.to_vec(),
-        status: SecretCustodyStatus::Active,
-        registered_at: 1_700_000_000,
-        rotated_at: None,
-        rotation_generation: 0,
-        bindings: vec![binding],
-        manifest_ref: "secrets.toml".to_owned(),
-        declared_paths: vec![".secrets/door.key".to_owned()],
-        policy_floor_snapshot: SecretCustodyFloor::default(),
-    };
-    vault.register_secret(rec).expect("register secret");
 }
 
 /// Moves the vault's authoritative instant to `secs` and returns it.
@@ -115,13 +80,15 @@ fn pin_vault_instant(vault: &Vault) -> u64 {
 
 /// A vault with the door's secret registered, a pinned authoritative instant,
 /// and a door bound to it.
+fn stored_policy(body: Vec<u8>) -> DoorResult<DoorPolicy> {
+    let (_tmp, vault, door) = door_fixture();
+    put_policy_manifest_body(&vault, 0x37, body);
+    door.door_policy()
+}
+
 fn door_fixture() -> (tempfile::TempDir, Arc<Vault>, CredentialDoorService) {
     let (tmp, vault) = temp_vault();
-    register_door_secret(&vault);
-    pin_vault_instant(&vault);
-    let door = CredentialDoorService::new(Arc::clone(&vault)).with_host_issuer(Arc::new(
-        crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap(),
-    ));
+    let door = CredentialDoorService::new(Arc::clone(&vault));
     (tmp, vault, door)
 }
 
@@ -155,7 +122,7 @@ fn witnessed(door: &CredentialDoorService) -> VaultInstant {
 /// A verified holder view good for pushing, injecting and leasing, issued at
 /// `issued_at` and alive for `lifetime_secs` from there.
 fn push_credential_from(issued_at: u64, lifetime_secs: u64) -> DoorCredential {
-    let verbs = [DOOR_VERB_RECEIVE_PACK, DOOR_VERB_INJECT, DOOR_VERB_LEASE];
+    let verbs = [DOOR_VERB_RECEIVE_PACK, "inject", "lease"];
     let records = [repo_record(&repo()), DOOR_SECRET.to_owned()];
     DoorCredential::verified(
         "slip-push-1",
@@ -176,55 +143,6 @@ fn push_credential_living(now: VaultInstant, lifetime_secs: u64) -> DoorCredenti
 /// The default push credential: 600s of validity left at `now`.
 fn push_credential(now: VaultInstant) -> DoorCredential {
     push_credential_living(now, 600)
-}
-
-/// A push credential with more validity left than any floor or dial, so a TTL
-/// test measures the ceiling under test and not the slip's own remaining life.
-fn long_lived_push_credential(now: VaultInstant) -> DoorCredential {
-    push_credential_living(now, 2 * DOOR_MAX_LEASE_TTL_SECS)
-}
-
-fn signed_credential(
-    vault: &Vault,
-    class: &str,
-    issued_at: u64,
-    lifetime: u64,
-    single_use: bool,
-) -> DoorCredential {
-    use rand_core::RngCore;
-    let issuer = crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap();
-    let mut claims = vault.ensure_host_root_slip(&issuer).unwrap().claims;
-    rand_core::OsRng.fill_bytes(&mut claims.slip_id);
-    claims.parent_id = None;
-    claims.holder_ref = "holder:tester".into();
-    claims.scope = super::verb_class::preset(class).unwrap();
-    claims.records = [DOOR_SECRET.to_owned()].into();
-    claims.channels = [EFFECTOR.to_owned()].into();
-    claims.issued_at = issued_at;
-    claims.expires_at = issued_at + lifetime;
-    claims.ttl_secs = lifetime;
-    claims.single_use = single_use;
-    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
-    let proof = issuer.binding_proof(&slip, b"door-fixture").unwrap();
-    vault
-        .verify_capability_slip(&issuer, &slip, b"door-fixture", &proof)
-        .unwrap()
-        .door_credential()
-}
-
-fn replay_credential(credential: &DoorCredential) -> DoorCredential {
-    let super::door_credential::DoorGrant::Capability(verified) = &credential.grant else {
-        panic!("expected verified capability");
-    };
-    verified.door_credential()
-}
-
-fn one_shot_credential_from(vault: &Vault, issued_at: u64) -> DoorCredential {
-    signed_credential(vault, "door.redeem", issued_at, 120, true)
-}
-
-fn one_shot_credential(vault: &Vault, now: VaultInstant) -> DoorCredential {
-    one_shot_credential_from(vault, now.secs())
 }
 
 fn blob(path: &str, lines: &[&[u8]]) -> PushedBlob {
@@ -321,51 +239,6 @@ fn effector_row(names: Vec<Value>) -> (Value, Value) {
     (key, Value::Array(names))
 }
 
-fn vault_meta_rows(vault: &Vault) -> u64 {
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    vault.store.vault_meta.len(&rtxn).expect("vault_meta len")
-}
-
-fn entity_rows(vault: &Vault) -> u64 {
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    vault.store.entities.len(&rtxn).expect("entities len")
-}
-
-fn prefix_rows(vault: &Vault, prefix: &str) -> usize {
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    let rows = vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, prefix.as_bytes())
-        .expect("prefix iter");
-    let mut count = 0;
-    for row in rows {
-        row.expect("row");
-        count += 1;
-    }
-    count
-}
-
-fn has_receipt_row(vault: &Vault, receipt_id: &EntityId) -> bool {
-    let hex = receipt_id.to_hex();
-    let key = format!("{SECRET_MATERIALIZATION_RECEIPT_PREFIX}{hex}");
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    let row = vault
-        .store
-        .vault_meta
-        .get(&rtxn, key.as_bytes())
-        .expect("read receipt row");
-    row.is_some()
-}
-
-fn lease_rows(vault: &Vault) -> usize {
-    prefix_rows(vault, SECRET_LEASE_KEY_PREFIX)
-}
-
-fn receipt_rows(vault: &Vault) -> usize {
-    prefix_rows(vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX)
-}
-
 fn deny_reason(err: CredentialDoorError) -> DoorDenyReason {
     match err {
         CredentialDoorError::UnauthorizedPrincipal { reason }
@@ -394,10 +267,6 @@ fn is_binary_rejected(err: &CredentialDoorError) -> bool {
     matches!(err, CredentialDoorError::BinaryContentRejected { .. })
 }
 
-fn is_log_unreachable(err: &CredentialDoorError) -> bool {
-    matches!(err, CredentialDoorError::AuthorityLogUnreachable)
-}
-
 fn secret_text() -> &'static str {
     std::str::from_utf8(SECRET_VALUE).expect("benign fixture is text")
 }
@@ -408,30 +277,17 @@ fn secret_text() -> &'static str {
 
 #[test]
 fn the_door_composes_over_the_vault_it_was_given() {
-    let (_tmp, vault, _door) = door_fixture();
-    // The compatibility alias names the same one organ, never a second.
-    let door: CredentialDoor = CredentialDoorService::new(Arc::clone(&vault));
-    assert!(Arc::ptr_eq(door.vault(), &vault));
+    let (_tmp, _vault, door) = door_fixture();
     let (_other_tmp, other_vault, other_door) = door_fixture();
     put_policy_manifest(&other_vault, 0x26, vec![effector_row(vec![])]);
-
     let credential = push_credential(witnessed(&door));
-    let ticket = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 60)
-        .expect("the supplied vault admits the lease");
-    assert_eq!(ticket.value.as_slice(), SECRET_VALUE);
-    assert_eq!(lease_rows(&vault), 1);
-    assert_eq!(receipt_rows(&vault), 1);
-    assert_eq!(lease_rows(&other_vault), 0);
-    assert_eq!(receipt_rows(&other_vault), 0);
-
+    door.authenticate_receive_pack(Some(&credential), &repo(), loopback())
+        .unwrap();
     let other_credential = push_credential(witnessed(&other_door));
     let err = other_door
-        .issue_lease_ticket(&other_credential, DOOR_SECRET, EFFECTOR, 60)
+        .authenticate_receive_pack(Some(&other_credential), &repo(), loopback())
         .expect_err("the other vault's closed dial must refuse");
     assert!(is_scope_refusal(&err));
-    assert_eq!(lease_rows(&other_vault), 0);
-    assert_eq!(receipt_rows(&other_vault), 0);
 }
 
 #[test]
@@ -485,175 +341,9 @@ fn a_slip_may_not_name_a_floor_either() {
     assert!(is_floor_named(&err));
 }
 
-#[test]
-fn a_slip_attenuation_cannot_raise_the_ttl_ceiling() {
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let greedy = long_lived_push_credential(now).attenuate_lease_ttl(7200);
-
-    let policy = DoorPolicy::default();
-    let ceiling = policy.effective_lease_ttl_ceiling(&greedy, now);
-    assert_eq!(ceiling, DOOR_MAX_LEASE_TTL_SECS);
-
-    let err = door
-        .issue_lease_ticket(&greedy, DOOR_SECRET, EFFECTOR, 3601)
-        .expect_err("the constant wins over the slip");
-    assert!(matches!(
-        err,
-        CredentialDoorError::LeaseTtlDenied {
-            ceiling_secs: DOOR_MAX_LEASE_TTL_SECS,
-            ..
-        }
-    ));
-}
-
-#[test]
-fn repeated_ttl_attenuation_is_a_minimum_in_both_orders() {
-    // A verifier walks a slip chain and applies one TTL caveat per link, in
-    // whatever order the chain is walked. Attenuation is documented as
-    // narrowing-only, so it has to be narrowing with respect to ITSELF: a
-    // later, looser caveat may not restore authority an earlier, tighter one
-    // already gave up, or caveat ORDER becomes an authority dial.
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let policy = DoorPolicy::default();
-
-    let tightening = long_lived_push_credential(now)
-        .attenuate_lease_ttl(3600)
-        .attenuate_lease_ttl(60);
-    let loosening = long_lived_push_credential(now)
-        .attenuate_lease_ttl(60)
-        .attenuate_lease_ttl(3600);
-
-    assert_eq!(policy.effective_lease_ttl_ceiling(&tightening, now), 60);
-    assert_eq!(policy.effective_lease_ttl_ceiling(&loosening, now), 60);
-    // Idempotent, not merely order-independent.
-    let repeated = long_lived_push_credential(now)
-        .attenuate_lease_ttl(60)
-        .attenuate_lease_ttl(60);
-    assert_eq!(policy.effective_lease_ttl_ceiling(&repeated, now), 60);
-
-    // And the widening order cannot buy the time it asked for.
-    let err = door
-        .issue_lease_ticket(&loosening, DOOR_SECRET, EFFECTOR, 61)
-        .expect_err("a later caveat may not restore an earlier one's authority");
-    assert!(matches!(
-        err,
-        CredentialDoorError::LeaseTtlDenied {
-            ceiling_secs: 60,
-            ..
-        }
-    ));
-    door.issue_lease_ticket(&loosening, DOOR_SECRET, EFFECTOR, 60)
-        .expect("the narrowest caveat still mints exactly its own width");
-}
-
-#[test]
-fn the_ttl_ceiling_is_a_meet_semilattice_that_cannot_leave_the_floor() {
-    // The invariant lives in the TYPE, not in whoever remembers to `min`
-    // last: there is no way to build a ceiling above the floor, and the only
-    // combining operation is a meet.
-    assert_eq!(TtlCeiling::FLOOR.secs(), DOOR_MAX_LEASE_TTL_SECS);
-    assert_eq!(TtlCeiling::default(), TtlCeiling::FLOOR);
-    // Every way in clamps: asking to widen buys the floor, never more.
-    assert_eq!(TtlCeiling::at_most(u64::MAX), TtlCeiling::FLOOR);
-    let raised = DOOR_MAX_LEASE_TTL_SECS + 1;
-    assert_eq!(TtlCeiling::at_most(raised), TtlCeiling::FLOOR);
-    assert_eq!(TtlCeiling::at_most(60).secs(), 60);
-
-    let tight = TtlCeiling::at_most(60);
-    let loose = TtlCeiling::at_most(600);
-    // Commutative, idempotent, and never widening in either direction.
-    assert_eq!(tight.meet(loose), tight);
-    assert_eq!(loose.meet(tight), tight);
-    assert_eq!(tight.meet(tight), tight);
-    assert_eq!(tight.meet_secs(u64::MAX), tight);
-    // Associative, so a chain of caveats has one answer whatever the walk.
-    let mid = TtlCeiling::at_most(300);
-    assert_eq!(tight.meet(loose).meet(mid), tight.meet(loose.meet(mid)));
-
-    // Admission is "positive and at or below": zero is not a lease.
-    assert!(!tight.admits(0));
-    assert!(tight.admits(1));
-    assert!(tight.admits(60));
-    assert!(!tight.admits(61));
-    assert!(!TtlCeiling::FLOOR.admits(DOOR_MAX_LEASE_TTL_SECS + 1));
-}
-
-#[test]
-fn an_unattenuated_slip_sits_at_the_floor_rather_than_unbounded() {
-    // The replaced `Option<u64>` spelled "nobody narrowed this" the same way
-    // it spelled "no opinion". The typed cap has no such spelling: the safe
-    // default IS the floor.
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let policy = DoorPolicy::default();
-    let fresh = long_lived_push_credential(now);
-    let ceiling = policy.effective_lease_ttl_ceiling(&fresh, now);
-    assert_eq!(ceiling, DOOR_MAX_LEASE_TTL_SECS);
-}
-
 // ---------------------------------------------------------------------------
 // T0 — remote at door
 // ---------------------------------------------------------------------------
-
-#[test]
-fn t0_injection_hands_the_egress_bytes_and_the_caller_only_a_receipt() {
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-
-    let mut egress: Vec<Vec<u8>> = Vec::new();
-    let mut apply = |value: &[u8]| -> crate::error::Result<()> {
-        egress.push(value.to_vec());
-        Ok(())
-    };
-    let receipt = door
-        .inject_secret_at_door(&credential, DOOR_SECRET, EFFECTOR, &mut apply)
-        .expect("door injection");
-
-    assert_eq!(receipt.secret_ref, DOOR_SECRET);
-    assert_eq!(receipt.effector, EFFECTOR);
-    // The caller's only artefact carries no bytes, in any rendering.
-    assert!(!format!("{receipt:?}").contains(secret_text()));
-    // The mock egress, inside the door, did receive them.
-    assert_eq!(egress, vec![SECRET_VALUE.to_vec()]);
-}
-
-#[test]
-fn t0_injection_needs_a_live_credential_before_the_vault_is_touched() {
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door).secs();
-    let expired = DoorCredential::verified("slip-old", "holder:t", now - 600, now - 1)
-        .with_verbs([DOOR_VERB_INJECT])
-        .with_records([DOOR_SECRET])
-        .with_channels([EFFECTOR]);
-
-    let mut egress: Vec<Vec<u8>> = Vec::new();
-    let mut apply = |value: &[u8]| -> crate::error::Result<()> {
-        egress.push(value.to_vec());
-        Ok(())
-    };
-    let err = door
-        .inject_secret_at_door(&expired, DOOR_SECRET, EFFECTOR, &mut apply)
-        .expect_err("an expired slip buys no remote use");
-
-    assert_eq!(deny_reason(err), DoorDenyReason::Expired);
-    assert!(egress.is_empty());
-}
-
-#[test]
-fn t0_injection_refuses_an_unscoped_effector() {
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-    let mut apply = |_: &[u8]| -> crate::error::Result<()> { Ok(()) };
-
-    let err = door
-        .inject_secret_at_door(&credential, DOOR_SECRET, "", &mut apply)
-        .expect_err("there is no unscoped door use");
-    assert!(is_scope_refusal(&err));
-}
 
 // ---------------------------------------------------------------------------
 // Authenticated receive-pack — loopback is not an identity
@@ -728,7 +418,7 @@ fn a_dial_that_keeps_receive_pack_still_authenticates_it() {
     let named = vec![Value::from(DOOR_RECEIVE_PACK_EFFECTOR)];
     put_policy_manifest(&vault, 0x42, vec![ttl_row(60), effector_row(named)]);
     let policy = door.door_policy().expect("dial");
-    assert_eq!(policy.lease_ttl_ceiling_secs(), 60);
+
     assert!(policy.admits_effector(EFFECTOR));
 
     door.authenticate_receive_pack(Some(&credential), &repo(), loopback())
@@ -751,7 +441,7 @@ fn an_unreadable_dial_refuses_receive_pack_authentication() {
 }
 
 #[test]
-fn expired_revoked_parent_revoked_and_insufficient_slips_default_deny() {
+fn expired_and_insufficient_slips_default_deny() {
     let (_tmp, _vault, door) = door_fixture();
     let instant = witnessed(&door);
     let now = instant.secs();
@@ -761,11 +451,9 @@ fn expired_revoked_parent_revoked_and_insufficient_slips_default_deny() {
         .with_verbs([DOOR_VERB_RECEIVE_PACK])
         .with_records([record.clone()])
         .with_channels([EFFECTOR]);
-    let revoked = push_credential(instant).revoked();
-    let cascaded = push_credential(instant).parent_revoked();
     // Insufficient: a slip that may lease but never got the push verb.
     let insufficient = DoorCredential::verified("slip-lease-only", "holder:t", now, now + 60)
-        .with_verbs([DOOR_VERB_LEASE])
+        .with_verbs(["lease"])
         .with_records([record.clone()])
         .with_channels([EFFECTOR]);
     let other_repo = DoorCredential::verified("slip-other-repo", "holder:t", now, now + 60)
@@ -784,8 +472,6 @@ fn expired_revoked_parent_revoked_and_insufficient_slips_default_deny() {
 
     let cases = vec![
         (expired, DoorDenyReason::Expired),
-        (revoked, DoorDenyReason::Revoked),
-        (cascaded, DoorDenyReason::ParentRevoked),
         (insufficient, DoorDenyReason::VerbNotInSlip),
         (other_repo, DoorDenyReason::RecordOutsideSlip),
         (other_channel, DoorDenyReason::ChannelOutsideSlip),
@@ -800,122 +486,9 @@ fn expired_revoked_parent_revoked_and_insufficient_slips_default_deny() {
     }
 }
 
-#[test]
-fn revocation_is_terminal_and_no_order_of_transitions_revives_a_slip() {
-    // The removed status setter could express `Revoked -> Active` simply by
-    // being called with `Active`. The monotone transitions cannot: there is
-    // no argument to pass, and every transition is a join UP the death order.
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door);
-
-    // A live slip pushes. That is the control: the denials below are the
-    // transitions talking, not a slip that was never good.
-    door.authenticate_receive_pack(Some(&push_credential(now)), &repo(), loopback())
-        .expect("the un-revoked control slip pushes");
-
-    // Both orders, and repetition, all stay dead — and a direct revocation is
-    // never downgraded to a mere cascade by a parent dying afterwards.
-    let denied_revoked = DoorDenyReason::Revoked;
-    let denied_cascade = DoorDenyReason::ParentRevoked;
-    let cases = [
-        (push_credential(now).revoked().revoked(), denied_revoked),
-        (
-            push_credential(now).revoked().parent_revoked(),
-            denied_revoked,
-        ),
-        (
-            push_credential(now).parent_revoked().revoked(),
-            denied_revoked,
-        ),
-        (
-            push_credential(now).parent_revoked().parent_revoked(),
-            denied_cascade,
-        ),
-    ];
-    for (credential, expected) in cases {
-        let refusal = door
-            .authenticate_receive_pack(Some(&credential), &repo(), loopback())
-            .expect_err("a revoked slip stays revoked");
-        assert_eq!(deny_reason(refusal), expected);
-    }
-
-    // The status lattice itself: `Revoked` is the top, so nothing joins back
-    // down to `Active`, and `Active` is only ever where a slip STARTS.
-    let revoked = DoorCredentialStatus::Revoked;
-    let cascaded = DoorCredentialStatus::ParentRevoked;
-    let active = DoorCredentialStatus::Active;
-    assert_eq!(revoked.join(active), revoked);
-    assert_eq!(active.join(revoked), revoked);
-    assert_eq!(revoked.join(cascaded), revoked);
-    assert_eq!(cascaded.join(revoked), revoked);
-    assert_eq!(cascaded.join(active), cascaded);
-    assert_eq!(active.join(active), active);
-}
-
-#[test]
-fn a_single_use_slip_is_refused_when_the_log_cannot_be_read() {
-    let (_tmp, _vault, door) = door_fixture();
-    let (credential, _, _) = capability_pair(&door, &[DOOR_VERB_RECEIVE_PACK], true);
-    assert!(credential.is_single_use());
-
-    authority_log_fault_hook::arm_log_unreachable();
-    let err = door
-        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
-        .expect_err("an unwitnessable caveat is refused");
-    assert!(is_log_unreachable(&err));
-}
-
 // ---------------------------------------------------------------------------
 // T1 — lease tickets
 // ---------------------------------------------------------------------------
-
-#[test]
-fn a_lease_ticket_rides_the_landed_receipt_before_value_path() {
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-
-    // Well inside the slip's 600s of remaining validity, so the ticket is
-    // worth exactly what was asked for and the credential clamp is not what
-    // this test is measuring.
-    let ticket = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 300)
-        .expect("lease ticket");
-
-    assert_eq!(ticket.value.as_slice(), SECRET_VALUE);
-    assert_eq!(ticket.lease.secret_ref, DOOR_SECRET);
-    assert_eq!(ticket.lease.binding_effector, EFFECTOR);
-    assert_eq!(ticket.lease.expires_at - ticket.lease.granted_at, 300);
-    assert!(ticket.lease.expires_at <= now.secs() + 600);
-    // The receipt the lease points at is already durable: the landed
-    // materialization writes it before the value returns.
-    let receipt_id = &ticket.lease.materialization_receipt;
-    assert!(has_receipt_row(&vault, receipt_id));
-    assert_eq!(lease_rows(&vault), 1);
-    assert_eq!(receipt_rows(&vault), 1);
-    // Every lease row names its scope; none is unscoped.
-    assert!(!ticket.lease.binding_effector.is_empty());
-}
-
-#[test]
-fn a_lease_above_the_hard_floor_is_denied() {
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = long_lived_push_credential(now);
-    let asked = DOOR_MAX_LEASE_TTL_SECS + 1;
-
-    let err = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, asked)
-        .expect_err("the hard ceiling holds");
-    assert!(matches!(
-        err,
-        CredentialDoorError::LeaseTtlDenied {
-            ceiling_secs: DOOR_MAX_LEASE_TTL_SECS,
-            ..
-        }
-    ));
-    assert_eq!(lease_rows(&vault), 0);
-}
 
 #[test]
 fn a_door_operation_takes_its_instant_from_the_vault_clock_seam() {
@@ -959,189 +532,35 @@ fn a_door_operation_takes_its_instant_from_the_vault_clock_seam() {
         .expect_err("a wall-clock window is not the vault's window");
     assert_eq!(deny_reason(err), DoorDenyReason::Expired);
 
-    // And the SAME authoritative reading that authorizes is the one that
-    // stamps: a slip whose window is anchored at the vault's instant both
-    // authenticates and buys a ticket granted at that instant.
     let credential = push_credential(now);
     door.authenticate_receive_pack(Some(&credential), &repo(), loopback())
         .expect("a slip live at the vault's instant authenticates");
-    let ticket = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 300)
-        .expect("and buys a ticket");
-    assert!(
-        ticket.lease.granted_at >= wall + PINNED_INSTANT_SKEW_SECS,
-        "the lease was stamped from the wall clock at {}",
-        ticket.lease.granted_at
-    );
-    assert_eq!(ticket.lease.expires_at - ticket.lease.granted_at, 300);
-    assert!(ticket.lease.expires_at <= now.secs() + 600);
-    assert_eq!(lease_rows(&vault), 1);
-    assert_eq!(receipt_rows(&vault), 1);
 }
 
 #[test]
-fn a_lease_never_outlives_the_credential_that_bought_it() {
-    // The slip has 600s left and the dial is at the 3600s floor, so the
-    // credential's own remaining validity is the binding ceiling: a ticket
-    // that outlived it would keep buying reads after the slip expired.
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-
-    let err = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 1200)
-        .expect_err("a slip may not sell more time than it has");
-    assert!(matches!(
-        err,
-        CredentialDoorError::LeaseTtlDenied {
-            requested_secs: 1200,
-            ceiling_secs: 600,
-        }
-    ));
-    assert_eq!(lease_rows(&vault), 0);
-
-    // The remaining validity shrinks as the vault's own clock advances through
-    // the slip's window, and the ceiling shrinks with it: a half-spent slip
-    // buys a half-length ticket. The clock is moved the ONLY way anything can
-    // move it — by raising the authority plane's persisted floor, exactly as
-    // 300s of elapsed time would.
-    pin_vault_instant_at(&vault, now.secs() + 300);
-    let err = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 301)
-        .expect_err("half spent, half the ceiling");
-    assert!(matches!(
-        err,
-        CredentialDoorError::LeaseTtlDenied {
-            ceiling_secs: 300,
-            ..
-        }
-    ));
-    assert_eq!(lease_rows(&vault), 0);
-
-    // Exactly the remaining validity still mints, and the ticket expires with
-    // the credential rather than after it.
-    let ticket = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 300)
-        .expect("a ticket inside the slip's remaining life mints");
-    assert_eq!(ticket.lease.expires_at - ticket.lease.granted_at, 300);
-    assert!(ticket.lease.expires_at <= now.secs() + 600);
-    assert_eq!(lease_rows(&vault), 1);
-}
-
-#[test]
-fn a_lease_at_the_remaining_boundary_dies_with_the_credential() {
-    // At the remaining boundary — where redemption and a maximal request both
-    // land — a ticket sized by duration alone would outlive the slip by
-    // however far the clock moved between authorizing and stamping. That gap
-    // is now closed by construction rather than patched afterwards: the
-    // instant that answers `remaining` IS the instant that stamps
-    // `granted_at`, and the absolute expiry that clamps the row is derived
-    // from that same instant.
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-    let credential_expiry = now.secs() + 600;
-
-    // 600s is the whole of what is left, so the door admits it.
-    let policy = DoorPolicy::default();
-    assert_eq!(policy.effective_lease_ttl_ceiling(&credential, now), 600);
-
-    let ticket = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 600)
-        .expect("the boundary request is admitted");
-
-    // The lease dies with the credential, to the second.
-    assert_eq!(ticket.lease.expires_at, credential_expiry);
-    assert!(ticket.lease.expires_at > ticket.lease.granted_at);
-    assert!(ticket.lease.expires_at <= ticket.lease.granted_at + 600);
-    assert_eq!(lease_rows(&vault), 1);
-}
-
-#[test]
-fn a_credential_dead_at_the_vault_instant_mints_nothing() {
-    // Past the far edge of the same seam. The slip's window closed before the
-    // vault's reading, so the evaluator refuses it outright — the request
-    // never reaches a write transaction, and a lease that would have been born
-    // already dead is not written, receipted, or valued.
-    let (_tmp, vault, door) = door_fixture();
+fn a_credential_dead_at_the_vault_instant_cannot_push() {
+    let (_tmp, _vault, door) = door_fixture();
     let now = witnessed(&door).secs();
     let credential = push_credential_from(now - 3600, 600);
 
     let err = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 600)
-        .expect_err("a slip dead at the vault's instant mints nothing");
+        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
+        .expect_err("a slip dead at the vault's instant is refused");
     assert_eq!(deny_reason(err), DoorDenyReason::Expired);
-    assert_eq!(lease_rows(&vault), 0);
-    assert_eq!(receipt_rows(&vault), 0);
-}
-
-#[test]
-fn a_one_shot_redeemed_after_the_vault_clock_advances_is_clamped_by_its_expiry() {
-    // The redemption arm always asks for its whole remaining bound, so it is
-    // the arm where an over-long ticket is guaranteed rather than incidental.
-    // Here the VAULT'S OWN clock advances 60s between the one-shot being
-    // written and its redemption — the only way anything can move this door's
-    // clock — and the ticket still dies at the one-shot's absolute expiry
-    // rather than 120s after the stamp.
-    let (_tmp, vault, door) = door_fixture();
-    let issued_at = witnessed(&door).secs();
-    let one_shot = one_shot_credential_from(door.vault(), issued_at);
-
-    pin_vault_instant_at(&vault, issued_at + 60);
-    let ticket = door
-        .redeem_one_shot(one_shot)
-        .expect("a one-shot still inside its window redeems");
-    assert_eq!(ticket.lease.granted_at, issued_at + 60);
-    assert_eq!(ticket.lease.expires_at, issued_at + 120);
-    assert_eq!(ticket.lease.expires_at - ticket.lease.granted_at, 60);
-}
-
-#[test]
-fn an_unscoped_or_foreign_lease_scope_has_no_path() {
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-
-    for effector in ["", "connector:gmail"] {
-        let err = door
-            .issue_lease_ticket(&credential, DOOR_SECRET, effector, 60)
-            .expect_err("only exact door scopes mint");
-        assert!(is_scope_refusal(&err));
-    }
-}
-
-#[test]
-fn a_narrowing_dial_applies_to_lease_tickets() {
-    let (_tmp, vault, door) = door_fixture();
-    put_policy_manifest(&vault, 0x21, vec![ttl_row(900)]);
-    let now = witnessed(&door);
-    let credential = long_lived_push_credential(now);
-
-    let policy = door.door_policy().expect("dial");
-    assert_eq!(policy.lease_ttl_ceiling_secs(), 900);
-
-    let err = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 1800)
-        .expect_err("the narrowed ceiling holds");
-    assert!(matches!(
-        err,
-        CredentialDoorError::LeaseTtlDenied {
-            ceiling_secs: 900,
-            ..
-        }
-    ));
-    door.issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 900)
-        .expect("a lease at the narrowed ceiling mints");
 }
 
 #[test]
 fn two_dials_resolve_most_restrictive() {
     let (_tmp, vault, door) = door_fixture();
-    put_policy_manifest(&vault, 0x22, vec![ttl_row(1800)]);
-    put_policy_manifest(&vault, 0x23, vec![ttl_row(600)]);
+    put_policy_manifest(
+        &vault,
+        0x22,
+        vec![ttl_row(1800), effector_row(vec![EFFECTOR.into()])],
+    );
+    put_policy_manifest(&vault, 0x23, vec![ttl_row(600), effector_row(vec![])]);
 
     let policy = door.door_policy().expect("dial");
-    assert_eq!(policy.lease_ttl_ceiling_secs(), 600);
+    assert!(!policy.admits_effector(EFFECTOR));
 }
 
 #[test]
@@ -1152,13 +571,13 @@ fn a_dial_may_narrow_the_effector_set_but_never_widen_it() {
     let credential = push_credential(now);
 
     let err = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 60)
-        .expect_err("a dial allowing no effector denies every lease");
+        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
+        .expect_err("a dial allowing no effector denies every push");
     assert!(is_scope_refusal(&err));
 
     let foreign = vec![Value::from("connector:gmail")];
     let body = encoded_map(vec![effector_row(foreign)]);
-    let widened = decode_door_policy_keys(&body).expect_err("widening fails");
+    let widened = stored_policy(body).expect_err("widening fails");
     assert!(is_invalid_policy(&widened));
 }
 
@@ -1174,8 +593,8 @@ fn a_dial_raising_the_ttl_ceiling_fails_closed() {
     let now = witnessed(&door);
     let credential = push_credential(now);
     let err = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 60)
-        .expect_err("an unreadable dial denies every lease");
+        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
+        .expect_err("an unreadable dial denies every push");
     assert!(is_invalid_policy(&err));
 }
 
@@ -1183,11 +602,11 @@ fn a_dial_raising_the_ttl_ceiling_fails_closed() {
 fn malformed_and_duplicated_dial_rows_never_default_open() {
     let key = Value::from(door_policy_keys::MAX_LEASE_TTL_SECS);
     let body = encoded_map(vec![(key, Value::from("900"))]);
-    let malformed = decode_door_policy_keys(&body).expect_err("unreadable row");
+    let malformed = stored_policy(body).expect_err("unreadable row");
     assert!(is_invalid_policy(&malformed));
 
     let body = encoded_map(vec![ttl_row(900), ttl_row(600)]);
-    let duplicated = decode_door_policy_keys(&body).expect_err("ambiguous row");
+    let duplicated = stored_policy(body).expect_err("ambiguous row");
     assert!(is_invalid_policy(&duplicated));
 }
 
@@ -1199,12 +618,12 @@ fn a_partially_decoded_dial_body_never_defaults_open() {
 
     let mut truncated = narrowing.clone();
     truncated.pop();
-    let err = decode_door_policy_keys(&truncated).expect_err("a truncated declaration");
+    let err = stored_policy(truncated.clone()).expect_err("a truncated declaration");
     assert!(is_invalid_policy(&err));
 
     let mut trailing = narrowing;
     trailing.push(0x00);
-    let err = decode_door_policy_keys(&trailing).expect_err("bytes left past the map");
+    let err = stored_policy(trailing).expect_err("bytes left past the map");
     assert!(is_invalid_policy(&err));
 
     // And it denies at the door instead of resolving the permissive default
@@ -1219,34 +638,8 @@ fn a_partially_decoded_dial_body_never_defaults_open() {
     let now = witnessed(&door);
     let credential = push_credential(now);
     let err = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 60)
-        .expect_err("no lease resolves against an unreadable dial");
-    assert!(is_invalid_policy(&err));
-    assert_eq!(lease_rows(&vault), 0);
-}
-
-#[test]
-fn a_body_this_door_cannot_open_carries_no_door_rows() {
-    // The manifest body schema belongs to the gate: a plane this door does not
-    // read is not a malformed door declaration, and it denies nothing. The
-    // dividing line is READABILITY, not shape — a body that decodes cleanly
-    // into something other than a map simply carries no door rows.
-    let mut array_body = Vec::new();
-    let rows = vec![Value::from(1_u64)];
-    rmpv::encode::write_value(&mut array_body, &Value::Array(rows)).expect("encode body");
-    assert_eq!(
-        decode_door_policy_keys(&array_body).expect("not a map"),
-        None
-    );
-
-    // An EMPTY body is on the other side of that line. It is not another
-    // plane's schema; it is a declaration whose bytes are gone, and the bytes
-    // most worth erasing are the ones that narrowed the dial.
-    let err = decode_door_policy_keys(&[]).expect_err("an empty body declares nothing readable");
-    assert!(is_invalid_policy(&err));
-    // Nor does "not a map" rescue a truncated value: a fixstr header promising
-    // five bytes and carrying one is unreadable whatever it would have said.
-    let err = decode_door_policy_keys(&[0xa5, b'a']).expect_err("an unreadable body");
+        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
+        .expect_err("no push is admitted against an unreadable dial");
     assert!(is_invalid_policy(&err));
 }
 
@@ -1257,7 +650,7 @@ fn a_body_with_no_door_rows_takes_the_safe_default() {
     put_policy_manifest(&vault, 0x26, vec![row]);
 
     let policy = door.door_policy().expect("dial");
-    assert_eq!(policy.lease_ttl_ceiling_secs(), DOOR_MAX_LEASE_TTL_SECS);
+
     assert!(policy.admits_effector(EFFECTOR));
     assert!(!policy.admits_effector(""));
 }
@@ -1280,11 +673,9 @@ fn a_dangling_manifest_index_entry_refuses_the_door_and_writes_nothing() {
     let now = witnessed(&door);
     let credential = push_credential(now);
     let err = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 60)
-        .expect_err("no lease resolves against a corrupt manifest plane");
+        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
+        .expect_err("no push is admitted against a corrupt manifest plane");
     assert!(is_invalid_policy(&err));
-    assert_eq!(lease_rows(&vault), 0);
-    assert_eq!(receipt_rows(&vault), 0);
 
     let err = door
         .authenticate_receive_pack(Some(&credential), &repo(), loopback())
@@ -1309,7 +700,7 @@ fn every_broken_manifest_index_branch_fails_closed() {
 
     fn assert_default_admission(door: &CredentialDoorService) {
         let clean = door.door_policy().expect("clean dial");
-        assert_eq!(clean.lease_ttl_ceiling_secs(), DOOR_MAX_LEASE_TTL_SECS);
+
         assert!(clean.admits_effector(EFFECTOR));
         assert!(!clean.admits_effector(""));
     }
@@ -1392,144 +783,14 @@ fn a_manifest_body_that_is_present_but_unreadable_refuses_the_door() {
     let now = witnessed(&door);
     let credential = push_credential(now);
     let err = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 60)
-        .expect_err("and mints no lease");
+        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
+        .expect_err("and denies a push");
     assert!(is_invalid_policy(&err));
-    assert_eq!(lease_rows(&vault), 0);
-    assert_eq!(receipt_rows(&vault), 0);
 }
 
 // ---------------------------------------------------------------------------
 // The admission is atomic with the stamp
 // ---------------------------------------------------------------------------
-
-/// The door's read-side admission over the fixture secret, plus the ticket it
-/// buys — held as a VALUE, so a test can move the manifest plane underneath it.
-///
-/// That is the whole reason the seam is testable without wall-clock or
-/// thread-timing tricks: admission stopped being a moment that had already
-/// passed and became something a stamp can re-examine.
-fn admitted_ticket(
-    door: &CredentialDoorService,
-    now: VaultInstant,
-    ttl_secs: u64,
-) -> AdmittedLease {
-    let credential = long_lived_push_credential(now);
-    let admitted = door
-        .admit_scope(EFFECTOR, now)
-        .expect("the dial admits the door scope at the door's read");
-    let not_after = now.after(credential.remaining_secs(now));
-    admitted.into_lease(DOOR_SECRET, ttl_secs, not_after)
-}
-
-#[test]
-fn a_dial_emptied_between_the_door_read_and_the_stamp_denies_instead_of_minting() {
-    // Admission precedes the write transaction, so a later dial change must
-    // be rechecked by the stamp rather than trusting the stale reading.
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let ticket = admitted_ticket(&door, now, 600);
-    assert_eq!(ticket.effector(), EFFECTOR);
-
-    // The dial is emptied AFTER the door read it and BEFORE the stamp.
-    put_policy_manifest(&vault, 0x51, vec![effector_row(vec![])]);
-    assert!(!door.door_policy().expect("dial").admits_effector(EFFECTOR));
-
-    let err = vault
-        .materialize_admitted_lease(&ticket)
-        .expect_err("a narrowed dial must deny, never mint under the stale reading");
-    assert!(is_scope_refusal(&err));
-    // Fail-closed all the way down: the write txn was dropped uncommitted.
-    assert_eq!(lease_rows(&vault), 0);
-    assert_eq!(receipt_rows(&vault), 0);
-}
-
-#[test]
-fn a_ttl_ceiling_narrowed_between_the_door_read_and_the_stamp_denies() {
-    // The other half of the same window. The dial still admits the SCOPE, so
-    // the scope arm passes; what moved is the CEILING, under a ticket already
-    // sized against the wider one.
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let ticket = admitted_ticket(&door, now, 600);
-    assert_eq!(ticket.ttl_secs(), 600);
-
-    put_policy_manifest(&vault, 0x52, vec![ttl_row(60)]);
-
-    let err = vault
-        .materialize_admitted_lease(&ticket)
-        .expect_err("a ceiling narrowed under the ticket must deny");
-    assert!(matches!(
-        err,
-        CredentialDoorError::LeaseTtlDenied {
-            requested_secs: 600,
-            ceiling_secs: 60,
-        }
-    ));
-    assert_eq!(lease_rows(&vault), 0);
-    assert_eq!(receipt_rows(&vault), 0);
-}
-
-#[test]
-fn any_other_dial_movement_under_the_stamp_denies_and_an_unmoved_dial_mints() {
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-
-    // A movement neither substantive arm names: the ceiling narrows to 900,
-    // which still admits this 60s ticket, and the scope is untouched. Harmless
-    // to mint under — and refused anyway, because the reading this admission
-    // rests on is provably stale, and a stamp does not get to shrug at that.
-    let ticket = admitted_ticket(&door, now, 60);
-    put_policy_manifest(&vault, 0x53, vec![ttl_row(900)]);
-    let err = vault
-        .materialize_admitted_lease(&ticket)
-        .expect_err("a stale dial reading is not a dial reading");
-    assert!(matches!(
-        err,
-        CredentialDoorError::DialMovedUnderStamp { effector } if effector == EFFECTOR
-    ));
-    assert_eq!(lease_rows(&vault), 0);
-    assert_eq!(receipt_rows(&vault), 0);
-
-    // The control, and it is load-bearing: the seam denies MOVEMENT, not every
-    // stamp. An admission taken against the dial that is actually live
-    // reaffirms inside the write transaction and mints exactly its own width.
-    let now = witnessed(&door);
-    let ticket = admitted_ticket(&door, now, 60);
-    let materialized = vault
-        .materialize_admitted_lease(&ticket)
-        .expect("an admission the stamping transaction agrees with mints");
-    assert_eq!(materialized.lease.binding_effector, EFFECTOR);
-    assert_eq!(materialized.lease.secret_ref, DOOR_SECRET);
-    assert_eq!(materialized.value.as_slice(), SECRET_VALUE);
-    assert_eq!(
-        materialized.lease.expires_at - materialized.lease.granted_at,
-        60
-    );
-    assert_eq!(materialized.lease.granted_at, now.secs());
-    assert_eq!(lease_rows(&vault), 1);
-    assert_eq!(receipt_rows(&vault), 1);
-}
-
-#[test]
-fn the_whole_lease_path_still_denies_when_the_dial_shuts_under_it() {
-    // The same seam through the PUBLIC arm, so the atomicity is a property of
-    // `issue_lease_ticket` and not only of the value it happens to build. The
-    // door's own read already refuses an emptied dial, so this asserts the
-    // outcome that matters — no ticket, no rows — rather than which of the two
-    // fail-closed arms answered first.
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = long_lived_push_credential(now);
-    put_policy_manifest(&vault, 0x55, vec![effector_row(vec![])]);
-
-    let err = door
-        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 60)
-        .expect_err("a shut dial mints nothing through any arm");
-    assert!(is_scope_refusal(&err));
-    assert_eq!(lease_rows(&vault), 0);
-    assert_eq!(receipt_rows(&vault), 0);
-}
 
 // ---------------------------------------------------------------------------
 // The typed admission values are the only authority shape
@@ -1574,77 +835,19 @@ fn the_dial_is_a_subset_of_the_door_effectors_by_construction() {
     // for anything to be checked against — or to forget to check.
     let foreign = vec![Value::from("connector:gmail")];
     let body = encoded_map(vec![effector_row(foreign)]);
-    let widened = decode_door_policy_keys(&body).expect_err("a widen is not a dial move");
+    let widened = stored_policy(body).expect_err("a widen is not a dial move");
     assert!(is_invalid_policy(&widened));
 
     // A body naming the door's own effector narrows to exactly it.
     let named = vec![Value::from(DOOR_RECEIVE_PACK_EFFECTOR)];
     let body = encoded_map(vec![effector_row(named)]);
-    let policy = decode_door_policy_keys(&body)
-        .expect("a narrowing declaration decodes")
-        .expect("and carries door rows");
+    let policy = stored_policy(body).expect("a narrowing declaration decodes");
     assert!(policy.admits_effector(EFFECTOR));
-    assert_eq!(policy.dial().len(), 1);
 
     // An empty declaration is a SHUT door, not a default one.
     let body = encoded_map(vec![effector_row(vec![])]);
-    let policy = decode_door_policy_keys(&body)
-        .expect("an empty declaration decodes")
-        .expect("and carries door rows");
-    assert_eq!(policy.dial().len(), 0);
+    let policy = stored_policy(body).expect("an empty declaration decodes");
     assert!(!policy.admits_effector(EFFECTOR));
-}
-
-#[test]
-fn the_resolved_floors_are_lattice_values_not_assignable_numbers() {
-    // `max_lease_ttl_secs: u64` could hold a ceiling above the catastrophe
-    // floor and could be assigned from anywhere. `PolicyFloors` holds the
-    // lattice value, so the floor is applied on the way in.
-    let floors = PolicyFloors::default();
-    assert_eq!(floors.lease_ttl(), TtlCeiling::FLOOR);
-    assert_eq!(floors.lease_ttl().secs(), DOOR_MAX_LEASE_TTL_SECS);
-    assert_eq!(
-        PolicyFloors::at_most_lease_ttl(u64::MAX).lease_ttl(),
-        TtlCeiling::FLOOR
-    );
-    assert_eq!(PolicyFloors::at_most_lease_ttl(60).lease_ttl().secs(), 60);
-    // Meets only, in either order.
-    let tight = PolicyFloors::at_most_lease_ttl(60);
-    let loose = PolicyFloors::at_most_lease_ttl(600);
-    assert_eq!(tight.meet(loose), tight);
-    assert_eq!(loose.meet(tight), tight);
-    assert_eq!(floors.meet(tight), tight);
-}
-
-#[test]
-fn no_admission_value_exists_for_an_effector_outside_the_resolved_dial() {
-    // The proof is the authority. An effector the dial does not admit produces
-    // no `AdmittedScope`, so there is nothing to hand a stamp — the refusal is
-    // an absence of a value rather than a check somewhere downstream.
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-
-    for foreign in ["", "connector:gmail"] {
-        let err = door
-            .admit_scope(foreign, now)
-            .expect_err("only exact door scopes are admitted");
-        assert!(is_scope_refusal(&err));
-    }
-    // The known effector IS admitted under the default dial, so the refusals
-    // above are the dial talking and not a broken fixture.
-    let admitted = door
-        .admit_scope(EFFECTOR, now)
-        .expect("the default dial admits the door's own effector");
-    assert_eq!(admitted.effector().as_str(), EFFECTOR);
-    assert_eq!(admitted.instant(), now);
-    assert_eq!(admitted.floors().lease_ttl(), TtlCeiling::FLOOR);
-
-    // And once the dial shuts, the door's own effector stops producing one too.
-    put_policy_manifest(&vault, 0x56, vec![effector_row(vec![])]);
-    let err = door
-        .admit_scope(EFFECTOR, now)
-        .expect_err("an emptied dial admits no scope at all");
-    assert!(is_scope_refusal(&err));
 }
 
 // ---------------------------------------------------------------------------
@@ -1759,160 +962,6 @@ fn a_scanner_failure_is_a_rejection() {
 // One-shot hatch and the recorded mint stop
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_one_shot_redeems_once_against_the_authority_log() {
-    let (_tmp, vault, door) = door_fixture();
-    let one_shot = one_shot_credential(&vault, witnessed(&door));
-    let (id, _) = one_shot.capability_identity().unwrap();
-    let replay = replay_credential(&one_shot);
-    let ticket = door.redeem_one_shot(one_shot).unwrap();
-    assert_eq!(ticket.lease.secret_ref, DOOR_SECRET);
-    assert_eq!(ticket.value.as_slice(), SECRET_VALUE);
-    assert!(vault.authority_fold().unwrap().slips.consumed.contains(&id));
-    assert!(matches!(
-        door.redeem_one_shot(replay),
-        Err(CredentialDoorError::AuthorityRejected)
-    ));
-    assert_eq!(lease_rows(&vault), 1);
-}
-
-#[test]
-fn a_one_shot_lease_never_outlives_the_one_shot_cap() {
-    let (_tmp, _vault, door) = door_fixture();
-    let instant = witnessed(&door);
-    let now = instant.secs();
-
-    let ticket = door
-        .redeem_one_shot(one_shot_credential(door.vault(), instant))
-        .expect("redeem");
-    // The one-shot's own absolute expiry is the ticket's, exactly: the
-    // redemption asks for its whole remaining bound and the vault's instant
-    // clamps it there. (The DURATION is that bound minus however far the
-    // vault's clock has moved since `now`, so the absolute instant is the
-    // honest assertion.)
-    assert_eq!(ticket.lease.expires_at, now + 120);
-    let ttl = ticket.lease.expires_at - ticket.lease.granted_at;
-    assert!(ttl <= 120);
-    assert!(ttl <= DOOR_ONE_SHOT_MAX_LIFETIME_SECS);
-
-    let too_long = DoorCredential::verified("slip-long", "holder:t", now, now + 301)
-        .with_verbs([DOOR_VERB_REDEEM])
-        .with_records([DOOR_SECRET])
-        .with_channels([EFFECTOR])
-        .with_single_use_caveat();
-    let err = door
-        .redeem_one_shot(too_long)
-        .expect_err("301s is past the one-shot cap");
-    assert!(matches!(
-        err,
-        CredentialDoorError::OneShotLifetimeDenied {
-            lifetime_secs: 301,
-            ceiling_secs: DOOR_ONE_SHOT_MAX_LIFETIME_SECS,
-        }
-    ));
-}
-
-#[test]
-fn a_redeemed_one_shot_ticket_dies_with_its_one_shot() {
-    // Redeemed 90s into a 120s one-shot: 30s of authority remain, so the
-    // ticket is worth 30s — not the 120s the credential was declared with.
-    // The 90s are spent by the one-shot's OWN window sitting that far behind
-    // the vault's instant; there is no caller clock left to fake them with.
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door).secs();
-    let issued_at = now - 90;
-
-    let ticket = door
-        .redeem_one_shot(one_shot_credential_from(door.vault(), issued_at))
-        .expect("a live one-shot redeems late");
-    assert_eq!(ticket.lease.expires_at, issued_at + 120);
-    assert!(ticket.lease.expires_at - ticket.lease.granted_at <= 30);
-    assert!(ticket.lease.expires_at > ticket.lease.granted_at);
-}
-
-#[test]
-fn a_one_shot_needs_the_caveat_the_verb_and_one_named_scope() {
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door).secs();
-
-    let no_caveat = DoorCredential::verified("slip-plain", "holder:t", now, now + 120)
-        .with_verbs([DOOR_VERB_REDEEM])
-        .with_records([DOOR_SECRET])
-        .with_channels([EFFECTOR]);
-    let err = door
-        .redeem_one_shot(no_caveat)
-        .expect_err("no caveat, no redemption");
-    assert_eq!(deny_reason(err), DoorDenyReason::SingleUseCaveatAbsent);
-
-    let two_secrets = DoorCredential::verified("slip-wide", "holder:t", now, now + 120)
-        .with_verbs([DOOR_VERB_REDEEM])
-        .with_records([DOOR_SECRET, "door.other.token"])
-        .with_channels([EFFECTOR])
-        .with_single_use_caveat();
-    let err = door
-        .redeem_one_shot(two_secrets)
-        .expect_err("a one-shot names exactly one secret");
-    assert!(is_scope_refusal(&err));
-
-    let wrong_verb = signed_credential(door.vault(), "door.lease", now, 120, true);
-    let err = door
-        .redeem_one_shot(wrong_verb)
-        .expect_err("redemption needs the redeem verb");
-    assert_eq!(deny_reason(err), DoorDenyReason::VerbNotInSlip);
-}
-
-#[test]
-fn a_verifier_that_cannot_reach_the_log_refuses_the_caveat() {
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let one_shot = one_shot_credential(door.vault(), now);
-    let meta_before = vault_meta_rows(&vault);
-    authority_log_fault_hook::arm_log_unreachable();
-    let err = door
-        .redeem_one_shot(one_shot)
-        .expect_err("an unwitnessable single-use caveat is refused");
-    assert!(is_log_unreachable(&err));
-    assert_eq!(vault_meta_rows(&vault), meta_before);
-}
-
-#[test]
-fn one_shot_redemption_fails_closed_without_authority_log() {
-    let (_tmp, vault, door) = door_fixture();
-    let minted = door.mint_host_one_shot(DOOR_SECRET, EFFECTOR, 120).unwrap();
-    let (id, _) = minted.capability_identity().unwrap();
-    let replay = replay_credential(&minted);
-    authority_log_fault_hook::arm_log_unreachable();
-    assert!(matches!(
-        door.redeem_one_shot(minted),
-        Err(CredentialDoorError::AuthorityLogUnreachable)
-    ));
-    assert!(vault.authority_fold().unwrap().slip_is_live(&id));
-    assert_eq!(
-        door.redeem_one_shot(replay).unwrap().value.as_slice(),
-        SECRET_VALUE
-    );
-    assert!(matches!(
-        door.mint_host_one_shot(DOOR_SECRET, EFFECTOR, 301),
-        Err(CredentialDoorError::OneShotLifetimeDenied { .. })
-    ));
-}
-
-#[test]
-fn the_one_shot_mint_arm_stops_closed() {
-    let (_tmp, vault, _door) = door_fixture();
-    let door = CredentialDoorService::new(vault.clone());
-    let meta_before = vault_meta_rows(&vault);
-    let entities_before = entity_rows(&vault);
-
-    let err = door
-        .mint_host_one_shot(DOOR_SECRET, EFFECTOR, 120)
-        .expect_err("read-only door has no host signer");
-    assert!(matches!(err, CredentialDoorError::MintUnavailable));
-    // The stop is a stop: nothing was persisted in its place.
-    assert_eq!(vault_meta_rows(&vault), meta_before);
-    assert_eq!(entity_rows(&vault), entities_before);
-}
-
 // ---------------------------------------------------------------------------
 // Nothing printable carries a value
 // ---------------------------------------------------------------------------
@@ -1933,17 +982,12 @@ fn door_refusals_and_credentials_print_no_secret_material() {
             path: "assets/blob.bin".to_owned(),
         },
         CredentialDoorError::UnauthorizedPrincipal {
-            reason: DoorDenyReason::Revoked,
+            reason: DoorDenyReason::Expired,
         },
         CredentialDoorError::AuthorityRejected,
-        // The in-transaction re-admission's refusal carries the door's own
-        // effector CONSTANT, so it is safe to print by construction.
-        CredentialDoorError::DialMovedUnderStamp {
-            effector: DOOR_RECEIVE_PACK_EFFECTOR,
-        },
         CredentialDoorError::LeaseScopeRefused {
             effector: DOOR_RECEIVE_PACK_EFFECTOR.to_owned(),
-            reason: STAMP_SCOPE_REFUSAL,
+            reason: "scope refused",
         },
     ];
     for err in &errors {
@@ -1956,90 +1000,39 @@ fn door_refusals_and_credentials_print_no_secret_material() {
 mod authority;
 
 #[test]
-fn signing_host_mints_and_redeems_one_shot_via_authority_log() {
-    let (_tmp, vault, door) = door_fixture();
-    let issuer = crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap();
-    vault.ensure_host_root_slip(&issuer).unwrap();
-    let before = vault.authority_fold().unwrap().valid_entries.len();
-    let credential = door.mint_host_one_shot(DOOR_SECRET, EFFECTOR, 120).unwrap();
-    assert_eq!(
-        vault.authority_fold().unwrap().valid_entries.len(),
-        before + 1
-    );
-    let ticket = door.redeem_one_shot(credential).unwrap();
-    assert_eq!(ticket.value.as_slice(), SECRET_VALUE);
-    assert_eq!(
-        vault.authority_fold().unwrap().valid_entries.len(),
-        before + 2
-    );
-}
-
-/// Builds the verified view twice so replay keeps its provenance, not just its hex id.
-fn capability_pair(
-    door: &CredentialDoorService,
-    verbs: &[&str],
-    single_use: bool,
-) -> (DoorCredential, DoorCredential, [u8; 32]) {
-    let issuer = crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap();
-    let mut claims = door.vault().ensure_host_root_slip(&issuer).unwrap().claims;
-    let id = [91; 32];
-    let now = witnessed(door).secs();
-    claims.slip_id = id;
-    claims.parent_id = None;
-    claims.issued_at = now;
-    claims.expires_at = now + 120;
-    claims.ttl_secs = 120;
-    claims.single_use = single_use;
-    claims.records = [repo_record(&repo()), DOOR_SECRET.to_owned()].into();
-    claims.channels = [EFFECTOR.to_owned()].into();
-    claims.scope.verbs =
-        crate::federation::ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
-    let slip = door.vault().mint_capability_slip(&issuer, claims).unwrap();
-    let proof = issuer.binding_proof(&slip, b"door-adapter-test").unwrap();
-    let verified = door
-        .vault()
-        .verify_capability_slip(&issuer, &slip, b"door-adapter-test", &proof)
-        .unwrap();
-    (verified.door_credential(), verified.door_credential(), id)
-}
-
-#[test]
-fn capability_receive_pack_burns_claims_id_once() {
-    let (_tmp, vault, door) = door_fixture();
-    let (credential, replay, id) = capability_pair(&door, &[DOOR_VERB_RECEIVE_PACK], true);
-    door.authenticate_receive_pack(Some(&credential), &repo(), loopback())
-        .unwrap();
-    let fold = vault.authority_fold().unwrap();
-    assert!(fold.slips.consumed.contains(&id));
-    assert!(
-        door.authenticate_receive_pack(Some(&replay), &repo(), loopback())
-            .is_err()
-    );
-}
-
-#[test]
-fn capability_verbs_stay_exact_and_repeatable_views_recheck_revocation() {
-    let (_tmp, vault, door) = door_fixture();
-    // This subset has no registered class. It must neither lose inject nor gain lease.
-    let (credential, _, id) =
-        capability_pair(&door, &[DOOR_VERB_RECEIVE_PACK, DOOR_VERB_INJECT], false);
+fn all_scope_admits_only_the_live_door_preset_vocabulary() {
+    let (_tmp, _vault, door) = door_fixture();
     let now = witnessed(&door);
-    credential
-        .evaluate(DOOR_VERB_INJECT, DOOR_SECRET, EFFECTOR, now)
-        .unwrap();
-    assert!(matches!(
-        credential.evaluate(DOOR_VERB_LEASE, DOOR_SECRET, EFFECTOR, now),
-        Err(CredentialDoorError::UnauthorizedPrincipal {
-            reason: DoorDenyReason::VerbNotInSlip
-        })
-    ));
-    door.authenticate_receive_pack(Some(&credential), &repo(), loopback())
-        .unwrap();
-    assert!(!vault.authority_fold().unwrap().slips.consumed.contains(&id));
-    let issuer = crate::authority::HostSlipIssuer::from_secret(b"door-test-root").unwrap();
-    vault.revoke_capability_slip(&issuer, id).unwrap();
-    assert!(
-        door.authenticate_receive_pack(Some(&credential), &repo(), loopback())
-            .is_err()
+    let mut credential = push_credential(now);
+    let super::door_credential::DoorGrant::Witnessed(scope) = &mut credential.grant else {
+        panic!("witnessed fixture")
+    };
+    scope.verbs = crate::federation::ScopeAxis::All;
+    for verb in ["receive-pack", "inject", "lease", "redeem"] {
+        assert!(
+            credential
+                .evaluate(verb, &repo_record(&repo()), EFFECTOR, now)
+                .is_ok()
+        );
+    }
+    for verb in ["mint", "unknown"] {
+        assert_eq!(
+            deny_reason(
+                credential
+                    .evaluate(verb, &repo_record(&repo()), EFFECTOR, now)
+                    .unwrap_err()
+            ),
+            DoorDenyReason::VerbNotInSlip
+        );
+    }
+    let explicit = push_credential(now).with_verbs(["mint"]);
+    assert_eq!(
+        deny_reason(
+            explicit
+                .evaluate("mint", &repo_record(&repo()), EFFECTOR, now)
+                .unwrap_err()
+        ),
+        DoorDenyReason::VerbNotInSlip
     );
+    assert!(super::verb_class::preset("door.mint").is_none());
 }

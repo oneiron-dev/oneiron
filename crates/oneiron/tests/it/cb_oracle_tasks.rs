@@ -499,8 +499,7 @@ mod cb_t {
         use oneiron::edge::EdgeActorClass;
         use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
         use oneiron::{
-            EntityId, TimeRange, Vault, task_verb::TASKS_VERBS, task_verb::TaskCreateSpec,
-            task_verb::TasksVerb,
+            EntityId, TimeRange, Vault, task_verb::TaskCreateSpec, task_verb::sdk::AgentVerb,
         };
 
         let temp = tempfile::tempdir().expect("temporary vault directory");
@@ -533,12 +532,13 @@ mod cb_t {
             .entities_by_type(ENTITY_TYPE_TASK)
             .expect("list task entities after create")
             .len();
-        let verbs: Vec<String> = TasksVerb::ALL
-            .map(TasksVerb::as_str)
-            .into_iter()
+        let mut verbs: Vec<String> = AgentVerb::ALL
+            .iter()
+            .map(|verb| verb.as_str())
+            .filter(|name| name.starts_with("tasks."))
             .map(str::to_owned)
             .collect();
-        assert_eq!(verbs, TASKS_VERBS);
+        verbs.sort();
         let agent_visible_jobqueue_verbs = verbs
             .iter()
             .filter(|verb| {

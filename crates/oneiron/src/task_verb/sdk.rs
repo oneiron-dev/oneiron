@@ -99,4 +99,25 @@ pub struct ReceiptsRequest {
     pub limit: Option<usize>,
 }
 
+include!("verb_catalog.rs");
 include!("sdk_generated.rs");
+
+#[cfg(test)]
+#[test]
+fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
+    let mut names = std::collections::BTreeSet::new();
+    for verb in AgentVerb::ALL {
+        assert!(names.insert(verb.as_str()));
+        assert_eq!(AgentVerb::from_name(verb.as_str()), Some(*verb));
+        assert!(input_schema(verb.as_str()).is_some());
+        assert_eq!(verb.argument_fields().is_some(), verb.is_mcp());
+        assert_eq!(verb.required_fields().is_some(), verb.is_mcp());
+        assert_eq!(mcp_arguments_schema(verb.as_str()).is_some(), verb.is_mcp());
+    }
+    assert!(AgentVerb::TasksAsk.is_section());
+    assert!(AgentVerb::RoomsSpeak.writes());
+    assert!(AgentVerb::RoomsList.is_facade());
+    assert!(!AgentVerb::BoardExpand.is_facade());
+    assert!(!AgentVerb::Recall.is_mcp());
+    assert!(AgentVerb::from_name("not.a.verb").is_none());
+}

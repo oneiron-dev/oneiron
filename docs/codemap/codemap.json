@@ -1677,7 +1677,7 @@
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
       "const": 15,
-      "crate-vis": 73,
+      "crate-vis": 72,
       "type": 2
      }
     },
@@ -1980,8 +1980,8 @@
      "path": "src/authority/slip.rs",
      "purpose": "Version-two capability slips: chained keyed MACs, offline narrowing and holder proof",
      "surface": {
-      "crate-vis": 8,
-      "fn": 10,
+      "crate-vis": 7,
+      "fn": 11,
       "struct": 5
      }
     },
@@ -2050,8 +2050,8 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 8,
-      "fn": 13,
+      "crate-vis": 6,
+      "fn": 15,
       "struct": 1
      }
     },
@@ -2313,7 +2313,7 @@
      "path": "src/authority/wire_decode.rs",
      "purpose": "`rmpv::Value` decoding for every authority type",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -3906,7 +3906,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "BoardVerb",
       "BoardVerbCall",
       "BoardVerbContext",
       "BoardVerbError",
@@ -3918,9 +3917,8 @@
      "path": "src/board_verb.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
-      "enum": 4,
-      "fn": 5,
+      "enum": 3,
+      "fn": 4,
       "struct": 3,
       "trait": 1
      }
@@ -10956,14 +10954,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_board/room_tests.rs",
-     "purpose": "ROOM derives live roster, authority, posture and rule claims with no board store",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/room_verbs.rs",
@@ -11754,7 +11744,7 @@
      "purpose": "The audience predicate shared by all ScopedRead paths",
      "surface": {
       "crate-vis": 4,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -11764,7 +11754,7 @@
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8
      }
     },
     {
@@ -11784,7 +11774,7 @@
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -11874,7 +11864,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/conversation_dag/tests/replay.rs",
@@ -12035,7 +12025,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/credential_door/door_authority.rs",
-     "purpose": "Canonical mint witnesses, atomic spend, and one-shot mint composition",
+     "purpose": "Checkout witnesses and consent admission under the committing writer",
      "surface": {
       "crate-vis": 2
      }
@@ -12051,13 +12041,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/credential_door/door_credential.rs",
      "purpose": "DoorCredential attenuation, lifetime math, and floor-naming evaluation",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 10
      }
     },
     {
@@ -12067,17 +12057,17 @@
      "path": "src/credential_door/door_policy.rs",
      "purpose": "Policy model: effectors, dials, floors, merge rules, and map helpers",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 17
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/credential_door/door_service.rs",
-     "purpose": "CredentialDoorService: admission, lease tickets, one-shot redemption, witnesses",
+     "purpose": "CredentialDoorService: checkout admission and pre-receive scanning",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 11
      }
     },
     {
@@ -12087,7 +12077,7 @@
      "path": "src/credential_door/door_types.rs",
      "purpose": "Door constants, floor names and prefixes, error type, and small naming helpers",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 24
      }
     },
     {
@@ -12095,17 +12085,17 @@
      "kind": "src",
      "notable": [],
      "path": "src/credential_door/mod.rs",
-     "purpose": "ARCH-0068 RC4 — the credential door (CSTDY-02)",
+     "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 5
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/credential_door/tests.rs",
-     "purpose": "CSTDY-02 unit tests: the T0 door composition (the egress gets bytes, the caller gets a receipt)…",
+     "purpose": "Checkout receive-pack, catastrophe policy, closed scope, and pre-receive scan laws",
      "surface": {}
     },
     {
@@ -12113,7 +12103,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/credential_door/tests/authority.rs",
-     "purpose": "Credential capability replay, consent, and scope regression cases",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -12121,7 +12111,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/credential_door/verb_class.rs",
-     "purpose": "Scope presets for the credential door's seven action classes",
+     "purpose": "Scope presets for the credential door's operations",
      "surface": {
       "crate-vis": 2
      }
@@ -20063,7 +20053,7 @@
      "purpose": "Peer-result delegation (ONE-1700): local TASK-to-trap bindings and peer signal reconcile",
      "surface": {
       "crate-vis": 4,
-      "fn": 4,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -20121,14 +20111,6 @@
      "kind": "test",
      "notable": [],
      "path": "src/llm/step/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/llm/step/tests/ask_wait.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -24242,7 +24224,7 @@
      "path": "src/ports/lmdb_entity.rs",
      "purpose": "LMDB entity, edge and place adapters",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -24371,7 +24353,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 6
      }
     },
@@ -24475,7 +24457,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/ports/tests/step21_conformance.rs",
@@ -26374,7 +26356,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 7,
       "struct": 1
      }
@@ -26510,7 +26492,7 @@
      "path": "src/secret_lease/doors.rs",
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 6
      }
     },
@@ -26569,7 +26551,7 @@
      "purpose": "Lease/registration/receipt row types, VaultInstant clock, key prefixes",
      "surface": {
       "const": 4,
-      "crate-vis": 5,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "struct": 6
@@ -27787,7 +27769,7 @@
      "path": "src/skill_hub/admission_guard.rs",
      "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 2
      }
     },
     {
@@ -27831,7 +27813,7 @@
      "path": "src/skill_hub/bootstrap.rs",
      "purpose": "Build-embedded bootstrap skills; import and activation commit together on first open",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 6
      }
     },
     {
@@ -27947,7 +27929,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 2,
       "re-export": 15
      }
@@ -28290,7 +28272,7 @@
      "path": "src/skill_hub/tests/support.rs",
      "purpose": "Imported Active fixtures traverse the same consent and held-out doors as a host",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -28371,7 +28353,7 @@
      "path": "src/skill_optimize/gate/admission.rs",
      "purpose": "Admission, its pinned keys, and the record-shape questions both doors ask",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -29237,7 +29219,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 5,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -30129,7 +30111,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/note/materialize.rs",
-     "purpose": "Peer windows can stage workflow values, never authorize NOTE mutation",
+     "purpose": "Peer windows retain erasure markers, never authorize NOTE mutation",
      "surface": {
       "crate-vis": 1
      }
@@ -31152,7 +31134,6 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
       "fn": 30
      }
     },
@@ -31311,14 +31292,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "TasksVerb"
+      "AgentVerb"
      ],
      "path": "src/task_verb/verb_catalog.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
+      "const": 1,
       "enum": 1,
-      "fn": 1
+      "fn": 11
      }
     },
     {
@@ -32797,16 +32778,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/workspace_roster/rooms/verb_catalog.rs",
-     "purpose": "—",
-     "surface": {
-      "const": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/workspace_roster/rooms/witness.rs",
      "purpose": "Claim-before-speaking guard inside the existing witness transaction",
      "surface": {
@@ -33974,7 +33945,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 50,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34034,7 +34005,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
-     "purpose": "ARCH-0068 RC4 — the credential door (CSTDY-02)"
+     "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning"
     },
     "critic": {
      "files": 7,
@@ -34366,7 +34337,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 65,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34898,7 +34869,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 20,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34914,8 +34885,8 @@
    },
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2064,
-   "test_files": 705
+   "source_files": 2063,
+   "test_files": 703
   },
   "oneiron-android": {
    "files": [
@@ -37490,7 +37461,6 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "const": 1,
       "fn": 23
      }
     },
@@ -37538,7 +37508,7 @@
       "const": 2,
       "fn": 11,
       "mod": 1,
-      "re-export": 3,
+      "re-export": 2,
       "struct": 2
      }
     },
@@ -39676,7 +39646,7 @@
      "path": "src/auth/slips.rs",
      "purpose": "HTTP/session holder proof and projection of the single log-backed slip",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -40665,14 +40635,6 @@
       "fn": 16,
       "struct": 5
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/mcp/agent_catalog.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -41693,7 +41655,7 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
     "mcp": {
-     "files": 23,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41772,7 +41734,7 @@
    },
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 231,
+   "source_files": 230,
    "test_files": 95
   },
   "oneiron-uniffi": {
@@ -41861,7 +41823,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_generated.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "Oneiron"
@@ -41905,11 +41875,18 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The single exported error type for the UniFFI head-contract surface"
+    },
+    "facade_generated": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "—"
     }
    },
    "over_bar": 0,
    "purpose": "Definition-only UniFFI interface surface for the WIRE head contract",
-   "source_files": 5,
+   "source_files": 6,
    "test_files": 1
   },
   "oneiron-vault-contract": {

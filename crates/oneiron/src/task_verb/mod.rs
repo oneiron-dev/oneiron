@@ -69,7 +69,7 @@ pub use terminal_state::{
     ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition,
     TaskTerminalRecord, board_status_for_disposition, merge_task_terminal_register,
 };
-pub use verb_kind::{TASKS_VERBS, TaskAssignee, TaskKind, TaskTtl, TasksVerb};
+pub use verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 
 pub(crate) use create_validation::{
     completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,

@@ -408,7 +408,7 @@ pub(super) async fn execute_mcp_board_verb(
     // None are new CLAIM/SKILL/AGENT_DEF body observations. An expansion has no
     // typed entity mapping, so its renderer strings are never parsed for ids.
     let value = mcp_board_verb_output_value(&output);
-    let page_source = mcp_board_verb_page_source(&value, omissions);
+    let page_source = mcp_board_verb_page_source(&output, omissions);
     // A verb that just minted a fresh keyframe returns it as the RESULT; the
     // central chokepoint supersedes and drains the queue behind it, so it is
     // never also attached as a carrier beside itself and nothing is stranded.
@@ -428,16 +428,13 @@ pub(super) async fn execute_mcp_board_verb(
 /// because a TASKS row was outside the credential's ceiling, and rows the render
 /// row cap dropped are a window fact rather than a scope one.
 pub(crate) fn mcp_board_verb_page_source(
-    output: &Value,
+    output: &oneiron::board_verb::BoardVerbOutput,
     omissions: McpBoardOmissions,
 ) -> crate::mcp::McpPageSource {
-    match output.get("kind").and_then(Value::as_str) {
-        Some("expanded") => {
-            let produced = output
-                .get("lines")
-                .and_then(Value::as_array)
-                .map_or(0, Vec::len);
-            if output.get("key").and_then(Value::as_str) == Some(MCP_BOARD_TASKS_SECTION) {
+    match output {
+        oneiron::board_verb::BoardVerbOutput::Expanded { key, lines } => {
+            let produced = lines.len();
+            if key == MCP_BOARD_TASKS_SECTION {
                 crate::mcp::McpPageSource::scoped_window(
                     produced,
                     omissions.scope_omitted,
@@ -449,14 +446,16 @@ pub(crate) fn mcp_board_verb_page_source(
             }
         }
         // A refresh renders the WHOLE board, so both axes apply to it.
-        Some("frame") => crate::mcp::McpPageSource::scoped_window(
+        oneiron::board_verb::BoardVerbOutput::Frame(_) => crate::mcp::McpPageSource::scoped_window(
             1,
             omissions.scope_omitted,
             omissions.window_truncated,
             omissions.source_exhausted,
         ),
         // A subscription receipt is one row and states itself completely.
-        _ => crate::mcp::McpPageSource::complete(1),
+        oneiron::board_verb::BoardVerbOutput::Subscription(_) => {
+            crate::mcp::McpPageSource::complete(1)
+        }
     }
 }
 

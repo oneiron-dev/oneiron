@@ -68,7 +68,7 @@ fn all_shipped_files_conform_and_import_unchanged() -> Result<()> {
 }
 
 #[test]
-fn bootstrap_proof_cannot_activate_changed_bytes() -> Result<()> {
+fn bootstrap_does_not_reactivate_changed_or_non_seed_records() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let id = stable_id("judge")?;
@@ -77,23 +77,30 @@ fn bootstrap_proof_cannot_activate_changed_bytes() -> Result<()> {
     vault.update_skill_record(&id, &record, TimeRange { start: 1, end: 1 }, 1)?;
     let before = vault.get_raw(&id)?;
     record.lifecycle_status = SkillLifecycle::Active;
-    let data = crate::skill::encode_skill_record(&record)?;
-    let proof = crate::skill_hub::admission_guard::HubAdmissionProof::genesis(id, &data);
     record.desc.push_str(" changed");
-    let changed = crate::skill::encode_skill_record(&record)?;
     assert!(
         vault
-            .with_write_txn(|txn| {
-                vault.admit_hub_skill_record_in_txn(
-                    txn,
-                    TimeRange { start: 2, end: 2 },
-                    2,
-                    changed,
-                    proof,
-                )
-            })
+            .update_skill_record(&id, &record, TimeRange { start: 2, end: 2 }, 2)
             .is_err()
     );
+    let outsider = EntityId::now();
+    let package = package(
+        "outside",
+        "---\nname: outside\ndescription: fixture\n---\nOutside the bootstrap set.\n",
+    )?;
+    let reference = HubRef::new(EntityId::now(), "outside", HubPin::None)?;
+    vault.import_skill_from_hub_with_id(
+        &reference,
+        &package,
+        outsider,
+        TimeRange { start: 3, end: 3 },
+        3,
+    )?;
+    seed_bootstrap_skills(&vault)?;
     assert_eq!(vault.get_raw(&id)?, before);
+    assert_eq!(
+        vault.get_skill_record(&outsider)?.unwrap().lifecycle_status,
+        SkillLifecycle::Candidate
+    );
     Ok(())
 }

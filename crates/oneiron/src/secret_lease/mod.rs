@@ -48,24 +48,6 @@
 //! capability slip (OF-452 D1/D7/D10); see [`crate::secret_custody`] module
 //! docs — this module does not pretend otherwise either.
 //!
-//! # The door's admission travels INSIDE the stamping transaction
-//!
-//! That custody rule is about the RECORD. The credential door adds a second,
-//! independent admission over the same mint — its narrow-only `secret.door.*`
-//! dial — and `Vault::materialize_admitted_lease` is where the two meet. It
-//! takes one `AdmittedLease` (the door's whole proof: proved effector, named
-//! secret, admitted TTL, absolute bound, witnessed instant), RE-RESOLVES the
-//! door dial under the write transaction that is about to stamp, and refuses on
-//! any disagreement — before the record read, the custody floor, or any value
-//! byte. The door resolving its dial in an earlier read transaction is what
-//! made the dial that admitted a request different from the dial the row
-//! committed under; both now happen under the one transaction that writes.
-//!
-//! `Vault::materialize_secret_lease_at` — the raw `(effector, ttl_secs, now,
-//! not_after)` shape — is module-private for that reason: with two ways to
-//! reach a stamp, "the door's admission is atomic with the stamp" would only be
-//! true of whichever one the door happened to call.
-//!
 //! # Teardown honesty (S3/S6)
 //!
 //! [`Vault::revoke_secret_lease`](crate::Vault::revoke_secret_lease) and expiry flip the lease status, revoke

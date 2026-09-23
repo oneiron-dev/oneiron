@@ -99,7 +99,6 @@ pub(super) fn handle_document(
                 Some("system") => oneiron::EdgeActorClass::System,
                 _ => return Err(ProtocolError::RpcNoPrincipal),
             };
-            let jti = auth.jti().ok_or(ProtocolError::RpcNoPrincipal)?;
             let operation = oneiron::note::NoteOperation::decode(payload).map_err(storage_error)?;
             let receipt = server
                 .vault
@@ -108,7 +107,7 @@ pub(super) fn handle_document(
                     entity,
                     selector_grant_scope(),
                     &request.selector,
-                    jti,
+                    |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
                     &operation,
                 )
                 .map_err(|error| ProtocolError::Persistence(error.to_string()))?;

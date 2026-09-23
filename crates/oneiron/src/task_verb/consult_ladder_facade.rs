@@ -1,3 +1,4 @@
+use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
 use crate::claim::ClaimApprovalStatus;
@@ -24,7 +25,7 @@ use super::follow_up::peer_handle_key;
 use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::TaskCreateReceipt;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
-use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl, TasksVerb};
+use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 use super::wire_encode::{canonical_bytes, encode_task_verb_body};
 
 impl Memory<'_> {
@@ -112,7 +113,7 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<TaskCreateReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let provenance = facade_provenance(task_verb_contract(TasksVerb::Create));
+        let provenance = facade_provenance(task_verb_contract(AgentVerb::TasksCreate));
         // A counter is a fresh cross-actor consult, so it answers to exactly
         // the same attribution and ownership laws as the original ask.
         let owning_actor_ref = self.resolve_cross_actor_owner(&counter_delta)?;

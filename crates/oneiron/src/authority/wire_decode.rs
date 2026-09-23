@@ -472,7 +472,7 @@ pub(super) fn decode_tier(value: &Value) -> Result<AuthorityTier> {
         .ok_or_else(invalid_authority)
 }
 
-fn decode_optional_hash(value: &Value) -> Result<Option<[u8; 32]>> {
+pub(super) fn decode_optional_hash(value: &Value) -> Result<Option<[u8; 32]>> {
     if matches!(value, Value::Nil) {
         Ok(None)
     } else {

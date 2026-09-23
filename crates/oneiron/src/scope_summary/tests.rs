@@ -209,26 +209,38 @@ fn denied_header_and_reply_roll_back_then_granted_late_result_advances_trunk() {
     assert_eq!(body["addr"], "reply");
     assert_eq!(body["reply_to"]["record"], asking.to_hex());
     assert_eq!(body["summary"], summary.to_hex());
+    assert!(!vault.thread(asking).unwrap().replies.contains(&reply));
     let strip = vault.reply_strip(&reply).unwrap().unwrap();
     assert_eq!(strip.record, asking);
     assert_eq!(strip.text.as_deref(), Some("record"));
     assert!(!strip.stale);
-    vault
-        .put_entity(
-            &asking,
-            ENTITY_TYPE_TURN,
-            time(21),
-            21,
-            &support::body("edited"),
-        )
-        .unwrap();
-    let strip = vault.reply_strip(&reply).unwrap().unwrap();
-    assert!(strip.stale);
-    assert_eq!(strip.text, None);
+    let original = vault.get(&asking).unwrap();
+    assert_eq!(
+        vault
+            .put_entity(
+                &asking,
+                ENTITY_TYPE_TURN,
+                time(21),
+                21,
+                &support::body("edited")
+            )
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::InvalidConversationDag
+    );
+    assert_eq!(vault.get(&asking).unwrap(), original);
+    assert!(!vault.reply_strip(&reply).unwrap().unwrap().stale);
+    assert_eq!(vault.head(&conv).unwrap(), Some(reply));
     assert_eq!(
         vault.resolve_dag_scope(&selector).unwrap().records,
         [worker]
     );
+    vault
+        .delete_entity_with_reason(&asking, crate::DeleteReason::UserDelete)
+        .unwrap();
+    let strip = vault.reply_strip(&reply).unwrap().unwrap();
+    assert!(strip.stale);
+    assert_eq!(strip.text, None);
 }
 
 #[test]
@@ -314,4 +326,72 @@ fn nested_subsession_continues_its_spawning_turn_without_leaking_scopes() {
         [asking]
     );
     assert_eq!(vault.head(&conv).unwrap(), Some(asking));
+}
+
+#[test]
+fn stored_summary_covers_prove_ownership_without_recomputing_history() {
+    let (_dir, vault, conversation, actor) = support::fixture();
+    let root = vault
+        .append_dag_record(&support::input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let selector = support::scope(conversation, ScopePath::Canonical, false);
+    let summary = vault
+        .mint_dag_scope_summary(&selector, "history", actor)
+        .unwrap();
+    let original = decode_scope_summary_body(&vault.get(&summary).unwrap().unwrap()).unwrap();
+    let later = vault
+        .append_dag_record(&support::input(conversation, Some(root), true, actor))
+        .unwrap()
+        .id;
+    vault.move_head(&conversation, &root).unwrap();
+    assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [root]);
+    let foreign = EntityId::now();
+    vault
+        .put_entity(
+            &foreign,
+            crate::registry::ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &support::body("foreign"),
+        )
+        .unwrap();
+    let foreign_turn = vault
+        .append_dag_record(&support::input(foreign, None, true, actor))
+        .unwrap()
+        .id;
+    let session = vault.spawn_dag_sub_session(&root, actor).unwrap();
+    let mut input = support::input(conversation, Some(root), false, actor);
+    input.session = Some(session);
+    let worker = vault.append_dag_record(&input).unwrap().id;
+    for covered in [actor.entity_ref(), foreign_turn, worker] {
+        let mut forged = original.clone();
+        forged.covers = vec![covered];
+        let id = EntityId::now();
+        vault
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_SUMMARY,
+                time(1),
+                1,
+                &encode_scope_summary_body(&forged).unwrap(),
+            )
+            .unwrap();
+        assert!(vault.scope_summary_covers(&id).is_err());
+        assert!(vault.land_header(&id, &later, actor, false).is_err());
+    }
+    assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [root]);
+    assert_eq!(
+        vault
+            .put_entity(
+                &summary,
+                crate::registry::ENTITY_TYPE_SUMMARY,
+                time(1),
+                1,
+                &support::body("opaque")
+            )
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::InvalidScopeSummary
+    );
 }

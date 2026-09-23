@@ -1,51 +1,27 @@
-//! CredentialDoorService: admission, lease tickets, one-shot redemption, witnesses.
+//! CredentialDoorService: checkout admission and pre-receive scanning.
 
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use super::door_credential::DoorCredential;
-use super::door_policy::{DoorEffector, DoorPolicy, PolicyFloors};
+use super::door_policy::{DoorEffector, DoorPolicy};
 use super::door_types::{
-    CredentialDoorError, DOOR_MAX_OID_BYTES, DOOR_MAX_PATH_BYTES, DOOR_ONE_SHOT_MAX_LIFETIME_SECS,
-    DOOR_RECEIVE_PACK_EFFECTOR, DOOR_VERB_INJECT, DOOR_VERB_LEASE, DOOR_VERB_RECEIVE_PACK,
-    DOOR_VERB_REDEEM, DoorDenyReason, DoorResult, DoorScanVerdict, PushedBlob, SecretLiftProposal,
-    TtlCeiling, UNUSABLE_PATH, custody, repo_record,
+    CredentialDoorError, DOOR_MAX_OID_BYTES, DOOR_MAX_PATH_BYTES, DOOR_RECEIVE_PACK_EFFECTOR,
+    DOOR_VERB_RECEIVE_PACK, DoorDenyReason, DoorResult, DoorScanVerdict, PushedBlob,
+    SecretLiftProposal, UNUSABLE_PATH, custody, repo_record,
 };
 use crate::batch::secret_scan::scan_file_content;
 use crate::codebase::RepoRef;
-use crate::secret_lease::{DoorInjectionReceipt, SecretLeaseMaterialization, VaultInstant};
-use crate::store::Store;
+use crate::secret_lease::VaultInstant;
 use crate::vault::Vault;
 
 #[cfg(test)]
 use super::scan_fault_hook;
 
-/// Why the re-admission taken INSIDE the stamping transaction refused a scope
-/// the door had already admitted at its own read.
-///
-/// A named constant because the two refusals are otherwise spelled the same:
-/// the regression that proves this check runs in the write transaction, and not
-/// merely at the door, has to be able to tell which one answered.
-pub(super) const STAMP_SCOPE_REFUSAL: &str =
-    "the stamping transaction's dial no longer admits this scope";
-
-/// PROOF that one door effector was admitted, and the authority it was admitted
-/// under.
-///
-/// The door's scope check PRODUCES this; everything after it CONSUMES it. The
-/// evaluator takes its channel argument from here rather than from the caller's
-/// string, the TTL ceiling is computed from the floors recorded here, the
-/// absolute bound is derived from the instant recorded here, and the stamping
-/// transaction re-derives the dial to compare against the one recorded here.
-///
-/// Fields are private and [`AdmittedScope::admit`] is the only constructor, so
-/// an admission cannot be assembled after the fact out of a dial, an effector
-/// and an instant that never met — which is precisely what the three loose
-/// arguments this replaces allowed.
+/// A named effector admitted under the door policy at one vault instant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct AdmittedScope {
     effector: DoorEffector,
-    policy: DoorPolicy,
     at: VaultInstant,
 }
 
@@ -63,7 +39,6 @@ impl AdmittedScope {
             })?;
         Ok(Self {
             effector: admitted,
-            policy,
             at,
         })
     }
@@ -78,130 +53,6 @@ impl AdmittedScope {
     pub(crate) fn instant(&self) -> VaultInstant {
         self.at
     }
-
-    /// The floors the scope was admitted under.
-    pub(crate) fn floors(&self) -> PolicyFloors {
-        self.policy.floors
-    }
-
-    /// The effective lease ceiling under THIS admission — the floors, the
-    /// slip's attenuation and its remaining validity, all against the one
-    /// instant the proof carries. There is no way to compute a ceiling from a
-    /// dial and an instant that were not admitted together.
-    fn effective_ttl_ceiling(&self, credential: &DoorCredential) -> TtlCeiling {
-        self.policy.effective_ttl_ceiling(credential, self.at)
-    }
-}
-
-impl AdmittedScope {
-    /// Sizes a lease against this scope, yielding the ONE admission shape that
-    /// reaches the stamping operation. Consumes the scope by value: a proof
-    /// spends into exactly one ticket.
-    pub(super) fn into_lease(
-        self,
-        secret_ref: &str,
-        ttl_secs: u64,
-        not_after: VaultInstant,
-    ) -> AdmittedLease {
-        AdmittedLease {
-            scope: self,
-            secret_ref: secret_ref.to_owned(),
-            ttl_secs,
-            not_after,
-        }
-    }
-}
-
-/// The ONE admission shape that reaches the stamping operation.
-///
-/// [`Vault::materialize_admitted_lease`] takes this and nothing else — no raw
-/// `max_lease_ttl_secs`, no caller-supplied effector string, no loose `now`,
-/// and no separately-computed bound. Everything the stamp needs travelled
-/// together, was admitted together, and can be checked together.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AdmittedLease {
-    scope: AdmittedScope,
-    secret_ref: String,
-    ttl_secs: u64,
-    not_after: VaultInstant,
-}
-
-impl AdmittedLease {
-    /// The named secret the credential was evaluated against.
-    pub(crate) fn secret_ref(&self) -> &str {
-        &self.secret_ref
-    }
-
-    /// The admitted scope's effector CONSTANT.
-    pub(crate) fn effector(&self) -> &'static str {
-        self.scope.effector.as_str()
-    }
-
-    /// The requested TTL the ceiling admitted.
-    pub(crate) fn ttl_secs(&self) -> u64 {
-        self.ttl_secs
-    }
-
-    /// The witnessed instant this lease authorizes and stamps under.
-    pub(crate) fn instant(&self) -> VaultInstant {
-        self.scope.at
-    }
-
-    /// The absolute instant the authority that bought this lease dies at.
-    pub(crate) fn not_after(&self) -> VaultInstant {
-        self.not_after
-    }
-
-    /// The admission, taken AGAIN inside the transaction that is about to
-    /// stamp — the whole point of this step.
-    ///
-    /// The door resolves the dial in a read transaction, and the lease commits
-    /// in a write transaction opened afterwards. Between the two, a manifest
-    /// row can land: the dial that admitted the request is then not the dial
-    /// the row commits under, and the single row an operator reaches for in a
-    /// catastrophe — an emptied effector set — loses to whatever was already
-    /// in flight. Re-resolving HERE, under the transaction that writes, closes
-    /// that window: the check and the commit are the same atomic act.
-    ///
-    /// Three arms, all denials, in order of how specifically they can name what
-    /// went wrong:
-    ///
-    /// 1. the live dial no longer admits the scope — the emptied-dial case, and
-    ///    the reason it carries is [`STAMP_SCOPE_REFUSAL`] rather than the
-    ///    door's own, so a test can tell which side answered;
-    /// 2. the live floors no longer admit the requested TTL — a dial that
-    ///    narrowed the ceiling under a ticket already sized at the wider one;
-    /// 3. any OTHER disagreement, including a dial that WIDENED. A widening is
-    ///    harmless to mint under, but it is still evidence that the reading
-    ///    this admission rests on is stale, and a stale reading is not
-    ///    something a stamp gets to shrug at.
-    ///
-    /// Deliberately NO clock reading happens here. The instant is threaded in
-    /// through the proof, because a second reading could disagree with the
-    /// lifetime check that already passed and put the credential's window and
-    /// the lease's dates on two different observations.
-    pub(crate) fn reaffirm_in_txn(&self, store: &Store, txn: &heed::RoTxn<'_>) -> DoorResult<()> {
-        let live = DoorPolicy::resolve(store, txn)?;
-        if !live.dial.admits(self.scope.effector) {
-            return Err(CredentialDoorError::LeaseScopeRefused {
-                effector: self.scope.effector.as_str().to_owned(),
-                reason: STAMP_SCOPE_REFUSAL,
-            });
-        }
-        let ceiling = live.floors.lease_ttl;
-        if !ceiling.admits(self.ttl_secs) {
-            return Err(CredentialDoorError::LeaseTtlDenied {
-                requested_secs: self.ttl_secs,
-                ceiling_secs: ceiling.secs(),
-            });
-        }
-        if live != self.scope.policy {
-            return Err(CredentialDoorError::DialMovedUnderStamp {
-                effector: self.scope.effector.as_str(),
-            });
-        }
-        Ok(())
-    }
 }
 
 /// The credential door over one landed vault.
@@ -211,29 +62,12 @@ impl AdmittedLease {
 /// composition and its refusals.
 pub(crate) struct CredentialDoorService {
     vault: Arc<Vault>,
-    issuer: Option<Arc<crate::authority::HostSlipIssuer>>,
 }
-
-/// Compatibility alias for the door's shorter name. One principal noun, two
-/// spellings — never two organs.
-pub(super) type CredentialDoor = CredentialDoorService;
 
 impl CredentialDoorService {
     /// Binds the door to a vault.
     pub(crate) fn new(vault: Arc<Vault>) -> Self {
-        Self {
-            vault,
-            issuer: None,
-        }
-    }
-
-    /// A signing host may mint and consume logged one-shots. A read-only door cannot.
-    pub(crate) fn with_host_issuer(
-        mut self,
-        issuer: Arc<crate::authority::HostSlipIssuer>,
-    ) -> Self {
-        self.issuer = Some(issuer);
-        self
+        Self { vault }
     }
 
     /// The vault this door composes over.
@@ -241,14 +75,7 @@ impl CredentialDoorService {
         &self.vault
     }
 
-    /// Resolves the door dial from the live vault, in a READ transaction.
-    ///
-    /// This is the door's admission-time reading, and it is deliberately no
-    /// longer the last word. A read transaction cannot hold anything still for
-    /// the write transaction that stamps a lease later, so what this resolves
-    /// is re-resolved there and compared
-    /// ([`AdmittedLease::reaffirm_in_txn`]). Treating this answer as final is
-    /// exactly the gap that let a dial narrowed after the read still mint.
+    /// Resolves the current catastrophe dial from stored policy manifests.
     pub(crate) fn door_policy(&self) -> DoorResult<DoorPolicy> {
         let rtxn = self.vault.store.env.read_txn().map_err(custody)?;
         DoorPolicy::resolve(&self.vault.store, &rtxn)
@@ -333,235 +160,6 @@ impl CredentialDoorService {
         } else {
             Ok(DoorScanVerdict::Rejected { proposals })
         }
-    }
-
-    /// T0: use a secret at the door without anyone workspace-side holding it.
-    ///
-    /// `apply` runs INSIDE [`Vault::inject_secret_at_door`] and can only
-    /// return `()`, so the value cannot come back out through it. The caller
-    /// gets the receipt; the bytes stay at the door.
-    pub(crate) fn inject_secret_at_door(
-        &self,
-        presented: &DoorCredential,
-        secret_ref: &str,
-        effector: &str,
-        apply: &mut dyn FnMut(&[u8]) -> crate::error::Result<()>,
-    ) -> DoorResult<DoorInjectionReceipt> {
-        let now = self.door_instant()?;
-        let admitted = self.admit_scope(effector, now)?;
-        self.authorize(
-            presented,
-            DOOR_VERB_INJECT,
-            secret_ref,
-            admitted.effector().as_str(),
-            admitted.instant(),
-        )?;
-        let vault = &self.vault;
-        // T0 stamps no lease, so there is no lease-stamping transaction for an
-        // admission to move inside of. The landed injection keeps its
-        // drop-then-apply shape exactly: the write txn is released BEFORE the
-        // caller's closure runs, because no caller code may execute inside an
-        // LMDB write transaction.
-        vault
-            .inject_secret_at_door(secret_ref, admitted.effector().as_str(), apply)
-            .map_err(custody)
-    }
-
-    /// T1: issue a lease ticket over a named secret, in an exact door scope.
-    ///
-    /// The composition is thin on purpose: the landed materialization writes
-    /// the lease row and its receipt BEFORE the value returns, so the door
-    /// adds no second, unmarked materializing path and no receipt family of
-    /// its own.
-    ///
-    /// The ticket is bounded by the credential's REMAINING validity as well as
-    /// by floor, dial and attenuation: a slip may not sell more time than it
-    /// still has.
-    ///
-    /// That bound is handed to the materialization as the credential's
-    /// ABSOLUTE expiry, not only as a duration: a duration alone would let a
-    /// slip at its exact remaining bound — which is precisely where redemption
-    /// and a maximal request both land — buy a ticket that outlives it.
-    ///
-    /// Both halves of the bound, and the lifetime check they rest on, are
-    /// computed from the SAME [`VaultInstant`] this call read at its start,
-    /// and that instant is what
-    /// [`Vault::materialize_admitted_lease`] stamps `granted_at` from. So the
-    /// absolute expiry travels as `now.after(remaining)` — which IS
-    /// `presented.expires_at`, exactly, because the evaluator has already
-    /// proved `now < expires_at` — rather than as the credential's raw wire
-    /// number. There is no second clock reading anywhere in the path for a
-    /// delay to open a gap in, and no way for a caller to name the instant any
-    /// of it happens at.
-    ///
-    /// What the ticket carries into the vault is the [`AdmittedLease`] — the
-    /// admitted scope, the secret, the admitted TTL and the absolute bound, as
-    /// one value — and the transaction that stamps it takes the door's
-    /// admission AGAIN under itself before writing a row. A dial narrowed
-    /// between the read above and that write denies rather than minting under
-    /// this now-stale reading.
-    pub(super) fn issue_lease_ticket(
-        &self,
-        presented: &DoorCredential,
-        secret_ref: &str,
-        effector: &str,
-        ttl_secs: u64,
-    ) -> DoorResult<SecretLeaseMaterialization> {
-        let now = self.door_instant()?;
-        let admitted = self.admit_scope(effector, now)?;
-        self.authorize(
-            presented,
-            DOOR_VERB_LEASE,
-            secret_ref,
-            admitted.effector().as_str(),
-            now,
-        )?;
-
-        let ceiling = admitted.effective_ttl_ceiling(presented);
-        if !ceiling.admits(ttl_secs) {
-            return Err(CredentialDoorError::LeaseTtlDenied {
-                requested_secs: ttl_secs,
-                ceiling_secs: ceiling.secs(),
-            });
-        }
-        let not_after = now.after(presented.remaining_secs(now));
-        let vault = &self.vault;
-        vault.materialize_admitted_lease(&admitted.into_lease(secret_ref, ttl_secs, not_after))
-    }
-
-    /// Redeems a one-shot. The authority log, not move semantics, enforces
-    /// single use even after a handle is reconstructed or the vault reopens.
-    pub(super) fn redeem_one_shot(
-        &self,
-        one_shot: DoorCredential,
-    ) -> DoorResult<SecretLeaseMaterialization> {
-        if !one_shot.single_use {
-            return Err(CredentialDoorError::UnauthorizedPrincipal {
-                reason: DoorDenyReason::SingleUseCaveatAbsent,
-            });
-        }
-
-        let lifetime = one_shot.lifetime_secs();
-        if lifetime == 0 || lifetime > DOOR_ONE_SHOT_MAX_LIFETIME_SECS {
-            return Err(CredentialDoorError::OneShotLifetimeDenied {
-                lifetime_secs: lifetime,
-                ceiling_secs: DOOR_ONE_SHOT_MAX_LIFETIME_SECS,
-            });
-        }
-        // A one-shot names EXACTLY one secret and EXACTLY one effector. Any
-        // other shape is a wildcard wearing a caveat.
-        let (Some(secret_ref), 1) = (one_shot.records.first(), one_shot.records.len()) else {
-            return Err(CredentialDoorError::LeaseScopeRefused {
-                effector: String::new(),
-                reason: "a one-shot must name exactly one secret",
-            });
-        };
-        let (Some(effector), 1) = (one_shot.channels.first(), one_shot.channels.len()) else {
-            return Err(CredentialDoorError::LeaseScopeRefused {
-                effector: String::new(),
-                reason: "a one-shot must name exactly one effector",
-            });
-        };
-
-        let now = self.door_instant()?;
-        let admitted = self.admit_scope(effector, now)?;
-        self.authorize(
-            &one_shot,
-            DOOR_VERB_REDEEM,
-            secret_ref,
-            admitted.effector().as_str(),
-            now,
-        )?;
-
-        // The declared lifetime is the CAP the one-shot was written under; the
-        // ceiling carries what is left of it at `now`, so a one-shot redeemed
-        // late buys only the time it still has.
-        let ceiling = admitted.effective_ttl_ceiling(&one_shot);
-        let ttl = lifetime.min(ceiling.secs());
-        if !ceiling.admits(ttl) {
-            return Err(CredentialDoorError::LeaseTtlDenied {
-                requested_secs: lifetime,
-                ceiling_secs: ceiling.secs(),
-            });
-        }
-        let vault = &self.vault;
-        // The one-shot's own absolute expiry rides along, for the same reason
-        // `issue_lease_ticket` sends the slip's, and derived the same way: the
-        // redemption arm always asks for its whole remaining bound, so the
-        // absolute instant is what keeps a redeemed ticket from outliving the
-        // one-shot it was redeemed from.
-        let not_after = now.after(one_shot.remaining_secs(now));
-        vault.materialize_admitted_lease(&admitted.into_lease(secret_ref, ttl, not_after))
-        // `one_shot` drops here: the credential is spent.
-    }
-
-    /// Mints a real log-backed one-shot, with exact secret and effector bounds.
-    pub(super) fn mint_host_one_shot(
-        &self,
-        secret_ref: &str,
-        effector: &str,
-        lifetime_secs: u64,
-    ) -> DoorResult<DoorCredential> {
-        use rand_core::{OsRng, RngCore};
-
-        let issuer = self
-            .issuer
-            .as_ref()
-            .ok_or(CredentialDoorError::MintUnavailable)?;
-        let now = self.door_instant()?;
-        self.admit_scope(effector, now)?;
-        if lifetime_secs == 0 || lifetime_secs > DOOR_ONE_SHOT_MAX_LIFETIME_SECS {
-            return Err(CredentialDoorError::OneShotLifetimeDenied {
-                lifetime_secs,
-                ceiling_secs: DOOR_ONE_SHOT_MAX_LIFETIME_SECS,
-            });
-        }
-        if secret_ref.is_empty() {
-            return Err(CredentialDoorError::MintUnavailable);
-        }
-        let root = self.vault.ensure_host_root_slip(issuer).map_err(custody)?;
-        let mut claims = root.claims;
-        OsRng.fill_bytes(&mut claims.slip_id);
-        // Host-root is the issuer, not a same-holder secret-record delegation.
-        claims.parent_id = None;
-        claims.issued_at = now.secs();
-        claims.expires_at = now.secs().saturating_add(lifetime_secs);
-        claims.ttl_secs = lifetime_secs;
-        claims.single_use = true;
-        claims.records = std::collections::BTreeSet::from([secret_ref.to_owned()]);
-        claims.channels = std::collections::BTreeSet::from([effector.to_owned()]);
-        claims.scope =
-            super::verb_class::preset("door.redeem").ok_or(CredentialDoorError::MintUnavailable)?;
-        let slip = self
-            .vault
-            .mint_capability_slip(issuer, claims)
-            .map_err(custody)?;
-        let proof = issuer
-            .binding_proof(&slip, b"credential-door-mint")
-            .map_err(custody)?;
-        let verified = self
-            .vault
-            .verify_capability_slip(issuer, &slip, b"credential-door-mint", &proof)
-            .map_err(custody)?;
-        Ok(verified.door_credential())
-    }
-
-    pub(super) fn consume_single_use(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        credential: &DoorCredential,
-    ) -> DoorResult<()> {
-        let Some((id, _)) = credential.capability_identity() else {
-            return Ok(());
-        };
-        if !credential.single_use {
-            return Ok(());
-        }
-        let issuer = self
-            .issuer
-            .as_ref()
-            .ok_or(CredentialDoorError::MintUnavailable)?;
-        self.vault.consume_slip(txn, issuer, id).map_err(custody)
     }
 }
 

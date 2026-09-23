@@ -157,6 +157,7 @@ pub use verdict::{HeldOutVerdict, SkillEditDisposition};
 
 pub(crate) use admission::{
     check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
+    with_optimized_skill_admission,
 };
 pub(crate) use ledger::skill_edit_verdict_receipts;
 

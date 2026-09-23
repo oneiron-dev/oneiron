@@ -12,7 +12,7 @@
 //!
 //! # The verb catalog is DECLARED, not implied
 //!
-//! [`FACADE_VERB_CATALOG`] is the ordered, authoritative list of verbs this
+//! [`oneiron::task_verb::sdk::AgentVerb`] is the ordered, authoritative list of verbs this
 //! SDK ships, and it is the same list the server's `/v1/core/facade` nest
 //! routes and the same list both language export censuses assert against. It
 //! holds four quickstart calls, five exact actor-owned keyed-memory calls,
@@ -65,15 +65,6 @@ pub const DEFAULT_RECALL_LIMIT: usize = 10;
 
 /// `receipts`'s default row count, per §HEAD-CONTRACT.
 pub const DEFAULT_RECEIPTS_LIMIT: usize = 100;
-
-/// The ordered public verb catalog this SDK ships.
-///
-/// Load-bearing as an ORDER and as a SET: the server route census, the npm
-/// export census, and the Python stub census are all compared against this
-/// exact slice, so a verb cannot appear in one surface and be forgotten in
-/// another. Every entry is also the wire path segment, which is why the
-/// spelling is the engine's snake_case or family.verb name, not the JavaScript one.
-pub use agent_verbs::FACADE_VERB_CATALOG;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
 ///

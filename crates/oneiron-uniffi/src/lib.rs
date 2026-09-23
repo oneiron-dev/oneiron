@@ -6,9 +6,7 @@
 //! enums, and error shape that a UniFFI-generated binding exposes, and it
 //! proves that declaration two ways:
 //!
-//! 1. Rust contract tests pin the exported ledger against an independently
-//!    maintained list and pin the load-bearing signatures with function
-//!    pointers.
+//! 1. Rust contract tests pin the load-bearing signatures with function pointers.
 //! 2. A standalone Swift package under `swift/` compiles a never-run consumer
 //!    against freshly generated bindings, so any name, field, optionality, or
 //!    width drift breaks the build.
@@ -107,110 +105,14 @@ impl Oneiron {
     /// Rebinds the handle to a narrower actor scope.
     ///
     /// Returns the same handle type; it does not mutate the receiver, and it
-    /// is actor rebinding rather than a head-contract verb, so it is absent
-    /// from the pinned verb ledger.
+    /// is actor rebinding rather than a head-contract verb.
     pub fn as_actor(&self, actor_key: String) -> Result<Arc<Self>, OneironError> {
         let _ = actor_key;
         definition_only("asActor")
     }
 }
 
-export_facade! {
-    "witness" =>
-    fn witness(&self, turn: WitnessTurn) -> WitnessReceipt;
-
-    "recall" =>
-    fn recall(
-        &self,
-        query: String,
-        effort: Effort,
-        scope: Option<RecallScope>,
-        limit: u32,
-        format: Option<String>
-    ) -> MemoryPack;
-
-    "receipts" =>
-    fn receipts(&self, limit: u32) -> Vec<FacadeReceipt>;
-
-    "commit" =>
-    fn commit(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt>;
-
-    "claimUpsert" =>
-    fn claim_upsert(&self, claim: ClaimInput) -> CommitReceipt;
-
-    "remember" =>
-    fn remember(&self, claim: ClaimInput) -> CommitReceipt;
-
-    "claimRetract" =>
-    fn claim_retract(&self, claim_ref: String) -> CommitReceipt;
-
-    "forget" =>
-    fn forget(&self, selector: ForgetSelector) -> Vec<CommitReceipt>;
-
-    "claimList" =>
-    fn claim_list(&self, filter: ClaimListFilter) -> Vec<ClaimView>;
-
-    "claimHistory" =>
-    fn claim_history(&self, claim_ref: String) -> Vec<ClaimView>;
-
-    "safeDelete" =>
-    fn safe_delete(&self, entity_ref: String, reason: SafeDeleteReason) -> DeleteReceipt;
-
-    "pendingWrites" =>
-    fn pending_writes(&self, limit: u32) -> Vec<PendingWrite>;
-
-    "hydrate" =>
-    fn hydrate(&self, refs: Vec<String>) -> Vec<EntityView>;
-
-    "getEntity" =>
-    fn get_entity(&self, entity_ref: String) -> Option<EntityView>;
-
-    "queryBm25" =>
-    fn query_bm25(&self, query: String, limit: u32) -> Vec<LexicalHit>;
-
-    "neighbors" =>
-    fn neighbors(&self, entity_ref: String, opts: NeighborOpts) -> Vec<NeighborHit>;
-
-    "putStructural" =>
-    fn put_structural(&self, input: StructuralPutInput) -> EntityRefReceipt;
-
-    "putHabitCheckin" =>
-    fn put_habit_checkin(&self, input: HabitCheckinInput) -> EntityRefReceipt;
-
-    "putCompanionRecord" =>
-    fn put_companion_record(&self, input: CompanionRecordInput) -> EntityRefReceipt;
-
-    "admitImportedClaim" =>
-    fn admit_imported_claim(&self, input: AdmitImportedClaimInput) -> CommitReceipt;
-
-    "putBlobArtifact" =>
-    fn put_blob_artifact(&self, input: BlobArtifactInput) -> EntityRefReceipt;
-
-    "appendBlobVersion" =>
-    fn append_blob_version(
-        &self,
-        artifact_ref: String,
-        content: Vec<u8>,
-        run_ref: Option<String>,
-        occurred_at: Option<i64>,
-        learned_at: Option<i64>
-    ) -> BlobVersionView;
-
-    "readBlobVersion" =>
-    fn read_blob_version(&self, artifact_ref: String, version: u64) -> Option<Vec<u8>>;
-
-    "enqueueConsolidation" =>
-    fn enqueue_consolidation(&self, input: ConsolidationJobInput) -> DreamerJobRef;
-
-    "dreamerJobStatus" =>
-    fn dreamer_job_status(&self, job_ref: String) -> Option<DreamerJobView>;
-
-    "seedClaims" =>
-    fn seed_claims(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt>;
-
-    "scheduleOutbound" =>
-    fn schedule_outbound(&self, draft: OutboundDraftInput) -> OutboundIntentReceipt;
-}
+include!("facade_generated.rs");
 
 #[cfg(test)]
 impl Oneiron {

@@ -18,8 +18,9 @@ mod shared_delta;
 mod shared_gate;
 
 pub use admission::{HubAdmissionDisposition, HubAdmissionReceipt};
-pub(crate) use admission_guard::{HubAdmissionProof, check_hub_skill_put};
+pub(crate) use admission_guard::check_hub_skill_put;
 pub use admission_view::{HubActivationAsk, HubAskSurface, hub_ask_surface};
+pub(crate) use bootstrap::HubAdmissionProof;
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub(crate) use package_codec::remove_hub_package_in_txn;
@@ -115,8 +116,8 @@ use rmpv::Value;
 use std::collections::BTreeSet;
 
 pub(crate) use bootstrap::seed_bootstrap_skills;
-pub mod osv;
 mod archive;
+pub mod osv;
 
 #[cfg(test)]
 #[path = "tests/support.rs"]

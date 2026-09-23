@@ -75,7 +75,7 @@ pub(super) const fn search_total(count_mode: CountMode, admitted: usize) -> u64 
     }
 }
 
-/// Entity record constructible from `ScopedRead::get_entity_parts`.
+/// Entity record constructible from `ScopedRead::get_entity_parts_with_receipt`.
 ///
 /// `body` is the one view-controlled field in v1: `Standard` omits it, while
 /// `Summary` and `Full` carry the public MessagePack → JSON projection.

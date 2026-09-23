@@ -40,7 +40,7 @@ use oneiron::habit::TaskRole;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::reverse_rematerialize;
-use oneiron::task_verb::{TaskCancelTarget, TaskCreateSpec, TasksVerb};
+use oneiron::task_verb::{TaskCancelTarget, TaskCreateSpec};
 use oneiron::{
     EdgeKind, EntityId, Error, TASK_AUTHORITY_FACT_SCHEMA_VERSION, TASK_AUTHORITY_FACT_SUBKIND,
     TaskAuthorityFactKind, TaskAuthorityState, Vad,
@@ -282,7 +282,9 @@ impl TaskPair {
                         origin_action_id: "cancel".to_owned(),
                         origin_receipt_ref: None,
                         scope: GrantMintIntentScope::VerbClass {
-                            verb_class: TasksVerb::Cancel.as_str().to_owned(),
+                            verb_class: oneiron::task_verb::sdk::AgentVerb::TasksCancel
+                                .as_str()
+                                .to_owned(),
                         },
                     },
                     T0,

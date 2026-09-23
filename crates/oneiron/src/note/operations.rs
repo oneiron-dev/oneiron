@@ -123,25 +123,19 @@ impl crate::Vault {
 impl Memory<'_> {
     /// Host boundary for an already MAC-verified, live session. `self.actor()`
     /// and class MUST come from that credential, never the command or selector.
-    /// The server's only caller supplies CoreAuth's principal, class and jti.
+    /// The server supplies CoreAuth's principal, class and liveness predicate.
     /// Actor/owner, token revocation, grant/member/role, scope, policy, erasure
-    /// and citation checks all run in the transaction that commits the result.
+    /// and citation checks run under the writer lock that commits the result.
+    /// The liveness predicate must read current auth state without writing it.
     #[cfg(feature = "sync")]
     pub fn admit_note_operation(
         &self,
         note: EntityId,
         scope: crate::FederationGrantScope,
         selector: &crate::sync::SyncSelector,
-        session_jti: &str,
+        session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
-        if session_jti.len() != 32
-            || !session_jti
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(invalid("NOTE session has no revocable identity").into());
-        }
         let receipt = self.with_verified_actor_write_txn(|txn| {
             if self
                 .vault()
@@ -152,13 +146,7 @@ impl Memory<'_> {
             {
                 return Err(invalid("replica NOTE cannot act as an admission authority").into());
             }
-            if self
-                .vault()
-                .store
-                .sync_state
-                .get(txn, &format!("auth:revoked-token-jti:{session_jti}"))?
-                .is_some()
-            {
+            if !session_is_live(txn) {
                 return Err(invalid("NOTE session revoked").into());
             }
             crate::sync::selector::admit_note_in_txn(

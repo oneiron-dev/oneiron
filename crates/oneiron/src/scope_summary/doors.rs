@@ -8,13 +8,14 @@ use crate::batch::EdgeValueFields;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::conversation_dag::{
     AppendRecord, ScopePath, ScopeSelector, actor_in_txn, append_in_txn, conversation_of, edge_ids,
-    require_type, resolve_in_txn,
+    is_sub_session_record, require_type, resolve_in_txn,
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TURN,
 };
 use crate::{
     ClaimCandidate, EntityId, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
@@ -35,12 +36,121 @@ fn summary_in_txn(vault: &Vault, txn: &RoTxn<'_>, summary: &EntityId) -> Result<
     if vault.archive_tombstone_in_txn(txn, summary)?.is_some() {
         return Err(Error::EntityNotFound);
     }
-    decode_scope_summary_body(&require_type(
+    let body = decode_scope_summary_body(&require_type(
         &vault.store,
         txn,
         summary,
         ENTITY_TYPE_SUMMARY,
-    )?)
+    )?)?;
+    validate_covers_in_txn(vault, txn, &body)?;
+    Ok(body)
+}
+
+fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBody) -> Result<()> {
+    let scope = &body.scope;
+    require_type(
+        &vault.store,
+        txn,
+        &scope.conversation,
+        ENTITY_TYPE_CONVERSATION,
+    )?;
+    let session = match scope.path {
+        ScopePath::SubSession(session) => {
+            require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION)?;
+            let anchors = edge_ids(&vault.store, txn, &session, EdgeKind::SpawnedBy, false, 2)?;
+            let [anchor] = anchors.as_slice() else {
+                return Err(invalid("summary session needs one spawning turn"));
+            };
+            if conversation_of(&vault.store, txn, anchor)? != scope.conversation {
+                return Err(invalid("summary session belongs to another conversation"));
+            }
+            Some(session)
+        }
+        ScopePath::Branch(anchor) => {
+            if conversation_of(&vault.store, txn, &anchor)? != scope.conversation
+                || is_sub_session_record(&vault.store, txn, &anchor)?
+            {
+                return Err(invalid("summary branch belongs to another scope"));
+            }
+            scope.session
+        }
+        ScopePath::Canonical => scope.session,
+    };
+    if let Some(session) = session {
+        require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION)?;
+    }
+    for covered in &body.covers {
+        if conversation_of(&vault.store, txn, covered)? != scope.conversation {
+            return Err(invalid("summary cover belongs to another conversation"));
+        }
+        if session.is_some()
+            && crate::compaction::turn_session_membership_in_txn(&vault.store, txn, covered)?
+                != session
+        {
+            return Err(invalid("summary cover belongs to another session"));
+        }
+        if is_sub_session_record(&vault.store, txn, covered)?
+            != matches!(scope.path, ScopePath::SubSession(_))
+        {
+            return Err(invalid("summary cover belongs to another path"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_landing_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    scope: &ScopeSelector,
+    turn: &EntityId,
+) -> Result<()> {
+    if conversation_of(&vault.store, txn, turn)? != scope.conversation {
+        return Err(invalid("landing turn is in another conversation"));
+    }
+    if let ScopePath::SubSession(session) = scope.path
+        && edge_ids(&vault.store, txn, &session, EdgeKind::SpawnedBy, false, 2)? != [*turn]
+    {
+        return Err(invalid(
+            "sub-session summary must land on its spawning turn",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_summary_put(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    kind: u8,
+    bytes: &[u8],
+) -> Result<()> {
+    let previous = store.entities.get(txn, id.as_bytes())?;
+    let was_summary = previous.as_ref().is_some_and(|raw| {
+        raw.first() == Some(&ENTITY_TYPE_SUMMARY)
+            && raw
+                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                .is_some_and(super::codec::is_scope_summary)
+    });
+    if was_summary || kind == ENTITY_TYPE_SUMMARY && super::codec::is_scope_summary(bytes) {
+        decode_scope_summary_body(bytes)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn merge_summary_ref(body: &crate::ClaimBody) -> Result<Option<(EntityId, EntityId)>> {
+    if body.predicate != "merge.summary" {
+        return Ok(None);
+    }
+    let ClaimSubject::Entity(turn) = body.subject else {
+        return Err(invalid("header subject must be a turn"));
+    };
+    let summary = EntityId::from_hex(
+        body.value
+            .as_str()
+            .ok_or_else(|| invalid("header value must be a summary id"))?,
+    )
+    .map_err(|_| invalid("invalid header summary id"))?;
+    Ok(Some((turn, summary)))
 }
 
 fn mint_in_txn(
@@ -95,17 +205,7 @@ fn land_in_txn(
     actor_in_txn(&vault.store, txn, actor)?;
     let body = summary_in_txn(vault, txn, summary)?;
     crate::conversation_dag::migrate_in_txn(vault, txn, &body.scope.conversation)?;
-    if conversation_of(&vault.store, txn, turn)? != body.scope.conversation {
-        return Err(invalid("landing turn is in another conversation"));
-    }
-    if let ScopePath::SubSession(session) = body.scope.path {
-        let spawned = edge_ids(&vault.store, txn, &session, EdgeKind::SpawnedBy, false, 2)?;
-        if spawned != [*turn] {
-            return Err(invalid(
-                "sub-session summary must land on its spawning turn",
-            ));
-        }
-    }
+    validate_landing_in_txn(vault, txn, &body.scope, turn)?;
     let source = Value::Map(vec![
         (Value::from("kind"), Value::from("scope_summary")),
         (Value::from("scope"), scope_value(&body.scope)),
@@ -178,6 +278,7 @@ fn land_in_txn(
                 actor,
             },
             Some(*summary),
+            false,
         )?;
         Some(appended.id)
     } else {
@@ -194,7 +295,9 @@ pub(crate) fn body_covers_in_txn(
     bytes: &[u8],
 ) -> Result<Option<Vec<EntityId>>> {
     if entity_type == ENTITY_TYPE_SUMMARY && super::codec::is_scope_summary(bytes) {
-        return Ok(Some(decode_scope_summary_body(bytes)?.covers));
+        let body = decode_scope_summary_body(bytes)?;
+        validate_covers_in_txn(vault, txn, &body)?;
+        return Ok(Some(body.covers));
     }
     if entity_type == ENTITY_TYPE_TURN
         && let Some(summary) = super::codec::reply_summary(bytes)?
@@ -213,22 +316,11 @@ pub(crate) fn merge_covers_in_txn(
     txn: &RoTxn<'_>,
     body: &crate::ClaimBody,
 ) -> Result<Option<Vec<EntityId>>> {
-    if body.predicate != "merge.summary" {
+    let Some((turn, summary)) = merge_summary_ref(body)? else {
         return Ok(None);
-    }
-    let summary = EntityId::from_hex(
-        body.value
-            .as_str()
-            .ok_or_else(|| invalid("header value must be a summary id"))?,
-    )
-    .map_err(|_| invalid("invalid header summary id"))?;
-    let summary = summary_in_txn(vault, txn, &summary)?;
-    let ClaimSubject::Entity(turn) = body.subject else {
-        return Err(invalid("header subject must be a turn"));
     };
-    if conversation_of(&vault.store, txn, &turn)? != summary.scope.conversation {
-        return Err(invalid("header and summary conversations differ"));
-    }
+    let summary = summary_in_txn(vault, txn, &summary)?;
+    validate_landing_in_txn(vault, txn, &summary.scope, &turn)?;
     Ok(Some(summary.covers))
 }
 

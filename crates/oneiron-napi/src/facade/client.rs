@@ -46,6 +46,23 @@ pub struct NapiWitnessTurnInput {
     pub occurred_at: Option<f64>,
 }
 
+impl NapiWitnessTurnInput {
+    fn into_engine(self) -> napi::Result<oneiron::memory::WitnessTurn> {
+        let stamped = oneiron_remote::stamp_occurred_at(self.occurred_at).map_err(facade_error)?;
+        // Caller numbers are already validated; narrowing failure here is
+        // an internal invariant failure, not bad input.
+        let occurred_at = i64::try_from(stamped)
+            .map_err(|_| boundary_error("occurred_at is out of range".to_owned()))?;
+        witness_turn_to_engine(&NapiWitnessTurn {
+            conversation_ref: self.conversation_ref,
+            turn_ref: self.turn_ref,
+            messages: self.messages,
+            occurred_at,
+        })
+        .map_err(witness_input_error)
+    }
+}
+
 /// The private native handle behind `packages/oneiron`.
 #[napi]
 pub struct NativeClient {

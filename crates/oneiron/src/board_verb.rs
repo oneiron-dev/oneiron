@@ -16,38 +16,7 @@ impl BoardWorldScope {
         self.0
     }
 }
-// BEGIN GENERATED BOARD CATALOG
-pub const BOARD_VERBS: [&str; 4] = [
-    "board.expand",
-    "board.refresh",
-    "board.subscribe",
-    "board.unsubscribe",
-];
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BoardVerb {
-    Expand,
-    Refresh,
-    Subscribe,
-    Unsubscribe,
-}
-impl BoardVerb {
-    pub const ALL: [Self; 4] = [
-        Self::Expand,
-        Self::Refresh,
-        Self::Subscribe,
-        Self::Unsubscribe,
-    ];
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Expand => "board.expand",
-            Self::Refresh => "board.refresh",
-            Self::Subscribe => "board.subscribe",
-            Self::Unsubscribe => "board.unsubscribe",
-        }
-    }
-}
 
-// END GENERATED BOARD CATALOG
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoardVerbCall {
     Expand {

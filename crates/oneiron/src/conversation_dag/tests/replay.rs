@@ -221,3 +221,109 @@ fn trunk_session_membership_cannot_be_added_by_local_or_replayed_overwrite() {
     }
     assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
 }
+
+#[test]
+fn typed_dag_records_refuse_generic_overwrite_and_delete_recreation() {
+    let (dir, vault, conv, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let original = vault.get(&root).unwrap().unwrap();
+    for replicated in [false, true] {
+        for (kind, occurred, body) in [
+            (ENTITY_TYPE_TURN, time(1), body("changed")),
+            (ENTITY_TYPE_TURN, time(2), original.clone()),
+            (
+                crate::registry::ENTITY_TYPE_PERSON,
+                time(1),
+                original.clone(),
+            ),
+        ] {
+            let builder = vault.batch();
+            let builder = if replicated {
+                builder.put_replicated(&root, kind, occurred, 2, &body)
+            } else {
+                builder.put(&root, kind, occurred, 2, &body)
+            };
+            assert_eq!(
+                builder.commit().unwrap_err().kind(),
+                ErrorKind::InvalidConversationDag
+            );
+            assert_eq!(vault.get(&root).unwrap().as_ref(), Some(&original));
+        }
+    }
+    vault
+        .batch()
+        .put_replicated(&root, ENTITY_TYPE_TURN, time(20), 21, &original)
+        .commit()
+        .unwrap();
+    let sentinel = EntityId::now();
+    assert_eq!(
+        vault
+            .batch()
+            .put(&sentinel, ENTITY_TYPE_TURN, time(1), 1, &body("sentinel"))
+            .delete(&root)
+            .put(&root, ENTITY_TYPE_TURN, time(1), 1, &original)
+            .commit()
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert!(vault.get(&sentinel).unwrap().is_none());
+    assert_eq!(vault.get(&root).unwrap().as_ref(), Some(&original));
+    vault.batch().delete(&root).commit().unwrap();
+    drop(vault);
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    assert_eq!(
+        vault
+            .put_entity(&root, ENTITY_TYPE_TURN, time(1), 1, &original)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert_eq!(
+        vault
+            .put_entity(
+                &root,
+                crate::registry::ENTITY_TYPE_PERSON,
+                time(1),
+                1,
+                b"person"
+            )
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert!(vault.get(&root).unwrap().is_none());
+}
+
+#[test]
+fn adoption_pins_an_imported_root_without_freezing_unadopted_turns() {
+    let (_dir, vault, conv, _actor) = fixture();
+    let root = EntityId::now();
+    vault
+        .batch()
+        .put(&root, ENTITY_TYPE_TURN, time(1), 1, &body("imported"))
+        .edge_checked(&root, &conv, 1.0)
+        .commit()
+        .unwrap();
+    vault
+        .put_entity(
+            &root,
+            ENTITY_TYPE_TURN,
+            time(1),
+            1,
+            &body("before adoption"),
+        )
+        .unwrap();
+    assert!(vault.migrate_conversation_dag(&conv).unwrap());
+    vault.batch().delete(&root).commit().unwrap();
+    assert_eq!(
+        vault
+            .put_entity(&root, ENTITY_TYPE_TURN, time(1), 1, &body("recreated"))
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+}

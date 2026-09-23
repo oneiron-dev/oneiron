@@ -1,6 +1,7 @@
 //! Shared fixtures and helpers for the task_verb tests.
 
 use super::*;
+use crate::task_verb::sdk::AgentVerb;
 
 pub(super) fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -65,7 +66,7 @@ pub(super) fn grant_cancel(vault: &Vault, actor: EntityId, seed: u8) {
                 origin_action_id: "cancel".to_owned(),
                 origin_receipt_ref: None,
                 scope: GrantMintIntentScope::VerbClass {
-                    verb_class: TasksVerb::Cancel.as_str().to_owned(),
+                    verb_class: AgentVerb::TasksCancel.as_str().to_owned(),
                 },
             },
             1,

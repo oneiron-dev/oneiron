@@ -15,7 +15,6 @@ use super::types::{
     SecretLeaseMaterialization, SecretLeaseStatus, SecretTaintRef, StoredLocalRegistration,
     VaultInstant,
 };
-use crate::credential_door::{AdmittedLease, DoorResult};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{CustodyTier, SecretCustodyFloor};
@@ -113,13 +112,6 @@ impl Vault {
     /// `not_after: None` is exactly [`Vault::materialize_secret_lease`]'s
     /// unbounded behaviour, unchanged for every existing caller.
     ///
-    /// This wrapper is the API BOUNDARY, and the only place an external
-    /// absolute second count becomes a `VaultInstant` bound. The wall
-    /// reading it has always stamped stays exactly what it was, so every
-    /// current non-door caller keeps its behaviour unchanged. The credential
-    /// door does NOT come through here: it carries its whole admission into
-    /// `Vault::materialize_admitted_lease` instead, so nothing a caller chose
-    /// can date, scope, or size a door-issued lease.
     pub fn materialize_secret_lease_bounded(
         &self,
         secret_ref: &str,
@@ -145,14 +137,6 @@ impl Vault {
     /// receipt, so the row, its receipt, and the bound check can never
     /// disagree about when the lease was minted.
     ///
-    /// PRIVATE to this module, and that is a load-bearing fact rather than
-    /// tidiness. This is the raw shape — a bare effector string, a bare
-    /// `ttl_secs`, a bare instant — and while the credential door could still
-    /// name it, the door had two ways to reach a mint: this one, and the typed
-    /// admission. "Exactly one admission shape reaches the stamp" is only true
-    /// if the other shape is unreachable, so the door cannot see this at all
-    /// any more. What remains is the wall-clock wrapper above, whose behaviour
-    /// every existing non-door caller depends on and which is unchanged.
     pub(super) fn materialize_secret_lease_at(
         &self,
         secret_ref: &str,
@@ -166,57 +150,6 @@ impl Vault {
             self, &mut wtxn, secret_ref, effector, ttl_secs, now, not_after,
         )?;
         wtxn.commit()?;
-        Ok(materialization)
-    }
-
-    /// The credential door's materialization: ONE admitted lease in, one
-    /// stamped lease out, and the door's own admission taken AGAIN inside the
-    /// transaction that stamps it.
-    ///
-    /// [`AdmittedLease`] is the whole argument list because it is the whole
-    /// admission — the proved effector, the named secret, the TTL a ceiling
-    /// admitted, the absolute instant the buying authority dies at, and the
-    /// single witnessed reading all of it was decided under. There is no raw
-    /// `max_lease_ttl_secs`, no caller-supplied effector set, and no second
-    /// `now` to disagree with the first.
-    ///
-    /// The order here is the point of the whole step:
-    ///
-    /// 1. open the write transaction that will stamp the lease;
-    /// 2. RE-RESOLVE the door dial under THAT transaction and refuse on any
-    ///    disagreement with what the door admitted
-    ///    ([`AdmittedLease::reaffirm_in_txn`]) — before the record is read,
-    ///    before the custody floor is resolved, before a value byte is touched;
-    /// 3. stamp through the one shared body, which resolves the custody floor
-    ///    and runs the one admission rule under this same transaction;
-    /// 4. commit.
-    ///
-    /// Previously (2) happened in a SEPARATE read transaction the door opened
-    /// earlier, so the dial that admitted a request was never the dial the row
-    /// committed under, and a dial narrowed in between still minted at the
-    /// stale wide reading. Now the check and the commit are one atomic act: a
-    /// refusal at (2) returns with the write transaction dropped uncommitted,
-    /// leaving no lease row, no receipt row, and no value.
-    ///
-    /// No caller closure runs inside this transaction — there is none to run.
-    /// T1 hands the value back to the caller after the commit; it is T0 that
-    /// takes a closure, and T0 keeps its own drop-then-apply shape.
-    pub(crate) fn materialize_admitted_lease(
-        &self,
-        admitted: &AdmittedLease,
-    ) -> DoorResult<SecretLeaseMaterialization> {
-        let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        admitted.reaffirm_in_txn(&self.store, &wtxn)?;
-        let materialization = stamp_secret_lease_in_txn(
-            self,
-            &mut wtxn,
-            admitted.secret_ref(),
-            admitted.effector(),
-            admitted.ttl_secs(),
-            admitted.instant(),
-            Some(admitted.not_after()),
-        )?;
-        wtxn.commit().map_err(Error::from)?;
         Ok(materialization)
     }
 

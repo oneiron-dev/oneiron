@@ -4,9 +4,10 @@ use super::*;
 use crate::edge::EdgeInfo;
 use crate::error::{Error, Result};
 use crate::registry::*;
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::{EdgeKind, EntityId, Vault};
 use heed::{RoTxn, RwTxn};
+use std::collections::BTreeSet;
 
 impl EntityStore for Vault {
     fn port_entity_get(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityRecord>> {
@@ -97,19 +98,17 @@ impl EntityStore for Vault {
         txn: &RoTxn<'_>,
         relationship: &EntityId,
     ) -> Result<Vec<EntityId>> {
-        related_entities(self, txn, relationship, ENTITY_TYPE_SESSION)
+        indexed_entities(self, txn, ENTITY_TYPE_SESSION, relationship.as_bytes())
     }
     fn port_list_summaries_by_level(&self, txn: &RoTxn<'_>, level: u64) -> Result<Vec<EntityId>> {
-        matching_bodies(self, txn, ENTITY_TYPE_SUMMARY, |body| {
-            field(body, "level").and_then(rmpv::Value::as_u64) == Some(level)
-        })
+        indexed_entities(self, txn, ENTITY_TYPE_SUMMARY, &level.to_be_bytes())
     }
     fn port_list_assets_by_relationship(
         &self,
         txn: &RoTxn<'_>,
         relationship: &EntityId,
     ) -> Result<Vec<EntityId>> {
-        related_entities(self, txn, relationship, ENTITY_TYPE_ASSET)
+        indexed_entities(self, txn, ENTITY_TYPE_ASSET, relationship.as_bytes())
     }
 }
 pub(super) fn type_ids(vault: &Vault, txn: &RoTxn<'_>, kind: u8) -> Result<Vec<EntityId>> {
@@ -123,43 +122,102 @@ pub(super) fn type_ids(vault: &Vault, txn: &RoTxn<'_>, kind: u8) -> Result<Vec<E
     }
     Ok(ids)
 }
-fn related_entities(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    relationship: &EntityId,
-    kind: u8,
-) -> Result<Vec<EntityId>> {
-    matching_bodies(vault, txn, kind, |body| {
-        ["rel", "relationship", "relationshipId"]
-            .iter()
-            .any(|key| match field(body, key) {
-                Some(rmpv::Value::Binary(value)) => value.as_slice() == relationship.as_bytes(),
-                _ => false,
-            })
-    })
-}
 pub(super) fn field<'a>(body: &'a rmpv::Value, name: &str) -> Option<&'a rmpv::Value> {
     body.as_map()?
         .iter()
         .find(|(key, _)| key.as_str() == Some(name))
         .map(|(_, v)| v)
 }
-fn matching_bodies(
+fn query_prefix(kind: u8, selector: &[u8]) -> Vec<u8> {
+    [b"named_entity:v1:".as_slice(), &[kind], selector].concat()
+}
+
+fn query_prefixes(kind: u8, data: &[u8]) -> BTreeSet<Vec<u8>> {
+    if !matches!(
+        kind,
+        ENTITY_TYPE_SESSION | ENTITY_TYPE_ASSET | ENTITY_TYPE_SUMMARY
+    ) {
+        return BTreeSet::new();
+    }
+    let Ok(body) = rmpv::decode::read_value(&mut std::io::Cursor::new(data)) else {
+        return BTreeSet::new();
+    };
+    if kind == ENTITY_TYPE_SUMMARY {
+        return field(&body, "level")
+            .and_then(rmpv::Value::as_u64)
+            .map(|level| query_prefix(kind, &level.to_be_bytes()))
+            .into_iter()
+            .collect();
+    }
+    ["rel", "relationship", "relationshipId"]
+        .into_iter()
+        .filter_map(|name| match field(&body, name) {
+            Some(rmpv::Value::Binary(bytes)) if bytes.len() == 16 => {
+                Some(query_prefix(kind, bytes))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn reindex_named_entities(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    replacement: Option<(u8, &[u8])>,
+) -> Result<()> {
+    let prior = store.entities().get(txn, id.as_bytes())?;
+    let old = prior.as_ref().and_then(|raw| {
+        let header = crate::batch::EntityMetadataHeader::parse(raw)?;
+        let body = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)?;
+        Some(query_prefixes(header.entity_type, body))
+    });
+    for mut prefix in old.into_iter().flatten() {
+        prefix.extend_from_slice(id.as_bytes());
+        store.vault_meta().delete(txn, &prefix)?;
+    }
+    if let Some((kind, body)) = replacement {
+        for mut prefix in query_prefixes(kind, body) {
+            prefix.extend_from_slice(id.as_bytes());
+            store.vault_meta().put(txn, &prefix, &[])?;
+        }
+    }
+    Ok(())
+}
+
+fn indexed_entities(
     vault: &Vault,
     txn: &RoTxn<'_>,
     kind: u8,
-    matches: impl Fn(&rmpv::Value) -> bool,
+    selector: &[u8],
 ) -> Result<Vec<EntityId>> {
+    let prefix = query_prefix(kind, selector);
     let mut ids = Vec::new();
-    for id in type_ids(vault, txn, kind)? {
+    for (scanned, row) in vault
+        .store
+        .vault_meta
+        .prefix_iter(txn, &prefix)?
+        .enumerate()
+    {
+        if scanned >= 100_000 {
+            return Err(Error::IndexOverflow("named entity query index"));
+        }
+        let (key, value) = row?;
+        let bytes = key
+            .get(prefix.len()..)
+            .and_then(|bytes| <[u8; 16]>::try_from(bytes).ok())
+            .ok_or(Error::CorruptedIndex("named entity query index"))?;
+        if !value.is_empty() {
+            return Err(Error::CorruptedIndex("named entity query index"));
+        }
+        let id = EntityId::from_bytes(bytes)?;
         let Some(row) = vault.port_entity_get(txn, &id)? else {
             continue;
         };
-        let body = rmpv::decode::read_value(&mut std::io::Cursor::new(row.body))
-            .map_err(|_| Error::CorruptedIndex("named entity query body"))?;
-        if matches(&body) {
-            ids.push(id);
+        if row.entity_type != kind || !query_prefixes(kind, &row.body).contains(&prefix) {
+            return Err(Error::CorruptedIndex("named entity query index"));
         }
+        ids.push(id);
     }
     Ok(ids)
 }
@@ -263,6 +321,25 @@ impl EdgeStore for Vault {
         }
         Ok(result)
     }
+}
+fn matching_bodies(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    kind: u8,
+    matches: impl Fn(&rmpv::Value) -> bool,
+) -> Result<Vec<EntityId>> {
+    let mut ids = Vec::new();
+    for id in type_ids(vault, txn, kind)? {
+        let Some(row) = vault.port_entity_get(txn, &id)? else {
+            continue;
+        };
+        let body = rmpv::decode::read_value(&mut std::io::Cursor::new(row.body))
+            .map_err(|_| Error::CorruptedIndex("named entity query body"))?;
+        if matches(&body) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
 }
 impl PlaceStore for Vault {
     fn port_place_get(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityRecord>> {

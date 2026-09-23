@@ -26,6 +26,7 @@ doc = false
 doctest = false
 
 [dependencies]
+heed.workspace = true
 base64 = "0.22"
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
 # Supervisor ⇄ vault child-process contract, consumed READ-ONLY: managed serve

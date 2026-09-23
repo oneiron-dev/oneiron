@@ -8,7 +8,7 @@ use super::rate_limit::{consume_create_rate_slot, task_actor_ceiling};
 use super::wire_decode::task_verb_body_in;
 use super::{
     ConsultFanOutPolicy, ConsultFanOutReceipt, ConsultFanOutSpec, ConsultPayload, TaskAssignee,
-    TaskCreateRateLimit, TaskCreateSpec, TaskKind, TaskTtl, TasksVerb,
+    TaskCreateRateLimit, TaskCreateSpec, TaskKind, TaskTtl,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::{
@@ -30,6 +30,7 @@ use crate::outbound_chokepoint::{
     FanoutPlan, FanoutPlanEdge, PeerRateSnapshot, admit_fanout_with_history, fanout_estimate,
     fanout_history_pathology,
 };
+use crate::task_verb::sdk::AgentVerb;
 use crate::unix_seconds_now;
 use rmpv::Value;
 
@@ -312,7 +313,7 @@ impl Memory<'_> {
                 "Retry the whole fan-out in the next window.",
             ));
         }
-        let provenance = facade_provenance(TasksVerb::Create.as_str());
+        let provenance = facade_provenance(AgentVerb::TasksCreate.as_str());
         for entry in entries {
             run.task_refs.push(
                 self.mint_task_in_txn(

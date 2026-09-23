@@ -192,9 +192,13 @@ fn snapshot() -> Vec<PluginSectionSnapshot> {
 #[test]
 fn verb_allowlist_is_exactly_the_exported_union() {
     let allowlist = SectionVerbAllowlist::from_exported_verbs();
-    assert_eq!(allowlist.len(), BOARD_VERBS.len() + TASKS_VERBS.len());
-    for verb in BOARD_VERBS.iter().chain(TASKS_VERBS.iter()) {
-        assert!(allowlist.contains(&SectionVerbRef((*verb).to_owned())));
+    let verbs: Vec<_> = crate::task_verb::sdk::AgentVerb::ALL
+        .iter()
+        .filter(|verb| verb.is_section())
+        .collect();
+    assert_eq!(allowlist.len(), verbs.len());
+    for verb in verbs {
+        assert!(allowlist.contains(&SectionVerbRef(verb.as_str().to_owned())));
     }
     assert!(!allowlist.contains(&SectionVerbRef("crm.sync".to_owned())));
     assert!(!allowlist.contains(&SectionVerbRef("board.install".to_owned())));

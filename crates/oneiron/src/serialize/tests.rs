@@ -2755,7 +2755,7 @@ fn provider_read_formats_have_wire_envelopes_and_null_secrets_before_truncation(
 }
 
 #[test]
-fn first_mention_renders_typed_names_without_rewriting_unrelated_text() {
+fn first_mention_aliases_names_and_free_text_at_token_boundaries() {
     let mut pack = sample_pack();
     let person = &mut pack.neighbors[0];
     person.short_id = "pr12".into();
@@ -2770,7 +2770,9 @@ fn first_mention_renders_typed_names_without_rewriting_unrelated_text() {
     ]));
     pack.results[0].fields.as_mut().unwrap().insert(
         "val".into(),
-        Value::String(format!("{id}, person:internal:yamada, {id}")),
+        Value::String(format!(
+            "{id}, person:internal:yamada, {id}; x{id} {id}_suffix 山{id}"
+        )),
     );
     for format in [
         PackFormat::Toon,
@@ -2786,9 +2788,10 @@ fn first_mention_renders_typed_names_without_rewriting_unrelated_text() {
             "{format:?}: {rendered}"
         );
         assert!(
-            rendered.contains(&format!("{id}, person:internal:yamada, {id}")),
+            rendered.contains("pr12, pr12") && !rendered.contains("person:internal:yamada"),
             "{format:?}: {rendered}"
         );
+        assert!(rendered.contains(&format!("x{id} {id}_suffix 山{id}")));
         assert!(!rendered.contains("identity_key"));
         assert!(rendered.contains("pr12:b3"), "citation gate remains intact");
     }
@@ -2942,16 +2945,15 @@ fn whole_vault_provenance_references_are_preserved_only_in_the_typed_value() {
 }
 
 #[test]
-fn handle_names_with_shared_prefixes_leave_unrelated_values_intact() {
+fn handle_aliases_with_shared_prefixes_leave_unrelated_tokens_intact() {
     let mut pack = sample_pack();
     pack.results.truncate(1);
-    let unrelated =
-        serde_json::json!({"name": "person:Ann", "text": "Ann and Anna know person:Ann."});
+    let unrelated = serde_json::json!({"name": "person:Ann", "text": "Ann and Anna know person:Anna, person:Ann, and person:Annalise."});
     pack.results[0]
         .fields
         .as_mut()
         .unwrap()
-        .insert("val".into(), unrelated.clone());
+        .insert("val".into(), unrelated);
     let mut person = pack.neighbors[0].clone();
     person.short_id = "pr12".into();
     person.fields = Some(HashMap::from([
@@ -2970,7 +2972,10 @@ fn handle_names_with_shared_prefixes_leave_unrelated_values_intact() {
     let decoded: Value = serde_json::from_slice(&bytes).unwrap();
     let round_trip: Value = serde_json::from_slice(&serde_json::to_vec(&decoded).unwrap()).unwrap();
     assert_eq!(round_trip, decoded);
-    assert_eq!(decoded["claims"][0]["val"], unrelated);
+    assert_eq!(
+        decoded["claims"][0]["val"],
+        serde_json::json!({"name": "Ann (pr12)", "text": "Ann and Anna know Anna (pr13), pr12, and person:Annalise."})
+    );
     let mut found: Vec<_> = decoded["persons"]
         .as_array()
         .unwrap()
@@ -2978,5 +2983,5 @@ fn handle_names_with_shared_prefixes_leave_unrelated_values_intact() {
         .map(|row| row["name"].as_str().unwrap())
         .collect();
     found.sort();
-    assert_eq!(found, ["Ann (pr12)", "Anna (pr13)"]);
+    assert_eq!(found, ["pr12", "pr13"]);
 }

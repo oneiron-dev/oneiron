@@ -1,10 +1,8 @@
 //! Field-by-field signed capability claims and six-axis Scope wire codec.
+use super::wire_decode::decode_optional_hash;
 use super::*;
 use crate::error::Result;
-use crate::federation::{
-    Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling,
-    decode_federation_direction_scope_value, federation_direction_scope_value,
-};
+use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use rmpv::Value;
 use std::collections::BTreeSet;
 
@@ -61,15 +59,6 @@ pub(super) fn slip_mint_value(action: &SlipMintAction) -> Value {
         (
             Value::from(SLIP_KEY_ORG_REF),
             claims.org_ref.as_deref().map_or(Value::Nil, Value::from),
-        ),
-        (
-            Value::from(SLIP_KEY_PACT),
-            claims.pact.as_ref().map_or(Value::Nil, |(grant, bound)| {
-                Value::Array(vec![
-                    Value::from(grant.to_hex()),
-                    federation_direction_scope_value(bound),
-                ])
-            }),
         ),
     ])
 }
@@ -132,10 +121,6 @@ pub(super) fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp
         org_ref: {
             let value = required(entries, SLIP_KEY_ORG_REF)?;
             decode_optional_string(value)?
-        },
-        pact: {
-            let value = required(entries, SLIP_KEY_PACT)?;
-            decode_pact(value)?
         },
     };
     claims.validate()?;
@@ -253,26 +238,4 @@ fn decode_optional_string(value: &Value) -> Result<Option<String>> {
     } else {
         decode_string(value).map(Some)
     }
-}
-fn decode_optional_hash(value: &Value) -> Result<Option<[u8; 32]>> {
-    if value.is_nil() {
-        Ok(None)
-    } else {
-        decode_hash(value).map(Some)
-    }
-}
-fn decode_pact(
-    value: &Value,
-) -> Result<Option<(crate::EntityId, crate::federation::FederationDirectionScope)>> {
-    if value.is_nil() {
-        return Ok(None);
-    }
-    let values = value.as_array().ok_or_else(invalid_authority)?;
-    let [grant, bound] = values.as_slice() else {
-        return Err(invalid_authority());
-    };
-    Ok(Some((
-        decode_id(grant)?,
-        decode_federation_direction_scope_value(bound)?,
-    )))
 }

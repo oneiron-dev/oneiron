@@ -366,40 +366,40 @@ async fn execute_mcp_agent_verb(
         "board.expand" => {
             let input: oneiron::task_verb::sdk::BoardExpandRequest = serde_json::from_value(json!({"key":a.key.clone().ok_or_else(invalid)?,"frame_epoch":a.frame_epoch.clone()})).map_err(|_| invalid())?;
 
-            return execute_mcp_board_verb(server, actor, |context| {
+            execute_mcp_board_verb(server, actor, |context| {
                 oneiron::task_verb::sdk::board_expand(context, input)
             })
-            .await;
+            .await
         }
         "board.refresh" => {
             let input: oneiron::task_verb::sdk::BoardRefreshRequest =
                 serde_json::from_value(json!({"frame_epoch":a.frame_epoch.clone()}))
                     .map_err(|_| invalid())?;
 
-            return execute_mcp_board_verb(server, actor, |context| {
+            execute_mcp_board_verb(server, actor, |context| {
                 oneiron::task_verb::sdk::board_refresh(context, input)
             })
-            .await;
+            .await
         }
         "board.subscribe" => {
             let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
                 serde_json::from_value(json!({"scopes":a.scopes.clone().ok_or_else(invalid)?}))
                     .map_err(|_| invalid())?;
 
-            return execute_mcp_board_verb(server, actor, |context| {
+            execute_mcp_board_verb(server, actor, |context| {
                 oneiron::task_verb::sdk::board_subscribe(context, input)
             })
-            .await;
+            .await
         }
         "board.unsubscribe" => {
             let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
                 serde_json::from_value(json!({"scopes":a.scopes.clone().ok_or_else(invalid)?}))
                     .map_err(|_| invalid())?;
 
-            return execute_mcp_board_verb(server, actor, |context| {
+            execute_mcp_board_verb(server, actor, |context| {
                 oneiron::task_verb::sdk::board_unsubscribe(context, input)
             })
-            .await;
+            .await
         }
         "tasks.ack" => {
             let input: oneiron::task_verb::sdk::TaskRequest =
@@ -442,7 +442,7 @@ async fn execute_mcp_agent_verb(
             let output =
                 oneiron::task_verb::sdk::tasks_check(&memory, input).map_err(mcp_facade_error)?;
             let (value, source) = mcp_tasks_section(server, actor, output)?;
-            return Ok((value, source, McpCarrierPolicy::Drain, None));
+            Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "tasks.create" => {
             let input: oneiron::task_verb::sdk::TaskCreateRequest = serde_json::from_value(

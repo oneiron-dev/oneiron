@@ -25,7 +25,7 @@ impl Memory<'_> {
 
     /// Stamps the authoritative `started_at` fact once an executor begins. It
     /// is a synced FACT — every device sees who is working on what — and is
-    /// engine-owned, outside the five agent-visible `TASKS_VERBS` names.
+    /// engine-owned, outside the agent-visible task catalog.
     ///
     /// Replaying it on an already-started task reports the FIRST `started_at`
     /// and mutates nothing: a re-delivered start is not a restart.

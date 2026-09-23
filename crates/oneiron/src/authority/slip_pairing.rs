@@ -171,7 +171,6 @@ impl Vault {
         let claims = SlipClaims {
             slip_id: random_slip_id(),
             vault_id: fold.vault_id.ok_or_else(invalid_authority)?,
-            pact: None,
             parent_id: None,
             holder_ref: holder_ref.to_owned(),
             binding_key,

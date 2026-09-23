@@ -66,8 +66,7 @@ pub(crate) fn scope_exists(vault: &Vault, txn: &heed::RoTxn<'_>, note: &EntityId
 /// Runs for every id, not just rows whose NOTE type header survived.
 pub(crate) fn purge(vault: &Vault, txn: &mut heed::RwTxn<'_>, note: &EntityId) -> Result<bool> {
     let mut removed = vault.store.vault_meta.delete(txn, &head_key(*note))?;
-    // Untrusted workflow inbox entries can span several notes and contain an
-    // unpartitionable explainer. Conservatively discard all on hard erasure.
+    // Workflow markers can span several notes. Conservatively discard all on hard erasure.
     let inbox = vault
         .store
         .sync_state

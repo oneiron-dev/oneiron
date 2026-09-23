@@ -81,7 +81,6 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "mcp_scope": "target",
       "section": true
     },
     {
@@ -97,7 +96,6 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "mcp_scope": "target",
       "section": true
     },
     {
@@ -149,7 +147,6 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "mcp_scope": "target",
       "section": true
     },
     {
@@ -158,15 +155,30 @@
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.witness(&input)?",
       "scope": "Write",
-      "mcp_fields": [
-        "spec"
-      ],
       "admission": {
         "validate": "crate::memory::caps::check_witness_turn(&input)?;"
       },
       "mcp": "none",
-      "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "args": [
+          {
+            "name": "turn",
+            "kind": "witness"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Witnesses one conversational turn.\n    ///\n    /// `turn.occurred_at` is already stamped by the caller through\n    /// [`stamp_occurred_at`], because the engine DTO's field is required and a\n    /// backend cannot tell an omitted `0` from a deliberate one.\n",
+          "ts": "/**\n   * Witnesses one conversational turn.\n   *\n   * Omitting `occurredAt` stamps the current wall clock, in Unix seconds, at\n   * the call boundary.\n   */",
+          "py": "Witnesses one conversational turn.\n\n        Omitting ``occurred_at`` stamps the current wall clock, in Unix\n        seconds, at the call boundary.\n        "
+        }
+      },
+      "uniffi": {
+        "args": {
+          "turn": "WitnessTurn"
+        },
+        "output": "WitnessReceipt"
+      }
     },
     {
       "name": "claim_upsert",
@@ -174,15 +186,30 @@
       "output": "crate::memory::CommitReceipt",
       "call": "memory.claim_upsert(&input)?",
       "scope": "Write",
-      "mcp_fields": [
-        "spec"
-      ],
       "admission": {
         "validate": "crate::memory::caps::check_claim_input(&input)?;"
       },
       "mcp": "none",
-      "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "args": [
+          {
+            "name": "claim",
+            "kind": "claim"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Upserts one claim through the gated claim-candidate path.\n",
+          "ts": "/** Upserts one claim. The consent gate, not this call, decides approval. */",
+          "py": "Upserts one claim. The consent gate, not this call, decides approval."
+        }
+      },
+      "uniffi": {
+        "args": {
+          "claim": "ClaimInput"
+        },
+        "output": "CommitReceipt"
+      }
     },
     {
       "name": "recall",
@@ -190,16 +217,55 @@
       "output": "crate::memory::MemoryPack",
       "call": "memory.recall(&input.query, input.effort.unwrap_or(crate::memory::Effort::Medium), &input.scope.unwrap_or_default(), input.limit.unwrap_or(10), input.format.as_deref(), None)?",
       "scope": "Read",
-      "mcp_fields": [
-        "spec"
-      ],
       "admission": {
         "unrestricted_record_scope": true,
         "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;"
       },
       "mcp": "none",
-      "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "assemble": true,
+        "options": "RecallOptions",
+        "args": [
+          {
+            "name": "query",
+            "kind": "text"
+          },
+          {
+            "name": "effort",
+            "kind": "effort",
+            "default": "medium"
+          },
+          {
+            "name": "scope",
+            "kind": "scope"
+          },
+          {
+            "name": "limit",
+            "kind": "limit",
+            "default": 10
+          },
+          {
+            "name": "format",
+            "kind": "format"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease argument the engine takes is `None` and is NOT a client\n    /// input: no lease issuer exists, and a bearer slip is not one. An\n    /// `Effort::High` call therefore returns the engine's `LEASE_REQUIRED`\n    /// through both backends, spelled identically.\n",
+          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` is lease-gated and returns `LEASE_REQUIRED` until a\n   * lease-bearing constructor exists; this package neither mints nor\n   * simulates a lease.\n   */",
+          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` is lease-gated and raises ``LEASE_REQUIRED`` until a\n        lease-bearing constructor exists; this package neither mints nor\n        simulates a lease. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        "
+        }
+      },
+      "uniffi": {
+        "args": {
+          "query": "String",
+          "effort": "Effort",
+          "scope": "Option<RecallScope>",
+          "limit": "u32",
+          "format": "Option<String>"
+        },
+        "output": "MemoryPack"
+      }
     },
     {
       "name": "receipts",
@@ -207,16 +273,33 @@
       "output": "Vec<crate::memory::MemoryReceipt>",
       "call": "memory.receipts(input.limit.unwrap_or(100))?",
       "scope": "Read",
-      "mcp_fields": [
-        "spec"
-      ],
       "admission": {
         "unrestricted_record_scope": true,
         "validate": "crate::memory::caps::check_limit(input.limit.unwrap_or(100))?;"
       },
       "mcp": "none",
-      "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "assemble": true,
+        "args": [
+          {
+            "name": "limit",
+            "kind": "limit",
+            "default": 100
+          }
+        ],
+        "docs": {
+          "remote": "    /// Lists governance receipts, newest first.\n",
+          "ts": "/** Governance receipts, newest first. */",
+          "py": "Governance receipts, newest first."
+        }
+      },
+      "uniffi": {
+        "args": {
+          "limit": "u32"
+        },
+        "output": "Vec<FacadeReceipt>"
+      }
     },
     {
       "name": "key_value_get",
@@ -224,13 +307,23 @@
       "output": "Option<crate::memory::KeyValueItem>",
       "call": "memory.key_value_get(&input)?",
       "scope": "Read",
-      "mcp_fields": [
-        "spec"
-      ],
       "admission": {},
       "mcp": "none",
-      "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+          "ts": "/** Exact actor-owned worldless key lookup, never recall. */",
+          "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+        }
+      }
     },
     {
       "name": "key_value_put",
@@ -238,13 +331,31 @@
       "output": "crate::memory::KeyValuePutReceipt",
       "call": "memory.key_value_put(&input)?",
       "scope": "Write",
-      "mcp_fields": [
-        "spec"
-      ],
       "admission": {},
       "mcp": "none",
-      "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "input_fields": {
+          "requestId": "request_id"
+        },
+        "output_fields": {
+          "item": "crate::memory::KeyValueItem",
+          "replayed": "bool",
+          "receipt_ref": "String"
+        },
+        "docs": {
+          "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+          "ts": "/** Synchronous gated write. Review-required writes fail without changing the key. */",
+          "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+        }
+      }
     },
     {
       "name": "key_value_delete",
@@ -252,13 +363,27 @@
       "output": "crate::memory::KeyValueDeleteReceipt",
       "call": "memory.key_value_delete(&input)?",
       "scope": "Write",
-      "mcp_fields": [
-        "spec"
-      ],
       "admission": {},
       "mcp": "none",
-      "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "output_fields": {
+          "existed": "bool",
+          "receipt_refs": "Vec<String>"
+        },
+        "docs": {
+          "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+          "ts": "/** Retracts only the caller's current key; preserves claim history. */",
+          "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+        }
+      }
     },
     {
       "name": "key_value_search",
@@ -266,13 +391,29 @@
       "output": "Vec<crate::memory::KeyValueItem>",
       "call": "memory.key_value_search(&input)?",
       "scope": "Read",
-      "mcp_fields": [
-        "spec"
-      ],
       "admission": {},
       "mcp": "none",
-      "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "input_fields": {
+          "namespacePrefix": "namespace_prefix"
+        },
+        "input_defaults": {
+          "namespacePrefix": []
+        },
+        "docs": {
+          "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+          "ts": "/** Exact prefix search, ordered lexically and paginated after filtering. */",
+          "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+        }
+      }
     },
     {
       "name": "key_value_namespaces",
@@ -280,13 +421,26 @@
       "output": "Vec<Vec<String>>",
       "call": "memory.key_value_namespaces(&input)?",
       "scope": "Read",
-      "mcp_fields": [
-        "spec"
-      ],
       "admission": {},
       "mcp": "none",
-      "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "input_fields": {
+          "maxDepth": "max_depth"
+        },
+        "docs": {
+          "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+          "ts": "/** Exact segment namespace enumeration. Empty namespaces are not retained. */",
+          "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+        }
+      }
     },
     {
       "name": "tasks.ask",
@@ -399,6 +553,244 @@
       "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": false
+    },
+    {
+      "name": "commit",
+      "uniffi": {
+        "args": {
+          "claims": "Vec<ClaimInput>"
+        },
+        "output": "Vec<CommitReceipt>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "remember",
+      "uniffi": {
+        "args": {
+          "claim": "ClaimInput"
+        },
+        "output": "CommitReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "claim_retract",
+      "uniffi": {
+        "args": {
+          "claim_ref": "String"
+        },
+        "output": "CommitReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "forget",
+      "uniffi": {
+        "args": {
+          "selector": "ForgetSelector"
+        },
+        "output": "Vec<CommitReceipt>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "claim_list",
+      "uniffi": {
+        "args": {
+          "filter": "ClaimListFilter"
+        },
+        "output": "Vec<ClaimView>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "claim_history",
+      "uniffi": {
+        "args": {
+          "claim_ref": "String"
+        },
+        "output": "Vec<ClaimView>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "safe_delete",
+      "uniffi": {
+        "args": {
+          "entity_ref": "String",
+          "reason": "SafeDeleteReason"
+        },
+        "output": "DeleteReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "pending_writes",
+      "uniffi": {
+        "args": {
+          "limit": "u32"
+        },
+        "output": "Vec<PendingWrite>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "hydrate",
+      "uniffi": {
+        "args": {
+          "refs": "Vec<String>"
+        },
+        "output": "Vec<EntityView>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "get_entity",
+      "uniffi": {
+        "args": {
+          "entity_ref": "String"
+        },
+        "output": "Option<EntityView>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "query_bm25",
+      "uniffi": {
+        "args": {
+          "query": "String",
+          "limit": "u32"
+        },
+        "output": "Vec<LexicalHit>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "neighbors",
+      "uniffi": {
+        "args": {
+          "entity_ref": "String",
+          "opts": "NeighborOpts"
+        },
+        "output": "Vec<NeighborHit>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "put_structural",
+      "uniffi": {
+        "args": {
+          "input": "StructuralPutInput"
+        },
+        "output": "EntityRefReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "put_habit_checkin",
+      "uniffi": {
+        "args": {
+          "input": "HabitCheckinInput"
+        },
+        "output": "EntityRefReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "put_companion_record",
+      "uniffi": {
+        "args": {
+          "input": "CompanionRecordInput"
+        },
+        "output": "EntityRefReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "admit_imported_claim",
+      "uniffi": {
+        "args": {
+          "input": "AdmitImportedClaimInput"
+        },
+        "output": "CommitReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "put_blob_artifact",
+      "uniffi": {
+        "args": {
+          "input": "BlobArtifactInput"
+        },
+        "output": "EntityRefReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "append_blob_version",
+      "uniffi": {
+        "args": {
+          "artifact_ref": "String",
+          "content": "Vec<u8>",
+          "run_ref": "Option<String>",
+          "occurred_at": "Option<i64>",
+          "learned_at": "Option<i64>"
+        },
+        "output": "BlobVersionView"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "read_blob_version",
+      "uniffi": {
+        "args": {
+          "artifact_ref": "String",
+          "version": "u64"
+        },
+        "output": "Option<Vec<u8>>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "enqueue_consolidation",
+      "uniffi": {
+        "args": {
+          "input": "ConsolidationJobInput"
+        },
+        "output": "DreamerJobRef"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "dreamer_job_status",
+      "uniffi": {
+        "args": {
+          "job_ref": "String"
+        },
+        "output": "Option<DreamerJobView>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "seed_claims",
+      "uniffi": {
+        "args": {
+          "claims": "Vec<ClaimInput>"
+        },
+        "output": "Vec<CommitReceipt>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "schedule_outbound",
+      "uniffi": {
+        "args": {
+          "draft": "OutboundDraftInput"
+        },
+        "output": "OutboundIntentReceipt"
+      },
+      "context": "definition"
     }
   ]
 }

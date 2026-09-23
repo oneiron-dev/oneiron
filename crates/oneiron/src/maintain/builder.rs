@@ -116,6 +116,8 @@ pub struct MaintenanceReport {
     pub gate_claim_index_backfill_already_complete: bool,
     /// Conversations whose legacy chain was migrated in this run.
     pub conversation_dags_migrated: u64,
+    /// Conversations skipped because their received DAG topology is invalid.
+    pub conversation_dags_skipped_invalid: u64,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
@@ -232,7 +234,10 @@ impl<'a> MaintenanceBuilder<'a> {
     pub fn run(self) -> Result<MaintenanceReport> {
         let mut report = MaintenanceReport::default();
         if self.do_migrate_conversation_dags {
-            report.conversation_dags_migrated = self.vault.migrate_all_conversation_dags()?;
+            (
+                report.conversation_dags_migrated,
+                report.conversation_dags_skipped_invalid,
+            ) = self.vault.migrate_all_conversation_dags()?;
         }
 
         if self.do_rebuild_hnsw {

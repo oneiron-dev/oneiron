@@ -1227,9 +1227,10 @@ fn tool_first_endpoint_is_generated_from_the_exported_verb_rows() {
     assert_eq!(surface.tool_names(), expected);
     assert_eq!(
         expected.len(),
-        oneiron::board_verb::BOARD_VERBS.len()
-            + oneiron::task_verb::TASKS_VERBS.len()
-            + oneiron::workspace_roster::ROOMS_VERBS.len()
+        oneiron::task_verb::sdk::AgentVerb::ALL
+            .iter()
+            .filter(|verb| verb.is_mcp())
+            .count()
             + oneiron::code_run::vault_read::MEMORY_VERBS.len(),
     );
 
@@ -4020,6 +4021,11 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
     let surface = McpRegisteredSurface::register(McpSurfaceMode::ToolFirst).expect("surface");
     for row in manifest["verbs"].as_array().expect("verb rows") {
         let name = row["name"].as_str().expect("verb name");
+        if row["context"] == "definition" {
+            assert!(oneiron::task_verb::sdk::AgentVerb::from_name(name).is_none());
+            assert!(surface.resolve(name).is_none());
+            continue;
+        }
         let input = oneiron::task_verb::sdk::input_schema(name).expect("input schema");
         assert_eq!(input["type"], "object", "{name}");
         if row["mcp"] == "none" {

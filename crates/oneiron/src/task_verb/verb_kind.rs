@@ -2,8 +2,6 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 
-include!("verb_catalog.rs");
-
 /// Shape discriminator on the typed TASK body. Absent on a schema-v1 row,
 /// where it means [`TaskKind::Standard`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

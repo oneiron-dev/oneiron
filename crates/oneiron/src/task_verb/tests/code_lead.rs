@@ -94,11 +94,11 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     .unwrap();
     let worker = routable_agent_def(&vault, 0xB1);
     let child = match dispatcher
-        .dispatch(SelfCall::AgentsSpawn(SelfAgentSpawnCall {
+        .dispatch(SelfCall::AgentsSpawn(Box::new(SelfAgentSpawnCall {
             target: AgentDispatchTarget::Custom(worker),
             context: AgentSpawnContext::default(),
             intent_key: "worker".to_owned(),
-        }))
+        })))
         .unwrap()
     {
         SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref }) => {
@@ -120,11 +120,11 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     .unwrap();
     assert!(
         worker_dispatcher
-            .dispatch(SelfCall::AgentsSpawn(SelfAgentSpawnCall {
+            .dispatch(SelfCall::AgentsSpawn(Box::new(SelfAgentSpawnCall {
                 target: AgentDispatchTarget::Custom(worker),
                 context: AgentSpawnContext::default(),
                 intent_key: "too-deep".to_owned(),
-            }))
+            })))
             .is_err()
     );
 
@@ -168,7 +168,7 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
         let mut context_refs = planned.consult.context_refs.clone();
         context_refs.extend_from_slice(extra);
         match dispatcher
-            .dispatch(SelfCall::TasksAsk(TaskAskSpec {
+            .dispatch(SelfCall::TasksAsk(Box::new(TaskAskSpec {
                 intent_key: format!("panel:{index}"),
                 ..crate::task_verb::TaskAskSpec::shorthand(
                     Some(TaskAskTarget::Responder(planned.responder)),
@@ -176,14 +176,14 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
                         reference: question,
                         revision: 1,
                         options: Default::default(),
-                        context_refs: context_refs,
+                        context_refs,
                         label: None,
                         outcome_binding: None,
                     },
                     Some(unix_seconds_now() + 3600),
                     crate::task_verb::TaskAskDefault::AskMe,
                 )
-            }))
+            })))
             .unwrap()
         {
             SelfDispatchOutcome::TaskAsk(receipt) => receipt,

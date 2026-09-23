@@ -15,5 +15,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/contract.rs` | src | s | 1 fn · 2 const | — | Head-contract pins and the crate-private verb export macro |
 | `src/dto.rs` | src | m | 37 struct · 3 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, ClaimInput, ClaimListFilter, ClaimView, CommitReceipt, CompanionRecordInput +32 | The complete DTO inventory for the WIRE head contract |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
-| `src/lib.rs` | src | m | 1 struct · 3 fn · 1 const · 2 re-export | Oneiron | Definition-only UniFFI interface surface for the WIRE head contract |
+| `src/facade_generated.rs` | src | s | — | — | — |
+| `src/lib.rs` | src | s | 1 struct · 3 fn · 1 const · 2 re-export | Oneiron | Definition-only UniFFI interface surface for the WIRE head contract |
 | `tests/contract.rs` | test | s | — | — | External drift guard for the exported head-contract surface |

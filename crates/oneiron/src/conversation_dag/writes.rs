@@ -24,7 +24,12 @@ pub(super) fn value(created_at: u64) -> EdgeValueFields {
     }
 }
 
-fn stamp_body(body: &[u8], actor: crate::WriteActor, session: Option<EntityId>) -> Result<Vec<u8>> {
+fn stamp_body(
+    body: &[u8],
+    actor: crate::WriteActor,
+    session: Option<EntityId>,
+    thread: bool,
+) -> Result<Vec<u8>> {
     let mut input = body;
     let decoded = rmpv::decode::read_value(&mut input)
         .map_err(|_| invalid("record body must be MessagePack"))?;
@@ -44,11 +49,22 @@ fn stamp_body(body: &[u8], actor: crate::WriteActor, session: Option<EntityId>) 
         }
         if matches!(
             key,
-            "actor" | "actor_class" | "reply_to" | "addr" | "to" | "summary" | "dag_session_ref"
+            "actor"
+                | "actor_class"
+                | "reply_to"
+                | "addr"
+                | "to"
+                | "summary"
+                | "dag_session_ref"
+                | "dag_kind"
         ) {
             return Err(invalid("record body contains door-owned fields"));
         }
     }
+    entries.push((
+        Value::from("dag_kind"),
+        Value::from(if thread { "thread" } else { "record" }),
+    ));
     entries.push((
         Value::from("actor"),
         Value::from(actor.entity_ref().to_hex()),
@@ -76,8 +92,12 @@ pub(crate) fn append_in_txn(
     txn: &mut RwTxn<'_>,
     input: &AppendRecord,
     summary: Option<EntityId>,
+    thread: bool,
 ) -> Result<AppendedRecord> {
     actor_in_txn(&vault.store, txn, input.actor)?;
+    if thread && input.advance {
+        return Err(invalid("HEAD never enters a thread"));
+    }
     if input.kind != ENTITY_TYPE_TURN {
         return Err(invalid("append_record admits TURN only"));
     }
@@ -112,6 +132,11 @@ pub(crate) fn append_in_txn(
     }
     if let Some(parent) = input.parent {
         let path = chain(&vault.store, txn, &input.conversation, parent)?;
+        for ancestor in &path {
+            if !thread && graph::is_thread_record(&vault.store, txn, ancestor)? {
+                return Err(invalid("thread continuations must use reply_in_thread"));
+            }
+        }
         if path.len() >= crate::limits::MAX_ANCESTOR_DEPTH {
             return Err(Error::IndexOverflow("conversation_dag_walk"));
         }
@@ -148,7 +173,7 @@ pub(crate) fn append_in_txn(
             return Err(invalid("nonempty conversation requires a Parent"));
         }
     }
-    let mut body = stamp_body(&input.body, input.actor, input.session)?;
+    let mut body = stamp_body(&input.body, input.actor, input.session, thread)?;
     if let Some(asking) = input.reply_to {
         require_member(&vault.store, txn, &input.conversation, &asking)?;
         let asking_body = require_type(&vault.store, txn, &asking, ENTITY_TYPE_TURN)?;
@@ -240,6 +265,9 @@ pub(super) fn set_head_in_txn(
 ) -> Result<()> {
     let path = chain(&vault.store, txn, conversation, record)?;
     for id in &path {
+        if graph::is_thread_record(&vault.store, txn, id)? {
+            return Err(invalid("HEAD never enters a thread"));
+        }
         if graph::is_sub_session_record(&vault.store, txn, id)? {
             return Err(invalid("sub-session records cannot enter the trunk"));
         }
@@ -269,7 +297,7 @@ pub(super) fn set_head_in_txn(
 impl Vault {
     /// Appends one immutable TURN and atomically updates topology and membership.
     pub fn append_dag_record(&self, input: &AppendRecord) -> Result<AppendedRecord> {
-        self.with_write_txn(|txn| append_in_txn(self, txn, input, None))
+        self.with_write_txn(|txn| append_in_txn(self, txn, input, None, false))
     }
 
     /// Explicit fork selection. Rewrites canonical marks on both old and new paths.

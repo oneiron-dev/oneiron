@@ -46,6 +46,7 @@ pub(in crate::batch) fn stage_entity_body_row(
         crate::note::validate_registered_kind(store, wtxn, data)?;
     }
     crate::ingest::reindex_identity_hints(store, wtxn, id, Some((entity_type, data)))?;
+    crate::ports::reindex_named_entities(store, wtxn, id, Some((entity_type, data)))?;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     payload.push(entity_type);
     payload.extend_from_slice(&occurred.start.to_be_bytes());
@@ -54,6 +55,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     payload.extend_from_slice(data);
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload)?;
     store.entities().put(wtxn, id.as_bytes(), &payload)?;
+    crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
     Ok(())
 }
 
@@ -164,6 +166,7 @@ pub(in crate::batch) fn stage_edge_rows(
     let key_in = Store::encode_edge_key(tgt, kind, src);
     store.edges_out().put(wtxn, &key_out, value)?;
     store.edges_in().put(wtxn, &key_in, value)?;
+    crate::conversation_dag::pin_membership(store, wtxn, src, kind, tgt)?;
     if kind == EdgeKind::DerivedFrom {
         crate::ports::record_derived_edge_in_txn(store, wtxn, src, tgt)?;
     }

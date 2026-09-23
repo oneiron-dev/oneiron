@@ -18,6 +18,34 @@ fn at(time: u64) -> TimeRange {
 
 pub(crate) fn admitted_import(vault: &Vault, id: &EntityId, record: SkillRecord) -> SkillRecord {
     assert_eq!(record.source, ClaimSource::Imported);
+    let contents = format!(
+        "---\nname: {}\ndescription: {}\nversion: {}\n---\nCheck the fixture result.\n",
+        record.skill_id, record.desc, record.version
+    );
+    let mut imported = record;
+    imported.content_hash = None;
+    imported.lifecycle_status = SkillLifecycle::Candidate;
+    let package = HubPackage::new(
+        imported,
+        vec![HubFile::new("SKILL.md", contents.into_bytes())],
+        SkillCapabilitySurface::default(),
+    );
+    let source = HubRef::new(
+        EntityId::now(),
+        "fixture",
+        HubPin::ContentHash(package.content_hash().expect("hash").to_hex()),
+    )
+    .expect("ref");
+    assert_eq!(
+        vault
+            .import_skill_from_hub_with_id(&source, &package, *id, at(10), 10)
+            .expect("import"),
+        *id
+    );
+    admit_installed(vault, id, &source)
+}
+
+pub(crate) fn admit_installed(vault: &Vault, id: &EntityId, source: &HubRef) -> SkillRecord {
     let owner_id = EntityId::now();
     vault
         .put_entity(
@@ -61,7 +89,7 @@ pub(crate) fn admitted_import(vault: &Vault, id: &EntityId, record: SkillRecord)
         .update_skill_record(&baseline, &base, at(3), 3)
         .expect("authored baseline");
     reserve(vault, &baseline, &base.skill_id);
-    let hub = EntityId::now();
+    let hub = source.hub_id;
     let hub_record = SkillHubRecord::new(
         SkillHubKind::HttpIndex,
         "https://example.invalid/index.json",
@@ -75,32 +103,8 @@ pub(crate) fn admitted_import(vault: &Vault, id: &EntityId, record: SkillRecord)
     let publisher = vault
         .admit_skill_publisher(&owner, "publisher:fixture", hub)
         .expect("publisher");
-    let contents = format!(
-        "---\nname: {}\ndescription: {}\nversion: {}\n---\nCheck the fixture result.\n",
-        record.skill_id, record.desc, record.version
-    );
-    let mut imported = record;
-    imported.content_hash = None;
-    imported.lifecycle_status = SkillLifecycle::Candidate;
-    let package = HubPackage::new(
-        imported,
-        vec![HubFile::new("SKILL.md", contents.into_bytes())],
-        SkillCapabilitySurface::default(),
-    );
-    let source = HubRef::new(
-        hub,
-        "fixture",
-        HubPin::ContentHash(package.content_hash().expect("hash").to_hex()),
-    )
-    .expect("ref");
-    assert_eq!(
-        vault
-            .import_skill_from_hub_with_id(&source, &package, *id, at(10), 10)
-            .expect("import"),
-        *id
-    );
     let ask = vault
-        .prepare_marketplace_activation(*id, &source, &publisher, baseline)
+        .prepare_marketplace_activation(*id, source, &publisher, baseline)
         .expect("ask");
     vault
         .approve_marketplace_activation(&ask, &owner)

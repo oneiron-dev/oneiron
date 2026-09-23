@@ -2,6 +2,7 @@
 
 use super::endpoint_schema::{execute_code_tool_schema, setup_tool_schema, verb_tool_schema};
 use oneiron::code_run::vault_read::{MEMORY_VERBS, VaultReadMethod};
+use oneiron::task_verb::sdk::AgentVerb;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -152,8 +153,11 @@ pub enum McpSurfaceConstructionError {
 /// row upstream adds a tool here with no curation decision to make.
 #[must_use]
 pub fn exported_verb_rows() -> Vec<&'static str> {
-    let mut rows = Vec::with_capacity(AGENT_MCP_VERBS.len() + MEMORY_VERBS.len());
-    rows.extend_from_slice(AGENT_MCP_VERBS);
+    let mut rows: Vec<_> = AgentVerb::ALL
+        .iter()
+        .filter(|verb| verb.is_mcp())
+        .map(|verb| verb.as_str())
+        .collect();
     rows.extend_from_slice(&MEMORY_VERBS);
     rows
 }
@@ -204,14 +208,14 @@ fn project_verb_row(
     let Some(family) = McpVerbFamily::from_prefix(prefix) else {
         return Err(unprojectable);
     };
-    if !AGENT_MCP_VERBS.contains(&row)
+    if !AgentVerb::from_name(row).is_some_and(AgentVerb::is_mcp)
         && !VaultReadMethod::ALL
             .into_iter()
             .any(|method| method.tool_name() == row)
     {
         return Err(unprojectable);
     }
-    if oneiron::task_verb::sdk::AGENT_VERBS.contains(&row)
+    if AgentVerb::from_name(row).is_some()
         && oneiron::task_verb::sdk::mcp_arguments_schema(row).is_none()
     {
         return Err(unprojectable);
@@ -223,8 +227,6 @@ fn project_verb_row(
     })
 }
 
-include!("agent_catalog.rs");
-
 impl McpGeneratedVerbTool {
     pub fn memory_method(self) -> Option<VaultReadMethod> {
         VaultReadMethod::ALL
@@ -233,24 +235,29 @@ impl McpGeneratedVerbTool {
     }
 
     pub(super) fn argument_fields(self) -> &'static [&'static str] {
-        agent_argument_fields(self.name).unwrap_or(&["request"])
+        AgentVerb::from_name(self.name)
+            .and_then(AgentVerb::argument_fields)
+            .unwrap_or(&["request"])
     }
 
     pub(super) fn required_fields(self) -> &'static [&'static str] {
-        agent_required_fields(self.name).unwrap_or(&["request"])
+        AgentVerb::from_name(self.name)
+            .and_then(AgentVerb::required_fields)
+            .unwrap_or(&["request"])
     }
 
     pub(crate) fn continuable(self) -> bool {
-        agent_continuable(self.name)
+        AgentVerb::from_name(self.name).is_some_and(AgentVerb::continuable)
     }
     pub(crate) fn filtered_read(self) -> bool {
-        agent_filtered_read(self.name)
+        AgentVerb::from_name(self.name).is_some_and(AgentVerb::filtered_read)
     }
     pub(crate) fn requires_unscoped(self) -> bool {
-        agent_unscoped(self.name) || self.memory_method().is_some()
+        AgentVerb::from_name(self.name).is_some_and(AgentVerb::requires_unscoped)
+            || self.memory_method().is_some()
     }
     pub(crate) fn writes(self) -> bool {
-        agent_writes(self.name)
+        AgentVerb::from_name(self.name).is_some_and(AgentVerb::writes)
     }
 }
 

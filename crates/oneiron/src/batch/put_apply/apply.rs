@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use super::owned_body::guard_storage_owned_body;
 use heed::RwTxn;
 
 use super::{
@@ -70,7 +71,7 @@ pub(in crate::batch) fn apply_put(
     };
     let data = normalized_policy.as_deref().unwrap_or(data);
     super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
-    super::owned_body::guard_storage_owned_body(store, wtxn, &id, entity_type, data, replicated)?;
+    guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
     super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
@@ -499,13 +500,12 @@ pub(in crate::batch) fn apply_put(
                 .as_ref()
                 .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
             validate_skill_body_overwrite(
-                store,
-                wtxn,
                 &id,
                 &old_record[ENTITY_METADATA_HEADER_LEN..],
                 updated,
                 hub_sync_imported,
                 replicated,
+                hub_admission,
             )?;
         }
         if old_type == ENTITY_TYPE_AGENT_DEF && body_changed {

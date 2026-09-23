@@ -199,25 +199,22 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-
-    /// Witnesses one conversational turn.
     fn witness(&self, py: Python<'_>, turn_json: &str) -> PyResult<String> {
-        let input: WitnessTurnInput = decode(turn_json, "the witness turn")?;
-        let turn = input.into_engine().map_err(raise)?;
-        let receipt = py.detach(|| self.inner.witness(&turn)).map_err(raise)?;
-        encode(&receipt)
-    }
-
-    /// Upserts one claim through the gated claim-candidate path.
-    fn claim_upsert(&self, py: Python<'_>, claim_json: &str) -> PyResult<String> {
-        let claim: ClaimInput = decode(claim_json, "the claim")?;
-        let receipt = py
-            .detach(|| self.inner.claim_upsert(&claim))
+        let turn_json = decode::<WitnessTurnInput>(turn_json, "witness turn")?
+            .into_engine()
             .map_err(raise)?;
-        encode(&receipt)
+        let output = py
+            .detach(|| self.inner.witness(&turn_json))
+            .map_err(raise)?;
+        encode(&output)
     }
-
-    /// Effort-dialed retrieval into a memory pack.
+    fn claim_upsert(&self, py: Python<'_>, claim_json: &str) -> PyResult<String> {
+        let claim_json: ClaimInput = decode(claim_json, "claim")?;
+        let output = py
+            .detach(|| self.inner.claim_upsert(&claim_json))
+            .map_err(raise)?;
+        encode(&output)
+    }
     #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None))]
     fn recall(
         &self,
@@ -229,57 +226,55 @@ impl NativeClient {
         format: Option<String>,
     ) -> PyResult<String> {
         let effort = oneiron_remote::parse_effort(effort.unwrap_or("medium")).map_err(raise)?;
-        let scope = match scope_json {
-            Some(json) => decode(json, "the recall scope")?,
+        let scope_json = match scope_json {
+            Some(value) => decode(value, "recall scope")?,
             None => oneiron::memory::RecallScope::default(),
         };
-        let limit = limit.unwrap_or(oneiron_remote::DEFAULT_RECALL_LIMIT);
-        let pack = py
+        let limit = limit.unwrap_or(10);
+        let output = py
             .detach(|| {
                 self.inner
-                    .recall(&query, effort, &scope, limit, format.as_deref())
+                    .recall(&query, effort, &scope_json, limit, format.as_deref())
             })
             .map_err(raise)?;
-        encode(&pack)
+        encode(&output)
     }
-
-    /// Gate decision receipts, newest first.
     #[pyo3(signature = (limit=None))]
     fn receipts(&self, py: Python<'_>, limit: Option<usize>) -> PyResult<String> {
-        let limit = limit.unwrap_or(oneiron_remote::DEFAULT_RECEIPTS_LIMIT);
-        let receipts = py.detach(|| self.inner.receipts(limit)).map_err(raise)?;
-        encode(&receipts)
+        let limit = limit.unwrap_or(100);
+        let output = py.detach(|| self.inner.receipts(limit)).map_err(raise)?;
+        encode(&output)
     }
-    fn key_value_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
-        let input: serde_json::Value = decode(input_json, "key_value_get")?;
+    fn key_value_get(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "key_value_get")?;
         let output = py
             .detach(|| self.inner.agent_verb("key_value_get", input))
             .map_err(raise)?;
         encode(&output)
     }
-    fn key_value_put(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
-        let input: serde_json::Value = decode(input_json, "key_value_put")?;
+    fn key_value_put(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "key_value_put")?;
         let output = py
             .detach(|| self.inner.agent_verb("key_value_put", input))
             .map_err(raise)?;
         encode(&output)
     }
-    fn key_value_delete(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
-        let input: serde_json::Value = decode(input_json, "key_value_delete")?;
+    fn key_value_delete(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "key_value_delete")?;
         let output = py
             .detach(|| self.inner.agent_verb("key_value_delete", input))
             .map_err(raise)?;
         encode(&output)
     }
-    fn key_value_search(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
-        let input: serde_json::Value = decode(input_json, "key_value_search")?;
+    fn key_value_search(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "key_value_search")?;
         let output = py
             .detach(|| self.inner.agent_verb("key_value_search", input))
             .map_err(raise)?;
         encode(&output)
     }
-    fn key_value_namespaces(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
-        let input: serde_json::Value = decode(input_json, "key_value_namespaces")?;
+    fn key_value_namespaces(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "key_value_namespaces")?;
         let output = py
             .detach(|| self.inner.agent_verb("key_value_namespaces", input))
             .map_err(raise)?;

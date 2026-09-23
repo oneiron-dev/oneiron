@@ -177,6 +177,30 @@ impl CoreAuth {
         }
         Ok(())
     }
+    pub(crate) fn credential_is_live_in_write_txn(
+        &self,
+        vault: &oneiron::Vault,
+        txn: &heed::RwTxn<'_>,
+    ) -> bool {
+        if let Some(verified) = &self.verified_slip {
+            return vault
+                .capability_slip_is_live_in_txn(txn, verified)
+                .unwrap_or(false);
+        }
+        self.jti().is_none_or(|jti| {
+            if jti.len() == 64 {
+                return parse_slip_id(jti).is_ok_and(|id| {
+                    vault
+                        .capability_slip_id_is_live_in_txn(txn, &id)
+                        .unwrap_or(false)
+                });
+            }
+            vault
+                .sync_state_get_in_write_txn(txn, &super::revoked_token_jti_key(jti))
+                .is_ok_and(|row| row.is_none())
+        })
+    }
+
     /// Long-lived sessions refold liveness for their original verified mint.
     pub(crate) fn credential_is_live(&self, vault: &oneiron::Vault) -> bool {
         if let Some(verified) = &self.verified_slip {

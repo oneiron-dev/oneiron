@@ -22,6 +22,7 @@ mod integrity;
 mod lmdb_aux;
 mod lmdb_claim;
 mod lmdb_entity;
+pub(crate) use lmdb_entity::reindex_named_entities;
 mod lmdb_index;
 mod mutation;
 mod records;

@@ -164,7 +164,6 @@ class Oneiron:
         return Oneiron(_translate(lambda: self._client.as_actor(actor_key)))
 
     # BEGIN GENERATED FACADE VERBS
-
     def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
         """Witnesses one conversational turn.
 
@@ -172,22 +171,10 @@ class Oneiron:
         seconds, at the call boundary.
         """
         return json.loads(_translate(lambda: self._client.witness(json.dumps(turn))))
-
     def claim_upsert(self, claim: dict[str, Any]) -> dict[str, Any]:
         """Upserts one claim. The consent gate, not this call, decides approval."""
-        return json.loads(
-            _translate(lambda: self._client.claim_upsert(json.dumps(claim)))
-        )
-
-    def recall(
-        self,
-        query: str,
-        *,
-        effort: str = "medium",
-        scope: dict[str, Any] | None = None,
-        limit: int = 10,
-        format: str | None = None,
-    ) -> dict[str, Any]:
+        return json.loads(_translate(lambda: self._client.claim_upsert(json.dumps(claim))))
+    def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None) -> dict[str, Any]:
         """Recalls a memory pack.
 
         ``effort="high"`` is lease-gated and raises ``LEASE_REQUIRED`` until a
@@ -195,38 +182,22 @@ class Oneiron:
         simulates a lease. ``format`` takes the engine's exact tokens:
         ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
         """
-        return json.loads(
-            _translate(
-                lambda: self._client.recall(
-                    query,
-                    effort,
-                    json.dumps(scope) if scope is not None else None,
-                    limit,
-                    format,
-                )
-            )
-        )
-
+        return json.loads(_translate(lambda: self._client.recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format)))
     def receipts(self, limit: int = 100) -> list[dict[str, Any]]:
         """Governance receipts, newest first."""
         return json.loads(_translate(lambda: self._client.receipts(limit)))
-
     def key_value_get(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
         return json.loads(_translate(lambda: self._client.key_value_get(json.dumps(request, allow_nan=False))))
-
     def key_value_put(self, request: dict[str, Any]) -> dict[str, Any]:
         """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
         return json.loads(_translate(lambda: self._client.key_value_put(json.dumps(request, allow_nan=False))))
-
     def key_value_delete(self, request: dict[str, Any]) -> dict[str, Any]:
         """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
         return json.loads(_translate(lambda: self._client.key_value_delete(json.dumps(request, allow_nan=False))))
-
     def key_value_search(self, request: dict[str, Any]) -> list[dict[str, Any]]:
         """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
         return json.loads(_translate(lambda: self._client.key_value_search(json.dumps(request, allow_nan=False))))
-
     def key_value_namespaces(self, request: dict[str, Any]) -> list[list[str]]:
         """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
         return json.loads(_translate(lambda: self._client.key_value_namespaces(json.dumps(request, allow_nan=False))))

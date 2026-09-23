@@ -6,7 +6,9 @@
 
 mod admission;
 mod graph;
-pub(crate) use admission::validate_local_membership;
+pub(crate) use admission::{
+    guard_record_put, pin_membership, pin_typed_record, validate_local_membership,
+};
 mod membership;
 mod migration;
 pub(crate) use membership::{stage_session_carrier, validate_session_carrier};
@@ -17,7 +19,9 @@ mod scopes;
 mod types;
 mod writes;
 
-pub(crate) use graph::{actor_in_txn, conversation_of, edge_ids, require_type};
+pub(crate) use graph::{
+    actor_in_txn, conversation_of, edge_ids, is_sub_session_record, require_type,
+};
 pub use reply::{ReplyStrip, Thread};
 pub(crate) use scopes::resolve_in_txn;
 pub use types::{

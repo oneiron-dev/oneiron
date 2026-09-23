@@ -32,30 +32,15 @@ tasksCancel(input: unknown): unknown
 tasksCheck(input: unknown): unknown
 tasksCreate(input: unknown): unknown
 tasksExpand(input: unknown): unknown
-  witness(turn: WitnessTurn): WitnessReceipt
-
-  claimUpsert(claim: ClaimInput): CommitReceipt
-
-  recall(
-    query: string,
-    effort: string | undefined,
-    scope: RecallScope | undefined,
-    limit: number | undefined,
-    format: string | undefined,
-  ): MemoryPack
-
-  receipts(limit: number | undefined): FacadeReceipt[]
-
-  keyValueGet(requestJson: string): string
-
-  keyValuePut(requestJson: string): string
-
-  keyValueDelete(requestJson: string): string
-
-  keyValueSearch(requestJson: string): string
-
-  keyValueNamespaces(requestJson: string): string
-
+witness(turn: WitnessTurn): WitnessReceipt
+claimUpsert(claim: ClaimInput): CommitReceipt
+recall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined): MemoryPack
+receipts(limit: number | undefined): FacadeReceipt[]
+keyValueGet(requestJson: string): string
+keyValuePut(requestJson: string): string
+keyValueDelete(requestJson: string): string
+keyValueSearch(requestJson: string): string
+keyValueNamespaces(requestJson: string): string
 tasksAsk(input: unknown): unknown
 tasksWait(input: unknown): unknown
 tasksAnswer(input: unknown): unknown

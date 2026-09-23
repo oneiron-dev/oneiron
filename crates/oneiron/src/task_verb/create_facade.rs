@@ -1,3 +1,4 @@
+use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
 use crate::agent_dispatch::{
@@ -30,7 +31,7 @@ use super::create_validation::{
 use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
 use super::terminal_state::TaskExecutionState;
-use super::verb_kind::{TaskAssignee, TasksVerb};
+use super::verb_kind::TaskAssignee;
 use super::wire_encode::{canonical_bytes, encode_task_realization_input, encode_task_verb_body};
 
 /// Canonical bytes of one create-proposal payload with its `created_at`
@@ -85,7 +86,7 @@ impl Memory<'_> {
         spec: &TaskCreateSpec,
         rate_limit: TaskCreateRateLimit,
     ) -> MemoryResult<TaskCreateReceipt> {
-        let verb = task_verb_contract(TasksVerb::Create);
+        let verb = task_verb_contract(AgentVerb::TasksCreate);
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let now = spec.now.unwrap_or_else(|| self.vault().now_recorded_at());
         let rate_now = self.vault().store.clock.now_recorded_at();

@@ -30,12 +30,6 @@ pub struct SlipClaims {
     pub channels: BTreeSet<String>,
     pub actor_class: Option<String>,
     pub org_ref: Option<String>,
-    #[serde(
-        default,
-        serialize_with = "serialize_pact",
-        deserialize_with = "deserialize_pact"
-    )]
-    pub pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
 }
 
 /// A narrowing appended by a holder, without contacting the issuing host.
@@ -89,9 +83,6 @@ impl SlipMintAction {
 }
 impl SlipClaims {
     pub fn validate(&self) -> Result<()> {
-        if let Some((_, bound)) = &self.pact {
-            bound.validate()?;
-        }
         if self.slip_id == [0; 32]
             || self.vault_id == [0; 32]
             || self.parent_id == Some(self.slip_id)
@@ -101,6 +92,11 @@ impl SlipClaims {
             || self.issued_at >= self.expires_at
             || self.ttl_secs == 0
             || self.ttl_secs > self.expires_at - self.issued_at
+            || (self.single_use
+                && self.expires_at - self.issued_at
+                    > crate::credential_door::DOOR_ONE_SHOT_MAX_LIFETIME_SECS)
+            || matches!(&self.scope.verbs, crate::federation::ScopeAxis::Some(verbs)
+                if verbs.iter().any(|verb| crate::credential_door::names_a_floor(verb)))
             || VerifyingKey::from_bytes(&self.binding_key).is_err()
             || self
                 .actor_class
@@ -114,12 +110,43 @@ impl SlipClaims {
                 .records
                 .iter()
                 .chain(self.channels.iter())
-                .any(|v| v.is_empty() || v.len() > 512)
+                .any(|v| v.is_empty() || v.len() > 512 || crate::credential_door::names_a_floor(v))
             || canonical(self)?.len() > MAX_WIRE_BYTES / 2
         {
             return Err(invalid_authority());
         }
         Ok(())
+    }
+    pub(super) fn narrows(&self, parent: &Self) -> bool {
+        self.vault_id == parent.vault_id
+            && self.scope.is_narrowing_of(&parent.scope)
+            && self.issued_at >= parent.issued_at
+            && self.expires_at <= parent.expires_at
+            && self.ttl_secs <= parent.ttl_secs
+            && (!parent.single_use || self.single_use)
+            && self.binding_key == parent.binding_key
+            && self.holder_ref == parent.holder_ref
+            && self.actor_class == parent.actor_class
+            && self.org_ref == parent.org_ref
+            && (self.records == parent.records
+                || (!self.records.is_empty()
+                    && ((parent.records.is_empty() && parent.channels.is_empty())
+                        || self.records.is_subset(&parent.records))))
+            && (self.channels == parent.channels
+                || (!self.channels.is_empty() && self.channels.is_subset(&parent.channels)))
+    }
+}
+
+/// A verifier-produced effective view; fields cannot be assembled by callers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedSlip {
+    claims: SlipClaims,
+    pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+}
+impl VerifiedSlip {
+    #[must_use]
+    pub fn pact(&self) -> Option<&(crate::EntityId, crate::federation::FederationDirectionScope)> {
+        self.pact.as_ref()
     }
     pub(crate) fn witness_pact(&self, fold: &AuthorityFold) -> Result<()> {
         let Some((grant, requested)) = &self.pact else {
@@ -150,37 +177,7 @@ impl SlipClaims {
         }
         Ok(())
     }
-    pub(super) fn narrows(&self, parent: &Self) -> bool {
-        self.vault_id == parent.vault_id
-            && self.scope.is_narrowing_of(&parent.scope)
-            && self.issued_at >= parent.issued_at
-            && self.expires_at <= parent.expires_at
-            && self.ttl_secs <= parent.ttl_secs
-            && (!parent.single_use || self.single_use)
-            && self.binding_key == parent.binding_key
-            && self.holder_ref == parent.holder_ref
-            && self.actor_class == parent.actor_class
-            && self.org_ref == parent.org_ref
-            && parent.pact.as_ref().is_none_or(|(grant, bound)| {
-                self.pact.as_ref().is_some_and(|(child_grant, child)| {
-                    child_grant == grant && child.is_narrowing_of(bound)
-                })
-            })
-            && (self.records == parent.records
-                || (!self.records.is_empty()
-                    && ((parent.records.is_empty() && parent.channels.is_empty())
-                        || self.records.is_subset(&parent.records))))
-            && (self.channels == parent.channels
-                || (!self.channels.is_empty() && self.channels.is_subset(&parent.channels)))
-    }
-}
 
-/// A verifier-produced effective view; fields cannot be assembled by callers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedSlip {
-    claims: SlipClaims,
-}
-impl VerifiedSlip {
     #[must_use]
     pub fn claims(&self) -> &SlipClaims {
         &self.claims
@@ -192,9 +189,6 @@ impl VerifiedSlip {
     #[must_use]
     pub fn allows_verb(&self, verb: &str) -> bool {
         self.claims.scope.verbs.contains(&verb.to_owned())
-    }
-    pub(crate) fn door_credential(&self) -> crate::credential_door::DoorCredential {
-        crate::credential_door::DoorCredential::from_verified_slip(self)
     }
 }
 
@@ -302,11 +296,24 @@ impl CapabilitySlip {
         let key = blake3::derive_key(MAC_CONTEXT, secret);
         let mut mac = *blake3::keyed_hash(&key, &canonical(&self.claims)?).as_bytes();
         let mut effective = self.claims.clone();
+        let mut pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)> = None;
         // An absent named-record bound is universal on generic record reads.
         // Once a caveat supplies a set, its empty meet is Bottom, never universal.
         let mut records_constrained =
             !effective.records.is_empty() || !effective.channels.is_empty();
         for caveat in &self.caveats {
+            if caveat.scope.as_ref().is_some_and(|scope| {
+                matches!(&scope.verbs, crate::federation::ScopeAxis::Some(verbs)
+                    if verbs.iter().any(|verb| crate::credential_door::names_a_floor(verb)))
+            }) || caveat
+                .records
+                .iter()
+                .flatten()
+                .chain(caveat.channels.iter().flatten())
+                .any(|token| crate::credential_door::names_a_floor(token))
+            {
+                return Err(invalid_authority());
+            }
             mac = *blake3::keyed_hash(&mac, &canonical(caveat)?).as_bytes();
             if let Some(scope) = &caveat.scope {
                 effective.scope = effective.scope.meet(scope);
@@ -320,7 +327,7 @@ impl CapabilitySlip {
             effective.single_use |= caveat.single_use;
             if let Some((grant, bound)) = &caveat.pact {
                 bound.validate()?;
-                effective.pact = Some(match &effective.pact {
+                pact = Some(match &pact {
                     Some((prior_grant, prior)) if prior_grant == grant => {
                         (*grant, prior.intersect(bound))
                     }
@@ -356,9 +363,17 @@ impl CapabilitySlip {
         {
             return Err(invalid_authority());
         }
-        effective.witness_pact(fold)?;
+        effective.ttl_secs = effective
+            .ttl_secs
+            .min(effective.expires_at.saturating_sub(effective.issued_at));
+        effective.validate()?;
         effective.ttl_secs = effective.ttl_secs.min(effective.expires_at - now);
-        Ok(VerifiedSlip { claims: effective })
+        let verified = VerifiedSlip {
+            claims: effective,
+            pact,
+        };
+        verified.witness_pact(fold)?;
+        Ok(verified)
     }
 }
 

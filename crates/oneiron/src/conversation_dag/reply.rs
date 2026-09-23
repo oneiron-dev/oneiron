@@ -152,6 +152,9 @@ fn thread_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, trunk: EntityId) -> Resul
             if edge_ids(&vault.store, txn, &child, EdgeKind::RepliesTo, false, 2)? != [target] {
                 return Err(invalid("record needs exactly one reply target"));
             }
+            if !super::graph::is_thread_record(&vault.store, txn, &child)? {
+                continue;
+            }
             let row = vault
                 .store
                 .port_entity_record(txn, &child)?
@@ -194,7 +197,7 @@ impl Vault {
             input.parent = Some(target);
             input.reply_to = Some(target);
             input.advance = false;
-            super::append_in_txn(self, txn, &input, None)
+            super::append_in_txn(self, txn, &input, None, true)
         })
     }
 }

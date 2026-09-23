@@ -164,7 +164,7 @@ pub use gate::{
 };
 pub(crate) use gate::{
     check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
-    skill_edit_verdict_receipts,
+    skill_edit_verdict_receipts, with_optimized_skill_admission,
 };
 
 pub(crate) use self::job::{SKILL_EDIT_CYCLE_RUN_PREFIX, proven_cycle};

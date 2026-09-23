@@ -18,6 +18,7 @@ pub struct RegistryStatus {
 pub(crate) struct EntityDocRegistry {
     capacity: usize,
     entries: HashMap<EntityId, (String, u64, Arc<EntityDoc>)>,
+    /// FIFO insertion order; cache hits do not change eviction order.
     cold: VecDeque<EntityId>,
 }
 
@@ -62,7 +63,7 @@ impl EntityDocRegistry {
 }
 
 impl Vault {
-    /// Changes the bound and immediately evicts excess cold documents. Every
+    /// Changes the bound and immediately evicts the oldest inserted documents. Every
     /// edit is already durable, so eviction never races a write-behind flush.
     pub fn set_entity_doc_capacity(&self, capacity: usize) -> Result<()> {
         let mut registry = self

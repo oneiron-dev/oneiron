@@ -71,36 +71,59 @@ impl Handles {
             seen: HashSet::new(),
         }
     }
-    fn field(&mut self, key: &str, value: &mut Value) {
-        if matches!(key, "name" | "display_name")
-            && let Some((id, name)) = value.as_str().and_then(|alias| self.aliases.get(alias))
-        {
-            *value = Value::String(if self.seen.insert(id.clone()) && !name.is_empty() {
-                format!("{name} ({id})")
-            } else {
-                id.clone()
+    fn text(&mut self, text: &str) -> String {
+        let mut aliases = self.aliases.iter().collect::<Vec<_>>();
+        aliases.sort_by_key(|(alias, _)| std::cmp::Reverse(alias.len()));
+        let mut output = String::with_capacity(text.len());
+        let mut tail = text;
+        let mut left_boundary = true;
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+        while !tail.is_empty() {
+            let matched = aliases.iter().find_map(|(alias, handle)| {
+                if !left_boundary {
+                    return None;
+                }
+                let rest = tail.strip_prefix(alias.as_str())?;
+                rest.chars()
+                    .next()
+                    .is_none_or(|c| !is_word(c))
+                    .then_some((alias, handle, rest))
             });
+            if let Some((alias, (id, name), rest)) = matched {
+                if self.seen.insert(id.clone()) && !name.is_empty() {
+                    output.push_str(name);
+                    output.push_str(" (");
+                    output.push_str(id);
+                    output.push(')');
+                } else {
+                    output.push_str(id);
+                }
+                left_boundary = alias.chars().next_back().is_none_or(|c| !is_word(c));
+                tail = rest;
+            } else {
+                let mut chars = tail.chars();
+                if let Some(c) = chars.next() {
+                    output.push(c);
+                    left_boundary = !is_word(c);
+                }
+                tail = chars.as_str();
+            }
         }
+        output
     }
     pub(super) fn value(&mut self, value: &mut Value) {
         match value {
+            Value::String(text) => *text = self.text(text),
             Value::Array(values) => {
                 for value in values {
                     self.value(value);
                 }
             }
-            Value::Object(map) if map.contains_key("id") => {
-                // Never substitute a short ref in a citation: its content-hash
-                // suffix is the revision gate.
-                for key in ["display_name", "name"] {
-                    if let Some(value) = map.get_mut(key) {
-                        self.field(key, value);
-                    }
-                }
-            }
             Value::Object(map) => {
                 for (key, value) in map {
-                    if key != "stats" {
+                    // Never substitute a short ref in a citation: its content-hash
+                    // suffix is the revision gate.
+                    if key != "stats" && key != "id" {
                         self.value(value);
                     }
                 }
@@ -126,12 +149,12 @@ impl Handles {
                         if let Some((_, value)) =
                             row.fields.iter_mut().find(|(key, _)| key == column)
                         {
-                            self.field(column, value);
+                            self.value(value);
                         }
                     }
                 } else {
-                    for (key, value) in &mut row.fields {
-                        self.field(key, value);
+                    for (_, value) in &mut row.fields {
+                        self.value(value);
                     }
                 }
             }

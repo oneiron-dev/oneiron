@@ -2570,5 +2570,3 @@ fn native_schema_validation_refuses_invalid_requests_and_unvalidated_terminals()
     }
     Ok(())
 }
-
-mod ask_wait;

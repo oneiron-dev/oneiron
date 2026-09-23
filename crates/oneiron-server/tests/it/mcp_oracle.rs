@@ -123,7 +123,7 @@ mod cb_x {
     }
 
     /// ONE-1704 fixture: the verb table is the engine's EXPORTED
-    /// `BOARD_VERBS ∪ TASKS_VERBS` (four plus five), read straight off the
+    /// the agent verb catalog, read straight off the
     /// constants; generate the tool-first variant from it.
     fn arm_generated_tool_variant() -> GeneratedToolVariant {
         let mut verb_table = oneiron_server::mcp::exported_verb_rows()
@@ -164,16 +164,16 @@ mod cb_x {
     fn tool_first_variant_is_generated_one_tool_per_verb() {
         let variant = arm_generated_tool_variant();
         // The census is REGENERATED from the exported constants rather than
-        // restated: `BOARD_VERBS`, `TASKS_VERBS` and `MEMORY_VERBS`, sorted.
-        let mut expected = oneiron::board_verb::BOARD_VERBS
+        // restated: the MCP projection and `MEMORY_VERBS`, sorted.
+        let mut expected = oneiron::task_verb::sdk::AgentVerb::ALL
             .iter()
-            .chain(oneiron::task_verb::TASKS_VERBS.iter())
-            .chain(oneiron::workspace_roster::ROOMS_VERBS.iter())
-            .chain(oneiron::code_run::vault_read::MEMORY_VERBS.iter())
-            .map(|verb| (*verb).to_owned())
+            .filter(|verb| verb.is_mcp())
+            .map(|verb| verb.as_str())
+            .chain(oneiron::code_run::vault_read::MEMORY_VERBS.iter().copied())
+            .map(str::to_owned)
             .collect::<Vec<_>>();
         expected.sort();
-        assert_eq!(expected.len(), 17);
+        assert_eq!(expected.len(), 25);
         assert_eq!(variant.verb_table, expected);
         assert_eq!(variant.generated_tool_names, expected);
         assert_eq!(variant.hand_written_tools, 0);

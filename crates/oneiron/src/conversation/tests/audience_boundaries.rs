@@ -113,11 +113,7 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
                 .into(),
         )];
         let candidate = vault.append_dag_record(&candidate).unwrap();
-        assert!(
-            vault
-                .record_visible_to(candidate.id, actor.entity_ref())
-                .unwrap()
-        );
+        assert!(audience_admits(&vault, candidate.id, actor.entity_ref()).unwrap());
         hidden.push(candidate.id);
         unavailable.push((room, state));
     }
@@ -160,7 +156,7 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
             .text(&claim, &[("body", "needle relationship")])
             .commit()
             .unwrap();
-        assert!(vault.record_visible_to(claim, actor.entity_ref()).unwrap());
+        assert!(audience_admits(&vault, claim, actor.entity_ref()).unwrap());
         hidden.push(claim);
         unavailable.push((rel, state));
     }
@@ -293,7 +289,7 @@ fn replicated_rooms_before_members_do_not_wedge_live_or_recovery_replay() {
                         == xxhash_rust::xxh3::xxh3_64(invalid.to_hex().as_bytes()))
         );
         assert!(vault.membership_ledger(room).unwrap().is_empty());
-        assert!(!vault.record_visible_to(room, member).unwrap());
+        assert!(!audience_admits(&vault, room, member).unwrap());
         // Later metadata arrival alone must not manufacture local authority.
         map_insert_bytes(
             &entities,
@@ -308,10 +304,10 @@ fn replicated_rooms_before_members_do_not_wedge_live_or_recovery_replay() {
             Some(b"member".as_slice())
         );
         assert!(vault.membership_ledger(room).unwrap().is_empty());
-        assert!(!vault.record_visible_to(room, member).unwrap());
+        assert!(!audience_admits(&vault, room, member).unwrap());
         vault
             .join_member(room, member, actor, 3, HistoryChoice::Share)
             .unwrap();
-        assert!(vault.record_visible_to(room, member).unwrap());
+        assert!(audience_admits(&vault, room, member).unwrap());
     }
 }

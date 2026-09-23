@@ -141,8 +141,7 @@ pub(super) const SLIP_KEY_RECORDS: &str = "records";
 pub(super) const SLIP_KEY_CHANNELS: &str = "channels";
 pub(super) const SLIP_KEY_ACTOR_CLASS: &str = "actor_class";
 pub(super) const SLIP_KEY_ORG_REF: &str = "org_ref";
-pub(super) const SLIP_KEY_PACT: &str = "pact";
-pub(super) const SLIP_MINT_KEYS: [&str; 16] = [
+pub(super) const SLIP_MINT_KEYS: [&str; 15] = [
     OP_KEY_KIND,
     SLIP_KEY_SLIP_ID,
     SLIP_KEY_VAULT_ID,
@@ -158,15 +157,14 @@ pub(super) const SLIP_MINT_KEYS: [&str; 16] = [
     SLIP_KEY_CHANNELS,
     SLIP_KEY_ACTOR_CLASS,
     SLIP_KEY_ORG_REF,
-    SLIP_KEY_PACT,
 ];
 pub(super) const SLIP_SCOPE_KEYS: [&str; 6] = [
-    "worlds",
-    "facets",
-    "bands",
-    "audience",
-    "verbs",
-    "sensitivity",
+    SCOPE_KEY_WORLDS,
+    SCOPE_KEY_FACETS,
+    SCOPE_KEY_BANDS,
+    SCOPE_KEY_AUDIENCE,
+    SCOPE_KEY_VERBS,
+    SCOPE_KEY_SENSITIVITY,
 ];
 pub(super) const SCOPE_KEY_WORLDS: &str = "worlds";
 pub(super) const SCOPE_KEY_FACETS: &str = "facets";

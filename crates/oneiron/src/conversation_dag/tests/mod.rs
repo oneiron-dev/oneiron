@@ -528,6 +528,35 @@ fn migration_rejects_disconnected_received_roots_without_adopting_the_forest() {
         vault.migrate_conversation_dag(&conv).unwrap_err().kind(),
         ErrorKind::InvalidConversationDag
     );
+    let mut healthy = Vec::new();
+    for byte in [0x01, 0xfe] {
+        let conversation = EntityId::from_bytes([byte; 16]).unwrap();
+        let turn = EntityId::now();
+        vault
+            .batch()
+            .put(
+                &conversation,
+                ENTITY_TYPE_CONVERSATION,
+                time(1),
+                1,
+                &body("healthy"),
+            )
+            .put(&turn, ENTITY_TYPE_TURN, time(1), 1, &body("root"))
+            .edge_checked(&turn, &conversation, 1.0)
+            .commit()
+            .unwrap();
+        healthy.push((conversation, turn));
+    }
+    let report = vault.maintain().migrate_conversation_dags().run().unwrap();
+    assert_eq!(report.conversation_dags_migrated, 2);
+    assert_eq!(report.conversation_dags_skipped_invalid, 1);
+    for (conversation, turn) in healthy {
+        assert_eq!(vault.head(&conversation).unwrap(), Some(turn));
+    }
+    assert_eq!(
+        vault.migrate_conversation_dag(&conv).unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
+    );
     // Fixing the supplied topology must still allow adoption: the failed
     // transaction may not leave HEAD, canonical marks or a migration marker.
     vault
@@ -540,7 +569,10 @@ fn migration_rejects_disconnected_received_roots_without_adopting_the_forest() {
         )
         .commit()
         .unwrap();
-    assert!(vault.migrate_conversation_dag(&conv).unwrap());
+    let report = vault.maintain().migrate_conversation_dags().run().unwrap();
+    assert_eq!(report.conversation_dags_migrated, 1);
+    assert_eq!(report.conversation_dags_skipped_invalid, 0);
+    assert!(!vault.migrate_conversation_dag(&conv).unwrap());
     assert_eq!(
         vault
             .resolve_dag_scope(&scope(conv, ScopePath::Canonical, true))
@@ -671,7 +703,7 @@ fn thread_continuation_keeps_each_session_boundary() {
     let mut worker_input = input(conversation, Some(root), false, actor);
     worker_input.session = Some(session);
     worker_input.reply_to = Some(root);
-    let worker = vault.append_dag_record(&worker_input).unwrap().id;
+    let worker = vault.reply_in_thread(root, &worker_input).unwrap().id;
     let ordinary = vault
         .reply_in_thread(root, &input(conversation, None, false, actor))
         .unwrap();
@@ -689,5 +721,39 @@ fn thread_continuation_keeps_each_session_boundary() {
             .unwrap()
             .records,
         [worker, worker_next.id]
+    );
+}
+
+#[test]
+fn head_cannot_select_a_thread_or_escape_through_its_descendant() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let thread = vault
+        .reply_in_thread(root, &input(conversation, Some(root), false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(
+        vault.move_head(&conversation, &thread).unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert_eq!(
+        vault
+            .append_dag_record(&input(conversation, Some(thread), false, actor))
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert_eq!(vault.head(&conversation).unwrap(), Some(root));
+    let next = vault
+        .reply_in_thread(thread, &input(conversation, Some(thread), false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(vault.thread(root).unwrap().replies, [thread, next]);
+    assert_eq!(
+        vault.move_head(&conversation, &next).unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
     );
 }

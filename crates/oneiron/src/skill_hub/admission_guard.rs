@@ -1,4 +1,5 @@
 //! Imported and hub-derived instruction authority at the single SKILL materialization door.
+use super::HubAdmissionProof;
 use super::package_codec::invalid;
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
@@ -8,33 +9,6 @@ use crate::{
     skill::{SkillLifecycle, SkillRecord},
     store::Store,
 };
-
-/// Exact-record activation proof, issued after local consent and held-out replay,
-/// or at bootstrap: the vault's own genesis authorizes the embedded install set,
-/// which is why first-open seeding needs no separately minted owner consent.
-#[derive(Debug)]
-pub(crate) struct HubAdmissionProof {
-    id: EntityId,
-    binding: blake3::Hash,
-}
-impl HubAdmissionProof {
-    pub(super) fn consent(
-        id: EntityId,
-        data: &[u8],
-        _authorization: &crate::consent::ApproveOnceAuthorization,
-    ) -> Self {
-        Self {
-            id,
-            binding: blake3::hash(data),
-        }
-    }
-    pub(super) fn genesis(id: EntityId, data: &[u8]) -> Self {
-        Self {
-            id,
-            binding: blake3::hash(data),
-        }
-    }
-}
 
 impl crate::Vault {
     pub(in crate::skill_hub) fn admit_hub_skill_record_in_txn(
@@ -51,7 +25,7 @@ impl crate::Vault {
             &self.analyzer,
             txn,
             vec![crate::batch::BatchOp::Put {
-                id: proof.id,
+                id: proof.id(),
                 entity_type: crate::registry::ENTITY_TYPE_SKILL,
                 occurred,
                 learned_at,
@@ -135,9 +109,9 @@ pub(crate) fn check_hub_skill_put(
             invalid("hub or fork activation requires local consent and held-out replay")
         })?;
         let encoded = crate::skill::encode_skill_record(record)?;
-        if proof.id != *id || proof.binding != blake3::hash(&encoded) {
+        if !proof.binds(id, &encoded) {
             return Err(invalid(
-                "hub admission ticket does not bind this exact record",
+                "hub admission proof does not bind this exact record",
             ));
         }
     }

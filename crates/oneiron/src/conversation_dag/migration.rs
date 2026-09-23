@@ -4,7 +4,7 @@ use super::graph::{self, MIGRATED, edge_ids, key, require_type};
 use super::writes::{set_head_in_txn, value};
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
@@ -51,6 +51,7 @@ pub(crate) fn migrate_in_txn(
             _ => {}
         }
         graph::require_member(&vault.store, txn, conversation, &id)?;
+        super::admission::pin_record(&vault.store, txn, &id)?;
         if let Some(session) =
             crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &id)?
         {
@@ -61,7 +62,9 @@ pub(crate) fn migrate_in_txn(
                 Some(session),
             )?;
         }
-        if graph::is_sub_session_record(&vault.store, txn, &id)? {
+        if graph::is_thread_record(&vault.store, txn, &id)?
+            || graph::is_sub_session_record(&vault.store, txn, &id)?
+        {
             continue;
         }
         already_dag |= graph::parent(&vault.store, txn, &id)?.is_some();
@@ -72,6 +75,9 @@ pub(crate) fn migrate_in_txn(
             .ok_or(Error::EntityNotFound)?;
         let metadata =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if let Some(body) = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) {
+            already_dag |= super::admission::record_kind(body)?.is_some();
+        }
         turns.push((metadata.occurred_start, id));
     }
     turns.sort_unstable();
@@ -140,11 +146,12 @@ impl Vault {
         self.with_write_txn(|txn| migrate_in_txn(self, txn, conversation))
     }
 
-    pub(crate) fn migrate_all_conversation_dags(&self) -> Result<u64> {
+    pub(crate) fn migrate_all_conversation_dags(&self) -> Result<(u64, u64)> {
         // Stream one type-index page at a time, with a separate atomic commit
         // per conversation. No vault-wide unbounded materialization.
         let mut after = None;
         let mut migrated = 0_u64;
+        let mut skipped_invalid = 0_u64;
         loop {
             let ids = self.entities_by_type_page(ENTITY_TYPE_CONVERSATION, after.as_ref(), 256)?;
             if ids.is_empty() {
@@ -169,12 +176,19 @@ impl Vault {
                             )?
                             .is_empty())
                 };
-                if live && self.migrate_conversation_dag(id)? {
-                    migrated += 1;
+                if live {
+                    match self.migrate_conversation_dag(id) {
+                        Ok(true) => migrated += 1,
+                        Ok(false) => {}
+                        Err(Error::Record(RecordError::InvalidConversationDag(_))) => {
+                            skipped_invalid += 1;
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
             }
             after = ids.last().copied();
         }
-        Ok(migrated)
+        Ok((migrated, skipped_invalid))
     }
 }

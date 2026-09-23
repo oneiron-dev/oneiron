@@ -101,7 +101,7 @@ fn log_mint_requires_parent_narrowing_and_revoke_kills_subtree() {
     claims.expires_at = claims.issued_at + 60;
     claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".into()]));
     let child = vault.mint_capability_slip(&issuer, claims).unwrap();
-    assert!(verify(&vault, &issuer, &child).is_ok());
+    let verified = verify(&vault, &issuer, &child).unwrap();
     let mut wide = child.claims.clone();
     wide.slip_id = [9; 32];
     wide.parent_id = Some(child.claims.slip_id);
@@ -112,6 +112,7 @@ fn log_mint_requires_parent_narrowing_and_revoke_kills_subtree() {
         .unwrap();
     assert!(verify(&vault, &issuer, &root).is_err());
     assert!(verify(&vault, &issuer, &child).is_err());
+    assert!(!vault.capability_slip_is_live(&verified).unwrap());
     assert!(vault.ensure_host_root_slip(&issuer).is_err());
 }
 #[test]
@@ -581,10 +582,7 @@ fn a_rejected_signed_local_entry_still_advances_the_next_sequence() {
 
 #[test]
 fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
-    use crate::federation::{
-        FederationDirectionScope, FederationScopeBands, FederationScopeFacets,
-        FederationScopeWorlds, Sensitivity, SensitivityCeiling,
-    };
+    use crate::federation::{Sensitivity, SensitivityCeiling};
     use rmpv::Value;
     let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
     let scope = Scope {
@@ -610,14 +608,6 @@ fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
         channels: ["git.receive-pack".into()].into(),
         actor_class: Some("agent".into()),
         org_ref: Some(crate::EntityId::from_bytes([6; 16]).unwrap().to_hex()),
-        pact: Some((
-            crate::EntityId::from_bytes([7; 16]).unwrap(),
-            FederationDirectionScope {
-                worlds: FederationScopeWorlds::Base,
-                facets: FederationScopeFacets::All,
-                bands: FederationScopeBands::All,
-            },
-        )),
     };
     let entry = issuer
         .sign_entry(
@@ -655,8 +645,7 @@ fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
             "records",
             "channels",
             "actor_class",
-            "org_ref",
-            "pact"
+            "org_ref"
         ]
     );
     assert!(matches!(
@@ -742,7 +731,13 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
             &proof,
         )
         .unwrap();
-    assert_eq!(checked.claims().pact, Some((grant, narrow)));
+    assert_eq!(checked.pact(), Some(&(grant, narrow)));
+    assert!(
+        vault
+            .capability_slip_id_is_live(&root.claims.slip_id)
+            .unwrap()
+    );
+    assert!(!vault.capability_slip_is_live(&checked).unwrap());
     let decoded = CapabilitySlip::from_token(&slip.to_token().unwrap()).unwrap();
     assert_eq!(decoded, slip);
     fold.federation_pacts.get_mut(&[42; 32]).unwrap().status = FederationPactStatus::Disconnected;
@@ -835,48 +830,179 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
 }
 
 #[test]
-fn pact_bound_mint_is_not_live_through_either_revalidation_door_without_its_pact() {
-    use crate::federation::{
-        FederationDirectionScope, FederationScopeBands, FederationScopeFacets,
-        FederationScopeWorlds,
-    };
+fn slip_validation_refuses_oversized_one_shots_and_floor_names() {
     let (_dir, vault, issuer, root) = fixture();
-    let fold = vault.authority_fold().unwrap();
-    let parent = fold.slips.mints[&root.claims.slip_id].entry_hash;
-    let mut claims = root.claims;
-    claims.slip_id = [71; 32];
-    claims.pact = Some((
-        crate::EntityId::from_bytes([51; 16]).unwrap(),
-        FederationDirectionScope {
-            worlds: FederationScopeWorlds::All,
-            facets: FederationScopeFacets::All,
-            bands: FederationScopeBands::All,
+    let mut claims = root.claims.clone();
+    claims.slip_id = [73; 32];
+    claims.parent_id = Some(root.claims.slip_id);
+    claims.single_use = true;
+    claims.expires_at = claims.issued_at + 301;
+    claims.ttl_secs = 301;
+    assert_eq!(
+        claims.validate().unwrap_err().kind(),
+        invalid_authority().kind()
+    );
+    assert_eq!(
+        vault
+            .mint_capability_slip(&issuer, claims.clone())
+            .unwrap_err()
+            .kind(),
+        invalid_authority().kind()
+    );
+    claims.expires_at = claims.issued_at + 300;
+    claims.ttl_secs = 300;
+    assert!(claims.validate().is_ok());
+    let slip = vault.mint_capability_slip(&issuer, claims.clone()).unwrap();
+    assert!(verify(&vault, &issuer, &slip).is_ok());
+    for token in ["DOOR_SCAN_ALWAYS_ON", "secret.door.floor.ttl"] {
+        for field in 0..3 {
+            let mut claims = claims.clone();
+            match field {
+                0 => claims.scope.verbs = ScopeAxis::Some([token.to_owned()].into()),
+                1 => {
+                    claims.records.insert(token.to_owned());
+                }
+                _ => {
+                    claims.channels.insert(token.to_owned());
+                }
+            }
+            assert_eq!(
+                claims.validate().unwrap_err().kind(),
+                invalid_authority().kind()
+            );
+        }
+    }
+}
+
+#[test]
+fn offline_one_shot_and_floor_caveats_are_checked_at_verification() {
+    let (_dir, vault, issuer, root) = fixture();
+    for caveat in [
+        SlipCaveat {
+            single_use: true,
+            ..Default::default()
         },
-    ));
-    let entry = issuer
-        .sign_entry(
-            Some(claims.vault_id),
-            2,
-            vec![parent],
-            AuthorityOp::SlipMint(SlipMintAction {
-                claims: claims.clone(),
+        SlipCaveat {
+            records: Some(["DOOR_SCAN_ALWAYS_ON".to_owned()].into()),
+            ..Default::default()
+        },
+        SlipCaveat {
+            channels: Some(["DOOR_SCAN_ALWAYS_ON".to_owned()].into()),
+            ..Default::default()
+        },
+        SlipCaveat {
+            scope: Some(Scope {
+                verbs: ScopeAxis::Some(["secret.door.floor.ttl".to_owned()].into()),
+                ..Scope::top()
             }),
-            claims.issued_at,
-        )
+            ..Default::default()
+        },
+    ] {
+        let mut slip = root.clone();
+        slip.attenuate(caveat).unwrap();
+        assert_eq!(
+            verify(&vault, &issuer, &slip).unwrap_err().kind(),
+            invalid_authority().kind()
+        );
+    }
+    let mut bounded = root.clone();
+    bounded
+        .attenuate(SlipCaveat {
+            single_use: true,
+            expires_at: Some(root.claims.issued_at + 300),
+            ..Default::default()
+        })
         .unwrap();
+    assert!(verify(&vault, &issuer, &bounded).is_ok());
+}
+
+#[test]
+fn rejected_mint_transaction_leaves_append_frontier_unchanged_after_reopen() {
+    let (dir, vault, issuer, root) = fixture();
+    let parent = vault.authority_fold().unwrap().slips.mints[&root.claims.slip_id].entry_hash;
+    let mut rejected = root.claims.clone();
+    rejected.slip_id = [80; 32];
+    rejected.parent_id = Some([81; 32]);
+    assert!(vault.mint_capability_slip(&issuer, rejected).is_err());
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = [82; 32];
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let fold = vault.authority_fold().unwrap();
+    let hash = fold.slips.mints[&slip.claims.slip_id].entry_hash;
+    let entry = vault
+        .get_authority_log_entry(&authority_log_entity_id_from_hash(&hash).unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(entry.seq, 2);
+    assert_eq!(entry.parent_hashes, vec![parent]);
+    assert!(fold.fork_alarms.is_empty());
+    assert!(verify(&vault, &issuer, &slip).is_ok());
+}
+
+#[test]
+fn concurrent_single_use_authentication_survives_reopen_and_mint_replay() {
+    let (dir, vault, issuer, root) = fixture();
+    let mut claims = root.claims.clone();
+    claims.slip_id = [84; 32];
+    claims.parent_id = Some(root.claims.slip_id);
+    claims.single_use = true;
+    claims.expires_at = claims.issued_at + 60;
+    claims.ttl_secs = 60;
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let hash = vault.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let entry = vault
+        .get_authority_log_entry(&authority_log_entity_id_from_hash(&hash).unwrap())
+        .unwrap()
+        .unwrap();
+    let timestamp = slip.claims.issued_at;
+    let attempts: Vec<_> = [1, 2]
+        .into_iter()
+        .map(|n| {
+            let nonce = format!("{n:032x}");
+            let challenge = crate::authority::slip_replay::request_challenge(
+                timestamp,
+                nonce.as_bytes(),
+                timestamp,
+            )
+            .unwrap();
+            let signature = issuer.binding_proof(&slip, &challenge).unwrap();
+            (nonce, signature)
+        })
+        .collect();
+    let successes = std::thread::scope(|threads| {
+        let handles: Vec<_> = attempts
+            .iter()
+            .map(|(nonce, signature)| {
+                threads.spawn(|| {
+                    vault
+                        .authenticate_capability_slip(
+                            &issuer,
+                            &slip,
+                            timestamp,
+                            signature,
+                            nonce.as_bytes(),
+                        )
+                        .is_ok()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| usize::from(handle.join().unwrap()))
+            .sum::<usize>()
+    });
+    assert_eq!(successes, 1);
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     vault
         .put_authority_log_entry(&entry, crate::TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
     assert!(
-        vault
-            .authority_fold()
-            .unwrap()
-            .slip_is_live(&claims.slip_id)
-    );
-    assert!(!vault.capability_slip_id_is_live(&claims.slip_id).unwrap());
-    assert!(
         !vault
-            .capability_slip_is_live(&VerifiedSlip { claims })
+            .capability_slip_id_is_live(&slip.claims.slip_id)
             .unwrap()
     );
+    assert!(verify(&vault, &issuer, &slip).is_err());
 }

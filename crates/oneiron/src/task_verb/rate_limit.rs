@@ -6,13 +6,13 @@ use crate::gate::{
     PolicyApprovalCeiling, dispatched_agent_effective_ceiling, resolve_policy_manifest,
 };
 use crate::memory::MemoryResult;
+use crate::task_verb::sdk::AgentVerb;
 use crate::write_envelope::WriteActor;
 
 use super::consts::TASK_CREATE_RATE_KEY_PREFIX;
 use super::create_spec::TaskCreateRateLimit;
-use super::verb_kind::TasksVerb;
 
-pub(super) fn task_verb_contract(verb: TasksVerb) -> &'static str {
+pub(super) fn task_verb_contract(verb: AgentVerb) -> &'static str {
     verb.as_str()
 }
 

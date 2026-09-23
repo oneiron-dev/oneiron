@@ -161,7 +161,7 @@ pub(super) fn chain(
     Ok(records)
 }
 
-pub(super) fn is_sub_session_record(
+pub(crate) fn is_sub_session_record(
     store: &Store,
     txn: &RoTxn<'_>,
     record: &EntityId,
@@ -203,6 +203,11 @@ pub(super) fn is_sub_session_record(
     Ok(!spawned.is_empty())
 }
 
+pub(super) fn is_thread_record(store: &Store, txn: &RoTxn<'_>, record: &EntityId) -> Result<bool> {
+    let body = require_type(store, txn, record, ENTITY_TYPE_TURN)?;
+    Ok(super::admission::record_kind(&body)? == Some("thread"))
+}
+
 pub(super) fn canonical_chain(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -214,6 +219,9 @@ pub(super) fn canonical_chain(
         .transpose()?
         .unwrap_or_default();
     for (n, id) in path.iter().enumerate() {
+        if is_thread_record(store, txn, id)? {
+            return Err(invalid("thread record on canonical line"));
+        }
         if is_sub_session_record(store, txn, id)? {
             return Err(invalid("sub-session record on canonical line"));
         }

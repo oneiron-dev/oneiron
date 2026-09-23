@@ -347,67 +347,6 @@ pub(super) fn peer_wait_binding_delete_in_txn(
     Ok(())
 }
 
-/// Opens the trap, binds the handle, and parks ONLY this attempt atomically.
-/// A restart reuses its binding. The caller owns idle scheduling; this door is
-/// invoked by tasks.wait, never by tasks.ask. Timestamps on trap claims are ms.
-pub fn park_peer_result_step(
-    ctx: &super::types::DurableStepContext<'_>,
-    task_ref: EntityId,
-    step_hash: [u8; 32],
-) -> Result<TrapRef> {
-    let vault = ctx.vault;
-    let runner = crate::dreamer_runner::DreamerRunnerStore::new(vault);
-    for binding in peer_wait_bindings(vault)? {
-        if binding.task_ref != task_ref || binding.step_hash != step_hash {
-            continue;
-        }
-        let (_, head) = trap_head(vault, &binding.trap_claim_id)?;
-        if head.attempt_id != ctx.attempt_id {
-            continue;
-        }
-        let trap = TrapRef {
-            trap_claim_id: binding.trap_claim_id,
-            kind: DreamerTrapKind::PeerResult,
-            step_hash,
-        };
-        register_peer_result_wait(vault, &trap, task_ref, ctx.now_ms)?;
-        return Ok(trap);
-    }
-    let trap = vault.with_write_txn(|txn| {
-        let trap = super::trap::open_trap_in_txn(
-            vault,
-            txn,
-            ctx,
-            DreamerTrapKind::PeerResult,
-            step_hash,
-            "tasks.wait",
-            super::trap_binding::TrapBindingScope::Attempt,
-        )?;
-        peer_wait_binding_put_in_txn(
-            vault,
-            txn,
-            &PeerResultWaitBinding {
-                task_ref,
-                trap_claim_id: trap.trap_claim_id,
-                step_hash,
-                created_at: ctx.now_ms,
-            },
-        )?;
-        runner.park_attempt_in_txn(
-            txn,
-            crate::dreamer_runner::ParkDreamerAttempt {
-                attempt_id: ctx.attempt_id,
-                reason: "tasks.wait".to_owned(),
-                park_owner: super::trap::trap_park_owner(&trap.trap_claim_id),
-                now: ctx.now_s(),
-            },
-        )?;
-        Ok(trap)
-    })?;
-    register_peer_result_wait(vault, &trap, task_ref, ctx.now_ms)?;
-    Ok(trap)
-}
-
 /// Wake-pass recovery for committed handle bindings. Sending and consuming may
 /// straddle a crash; both are idempotent through the trap chain and owner row.
 pub(crate) fn resume_peer_result_steps(vault: &Vault, now_ms: u64) -> Result<usize> {

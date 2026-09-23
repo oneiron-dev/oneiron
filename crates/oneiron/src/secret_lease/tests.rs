@@ -635,19 +635,6 @@ fn a_bounded_materialization_is_clamped_by_the_clock_that_stamps_it() {
 
 #[test]
 fn the_typed_instant_path_stamps_from_the_vault_clock_and_honours_its_bound() {
-    // The witnessed-instant half of the bounded materialization, exercised
-    // through the module-private raw entry. Both entries — this one and the
-    // credential door's `materialize_admitted_lease` — funnel through the ONE
-    // stamping body, so what is asserted here is that body's contract: the
-    // instant handed in dates `granted_at`, dates the receipt, and answers the
-    // bound. `VaultInstant` has no `From<u64>` and no public constructor, so an
-    // instant arriving here can only have come from `Vault::instant_in_txn`.
-    //
-    // The door no longer reaches this entry at all (it is private to this
-    // module now): it carries its whole admission into
-    // `Vault::materialize_admitted_lease`, which re-checks the door dial under
-    // the stamping transaction before calling the same body. The door-side
-    // regressions for that live in `credential_door::tests`.
     let (_tmp, vault) = temp_vault();
     register(
         &vault,
@@ -668,7 +655,7 @@ fn the_typed_instant_path_stamps_from_the_vault_clock_and_honours_its_bound() {
     drop(rtxn);
     assert!(again >= now, "the observation clock ran backwards");
 
-    let bound = now.after(60);
+    let bound = VaultInstant(now.secs().saturating_add(60));
     let materialization = vault
         .materialize_secret_lease_at("typed", EFFECTOR, 3600, now, Some(bound))
         .expect("a live bound admits");

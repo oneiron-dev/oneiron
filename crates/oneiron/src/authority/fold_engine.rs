@@ -255,13 +255,7 @@ fn fold_authority_log_inner(
             && next_authority_forks == authority_forks
             && next_authority_fork_vault_ids == authority_fork_vault_ids
         {
-            return apply_stale_roster_window(
-                entries,
-                fold,
-                first_seen_at_secs,
-                now_secs,
-                stale_roster_window_secs,
-            );
+            break;
         }
         vetoed_widens = fold.vetoed_widens.clone();
         authority_forks = next_authority_forks;
@@ -285,13 +279,28 @@ fn fold_authority_log_inner(
             },
         );
     }
-    apply_stale_roster_window(
+    let mut fold = apply_stale_roster_window(
         entries,
         fold,
         first_seen_at_secs,
         now_secs,
         stale_roster_window_secs,
-    )
+    );
+    fold.append_heads = fold.valid_entries.clone();
+    for entry in entries {
+        // Advance beyond even a signed rejected local entry. Reusing a seq
+        // would create an equivocation, not a retry.
+        fold.append_sequences
+            .entry(entry.signer.public_key.clone())
+            .and_modify(|seq| *seq = (*seq).max(entry.seq))
+            .or_insert(entry.seq);
+        if authority_entry_hash(entry).is_ok_and(|hash| fold.valid_entries.contains(&hash)) {
+            for parent in &entry.parent_hashes {
+                fold.append_heads.remove(parent);
+            }
+        }
+    }
+    fold
 }
 
 fn fold_authority_log_once(
@@ -531,6 +540,8 @@ fn fold_authority_log_once(
         let fork_alarms = build_fork_alarms(&authority_forks);
         return (
             AuthorityFold {
+                append_heads: BTreeSet::new(),
+                append_sequences: BTreeMap::new(),
                 actor_revocation_affected_writers: BTreeSet::new(),
                 actor_write_frontiers: BTreeMap::new(),
                 revoked_actor_keys: BTreeSet::new(),
@@ -597,6 +608,8 @@ fn fold_authority_log_once(
 
     (
         AuthorityFold {
+            append_heads: BTreeSet::new(),
+            append_sequences: BTreeMap::new(),
             actor_revocation_affected_writers: super::causal_write::revocation_affected_writers(
                 &states,
                 merged.as_ref(),

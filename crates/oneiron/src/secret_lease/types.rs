@@ -71,19 +71,6 @@ impl VaultInstant {
     pub(crate) fn secs(self) -> u64 {
         self.0
     }
-
-    /// The instant `secs` AFTER this one.
-    ///
-    /// Forward-only, and deliberately the only arithmetic this type offers.
-    /// It exists so a holder of a witnessed reading can name a DEADLINE
-    /// derived from it — a credential live at `now` has its absolute expiry at
-    /// exactly `now + remaining`, because `remaining` is
-    /// `expires_at - now` — without any way to manufacture an EARLIER
-    /// instant. An earlier instant is the dangerous direction: that is the one
-    /// that makes a dead credential look live.
-    pub(crate) fn after(self, secs: u64) -> Self {
-        Self(self.0.saturating_add(secs))
-    }
 }
 
 impl Vault {

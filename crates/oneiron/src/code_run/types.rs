@@ -16,9 +16,9 @@ pub trait SelfDispatcher {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelfCall {
     /// Typed bounded dispatch. Parent/run identity comes from the host binding.
-    AgentsSpawn(SelfAgentSpawnCall),
+    AgentsSpawn(Box<SelfAgentSpawnCall>),
     /// Async question to live scope authority holders. Returns without waiting.
-    TasksAsk(crate::task_verb::TaskAskSpec),
+    TasksAsk(Box<crate::task_verb::TaskAskSpec>),
     /// Requests a C9 wait for this handle, only at the caller's idle point.
     TasksWait(crate::task_verb::TaskAskHandle),
     /// Fixture for `self.memory.search(...)`.

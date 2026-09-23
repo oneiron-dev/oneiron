@@ -7,7 +7,7 @@
 //! process-wide open counter is isolated from the vault opens in this binary.
 
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN};
-use oneiron_remote::{FACADE_VERB_CATALOG, OneironClient, OpenOptions, unix_seconds_now};
+use oneiron_remote::{OneironClient, OpenOptions, unix_seconds_now};
 
 /// §Test/Shared #1 — `facade_contract_catalog_is_exact`.
 #[test]
@@ -22,9 +22,14 @@ fn facade_contract_catalog_is_exact() {
         .filter(|row| row["context"].as_str().unwrap_or("memory") == "memory")
         .map(|row| row["name"].as_str().expect("verb name"))
         .collect();
-    assert_eq!(FACADE_VERB_CATALOG.len(), expected.len());
+    let catalog: Vec<_> = oneiron::task_verb::sdk::AgentVerb::ALL
+        .iter()
+        .filter(|verb| verb.is_facade())
+        .map(|verb| verb.as_str())
+        .collect();
+    assert_eq!(catalog.len(), expected.len());
     assert_eq!(
-        FACADE_VERB_CATALOG.as_slice(),
+        catalog.as_slice(),
         expected,
         "the shipped catalog must equal the declared catalog, in order"
     );
@@ -38,7 +43,11 @@ fn facade_contract_catalog_is_exact() {
 #[test]
 fn remote_route_catalog_is_total() {
     let mut seen = std::collections::BTreeSet::new();
-    for verb in FACADE_VERB_CATALOG {
+    for verb in oneiron::task_verb::sdk::AgentVerb::ALL
+        .iter()
+        .filter(|verb| verb.is_facade())
+        .map(|verb| verb.as_str())
+    {
         assert!(
             !verb.is_empty()
                 && verb
@@ -48,7 +57,13 @@ fn remote_route_catalog_is_total() {
         );
         assert!(seen.insert(verb), "{verb:?} appears twice in the catalog");
     }
-    assert_eq!(seen.len(), FACADE_VERB_CATALOG.len());
+    assert_eq!(
+        seen.len(),
+        oneiron::task_verb::sdk::AgentVerb::ALL
+            .iter()
+            .filter(|verb| verb.is_facade())
+            .count()
+    );
 }
 
 /// §Test/Shared #3 — divergent reopen options are a typed refusal.

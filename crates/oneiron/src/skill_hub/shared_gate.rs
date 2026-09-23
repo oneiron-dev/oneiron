@@ -155,7 +155,9 @@ impl Vault {
                     learned_at,
                 )?;
             }
-            crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
+            if !accepted {
+                crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
+            }
             let encoded_receipt =
                 serde_json::to_vec(&receipt).map_err(|_| invalid("merge receipt encode failed"))?;
             let mut history_key = b"skill_hub/shared-merge-history/v1\0".to_vec();

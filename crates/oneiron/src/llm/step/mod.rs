@@ -27,8 +27,8 @@ use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
 pub use self::execute::{call_as_step, call_as_step_with_fallbacks};
 pub use self::peer_wait::{
-    PeerResultWaitBinding, park_peer_result_step, reconcile_peer_result_signals,
-    register_peer_result_wait, send_peer_result_signal,
+    PeerResultWaitBinding, reconcile_peer_result_signals, register_peer_result_wait,
+    send_peer_result_signal,
 };
 pub use self::trap::{
     consume_trap_signal, open_trap, register_wait, send_trap_signal, trap_for_durable_wait,

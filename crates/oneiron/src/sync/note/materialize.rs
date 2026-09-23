@@ -1,4 +1,4 @@
-//! Peer windows can stage workflow values, never authorize NOTE mutation.
+//! Peer windows retain erasure markers, never authorize NOTE mutation.
 use super::*;
 
 pub(crate) fn apply(
@@ -22,14 +22,9 @@ pub(crate) fn apply(
         state.validate()?;
         // Erasure reads this namespace to find and purge workflow residue;
         // proposal review/landing deliberately does not read it.
-        // A future authenticated command may explicitly adopt a staged intent.
         // Peer metadata never mints a trusted fork, authorship or receipt.
-        let payload = pack(&(state.docs, state.forks, state.receipts, state.bundles))?;
-        if payload.len() > 4 * 1024 * 1024 {
-            return Err(invalid("NOTE workflow inbox exceeds bound"));
-        }
         let key = format!("note_inbox:v1:{window}");
-        vault.store.sync_state.put(txn, &key, &payload)?;
+        vault.store.sync_state.put(txn, &key, &[])?;
         Ok(Vec::new()) // Staging is not a canonical healing write.
     })
 }

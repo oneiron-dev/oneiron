@@ -301,7 +301,11 @@ fn every_capability_axis_and_offline_caveat_excludes_owner_grade() {
     })
     .unwrap();
     assert!(!fixture.auth(&slip).unwrap().is_owner_grade());
-    let single_use = fixture.mint(|claims| claims.single_use = true);
+    let single_use = fixture.mint(|claims| {
+        claims.single_use = true;
+        claims.expires_at = claims.issued_at + 60;
+        claims.ttl_secs = 60;
+    });
     assert_unauthorized(fixture.auth(&single_use));
 }
 
@@ -663,4 +667,27 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
         first.idempotency_principal(),
         narrowed_auth.idempotency_principal()
     );
+}
+
+#[test]
+fn credential_predicate_reads_the_note_writer_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"writer-snapshot-root").unwrap();
+    let verified = vault.verified_host_root_slip(&issuer).unwrap();
+    let id = verified.claims().slip_id;
+    let auth = CoreAuth::from_verified(verified, true).unwrap();
+    vault
+        .with_write_txn(|txn| {
+            assert!(auth.credential_is_live_in_write_txn(&vault, txn));
+            Ok(())
+        })
+        .unwrap();
+    vault.revoke_capability_slip(&issuer, id).unwrap();
+    vault
+        .with_write_txn(|txn| {
+            assert!(!auth.credential_is_live_in_write_txn(&vault, txn));
+            Ok(())
+        })
+        .unwrap();
 }

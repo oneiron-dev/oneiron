@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use witness::admit_witness;
 
-include!("verb_catalog.rs");
 const TURNS: &[u8] = b"rooms.turn.v1/";
 const HANDLES: &[u8] = b"rooms.platform_handle.v1/";
 const CLAIMS: &[u8] = b"rooms.claim.v1/";

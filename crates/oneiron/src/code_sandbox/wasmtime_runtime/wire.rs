@@ -142,7 +142,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
 
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     Ok(match name {
-        "tasks.ask" => SelfCall::TasksAsk(parse::<crate::task_verb::TaskAskSpec>(input)?),
+        "tasks.ask" => SelfCall::TasksAsk(Box::new(parse::<crate::task_verb::TaskAskSpec>(input)?)),
         "tasks.wait" => SelfCall::TasksWait(parse::<crate::task_verb::TaskAskHandle>(input)?),
         "self.memory.put_claim" => {
             let args: Claim = parse(input)?;
@@ -357,7 +357,7 @@ fn ask_and_wait_bridge_decode_the_engine_spec_without_guest_host_fields() {
     let input = serde_json::to_string(&spec).unwrap();
     assert_eq!(
         self_call("tasks.ask", &input, 1).unwrap(),
-        SelfCall::TasksAsk(spec)
+        SelfCall::TasksAsk(Box::new(spec))
     );
     let handle = crate::task_verb::TaskAskHandle { group_ref: id };
     assert_eq!(

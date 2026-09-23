@@ -1,6 +1,7 @@
 use super::*;
 use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
 use crate::edge::EdgeActorClass;
+use crate::task_verb::sdk::AgentVerb;
 use crate::{EntityId, Vault, VaultConfig};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -228,7 +229,7 @@ fn cancelled_ask_member_cannot_answer_or_mint_a_wait_trap() -> Result<()> {
             origin_action_id: "cancel".into(),
             origin_receipt_ref: None,
             scope: crate::genui::GrantMintIntentScope::VerbClass {
-                verb_class: TasksVerb::Cancel.as_str().into(),
+                verb_class: AgentVerb::TasksCancel.as_str().into(),
             },
         },
         1,

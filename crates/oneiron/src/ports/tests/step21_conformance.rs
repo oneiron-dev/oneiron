@@ -4,7 +4,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::error::{Error, RegistryError, Result};
 use crate::registry::*;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
-use crate::{EdgeKind, TimeRange};
+use crate::{EdgeKind, EntityId, TimeRange};
 use rmpv::Value;
 
 fn entity_edge_place<P: Backend>(ports: &P) -> Result<()> {
@@ -223,4 +223,145 @@ fn opaque_source_frontiers_roundtrip_on_both_backends() -> Result<()> {
     let (_temp, vault, memory, _clock) = fixtures();
     opaque_frontiers(&vault)?;
     opaque_frontiers(&memory)
+}
+
+fn named_queries_follow_mutations<P: Backend>(
+    ports: &P,
+    session_field: &str,
+    asset_field: &str,
+) -> Result<()> {
+    let first = id(91);
+    let second = id(92);
+    let session = id(93);
+    let asset = id(94);
+    let summary = id(95);
+    let related = |name: &str, relationship: EntityId| {
+        map(&[(name, Value::Binary(relationship.as_bytes().to_vec()))])
+    };
+    let mut txn = ports.write()?;
+    for entity in [first, second] {
+        ports.port_entity_put(&mut txn, &entity, &row(ENTITY_TYPE_PERSON, b"relationship"))?;
+    }
+    ports.port_entity_put(
+        &mut txn,
+        &session,
+        &row(ENTITY_TYPE_SESSION, &related("rel", first)),
+    )?;
+    ports.port_entity_put(
+        &mut txn,
+        &asset,
+        &row(ENTITY_TYPE_ASSET, &related(asset_field, first)),
+    )?;
+    ports.port_entity_put(
+        &mut txn,
+        &summary,
+        &row(ENTITY_TYPE_SUMMARY, &map(&[("level", Value::from(2))])),
+    )?;
+    ports.commit(txn)?;
+    let mut txn = ports.write()?;
+    ports.port_entity_put(
+        &mut txn,
+        &session,
+        &row(ENTITY_TYPE_SESSION, &related(session_field, second)),
+    )?;
+    ports.port_entity_put(
+        &mut txn,
+        &asset,
+        &row(ENTITY_TYPE_ASSET, &related("rel", second)),
+    )?;
+    ports.port_entity_put(
+        &mut txn,
+        &summary,
+        &row(ENTITY_TYPE_SUMMARY, &map(&[("level", Value::from(3))])),
+    )?;
+    assert!(
+        ports
+            .port_list_sessions_by_relationship(&txn, &first)?
+            .is_empty()
+    );
+    assert!(
+        ports
+            .port_list_assets_by_relationship(&txn, &first)?
+            .is_empty()
+    );
+    assert!(ports.port_list_summaries_by_level(&txn, 2)?.is_empty());
+    assert_eq!(
+        ports.port_list_sessions_by_relationship(&txn, &second)?,
+        vec![session]
+    );
+    assert_eq!(
+        ports.port_list_assets_by_relationship(&txn, &second)?,
+        vec![asset]
+    );
+    assert_eq!(ports.port_list_summaries_by_level(&txn, 3)?, vec![summary]);
+    drop(txn);
+    let mut txn = ports.write()?;
+    assert_eq!(
+        ports.port_list_sessions_by_relationship(&txn, &first)?,
+        vec![session]
+    );
+    assert_eq!(
+        ports.port_list_assets_by_relationship(&txn, &first)?,
+        vec![asset]
+    );
+    assert_eq!(ports.port_list_summaries_by_level(&txn, 2)?, vec![summary]);
+    for entity in [session, asset, summary] {
+        assert!(ports.port_entity_delete(&mut txn, &entity)?);
+    }
+    assert!(
+        ports
+            .port_list_sessions_by_relationship(&txn, &first)?
+            .is_empty()
+    );
+    assert!(
+        ports
+            .port_list_assets_by_relationship(&txn, &first)?
+            .is_empty()
+    );
+    assert!(ports.port_list_summaries_by_level(&txn, 2)?.is_empty());
+    ports.commit(txn)
+}
+
+#[test]
+fn lmdb_entity_named_queries_follow_replacement_rollback_and_delete() -> Result<()> {
+    let (_temp, vault, memory, _clock) = fixtures();
+    named_queries_follow_mutations(&vault, "relationshipId", "relationship")?;
+    named_queries_follow_mutations(&memory, "rel", "rel")
+}
+
+#[test]
+fn lmdb_entity_named_queries_do_not_walk_unrelated_type_rows() -> Result<()> {
+    let (_temp, vault, _memory, _clock) = fixtures();
+    let relationship = id(96);
+    let mut txn = vault.write()?;
+    for (kind, entity, body) in [
+        (
+            ENTITY_TYPE_SESSION,
+            id(97),
+            map(&[("rel", Value::Binary(relationship.as_bytes().to_vec()))]),
+        ),
+        (
+            ENTITY_TYPE_ASSET,
+            id(98),
+            map(&[("rel", Value::Binary(relationship.as_bytes().to_vec()))]),
+        ),
+        (
+            ENTITY_TYPE_SUMMARY,
+            id(99),
+            map(&[("level", Value::from(2))]),
+        ),
+    ] {
+        vault.port_entity_put(&mut txn, &entity, &row(kind, &body))?;
+        vault.store.type_index.put(&mut txn, &[kind, 255], &[])?;
+    }
+    assert_eq!(
+        vault.port_list_sessions_by_relationship(&txn, &relationship)?,
+        vec![id(97)]
+    );
+    assert_eq!(
+        vault.port_list_assets_by_relationship(&txn, &relationship)?,
+        vec![id(98)]
+    );
+    assert_eq!(vault.port_list_summaries_by_level(&txn, 2)?, vec![id(99)]);
+    Ok(())
 }

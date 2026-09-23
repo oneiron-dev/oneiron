@@ -3,11 +3,9 @@ use super::*;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::board_verb::BOARD_VERBS;
 use crate::genui::{ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface};
 use crate::outbound::OutboundDispatchOutcome;
 use crate::receipt::{ReceiptKind, ReceiptRecord};
-use crate::task_verb::TASKS_VERBS;
 use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
 
 /// The feedback module source, read at compile time so the network-freedom and
@@ -1563,14 +1561,7 @@ fn feedback_verb_registration_is_local_and_exact() {
     assert_eq!(FeedbackVerb::Send.as_str(), FEEDBACK_SEND_VERB);
     assert!(FEEDBACK_VERBS.contains(&FeedbackVerb::Send.as_str()));
 
-    assert!(
-        !TASKS_VERBS.contains(&FEEDBACK_SEND_VERB),
-        "feedback does not join the agent-visible task verb surface"
-    );
-    assert!(
-        !BOARD_VERBS.contains(&FEEDBACK_SEND_VERB),
-        "feedback does not join the agent-visible board verb surface"
-    );
+    assert!(crate::task_verb::sdk::AgentVerb::from_name(FEEDBACK_SEND_VERB).is_none());
 }
 
 // ----------------------------------------------------------- module cohesion

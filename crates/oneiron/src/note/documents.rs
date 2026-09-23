@@ -440,7 +440,7 @@ pub(crate) fn proposal_value(note: EntityId, text: &str) -> Result<LoroDoc> {
     Ok(doc)
 }
 
-#[cfg(any(feature = "sync", test))]
+#[cfg(feature = "sync")]
 pub(crate) fn proposal_text(note: EntityId, bytes: &[u8]) -> Result<String> {
     let doc = super::document::NoteDocument::load(note, bytes)?;
     let view = doc.view()?;

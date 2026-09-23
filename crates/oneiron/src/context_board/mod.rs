@@ -11,8 +11,6 @@ mod observations;
 mod observations_tests;
 mod read_set;
 mod room;
-#[cfg(test)]
-mod room_tests;
 mod room_verbs;
 mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};

@@ -139,14 +139,6 @@ impl VaultWriterLease {
         ))
     }
 
-    /// The directory descriptor pinned by this lease and used by Linux storage open.
-    /// Hosts use this borrowed handle for inode-bound OS isolation checks instead
-    /// of reopening the pathname. The lease retains ownership for the vault lifetime.
-    #[cfg(unix)]
-    pub fn directory_handle(&self) -> &std::fs::File {
-        &self.directory
-    }
-
     /// The same descriptor-bound path used by the existing-only store door.
     #[cfg(target_os = "linux")]
     pub(super) fn environment_path(&self) -> PathBuf {
