@@ -403,8 +403,12 @@ impl EnvOpenOptions {
                     // instant the C call returns — before the result is even
                     // inspected.
                     before_open();
-                    let result =
-                        mdb_result(ffi::mdb_env_open(env, path_str.as_ptr(), flags.bits(), 0o600));
+                    let result = mdb_result(ffi::mdb_env_open(
+                        env,
+                        path_str.as_ptr(),
+                        flags.bits(),
+                        0o600,
+                    ));
                     after_open();
 
                     match result {
@@ -413,7 +417,10 @@ impl EnvOpenOptions {
                             // The CACHE IDENTITY, not the open path: this is
                             // the key the map, `Env::path`, and the close path
                             // all use.
-                            let inner = EnvInner { env, path: entry.key().clone() };
+                            let inner = EnvInner {
+                                env,
+                                path: entry.key().clone(),
+                            };
                             let env = Env(Arc::new(inner));
                             let cache_entry = EnvEntry {
                                 env: Some(env.clone()),
@@ -437,7 +444,8 @@ impl EnvOpenOptions {
 /// Returns a struct that allows to wait for the effective closing of an environment.
 pub fn env_closing_event<P: AsRef<Path>>(path: P) -> Option<EnvClosingEvent> {
     let lock = OPENED_ENV.read().unwrap();
-    lock.get(path.as_ref()).map(|e| EnvClosingEvent(e.signal_event.clone()))
+    lock.get(path.as_ref())
+        .map(|e| EnvClosingEvent(e.signal_event.clone()))
 }
 
 /// An environment handle constructed by using [`EnvOpenOptions`].
@@ -447,7 +455,9 @@ pub struct Env(Arc<EnvInner>);
 impl fmt::Debug for Env {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let EnvInner { env: _, path } = self.0.as_ref();
-        f.debug_struct("Env").field("path", &path.display()).finish_non_exhaustive()
+        f.debug_struct("Env")
+            .field("path", &path.display())
+            .finish_non_exhaustive()
     }
 }
 
@@ -670,7 +680,12 @@ impl Env {
     /// Return the raw flags the environment is currently set with.
     pub fn get_flags(&self) -> Result<u32> {
         let mut flags = mem::MaybeUninit::uninit();
-        unsafe { mdb_result(ffi::mdb_env_get_flags(self.env_mut_ptr(), flags.as_mut_ptr()))? };
+        unsafe {
+            mdb_result(ffi::mdb_env_get_flags(
+                self.env_mut_ptr(),
+                flags.as_mut_ptr(),
+            ))?
+        };
         let flags = unsafe { flags.assume_init() };
         Ok(flags)
     }
@@ -829,7 +844,11 @@ impl Env {
         unsafe {
             mdb_result(ffi::mdb_dbi_open(raw_txn, name_ptr, flags, &mut dbi))?;
             if TypeId::of::<C>() != TypeId::of::<DefaultComparator>() {
-                mdb_result(ffi::mdb_set_compare(raw_txn, dbi, Some(custom_key_cmp_wrapper::<C>)))?;
+                mdb_result(ffi::mdb_set_compare(
+                    raw_txn,
+                    dbi,
+                    Some(custom_key_cmp_wrapper::<C>),
+                ))?;
             }
         };
 
@@ -946,7 +965,11 @@ impl Env {
         fd: ffi::mdb_filehandle_t,
         option: CompactionOption,
     ) -> Result<()> {
-        let flags = if let CompactionOption::Enabled = option { ffi::MDB_CP_COMPACT } else { 0 };
+        let flags = if let CompactionOption::Enabled = option {
+            ffi::MDB_CP_COMPACT
+        } else {
+            0
+        };
         mdb_result(ffi::mdb_env_copyfd2(self.0.env, fd, flags))?;
         Ok(())
     }
@@ -971,7 +994,9 @@ impl Env {
         let mut lock = OPENED_ENV.write().unwrap();
         match lock.get_mut(self.path()) {
             None => panic!("cannot find the env that we are trying to close"),
-            Some(EnvEntry { env, signal_event, .. }) => {
+            Some(EnvEntry {
+                env, signal_event, ..
+            }) => {
                 // We remove the env from the global list and replace it with a None.
                 let _env = env.take();
                 let signal_event = signal_event.clone();
@@ -1176,7 +1201,9 @@ mod tests {
         let env = unsafe { envbuilder.open(dir.path()).unwrap() };
 
         let mut wtxn = env.write_txn().unwrap();
-        let _db = env.create_database::<Str, Str>(&mut wtxn, Some("my-super-db")).unwrap();
+        let _db = env
+            .create_database::<Str, Str>(&mut wtxn, Some("my-super-db"))
+            .unwrap();
         wtxn.commit().unwrap();
     }
 
@@ -1200,11 +1227,15 @@ mod tests {
         };
 
         let mut wtxn = env.write_txn().unwrap();
-        let _db = env.create_database::<Str, Str>(&mut wtxn, Some("my-super-db")).unwrap();
+        let _db = env
+            .create_database::<Str, Str>(&mut wtxn, Some("my-super-db"))
+            .unwrap();
         wtxn.abort();
 
         let rtxn = env.read_txn().unwrap();
-        let option = env.open_database::<Str, Str>(&rtxn, Some("my-super-db")).unwrap();
+        let option = env
+            .open_database::<Str, Str>(&rtxn, Some("my-super-db"))
+            .unwrap();
         assert!(option.is_none());
     }
 
@@ -1221,7 +1252,9 @@ mod tests {
 
         // we first create a database
         let mut wtxn = env.write_txn().unwrap();
-        let _db = env.create_database::<Str, Str>(&mut wtxn, Some("my-super-db")).unwrap();
+        let _db = env
+            .create_database::<Str, Str>(&mut wtxn, Some("my-super-db"))
+            .unwrap();
         wtxn.commit().unwrap();
 
         // Close the environement and reopen it, databases must not be loaded in memory.
@@ -1235,7 +1268,9 @@ mod tests {
         };
 
         let rtxn = env.read_txn().unwrap();
-        let option = env.open_database::<Str, Str>(&rtxn, Some("my-super-db")).unwrap();
+        let option = env
+            .open_database::<Str, Str>(&rtxn, Some("my-super-db"))
+            .unwrap();
         assert!(option.is_some());
     }
 
@@ -1244,11 +1279,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let page_size = page_size::get();
         let env = unsafe {
-            EnvOpenOptions::new().map_size(9 * page_size).max_dbs(1).open(dir.path()).unwrap()
+            EnvOpenOptions::new()
+                .map_size(9 * page_size)
+                .max_dbs(1)
+                .open(dir.path())
+                .unwrap()
         };
 
         let mut wtxn = env.write_txn().unwrap();
-        let db = env.create_database::<Str, Str>(&mut wtxn, Some("my-super-db")).unwrap();
+        let db = env
+            .create_database::<Str, Str>(&mut wtxn, Some("my-super-db"))
+            .unwrap();
         wtxn.commit().unwrap();
 
         let mut wtxn = env.write_txn().unwrap();
@@ -1261,7 +1302,8 @@ mod tests {
         for i in 64..128 {
             db.put(&mut wtxn, &i.to_string(), "world").unwrap();
         }
-        wtxn.commit().expect_err("cannot commit a transaction that would reach the map size limit");
+        wtxn.commit()
+            .expect_err("cannot commit a transaction that would reach the map size limit");
 
         unsafe {
             env.resize(10 * page_size).unwrap();
@@ -1270,7 +1312,8 @@ mod tests {
         for i in 64..128 {
             db.put(&mut wtxn, &i.to_string(), "world").unwrap();
         }
-        wtxn.commit().expect("transaction should commit after resizing the map size");
+        wtxn.commit()
+            .expect("transaction should commit after resizing the map size");
 
         assert_eq!(10 * page_size, env.info().map_size);
     }
@@ -1295,7 +1338,9 @@ mod tests {
                     .unwrap()
             };
             let mut wtxn = env.write_txn().unwrap();
-            let database0 = env.create_database::<Str, Str>(&mut wtxn, Some("shared0")).unwrap();
+            let database0 = env
+                .create_database::<Str, Str>(&mut wtxn, Some("shared0"))
+                .unwrap();
 
             wtxn.commit().unwrap();
             let mut wtxn = env.write_txn().unwrap();
@@ -1316,8 +1361,10 @@ mod tests {
             };
             let database0 = {
                 let rtxn = env.read_txn().unwrap();
-                let database0 =
-                    env.open_database::<Str, Str>(&rtxn, Some("shared0")).unwrap().unwrap();
+                let database0 = env
+                    .open_database::<Str, Str>(&rtxn, Some("shared0"))
+                    .unwrap()
+                    .unwrap();
                 // This commit is mandatory if not committed you might get
                 // Io(Os { code: 22, kind: InvalidInput, message: "Invalid argument" })
                 rtxn.commit().unwrap();
@@ -1346,8 +1393,10 @@ mod tests {
             };
             let database0 = {
                 let rtxn = env.read_txn().unwrap();
-                let database0 =
-                    env.open_database::<Str, Str>(&rtxn, Some("shared0")).unwrap().unwrap();
+                let database0 = env
+                    .open_database::<Str, Str>(&rtxn, Some("shared0"))
+                    .unwrap()
+                    .unwrap();
                 // No commit it's important, dropping explicitly
                 drop(rtxn);
                 database0
@@ -1378,7 +1427,11 @@ mod tests {
     #[test]
     fn max_key_size() {
         let dir = tempfile::tempdir().unwrap();
-        let env = unsafe { EnvOpenOptions::new().open(dir.path().join(dir.path())).unwrap() };
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .open(dir.path().join(dir.path()))
+                .unwrap()
+        };
         let maxkeysize = env.max_key_size();
 
         eprintln!("maxkeysize: {}", maxkeysize);

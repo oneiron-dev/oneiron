@@ -1862,4 +1862,3 @@ async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     fixture.shutdown.trigger();
     fixture.task.await.unwrap();
 }
-

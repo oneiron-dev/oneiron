@@ -1362,7 +1362,6 @@ fn checker_reasons(reasons: &[String]) -> Vec<String> {
         .collect()
 }
 
-
 #[test]
 fn native_checker_observes_structural_streak_outage_neutrality_and_success_reset() -> Result<()> {
     let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;

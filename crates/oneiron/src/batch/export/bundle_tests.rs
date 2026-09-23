@@ -454,8 +454,8 @@ fn missing_source_and_historic_fork_binding_are_explicit_not_invented() -> Resul
         vault.store.vault_meta.delete(txn, &key)?;
         let carrier = crate::agent_def::birth_source_id(&fork)?;
         if let Some(raw) = vault.store.entities.get(txn, carrier.as_bytes())? {
-            let header = crate::batch::EntityMetadataHeader::parse(&raw)
-                .expect("birth carrier header");
+            let header =
+                crate::batch::EntityMetadataHeader::parse(&raw).expect("birth carrier header");
             assert_eq!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_ASSET,

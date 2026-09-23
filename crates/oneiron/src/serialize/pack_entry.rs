@@ -194,9 +194,8 @@ pub(super) fn serialize_prepared_pack(
     config: &SerializeConfig,
     mut prepared: PreparedPack,
 ) -> Vec<u8> {
-    let empty = prepared.results.is_empty()
-        && prepared.neighbors.is_empty()
-        && prepared.l2_base.is_none();
+    let empty =
+        prepared.results.is_empty() && prepared.neighbors.is_empty() && prepared.l2_base.is_none();
     let l2_base = prepared.l2_base.clone();
     let mut handles = super::handles::Handles::new(pack, &mut prepared);
     if !matches!(config.format, PackFormat::Json | PackFormat::Toon) {

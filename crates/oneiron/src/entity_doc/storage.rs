@@ -414,11 +414,7 @@ pub(super) fn drop_document(store: &Store, txn: &mut RwTxn<'_>, document: &str) 
 
 /// A migrated record keeps the EntityDoc codec, even when it is a NOTE.
 /// Errors and malformed heads must not fall through to another document codec.
-pub(crate) fn has_record_head(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    entity: &EntityId,
-) -> Result<bool> {
+pub(crate) fn has_record_head(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Result<bool> {
     Ok(store
         .vault_meta
         .get(txn, head_key(entity).as_bytes())?

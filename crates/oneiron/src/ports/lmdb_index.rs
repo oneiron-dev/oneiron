@@ -135,7 +135,8 @@ impl ShortIdStore for Vault {
             .get(txn, id.as_bytes())?
             .is_none()
         {
-            self.port_entity_get(txn, id)?.ok_or(Error::EntityNotFound)?;
+            self.port_entity_get(txn, id)?
+                .ok_or(Error::EntityNotFound)?;
             // A live projection is not an immutable storage birth record.
             // Repair the reference from raw storage only after the live fence.
             let row = self

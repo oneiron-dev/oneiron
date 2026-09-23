@@ -334,9 +334,7 @@ impl<'a> AttemptQueue<'a> {
             )? {
                 continue;
             }
-            scan.candidate = Some(ClaimKindCandidate {
-                id,
-            });
+            scan.candidate = Some(ClaimKindCandidate { id });
             break;
         }
 

@@ -14,7 +14,10 @@ impl<'txn> RoCursor<'txn> {
     pub(crate) fn new(txn: &'txn RoTxn, dbi: ffi::MDB_dbi) -> Result<RoCursor<'txn>> {
         let mut cursor: *mut ffi::MDB_cursor = ptr::null_mut();
         unsafe { mdb_result(ffi::mdb_cursor_open(txn.txn, dbi, &mut cursor))? }
-        Ok(RoCursor { cursor, _marker: marker::PhantomData })
+        Ok(RoCursor {
+            cursor,
+            _marker: marker::PhantomData,
+        })
     }
 
     pub fn current(&mut self) -> Result<Option<(&'txn [u8], &'txn [u8])>> {
@@ -53,7 +56,10 @@ impl<'txn> RoCursor<'txn> {
                     mdb_result(ffi::mdb_cursor_get(
                         self.cursor,
                         ptr::null_mut(),
-                        &mut ffi::MDB_val { mv_size: 0, mv_data: ptr::null_mut() },
+                        &mut ffi::MDB_val {
+                            mv_size: 0,
+                            mv_data: ptr::null_mut(),
+                        },
                         ffi::cursor_op::MDB_FIRST_DUP,
                     ))?
                 };
@@ -94,7 +100,10 @@ impl<'txn> RoCursor<'txn> {
                     mdb_result(ffi::mdb_cursor_get(
                         self.cursor,
                         ptr::null_mut(),
-                        &mut ffi::MDB_val { mv_size: 0, mv_data: ptr::null_mut() },
+                        &mut ffi::MDB_val {
+                            mv_size: 0,
+                            mv_data: ptr::null_mut(),
+                        },
                         ffi::cursor_op::MDB_LAST_DUP,
                     ))?
                 };
@@ -132,7 +141,10 @@ impl<'txn> RoCursor<'txn> {
             mdb_result(ffi::mdb_cursor_get(
                 self.cursor,
                 &mut key_val,
-                &mut ffi::MDB_val { mv_size: 0, mv_data: ptr::null_mut() },
+                &mut ffi::MDB_val {
+                    mv_size: 0,
+                    mv_data: ptr::null_mut(),
+                },
                 ffi::cursor_op::MDB_SET,
             ))
         };
@@ -247,7 +259,9 @@ pub struct RwCursor<'txn> {
 
 impl<'txn> RwCursor<'txn> {
     pub(crate) fn new(txn: &'txn RwTxn, dbi: ffi::MDB_dbi) -> Result<RwCursor<'txn>> {
-        Ok(RwCursor { cursor: RoCursor::new(txn, dbi)? })
+        Ok(RwCursor {
+            cursor: RoCursor::new(txn, dbi)?,
+        })
     }
 
     /// Delete the entry the cursor is currently pointing to.
@@ -343,8 +357,12 @@ impl<'txn> RwCursor<'txn> {
         let mut reserved = ffi::reserve_size_val(data_size);
         let flags = ffi::MDB_RESERVE | flags.bits();
 
-        let result =
-            mdb_result(ffi::mdb_cursor_put(self.cursor.cursor, &mut key_val, &mut reserved, flags));
+        let result = mdb_result(ffi::mdb_cursor_put(
+            self.cursor.cursor,
+            &mut key_val,
+            &mut reserved,
+            flags,
+        ));
 
         let found = match result {
             Ok(()) => true,

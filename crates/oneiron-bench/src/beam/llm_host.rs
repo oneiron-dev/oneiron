@@ -171,8 +171,7 @@ impl ModelSession {
         }
         // Load only this run's pinned models through the adapter's registry door.
         let registry_dir = tempfile::tempdir()?;
-        let registry =
-            oneiron::Vault::open(registry_dir.path(), super::util::beam_vault_config())?;
+        let registry = oneiron::Vault::open(registry_dir.path(), super::util::beam_vault_config())?;
         for mut entry in catalog {
             let price = &config.prices.models[&entry.model];
             entry.cost = Some(LlmCatalogCost {

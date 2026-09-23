@@ -211,7 +211,6 @@ fn emit_preference_claim(
     handle: &[u8; 32],
     now: u64,
 ) -> Result<Option<EntityId>> {
-
     let predicate = cluster
         .target
         .predicate()

@@ -250,7 +250,8 @@ impl Vault {
         // Credential-bearing trees skip too: the write-door secret scan would
         // refuse the carrier put, and a refused scan must not fail the import
         // — the scan verdict on the skill row is what gates activation.
-        let carrier_dirty = crate::batch::secret_scan::scan_file_content("", &encoded_carrier).is_some();
+        let carrier_dirty =
+            crate::batch::secret_scan::scan_file_content("", &encoded_carrier).is_some();
         if !carrier_dirty && self.store.entities.get(txn, carrier.as_bytes())?.is_none() {
             self.batch_in()
                 .put(

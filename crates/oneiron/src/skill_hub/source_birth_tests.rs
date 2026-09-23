@@ -325,10 +325,7 @@ fn fork_reidentifies_exact_source_and_supported_json_reimports_only_candidates()
     let root = vault
         .store
         .vault_meta
-        .get(
-            &vault.store.env.read_txn()?,
-            b"project.root.v1",
-        )?
+        .get(&vault.store.env.read_txn()?, b"project.root.v1")?
         .map(|raw| EntityId::from_bytes(raw.as_ref().try_into().expect("root id")))
         .transpose()?
         .expect("seeded root project");

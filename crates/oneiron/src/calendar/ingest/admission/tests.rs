@@ -82,7 +82,6 @@ fn update_existing_rewrites_the_event_occurrence() {
             .contains("uid-oc@x")
     );
 
-
     let drifted = BodyFetcher {
         body: one_event_feed("20260807T090000Z", "20260807T093000Z"),
     };

@@ -160,7 +160,10 @@ where
         let result = if self.move_on_start {
             move_on_range_end(&mut self.cursor, &self.end_bound)
         } else {
-            match (self.cursor.current(), move_on_range_end(&mut self.cursor, &self.end_bound)) {
+            match (
+                self.cursor.current(),
+                move_on_range_end(&mut self.cursor, &self.end_bound),
+            ) {
                 (Ok(Some((ckey, _))), Ok(Some((key, data)))) if ckey != key => {
                     Ok(Some((key, data)))
                 }
@@ -304,7 +307,8 @@ impl<'txn, KC, DC, IM> RwRange<'txn, KC, DC, IM> {
         F: FnOnce(&mut ReservedSpace) -> io::Result<()>,
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
-        self.cursor.put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
+        self.cursor
+            .put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
     }
 
     /// Insert a key-value pair in this database. The entry is written with the specified flags and data codec.
@@ -336,7 +340,8 @@ impl<'txn, KC, DC, IM> RwRange<'txn, KC, DC, IM> {
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
         let data_bytes: Cow<[u8]> = NDC::bytes_encode(data).map_err(Error::Encoding)?;
-        self.cursor.put_current_with_flags(flags, &key_bytes, &data_bytes)
+        self.cursor
+            .put_current_with_flags(flags, &key_bytes, &data_bytes)
     }
 
     /// Move on the first value of keys, ignoring duplicate values.
@@ -436,7 +441,10 @@ where
         let result = if self.move_on_start {
             move_on_range_end(&mut self.cursor, &self.end_bound)
         } else {
-            match (self.cursor.current(), move_on_range_end(&mut self.cursor, &self.end_bound)) {
+            match (
+                self.cursor.current(),
+                move_on_range_end(&mut self.cursor, &self.end_bound),
+            ) {
                 (Ok(Some((ckey, _))), Ok(Some((key, data)))) if ckey != key => {
                     Ok(Some((key, data)))
                 }
@@ -741,7 +749,8 @@ impl<'txn, KC, DC, IM> RwRevRange<'txn, KC, DC, IM> {
         F: FnOnce(&mut ReservedSpace) -> io::Result<()>,
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
-        self.cursor.put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
+        self.cursor
+            .put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
     }
 
     /// Insert a key-value pair in this database. The entry is written with the specified flags and data codec.
@@ -773,7 +782,8 @@ impl<'txn, KC, DC, IM> RwRevRange<'txn, KC, DC, IM> {
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
         let data_bytes: Cow<[u8]> = NDC::bytes_encode(data).map_err(Error::Encoding)?;
-        self.cursor.put_current_with_flags(flags, &key_bytes, &data_bytes)
+        self.cursor
+            .put_current_with_flags(flags, &key_bytes, &data_bytes)
     }
 
     /// Move on the first value of keys, ignoring duplicate values.

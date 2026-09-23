@@ -94,11 +94,9 @@ impl AgentDispatcher<'_> {
                     super::AgentDispatchOutcome::ProposedWiden(_)
                     | super::AgentDispatchOutcome::WorkflowDispatched(_)
                     | super::AgentDispatchOutcome::WorkflowExisting(_) => {
-                        return Err(Error::Artifact(
-                            ArtifactError::InvalidAgentDispatchInput(
-                                "healer dispatch unexpectedly proposed widening",
-                            ),
-                        ));
+                        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "healer dispatch unexpectedly proposed widening",
+                        )));
                     }
                 })
             }
