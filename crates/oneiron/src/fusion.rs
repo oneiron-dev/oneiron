@@ -21,7 +21,8 @@ pub(crate) fn sort_scored_entities_desc(scores: &mut [ScoredEntity]) {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RetrievalBlendInput {
     pub(crate) id: EntityId,
-    pub(crate) recency: f32,
+    /// f64, like the whole blend; `narrow_scores_desc` says why.
+    pub(crate) recency: f64,
     pub(crate) salience: f32,
     pub(crate) confidence: f32,
     pub(crate) gravity: f32,
@@ -86,31 +87,52 @@ pub(crate) fn linear_log_blend_scores_with_weights(
     let mut scores = Vec::with_capacity(inputs.len());
     let mut base_scores = Vec::with_capacity(inputs.len());
     for (index, input) in inputs.iter().enumerate() {
-        let log_score = weights.recency * columns.recency[index]
-            + weights.salience * columns.salience[index]
-            + weights.confidence * columns.confidence[index]
-            + weights.gravity * columns.gravity[index];
+        let log_score = f64::from(weights.recency) * columns.recency[index]
+            + f64::from(weights.salience) * columns.salience[index]
+            + f64::from(weights.confidence) * columns.confidence[index]
+            + f64::from(weights.gravity) * columns.gravity[index];
         let base = log_score.exp();
-        base_scores.push(ScoredEntity {
-            id: input.id,
-            score: base,
-        });
-        scores.push(ScoredEntity {
-            id: input.id,
-            // Read-side memory decay is a surfacing multiplier, not a
-            // fifth blend signal: it lands ONCE here, on the exp() of
-            // the z-normalized log blend, so it never enters
-            // `normalized_blend_columns` and never becomes a
-            // `RetrievalSignal`.
-            score: base * input.access_factor,
-        });
+        base_scores.push((input.id, base));
+        // Read-side memory decay is a surfacing multiplier, not a fifth
+        // blend signal: it lands ONCE here, on the exp() of the
+        // z-normalized log blend, so it never enters
+        // `normalized_blend_columns` and never becomes a `RetrievalSignal`.
+        scores.push((input.id, base * f64::from(input.access_factor)));
     }
-    sort_scored_entities_desc(&mut scores);
-    sort_scored_entities_desc(&mut base_scores);
     LinearLogBlendScores {
-        scores,
-        base_scores,
+        scores: narrow_scores_desc(scores),
+        base_scores: narrow_scores_desc(base_scores),
     }
+}
+
+/// Sorts f64 blend scores descending, ties by id, and narrows them to the
+/// pipeline's f32 score without losing that order.
+///
+/// Records written seconds apart, or of types whose recency half-lives
+/// differ by days, differ in blend score by far less than one f32 step. A
+/// plain cast would tie two of them in one clock second and part them in
+/// the next, and every later sort would hand the tie to the id key, so two
+/// recalls a few milliseconds apart could rank them differently. A strictly
+/// lower f64 score therefore stays strictly below its predecessor, and an
+/// exact f64 tie stays an exact tie for the id key to order.
+fn narrow_scores_desc(mut scores: Vec<(EntityId, f64)>) -> Vec<ScoredEntity> {
+    scores.sort_unstable_by(|(left_id, left), (right_id, right)| {
+        right
+            .total_cmp(left)
+            .then_with(|| left_id.as_bytes().cmp(right_id.as_bytes()))
+    });
+    let mut narrowed = Vec::with_capacity(scores.len());
+    let mut previous: Option<(f64, f32)> = None;
+    for (id, wide) in scores {
+        let score = match previous {
+            Some((previous_wide, previous_score)) if wide == previous_wide => previous_score,
+            Some((_, previous_score)) => (wide as f32).min(previous_score.next_down()),
+            None => wide as f32,
+        };
+        previous = Some((wide, score));
+        narrowed.push(ScoredEntity { id, score });
+    }
+    narrowed
 }
 
 /// The applied face alone, for callers that want only `scores`. Every
@@ -149,7 +171,7 @@ pub(crate) fn retrieval_blend_score_components(
                 .push(RetrievalScoreComponent {
                     signal,
                     rank: ranks[index],
-                    score: values[index],
+                    score: values[index] as f32,
                 });
         }
     }
@@ -157,32 +179,22 @@ pub(crate) fn retrieval_blend_score_components(
 }
 
 struct NormalizedBlendColumns {
-    recency: Vec<f32>,
-    salience: Vec<f32>,
-    confidence: Vec<f32>,
-    gravity: Vec<f32>,
+    recency: Vec<f64>,
+    salience: Vec<f64>,
+    confidence: Vec<f64>,
+    gravity: Vec<f64>,
 }
 
 fn normalized_blend_columns(inputs: &[RetrievalBlendInput]) -> NormalizedBlendColumns {
-    let mut recency: Vec<f32> = inputs.iter().map(|input| input.recency).collect();
-    let mut salience: Vec<f32> = inputs.iter().map(|input| input.salience).collect();
-    let mut confidence: Vec<f32> = inputs.iter().map(|input| input.confidence).collect();
-    let mut gravity: Vec<f32> = inputs.iter().map(|input| input.gravity).collect();
-
-    z_normalize(&mut recency);
-    z_normalize(&mut salience);
-    z_normalize(&mut confidence);
-    z_normalize(&mut gravity);
-
     NormalizedBlendColumns {
-        recency,
-        salience,
-        confidence,
-        gravity,
+        recency: z_normalized(inputs.iter().map(|input| input.recency).collect()),
+        salience: z_normalized(inputs.iter().map(|input| input.salience.into()).collect()),
+        confidence: z_normalized(inputs.iter().map(|input| input.confidence.into()).collect()),
+        gravity: z_normalized(inputs.iter().map(|input| input.gravity.into()).collect()),
     }
 }
 
-fn component_ranks(inputs: &[RetrievalBlendInput], values: &[f32]) -> Vec<u32> {
+fn component_ranks(inputs: &[RetrievalBlendInput], values: &[f64]) -> Vec<u32> {
     let mut order: Vec<usize> = (0..inputs.len()).collect();
     order.sort_unstable_by(|left, right| {
         values[*right].total_cmp(&values[*left]).then_with(|| {
@@ -221,30 +233,26 @@ fn compare_blend_inputs(a: &RetrievalBlendInput, b: &RetrievalBlendInput) -> Ord
         .then_with(|| a.gravity.total_cmp(&b.gravity))
 }
 
-fn z_normalize(values: &mut [f32]) {
+fn z_normalized(values: Vec<f64>) -> Vec<f64> {
     if values.len() <= 1 {
-        values.fill(0.0);
-        return;
+        return vec![0.0; values.len()];
     }
 
-    let mean = values.iter().map(|value| f64::from(*value)).sum::<f64>() / values.len() as f64;
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
     let variance = values
         .iter()
         .map(|value| {
-            let delta = f64::from(*value) - mean;
+            let delta = value - mean;
             delta * delta
         })
         .sum::<f64>()
         / values.len() as f64;
     let stddev = variance.sqrt();
     if stddev <= f64::EPSILON {
-        values.fill(0.0);
-        return;
+        return vec![0.0; values.len()];
     }
 
-    for value in values {
-        *value = ((f64::from(*value) - mean) / stddev) as f32;
-    }
+    values.iter().map(|value| (value - mean) / stddev).collect()
 }
 
 pub(crate) fn decode_msgpack_float(raw: &[u8], field: &str) -> Option<f32> {

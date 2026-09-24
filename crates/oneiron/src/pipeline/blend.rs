@@ -117,8 +117,13 @@ pub(super) fn blended_retrieval_scores(
             let half_life_days =
                 f64::from(retrieval_recency_half_life_days_for_type(meta.entity_type));
             let seconds_per_half_life = half_life_days * SECONDS_PER_DAY_F64;
-            let age_secs = now_secs.saturating_sub(meta.learned_at) as f64;
-            input.recency = 2.0_f64.powf(-age_secs / seconds_per_half_life) as f32;
+            // The store clock ticks in whole seconds. An age counts the
+            // recall's own tick, so a record written in that tick is one
+            // tick old, not zero. At zero every half-life reads exactly
+            // 1.0, so records of different types written in that tick
+            // would tie for that one second and part one tick later.
+            let age_secs = now_secs.saturating_sub(meta.learned_at).saturating_add(1) as f64;
+            input.recency = 2.0_f64.powf(-age_secs / seconds_per_half_life);
         }
 
         if needs_claim_body
