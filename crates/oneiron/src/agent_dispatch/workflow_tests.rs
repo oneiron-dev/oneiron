@@ -3,8 +3,8 @@
 use super::*;
 use crate::agent_def::{AgentCeiling, workflow::WorkflowDefinition};
 use crate::attempt_queue::{
-    AttemptRecord, AttemptResultRef, ClaimAttempt, ClaimOutcome, CompleteAttempt, RetryAttempt,
-    SetAttemptResult,
+    AttemptPlacement, AttemptRecord, AttemptResultRef, ClaimAttempt, ClaimOutcome,
+    CleanupAttemptLeases, CompleteAttempt, RetryAttempt, SetAttemptResult,
 };
 use crate::context_projection::ContextSpec;
 use crate::{TimeRange, VaultConfig};
@@ -437,5 +437,96 @@ fn typed_host_executes_both_saved_steps_and_never_replays_completed_callbacks() 
     );
     assert_eq!(executed, vec![first, second]);
     assert_eq!(dispatcher.workflow_status(root)?.results.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn a_redirected_workflow_leaf_is_not_claimed_by_its_old_host() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let first = fixture(&vault, AgentCeiling::Proposed, "redirect-first")?;
+    let second = fixture(&vault, AgentCeiling::Proposed, "redirect-second")?;
+    let id = EntityId::now();
+    vault.save_workflow(
+        &id,
+        &WorkflowDefinition::new("redirect", vec![first, second])?,
+        2,
+    )?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let status = workflow(dispatcher.dispatch(request(AgentDispatchTarget::Workflow(id), None))?);
+    let (root, leaf) = (status.attempt.id, status.active_step);
+    let queue = AttemptQueue::new(&vault);
+    queue.redirect(
+        InterveneAttempt {
+            id: leaf,
+            kind: AttemptInterventionKind::Redirect,
+            actor: "operator".into(),
+            note: None,
+            now: 11,
+        },
+        AttemptPlacement {
+            parent: Some(root),
+            worker: Some("host-b".into()),
+        },
+    )?;
+    assert_eq!(
+        dispatcher.run_workflow_step(root, "host-a", 12, |_, _| panic!(
+            "the old host ran a redirected leaf"
+        ))?,
+        WorkflowProgress::Waiting(leaf)
+    );
+    let queued = queue.get(leaf)?.expect("leaf");
+    assert_eq!(queued.state, AttemptState::Queued);
+    assert_eq!(queued.lease_owner, None);
+    assert_eq!(
+        queued.placement.and_then(|placement| placement.worker),
+        Some("host-b".to_owned())
+    );
+    let progress = dispatcher.run_workflow_step(root, "host-b", 13, |status, _| {
+        assert_eq!(status.attempt.id, leaf);
+        assert_eq!(status.attempt.lease_owner.as_deref(), Some("host-b"));
+        AttemptResultRef::new("artifact:redirected")
+    })?;
+    assert!(matches!(progress, WorkflowProgress::Advanced(_)));
+    Ok(())
+}
+
+#[test]
+fn a_workflow_point_claim_stamps_the_recorded_clock() -> Result<()> {
+    let clock = crate::ports::ManualClock::new(100);
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    });
+    let first = fixture(&vault, AgentCeiling::Proposed, "clock-first")?;
+    let second = fixture(&vault, AgentCeiling::Proposed, "clock-second")?;
+    let id = EntityId::now();
+    vault.save_workflow(
+        &id,
+        &WorkflowDefinition::new("clock", vec![first, second])?,
+        2,
+    )?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let status = workflow(dispatcher.dispatch(request(AgentDispatchTarget::Workflow(id), None))?);
+    let (root, leaf) = (status.attempt.id, status.active_step);
+    // A host whose clock runs far ahead stops mid-step and leaves its lease.
+    let stopped = dispatcher.run_workflow_step(root, "host-a", 1_000_000, |_, _| {
+        Err(Error::InvariantViolation("host stopped mid-step"))
+    });
+    assert!(stopped.is_err());
+    let queue = AttemptQueue::new(&vault);
+    let leased = queue.get(leaf)?.expect("leaf");
+    assert_eq!(leased.state, AttemptState::Leased);
+    assert_eq!(leased.lease_owner.as_deref(), Some("host-a"));
+    assert_eq!(leased.updated_at, 100);
+    assert_eq!(leased.claimed_at, Some(100));
+    let cleanup = |now| {
+        queue.cleanup_leases(CleanupAttemptLeases {
+            now,
+            lease_timeout_secs: 30,
+        })
+    };
+    assert_eq!(cleanup(129)?.stale_requeued, 0);
+    assert_eq!(cleanup(130)?.stale_requeued, 1);
+    assert_eq!(queue.get(leaf)?.expect("leaf").state, AttemptState::Queued);
     Ok(())
 }

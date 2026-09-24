@@ -5,7 +5,7 @@ use super::widen_record::{invalid, json};
 use super::workflow_record::{WorkflowProgress, WorkflowStepResult, record_key};
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionKind, AttemptQueue, AttemptResultRef, AttemptState, ClaimAttempt,
-    CompleteAttempt, FailAttempt, InterveneAttempt, SetAttemptResult,
+    ClaimOutcome, CompleteAttempt, FailAttempt, InterveneAttempt, SetAttemptResult,
 };
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::error::Result;
@@ -142,13 +142,16 @@ impl AgentDispatcher<'_> {
                 now,
             },
         )?;
-        queue.claim_id_in_txn(
+        match queue.claim_id_in_txn(
             txn,
             root,
             ClaimAttempt {
                 lease_owner: "workflow-pump".to_owned(),
                 now,
             },
-        )
+        )? {
+            ClaimOutcome::Claimed(lease) => Ok(lease),
+            ClaimOutcome::Empty => Err(invalid("workflow wrapper is not claimable")),
+        }
     }
 }

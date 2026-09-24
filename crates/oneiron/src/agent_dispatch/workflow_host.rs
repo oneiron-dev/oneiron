@@ -3,8 +3,8 @@
 use super::widen_record::invalid;
 use super::{AgentDispatchStatus, AgentDispatcher, WorkflowProgress};
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptResultRef, AttemptState, ClaimAttempt, CompleteAttempt,
-    SetAttemptResult,
+    AttemptId, AttemptQueue, AttemptResultRef, AttemptState, ClaimAttempt, ClaimOutcome,
+    CompleteAttempt, SetAttemptResult,
 };
 use crate::context_projection::ResolvedContextProjection;
 use crate::error::Result;
@@ -62,14 +62,19 @@ impl AgentDispatcher<'_> {
         }
         let input = super::decode_agent_dispatch_input(&payload.input)?;
         self.dispatchable_definition_in_txn(&txn, &input.target)?;
-        let attempt = queue.claim_id_in_txn(
+        // A leaf placed on another worker, or not yet ready at the recorded
+        // clock, is not this host's to run.
+        let ClaimOutcome::Claimed(attempt) = queue.claim_id_in_txn(
             &mut txn,
             active.id,
             ClaimAttempt {
                 lease_owner: lease_owner.to_owned(),
                 now,
             },
-        )?;
+        )?
+        else {
+            return Ok(WorkflowProgress::Waiting(active.id));
+        };
         txn.commit()?;
         let status = AgentDispatchStatus { attempt, input };
         let context = self.resolve_attempt_context(status.attempt.id)?;
