@@ -48,10 +48,6 @@ if (mode === "write") {
     value: { seat: "window" }, confidence: 1, source: "user_stated",
     occurredAt, learnedAt: occurredAt,
   })
-  // Node pairs its own link once, before any compared recall: a pairing
-  // appends a SlipMint to the authority log, and recall may return that row.
-  const { memory: paired } = Oneiron.pair(required("ONEIRON_WIRE_NODE_PAIR_LINK"))
-  assert.ok(Array.isArray(paired.receipts()))
 }
 
 const recalled = memory.recall("window seat")
@@ -63,6 +59,10 @@ const errors = {
 const unbound = Oneiron.connect(url, required("ONEIRON_WIRE_NO_CLASS_KEY"))
 errors.ONEIRON_WIRE_NO_CLASS_KEY = refusal(() => unbound.receipts(), "FORBIDDEN")
 if (mode === "read") {
+  // A link pairs once. A spent link and a link whose holder names no vault
+  // entity are refused, and a refused pairing mints nothing.
+  const { memory: paired } = Oneiron.pair(required("ONEIRON_WIRE_NODE_PAIR_LINK"))
+  assert.ok(Array.isArray(paired.receipts()))
   errors.pairTwice = refusal(() => Oneiron.pair(required("ONEIRON_WIRE_NODE_PAIR_LINK")), "UNAUTHORIZED")
   errors.pairStranger = refusal(() => Oneiron.pair(required("ONEIRON_WIRE_STRANGER_LINK")), "UNAUTHORIZED")
 }

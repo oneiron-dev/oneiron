@@ -60,6 +60,7 @@ impl PipelineBuilder<'_> {
         authority::apply(
             scores,
             inputs.authority_filter,
+            self.type_filter.as_deref(),
             &self.vault.store,
             rtxn,
             metadata_cache,

@@ -349,6 +349,7 @@ impl PipelineBuilder<'_> {
                 super::authority::apply_types(
                     scores,
                     authority_filter,
+                    self.type_filter.as_deref(),
                     &self.vault.store,
                     rtxn,
                     &mut metadata_cache,

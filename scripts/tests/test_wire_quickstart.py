@@ -116,10 +116,6 @@ def test_remote_sdk_parity():
         "value": {"seat": "window"}, "confidence": 1.0, "source": "user_stated",
         "occurred_at": occurred_at, "learned_at": occurred_at,
     })
-    # Each SDK pairs its own link once, before any compared recall: a pairing
-    # appends a SlipMint to the authority log, and recall may return that row.
-    paired, _credential = Oneiron.pair(os.environ["ONEIRON_WIRE_PAIR_LINK"])
-    assert isinstance(paired.receipts(), list)
     recalled = memory.recall("window seat")
     receipts = memory.receipts()
     assert_quickstart({
@@ -133,8 +129,10 @@ def test_remote_sdk_parity():
     }
     unbound = Oneiron.connect(url, os.environ["ONEIRON_WIRE_NO_CLASS_KEY"])
     errors["ONEIRON_WIRE_NO_CLASS_KEY"] = refusal(unbound.receipts, "FORBIDDEN")
-    # A spent link and a link whose holder names no vault entity are refused,
-    # and a refused pairing mints nothing.
+    # A link pairs once. A spent link and a link whose holder names no vault
+    # entity are refused, and a refused pairing mints nothing.
+    paired, _credential = Oneiron.pair(os.environ["ONEIRON_WIRE_PAIR_LINK"])
+    assert isinstance(paired.receipts(), list)
     errors["pairTwice"] = refusal(
         lambda: Oneiron.pair(os.environ["ONEIRON_WIRE_PAIR_LINK"]), "UNAUTHORIZED"
     )

@@ -827,3 +827,104 @@ fn recall_default_effort_ranks_the_newer_identical_message_first() {
     };
     assert!(newer_at < older_at, "newer message first: {refs:?}");
 }
+
+/// ARCH-0002: AUTHORITY_LOG is a maintenance record with no short-id prefix,
+/// so it never appears in a prompt-facing pack. A pairing appends a SlipMint
+/// seconds before the recall, inside the effort's default now anchor, where
+/// the temporal channel reaches it. Naming the kind still reaches it.
+#[test]
+fn recall_leaves_a_fresh_slip_mint_out_unless_the_kind_is_named() {
+    use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x64);
+    let facade = facade_for(&vault, actor);
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x65; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![witness_message(
+                0,
+                WitnessAuthor::User,
+                "I prefer a window seat when I fly.",
+            )],
+            occurred_at: crate::unix_seconds_now() - 28 * 86_400,
+        })
+        .expect("witness");
+
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"recall pairing secret").unwrap();
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    let holder = SigningKey::from_bytes(&[0x66; 32]);
+    let public = holder.verifying_key().to_bytes();
+    let link = vault
+        .issue_pairing_link(&issuer, crate::federation::Scope::top(), 3_600)
+        .expect("pairing link");
+    let transcript =
+        crate::authority::pairing_binding_transcript(&link.code, &public, "recall-holder").unwrap();
+    vault
+        .redeem_pairing_link(
+            &issuer,
+            &link.code,
+            "recall-holder",
+            public,
+            &holder.sign(&transcript).to_bytes(),
+        )
+        .expect("pair");
+
+    // Medium is the SDKs' default recall effort; no vector makes it sparse.
+    let pack = facade
+        .recall(
+            "window seat",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("recall");
+    let kinds: Vec<&str> = pack.items.iter().map(|item| item.kind.as_str()).collect();
+    assert_eq!(pack.retrieval_meta.sparse, Some(true));
+    assert!(kinds.contains(&"MESSAGE"), "{kinds:?}");
+    assert!(!kinds.contains(&"AUTHORITY_LOG"), "{kinds:?}");
+
+    // The caller's own kind filter names it.
+    let named = vault
+        .context_pack()
+        .search_text("window seat", 10)
+        .limit(10)
+        .retrieval_effort(Effort::Medium, &[])
+        .filter_types(&[ENTITY_TYPE_AUTHORITY_LOG])
+        .run()
+        .expect("named pack");
+    assert!(!named.results.is_empty());
+    assert!(
+        named
+            .results
+            .iter()
+            .all(|entity| entity.entity_type == ENTITY_TYPE_AUTHORITY_LOG)
+    );
+
+    // So does an authority filter that lists it.
+    let floor =
+        crate::gate::resolve_policy_manifest(&vault.store, &vault.store.env.read_txn().unwrap())
+            .unwrap()
+            .retrieval_floor_for_actor(None);
+    let filter = crate::gate::narrow_retrieval_filter(
+        &floor,
+        Some(&crate::gate::RetrievalFilter {
+            entity_types: Some([ENTITY_TYPE_AUTHORITY_LOG].into()),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    let hits = vault
+        .query()
+        .search_text("window seat", 10)
+        .limit(10)
+        .retrieval_effort(Effort::Medium, &[])
+        .authority_filter(filter)
+        .run()
+        .expect("named query");
+    assert!(!hits.is_empty());
+}

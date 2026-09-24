@@ -495,7 +495,12 @@ pub(super) fn apply_filters(
             continue;
         };
 
-        if !super::authority::type_allowed(filters.authority_filter, store, meta.entity_type) {
+        if !super::authority::type_allowed(
+            filters.authority_filter,
+            filters.type_filter,
+            store,
+            meta.entity_type,
+        ) {
             metadata_cache.read_suppressed.insert(scored.id);
             continue;
         }
@@ -577,7 +582,12 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     };
 
-    if !super::authority::type_allowed(filters.authority_filter, store, meta.entity_type) {
+    if !super::authority::type_allowed(
+        filters.authority_filter,
+        filters.type_filter,
+        store,
+        meta.entity_type,
+    ) {
         metadata_cache.read_suppressed.insert(*id);
         return Ok(false);
     }
