@@ -145,7 +145,9 @@ struct TargetedLmdbOpenHook {
 
 type LmdbOpenHook = Box<dyn FnOnce(&Path) + Send>;
 
-type LmdbOpenHookSlot = LazyLock<Mutex<Option<TargetedLmdbOpenHook>>>;
+/// Every armed hook, one per target path. Arming never replaces a sibling
+/// test's hook for a different path: both wait for their own open.
+type LmdbOpenHookSlot = LazyLock<Mutex<Vec<TargetedLmdbOpenHook>>>;
 
 /// Fires between the vault root being bound as a descriptor capability and the
 /// LMDB environment being opened through it, i.e. INSIDE the existing-only
@@ -160,14 +162,14 @@ type LmdbOpenHookSlot = LazyLock<Mutex<Option<TargetedLmdbOpenHook>>>;
 /// — the exact `/proc/self/fd/<dirfd>` path is what makes the open safe; this
 /// hook only makes the schedule observable.
 #[cfg(target_os = "linux")]
-static BEFORE_LMDB_OPEN: LmdbOpenHookSlot = LazyLock::new(|| Mutex::new(None));
+static BEFORE_LMDB_OPEN: LmdbOpenHookSlot = LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// The mirror of [`BEFORE_LMDB_OPEN`] on the other side of the open: on the
 /// existing-only door it runs the instant `mdb_env_open` returns, before any
 /// post-open identity check, which is what lets an ABA schedule restore the
 /// original before those checks look; on the create-capable door it runs once
 /// `EnvOpenOptions::open` has returned.
-static AFTER_LMDB_OPEN: LmdbOpenHookSlot = LazyLock::new(|| Mutex::new(None));
+static AFTER_LMDB_OPEN: LmdbOpenHookSlot = LazyLock::new(|| Mutex::new(Vec::new()));
 thread_local! {
     static FAIL_NEXT_RETRIEVAL_RUN_WRITE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     static FAIL_INITIAL_SEED_COMMIT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
@@ -178,7 +180,9 @@ fn arm_lmdb_open_hook(
     path: PathBuf,
     hook: impl FnOnce(&Path) + Send + 'static,
 ) {
-    *slot.lock().expect("lmdb-open hook mutex poisoned") = Some(TargetedLmdbOpenHook {
+    let mut armed = slot.lock().expect("lmdb-open hook mutex poisoned");
+    armed.retain(|armed| armed.path != path);
+    armed.push(TargetedLmdbOpenHook {
         path,
         hook: Box::new(hook),
     });
@@ -189,11 +193,10 @@ fn arm_lmdb_open_hook(
 fn run_lmdb_open_hook(slot: &LmdbOpenHookSlot, path: &Path) {
     let hook = {
         let mut armed = slot.lock().expect("lmdb-open hook mutex poisoned");
-        if armed.as_ref().is_some_and(|hook| hook.path == path) {
-            armed.take().map(|hook| hook.hook)
-        } else {
-            None
-        }
+        armed
+            .iter()
+            .position(|hook| hook.path == path)
+            .map(|at| armed.swap_remove(at).hook)
     };
     if let Some(hook) = hook {
         hook(path);
