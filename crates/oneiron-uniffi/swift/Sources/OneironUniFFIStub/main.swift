@@ -88,6 +88,7 @@ func claimsCompile(client: Oneiron) throws {
         confidence: 0.9,
         source: "compile-only",
         worldRef: nil,
+        relationshipRef: nil,
         scope: nil,
         validFrom: nil,
         validTo: nil,
