@@ -1290,7 +1290,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback/intake/tests.rs` | test | s | — | — | — |
 | `src/feedback/mod.rs` | src | s | 1 mod · 4 re-export | — | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `src/feedback/tests.rs` | test | XL | — | — | — |
-| `src/fusion.rs` | src | s | 9 crate-vis | — | — |
+| `src/fusion.rs` | src | m | 9 crate-vis | — | — |
 | `src/fusion/tests.rs` | test | m | — | — | — |
 | `src/gate/auto_signals.rs` | src | s | 1 crate-vis | — | Receipt-derived rate and failure streak supplied to the existing auto checker |
 | `src/gate/bundle.rs` | src | m | 4 fn · 5 const | — | — |

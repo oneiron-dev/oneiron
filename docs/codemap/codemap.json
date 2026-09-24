@@ -16193,7 +16193,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/fusion.rs",
@@ -34184,7 +34184,7 @@
     "fusion": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "—"
     },
