@@ -56,7 +56,9 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     );
 
     fork_hash_bm25_config(&mut hasher, bm25_config);
-    fork_hash_bool(&mut hasher, builder.recency_blend_enabled);
+    // The recency the run applies: a host temporal window switches a
+    // requested blend off, the effort's default anchor keeps it.
+    fork_hash_bool(&mut hasher, builder.recency_blend_applies());
     fork_hash_opt_u64(&mut hasher, explicit_time_dependent_now_secs);
     fork_hash_access_factor_overrides(&mut hasher, builder.access_factor_overrides);
     fork_hash_bool(&mut hasher, builder.apply_salience);

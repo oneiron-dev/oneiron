@@ -38,6 +38,9 @@ impl<'a> PipelineBuilder<'a> {
             } else {
                 self.search_temporal(now, now, limit)
             };
+            if let Some(config) = self.temporal_search.as_mut() {
+                config.effort_anchor = true;
+            }
         }
         if effort != Effort::Light {
             self = self

@@ -164,11 +164,7 @@ impl PipelineBuilder<'_> {
             self.vault.ensure_text_index_trusted()?;
         }
 
-        let recency = if self.temporal_search.is_none() && self.recency_blend_enabled {
-            Some(temporal_now)
-        } else {
-            None
-        };
+        let recency = self.recency_blend_applies().then_some(temporal_now);
         // ONE-1402: read-side decay ages every claim against the run's
         // resolved clock, so EVERY run is time-dependent scoring now — not
         // only the ones that blend recency or search temporally. An

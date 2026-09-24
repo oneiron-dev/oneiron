@@ -143,6 +143,11 @@ pub(super) struct TemporalSearchConfig {
     pub(super) anchor_mode: TemporalAnchorMode,
     pub(super) adaptive: bool,
     pub(super) limit: usize,
+    /// The effort dial's default now anchor, not a host-supplied window.
+    /// Only a host window ranks by time on its own and switches the
+    /// recency blend off; the default anchor keeps it (ARCH-0004: the
+    /// blend is constant at every effort level).
+    pub(super) effort_anchor: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

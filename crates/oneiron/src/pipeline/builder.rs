@@ -286,6 +286,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode: TemporalAnchorMode::Auto,
             adaptive: self.temporal_adaptive_default,
             limit,
+            effort_anchor: false,
         });
         self
     }
@@ -308,6 +309,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode,
             adaptive: self.temporal_adaptive_default,
             limit,
+            effort_anchor: false,
         });
         self
     }
@@ -330,6 +332,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode,
             adaptive: self.temporal_adaptive_default,
             limit,
+            effort_anchor: false,
         });
         self
     }
@@ -354,8 +357,20 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode: TemporalAnchorMode::Both,
             adaptive: self.temporal_adaptive_default,
             limit,
+            effort_anchor: false,
         });
         self
+    }
+
+    /// Recency blends when asked for, unless a host-supplied temporal
+    /// window already ranks by time. The effort's default now anchor is
+    /// no such window, so recency still blends under it.
+    pub(super) fn recency_blend_applies(&self) -> bool {
+        self.recency_blend_enabled
+            && self
+                .temporal_search
+                .as_ref()
+                .is_none_or(|config| config.effort_anchor)
     }
 
     pub fn temporal_adaptive(mut self, enabled: bool) -> Self {
