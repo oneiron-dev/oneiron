@@ -71,6 +71,12 @@ pub enum ArtifactError {
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
     InvalidSkillBody(&'static str),
+    /// A hub Git read of a SKILL package failed or exceeded its budget. Same
+    /// kind as [`Self::InvalidSkillBody`]; the text names the git operation
+    /// and the cause (exit code and stderr head, timeout, truncated output or
+    /// oversize stdout). Nothing was written.
+    #[error("invalid SKILL body: {0}")]
+    SkillHubGitRead(String),
     /// The world the ONE-1449 skill-edit gate was ruling over moved before the
     /// ruling could commit: the reserved evidence changed under the scorer, or
     /// a terminal reason read before the write door no longer held inside it.
@@ -161,7 +167,7 @@ impl ArtifactError {
             Self::EditProposalAlreadySettled { .. } => ErrorKind::EditProposalAlreadySettled,
             Self::EditProposalStale => ErrorKind::EditProposalStale,
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
-            Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
+            Self::InvalidSkillBody(_) | Self::SkillHubGitRead(_) => ErrorKind::InvalidSkillBody,
             Self::SkillEditGateRetry(_) => ErrorKind::SkillEditGateRetry,
             Self::SkillContentAnchorTypeMismatch { .. } => {
                 ErrorKind::SkillContentAnchorTypeMismatch

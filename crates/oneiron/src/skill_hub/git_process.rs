@@ -1,5 +1,8 @@
 //! Private disposable object store; all Git processes use the GitWire boundary.
-use crate::{entity_id::EntityId, error::Result};
+use crate::{
+    entity_id::EntityId,
+    error::{ArtifactError, CodeError, Error, Result},
+};
 use std::{fs, path::PathBuf};
 pub(super) struct GitScratch {
     root: PathBuf,
@@ -20,8 +23,15 @@ impl GitScratch {
         Ok(scratch)
     }
     pub(super) fn run(&self, args: &[&str], limit: usize) -> Result<Vec<u8>> {
-        crate::git_wire::read_hub_git(&self.root, args, limit).map_err(|_| {
-            super::package_codec::invalid("Git package read failed or exceeded its budget")
+        crate::git_wire::read_hub_git(&self.root, args, limit).map_err(|error| {
+            // Carry the inner refusal text: it names the op and the cause.
+            let detail = match error {
+                Error::Code(CodeError::RepoMutationFailed(detail)) => detail,
+                other => other.to_string(),
+            };
+            Error::Artifact(ArtifactError::SkillHubGitRead(format!(
+                "Git package read failed or exceeded its budget: {detail}"
+            )))
         })
     }
 }

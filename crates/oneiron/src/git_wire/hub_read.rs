@@ -1,6 +1,6 @@
 //! Fixed network-read profile for a private disposable hub object store.
 //! No caller-controlled config pairs, checkout, hooks or inherited credentials.
-use super::failure::invalid;
+use super::failure::{invalid, uncertain};
 use super::{GitWireProcessEnv, process::spawn_git};
 use crate::error::Result;
 use std::{
@@ -56,11 +56,57 @@ pub(crate) fn read_hub_git(root: &Path, args: &[&str], limit: usize) -> Result<V
     let mut env =
         GitWireProcessEnv::capture()?.with_limits(Duration::from_secs(30), limit.max(4096))?;
     env.hub_root = Some(root.to_path_buf());
-    let output = spawn_git(&env, root, &argv, None)?;
-    if !output.success || output.timed_out || output.truncated || output.stdout.len() > limit {
-        return Err(invalid("hub Git read refused or exceeded its budget"));
-    }
-    Ok(output.stdout)
+    // Validation above guarantees a subcommand at args[1] outside init.
+    let op = if args[0] == "init" { "init" } else { args[1] };
+    let started = Instant::now();
+    let output = spawn_git(&env, root, &argv, None)
+        .map_err(|error| refused(op, "spawn", started, &format!(" error={error}")))?;
+    // `success` is already false when output was truncated, so the order of
+    // these checks is what names the cause.
+    let (cause, detail) = if output.timed_out {
+        (
+            "timeout",
+            format!(" budget_ms={}", env.timeout().as_millis()),
+        )
+    } else if output.truncated {
+        let (out, err, cap) = (output.stdout.len(), output.stderr.len(), limit.max(4096));
+        (
+            "truncated",
+            format!(" stdout_bytes={out} stderr_bytes={err} cap={cap}"),
+        )
+    } else if !output.success {
+        let code = output
+            .exit_code
+            .map_or_else(|| "signal".to_owned(), |code| code.to_string());
+        (
+            "exit",
+            format!(" code={code} stderr={}", stderr_head(&output.stderr)),
+        )
+    } else if output.stdout.len() > limit {
+        let out = output.stdout.len();
+        ("oversize", format!(" stdout_bytes={out} limit={limit}"))
+    } else {
+        return Ok(output.stdout);
+    };
+    Err(refused(op, cause, started, &detail))
+}
+
+/// Names the op and the cause. The scratch repository holds no credentials by
+/// construction, so its stderr head is safe to carry.
+fn refused(op: &str, cause: &str, started: Instant, detail: &str) -> crate::error::Error {
+    let elapsed = started.elapsed().as_millis();
+    uncertain(format!(
+        "hub Git read refused or exceeded its budget: op={op} cause={cause} elapsed_ms={elapsed}{detail}"
+    ))
+}
+
+/// First 200 bytes of stderr on one line.
+fn stderr_head(stderr: &[u8]) -> String {
+    let head = &stderr[..stderr.len().min(200)];
+    String::from_utf8_lossy(head)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub(super) fn configure(command: &mut Command, root: &Path) -> Result<()> {
@@ -101,14 +147,21 @@ pub(super) fn configure(command: &mut Command, root: &Path) -> Result<()> {
     limit_process(command)
 }
 pub(super) fn check_budget(root: &Path, deadline: Instant) -> Result<()> {
-    if tree_size(root, deadline)? > DISK_LIMIT {
+    if tree_size(root, &root.join("repo"), deadline)? > DISK_LIMIT {
         return Err(invalid("hub Git disk budget exceeded"));
     }
     Ok(())
 }
-fn tree_size(root: &Path, deadline: Instant) -> Result<u64> {
+fn tree_size(root: &Path, git_dir: &Path, deadline: Instant) -> Result<u64> {
     let mut size = 0u64;
-    for entry in std::fs::read_dir(root)? {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        // Git removed this directory after the parent listing named it; the
+        // walk runs while git works, exactly like a vanished file below.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
         if Instant::now() >= deadline {
             return Err(invalid("hub Git time budget exceeded"));
         }
@@ -119,10 +172,13 @@ fn tree_size(root: &Path, deadline: Instant) -> Result<u64> {
             Err(error) => return Err(error.into()),
         };
         if metadata.is_symlink() {
+            if is_init_symlink_probe(&entry.path(), git_dir) {
+                continue;
+            }
             return Err(invalid("symlink in hub Git scratch"));
         }
         size = size.saturating_add(if metadata.is_dir() {
-            tree_size(&entry.path(), deadline)?
+            tree_size(&entry.path(), git_dir, deadline)?
         } else {
             metadata.len()
         });
@@ -131,6 +187,26 @@ fn tree_size(root: &Path, deadline: Instant) -> Result<u64> {
         }
     }
     Ok(size)
+}
+/// `git init` tests symlink support by linking `<git dir>/tXXXXXX` to
+/// `testing` and unlinking it at once. That transient probe is git's own, not
+/// a scratch escape; any other symlink still refuses.
+fn is_init_symlink_probe(path: &Path, git_dir: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    path.parent() == Some(git_dir)
+        && name.len() == 7
+        && name.starts_with('t')
+        && name
+            .bytes()
+            .skip(1)
+            .all(|byte| byte.is_ascii_alphanumeric())
+        && match std::fs::read_link(path) {
+            Ok(target) => target == Path::new("testing"),
+            Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+        }
 }
 #[cfg(unix)]
 #[expect(

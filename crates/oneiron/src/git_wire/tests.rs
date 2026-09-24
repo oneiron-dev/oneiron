@@ -1724,3 +1724,45 @@ fn production_git_constructor_scan_excludes_only_test_scopes() {
         );
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn hub_budget_walk_passes_the_git_init_symlink_probe_and_refuses_every_other_link() {
+    use std::os::unix::fs::symlink;
+    let scratch = tempfile::tempdir().expect("scratch");
+    let git_dir = scratch.path().join("repo");
+    fs::create_dir_all(git_dir.join("objects")).expect("git dir");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+
+    // `git init` links <git dir>/tXXXXXX -> testing for a moment to test
+    // symlink support. The walk runs while git works, so it can see that link.
+    let probe = git_dir.join("tAb3dE9");
+    symlink("testing", &probe).expect("probe");
+    super::hub_read::check_budget(scratch.path(), deadline).expect("git's own init probe");
+    fs::remove_file(&probe).expect("remove probe");
+
+    for (link, target) in [
+        (git_dir.join("tQ1w2E3"), "/etc/passwd"),
+        (git_dir.join("escape"), "testing"),
+        (git_dir.join("tQ1w2E3x"), "testing"),
+        (git_dir.join("objects/tQ1w2E3"), "testing"),
+        (scratch.path().join("tQ1w2E3"), "testing"),
+    ] {
+        symlink(target, &link).expect("symlink fixture");
+        assert!(
+            matches!(
+                super::hub_read::check_budget(scratch.path(), deadline),
+                Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+                    "symlink in hub Git scratch"
+                )))
+            ),
+            "{} -> {target} must refuse",
+            link.display()
+        );
+        fs::remove_file(&link).expect("remove fixture");
+    }
+
+    // A directory git removes while the walk runs counts as empty.
+    super::hub_read::check_budget(&scratch.path().join("removed"), deadline)
+        .expect("a vanished directory holds nothing");
+}
