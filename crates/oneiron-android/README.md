@@ -7,10 +7,15 @@ become `IllegalStateException`; a missing entity alone returns `null`.
 
 Use the app-private files directory for production vaults. Close each instance
 before reopening the same root. Do not mutate `nativeHandle` with reflection.
+The engine checks each body against its kind. Kind 4 is a conversation, and its
+body must be a MessagePack map (`ConversationBody`, every field optional).
 
 ```kotlin
+// MessagePack {"title": "notes"}: a fixmap of one fixstr key and one fixstr value.
+val body = byteArrayOf(0x81.toByte(), 0xa5.toByte()) + "title".toByteArray() +
+    byteArrayOf(0xa5.toByte()) + "notes".toByteArray()
 EmbeddedVault(context.filesDir.resolve("memory").absolutePath).use { vault ->
-    vault.put("0102030405060708090a0b0c0d0e0f10", 4, 1, "person".toByteArray())
+    vault.put("0102030405060708090a0b0c0d0e0f10", 4, 1, body)
     check(vault.get("0102030405060708090a0b0c0d0e0f10") != null)
 }
 ```
