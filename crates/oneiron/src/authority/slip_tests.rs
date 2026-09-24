@@ -227,10 +227,14 @@ fn a_pairing_link_expires_after_one_hour() {
         .issue_pairing_link(&issuer, Scope::top(), 120)
         .unwrap();
     vault
-        .sync_state_put(
-            "authlog:first_seen:clock_floor",
-            &link.expires_at.to_be_bytes(),
-        )
+        .with_write_txn(|wtxn| {
+            vault.store.sync_state.put(
+                wtxn,
+                "authlog:first_seen:clock_floor",
+                &link.expires_at.to_be_bytes(),
+            )?;
+            Ok(())
+        })
         .unwrap();
     let sig = holder
         .sign(&pairing_binding_transcript(&link.code, &public, "test-holder").unwrap())
