@@ -431,6 +431,19 @@ fn concurrent_edit_same_entity_lww_converges_and_displaces_loser_metadata_rows()
 #[test]
 fn concurrent_edit_same_entity_lww_displaces_loser_text_postings() {
     let (a, b) = vault_pair();
+    // Vault::open seeds the bootstrap skills, whose activation edits wait for
+    // idle publication like any other revision. Publish them first on both
+    // nodes so the idle report below covers only the contested entity.
+    for node in [&a, &b] {
+        node.vault.set_indexed_idle_delay_ms(0).unwrap();
+        let seeded = node.vault.refresh_staged_indexed_at_idle(u64::MAX).unwrap();
+        assert!(
+            seeded.failed.is_empty(),
+            "{}: seeded revisions need no model",
+            node.name
+        );
+        assert!(seeded.superseded.is_empty(), "{}", node.name);
+    }
 
     let id = EntityId::now();
     let blob_a = entity_blob(1, time_range(T0 + 100), T0 + 100, b"payload-from-a");
