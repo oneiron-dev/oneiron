@@ -34,10 +34,17 @@ try {
   const { NapiVault } = require(addonPath)
   const vault = new NapiVault(join(dir, "vault-entity"), 4)
   const id = Buffer.alloc(16, 0x41)
-  const payload = Buffer.from("native host payload")
+  // Kind 4 is a conversation. The engine takes its body only as a MessagePack
+  // map (ConversationBody, every field optional); this is {"title": title}.
+  const title = Buffer.from("native host payload")
+  const payload = Buffer.concat([
+    Buffer.from([0x81, 0xa5]),
+    Buffer.from("title"),
+    Buffer.from([0xa0 | title.length]),
+    title,
+  ])
   assert.equal(vault.getEntity(id), null)
   assert.equal(vault.entityExists(id), false)
-  // ENTITY_TYPE_PERSON is 4 in the current registry.
   vault.putEntity(id, 4, 1, 1, 1, payload)
   const stored = vault.getEntity(id)
   assert.ok(Buffer.isBuffer(stored))
