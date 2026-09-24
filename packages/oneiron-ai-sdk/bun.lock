@@ -7,6 +7,7 @@
       "devDependencies": {
         "ai": "^6.0.0",
         "oneiron": "file:../oneiron",
+        "zod": "^4.1.8",
       },
       "peerDependencies": {
         "ai": ">=5 <7",

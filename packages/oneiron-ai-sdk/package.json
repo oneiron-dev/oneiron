@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "ai": "^6.0.0",
-    "oneiron": "file:../oneiron"
+    "oneiron": "file:../oneiron",
+    "zod": "^4.1.8"
   }
 }
