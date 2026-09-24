@@ -1526,6 +1526,11 @@ fn retract_claim_end_to_end_removes_stale_text_from_context_pack() -> Result<()>
     }
 
     let (_dir, vault) = open_test_vault();
+    // Vault::open seeds the bootstrap skills, whose activation edits wait for
+    // idle publication with a millisecond open stamp. The wall clock below is
+    // second-truncated, so publish them first: otherwise a second boundary
+    // between open and refresh hands them to the panicking embedder.
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::from_bytes([0x43; 16])?;
     put_claim_text_entity(
         &vault,
