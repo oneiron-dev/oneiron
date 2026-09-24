@@ -10,6 +10,12 @@ use super::vault_root_bind::VaultRootIdentity;
 
 pub const MAX_DBS: u32 = 32;
 
+/// v20: the pairing link row stores an 8-character code hashed at rest with
+/// the server origin and the intended holder in place of the 64-hex ticket,
+/// and the replay table holds one row per admitted proof, bounded by the
+/// request timestamp window. ABI 19 vaults fail closed at the ABI gate — there
+/// is no migration pass; rebuild the vault.
+///
 /// v19 (Wave 7): stored meanings changed with no version move — SlipMint
 /// authority rows, the esign `ResealRequested` event, `conversation.summary`
 /// covers and old room threads, the append pin for unmigrated records, and
@@ -91,7 +97,7 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 19;
+pub const STORAGE_ABI_VERSION: u16 = 20;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 

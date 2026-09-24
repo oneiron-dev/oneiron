@@ -173,9 +173,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/sequence_ancestry.rs` | src | s | 1 crate-vis | — | Causally vouched history may arrive after its already-observed descendant |
 | `src/authority/sequence_observation.rs` | src | s | 4 crate-vis | — | Durable signer sequence maxima and content-addressed first-observation receipts |
 | `src/authority/slip.rs` | src | m | 5 struct · 11 fn · 7 crate-vis | CapabilitySlip, SlipCaveat, SlipClaims, SlipMintAction, VerifiedSlip | Version-two capability slips: chained keyed MACs, offline narrowing and holder proof |
-| `src/authority/slip_pairing.rs` | src | s | 3 struct · 4 fn | PairingDescriptor, PairingLink, PairingPrincipal | Single-use pairing links bind a throwaway key and mint one log-backed slip |
-| `src/authority/slip_replay.rs` | src | s | 1 fn · 2 crate-vis | — | Bounded, timestamp-bound replay windows for authenticated slip requests |
-| `src/authority/slip_replay/tests.rs` | test | s | — | — | Replay-window boundaries, persistence, and fail-closed capacity |
+| `src/authority/slip_pairing.rs` | src | m | 3 struct · 6 fn | PairingDescriptor, PairingLink, PairingPrincipal | Single-use pairing links bind a throwaway key and mint one log-backed slip |
+| `src/authority/slip_replay.rs` | src | s | 2 fn · 2 crate-vis | — | Bounded, timestamp-bound replay windows for authenticated slip requests |
+| `src/authority/slip_replay/tests.rs` | test | s | — | — | Replay-window boundaries, persistence, and eviction by timestamp |
 | `src/authority/slip_state.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | FoldedSlip, SlipAuthorityState | Log-derived capability mint ancestry and monotone subtree tombstones |
 | `src/authority/slip_tests.rs` | test | L | — | — | Caller-observable slip, pairing and residue regressions |
 | `src/authority/slip_vault.rs` | src | m | 1 struct · 15 fn · 6 crate-vis | HostSlipIssuer | Host-root bootstrap and atomic authority-log capability issuance |

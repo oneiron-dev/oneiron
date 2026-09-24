@@ -63,6 +63,13 @@ impl NapiWitnessTurnInput {
     }
 }
 
+/// What `pair` returns: the server origin and the credential `connect` takes.
+#[napi(object)]
+pub struct NapiPaired {
+    pub url: String,
+    pub credential: String,
+}
+
 /// The private native handle behind `packages/oneiron`.
 #[napi]
 pub struct NativeClient {
@@ -86,11 +93,20 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
-    /// Binds a remote `oneiron-server` with a minted slip, passed verbatim.
+    /// Binds a remote `oneiron-server`. `key` is the credential `pair`
+    /// returned; every request is signed with it, and write identity is the
+    /// server's.
     #[napi(factory)]
     pub fn connect(url: String, key: String) -> napi::Result<Self> {
         let inner = oneiron_remote::OneironClient::connect(&url, &key).map_err(facade_error)?;
         Ok(Self { inner })
+    }
+
+    /// Redeems a pairing link once; returns the origin and the credential.
+    #[napi]
+    pub fn pair(link: String) -> napi::Result<NapiPaired> {
+        let (url, credential) = oneiron_remote::OneironClient::pair(&link).map_err(facade_error)?;
+        Ok(NapiPaired { url, credential })
     }
 
     /// Returns a NEW handle bound to another actor; refuses when connected.

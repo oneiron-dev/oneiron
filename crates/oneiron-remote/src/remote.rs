@@ -5,18 +5,23 @@
 //! this file, so there is one place where a timeout, a body ceiling, or an
 //! error envelope is decided.
 //!
-//! The client is deliberately incurious about its credential. The minted slip
-//! is placed verbatim after `Authorization: Bearer ` and never parsed, split,
-//! reordered, or validated: authority is the server's to decide, and a client
-//! that inspected claims would eventually start believing them.
+//! The client holds its credential and never believes it. A slip crosses
+//! verbatim after `Authorization: Bearer `, and every request carries a fresh
+//! holder proof signed with the connection key. The slip is parsed once, at
+//! connect, only to hash it into that proof; its claims are never read:
+//! authority is the server's to decide, and a client that inspected claims
+//! would eventually start believing them. A host secret crosses as a bare
+//! bearer.
 
 use std::io::Read;
 use std::time::Duration;
 
+use ed25519_dalek::SigningKey;
+use oneiron::authority::CapabilitySlip;
 use oneiron::memory::MemoryError;
 use reqwest::Url;
 use reqwest::blocking::Client;
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -25,6 +30,9 @@ use crate::error::{bad_request, forbidden, transport_error};
 
 /// Path prefix every facade verb hangs off.
 const FACADE_PREFIX: &str = "v1/core/facade";
+
+/// The header a slip holder's per-request proof crosses in.
+const BINDING_HEADER: &str = "x-oneiron-binding";
 
 /// Maximum bytes read from a FAILING response before parsing is attempted.
 ///
@@ -65,6 +73,7 @@ struct ApiErrorBody {
 pub(crate) struct RemoteClient {
     base_url: Url,
     authorization: HeaderValue,
+    holder: Option<Box<(CapabilitySlip, SigningKey)>>,
     agent: Client,
     stream_agent: reqwest::Client,
 }
@@ -87,6 +96,7 @@ impl Clone for RemoteClient {
         Self {
             base_url: self.base_url.clone(),
             authorization: self.authorization.clone(),
+            holder: self.holder.clone(),
             agent: self.agent.clone(),
             stream_agent: self.stream_agent.clone(),
         }
@@ -99,19 +109,26 @@ impl RemoteClient {
     /// This is ALL `connect` does. It claims no authority, mints no actor and
     /// makes no request: the first verb is the first round trip, and until
     /// then the server has not been asked to agree to anything.
-    pub(crate) fn connect(url: &str, key: &str) -> Result<Self, MemoryError> {
+    pub(crate) fn connect(
+        url: &str,
+        bearer: &str,
+        holder: Option<SigningKey>,
+    ) -> Result<Self, MemoryError> {
         let base_url = normalize_origin(url)?;
-        let authorization = bearer_header(key)?;
-        let agent = Client::builder()
-            // A redirect must not move a bearer request outside the validated
-            // origin or downgrade HTTPS to cleartext HTTP.
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .map_err(|error| {
-                transport_error(format!("could not build the HTTP client: {error}"))
-            })?;
+        let authorization = bearer_header(bearer)?;
+        let agent = blocking_agent()?;
+        let holder = match holder {
+            Some(key) => {
+                let slip = CapabilitySlip::from_token(bearer).map_err(|_| {
+                    bad_request(
+                        "the credential's slip is not a v2 slip token",
+                        &["Pair again and pass the credential exactly as pair returned it."],
+                    )
+                })?;
+                Some(Box::new((slip, key)))
+            }
+            None => None,
+        };
         let stream_agent = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
@@ -124,8 +141,25 @@ impl RemoteClient {
             stream_agent,
             base_url,
             authorization,
+            holder,
             agent,
         })
+    }
+
+    /// The bearer, and for a slip holder a fresh holder proof: one per
+    /// request, never reused.
+    fn credential_headers(&self) -> Result<HeaderMap, MemoryError> {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, self.authorization.clone());
+        if let Some((slip, key)) = self.holder.as_deref() {
+            let unsigned = || transport_error("could not sign this request's holder proof");
+            let proof = oneiron::authority::holder_proof(slip, key, crate::unix_seconds_now())
+                .map_err(|_| unsigned())?;
+            let mut binding = HeaderValue::from_str(&proof.to_string()).map_err(|_| unsigned())?;
+            binding.set_sensitive(true);
+            headers.insert(BINDING_HEADER, binding);
+        }
+        Ok(headers)
     }
 
     /// The origin this client talks to, for diagnostics.
@@ -141,10 +175,11 @@ impl RemoteClient {
     ) -> Result<R, MemoryError> {
         let url = self.verb_url(verb)?;
         let body = serialize_request(request)?;
+        let credential = self.credential_headers()?;
         let response = self
             .agent
             .post(url)
-            .header(AUTHORIZATION, self.authorization.clone())
+            .headers(credential)
             .header(ACCEPT, HeaderValue::from_static("application/json"))
             .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
             .body(body)
@@ -187,10 +222,13 @@ impl RemoteClient {
             .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
         let bytes =
             serialize_request(request).map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
+        let credential = self
+            .credential_headers()
+            .map_err(|_| oneiron::FatalLlmError::Auth)?;
         self.stream_agent
             .post(url)
             .timeout(REQUEST_TIMEOUT)
-            .header(AUTHORIZATION, self.authorization.clone())
+            .headers(credential)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .header("x-oneiron-budget-lease", lease.id())
@@ -217,9 +255,12 @@ impl RemoteClient {
             .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
         let bytes =
             serialize_request(request).map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
+        let credential = self
+            .credential_headers()
+            .map_err(|_| oneiron::FatalLlmError::Auth)?;
         self.stream_agent
             .post(url)
-            .header(AUTHORIZATION, self.authorization.clone())
+            .headers(credential)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/x-ndjson")
             .header("x-oneiron-budget-lease", lease.id())
@@ -245,6 +286,128 @@ impl RemoteClient {
             .join(&format!("{FACADE_PREFIX}/{verb}"))
             .map_err(|error| transport_error(format!("could not build the {verb} URL: {error}")))
     }
+}
+
+/// The blocking client every facade verb and `pair` share.
+fn blocking_agent() -> Result<Client, MemoryError> {
+    Client::builder()
+        // A redirect must not move a bearer request outside the validated
+        // origin or downgrade HTTPS to cleartext HTTP.
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .map_err(|error| transport_error(format!("could not build the HTTP client: {error}")))
+}
+
+/// What a paired client stores, in one string:
+/// `v2.cred.{slip hex}.{seed hex}`.
+///
+/// `{slip hex}` is the slip token after `v2.slip.`; `{seed hex}` is the
+/// connection key's 32-byte Ed25519 seed as 64 lowercase hex. A key that
+/// starts `v2.cred.` and does not parse is refused without being echoed. Any
+/// other key — the host secret, or a bare slip the server will refuse —
+/// crosses as a bare bearer.
+const CREDENTIAL_PREFIX: &str = "v2.cred.";
+
+/// Splits a key into the bearer it sends and the connection key it signs with.
+pub(crate) fn parse_credential(key: &str) -> Result<(String, Option<SigningKey>), MemoryError> {
+    let Some(credential) = key.strip_prefix(CREDENTIAL_PREFIX) else {
+        return Ok((key.to_owned(), None));
+    };
+    let (slip, seed) = credential
+        .rsplit_once('.')
+        .and_then(|(slip, seed)| Some((slip, seed_from_hex(seed)?)))
+        .ok_or_else(|| {
+            bad_request(
+                "the key is not a paired credential",
+                &["Pass the credential exactly as pair returned it, or pair again."],
+            )
+        })?;
+    Ok((
+        format!("v2.slip.{slip}"),
+        Some(SigningKey::from_bytes(&seed)),
+    ))
+}
+
+fn seed_from_hex(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return None;
+    }
+    let mut seed = [0; 32];
+    for (slot, pair) in seed.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+        *slot = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(seed)
+}
+
+fn lower_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The redeem route's success body.
+#[derive(serde::Deserialize)]
+struct Paired {
+    token: String,
+}
+
+/// Redeems a pairing link once and returns `(origin, credential)`.
+///
+/// A fresh connection key signs the link's code and holder; the request
+/// carries no `Authorization` header, because the link is the enrollment. It
+/// builds no handle: the caller connects with what it returns.
+pub(crate) fn pair(link: &str) -> Result<(String, String), MemoryError> {
+    use ed25519_dalek::Signer;
+    // The link and its code are never echoed: the code is the enrollment grant
+    // until it is spent.
+    let malformed = || {
+        bad_request(
+            "the pairing link does not parse",
+            &["Pass the one-line link the server owner created, exactly as printed."],
+        )
+    };
+    let (origin, code, holder_ref) =
+        oneiron::authority::parse_pairing_link(link).map_err(|_| malformed())?;
+    let base_url = normalize_origin(&origin)?;
+    let key = SigningKey::generate(&mut rand_core::OsRng);
+    let binding_key = key.verifying_key().to_bytes();
+    let transcript =
+        oneiron::authority::pairing_binding_transcript(&code, &binding_key, &holder_ref)
+            .map_err(|_| malformed())?;
+    let body = serialize_request(&serde_json::json!({
+        "code": code,
+        "holder_ref": holder_ref,
+        "binding_key": lower_hex(&binding_key),
+        "signature": lower_hex(&key.sign(&transcript).to_bytes()),
+    }))?;
+    let url = base_url
+        .join("v1/core/pairing/redeem")
+        .map_err(|error| transport_error(format!("could not build the pairing URL: {error}")))?;
+    let response = blocking_agent()?
+        .post(url)
+        .header(ACCEPT, HeaderValue::from_static("application/json"))
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .body(body)
+        .send()
+        .map_err(|error| transport_error(describe_send_failure(&error)))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(read_error_envelope(response, status));
+    }
+    let bytes = read_capped(response, MAX_REMOTE_RESPONSE_BYTES)
+        .map_err(|_| transport_error("the server's pairing reply was truncated or oversized"))?;
+    let slip = serde_json::from_slice::<Paired>(&bytes)
+        .ok()
+        .and_then(|paired| paired.token.strip_prefix("v2.slip.").map(str::to_owned))
+        .ok_or_else(|| transport_error(format!("the server answered {status} with no slip")))?;
+    Ok((
+        origin,
+        format!("{CREDENTIAL_PREFIX}{slip}.{}", lower_hex(key.as_bytes())),
+    ))
 }
 
 /// Normalizes the caller's origin exactly once (I13).
@@ -283,7 +446,7 @@ fn normalize_origin(url: &str) -> Result<Url, MemoryError> {
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(bad_request(
             "the Oneiron URL must not carry userinfo",
-            &["Remove user:password@ from the URL; pass the slip as the key argument."],
+            &["Remove user:password@ from the URL; pass the credential as the key argument."],
         ));
     }
     if parsed.query().is_some() || parsed.fragment().is_some() {
@@ -330,9 +493,10 @@ fn is_loopback_origin(url: &Url) -> bool {
 fn bearer_header(key: &str) -> Result<HeaderValue, MemoryError> {
     if key.trim().is_empty() {
         return Err(forbidden(
-            "connect() requires a minted slip",
+            "connect() requires a paired credential",
             &[
-                "Mint one with: oneiron-server token mint --scope core:read,core:write \
+                "Pair once with Oneiron.pair(link); the owner creates the link with: \
+               oneiron-server token pair --scope core:read,core:write \
                --principal-ref <32hex> --actor-class human",
             ],
         ));
@@ -340,7 +504,7 @@ fn bearer_header(key: &str) -> Result<HeaderValue, MemoryError> {
     let mut header = HeaderValue::from_str(&format!("Bearer {key}")).map_err(|_| {
         forbidden(
             "the supplied key is not a valid HTTP header value",
-            &["Pass the minted v2.<claims>.<mac-hex> slip exactly as the server printed it."],
+            &["Pass the credential exactly as pair returned it."],
         )
     })?;
     // Marks the value redacted in this header map's own Debug output, so a
@@ -463,7 +627,173 @@ fn describe_send_failure(error: &reqwest::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_origin, parse_error_envelope};
+    use super::{RemoteClient, normalize_origin, parse_error_envelope};
+    use ed25519_dalek::SigningKey;
+    use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
+
+    /// A loopback peer that answers `count` requests with an empty 200 and
+    /// hands back each request's header lines.
+    fn peer(count: usize) -> (String, std::thread::JoinHandle<Vec<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let captured = std::thread::spawn(move || {
+            (0..count)
+                .map(|_| {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut reader = BufReader::new(&mut stream);
+                    let mut headers = Vec::new();
+                    let mut content_length = 0;
+                    loop {
+                        let mut line = String::new();
+                        reader.read_line(&mut line).unwrap();
+                        if line == "\r\n" {
+                            break;
+                        }
+                        if let Some((name, value)) = line.split_once(':')
+                            && name.eq_ignore_ascii_case("content-length")
+                        {
+                            content_length = value.trim().parse::<usize>().unwrap();
+                        }
+                        headers.push(line.trim_end().to_owned());
+                    }
+                    reader.read_exact(&mut vec![0; content_length]).unwrap();
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                        )
+                        .unwrap();
+                    headers
+                })
+                .collect()
+        });
+        (origin, captured)
+    }
+
+    fn binding(headers: &[String]) -> Option<serde_json::Value> {
+        headers.iter().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("x-oneiron-binding")
+                .then(|| serde_json::from_str(value.trim()).unwrap())
+        })
+    }
+
+    /// A slip minted on a temp vault, bound to its own connection key.
+    fn paired() -> (
+        tempfile::TempDir,
+        oneiron::Vault,
+        HostSlipIssuer,
+        CapabilitySlip,
+        SigningKey,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
+        let issuer = HostSlipIssuer::from_secret(b"remote-holder-host").unwrap();
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let mut claims = vault.ensure_host_root_slip(&issuer).unwrap().claims;
+        claims.slip_id = [4; 32];
+        claims.parent_id = None;
+        claims.holder_ref = "remote-holder".to_owned();
+        claims.binding_key = key.verifying_key().to_bytes();
+        let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+        (dir, vault, issuer, slip, key)
+    }
+
+    fn call(client: &RemoteClient) {
+        client
+            .call::<_, serde_json::Value>("receipts", &serde_json::json!({}))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_slip_holder_signs_each_request_with_a_proof_the_vault_accepts() {
+        let (_dir, vault, issuer, slip, key) = paired();
+        let (origin, captured) = peer(1);
+        let client = RemoteClient::connect(&origin, &slip.to_token().unwrap(), Some(key)).unwrap();
+        call(&client);
+        let proof = binding(&captured.join().unwrap()[0]).unwrap();
+        let signature: Vec<u8> = (0..128)
+            .step_by(2)
+            .map(|at| {
+                u8::from_str_radix(&proof["signature"].as_str().unwrap()[at..at + 2], 16).unwrap()
+            })
+            .collect();
+        assert!(
+            vault
+                .authenticate_capability_slip(
+                    &issuer,
+                    &slip,
+                    proof["timestamp"].as_u64().unwrap(),
+                    &signature,
+                    proof["nonce"].as_str().unwrap().as_bytes(),
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn back_to_back_requests_carry_distinct_nonces() {
+        let (_dir, _vault, _issuer, slip, key) = paired();
+        let (origin, captured) = peer(2);
+        let client = RemoteClient::connect(&origin, &slip.to_token().unwrap(), Some(key)).unwrap();
+        call(&client);
+        call(&client);
+        let nonces: Vec<_> = captured
+            .join()
+            .unwrap()
+            .iter()
+            .map(|headers| binding(headers).unwrap()["nonce"].clone())
+            .collect();
+        assert_ne!(nonces[0], nonces[1]);
+    }
+
+    #[test]
+    fn a_host_secret_crosses_as_a_bare_bearer() {
+        let (origin, captured) = peer(1);
+        let client = RemoteClient::connect(&origin, "host-secret", None).unwrap();
+        call(&client);
+        assert!(binding(&captured.join().unwrap()[0]).is_none());
+    }
+
+    #[test]
+    fn the_streaming_request_carries_a_holder_proof() {
+        use oneiron::{
+            BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, LlmRequest,
+            ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence,
+        };
+        let (_dir, _vault, _issuer, slip, key) = paired();
+        let (origin, captured) = peer(1);
+        let client = RemoteClient::connect(&origin, &slip.to_token().unwrap(), Some(key)).unwrap();
+        let request = LlmRequest {
+            model: ModelId::new("own/model@1").unwrap(),
+            envelope: CallEnvelope {
+                scope: Default::default(),
+                purpose: CallPurpose::AnswerGen,
+                class: CallClass::BestEffort,
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::AnswerGen,
+                    ModelTierRef("default".into()),
+                ),
+                response_format: ResponseFormat::Text,
+                locality: ModelLocality::OwnServer,
+            },
+            messages: vec![],
+            tools: vec![],
+            params: Default::default(),
+            provider_options: Default::default(),
+        };
+        let guard =
+            BudgetGuard::with_reserve_units("client", 100, 10, BudgetExhaustionPolicy::Suspend);
+        let lease = guard.admit_for_request(&request).unwrap().lease;
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(client.llm_stream(&request, &lease))
+            .unwrap();
+        assert!(binding(&captured.join().unwrap()[0]).is_some());
+    }
 
     /// §Test/Shared #5 — an engine code the SDK has never heard of survives.
     #[test]

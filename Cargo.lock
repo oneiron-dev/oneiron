@@ -6581,9 +6581,11 @@ dependencies = [
 name = "oneiron-remote"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
  "futures-channel",
  "futures-core",
  "oneiron",
+ "rand_core 0.6.4",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

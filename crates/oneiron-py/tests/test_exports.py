@@ -18,7 +18,7 @@ PUBLIC_EXPORTS = {"Oneiron", "OneironError"}
 _manifest = json.loads((pathlib.Path(__file__).resolve().parents[3] / "scripts/sdk/agent-verbs.json").read_text())
 _VERBS = [row["name"] for row in _manifest["verbs"] if row.get("context", "memory") == "memory"]
 assert _VERBS, "SDK manifest is empty"
-PUBLIC_METHODS = {"open", "connect", "as_actor", *(verb for verb in _VERBS if "." not in verb)}
+PUBLIC_METHODS = {"open", "connect", "pair", "as_actor", *(verb for verb in _VERBS if "." not in verb)}
 
 
 def test_all_is_the_closed_catalog() -> None:

@@ -171,11 +171,11 @@ which endpoint a connector reaches is a registration the operator makes.
 One credential travels, in the standard header: `Authorization: Bearer <credential>`.
 
 - **Owner-grade** — the configured trust-root secret sent verbatim, or a minted token carrying no narrowing claims. Required by the legacy `/api/*` routes and the `/ws` sync upgrade, which read the whole vault.
-- **Scoped** — a minted token of the form `v2.<claims>.<mac>`, where `<claims>` is `scope=…[;principal_ref=…][;jti=<hex32>]`. Accepted on `/v1/core/*` and companion control-plane routes with exactly the scopes it names. Mint one with `oneiron token mint --scope core:read[,…] [--principal-ref <hex32>]`.
+- **Scoped** — a paired slip `v2.slip.<hex>`, sent with a fresh `x-oneiron-binding` holder proof `{"timestamp","nonce","signature"}` signed by its connection key on every request. Accepted on `/v1/core/*` and companion control-plane routes with exactly the verbs it carries. Create a one-hour pairing link with `oneiron-server token pair --scope core:read[,…] --principal-ref <hex32> [--actor-class human]` and redeem it once at `POST /v1/core/pairing/redeem`; the SDKs' `pair(link)` does both halves.
 
 The claims are visible but not editable: they are authenticated by a MAC keyed on the server's secret, which appears in no token. Editing, widening, or deleting the claims invalidates the token. Every authentication failure — absent, malformed, wrong MAC, unknown claim, revoked — returns the same `UNAUTHORIZED`; the response never says which.
 
-Every token minted by the current `token mint` carries a `jti`, its identity: mint always attaches one. The claim itself is optional in the grammar, because tokens minted before the identity claim existed are still authentic and still resolve — they simply have no id to revoke, and rotation is the only lever that retires them. A `jti` narrows nothing on its own: a token whose only claim is its id stays owner-grade. `token mint` prints the token on stdout and its id on stderr. Two mints of identical claims produce two distinct tokens, so one can be revoked without touching the other.
+Every paired slip carries a slip id, its identity. Two pairings of identical claims produce two distinct slips, so one can be revoked without touching the other. A slip without its connection key authenticates nothing: the holder proof, not the slip, is what each request spends.
 
 **Revoking one token.** `oneiron token revoke --jti <hex32>`. Its own explicit act, on one named token, effective immediately on every route including the owner-grade ones; idempotent, and it reports `{"revoked": false}` when the id was already revoked. It does not affect any other token, whatever claims they share.
 

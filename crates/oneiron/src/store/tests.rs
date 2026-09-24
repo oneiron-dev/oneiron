@@ -171,7 +171,7 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
 
 #[test]
 fn receipt_family_versions_require_a_storage_abi_bump() {
-    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 5])] = &[(19, [0, 2, 0, 1, 1])];
+    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 5])] = &[(20, [0, 2, 0, 1, 1])];
 
     let receipt_versions = [
         GATE_DECISION_LEDGER_VERSION,

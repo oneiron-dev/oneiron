@@ -6,11 +6,14 @@
 # two deterministic machine-readable lines:
 #
 #     ONEIRON_WIRE_URL=<base url>
-#     ONEIRON_WIRE_KEY=<v2.<claims>.<mac-hex> slip>
+#     ONEIRON_WIRE_KEY=<v2.cred.<slip hex>.<seed hex> credential>
 #
-# The client consumes the slip OPAQUELY and passes it verbatim after
-# `Authorization: Bearer `. Nothing here prints a production credential: the
-# auth secret is generated per run and dies with the temporary directory.
+# The key is a paired credential: the owner creates a link with
+# `oneiron-server token pair`, and the SDK's `pair` redeems it with a fresh
+# connection key. The client sends the slip after `Authorization: Bearer ` and
+# signs every request with that key; it never reads the slip's claims. Nothing
+# here prints a production credential: the auth secret is generated per run
+# and dies with the temporary directory.
 #
 # ONE-1543 stage 6 consumes the same two lines in this same grammar, which is
 # why the format is pinned rather than convenient.
@@ -41,9 +44,9 @@ trap cleanup EXIT INT TERM
 
 log() { printf '[wire-test-server] %s\n' "$*" >&2; }
 
-# A per-run secret. It is the MAC key the minted slip is verified against, so
-# it must be identical for the mint and the serve, and it must not outlive the
-# fixture.
+# A per-run secret. It is the host root every paired slip is verified against,
+# so the owner command that creates links must present the one the server was
+# started with, and it must not outlive the fixture.
 AUTH_SECRET="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
 # An ephemeral port chosen by the kernel, so parallel fixtures do not collide.
@@ -114,45 +117,59 @@ if [[ "$READY" != "1" ]]; then
   exit 1
 fi
 
-# Minted through the server's OWN token path, so the fixture proves the same
-# grammar a real operator would produce rather than hand-building a token the
-# parser might not accept.
-log "minting the test slip"
-SLIP="$("$SERVER_BIN" token mint \
-  --vault-path "$VAULT_DIR" \
-  --auth-secret "$AUTH_SECRET" \
-  --scope core:read,core:write \
-  --principal-ref "$PRINCIPAL_REF" \
-  --actor-class human \
-  | tr -d '\r\n' | tail -c 4096)"
+# Paired through the server's OWN owner command and the SDK's OWN pair, so the
+# fixture proves the path a real owner and developer take rather than
+# hand-building a credential the server might not accept. `token pair` opens no
+# vault; it asks the running server for the link.
+link() {
+  ONEIRON_SECRET="$AUTH_SECRET" "$SERVER_BIN" token pair --url "$BASE_URL" "$@"
+}
+pair() {
+  "$PROVISION_BIN" pair "$1"
+}
 
-if [[ "$SLIP" != v2.* ]]; then
-  log "token mint did not produce a v2 slip"
+log "pairing the test credential"
+KEY="$(pair "$(link --scope core:read,core:write \
+  --principal-ref "$PRINCIPAL_REF" --actor-class human)" | tr -d '\r\n')"
+
+if [[ "$KEY" != v2.cred.* ]]; then
+  log "pairing did not produce a v2 credential"
   exit 1
 fi
 
 printf 'ONEIRON_WIRE_URL=%s\n' "$BASE_URL"
-printf 'ONEIRON_WIRE_KEY=%s\n' "$SLIP"
+printf 'ONEIRON_WIRE_KEY=%s\n' "$KEY"
 
 # The caller drives the tests; this process stays alive so the server does,
 # and the EXIT trap tears both down together.
 if [[ -n "${ONEIRON_WIRE_EXEC:-}" ]]; then
-  # Negative-authority fixtures use the same real mint path. They are only
+  # Negative-authority fixtures use the same real pairing path. They are only
   # passed to the child; the two public stdout lines above stay unchanged.
-  NO_CLASS_SLIP="$("$SERVER_BIN" token mint \
-    --vault-path "$VAULT_DIR" --auth-secret "$AUTH_SECRET" \
-    --scope core:read,core:write --principal-ref "$PRINCIPAL_REF")"
-  NO_PRINCIPAL_SLIP="$("$SERVER_BIN" token mint \
-    --vault-path "$VAULT_DIR" --auth-secret "$AUTH_SECRET" \
-    --scope core:read,core:write)"
-  READ_SLIP="$("$SERVER_BIN" token mint \
-    --vault-path "$VAULT_DIR" --auth-secret "$AUTH_SECRET" \
-    --scope core:read --principal-ref "$PRINCIPAL_REF" --actor-class human)"
+  # The links are unredeemed: the child's SDKs pair them, and a stranger link
+  # names a principal that is no vault entity, so its pair is refused.
+  NO_CLASS_KEY="$(pair "$(link --scope core:read,core:write \
+    --principal-ref "$PRINCIPAL_REF")")"
+  READ_KEY="$(pair "$(link --scope core:read \
+    --principal-ref "$PRINCIPAL_REF" --actor-class human)")"
+  owner_link() {
+    link --scope core:read,core:write --principal-ref "$PRINCIPAL_REF" --actor-class human
+  }
+  PAIR_LINK="$(owner_link)"
+  NODE_PAIR_LINK="$(owner_link)"
+  README_NODE_LINK="$(owner_link)"
+  README_PYTHON_LINK="$(owner_link)"
+  STRANGER_REF="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  STRANGER_LINK="$(link --scope core:read,core:write \
+    --principal-ref "$STRANGER_REF" --actor-class human)"
   log "running: ${ONEIRON_WIRE_EXEC}"
-  ONEIRON_WIRE_URL="$BASE_URL" ONEIRON_WIRE_KEY="$SLIP" \
-    ONEIRON_WIRE_NO_CLASS_KEY="$NO_CLASS_SLIP" \
-    ONEIRON_WIRE_NO_PRINCIPAL_KEY="$NO_PRINCIPAL_SLIP" \
-    ONEIRON_WIRE_READ_KEY="$READ_SLIP" \
+  ONEIRON_WIRE_URL="$BASE_URL" ONEIRON_WIRE_KEY="$KEY" \
+    ONEIRON_WIRE_NO_CLASS_KEY="$NO_CLASS_KEY" \
+    ONEIRON_WIRE_READ_KEY="$READ_KEY" \
+    ONEIRON_WIRE_PAIR_LINK="$PAIR_LINK" \
+    ONEIRON_WIRE_NODE_PAIR_LINK="$NODE_PAIR_LINK" \
+    ONEIRON_WIRE_STRANGER_LINK="$STRANGER_LINK" \
+    ONEIRON_WIRE_README_NODE_LINK="$README_NODE_LINK" \
+    ONEIRON_WIRE_README_PYTHON_LINK="$README_PYTHON_LINK" \
     bash -c "$ONEIRON_WIRE_EXEC"
 else
   wait "$SERVER_PID"

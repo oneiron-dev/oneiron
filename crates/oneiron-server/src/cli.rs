@@ -42,7 +42,7 @@ pub enum Command {
     Doctor(VaultArgs),
     /// Resolve repo commit provenance trailers against a vault claim.
     Provenance(Box<ProvenanceArgs>),
-    /// Mint bearer tokens against the configured auth secret.
+    /// Create pairing links and revoke slips.
     #[command(subcommand)]
     Token(TokenCommand),
     /// Make short curl-shaped calls against the existing HTTP API.
@@ -69,36 +69,42 @@ pub struct HostInitArgs {
 
 #[derive(Subcommand)]
 pub enum TokenCommand {
-    /// Mint a scoped core bearer token and print it to stdout.
-    Mint(Box<TokenMintArgs>),
+    /// Create a one-hour pairing link on the running server and print it.
+    Pair(Box<TokenPairArgs>),
     /// Revoke one previously minted token by its id.
     Revoke(Box<TokenRevokeArgs>),
 }
 
+/// Pairing is the only enrollment. The owner fixes the holder, the class and
+/// the verbs here; whoever redeems the link chooses only the connection key.
 #[derive(Args, Clone, Debug)]
-pub struct TokenMintArgs {
-    /// Core scopes to grant, comma-separated (e.g. `core:read,core:write`).
-    /// Omit to mint an owner-grade token carrying every scope.
+pub struct TokenPairArgs {
+    /// The running server's origin. The link carries it.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    pub url: String,
+
+    /// Environment variable holding the host secret. The secret is never a
+    /// positional argument, never printed, and never reaches curl's argv.
+    #[arg(long, default_value = "ONEIRON_SECRET")]
+    pub secret_env: String,
+
+    /// Verbs the paired slip carries, comma-separated (e.g.
+    /// `core:read,core:write`). Omit for every verb.
     #[arg(long, value_delimiter = ',', num_args = 1..)]
     pub scope: Option<Vec<String>>,
 
-    /// Bind the token to a third-party principal, as 32 lowercase hex
-    /// characters. Requires `--scope`: an owner-grade token is never bound.
-    #[arg(long = "principal-ref", requires = "scope")]
-    pub principal_ref: Option<String>,
+    /// The principal the paired slip is for, as 32 lowercase hex characters.
+    #[arg(long = "principal-ref")]
+    pub principal_ref: String,
 
-    /// D13 actor class the token binds write identity to: `human`, `agent`,
+    /// D13 actor class the slip binds write identity to: `human`, `agent`,
     /// or `system`. Required by `/v1/core/facade` routes; absent by default.
-    ///
-    /// Requires `--principal-ref`, which itself requires `--scope`: a class
-    /// without a principal names nobody, and an owner-grade token is never
-    /// actor-bound. The value is grammar-checked before the token is emitted,
-    /// so a typo fails at the CLI instead of 401ing later.
-    #[arg(long = "actor-class", requires = "principal_ref")]
+    #[arg(long = "actor-class")]
     pub actor_class: Option<String>,
 
-    #[command(flatten)]
-    pub serve: ServeArgs,
+    /// The paired slip's lifetime in seconds.
+    #[arg(long = "lifetime-secs", default_value_t = 365 * 24 * 60 * 60)]
+    pub lifetime_secs: u64,
 }
 
 /// Revoking one token is an explicit act on one named identity. It is
@@ -107,7 +113,7 @@ pub struct TokenMintArgs {
 #[derive(Args, Clone, Debug)]
 pub struct TokenRevokeArgs {
     /// Token id (`jti`) to revoke, as 32 lowercase hex characters. It is
-    /// printed by `token mint` and carried in the token's visible claims.
+    /// carried in the token's visible claims.
     #[arg(long)]
     pub jti: String,
 
@@ -334,7 +340,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Init(args) => tokio::task::spawn_blocking(move || commands::init(args)).await?,
         Command::Doctor(args) => commands::doctor(args),
         Command::Provenance(args) => commands::provenance(*args),
-        Command::Token(TokenCommand::Mint(args)) => commands::token_mint(*args),
+        Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),

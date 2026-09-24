@@ -1284,24 +1284,3 @@ fn api_a_failed_body_staging_leaves_nothing_behind() {
         "a staged body must not outlive the call"
     );
 }
-
-#[test]
-fn retired_cli_mint_cannot_enroll_or_emit_credentials() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("not-created");
-    for scope in [None, Some(vec!["core:read".to_owned()])] {
-        assert!(
-            token_mint(TokenMintArgs {
-                scope,
-                principal_ref: None,
-                actor_class: None,
-                serve: ServeArgs {
-                    vault_path: Some(path.clone()),
-                    ..Default::default()
-                }
-            })
-            .is_err()
-        );
-    }
-    assert!(!path.exists());
-}

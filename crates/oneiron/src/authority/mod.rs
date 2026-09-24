@@ -89,9 +89,10 @@ pub use observation_policy::*;
 pub use recovery_ceremony::*;
 pub use slip::*;
 pub use slip_pairing::{
-    PairingDescriptor, PairingLink, PairingPrincipal, pairing_binding_transcript,
+    PairingDescriptor, PairingLink, PairingPrincipal, format_pairing_link,
+    pairing_binding_transcript, parse_pairing_link,
 };
-pub use slip_replay::holder_proof_challenge;
+pub use slip_replay::{holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::HostSlipIssuer;
 

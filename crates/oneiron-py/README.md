@@ -75,12 +75,13 @@ from oneiron import Oneiron
 memory = Oneiron.connect("http://127.0.0.1:8080", os.environ["ONEIRON_KEY"])
 ```
 
-`key` is a slip minted by the server operator and passed verbatim as
-`Authorization: Bearer v2.<claims>.<mac-hex>`. This package never parses,
-splits, or validates it: every authority decision is made server-side from the
-MAC-verified `principal_ref` and `actor_class` claims. A connected handle's
-`as_actor` therefore raises `FORBIDDEN` — reconnect with a differently scoped
-slip instead.
+`key` is the credential `Oneiron.pair(link)` returned once, from a link the
+server's owner created with `oneiron-server token pair`: it holds the slip and
+its connection key, and this package signs every request with that key. The
+package never reads the slip's claims: write identity comes from the
+server-verified slip, and every authority decision is made server-side. A
+connected handle's `as_actor` therefore raises `FORBIDDEN` — pair a link
+created for the actor you want to act as instead.
 
 ## API
 
@@ -88,6 +89,7 @@ slip instead.
 |---|---|
 | `Oneiron.open(path=None, *, dimensions=None)` | an embedded handle |
 | `Oneiron.connect(url, key)` | a remote handle |
+| `Oneiron.pair(link)` | `(handle, credential)`: a remote handle and the credential to store |
 | `handle.as_actor(actor_key)` | a new handle bound to another actor |
 | `handle.witness(turn)` | `WitnessReceipt` |
 | `handle.claim_upsert(claim)` | `CommitReceipt` |

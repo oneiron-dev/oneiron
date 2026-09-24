@@ -3,7 +3,8 @@
 Four calls are the whole quickstart: witness a turn, claim a fact, recall it,
 read the receipts. ``Oneiron.open()`` gives you an embedded vault bound to a
 local owner actor; ``Oneiron.connect(url, key)`` gives you the same handle
-against a running ``oneiron-server``. The two differ by one line.
+against a running ``oneiron-server``, where ``key`` is the credential
+``Oneiron.pair(link)`` returned once. The two differ by one line.
 
 Every method below is a one-line delegate to the private native client. There
 are deliberately no service classes, repositories, or per-verb error wrappers:
@@ -145,13 +146,21 @@ class Oneiron:
         Remote connect remains available on targets without embedded open,
         including Windows; the server must run on a supported host.
 
-        ``key`` is a minted slip passed verbatim as
-        ``Authorization: Bearer v2.<claims>.<mac-hex>``. This package never
-        parses, splits, or validates it: every authority decision is made
-        server-side from the MAC-verified ``principal_ref`` and ``actor_class``
-        claims.
+        ``key`` is the credential :meth:`pair` returned. This package signs
+        every request with it and never reads the slip's claims: write
+        identity is the server's to decide from the slip it verifies.
         """
         return cls(_translate(lambda: _NativeClient.connect(url, key)))
+
+    @classmethod
+    def pair(cls, link: str) -> tuple["Oneiron", str]:
+        """Redeems a one-use pairing link and connects with its credential.
+
+        Returns the connected handle and the credential. Store the credential
+        as ``ONEIRON_KEY``; the link cannot be redeemed twice.
+        """
+        url, credential = _translate(lambda: _NativeClient.pair(link))
+        return cls.connect(url, credential), credential
 
     def as_actor(self, actor_key: str) -> "Oneiron":
         """Returns a NEW handle bound to another actor; this one is unchanged.

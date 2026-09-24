@@ -1,5 +1,5 @@
 //! Single-use pairing links bind a throwaway key and mint one log-backed slip.
-use super::slip::{canonical, hex, unhex};
+use super::slip::canonical;
 use super::slip_vault::{random_slip_id, require_host};
 use super::*;
 use crate::Vault;
@@ -26,11 +26,11 @@ impl Default for PairingDescriptor {
         }
     }
 }
-/// A link/QR payload. The opaque ticket is random and stored only as a hash.
+/// A link/QR payload. The code is random and stored only as a keyed hash.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PairingLink {
-    pub ticket: String,
+    pub code: String,
     pub expires_at: u64,
 }
 /// Owner-approved identity constraints. Redemption can choose a connection key,
@@ -52,35 +52,87 @@ struct PairingPending {
     principal: PairingPrincipal,
 }
 
+/// Crockford base32: no `I`, `L`, `O` or `U`, so a code survives being read
+/// aloud or typed from a screen.
+const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const CODE_LEN: usize = 8;
+const CODE_TTL_SECS: u64 = 60 * 60;
+const CODE_HASH_CONTEXT: &str = "oneiron/pairing-code/v1/hash";
+
+/// The one reader of a typed code: case-blind, with `O`, `I` and `L` read as
+/// `0`, `1` and `1`.
+fn normalize_code(code: &str) -> Result<String> {
+    let normalized: String = code
+        .chars()
+        .map(|c| match c.to_ascii_uppercase() {
+            'O' => '0',
+            'I' | 'L' => '1',
+            upper => upper,
+        })
+        .collect();
+    if normalized.len() != CODE_LEN || !normalized.bytes().all(|b| CODE_ALPHABET.contains(&b)) {
+        return Err(invalid_authority());
+    }
+    Ok(normalized)
+}
+/// Keyed by the issuer secret, so a copied vault file alone cannot search the
+/// 40-bit code space.
+fn pairing_row_key(issuer: &HostSlipIssuer, code: &str) -> Result<String> {
+    let key = blake3::derive_key(CODE_HASH_CONTEXT, issuer.secret());
+    let hash = blake3::keyed_hash(&key, normalize_code(code)?.as_bytes());
+    Ok(format!("authority:pairing:{}", hash.to_hex()))
+}
 /// Client signs this transcript with its newly generated connection key.
-/// Ticket possession without that private key cannot authenticate the result.
+/// Code possession without that private key cannot authenticate the result.
 pub fn pairing_binding_transcript(
-    ticket: &str,
+    code: &str,
     binding_key: &[u8; 32],
     holder_ref: &str,
 ) -> Result<Vec<u8>> {
-    let ticket = unhex(ticket)?;
-    if ticket.len() != 32 || holder_ref.is_empty() || holder_ref.len() > 256 {
+    let code = normalize_code(code)?;
+    if holder_ref.is_empty() || holder_ref.len() > 256 {
         return Err(invalid_authority());
     }
     let mut msg = b"oneiron/pairing-binding/v2\0".to_vec();
-    msg.extend_from_slice(&ticket);
+    msg.extend_from_slice(code.as_bytes());
     msg.extend_from_slice(binding_key);
     msg.extend_from_slice(holder_ref.as_bytes());
     Ok(msg)
 }
-fn pairing_key(ticket: &str) -> Result<String> {
-    let bytes = unhex(ticket)?;
-    if bytes.len() != 32 {
+/// One string pairs on its own: the server origin, the code and the holder the
+/// owner fixed. The code rides in the fragment, which a browser never sends to
+/// a server, and the string is its own QR payload.
+#[must_use]
+pub fn format_pairing_link(origin: &str, code: &str, holder_ref: &str) -> String {
+    format!("{}/pair#{code}.{holder_ref}", origin.trim_end_matches('/'))
+}
+/// The inverse of [`format_pairing_link`]: `(origin, code, holder_ref)`.
+pub fn parse_pairing_link(link: &str) -> Result<(String, String, String)> {
+    let (location, fragment) = link.split_once('#').ok_or_else(invalid_authority)?;
+    let origin = location
+        .strip_suffix("/pair")
+        .filter(|origin| !origin.is_empty())
+        .ok_or_else(invalid_authority)?;
+    let (code, holder_ref) = fragment.split_once('.').ok_or_else(invalid_authority)?;
+    let holder = crate::EntityId::from_hex(holder_ref).map_err(|_| invalid_authority())?;
+    if holder.to_hex() != holder_ref {
         return Err(invalid_authority());
     }
-    Ok(format!(
-        "authority:pairing:{}",
-        blake3::hash(&bytes).to_hex()
+    Ok((
+        origin.to_owned(),
+        normalize_code(code)?,
+        holder_ref.to_owned(),
     ))
 }
+fn draw_code() -> String {
+    use rand_core::{OsRng, RngCore};
+    let bits = OsRng.next_u64();
+    (0..CODE_LEN)
+        .map(|at| char::from(CODE_ALPHABET[((bits >> (at * 5)) & 0x1f) as usize]))
+        .collect()
+}
 impl Vault {
-    /// Owner/host API: issue a five-minute enrollment link, scoped at creation.
+    /// Owner/host API: issue a one-hour enrollment link, scoped at creation.
     pub fn issue_pairing_link(
         &self,
         issuer: &HostSlipIssuer,
@@ -94,8 +146,8 @@ impl Vault {
             PairingPrincipal::default(),
         )
     }
-    /// Owner/host enrollment with identity claims fixed before ticket delivery.
-    /// Organization tickets require a registered admin and an explicit subset
+    /// Owner/host enrollment with identity claims fixed before code delivery.
+    /// Organization links require a registered admin and an explicit subset
     /// of the organization's immutable administration policy.
     pub fn issue_pairing_link_for_principal(
         &self,
@@ -111,8 +163,19 @@ impl Vault {
         require_host(&self.authority_fold_readonly_in_txn(&txn)?, issuer)?;
         self.validate_pairing_principal_in_txn(&txn, &principal, &scope)?;
         let now = self.instant_in_txn(&txn)?.secs();
-        let ticket = hex(&random_slip_id());
-        let expires_at = now.saturating_add(300);
+        let (code, row_key) = loop {
+            let code = draw_code();
+            let row_key = pairing_row_key(issuer, &code)?;
+            let free = match self.store.sync_state.get(&txn, &row_key)? {
+                Some(raw) => serde_json::from_slice::<PairingPending>(&raw)
+                    .is_ok_and(|pending| now >= pending.expires_at),
+                None => true,
+            };
+            if free {
+                break (code, row_key);
+            }
+        };
+        let expires_at = now.saturating_add(CODE_TTL_SECS);
         let pending = PairingPending {
             expires_at,
             slip_lifetime_secs,
@@ -122,9 +185,9 @@ impl Vault {
         };
         self.store
             .sync_state
-            .put(&mut txn, &pairing_key(&ticket)?, &canonical(&pending)?)?;
+            .put(&mut txn, &row_key, &canonical(&pending)?)?;
         txn.commit()?;
-        Ok(PairingLink { ticket, expires_at })
+        Ok(PairingLink { code, expires_at })
     }
     /// No prior bearer is required. The link is the one-use enrollment grant;
     /// the binding signature proves possession of the receiving connection key.
@@ -132,7 +195,7 @@ impl Vault {
     pub fn redeem_pairing_link(
         &self,
         issuer: &HostSlipIssuer,
-        ticket: &str,
+        code: &str,
         holder_ref: &str,
         binding_key: [u8; 32],
         signature: &[u8],
@@ -140,13 +203,13 @@ impl Vault {
         let key = VerifyingKey::from_bytes(&binding_key).map_err(|_| invalid_authority())?;
         let signature = Signature::from_slice(signature).map_err(|_| invalid_authority())?;
         key.verify_strict(
-            &pairing_binding_transcript(ticket, &binding_key, holder_ref)?,
+            &pairing_binding_transcript(code, &binding_key, holder_ref)?,
             &signature,
         )
         .map_err(|_| invalid_authority())?;
         let mut txn = self.store.env.write_txn()?;
         let now = self.instant_in_txn(&txn)?.secs();
-        let row_key = pairing_key(ticket)?;
+        let row_key = pairing_row_key(issuer, code)?;
         let raw = self
             .store
             .sync_state

@@ -4,7 +4,8 @@
  * Four calls are the whole quickstart: witness a turn, claim a fact, recall
  * it, read the receipts. `Oneiron.open()` gives you an embedded vault bound to
  * a local owner actor; `Oneiron.connect(url, key)` gives you the same handle
- * against a running `oneiron-server`. The two differ by one line.
+ * against a running `oneiron-server`, where `key` is the credential
+ * `Oneiron.pair(link)` returned once. The two differ by one line.
  *
  * Everything below is a one-line delegate to the native client. There are
  * deliberately no service classes, repositories, request builders, or
@@ -78,11 +79,9 @@ export class Oneiron {
   /**
    * Binds a running `oneiron-server` through its facade projection.
    *
-   * `key` is a minted slip, passed verbatim as
-   * `Authorization: Bearer v2.<claims>.<mac-hex>`. This package never parses,
-   * splits, reorders, or validates it: every authority decision is made
-   * server-side from the MAC-verified `principal_ref` and `actor_class`
-   * claims.
+   * `key` is the credential `pair` returned. The package signs every request
+   * with it, and never reads the slip's claims: write identity is the
+   * server's to decide from the slip it verifies.
    */
   static connect(url: string, key: string): Oneiron {
     try {
@@ -90,6 +89,21 @@ export class Oneiron {
     } catch (error) {
       throw translateNativeError(error)
     }
+  }
+
+  /**
+   * Redeems a one-use pairing link and connects with the credential it
+   * returns. Store the credential as `ONEIRON_KEY`; the link cannot be
+   * redeemed twice.
+   */
+  static pair(link: string): { memory: Oneiron; credential: string } {
+    let paired: { url: string; credential: string }
+    try {
+      paired = NativeClient.pair(link)
+    } catch (error) {
+      throw translateNativeError(error)
+    }
+    return { memory: Oneiron.connect(paired.url, paired.credential), credential: paired.credential }
   }
 
   /**

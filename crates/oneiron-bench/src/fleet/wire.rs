@@ -1,5 +1,5 @@
 //! Real app-tier WebSocket client using the shipped server protocol version.
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
 use oneiron::federation::ScopeAxis;
@@ -144,16 +144,9 @@ impl Agent {
     /// A fresh holder proof over the whole slip: each request and bind spends one nonce.
     pub(super) fn binding(&self) -> Result<Value> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let nonce = oneiron::EntityId::now().to_hex();
-        let challenge = format!("oneiron-request:{timestamp}:{nonce}");
-        let signature: String = self
-            .key
-            .sign(&self.slip.binding_transcript(challenge.as_bytes())?)
-            .to_bytes()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        Ok(json!({"timestamp":timestamp,"nonce":nonce,"signature":signature}))
+        Ok(oneiron::authority::holder_proof(
+            &self.slip, &self.key, timestamp,
+        )?)
     }
 
     pub(super) async fn recall(&mut self, round: usize, query: &str) -> Result<()> {

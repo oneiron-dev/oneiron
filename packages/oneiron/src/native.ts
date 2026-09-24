@@ -58,6 +58,7 @@ roomsSpeak(input: unknown): unknown
 interface NativeClientConstructor {
   open(path: string | undefined, dimensions: number | undefined): NativeClient
   connect(url: string, key: string): NativeClient
+  pair(link: string): { url: string; credential: string }
 }
 
 interface NativeBinding {

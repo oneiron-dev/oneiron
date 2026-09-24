@@ -178,6 +178,65 @@ async fn own_server_transport_reaches_authenticated_server_and_settles_local_bud
     serving.abort();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_paired_credential_streams_through_the_llm_route() {
+    use oneiron::authority::{HostSlipIssuer, PairingPrincipal, format_pairing_link};
+    use oneiron::federation::Scope;
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    seed_models(&vault);
+    let person = vault.ensure_embedded_owner_actor().unwrap().to_hex();
+    let budget = BudgetGuard::with_reserve_units("host", 100, 10, BudgetExhaustionPolicy::Suspend);
+    let server = SyncServer::new(
+        vault.clone(),
+        crate::config::SyncServerConfig {
+            auth_secret: Some("fixture-owner".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .with_llm_backend(Arc::new(Backend), budget);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        axum::serve(listener, crate::api::api_routes(Arc::new(server)))
+            .await
+            .unwrap();
+    });
+    // Scope::top() for a PERSON is owner-grade: the LLM route's floor.
+    let issuer = HostSlipIssuer::from_secret(b"fixture-owner").unwrap();
+    let link = vault
+        .issue_pairing_link_for_principal(
+            &issuer,
+            Scope::top(),
+            3600,
+            PairingPrincipal {
+                holder_ref: Some(person.clone()),
+                actor_class: Some("human".into()),
+                org_ref: None,
+            },
+        )
+        .unwrap();
+    let link = format_pairing_link(&origin, &link.code, &person);
+    let runtime = tokio::runtime::Handle::current();
+    let events = tokio::task::spawn_blocking(move || {
+        let (origin, credential) = oneiron_remote::OneironClient::pair(&link).unwrap();
+        let client = RemoteLlmClient::connect(&origin, &credential).unwrap();
+        let guard =
+            BudgetGuard::with_reserve_units("client", 100, 10, BudgetExhaustionPolicy::Suspend);
+        let lease = guard.admit_for_request(&request()).unwrap().lease;
+        let mut stream = client.stream(request(), &lease).unwrap();
+        let mut events = Vec::new();
+        while let Some(event) = runtime.block_on(stream.next()) {
+            events.push(event.unwrap());
+        }
+        events.len()
+    })
+    .await
+    .unwrap();
+    assert_eq!(events, 4);
+}
+
 #[tokio::test]
 async fn unconfigured_and_exhausted_llm_routes_fail_closed() {
     use tower::ServiceExt;

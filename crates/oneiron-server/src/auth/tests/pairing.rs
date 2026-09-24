@@ -57,12 +57,13 @@ fn configure(fixture: &Fixture, org: oneiron::EntityId) {
         )
         .unwrap();
 }
-fn redemption(ticket: &str, actor: oneiron::EntityId, holder: &SigningKey) -> Value {
+fn redemption(code: &str, actor: oneiron::EntityId, holder: &SigningKey) -> Value {
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
     let binding_key = holder.verifying_key().to_bytes();
     let holder_ref = actor.to_hex();
-    let transcript = pairing_binding_transcript(ticket, &binding_key, &holder_ref).unwrap();
-    json!({"ticket":ticket,"holder_ref":holder_ref,"binding_key":binding_key,
-        "signature":holder.sign(&transcript).to_bytes().to_vec()})
+    let transcript = pairing_binding_transcript(code, &binding_key, &holder_ref).unwrap();
+    json!({"code":code,"holder_ref":holder_ref,"binding_key":hex(&binding_key),
+        "signature":hex(&holder.sign(&transcript).to_bytes())})
 }
 
 #[tokio::test]
@@ -94,18 +95,18 @@ async fn owner_approved_org_ticket_delivers_fixed_principal_and_only_approved_po
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let ticket = body["ticket"].as_str().unwrap();
+    let code = body["code"].as_str().unwrap();
     // Even a valid holder signature cannot substitute the intended admin.
     let (status, _) = request(
         &server,
         "POST",
         "/v1/core/pairing/redeem",
         HeaderMap::new(),
-        Some(redemption(ticket, other, &fixture.holder)),
+        Some(redemption(code, other, &fixture.holder)),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let payload = redemption(ticket, fixture.actor, &fixture.holder);
+    let payload = redemption(code, fixture.actor, &fixture.holder);
     let mut injected = payload.clone();
     injected["org_ref"] = json!(oneiron::EntityId::now().to_hex());
     let (status, _) = request(
@@ -253,7 +254,7 @@ async fn mixed_org_request_is_refused_and_generic_pairing_remains_available() {
         "POST",
         "/v1/core/pairing/redeem",
         HeaderMap::new(),
-        Some(redemption(&link.ticket, fixture.actor, &fixture.holder)),
+        Some(redemption(&link.code, fixture.actor, &fixture.holder)),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -295,7 +296,7 @@ async fn paired_mcp_enrollment_requires_holder_proof_and_consumes_both_header_no
         "/v1/core/pairing/redeem",
         HeaderMap::new(),
         Some(redemption(
-            link["ticket"].as_str().unwrap(),
+            link["code"].as_str().unwrap(),
             fixture.actor,
             &fixture.holder,
         )),

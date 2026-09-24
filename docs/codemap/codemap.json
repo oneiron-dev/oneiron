@@ -1986,7 +1986,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PairingDescriptor",
@@ -1996,7 +1996,7 @@
      "path": "src/authority/slip_pairing.rs",
      "purpose": "Single-use pairing links bind a throwaway key and mint one log-backed slip",
      "surface": {
-      "fn": 4,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -2008,7 +2008,7 @@
      "purpose": "Bounded, timestamp-bound replay windows for authenticated slip requests",
      "surface": {
       "crate-vis": 2,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -2016,7 +2016,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/authority/slip_replay/tests.rs",
-     "purpose": "Replay-window boundaries, persistence, and fail-closed capacity",
+     "purpose": "Replay-window boundaries, persistence, and eviction by timestamp",
      "surface": {}
     },
     {
@@ -37145,14 +37145,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "NapiPaired",
       "NapiWitnessTurnInput",
       "NativeClient"
      ],
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 3,
-      "struct": 2
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -37491,7 +37492,7 @@
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
       "const": 2,
-      "fn": 11,
+      "fn": 12,
       "mod": 1,
       "re-export": 2,
       "struct": 2
@@ -37513,13 +37514,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/remote.rs",
      "purpose": "The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -37634,12 +37635,12 @@
     "remote": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2)"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
    "source_files": 8,
    "test_files": 9
@@ -39631,7 +39632,7 @@
      "path": "src/auth/slips.rs",
      "purpose": "HTTP/session holder proof and projection of the single log-backed slip",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -39683,7 +39684,7 @@
       "RevokeArgs",
       "SkillsPackArgs",
       "TokenCommand",
-      "TokenMintArgs",
+      "TokenPairArgs",
       "TokenRevokeArgs",
       "VaultArgs"
      ],
@@ -39725,7 +39726,7 @@
      "path": "src/commands/api.rs",
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -41495,6 +41496,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/remote_pairing.rs",
+     "purpose": "A paired `oneiron_remote::OneironClient` against the real router",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -41722,7 +41731,7 @@
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 230,
-   "test_files": 95
+   "test_files": 96
   },
   "oneiron-uniffi": {
    "files": [

@@ -161,6 +161,37 @@ pub(crate) fn request_for_command(
     }
 }
 
+/// `token pair`: one POST on the pairing route. Its one reply is captured
+/// rather than streamed, because the caller prints a link built from it; a
+/// refusal's body still reaches stderr verbatim.
+pub(crate) fn create_pairing_link(
+    base_url: &str,
+    secret: &str,
+    body: Vec<u8>,
+) -> anyhow::Result<(String, oneiron::authority::PairingLink)> {
+    let base = normalized_base(base_url)?;
+    let request = CurlRequest {
+        method: "POST".to_owned(),
+        url: format!("{base}/v1/core/pairing/links"),
+        body: Some(body),
+        content_type: Some(JSON_CONTENT_TYPE.to_owned()),
+    };
+    let output = run_curl_output(
+        OsStr::new(CURL_PROGRAM),
+        &request,
+        Some(secret),
+        Stdio::piped(),
+        Stdio::inherit(),
+    )?;
+    if let Err(error) = exit_status_result(&output.status) {
+        io::stderr().write_all(&output.stdout)?;
+        return Err(error);
+    }
+    let link = serde_json::from_slice(&output.stdout)
+        .map_err(|error| anyhow::anyhow!("the server's pairing reply did not parse: {error}"))?;
+    Ok((base, link))
+}
+
 /// Run one request through the host's curl, streaming the response body to
 /// this process's own stdout untouched.
 pub(crate) fn run_curl(request: &CurlRequest, secret: Option<&str>) -> anyhow::Result<()> {

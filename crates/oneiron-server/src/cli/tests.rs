@@ -254,47 +254,44 @@ fn provenance_requires_sha_or_claim_id() {
 }
 
 #[test]
-fn token_mint_parses_scope_list_and_principal_ref() {
+fn token_pair_parses_scope_principal_class_and_lifetime() {
     let cli = Cli::try_parse_from([
         "oneiron-server",
         "token",
-        "mint",
+        "pair",
         "--scope",
-        "core:read,companion:profile:read",
+        "core:read,core:write",
         "--principal-ref",
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--actor-class",
+        "human",
+        "--lifetime-secs",
+        "60",
     ])
     .unwrap();
 
-    match cli.into_command() {
-        Command::Token(TokenCommand::Mint(args)) => {
-            assert_eq!(
-                args.scope,
-                Some(vec![
-                    "core:read".to_owned(),
-                    "companion:profile:read".to_owned()
-                ])
-            );
-            assert_eq!(
-                args.principal_ref.as_deref(),
-                Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-            );
-        }
-        _ => panic!("expected token mint command"),
-    }
+    let Command::Token(TokenCommand::Pair(args)) = cli.into_command() else {
+        panic!("expected token pair command");
+    };
+    assert_eq!(
+        (
+            args.scope,
+            args.principal_ref.as_str(),
+            args.actor_class.as_deref(),
+            args.lifetime_secs
+        ),
+        (
+            Some(vec!["core:read".to_owned(), "core:write".to_owned()]),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            Some("human"),
+            60
+        )
+    );
 }
 
 #[test]
-fn token_mint_defaults_to_owner_grade_claims() {
-    let cli = Cli::try_parse_from(["oneiron-server", "token", "mint"]).unwrap();
-
-    match cli.into_command() {
-        Command::Token(TokenCommand::Mint(args)) => {
-            assert!(args.scope.is_none());
-            assert!(args.principal_ref.is_none());
-        }
-        _ => panic!("expected token mint command"),
-    }
+fn token_pair_requires_a_principal_ref() {
+    assert!(Cli::try_parse_from(["oneiron-server", "token", "pair"]).is_err());
 }
 
 #[test]
@@ -454,22 +451,4 @@ fn api_without_a_subcommand_is_a_parse_error() {
     );
     assert!(err.use_stderr());
     assert_eq!(err.exit_code(), 2);
-}
-
-/// Mirrors the server-side grammar rule: an owner-grade token is never
-/// bound to a third-party principal, so the flag pair is rejected at parse.
-#[test]
-fn token_mint_principal_ref_requires_scope() {
-    let err = match Cli::try_parse_from([
-        "oneiron-server",
-        "token",
-        "mint",
-        "--principal-ref",
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    ]) {
-        Ok(_) => panic!("expected --principal-ref to require --scope"),
-        Err(err) => err,
-    };
-
-    assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
 }

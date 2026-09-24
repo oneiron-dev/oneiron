@@ -105,8 +105,48 @@ JavaScript is camelCase, Python is snake_case — and by nothing else.
 
 ## Connecting to a server
 
-Set `ONEIRON_URL` to the server origin and `ONEIRON_KEY` to a minted slip.
-These are complete programs; the constructors are the only behavioral change.
+Pairing takes three steps. First, the server's owner creates a one-hour,
+one-use link for the person the connection writes as, and hands over the one
+line it prints:
+
+```sh
+oneiron-server token pair \
+  --scope core:read,core:write \
+  --principal-ref <32-hex person id> \
+  --actor-class human
+```
+
+Second, you pair once with that link as `ONEIRON_LINK`, and store the
+credential it prints as `ONEIRON_KEY`:
+
+<!-- snippet:quickstart/node-pair.mjs -->
+```js
+import { Oneiron } from "oneiron"
+
+const link = process.env.ONEIRON_LINK
+if (!link) throw new Error("Set ONEIRON_LINK to the one-line link your server's owner created")
+const { credential } = Oneiron.pair(link)
+
+// Store this as ONEIRON_KEY. The link is now spent; the credential is not.
+console.log(credential)
+```
+<!-- /snippet -->
+
+<!-- snippet:quickstart/python-pair.py -->
+```python
+import os
+
+from oneiron import Oneiron
+
+memory, credential = Oneiron.pair(os.environ["ONEIRON_LINK"])
+
+# Store this as ONEIRON_KEY. The link is now spent; the credential is not.
+print(credential)
+```
+<!-- /snippet -->
+
+Third, set `ONEIRON_URL` to the server origin and connect. These are complete
+programs; the constructors are the only behavioral change.
 
 <!-- snippet:quickstart/node-connect.mjs -->
 ```js
@@ -114,7 +154,7 @@ import { Oneiron } from "oneiron"
 
 const url = process.env.ONEIRON_URL
 const key = process.env.ONEIRON_KEY
-if (!url || !key) throw new Error("Set ONEIRON_URL and ONEIRON_KEY to your server and minted slip")
+if (!url || !key) throw new Error("Set ONEIRON_URL and ONEIRON_KEY to your server and paired credential")
 const memory = Oneiron.connect(url, key)
 
 const witnessed = memory.witness({
@@ -187,20 +227,12 @@ print(
 ```
 <!-- /snippet -->
 
-`key` is a slip minted by the server operator:
-
-```sh
-oneiron-server token mint \
-  --scope core:read,core:write \
-  --principal-ref <32-hex person id> \
-  --actor-class human
-```
-
-It is passed verbatim as `Authorization: Bearer v2.<claims>.<mac-hex>`. This
-package never parses, splits, or validates it: write identity comes from the
-server-verified `principal_ref` and `actor_class` claims, and every authority
-decision is made server-side. A connected handle's `asActor` therefore fails
-with `FORBIDDEN` — reconnect with a differently scoped slip instead.
+`key` is the credential `pair` returned: it holds the slip and its connection
+key, and this package signs every request with that key. The package never
+reads the slip's claims: write identity comes from the server-verified slip,
+and every authority decision is made server-side. A connected handle's
+`asActor` therefore fails with `FORBIDDEN` — pair a link created for the actor
+you want to act as instead.
 
 ## API
 
@@ -208,6 +240,7 @@ with `FORBIDDEN` — reconnect with a differently scoped slip instead.
 |---|---|
 | `Oneiron.open(path?, opts?)` | an embedded handle |
 | `Oneiron.connect(url, key)` | a remote handle |
+| `Oneiron.pair(link)` | `{ memory, credential }`: a remote handle and the credential to store |
 | `handle.asActor(actorKey)` | a new handle bound to another actor |
 | `handle.witness(turn)` | `WitnessReceipt` |
 | `handle.claimUpsert(claim)` | `CommitReceipt` |

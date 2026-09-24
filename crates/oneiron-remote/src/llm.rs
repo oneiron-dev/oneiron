@@ -22,8 +22,9 @@ pub struct RemoteLlmClient {
 }
 impl RemoteLlmClient {
     pub fn connect(origin: &str, credential: &str) -> Result<Self, oneiron::memory::MemoryError> {
+        let (bearer, holder) = crate::remote::parse_credential(credential)?;
         Ok(Self {
-            remote: RemoteClient::connect(origin, credential)?,
+            remote: RemoteClient::connect(origin, &bearer, holder)?,
         })
     }
 }

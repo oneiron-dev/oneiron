@@ -48,11 +48,12 @@ async fn descriptor_is_unauthenticated_and_pairing_link_is_one_use() {
         .unwrap();
     let holder = SigningKey::from_bytes(&[81; 32]);
     let binding_key = holder.verifying_key().to_bytes();
-    let transcript = pairing_binding_transcript(&link.ticket, &binding_key, &actor).unwrap();
-    let signature = holder.sign(&transcript).to_bytes().to_vec();
-    let data = json!({"ticket":link.ticket,"holder_ref":actor,"binding_key":binding_key,"signature":signature});
+    let transcript = pairing_binding_transcript(&link.code, &binding_key, &actor).unwrap();
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let signature = hex(&holder.sign(&transcript).to_bytes());
+    let data = json!({"code":link.code,"holder_ref":actor,"binding_key":hex(&binding_key),"signature":signature});
     let mut no_key = data.clone();
-    no_key["signature"] = json!([]);
+    no_key["signature"] = json!("");
     let (status, _) = route_json(
         server.clone(),
         json_request("POST", "/v1/core/pairing/redeem", no_key),
@@ -72,6 +73,23 @@ async fn descriptor_is_unauthenticated_and_pairing_link_is_one_use() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+#[tokio::test]
+async fn a_pairing_refusal_is_a_typed_envelope() {
+    let (_dir, server) = server();
+    let actor = seed_turn(&server, "pairing refusal actor").to_hex();
+    let holder = SigningKey::from_bytes(&[84; 32]);
+    let binding_key = holder.verifying_key().to_bytes();
+    let transcript = pairing_binding_transcript("K7M2Q9XA", &binding_key, &actor).unwrap();
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let data = json!({"code":"K7M2Q9XA","holder_ref":actor,"binding_key":hex(&binding_key),
+        "signature":hex(&holder.sign(&transcript).to_bytes())});
+    let (_, body) = route_json(
+        server,
+        json_request("POST", "/v1/core/pairing/redeem", data),
+    )
+    .await;
+    assert_eq!(body["error"]["code"], "UNAUTHORIZED");
 }
 #[tokio::test]
 async fn v2_http_tamper_and_token_without_private_binding_refuse_401() {
@@ -235,10 +253,10 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     let link: oneiron::authority::PairingLink = serde_json::from_slice(&bytes).unwrap();
     let holder = SigningKey::from_bytes(&[83; 32]);
     let key = holder.verifying_key().to_bytes();
-    let sig =
-        holder.sign(&pairing_binding_transcript(&link.ticket, &key, &actor.to_hex()).unwrap());
-    let payload = json!({"ticket":link.ticket,"holder_ref":actor.to_hex(),
-        "binding_key":key,"signature":sig.to_bytes().to_vec()});
+    let sig = holder.sign(&pairing_binding_transcript(&link.code, &key, &actor.to_hex()).unwrap());
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let payload = json!({"code":link.code,"holder_ref":actor.to_hex(),
+        "binding_key":hex(&key),"signature":hex(&sig.to_bytes())});
     let response = app
         .clone()
         .oneshot(request("/v1/core/pairing/redeem", payload.clone()))

@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from oneiron import OneironError
+from oneiron import Oneiron, OneironError
 from oneiron import _translate  # noqa: PLC2701 — the seam under test
 
 
@@ -72,3 +72,9 @@ def test_already_typed_errors_pass_straight_through() -> None:
     with pytest.raises(OneironError) as caught:
         _translate(operation)
     assert caught.value is original
+
+
+def test_pair_refuses_a_malformed_link_before_any_request() -> None:
+    with pytest.raises(OneironError) as caught:
+        Oneiron.pair("not a link")
+    assert caught.value.code == "BAD_REQUEST"

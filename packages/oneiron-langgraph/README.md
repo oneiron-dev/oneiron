@@ -48,12 +48,13 @@ import os
 from oneiron import Oneiron
 from oneiron_langgraph import OneironStore
 
-memory = Oneiron.connect(os.environ["ONEIRON_URL"], os.environ["ONEIRON_SLIP"])
+memory = Oneiron.connect(os.environ["ONEIRON_URL"], os.environ["ONEIRON_KEY"])
 store = OneironStore(memory)  # generated provenance; policy may refuse writes
 ```
 
-The slip must carry `principal_ref`, `actor_class`, and the needed core scopes.
-Neither the adapter nor the SDK parses the slip or supplies another actor.
+The credential's slip must carry `principal_ref`, `actor_class`, and the needed
+core scopes. Neither the adapter nor the SDK reads the slip's claims or supplies
+another actor.
 
 ## Semantics
 

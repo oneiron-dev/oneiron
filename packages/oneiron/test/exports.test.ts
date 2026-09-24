@@ -62,6 +62,7 @@ describe("export census", () => {
 
     expect(typeof pkg.Oneiron.open).toBe("function")
     expect(typeof pkg.Oneiron.connect).toBe("function")
+    expect(typeof pkg.Oneiron.pair).toBe("function")
   })
 
   test("OneironError carries the contract fields", () => {

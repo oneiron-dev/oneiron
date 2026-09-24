@@ -116,6 +116,10 @@ def test_remote_sdk_parity():
         "value": {"seat": "window"}, "confidence": 1.0, "source": "user_stated",
         "occurred_at": occurred_at, "learned_at": occurred_at,
     })
+    # Each SDK pairs its own link once, before any compared recall: a pairing
+    # appends a SlipMint to the authority log, and recall may return that row.
+    paired, _credential = Oneiron.pair(os.environ["ONEIRON_WIRE_PAIR_LINK"])
+    assert isinstance(paired.receipts(), list)
     recalled = memory.recall("window seat")
     receipts = memory.receipts()
     assert_quickstart({
@@ -127,9 +131,16 @@ def test_remote_sdk_parity():
             lambda: memory.as_actor("human:00000000000000000000000000000001"), "FORBIDDEN"
         ),
     }
-    for name in ("ONEIRON_WIRE_NO_CLASS_KEY", "ONEIRON_WIRE_NO_PRINCIPAL_KEY"):
-        unbound = Oneiron.connect(url, os.environ[name])
-        errors[name] = refusal(unbound.receipts, "FORBIDDEN")
+    unbound = Oneiron.connect(url, os.environ["ONEIRON_WIRE_NO_CLASS_KEY"])
+    errors["ONEIRON_WIRE_NO_CLASS_KEY"] = refusal(unbound.receipts, "FORBIDDEN")
+    # A spent link and a link whose holder names no vault entity are refused,
+    # and a refused pairing mints nothing.
+    errors["pairTwice"] = refusal(
+        lambda: Oneiron.pair(os.environ["ONEIRON_WIRE_PAIR_LINK"]), "UNAUTHORIZED"
+    )
+    errors["pairStranger"] = refusal(
+        lambda: Oneiron.pair(os.environ["ONEIRON_WIRE_STRANGER_LINK"]), "UNAUTHORIZED"
+    )
     reader = Oneiron.connect(url, os.environ["ONEIRON_WIRE_READ_KEY"])
     assert isinstance(reader.receipts(), list)
     errors["readWrite"] = refusal(lambda: reader.witness({
@@ -163,7 +174,9 @@ def test_remote_sdk_parity():
     # Both identical messages must survive. The newer Python message must
     # precede the older Node message, not their creation/ID order. This makes
     # the age separation load-bearing without normalizing away engine ranking.
-    short_ids = [item["short_id"] for item in recalled["items"]]
+    # Recall cites the exact revision it ranked (`ref@revision`); a witness
+    # receipt names the ref alone.
+    short_ids = [item["short_id"].split("@")[0] for item in recalled["items"]]
     older = normalize(node_written)["witnessed"]["message_short_ids"][0]
     newer = witnessed["message_short_ids"][0]
     assert older in short_ids
@@ -172,21 +185,26 @@ def test_remote_sdk_parity():
 
 
 def test_installed_remote_quickstarts():
-    """Execute both complete remote README snippets verbatim on installed SDKs."""
+    """Pair, then connect, with the complete README snippets on installed SDKs."""
     import shutil
     import sys
 
     root = Path(__file__).resolve().parents[2]
+    quickstart = root / "packages/oneiron/quickstart"
     project = Path(os.environ["WIRE_NODE_PROJECT"])
-    node = project / "node-connect.mjs"
-    shutil.copyfile(root / "packages/oneiron/quickstart/node-connect.mjs", node)
+    for name in ("node-pair.mjs", "node-connect.mjs"):
+        shutil.copyfile(quickstart / name, project / name)
     env = os.environ.copy()
     env["ONEIRON_URL"] = env["ONEIRON_WIRE_URL"]
-    env["ONEIRON_KEY"] = env["ONEIRON_WIRE_KEY"]
-    for command in (
-        ["node", str(node)],
-        [sys.executable, str(root / "packages/oneiron/quickstart/python-connect.py")],
+    for pair, connect, link in (
+        (["node", str(project / "node-pair.mjs")], ["node", str(project / "node-connect.mjs")],
+         env["ONEIRON_WIRE_README_NODE_LINK"]),
+        ([sys.executable, str(quickstart / "python-pair.py")],
+         [sys.executable, str(quickstart / "python-connect.py")],
+         env["ONEIRON_WIRE_README_PYTHON_LINK"]),
     ):
-        result = subprocess.run(command, env=env, text=True, capture_output=True,
-                                check=True, timeout=180)
+        paired = subprocess.run(pair, env=env | {"ONEIRON_LINK": link}, text=True,
+                                capture_output=True, check=True, timeout=180)
+        result = subprocess.run(connect, env=env | {"ONEIRON_KEY": paired.stdout.strip()},
+                                text=True, capture_output=True, check=True, timeout=180)
         assert_quickstart(json.loads(result.stdout))

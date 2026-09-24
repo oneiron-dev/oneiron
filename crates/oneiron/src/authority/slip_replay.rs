@@ -1,19 +1,9 @@
 //! Bounded, timestamp-bound replay windows for authenticated slip requests.
 use super::invalid_authority;
 use crate::{Vault, error::Result};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 const WINDOW_SECS: u64 = 60;
-const WINDOW_SLOTS: u64 = 3;
-const MAX_WINDOW_NONCES: usize = 4096;
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReplayWindow {
-    bucket: u64,
-    nonces: BTreeSet<[u8; 32]>,
-}
+const REPLAY_PREFIX: &str = "authority:slip-replay:v2:";
 
 /// The timestamp is part of the signed challenge, never an unsigned eviction hint.
 pub(super) fn request_challenge(timestamp: u64, nonce: &[u8], now: u64) -> Result<Vec<u8>> {
@@ -36,9 +26,24 @@ pub fn holder_proof_challenge(timestamp: u64, nonce: &str) -> Vec<u8> {
     format!("oneiron-request:{timestamp}:{nonce}").into_bytes()
 }
 
-/// Three fixed rows cover the previous/current/next signed minute. A slot can
-/// rotate only after every proof in its old bucket has expired (inclusive +60s).
-/// Full live buckets refuse, never evict a replay witness to admit another call.
+/// A fresh holder proof for one request: a new nonce, signed through the
+/// slip's binding transcript with the connection key. The proof is not a
+/// replacement bearer token.
+pub fn holder_proof(
+    slip: &super::CapabilitySlip,
+    key: &ed25519_dalek::SigningKey,
+    timestamp: u64,
+) -> Result<serde_json::Value> {
+    use ed25519_dalek::Signer;
+    let nonce = crate::EntityId::now().to_hex();
+    let transcript = slip.binding_transcript(&holder_proof_challenge(timestamp, &nonce))?;
+    let signature = super::slip::hex(&key.sign(&transcript).to_bytes());
+    Ok(serde_json::json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}))
+}
+
+/// One row per admitted proof, keyed by its signed timestamp. The timestamp
+/// window bounds the table: rows older than the window are evicted in the same
+/// transaction, and a crowded table admits every fresh proof.
 pub(super) fn record_nonce(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -48,40 +53,34 @@ pub(super) fn record_nonce(
     now: u64,
 ) -> Result<()> {
     request_challenge(timestamp, nonce, now)?;
-    let bucket = timestamp / WINDOW_SECS;
-    let key = format!("authority:slip-replay:v1:{}", bucket % WINDOW_SLOTS);
-    let mut window = match vault.store.sync_state.get(txn, &key)? {
-        Some(raw) => {
-            rmp_serde::from_slice::<ReplayWindow>(&raw).map_err(|_| invalid_authority())?
+    // An evicted proof already fails `request_challenge`, so eviction opens no
+    // replay.
+    let floor = now.saturating_sub(WINDOW_SECS);
+    let mut expired = Vec::new();
+    for row in vault.store.sync_state.prefix_iter(txn, REPLAY_PREFIX)? {
+        let (key, _) = row?;
+        let signed_at = key
+            .get(REPLAY_PREFIX.len()..REPLAY_PREFIX.len() + 16)
+            .and_then(|hex| u64::from_str_radix(hex, 16).ok())
+            .ok_or_else(invalid_authority)?;
+        if signed_at >= floor {
+            break;
         }
-        None => ReplayWindow {
-            bucket,
-            nonces: BTreeSet::new(),
-        },
-    };
-    if window.nonces.len() > MAX_WINDOW_NONCES {
-        return Err(invalid_authority());
+        expired.push(key.into_owned());
     }
-    if window.bucket != bucket {
-        let expires_at = window.bucket.saturating_add(2).saturating_mul(WINDOW_SECS);
-        if now < expires_at {
-            return Err(invalid_authority());
-        }
-        window = ReplayWindow {
-            bucket,
-            nonces: BTreeSet::new(),
-        };
-    }
-    if window.nonces.len() >= MAX_WINDOW_NONCES {
-        return Err(invalid_authority());
+    for key in expired {
+        vault.store.sync_state.delete(txn, &key)?;
     }
     let mut material = binding_key.to_vec();
     material.extend_from_slice(nonce);
-    if !window.nonces.insert(*blake3::hash(&material).as_bytes()) {
+    let key = format!(
+        "{REPLAY_PREFIX}{timestamp:016x}:{}",
+        blake3::hash(&material).to_hex()
+    );
+    if vault.store.sync_state.get(txn, &key)?.is_some() {
         return Err(invalid_authority());
     }
-    let bytes = rmp_serde::to_vec_named(&window).map_err(|_| invalid_authority())?;
-    vault.store.sync_state.put(txn, &key, &bytes)?;
+    vault.store.sync_state.put(txn, &key, &[])?;
     Ok(())
 }
 

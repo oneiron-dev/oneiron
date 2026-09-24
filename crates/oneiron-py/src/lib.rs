@@ -146,13 +146,22 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
-    /// Binds a remote `oneiron-server`; the slip crosses verbatim.
+    /// Binds a remote `oneiron-server`. `key` is the credential `pair`
+    /// returned; every request is signed with it, and write identity is the
+    /// server's.
     #[staticmethod]
     fn connect(py: Python<'_>, url: String, key: String) -> PyResult<Self> {
         let inner = py
             .detach(|| oneiron_remote::OneironClient::connect(&url, &key))
             .map_err(raise)?;
         Ok(Self { inner })
+    }
+
+    /// Redeems a pairing link once; returns `(url, credential)`.
+    #[staticmethod]
+    fn pair(py: Python<'_>, link: String) -> PyResult<(String, String)> {
+        py.detach(|| oneiron_remote::OneironClient::pair(&link))
+            .map_err(raise)
     }
 
     /// Returns a NEW handle bound to another actor; refuses when connected.

@@ -155,19 +155,19 @@ fn pairing_link_mints_once_and_requires_connection_private_key() {
     let link = vault
         .issue_pairing_link(&issuer, Scope::top(), 120)
         .unwrap();
-    let transcript = pairing_binding_transcript(&link.ticket, &public, "test-holder").unwrap();
+    let transcript = pairing_binding_transcript(&link.code, &public, "test-holder").unwrap();
     let sig = holder.sign(&transcript).to_bytes();
     assert!(
         vault
-            .redeem_pairing_link(&issuer, &link.ticket, "test-holder", public, &[])
+            .redeem_pairing_link(&issuer, &link.code, "test-holder", public, &[])
             .is_err()
     );
     let paired = vault
-        .redeem_pairing_link(&issuer, &link.ticket, "test-holder", public, &sig)
+        .redeem_pairing_link(&issuer, &link.code, "test-holder", public, &sig)
         .unwrap();
     assert!(
         vault
-            .redeem_pairing_link(&issuer, &link.ticket, "test-holder", public, &sig)
+            .redeem_pairing_link(&issuer, &link.code, "test-holder", public, &sig)
             .is_err()
     );
     let proof = holder
@@ -187,6 +187,90 @@ fn pairing_link_mints_once_and_requires_connection_private_key() {
                 &issuer.binding_proof(&paired, b"holder-request").unwrap()
             )
             .is_err()
+    );
+}
+#[test]
+fn a_pairing_code_is_eight_unambiguous_characters() {
+    let (_dir, vault, issuer, _root) = fixture();
+    let link = vault
+        .issue_pairing_link(&issuer, Scope::top(), 120)
+        .unwrap();
+    assert!(
+        link.code.len() == 8
+            && link
+                .code
+                .chars()
+                .all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c))
+    );
+}
+#[test]
+fn a_pairing_code_is_stored_only_as_a_keyed_hash() {
+    let (_dir, vault, issuer, _root) = fixture();
+    let link = vault
+        .issue_pairing_link(&issuer, Scope::top(), 120)
+        .unwrap();
+    let code = link.code.as_bytes();
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let mut rows = vault.store.sync_state.iter(&rtxn).unwrap();
+    assert!(rows.all(|row| {
+        let (key, value) = row.unwrap();
+        !key.as_bytes().windows(code.len()).any(|at| at == code)
+            && !value.windows(code.len()).any(|at| at == code)
+    }));
+}
+#[test]
+fn a_pairing_link_expires_after_one_hour() {
+    let (_dir, vault, issuer, _root) = fixture();
+    let holder = SigningKey::from_bytes(&[32; 32]);
+    let public = holder.verifying_key().to_bytes();
+    let link = vault
+        .issue_pairing_link(&issuer, Scope::top(), 120)
+        .unwrap();
+    vault
+        .sync_state_put(
+            "authlog:first_seen:clock_floor",
+            &link.expires_at.to_be_bytes(),
+        )
+        .unwrap();
+    let sig = holder
+        .sign(&pairing_binding_transcript(&link.code, &public, "test-holder").unwrap())
+        .to_bytes();
+    assert!(
+        vault
+            .redeem_pairing_link(&issuer, &link.code, "test-holder", public, &sig)
+            .is_err()
+    );
+}
+#[test]
+fn a_pairing_code_redeems_when_typed_in_lower_case() {
+    let (_dir, vault, issuer, _root) = fixture();
+    let holder = SigningKey::from_bytes(&[33; 32]);
+    let public = holder.verifying_key().to_bytes();
+    let link = vault
+        .issue_pairing_link(&issuer, Scope::top(), 120)
+        .unwrap();
+    let sig = holder
+        .sign(&pairing_binding_transcript(&link.code, &public, "test-holder").unwrap())
+        .to_bytes();
+    assert!(
+        vault
+            .redeem_pairing_link(
+                &issuer,
+                &link.code.to_ascii_lowercase(),
+                "test-holder",
+                public,
+                &sig
+            )
+            .is_ok()
+    );
+}
+#[test]
+fn a_pairing_link_string_round_trips_its_origin_code_and_holder() {
+    let origin = "https://example.invalid:8443/oneiron";
+    let holder = crate::EntityId::now().to_hex();
+    assert_eq!(
+        parse_pairing_link(&format_pairing_link(origin, "K7M2Q9XA", &holder)).unwrap(),
+        (origin.to_owned(), "K7M2Q9XA".to_owned(), holder)
     );
 }
 #[test]

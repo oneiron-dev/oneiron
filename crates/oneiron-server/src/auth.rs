@@ -20,7 +20,7 @@ use crate::server::SyncServer;
 mod binding_admission;
 mod slips;
 pub(crate) use binding_admission::admit_http_binding;
-pub(crate) use slips::BindingProof;
+pub(crate) use slips::{BindingProof, parse_signature, parse_slip_id};
 
 const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
 

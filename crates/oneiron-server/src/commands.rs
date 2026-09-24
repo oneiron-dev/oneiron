@@ -19,7 +19,7 @@ use crate::auth::revoke_token_jti;
 use crate::auth::{mint_identified_core_token_v2, validate_bearer_claims};
 use crate::build_app;
 use crate::cli::{
-    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenMintArgs, TokenRevokeArgs, VaultArgs,
+    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenPairArgs, TokenRevokeArgs, VaultArgs,
 };
 use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
 use crate::managed::{self, ServeListener};
@@ -104,17 +104,39 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Mints a v2 core bearer token and prints it to stdout.
+/// Creates a pairing link on the running server and prints it.
 ///
-/// The secret resolves through the normal serve-config precedence and is
-/// never printed or logged. Claims are validated before minting, so a token
-/// that would 401 is never emitted. Every minted token carries a fresh `jti`
-/// so it can later be revoked individually; the id is printed to stderr so
-/// piping stdout still yields exactly the token.
-pub fn token_mint(_args: TokenMintArgs) -> anyhow::Result<()> {
-    anyhow::bail!(
-        "token mint is retired; create a one-use pairing link at /v1/core/pairing/links and redeem it with a connection binding-key proof"
-    )
+/// stdout is exactly one line, the link, so piping it yields nothing else; the
+/// expiry goes to stderr. It opens no vault, so it runs beside a live server,
+/// and the host secret reaches the server only on curl's config channel.
+pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
+    let Ok(secret) = std::env::var(&args.secret_env) else {
+        anyhow::bail!("{} holds no host secret; nothing was sent", args.secret_env);
+    };
+    let mut scope = oneiron::federation::Scope::top();
+    if let Some(verbs) = args.scope {
+        scope.verbs = oneiron::federation::ScopeAxis::Some(verbs.into_iter().collect());
+    }
+    let principal = oneiron::authority::PairingPrincipal {
+        holder_ref: Some(args.principal_ref.clone()),
+        actor_class: args.actor_class,
+        org_ref: None,
+    };
+    let body = serde_json::to_vec(&json!({
+        "scope": scope,
+        "lifetime_secs": args.lifetime_secs,
+        "principal": principal,
+    }))?;
+    let (origin, link) = api::create_pairing_link(&args.url, &secret, body)?;
+    println!(
+        "{}",
+        oneiron::authority::format_pairing_link(&origin, &link.code, &args.principal_ref)
+    );
+    eprintln!(
+        "the pairing link expires at unix second {}",
+        link.expires_at
+    );
+    Ok(())
 }
 
 /// Revokes one previously minted token by its id.

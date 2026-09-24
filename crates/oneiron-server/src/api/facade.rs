@@ -90,7 +90,7 @@ fn facade_actor(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), FacadeApi
         FacadeApiError::forbidden(
             "facade routes bind writes to an authenticated principal",
             [
-                "Present a slip minted with --principal-ref <32-hex person id>.",
+                "Present a slip paired from a link created with --principal-ref <32-hex person id>.",
                 "An owner-grade credential names no principal and cannot write here.",
             ],
         )
@@ -116,7 +116,7 @@ fn facade_actor(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), FacadeApi
             return Err(FacadeApiError::forbidden(
                 "facade routes bind writes to a declared actor class",
                 [
-                    "Present a slip minted with --actor-class <human|agent|system>.",
+                    "Present a slip paired from a link created with --actor-class <human|agent|system>.",
                     "Reconnect with a differently scoped slip to act as another actor.",
                 ],
             ));

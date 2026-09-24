@@ -2,7 +2,7 @@ import { Oneiron } from "oneiron"
 
 const url = process.env.ONEIRON_URL
 const key = process.env.ONEIRON_KEY
-if (!url || !key) throw new Error("Set ONEIRON_URL and ONEIRON_KEY to your server and minted slip")
+if (!url || !key) throw new Error("Set ONEIRON_URL and ONEIRON_KEY to your server and paired credential")
 const memory = Oneiron.connect(url, key)
 
 const witnessed = memory.witness({

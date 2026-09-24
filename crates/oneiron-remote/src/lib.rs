@@ -29,8 +29,10 @@
 //!
 //! # What this crate never does
 //!
-//! It does not mint, split, parse, or validate authority. The `OF-452` slip
-//! crosses verbatim and every authority decision is the server's. It does not
+//! It does not mint, split, or validate authority, and it never reads a
+//! slip's claims. A slip crosses verbatim beside a fresh holder proof signed
+//! with its connection key; the slip is parsed once, at connect, only to hash
+//! it into that proof, and every authority decision is the server's. It does not
 //! emulate a facade verb out of lower-level storage routes. It does not mint
 //! or simulate a retrieval lease, so `Effort::High` returns the engine's own
 //! `LEASE_REQUIRED`.
@@ -130,8 +132,8 @@ enum Backend {
 /// `Debug` is required rather than decorative: the contract tests assert a
 /// refusal with `expect_err` on a `Result<Self, _>`, and that panic message
 /// formats the `Ok` type. It is HAND-WRITTEN because a derive would walk into
-/// the backend and print what a handle holds — a remote handle holds the
-/// bearer slip verbatim, and a credential must not reach a panic message, a
+/// the backend and print what a handle holds — a remote handle holds a slip
+/// and its connection key, and a credential must not reach a panic message, a
 /// test log, or a caller's crash report. The kind is the only thing a
 /// diagnostic needs to know about a handle.
 impl fmt::Debug for OneironClient {
@@ -159,14 +161,25 @@ impl OneironClient {
 
     /// Binds a remote `oneiron-server` through the facade projection.
     ///
-    /// Validates URL configuration and nothing else. Authority arrives with
-    /// the slip and is decided server-side from the MAC-verified
-    /// `principal_ref` and `actor_class` claims; this call neither claims it
-    /// nor mints an actor locally.
+    /// `key` is the credential [`OneironClient::pair`] returned. This call
+    /// validates configuration and makes no request; every request after it
+    /// is signed with the credential's connection key, and write identity is
+    /// the server's to decide from the slip it verifies. This call neither
+    /// claims authority nor mints an actor locally.
     pub fn connect(url: &str, key: &str) -> Result<Self, MemoryError> {
+        let (bearer, holder) = remote::parse_credential(key)?;
         Ok(Self {
-            backend: Backend::Remote(RemoteClient::connect(url, key)?),
+            backend: Backend::Remote(RemoteClient::connect(url, &bearer, holder)?),
         })
+    }
+
+    /// Redeems a pairing link once and returns `(url, credential)`.
+    ///
+    /// It generates the connection key, proves it to the server, and builds
+    /// no handle: connect with the pair it returns, and store the credential
+    /// as one secret.
+    pub fn pair(link: &str) -> Result<(String, String), MemoryError> {
+        remote::pair(link)
     }
 
     /// Rebinds to another actor, or refuses.
@@ -187,7 +200,7 @@ impl OneironClient {
             Backend::Remote(_) => Err(forbidden(
                 "a connected handle cannot rebind its actor",
                 &[
-                    "Reconnect with a slip minted for the actor you want to act as.",
+                    "Reconnect with a credential paired for the actor you want to act as.",
                     "The slip's principal_ref and actor_class bind write identity server-side.",
                 ],
             )),

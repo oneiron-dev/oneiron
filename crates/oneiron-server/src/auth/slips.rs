@@ -21,23 +21,26 @@ impl BindingProof {
         serde_json::from_str(raw).map_err(|_| ApiError::unauthorized())
     }
     fn signature(&self) -> Result<Vec<u8>, ApiError> {
-        if self.signature.len() != 128
-            || !self
-                .signature
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(ApiError::unauthorized());
-        }
-        self.signature
-            .as_bytes()
-            .chunks_exact(2)
-            .map(|pair| {
-                let nibble = |b: u8| if b <= b'9' { b - b'0' } else { b - b'a' + 10 };
-                Ok(nibble(pair[0]) * 16 + nibble(pair[1]))
-            })
-            .collect()
+        parse_signature(&self.signature)
     }
+}
+/// An Ed25519 signature as 128 lowercase hex.
+pub(crate) fn parse_signature(value: &str) -> Result<Vec<u8>, ApiError> {
+    if value.len() != 128
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(ApiError::unauthorized());
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let nibble = |b: u8| if b <= b'9' { b - b'0' } else { b - b'a' + 10 };
+            Ok(nibble(pair[0]) * 16 + nibble(pair[1]))
+        })
+        .collect()
 }
 impl CoreAuth {
     pub(crate) fn from_slip_token(
@@ -232,7 +235,7 @@ fn hex_id(bytes: &[u8; 32]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-pub(super) fn parse_slip_id(value: &str) -> Result<[u8; 32], ApiError> {
+pub(crate) fn parse_slip_id(value: &str) -> Result<[u8; 32], ApiError> {
     if value.len() != 64
         || !value
             .bytes()

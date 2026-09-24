@@ -52,16 +52,10 @@ pub(super) fn pair_mcp_credential(
         .unwrap();
     let key = holder_key(label);
     let binding = key.verifying_key().to_bytes();
-    let signature = key.sign(&pairing_binding_transcript(&link.ticket, &binding, &holder).unwrap());
+    let signature = key.sign(&pairing_binding_transcript(&link.code, &binding, &holder).unwrap());
     let slip = server
         .vault()
-        .redeem_pairing_link(
-            &issuer,
-            &link.ticket,
-            &holder,
-            binding,
-            &signature.to_bytes(),
-        )
+        .redeem_pairing_link(&issuer, &link.code, &holder, binding, &signature.to_bytes())
         .unwrap();
     let token = slip.to_token().unwrap();
     server
