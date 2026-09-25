@@ -1,4 +1,4 @@
-import type { Oneiron } from "../src/index.js"
+import type { Oneiron, TaskCancelReceipt, TaskDescription } from "../src/index.js"
 import type { RetrievalMeta } from "../src/types.js"
 
 export function partialFlag(metadata: RetrievalMeta): boolean {
@@ -6,6 +6,11 @@ export function partialFlag(metadata: RetrievalMeta): boolean {
 }
 
 export function describedTaskRows(api: Oneiron): unknown[] {
-  const description = api.describe()
+  const description: TaskDescription = api.describe()
   return description.kind === "tasks_section" ? description.rows : []
+}
+
+export function cancelStoppedWork(api: Oneiron, taskRef: string): boolean {
+  const receipt: TaskCancelReceipt = api.cancel(taskRef)
+  return receipt.effected
 }
