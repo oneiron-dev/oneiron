@@ -105,6 +105,9 @@ pub enum McpVerbFamily {
     Tasks,
     Rooms,
     Memory,
+    /// The bare verbs over any handle (ARCH-0067 §4), such as `describe` and
+    /// `cancel`: their row names carry no family prefix.
+    Handle,
 }
 
 impl McpVerbFamily {
@@ -115,6 +118,7 @@ impl McpVerbFamily {
             Self::Tasks => "tasks",
             Self::Rooms => "rooms",
             Self::Memory => "memory",
+            Self::Handle => "handle",
         }
     }
 
@@ -135,7 +139,8 @@ pub struct McpGeneratedVerbTool {
     /// The exported row verbatim. The tool name IS the verb name.
     pub name: &'static str,
     pub family: McpVerbFamily,
-    /// The row's suffix, borrowed out of the row itself.
+    /// The row's suffix, borrowed out of the row itself; a bare row's whole
+    /// name.
     pub verb: &'static str,
 }
 
@@ -199,15 +204,16 @@ fn project_verb_row(
     row: &'static str,
 ) -> Result<McpGeneratedVerbTool, McpSurfaceConstructionError> {
     let unprojectable = McpSurfaceConstructionError::UnprojectableVerbRow { row };
-    let Some((prefix, verb)) = row.split_once('.') else {
-        return Err(unprojectable);
+    let (family, verb) = match row.split_once('.') {
+        Some((prefix, verb)) => match McpVerbFamily::from_prefix(prefix) {
+            Some(family) => (family, verb),
+            None => return Err(unprojectable),
+        },
+        None => (McpVerbFamily::Handle, row),
     };
     if verb.is_empty() || verb.contains('.') {
         return Err(unprojectable);
     }
-    let Some(family) = McpVerbFamily::from_prefix(prefix) else {
-        return Err(unprojectable);
-    };
     if !AgentVerb::from_name(row).is_some_and(AgentVerb::is_mcp)
         && !VaultReadMethod::ALL
             .into_iter()

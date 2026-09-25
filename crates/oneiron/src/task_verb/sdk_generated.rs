@@ -22,23 +22,19 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<BoardSubscriptionRequest>(),
             ),
             (
-                "tasks.ack",
+                "cancel",
                 crate::code_run::vault_read::request_schema::<TaskRequest>(),
             ),
             (
-                "tasks.cancel",
-                crate::code_run::vault_read::request_schema::<TaskRequest>(),
-            ),
-            (
-                "tasks.check",
-                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+                "describe",
+                crate::code_run::vault_read::request_schema::<DescribeRequest>(),
             ),
             (
                 "tasks.create",
                 crate::code_run::vault_read::request_schema::<TaskCreateRequest>(),
             ),
             (
-                "tasks.expand",
+                "tasks.update",
                 crate::code_run::vault_read::request_schema::<TaskRequest>(),
             ),
             (
@@ -154,21 +150,20 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["scopes"]
         }
-        "tasks.ack" => {
+        "cancel" => {
             properties.insert(
                 "task_ref".to_owned(),
                 schema.pointer("/properties/task_ref")?.clone(),
             );
             &["task_ref"]
         }
-        "tasks.cancel" => {
+        "describe" => {
             properties.insert(
                 "task_ref".to_owned(),
                 schema.pointer("/properties/task_ref")?.clone(),
             );
-            &["task_ref"]
+            &[]
         }
-        "tasks.check" => &[],
         "tasks.create" => {
             properties.insert(
                 "spec".to_owned(),
@@ -180,7 +175,7 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec"]
         }
-        "tasks.expand" => {
+        "tasks.update" => {
             properties.insert(
                 "task_ref".to_owned(),
                 schema.pointer("/properties/task_ref")?.clone(),
@@ -269,19 +264,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "board.unsubscribe" => {
             let _input: BoardSubscriptionRequest = decode(value.clone())?;
         }
-        "tasks.ack" => {
+        "cancel" => {
             let _input: TaskRequest = decode(value.clone())?;
         }
-        "tasks.cancel" => {
-            let _input: TaskRequest = decode(value.clone())?;
-        }
-        "tasks.check" => {
-            let _input: EmptyRequest = decode(value.clone())?;
+        "describe" => {
+            let _input: DescribeRequest = decode(value.clone())?;
         }
         "tasks.create" => {
             let _input: TaskCreateRequest = decode(value.clone())?;
         }
-        "tasks.expand" => {
+        "tasks.update" => {
             let _input: TaskRequest = decode(value.clone())?;
         }
         "witness" => {
@@ -350,11 +342,10 @@ pub fn invoke(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     match verb {
-        "tasks.ack" => encode(tasks_ack(memory, decode(value)?)?),
-        "tasks.cancel" => encode(tasks_cancel(memory, decode(value)?)?),
-        "tasks.check" => encode(tasks_check(memory, decode(value)?)?),
+        "cancel" => encode(cancel(memory, decode(value)?)?),
+        "describe" => encode(describe(memory, decode(value)?)?),
         "tasks.create" => encode(tasks_create(memory, decode(value)?)?),
-        "tasks.expand" => encode(tasks_expand(memory, decode(value)?)?),
+        "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "witness" => encode(witness(memory, decode(value)?)?),
         "claim_upsert" => encode(claim_upsert(memory, decode(value)?)?),
         "recall" => encode(recall(memory, decode(value)?)?),
@@ -420,25 +411,25 @@ pub fn board_unsubscribe<S: crate::board_verb::LiveBoardSource>(
         },
     )
 }
-pub fn tasks_ack(
-    memory: &Memory<'_>,
-    input: TaskRequest,
-) -> MemoryResult<crate::task_verb::TaskAckReceipt> {
-    memory.tasks_ack(crate::EntityId::from_hex(&input.task_ref)?)
-}
-pub fn tasks_cancel(
+pub fn cancel(
     memory: &Memory<'_>,
     input: TaskRequest,
 ) -> MemoryResult<crate::task_verb::TaskCancelReceipt> {
-    memory.tasks_cancel(crate::task_verb::TaskCancelTarget::Task(
+    memory.cancel(crate::task_verb::TaskCancelTarget::Task(
         crate::EntityId::from_hex(&input.task_ref)?,
     ))
 }
-pub fn tasks_check(
+pub fn describe(
     memory: &Memory<'_>,
-    _input: EmptyRequest,
-) -> MemoryResult<crate::context_board::TasksSection> {
-    memory.tasks_check()
+    input: DescribeRequest,
+) -> MemoryResult<crate::task_verb::TaskDescription> {
+    memory.describe(
+        input
+            .task_ref
+            .as_deref()
+            .map(crate::EntityId::from_hex)
+            .transpose()?,
+    )
 }
 pub fn tasks_create(
     memory: &Memory<'_>,
@@ -451,8 +442,11 @@ pub fn tasks_create(
         Some(crate::unix_seconds_now()),
     ))
 }
-pub fn tasks_expand(memory: &Memory<'_>, input: TaskRequest) -> MemoryResult<Vec<String>> {
-    memory.tasks_expand(crate::EntityId::from_hex(&input.task_ref)?)
+pub fn tasks_update(
+    memory: &Memory<'_>,
+    input: TaskRequest,
+) -> MemoryResult<crate::task_verb::TaskUpdateReceipt> {
+    memory.tasks_update(crate::EntityId::from_hex(&input.task_ref)?)
 }
 pub fn witness(
     memory: &Memory<'_>,

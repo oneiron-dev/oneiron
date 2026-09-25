@@ -1248,7 +1248,11 @@ fn tool_first_endpoint_is_generated_from_the_exported_verb_rows() {
             panic!("{} is not generated from a verb row", tool.name());
         };
         assert!(expected.contains(&verb.name));
-        assert_eq!(format!("{}.{}", verb.family.as_str(), verb.verb), verb.name);
+        let spelled = match verb.family {
+            McpVerbFamily::Handle => verb.verb.to_owned(),
+            family => format!("{}.{}", family.as_str(), verb.verb),
+        };
+        assert_eq!(spelled, verb.name);
     }
 }
 
@@ -1902,11 +1906,11 @@ fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
         "rooms.claim" => json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID}),
         "rooms.speak" => json!({"room_ref":ACTOR_ID,"spec":{}}),
         "board.expand" => json!({ "key": "TASKS" }),
-        "board.refresh" | "tasks.check" => json!({}),
+        "board.refresh" | "describe" => json!({}),
         "board.subscribe" | "board.unsubscribe" => {
             json!({ "scopes": ["my_tasks"] })
         }
-        "tasks.ack" | "tasks.cancel" | "tasks.expand" => {
+        "tasks.update" | "cancel" => {
             json!({ "task_ref": ACTOR_ID })
         }
         "tasks.create" => json!({ "spec": { "kind": "review" } }),
@@ -2408,7 +2412,7 @@ fn page_cursors_are_bound_consumed_once_and_refused_on_every_mismatch() {
     );
     // Wrong tool, wrong arguments, wrong snapshot epoch — each on its own axis.
     assert_eq!(
-        registry.consume_page_cursor(&connection, "tasks.check", digest, 7, &cursor),
+        registry.consume_page_cursor(&connection, "describe", digest, 7, &cursor),
         Err(McpPageCursorError::ToolMismatch),
     );
     let other_digest = cursor_digest(4, None);
@@ -2493,14 +2497,14 @@ fn retained_cursor_carries_the_exact_producer_snapshot() {
     let digest = mcp_page_argument_digest(&json!({ "query": "tasks" }));
     let cursor = registry.mint_page_cursor_with_snapshot(
         &connection,
-        "tasks.check",
+        "describe",
         digest,
         1,
         1,
         Some(snapshot.clone()),
     );
     let state = registry
-        .consume_page_cursor_state(&connection, "tasks.check", digest, None, &cursor)
+        .consume_page_cursor_state(&connection, "describe", digest, None, &cursor)
         .expect("the live handle consumes once");
     assert_eq!(state.position, 1);
     assert_eq!(
@@ -2571,7 +2575,7 @@ fn one_connection_owns_many_independent_continuations() {
     );
     let second = registry.mint_page_cursor_with_snapshot(
         &connection,
-        "tasks.check",
+        "describe",
         tasks_digest,
         4,
         2,
@@ -2602,7 +2606,7 @@ fn one_connection_owns_many_independent_continuations() {
         McpPageCursorError::Unknown,
     );
     assert_eq!(
-        refused(&connection, "tasks.check", setup_digest),
+        refused(&connection, "describe", setup_digest),
         McpPageCursorError::ToolMismatch,
     );
     assert_eq!(
@@ -2636,13 +2640,13 @@ fn one_connection_owns_many_independent_continuations() {
 
     // The second is still consumable, independently and exactly once.
     let continued = registry
-        .consume_page_cursor_state(&connection, "tasks.check", tasks_digest, None, &second)
+        .consume_page_cursor_state(&connection, "describe", tasks_digest, None, &second)
         .expect("the second handle continues its own producer");
     assert_eq!(continued.position, 2);
     assert_eq!(continued.snapshot, Some(page_snapshot("second")));
     assert_eq!(registry.live_page_continuations(&connection), 0);
     assert_eq!(
-        registry.consume_page_cursor_state(&connection, "tasks.check", tasks_digest, None, &second),
+        registry.consume_page_cursor_state(&connection, "describe", tasks_digest, None, &second),
         Err(McpPageCursorError::Unknown),
         "a replayed handle is refused, never a silent page one",
     );
@@ -2684,7 +2688,7 @@ fn a_retained_continuation_outlives_an_unrelated_board_epoch_change() {
     );
     let cursor = registry.mint_page_cursor_with_snapshot(
         &connection,
-        "tasks.check",
+        "describe",
         digest,
         produced,
         1,
@@ -2706,7 +2710,7 @@ fn a_retained_continuation_outlives_an_unrelated_board_epoch_change() {
     assert_eq!(
         registry.consume_page_cursor_state(
             &connection,
-            "tasks.check",
+            "describe",
             mcp_page_argument_digest(&json!({ "query": "other" })),
             None,
             &cursor,
@@ -2716,12 +2720,12 @@ fn a_retained_continuation_outlives_an_unrelated_board_epoch_change() {
     // A caller that PINS a producer epoch other than the retained one is still
     // refused: the fence moved, it did not disappear.
     assert_eq!(
-        registry.consume_page_cursor(&connection, "tasks.check", digest, latest, &cursor),
+        registry.consume_page_cursor(&connection, "describe", digest, latest, &cursor),
         Err(McpPageCursorError::SnapshotMismatch),
     );
 
     let continued = registry
-        .consume_page_cursor_state(&connection, "tasks.check", digest, None, &cursor)
+        .consume_page_cursor_state(&connection, "describe", digest, None, &cursor)
         .expect("the retained continuation survives an unrelated board epoch change");
     assert_eq!(continued.position, 1);
     assert_eq!(
@@ -3828,7 +3832,7 @@ fn retained_continuations_are_bounded_per_connection() {
     assert_eq!(
         registry.consume_page_cursor_state(
             &connection,
-            "tasks.check",
+            "describe",
             digest_for(1),
             None,
             &minted[1],
@@ -4195,6 +4199,69 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
     }
     assert!(oneiron::task_verb::sdk::input_schema("tasks.missing").is_none());
     assert!(oneiron::task_verb::sdk::mcp_arguments_schema("tasks.missing").is_none());
+}
+
+/// The task verbs ARCH-0067's 2026-09-22 amendment renamed: a payload built
+/// from the advertised `tools/list` schema is one the decoder accepts and
+/// dispatches, and one field more is refused by both.
+#[test]
+fn renamed_task_verbs_schema_and_decoder_accept_the_same_payloads() {
+    let surface = registered_surface(McpSurfaceMode::ToolFirst);
+    let listing = surface
+        .listing()
+        .as_array()
+        .expect("tools/list is an array");
+    for (name, arguments) in [
+        ("describe", json!({})),
+        ("describe", json!({ "task_ref": ACTOR_ID })),
+        ("tasks.update", json!({ "task_ref": ACTOR_ID })),
+        ("cancel", json!({ "task_ref": ACTOR_ID })),
+    ] {
+        let schema = &listing
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is listed"))["inputSchema"];
+        let mut payload = endpoint_envelope("read_tasks");
+        payload["arguments"] = arguments.clone();
+        for required in schema["required"].as_array().expect("required names") {
+            let required = required.as_str().expect("a required name is a string");
+            assert!(payload.get(required).is_some(), "{name} sends {required}");
+        }
+        let advertised = &schema["properties"]["arguments"]["properties"];
+        for field in arguments.as_object().expect("arguments object").keys() {
+            assert!(advertised.get(field).is_some(), "{name} advertises {field}");
+        }
+        assert!(
+            draft2020_12_accepts(schema, &payload),
+            "{name}: the schema accepts {payload}"
+        );
+        let tool = surface.resolve(name).expect("the tool is registered");
+        let McpValidatedToolArgs::Verb(verb) =
+            validate_mcp_endpoint_tool_args(tool, payload.clone())
+                .unwrap_or_else(|error| panic!("{name}: the decoder accepts: {error}"))
+        else {
+            panic!("{name} dispatches to its generated verb");
+        };
+        assert_eq!(verb.tool.name, name);
+        assert_eq!(
+            verb.payload.arguments.task_ref.as_deref(),
+            arguments.get("task_ref").and_then(Value::as_str),
+        );
+
+        // One field more: another verb's argument, and one no verb has.
+        for extra in ["key", "unlisted"] {
+            let mut widened = payload.clone();
+            widened["arguments"][extra] = json!("TASKS");
+            assert!(
+                !draft2020_12_accepts(schema, &widened),
+                "{name}: the schema refuses {extra}"
+            );
+            assert!(
+                validate_mcp_endpoint_tool_args(tool, widened).is_err(),
+                "{name}: the decoder refuses {extra}"
+            );
+        }
+    }
 }
 
 #[test]

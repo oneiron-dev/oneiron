@@ -526,7 +526,7 @@ pub(in crate::attempt_queue) fn force_cancel_record(
 ///
 /// It is linked by `retry_of`, the same explicit row link a retry uses, so
 /// every existing surface that reduces a chain to its live HEAD — run-tree
-/// parenting, `tasks.cancel` membership, terminal-status folding — treats the
+/// parenting, `cancel` membership, terminal-status folding — treats the
 /// landed row as superseded history without a second lineage concept.
 fn landing_successor(
     source: &AttemptRecord,

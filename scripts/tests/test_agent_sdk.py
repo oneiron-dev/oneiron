@@ -92,13 +92,39 @@ class AgentSdkProjectionTests(unittest.TestCase):
         calls = []
         tasks = module.TasksVerbs(lambda name, value: calls.append((name, value)))
         request = {"task_ref": "task"}
-        tasks.ack(request)
-        tasks.cancel(request)
-        tasks.expand(request)
+        tasks.update(request)
         create = {"spec": {"goal": "review"}, "label": "review"}
         tasks.create(create)
-        tasks.check()
-        self.assertEqual(calls, [("tasks_ack", request), ("tasks_cancel", request), ("tasks_expand", request), ("tasks_create", create), ("tasks_check", {})])
+        self.assertEqual(calls, [("tasks_update", request), ("tasks_create", create)])
+
+    def test_retired_task_names_leave_every_generated_output(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        outputs = {path: text for path, text in generator.outputs().items() if text is not None}
+        for path, text in outputs.items():
+            for retired in ["check", "expand", "ack", "cancel"]:
+                for spelling in ["tasks." + retired, "tasks_" + retired, "tasks" + retired.title()]:
+                    self.assertNotIn(spelling, text, path)
+        catalog = "crates/oneiron/src/task_verb/verb_catalog.rs"
+        routes = "crates/oneiron-server/src/api/facade/agent_verbs.rs"
+        remote = "crates/oneiron-remote/src/agent_verbs.rs"
+        napi = "crates/oneiron-napi/src/facade/client/agent_verbs.rs"
+        pyo3 = "crates/oneiron-py/src/lib.rs"
+        python = "crates/oneiron-py/python/oneiron/__init__.py"
+        python_tasks = "crates/oneiron-py/python/oneiron/agent_verbs.py"
+        typescript = "packages/oneiron/src/index.ts"
+        typescript_tasks = "packages/oneiron/src/agent-verbs.ts"
+        for path, spelling in [
+            (catalog, '=> "describe"'), (catalog, '=> "tasks.update"'), (catalog, '=> "cancel"'),
+            (routes, '"/describe"'), (routes, '"/tasks.update"'), (routes, '"/cancel"'),
+            (remote, 'agent_verb("describe"'), (remote, 'agent_verb("tasks.update"'), (remote, 'agent_verb("cancel"'),
+            (napi, 'agent_verb("describe"'), (napi, 'agent_verb("tasks.update"'), (napi, 'agent_verb("cancel"'),
+            (pyo3, 'agent_verb("describe"'), (pyo3, 'agent_verb("tasks.update"'), (pyo3, 'agent_verb("cancel"'),
+            (python, "def describe(self, task_ref: str | None = None)"), (python_tasks, '"tasks_update"'), (python, "def cancel(self, task_ref: str)"),
+            (typescript, "describe(taskRef?: string)"), (typescript_tasks, '"tasksUpdate"'), (typescript, "cancel(taskRef: string)"),
+        ]:
+            self.assertIn(spelling, outputs[path], path)
 
     def test_python_ask_wait_answer_and_room_arguments(self):
         spec = importlib.util.spec_from_file_location("generated_agent_verbs", ROOT / "crates/oneiron-py/python/oneiron/agent_verbs.py")

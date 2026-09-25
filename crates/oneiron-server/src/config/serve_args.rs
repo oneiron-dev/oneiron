@@ -199,6 +199,10 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_entity_blob: Option<usize>,
 
+    /// Optional maximum bytes per LFS upload object.
+    #[arg(long)]
+    pub max_lfs_object_bytes: Option<u64>,
+
     /// Maximum decompressed BulkTransfer chunk in bytes.
     #[arg(long)]
     pub max_bulk_decompressed: Option<usize>,
@@ -318,6 +322,7 @@ impl fmt::Debug for ServeArgs {
                 &self.max_ephemeral_snapshot_bytes,
             )
             .field("max_entity_blob", &self.max_entity_blob)
+            .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime_mode", &self.runtime_mode)
             .field("runtime_byo_key_env", &self.runtime_byo_key_env)

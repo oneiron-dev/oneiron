@@ -568,7 +568,10 @@ impl Vault {
         let Some((share, _)) = read_share_in_txn(&self.store, &txn, share_id)? else {
             return Ok(None);
         };
-        if !share.grant().is_active() || share.recipient_ref != *viewer {
+        let now = self.store.clock.now_recorded_at();
+        if share.grant().effective_status_at(now) != AccessGrantStatus::Active
+            || share.recipient_ref != *viewer
+        {
             return Ok(None);
         }
         let Some(actor) = share_viewer_actor_in_txn(self, &txn, viewer)? else {
