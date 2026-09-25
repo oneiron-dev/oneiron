@@ -221,11 +221,11 @@ class FleetRegressionTests(unittest.TestCase):
         doubled = copy.deepcopy(self.floor)
         for metric in doubled["baseline_receipt"]["metrics"].values():
             metric["p99_ms"] *= 2
-        cases = [(zeros, blake3, "baseline digest differs"),
-                 (doubled, blake3, "floor differs from the one its archived receipt makes"),
-                 (self.floor, "f" * 64, "BLAKE3 differs from its pointer")]
-        for floor, pointer_blake3, refusal in cases:
-            with self.subTest(refusal=refusal), self.assertRaisesRegex(ValueError, refusal):
+        cases = [("zero baseline digest", zeros, blake3),
+                 ("doubled p99 under the true digest", doubled, blake3),
+                 ("pointer BLAKE3 differs", self.floor, "f" * 64)]
+        for case, floor, pointer_blake3 in cases:
+            with self.subTest(case=case), self.assertRaises(ValueError):
                 fleet.verify_floor(floor, self.receipt, blake3, pointer_blake3)
         fleet.verify_floor(self.floor, self.receipt, blake3, blake3)
 

@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 SCHEMA = "oneiron-fleet-v1"
 FLOOR_SCHEMA = "oneiron-fleet-floor-v1"
@@ -42,8 +43,11 @@ def fingerprint(value):
 
 
 def read(path):
-    return json.loads(Path(path).read_text(),
-                      parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+    return parse(Path(path).read_bytes())
+
+
+def parse(data):
+    return json.loads(data, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
 
 
 def write_new(path, value):
@@ -249,7 +253,12 @@ def main(argv=None):
         if args.command == "verify-floor":
             name, pointer_blake3 = pointer(args.floor)
             receipt = Path(args.archive) / name
-            verify_floor(read(args.floor), read(receipt), file_blake3(args.bench, receipt), pointer_blake3)
+            data = receipt.read_bytes()  # One read: the bytes hashed are the bytes parsed.
+            with tempfile.NamedTemporaryFile() as snapshot:
+                snapshot.write(data)
+                snapshot.flush()
+                receipt_blake3 = file_blake3(args.bench, snapshot.name)
+            verify_floor(read(args.floor), parse(data), receipt_blake3, pointer_blake3)
             print(json.dumps({"status": "floor-verified", "floor": args.floor, "receipt": str(receipt)}))
             return 0
         require(not Path(args.out).exists(), "output already exists")
