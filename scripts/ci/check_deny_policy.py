@@ -1,88 +1,24 @@
-"""Check that RustSec ignores still name affected locked crate versions.
+"""Require every ignored RustSec advisory to affect a locked crate version.
 
-Uses cargo-deny's local advisory DB; no network or dependency resolution.
+Cargo-deny 0.19.4 decides advisory version ranges using its local database.
+The separate lock/reason check pins the reviewed crate and version exactly.
 """
 
+import json
+import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[2]
-_VERSION = re.compile(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?")
-_COMPARATOR = re.compile(r"(\^|~|>=|<=|>|<|=)?\s*(.+)")
+ADVISORY_ID = re.compile(r"RUSTSEC-\d{4}-\d+")
 
 
-def version_parts(text: str) -> tuple[tuple[int, int, int], tuple[tuple[int, object], ...], int]:
-    """Parse a SemVer (or partial requirement) without its irrelevant build metadata."""
-    match = _VERSION.fullmatch(text)
-    if match is None:
-        raise ValueError(f"unsupported advisory version: {text}")
-    nums = tuple(int(part or 0) for part in match.group(1, 2, 3))
-    prerelease = tuple(
-        (0, int(part)) if part.isdigit() else (1, part)
-        for part in (match.group(4) or "").split(".") if part
-    )
-    return nums, prerelease, sum(part is not None for part in match.group(1, 2, 3))
-
-
-def version_key(parts: tuple[tuple[int, int, int], tuple[tuple[int, object], ...], int]) -> tuple:
-    nums, prerelease, _ = parts
-    # A release sorts after all its prereleases; numeric identifiers sort first.
-    return (*nums, 0 if prerelease else 1, prerelease)
-
-
-def requirement_matches(version: str, requirement: str) -> bool:
-    """Match RustSec's comma-AND SemVer requirements; reject unknown syntax."""
-    candidate = version_parts(version)
-    clauses = []
-    for clause in requirement.split(","):
-        match = _COMPARATOR.fullmatch(clause.strip())
-        if match is None:
-            raise ValueError(f"unsupported advisory requirement: {requirement}")
-        op, text = match.groups()
-        target = version_parts(text)
-        clauses.append((op or "^", target))
-    # RustSec advisory ranges compare prereleases by SemVer ordering; they do
-    # not apply Cargo's dependency-selection prerelease opt-in rule. A version
-    # like 0.2.1-alpha is unaffected by an advisory range of "< 0.2.2".
-    key = version_key(candidate)
-    for op, target in clauses:
-        bound = version_key(target)
-        if op in (">", ">=", "<", "<="):
-            # For partial requirements compare only the components supplied.
-            left = key if target[2] == 3 or target[1] else candidate[0][:target[2]]
-            right = bound if target[2] == 3 or target[1] else target[0][:target[2]]
-            matches = {">": left > right, ">=": left >= right,
-                       "<": left < right, "<=": left <= right}[op]
-        elif op == "=":
-            matches = (key == bound if target[2] == 3 or target[1] else
-                       candidate[0][:target[2]] == target[0][:target[2]])
-        elif op in ("^", "~"):
-            major, minor, patch = target[0]
-            if op == "~":
-                upper = (major + 1, 0, 0) if target[2] == 1 else (major, minor + 1, 0)
-            elif major:
-                upper = (major + 1, 0, 0)
-            elif target[2] == 1:
-                upper = (1, 0, 0)  # ^0 and bare 0 include all 0.x releases.
-            elif minor:
-                upper = (0, minor + 1, 0)
-            elif target[2] == 2:
-                upper = (0, 1, 0)
-            else:
-                upper = (0, 0, patch + 1)
-            matches = key >= bound and candidate[0] < upper
-        else:
-            raise ValueError(f"unsupported advisory requirement: {requirement}")
-        if not matches:
-            return False
-    return True
-
-
-def advisory_record(db_root: Path, advisory_id: str) -> dict:
-    """Read identity, package and version ranges from RustSec TOML front matter."""
+def advisory_package(db_root: Path, advisory_id: str) -> str:
+    """Read a package from the local RustSec advisory front matter."""
     candidates = list(db_root.glob(f"crates/*/{advisory_id}.md"))
     candidates += list(db_root.glob(f"advisory-db-*/crates/*/{advisory_id}.md"))
     if len(candidates) != 1:
@@ -95,35 +31,76 @@ def advisory_record(db_root: Path, advisory_id: str) -> dict:
     record = tomllib.loads(tail.split("\n```", 1)[0])
     if record["advisory"]["id"] != advisory_id:
         raise ValueError(f"{advisory_id}: advisory file has a different id")
-    return record
+    return record["advisory"]["package"]
+
+
+def deny_unmatched_ignores(
+    deny_path: Path, manifest_path: Path, metadata_path: Path | None = None
+) -> set[str]:
+    """Read advisory-not-detected IDs from the pinned cargo-deny JSON stream."""
+    home = Path.home()
+    binary = Path(os.environ.get("CARGO_DENY_BIN", home / "ci/tools/bin/cargo-deny"))
+    if not binary.is_file() and "CARGO_DENY_BIN" not in os.environ:
+        binary = home / ".cargo/bin/cargo-deny"
+    # Put the host's real Cargo before factory wrappers; CI also uses this path.
+    env = os.environ | {"PATH": f"{home / '.cargo/bin'}:{os.environ.get('PATH', '')}"}
+    version = subprocess.run([str(binary), "--version"], capture_output=True, text=True, env=env)
+    if version.returncode or version.stdout.strip() != "cargo-deny 0.19.4":
+        raise ValueError(f"expected cargo-deny 0.19.4 at {binary}: {version.stdout}{version.stderr}")
+    command = [
+        str(binary), "--format", "json", "--locked", "--offline",
+        "--manifest-path", str(manifest_path), "check", "advisories",
+        "--config", str(deny_path),
+    ]
+    if metadata_path is not None:
+        command.extend(["--metadata-path", str(metadata_path)])
+    result = subprocess.run(command, capture_output=True, text=True, env=env)
+    if result.returncode:
+        raise ValueError(f"cargo-deny advisories failed ({result.returncode}): "
+                         f"{(result.stderr or result.stdout)[-1000:]}")
+    unmatched = set()
+    summaries = 0
+    for line in (result.stdout + "\n" + result.stderr).splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)  # Unexpected output fails closed.
+        if record["type"] == "summary":
+            summaries += 1
+        if record["type"] != "diagnostic" or record["fields"].get("code") != "advisory-not-detected":
+            continue
+        fields = record["fields"]
+        if fields.get("message") != "advisory was not encountered":
+            raise ValueError(f"unexpected advisory-not-detected diagnostic: {fields}")
+        ids = [label.get("span") for label in fields.get("labels", [])
+               if ADVISORY_ID.fullmatch(label.get("span", ""))]
+        if len(ids) != 1:
+            raise ValueError(f"advisory-not-detected has no unique ID: {fields}")
+        unmatched.add(ids[0])
+    if summaries != 1:
+        raise ValueError(f"expected one cargo-deny summary, got {summaries}")
+    return unmatched
 
 
 def find_stale_ignores(
-    deny_path: Path, lock_path: Path, db_root: Path | None = None
+    deny_path: Path, lock_path: Path, metadata_path: Path | None = None,
+    manifest_path: Path = ROOT / "Cargo.toml",
 ) -> list[str]:
-    """Return IDs without a matching affected package@version in Cargo.lock."""
+    """Return IDs without an affected, reviewed package@version in Cargo.lock."""
     config = tomllib.loads(deny_path.read_text())
     lock = tomllib.loads(lock_path.read_text())
     locked = {(pkg["name"], pkg["version"]) for pkg in lock["package"]}
-    db_root = db_root or Path(config["advisories"]["db-path"]).expanduser()
+    db_root = Path(config["advisories"]["db-path"]).expanduser()
+    unmatched = deny_unmatched_ignores(deny_path, manifest_path, metadata_path)
     stale = []
     for entry in config["advisories"]["ignore"]:
         advisory_id = entry["id"]
-        advisory = advisory_record(db_root, advisory_id)
-        package = advisory["advisory"]["package"]
-        versions = advisory["versions"]
-        # The first reason token names the exact reviewed crate and version.
-        # Requiring it prevents an old acceptance from surviving a lock update.
+        package = advisory_package(db_root, advisory_id)
+        # Reasons pin one exact reviewed version; cargo-deny checks affectedness.
         first_token = entry["reason"].split(maxsplit=1)[0]
         prefix = f"{package}@"
-        if not first_token.startswith(prefix):
-            stale.append(advisory_id)
-            continue
-        version = first_token[len(prefix) :]
-        if (package, version) not in locked or any(
-            requirement_matches(version, rule)
-            for rule in (*versions["patched"], *versions.get("unaffected", []))
-        ):
+        if not first_token.startswith(prefix) or (
+            package, first_token[len(prefix) :]
+        ) not in locked or advisory_id in unmatched:
             stale.append(advisory_id)
     return stale
 
@@ -131,7 +108,7 @@ def find_stale_ignores(
 if __name__ == "__main__":
     try:
         stale = find_stale_ignores(ROOT / "deny.toml", ROOT / "Cargo.lock")
-    except (OSError, ValueError, KeyError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, ValueError, KeyError, json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
         sys.exit(f"deny policy check failed: {exc}")
     if stale:
         sys.exit("stale advisory ignores: " + ", ".join(stale))
