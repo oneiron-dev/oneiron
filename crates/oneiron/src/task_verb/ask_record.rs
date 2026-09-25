@@ -518,10 +518,10 @@ pub(super) fn record_answer(
     task: EntityId,
     body: &super::consult_result::TaskVerbBody,
     actor: crate::WriteActor,
-    terminal: &super::TaskTerminalRecord,
-    option: Option<&super::TaskAskOptionId>,
+    answer: (&super::TaskTerminalRecord, Option<&super::TaskAskOptionId>),
     now: u64,
 ) -> Result<Option<EntityId>> {
+    let (terminal, option) = answer;
     let Some(payload) = &body.consult else {
         return Ok(None);
     };

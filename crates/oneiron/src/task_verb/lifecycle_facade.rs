@@ -229,7 +229,7 @@ impl Memory<'_> {
                 Some(super::ConsultResultKind::Answer { option, .. }) => option.as_ref(),
                 _ => None,
             };
-            let ask_group = super::ask_record::record_answer(self.vault(), wtxn, task_ref, &body, crate::WriteActor::new(self.actor(), self.actor_class()), landed, option, at)?;
+            let ask_group = super::ask_record::record_answer(self.vault(), wtxn, task_ref, &body, crate::WriteActor::new(self.actor(), self.actor_class()), (landed, option), at)?;
             body.state = Some(TaskExecutionState::Terminal(landed.clone()));
             let encoded = encode_task_verb_body(body);
             self.put_task_body_in_txn(wtxn, task_ref, &encoded, at)?;
