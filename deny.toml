@@ -40,6 +40,13 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.9
+# The iroh-relay wasm-only WebSocket path pulls these three Unlicense (OSI/FSF
+# permissive) crates. Keep approval package-specific, not a blanket license add.
+exceptions = [
+    { crate = "async_io_stream", allow = ["Unlicense"] },
+    { crate = "pharos", allow = ["Unlicense"] },
+    { crate = "ws_stream_wasm", allow = ["Unlicense"] },
+]
 
 [bans]
 multiple-versions = "warn"
