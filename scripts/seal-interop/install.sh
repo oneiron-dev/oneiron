@@ -22,16 +22,8 @@ export MAMBA_ROOT_PREFIX="$ROOT/mamba"
 export CONDA_PKGS_DIRS="$ROOT/cache/conda-pkgs"
 export MAMBA_PKGS_DIRS="$ROOT/cache/conda-pkgs"
 
-mamba_env() {
-  local prefix="$1" package="$2"
-  if [[ -x "$prefix/bin/pdfsig" || -x "$prefix/bin/qpdf" || -x "$prefix/bin/python" ]]; then return 0; fi
-  if [[ -z "$MM" ]]; then warn "cannot install $package: micromamba unavailable"; return 1; fi
-  # Remove only an incomplete environment created at this exact managed prefix.
-  if [[ -d "$prefix" && ! -d "$prefix/conda-meta" ]]; then rm -rf -- "$prefix"; fi
-  if "$MM" create -y -c conda-forge -p "$prefix" "$package" >"$ROOT/logs/$(basename "$prefix")-install.log" 2>&1; then return 0; fi
-  warn "failed to install $package under $prefix; see $ROOT/logs/$(basename "$prefix")-install.log"
-  return 1
-}
+# The isolated prefix repair is exercised with a fake micromamba in test_runner.py.
+source "$SCRIPT_DIR/install_env.sh"
 
 build_poppler22() {
   local src="$ROOT/cache/source/poppler-22.02.0" archive="$ROOT/cache/poppler-22.02.0.tar.xz" build="$ROOT/build/poppler-22.02.0" prefix="$ROOT/poppler/22.02.0"

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """JSON wrappers for local Poppler/qpdf commands. No third-party deps."""
-import json, os, re, subprocess, sys
+import json, os, platform, re, subprocess, sys
+from pathlib import Path
 
 def out(obj, code):
     print(json.dumps(obj, separators=(",", ":")))
@@ -14,11 +15,13 @@ def version_text(command, env=None):
     return (p.stdout + p.stderr).splitlines()[0].strip() if p.stdout or p.stderr else "unknown"
 
 def os_proxy():
+    machine = platform.machine().lower()
+    arch = {"amd64": "x86_64", "arm64": "aarch64"}.get(machine, machine)
     try:
-        for line in open("/etc/os-release"):
-            if line.startswith("PRETTY_NAME="): return "linux-x86_64/" + line.split("=",1)[1].strip().strip('"')
+        for line in Path("/etc/os-release").read_text().splitlines():
+            if line.startswith("PRETTY_NAME="): return f"linux-{arch}/" + line.split("=",1)[1].strip().strip('"')
     except OSError: pass
-    return "linux-x86_64"
+    return f"linux-{arch}"
 
 def unavailable(reader, mode, detail):
     return out({"reader":reader,"version":"unavailable","os_proxy":os_proxy(),"mode":mode,"status":"unavailable","detail":detail},77)

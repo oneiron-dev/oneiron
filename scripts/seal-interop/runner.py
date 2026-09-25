@@ -22,13 +22,15 @@ WRAPPERS = {
 }
 
 def os_proxy():
+    machine = platform.machine().lower()
+    arch = {"amd64": "x86_64", "arm64": "aarch64"}.get(machine, machine)
     try:
         for line in Path("/etc/os-release").read_text().splitlines():
             if line.startswith("PRETTY_NAME="):
-                return "linux-x86_64/" + line.split("=", 1)[1].strip().strip('"')
+                return f"linux-{arch}/" + line.split("=", 1)[1].strip().strip('"')
     except OSError:
         pass
-    return f"linux-x86_64/{platform.system()}-{platform.release()}"
+    return f"linux-{arch}/{platform.system()}-{platform.release()}"
 
 def emit(reader, pdf):
     envvar, default = WRAPPERS[reader]
@@ -75,7 +77,10 @@ def main(argv):
         code = emit(name, pdf)
         if code == 77: skipped += 1
         elif code != 0: bad += 1
+    if skipped and skipped < len(chosen):
+        print(f"PARTIAL-MATRIX: {skipped} of {len(chosen)} readers unavailable; rows do not prove full coverage", file=sys.stderr)
     if bad: return 1
-    return 77 if len(chosen) == 1 and skipped else 0
+    if skipped == len(chosen): return 77
+    return 0
 
 if __name__ == "__main__": raise SystemExit(main(sys.argv))

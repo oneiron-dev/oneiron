@@ -112,9 +112,9 @@ fn optional_reader_validate(env_var: &str, reader: &str, expected_mode: &str) {
         report["mode"], expected_mode,
         "unexpected check mode: {stdout:?}"
     );
-    assert_eq!(
-        report["status"], "pass",
-        "reader did not report pass: {stdout:?}"
+    assert!(
+        reader_report_acceptable(reader, &report),
+        "reader did not report pass (or a visible qpdf warning): {stdout:?}"
     );
     if reader == "dss" {
         assert!(
@@ -129,6 +129,36 @@ fn optional_reader_validate(env_var: &str, reader: &str, expected_mode: &str) {
         );
     }
     println!("{}", stdout.trim());
+}
+
+/// qpdf exit 0 with a warning is a completed structural check, but not a
+/// clean pass. No other reader may turn a warning into a valid signature.
+fn reader_report_acceptable(reader: &str, report: &serde_json::Value) -> bool {
+    report["status"] == "pass"
+        || (reader == "qpdf"
+            && report["status"] == "warning"
+            && report["detail"]
+                .as_str()
+                .is_some_and(|detail| !detail.trim().is_empty()))
+}
+
+#[test]
+fn qpdf_warning_is_visible_and_only_accepted_for_qpdf() {
+    let warning = serde_json::json!({"status": "warning", "detail": "WARNING: repaired input"});
+    assert!(reader_report_acceptable("qpdf", &warning));
+    assert!(reader_report_acceptable(
+        "qpdf",
+        &serde_json::json!({"status": "warning", "detail": "qpdf: operation succeeded with warnings"})
+    ));
+    assert!(!reader_report_acceptable("pdfbox", &warning));
+    assert!(!reader_report_acceptable(
+        "qpdf",
+        &serde_json::json!({"status": "warning", "detail": ""})
+    ));
+    assert!(!reader_report_acceptable(
+        "qpdf",
+        &serde_json::json!({"status": "fail", "detail": "WARNING: failed"})
+    ));
 }
 
 /// Oracle matrix row 2: native seal -> pyHanko validate.

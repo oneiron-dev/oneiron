@@ -1,5 +1,5 @@
 {
-  "os_proxy": "linux-x86_64",
+  "os_proxy": "linux-<detected-host-architecture>",
   "install_root_default": "/mnt/wd16/w8-build/seal-interop",
   "poppler": {
     "22.02.0": {"source": "https://poppler.freedesktop.org/poppler-22.02.0.tar.xz", "sha256": "e390c8b806f6c9f0e35c8462033e0a738bb2460ebd660bdb8b6dca01556193e1", "build": "local-cmake"},

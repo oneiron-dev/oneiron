@@ -18,7 +18,7 @@ cargo test --locked -p oneiron-seal --features seal-oracle --test oracle
 
 The full runner prints TSV with `reader`, `version`, `os_proxy`, `mode`, `status`, and `detail`.
 Each per-reader wrapper prints one JSON object with `reader`, `version`, `mode`, and `status`;
-optional `detail` and `os_proxy` fields add context. Exit status is 0 for successful verification, parse, or a qpdf check that is either clean or only warns; 1 for invalid/rejected input; and 77 if a reader or required API is unavailable. qpdf warning rows retain `status=warning` and do not become a clean structural pass.
+optional `detail` and `os_proxy` fields add context. A single-reader run exits 0 for a completed check (including a reported qpdf warning), 1 for failure, or 77 when unavailable. The full matrix exits 77 if **no reader ran**, 1 if any reader failed, and 0 if the available readers passed; a partially available matrix prints `PARTIAL-MATRIX` to stderr and is **not full reader coverage**. Each unavailable row remains visible. qpdf warning rows retain `status=warning` and are not clean structural passes.
 
 ## Evidence meaning
 
@@ -26,10 +26,10 @@ optional `detail` and `os_proxy` fields add context. Exit status is 0 for succes
   cryptographic PDF signature. A certificate trust warning is reported separately and is not
   treated as cryptographic signature corruption. These tools do not establish a production trust
   policy, remote timestamp validity, or long-term validation.
-- **Parse only**: PDFium and pdf.js parse pages, require a signature field/object, and check that each `/ByteRange` reaches the file EOF. They do not verify the CMS signature or certificate trust.
+- **Parse only**: PDFium parses signature objects and checks each signature object's `/ByteRange` reaches EOF. pdf.js opens the document and finds signature fields. Its public field API does not expose the associated `/V` dictionary, so **pdf.js makes no ByteRange coverage claim**; scanning unrelated PDF text for `/ByteRange` would give false results. Neither engine check verifies CMS or certificate trust.
 - **Check**: qpdf runs `--check`; warnings are preserved in `detail`. It is a structural check, not
   signature verification.
-- **OS proxy** is always labeled `linux-x86_64/<distro>`: results use Linux builds or Linux wheels,
+- **OS proxy** uses the detected host architecture, e.g. `linux-x86_64/<distro>` or `linux-aarch64/<distro>`: results use Linux builds or Linux wheels,
   not macOS/iOS native PDF frameworks. Poppler rows are version-pinned. They do not substitute for
   native platform testing.
 
