@@ -101,6 +101,57 @@ fn deep_recall_returns_lease_required() {
     assert!(!error.suggestions.is_empty());
 }
 
+/// A valid JSON success body is still an INTERNAL fault when it is not this verb's DTO.
+#[test]
+fn a_2xx_body_that_is_not_the_verb_output_is_internal() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback peer");
+    let address = listener.local_addr().unwrap();
+    let peer = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("witness request");
+        let mut reader = BufReader::new(&mut stream);
+        let mut content_length = 0;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("request headers");
+            if line == "\r\n" {
+                break;
+            }
+            if let Some((key, value)) = line.split_once(':')
+                && key.eq_ignore_ascii_case("content-length")
+            {
+                content_length = value.trim().parse::<usize>().unwrap();
+            }
+        }
+        let mut body = vec![0; content_length];
+        reader.read_exact(&mut body).expect("request body");
+        let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        if request["conversation_ref"] != "conversation" {
+            return false;
+        }
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}").unwrap();
+        true
+    });
+    let client = OneironClient::connect(&format!("http://{address}"), "fixture").unwrap();
+    let result = client.witness(&oneiron::memory::WitnessTurn {
+        conversation_ref: "conversation".into(),
+        turn_ref: None,
+        messages: vec![],
+        occurred_at: 1,
+    });
+    // Release the peer even if a regression fails before making the request.
+    drop(TcpStream::connect(address));
+    assert!(peer.join().expect("peer"), "request must reach the peer");
+    let error = result.expect_err("a success response is not a witness receipt");
+    assert_eq!(error.code, MEMORY_CODE_INTERNAL);
+    assert!(error.message.contains("witness"), "{error:?}");
+    assert!(error.message.contains("200"), "{error:?}");
+    assert!(error.message.contains("missing field"), "{error:?}");
+    assert!(!error.suggestions.is_empty());
+}
+
 /// Embedded failures cross byte-for-byte: the engine's own triple, unedited.
 #[test]
 fn embedded_errors_keep_the_engine_payload() {
