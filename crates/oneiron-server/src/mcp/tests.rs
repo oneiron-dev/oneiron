@@ -3965,6 +3965,41 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
 }
 
 #[test]
+fn board_frame_epoch_schema_refuses_null_like_its_decoder() {
+    for name in ["board.expand", "board.refresh"] {
+        let tool = registered_surface(McpSurfaceMode::ToolFirst)
+            .resolve(name)
+            .expect("board tool is registered");
+        let schema = tool.schema().input_schema;
+        let epoch_schema = &schema["properties"]["arguments"]["properties"]["frame_epoch"];
+        assert_eq!(epoch_schema["type"], "integer", "{name}");
+        let mut args = endpoint_envelope("read_board");
+        args["arguments"] = if name == "board.expand" {
+            json!({ "key": "TASKS", "frame_epoch": null })
+        } else {
+            json!({ "frame_epoch": null })
+        };
+        assert!(
+            !draft2020_12_accepts(&schema, &args),
+            "{name} advertises no null"
+        );
+        assert!(
+            validate_mcp_endpoint_tool_args(tool, args.clone()).is_err(),
+            "{name} refuses null"
+        );
+        args["arguments"]["frame_epoch"] = json!(0);
+        assert!(
+            draft2020_12_accepts(&schema, &args),
+            "{name} advertises zero"
+        );
+        assert!(
+            validate_mcp_endpoint_tool_args(tool, args).is_ok(),
+            "{name} decodes zero"
+        );
+    }
+}
+
+#[test]
 fn nullable_integer_spec_field_accepts_an_integral_float() {
     let tool = registered_surface(McpSurfaceMode::ToolFirst)
         .resolve("tasks.ask")

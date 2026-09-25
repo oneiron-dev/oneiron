@@ -164,9 +164,12 @@ pub(super) fn merge_verb_argument_schema(input: Value, constraints: Value) -> Va
     if let (Some(mut typed), Some(mut envelope)) =
         (input.as_object().cloned(), constraints.as_object().cloned())
     {
-        // Typed inputs own their type (including nullable types); the envelope
-        // still narrows them with its pattern and other constraints.
-        if typed.contains_key("type") {
+        // Typed inputs own nullable string types. The envelope's integer
+        // type instead pins fields decoded by deserialize_optional_u64:
+        // explicit null is not an unsigned JSON integer at that door.
+        if typed.contains_key("type")
+            && envelope.get("type").and_then(Value::as_str) != Some("integer")
+        {
             envelope.remove("type");
         }
         typed.extend(envelope);
