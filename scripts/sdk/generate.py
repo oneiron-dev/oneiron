@@ -246,6 +246,9 @@ def outputs():
     facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"]
     core = HEADER
     core += "pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {\n"
+    # GLOBAL STATE: these schemas depend only on compiled verb types, never vault or actor data.
+    # Sharing one immutable schema table avoids repeated schemars generation on tool listing.
+    core += "// GLOBAL STATE: compiled verb schemas are immutable, vault-independent metadata; share one table across callers.\n"
     core += "static SCHEMAS: std::sync::LazyLock<std::collections::HashMap<&'static str, serde_json::Value>> = std::sync::LazyLock::new(|| std::collections::HashMap::from([\n"
     for r in ROWS:
         core += f'({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'

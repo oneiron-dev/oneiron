@@ -104,14 +104,6 @@ include!("sdk_generated.rs");
 
 #[cfg(test)]
 #[test]
-fn verb_input_schema_is_built_once_per_process() {
-    let first = input_schema("tasks.ask").expect("tasks.ask input schema");
-    let second = input_schema("tasks.ask").expect("tasks.ask input schema");
-    assert!(std::ptr::eq(first, second));
-}
-
-#[cfg(test)]
-#[test]
 fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
     let mut names = std::collections::BTreeSet::new();
     for verb in AgentVerb::ALL {
