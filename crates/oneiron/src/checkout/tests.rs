@@ -44,10 +44,13 @@ use crate::config::VaultConfig;
 use std::collections::HashMap;
 use tempfile::TempDir;
 
-fn vault() -> (Vault, TempDir) {
+fn vault() -> (TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
-    (vault, dir)
+    // Callers bind (_d, v): reverse drop order closes v before _d removes
+    // its LMDB files. Deleting a live root can let recycled file identities
+    // collide with the process open-root registry in parallel libtests.
+    (dir, vault)
 }
 fn id() -> CheckoutId {
     CheckoutId::from_bytes([7; 16]).unwrap()
@@ -150,7 +153,7 @@ impl CheckoutRepoOps for Ops {
 
 #[test]
 fn checkout_epoch_fences_renew_and_settle() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
     let grant = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -180,7 +183,7 @@ fn checkout_epoch_fences_renew_and_settle() {
 #[test]
 fn checkout_ttl_reclaim_is_class_fenced_and_idempotent() {
     for class in [CheckoutTaskClass::Build, CheckoutTaskClass::Verify] {
-        let (v, _d) = vault();
+        let (_d, v) = vault();
         let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
         s.claim(request(class, "one", 100)).unwrap();
         assert_eq!(
@@ -193,7 +196,7 @@ fn checkout_ttl_reclaim_is_class_fenced_and_idempotent() {
         );
     }
     for class in [CheckoutTaskClass::Edit, CheckoutTaskClass::Effect] {
-        let (v, _d) = vault();
+        let (_d, v) = vault();
         let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
         s.claim(request(class, "one", 100)).unwrap();
         assert!(s.reclaim_idempotent(id(), "two".into(), 111).is_err());
@@ -202,7 +205,7 @@ fn checkout_ttl_reclaim_is_class_fenced_and_idempotent() {
 
 #[test]
 fn checkout_settlement_is_consume_once() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -239,7 +242,7 @@ fn checkout_settlement_is_consume_once() {
 
 #[test]
 fn checkout_teardown_retains_for_missing_dirty_and_occupant() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -316,7 +319,7 @@ fn pulse(epoch: u64, holder: &str) -> CheckoutLivenessPulse {
 
 #[test]
 fn checkout_teardown_fences_wrong_holder_and_epoch_before_effects() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -342,7 +345,7 @@ fn checkout_teardown_fences_wrong_holder_and_epoch_before_effects() {
 #[test]
 fn checkout_reclaim_refuses_before_expiry_and_retained_leases() {
     for class in [CheckoutTaskClass::Build, CheckoutTaskClass::Verify] {
-        let (v, _d) = vault();
+        let (_d, v) = vault();
         let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
         let g = s.claim(request(class, "one", 100)).unwrap();
         assert!(matches!(
@@ -367,7 +370,7 @@ fn checkout_reclaim_refuses_before_expiry_and_retained_leases() {
 
 #[test]
 fn checkout_teardown_retains_live_mismatch_and_uncertain() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -395,7 +398,7 @@ fn checkout_teardown_retains_live_mismatch_and_uncertain() {
         TeardownReceiptMatch::Mismatch,
         TeardownReceiptMatch::Uncertain,
     ] {
-        let (v, _d) = vault();
+        let (_d, v) = vault();
         let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
         let g = s
             .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -417,7 +420,7 @@ fn checkout_teardown_retains_live_mismatch_and_uncertain() {
 
 #[test]
 fn checkout_collects_clean_matching_receipt_and_removes_lease() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -434,7 +437,7 @@ fn checkout_collects_clean_matching_receipt_and_removes_lease() {
 
 #[test]
 fn checkout_settlement_facts_retry_and_release() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -465,7 +468,7 @@ fn checkout_settlement_facts_retry_and_release() {
             CheckoutFactMutation::Settled { .. }
         ]
     ));
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -487,7 +490,7 @@ fn checkout_settlement_facts_retry_and_release() {
 
 #[test]
 fn checkout_codec_rejects_invalid_data_and_liveness_is_not_durable() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -557,7 +560,7 @@ fn checkout_codec_rejects_invalid_data_and_liveness_is_not_durable() {
 
 #[test]
 fn checkout_reclaim_preserves_ttl_and_identity_is_pinned() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     s.claim(request(CheckoutTaskClass::Build, "one", 100))
         .unwrap();
@@ -586,7 +589,7 @@ fn checkout_settlement_keys_are_tuple_scoped_and_all_dispositions_survive() {
         CheckoutSettlementDisposition::Release,
         CheckoutSettlementDisposition::Discard,
     ] {
-        let (v, _d) = vault();
+        let (_d, v) = vault();
         let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
         let g = s
             .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -613,7 +616,7 @@ fn checkout_settlement_keys_are_tuple_scoped_and_all_dispositions_survive() {
         );
     }
 
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -659,7 +662,7 @@ fn checkout_teardown_retains_mismatched_receipts_and_settlement_survives_collect
             ..receipt(1)
         }),
     ] {
-        let (v, _d) = vault();
+        let (_d, v) = vault();
         let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
         let g = s
             .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -687,7 +690,7 @@ fn checkout_teardown_retains_mismatched_receipts_and_settlement_survives_collect
         ));
     }
 
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -726,7 +729,7 @@ fn checkout_teardown_retains_mismatched_receipts_and_settlement_survives_collect
 
 #[test]
 fn checkout_reclaim_rejects_empty_holder_and_regressing_times() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -766,7 +769,7 @@ fn checkout_reclaim_rejects_empty_holder_and_regressing_times() {
 
 #[test]
 fn checkout_teardown_own_pulse_does_not_self_retain_enabled_liveness_happy_path_collects() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -790,7 +793,7 @@ fn checkout_teardown_own_pulse_does_not_self_retain_enabled_liveness_happy_path_
 #[test]
 fn checkout_teardown_retains_only_for_foreign_pulses_and_occupants() {
     for foreign in [pulse(1, "two"), pulse(2, "one")] {
-        let (v, _d) = vault();
+        let (_d, v) = vault();
         let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
         let g = s
             .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -810,7 +813,7 @@ fn checkout_teardown_retains_only_for_foreign_pulses_and_occupants() {
         assert_eq!(o.collect_calls.get(), 0);
     }
     for (occupant, collects) in [("two", false), ("one", true)] {
-        let (v, _d) = vault();
+        let (_d, v) = vault();
         let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
         let g = s
             .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -827,7 +830,7 @@ fn checkout_teardown_retains_only_for_foreign_pulses_and_occupants() {
 
 #[test]
 fn checkout_teardown_transient_retain_then_retry_collects() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -853,7 +856,7 @@ fn checkout_teardown_transient_retain_then_retry_collects() {
 
 #[test]
 fn checkout_teardown_liveness_port_error_is_retryable_not_poisoned() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let live = Live {
         fail_current: std::cell::Cell::new(1),
         ..Live::default()
@@ -881,7 +884,7 @@ fn checkout_teardown_liveness_port_error_is_retryable_not_poisoned() {
 
 #[test]
 fn checkout_teardown_resumes_settling_after_collect_failure_without_reinspecting() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -935,7 +938,7 @@ fn tombstone(v: &Vault) -> Option<u64> {
 
 #[test]
 fn checkout_reclaimed_id_after_teardown_seeds_next_epoch_and_kills_old_fence() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     let first = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -984,7 +987,7 @@ fn checkout_reclaimed_id_after_teardown_seeds_next_epoch_and_kills_old_fence() {
 
 #[test]
 fn checkout_relifecycled_id_settles_identical_tuple_without_cross_lifecycle_collision() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     let settle = |s: &mut CheckoutLeaseService<'_, Sink, Live>,
                   g: &CheckoutLeaseGrant,
@@ -1066,7 +1069,7 @@ fn checkout_relifecycled_id_settles_identical_tuple_without_cross_lifecycle_coll
 
 #[test]
 fn checkout_tombstone_row_is_absent_until_teardown_and_codec_is_pinned() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -1134,7 +1137,7 @@ fn checkout_tombstone_zero_max_epoch_is_corrupt() {
 
 #[test]
 fn checkout_ttl_reclaimed_epoch_is_tombstoned_and_next_claim_resumes_above_it() {
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
     assert_eq!(
         s.claim(request(CheckoutTaskClass::Build, "one", 100))
@@ -1163,7 +1166,7 @@ fn checkout_retained_state_can_settle_after_teardown_retain() {
     // settlement receipt is exactly how the holder clears
     // `MissingPushedHeadReceipt`, so `Retained` must stay settleable — treating
     // it as terminal would permanently foreclose settle and strand the lease.
-    let (v, _d) = vault();
+    let (_d, v) = vault();
     let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
     let g = s
         .claim(request(CheckoutTaskClass::Build, "one", 100))

@@ -229,7 +229,6 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             let worker = std::thread::Builder::new()
                 .name("mcp-execute-code".to_owned())
                 .spawn(move || {
-                    let _guard = guard;
                     let outcome = run_engine_native_code_mode(
                         &vault,
                         provider.as_ref(),
@@ -237,6 +236,9 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         &run_ref,
                         &config,
                     );
+                    // Completion must release single-flight before waking an
+                    // awaiter that may immediately re-enter this persisted run.
+                    drop(guard);
                     let _ = sender.send(outcome);
                 })
                 .map_err(|error| McpCodeExecutionError::Run(error.to_string()))?;

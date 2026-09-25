@@ -1,5 +1,5 @@
 //! Stock Git checkout-to-door round trip with a live epoch-fenced lease.
-use super::tests::{PublicationTestOrigin, git, served_repo, temp_vault};
+use super::tests::{PublicationTestOrigin, git, served_repo};
 use super::*;
 use crate::checkout::lease::*;
 
@@ -27,7 +27,17 @@ impl CheckoutLiveness for Liveness {
 
 #[test]
 fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() {
-    let (_dir, vault) = temp_vault();
+    // A caller-supplied wall second can lead the vault's monotone authority
+    // observation by one second at a second boundary. Share a test-local clock
+    // between the claim and the real credential door instead of racing it.
+    let now = crate::unix_seconds_now();
+    let clock = crate::store::ports::ManualClock::new(now);
+    let config = crate::VaultConfig {
+        store_clock: clock.bundle(),
+        ..Default::default()
+    };
+    let _dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(_dir.path(), config).unwrap());
     let (_source, repo_dir, _, head) = served_repo(&vault);
     // A source with remote config is not eligible: a linked worktree would
     // inherit it. The fixture source is copied as a bare repo, so remove the
@@ -35,7 +45,6 @@ fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() 
     git(&repo_dir, &["remote", "remove", "origin"]);
     let principal = EntityId::now();
     let origin = PublicationTestOrigin::start(&vault, principal);
-    let now = crate::unix_seconds_now();
     let mut leases = CheckoutLeaseService::new(&vault, Facts, Liveness::default());
     let grant = leases
         .claim(CheckoutClaimRequest {
@@ -47,7 +56,9 @@ fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() 
             },
             holder_ref: principal.to_hex(),
             task_class: CheckoutTaskClass::Build,
-            ttl_secs: Some(600),
+            // This tests the live push and stale epoch, not lease expiry. Allow
+            // a full busy CI run before reclaiming at the actual expiry below.
+            ttl_secs: Some(24 * 60 * 60),
             now,
         })
         .unwrap();
@@ -138,7 +149,11 @@ fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() 
     // Epoch fencing remains authoritative after reclaim; the old URL grants
     // nothing even if its printable ticket has been copied.
     leases
-        .reclaim_idempotent(grant.checkout_id, "replacement:holder".into(), now + 601)
+        .reclaim_idempotent(
+            grant.checkout_id,
+            "replacement:holder".into(),
+            lease.lease_expires_at.unwrap() + 1,
+        )
         .unwrap();
     assert!(
         door.checkout_credential(&ticket, &principal.to_hex(), &lease.repo_ref)
