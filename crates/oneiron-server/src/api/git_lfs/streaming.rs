@@ -73,7 +73,19 @@ pub(super) async fn upload(
     });
     let mut stream = body.into_data_stream();
     let mut failed = false;
-    while let Some(frame) = stream.next().await {
+    loop {
+        // The engine can reject a frame before the client sends another one.
+        // Do not wait for the body to end before returning that refusal.
+        let frame = tokio::select! {
+            biased;
+            result = &mut worker => {
+                return result
+                    .map_err(|_| ApiError::internal_server_error("lfs upload worker failed"))?
+                    .map_err(|e| lfs_engine_error("lfs streaming upload failed", &e));
+            }
+            frame = stream.next() => frame,
+        };
+        let Some(frame) = frame else { break };
         match frame {
             Ok(bytes) => {
                 // Copy each bounded slice. Bytes::slice would retain a hostile

@@ -272,6 +272,50 @@ async fn lfs_upload_over_the_configured_cap_answers_a_typed_refusal() {
 }
 
 #[tokio::test]
+async fn lfs_over_cap_upload_refuses_without_waiting_for_body_eof() {
+    use axum::body::Bytes;
+    use futures_util::StreamExt;
+    use std::time::Duration;
+
+    let config = SyncServerConfig {
+        max_lfs_object_bytes: Some(1024),
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let bytes = vec![b'x'; 2048];
+    let oid = LfsOid::digest(&bytes);
+    // The first frame crosses the cap. The client never sends EOF or another
+    // frame, so the response must be driven by the worker's refusal alone.
+    let body = Body::from_stream(
+        futures_util::stream::once(async move { Ok::<_, std::io::Error>(Bytes::from(bytes)) })
+            .chain(futures_util::stream::pending()),
+    );
+    let (status, _, response) = tokio::time::timeout(
+        Duration::from_secs(3),
+        route(
+            &server,
+            request(
+                "PUT",
+                &object_uri(&oid.to_hex()),
+                Some(&writer_token()),
+                body,
+            ),
+        ),
+    )
+    .await
+    .expect("over-cap upload must not wait for body EOF");
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let response = json_body(&response);
+    assert_eq!(response["error"]["code"], "BAD_REQUEST");
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .is_some_and(|s| s.contains("object cap"))
+    );
+    assert_eq!(server.vault.lfs_object(oid).expect("record read"), None);
+}
+
+#[tokio::test]
 async fn lfs_upload_rejects_oid_and_size_mismatch() {
     let (_dir, server) = test_server(secret_config());
     let token = writer_token();
