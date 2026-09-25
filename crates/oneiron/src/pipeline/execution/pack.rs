@@ -76,7 +76,7 @@ impl PipelineBuilder<'_> {
             config.anchor_end = end;
             config.learned_start = None;
             config.learned_end = None;
-            config.anchor_mode = crate::temporal::TemporalAnchorMode::Auto;
+            config.anchor_mode = crate::temporal::TemporalAnchorMode::Occurred;
             config.sigma_secs = end
                 .saturating_sub(start)
                 .max(crate::pipeline::types::DEFAULT_SIGMA_SECS);

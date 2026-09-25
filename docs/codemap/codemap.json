@@ -30695,6 +30695,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/task_verb/ask_record/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -33530,6 +33538,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/temporal_query_window.rs",
+     "purpose": "Query-derived occurred windows must not lose their eligible hit to learned-time candidates",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/type_boundaries_compilefail.rs",
      "purpose": "Compile-fail proofs of three type boundaries from external-crate positions",
      "surface": {}
@@ -34751,7 +34767,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34873,7 +34889,7 @@
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2061,
-   "test_files": 703
+   "test_files": 705
   },
   "oneiron-android": {
    "files": [

@@ -109,7 +109,9 @@ fn bootstrap_does_not_reactivate_changed_or_non_seed_records() -> Result<()> {
 // Import judge before a malformed policy defers the first seeded open. The
 // fail-closed manifest also blocks ordinary hub imports, so the earlier import
 // must happen while the policy is healthy.
-fn deferred_judge_import() -> Result<(tempfile::TempDir, EntityId, Vec<u8>)> {
+fn deferred_judge_import_with_capability(
+    with_capability: bool,
+) -> Result<(tempfile::TempDir, EntityId, Vec<u8>)> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::default())?;
     put_policy_manifest_bytes(
@@ -121,8 +123,8 @@ fn deferred_judge_import() -> Result<(tempfile::TempDir, EntityId, Vec<u8>)> {
     let (name, markdown) = FILES[1];
     let package = package(name, markdown)?;
     let reference = HubRef::new(
-        stable_id("hub")?,
-        name,
+        EntityId::now(),
+        format!("external/{name}"),
         HubPin::ContentHash(package.content_hash()?.to_hex()),
     )?;
     assert_eq!(
@@ -135,6 +137,15 @@ fn deferred_judge_import() -> Result<(tempfile::TempDir, EntityId, Vec<u8>)> {
         )?,
         imported,
     );
+    if with_capability {
+        vault.with_write_txn(|txn| {
+            vault.write_admitted_capability_surface_in_txn(
+                txn,
+                &imported,
+                &crate::skill_hub::SkillCapabilitySurface::default().with_bin("existing-bin"),
+            )
+        })?;
+    }
     let before = vault.get_raw(&imported)?.expect("imported judge bytes");
     let manifest = EntityId::now();
     put_policy_manifest_bytes(&vault, manifest, b"not-a-manifest")?;
@@ -153,6 +164,45 @@ fn deferred_judge_import() -> Result<(tempfile::TempDir, EntityId, Vec<u8>)> {
     })?;
     drop(vault);
     Ok((dir, imported, before))
+}
+
+fn deferred_judge_import() -> Result<(tempfile::TempDir, EntityId, Vec<u8>)> {
+    deferred_judge_import_with_capability(false)
+}
+
+#[test]
+fn bootstrap_skips_preexisting_holder_without_metadata_or_capability_mutation() -> Result<()> {
+    let (dir, imported, before) = deferred_judge_import_with_capability(true)?;
+    let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::default())?;
+    let provenance_before = vault.skill_hub_provenance_count(&imported)?;
+    drop(vault);
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert_eq!(vault.get_raw(&imported)?, Some(before));
+    assert_eq!(
+        vault.skill_hub_provenance_count(&imported)?,
+        provenance_before
+    );
+    // The existing admitted capability remains in force: the default embedded
+    // package still conflicts when offered through the ordinary import door.
+    let (name, markdown) = FILES[1];
+    let package = package(name, markdown)?;
+    let source = HubRef::new(
+        EntityId::now(),
+        "different-source",
+        HubPin::ContentHash(package.content_hash()?.to_hex()),
+    )?;
+    assert!(matches!(
+        vault.import_skill_from_hub_with_id(
+            &source,
+            &package,
+            EntityId::now(),
+            TimeRange { start: 2, end: 2 },
+            2,
+        ),
+        Err(Error::Artifact(ArtifactError::InvalidSkillBody(_)))
+    ));
+    assert!(vault.get_skill_record(&stable_id("judge")?)?.is_none());
+    Ok(())
 }
 
 #[test]
@@ -186,6 +236,21 @@ fn a_seed_held_under_another_id_is_not_rewritten() -> Result<()> {
             .expect("imported judge")
             .lifecycle_status,
         SkillLifecycle::Candidate,
+    );
+    Ok(())
+}
+
+#[test]
+fn bootstrap_duplicate_leaves_existing_hub_provenance_unchanged() -> Result<()> {
+    let (dir, imported, before) = deferred_judge_import()?;
+    let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::default())?;
+    let provenance_before = vault.skill_hub_provenance_count(&imported)?;
+    drop(vault);
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert_eq!(vault.get_raw(&imported)?, Some(before));
+    assert_eq!(
+        vault.skill_hub_provenance_count(&imported)?,
+        provenance_before
     );
     Ok(())
 }
