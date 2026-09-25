@@ -242,6 +242,36 @@ async fn lfs_batch_download_returns_actions_and_transfer_basic() {
 }
 
 #[tokio::test]
+async fn lfs_upload_over_the_configured_cap_answers_a_typed_refusal() {
+    let config = SyncServerConfig {
+        max_lfs_object_bytes: Some(1024),
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let bytes = vec![b'x'; 2048];
+    let oid = LfsOid::digest(&bytes);
+    let (status, _, body) = route(
+        &server,
+        request(
+            "PUT",
+            &object_uri(&oid.to_hex()),
+            Some(&writer_token()),
+            Body::from(bytes),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let response = json_body(&body);
+    assert_eq!(response["error"]["code"], "BAD_REQUEST");
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .is_some_and(|s| s.contains("object cap"))
+    );
+    assert_eq!(server.vault.lfs_object(oid).expect("record read"), None);
+}
+
+#[tokio::test]
 async fn lfs_upload_rejects_oid_and_size_mismatch() {
     let (_dir, server) = test_server(secret_config());
     let token = writer_token();

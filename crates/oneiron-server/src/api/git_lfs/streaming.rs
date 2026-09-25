@@ -48,14 +48,16 @@ pub(super) async fn upload(
     vault: Arc<Vault>,
     oid: LfsOid,
     size: Option<u64>,
+    max_object_bytes: Option<u64>,
     body: Body,
     now: u64,
 ) -> Result<LfsPutOutcome, ApiError> {
     let (sender, receiver) = mpsc::channel(2);
     let worker = tokio::task::spawn_blocking(move || {
-        vault.put_lfs_object_stream(
+        vault.put_lfs_object_stream_with_cap(
             oid,
             size,
+            max_object_bytes,
             ChannelReader {
                 receiver,
                 current: Bytes::new(),
