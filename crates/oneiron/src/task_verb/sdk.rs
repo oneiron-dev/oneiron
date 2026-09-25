@@ -63,8 +63,8 @@ pub struct BoardSubscriptionRequest {
 }
 
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> MemoryResult<T> {
-    serde_json::from_value(value)
-        .map_err(|_| MemoryError::bad_request("invalid typed SDK arguments"))
+    serde_path_to_error::deserialize(value)
+        .map_err(|error| MemoryError::bad_request(format!("invalid keyed request: {error}")))
 }
 fn encode<T: Serialize>(value: T) -> MemoryResult<serde_json::Value> {
     serde_json::to_value(value).map_err(|_| MemoryError::bad_request("SDK result encoding failed"))
@@ -120,4 +120,16 @@ fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
     assert!(!AgentVerb::BoardExpand.is_facade());
     assert!(!AgentVerb::Recall.is_mcp());
     assert!(AgentVerb::from_name("not.a.verb").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn a_typed_argument_shape_error_names_its_field() {
+    let error = validate_input(
+        "key_value_search",
+        &serde_json::json!({"namespace_prefix": "a"}),
+    )
+    .expect_err("a string cannot stand in for a namespace sequence");
+    assert_eq!(error.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    assert!(error.message.contains("namespace_prefix"), "{error:?}");
 }

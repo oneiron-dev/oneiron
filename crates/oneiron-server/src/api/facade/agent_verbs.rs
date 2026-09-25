@@ -33,7 +33,6 @@ async fn tasks_ack(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("tasks.ack", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
@@ -50,7 +49,6 @@ async fn tasks_cancel(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("tasks.cancel", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
@@ -86,7 +84,6 @@ async fn tasks_create(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("tasks.create", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -102,7 +99,6 @@ async fn tasks_expand(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("tasks.expand", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
@@ -119,7 +115,6 @@ async fn witness(
     auth.require(CoreScope::Write)?;
 
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("witness", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -135,7 +130,6 @@ async fn claim_upsert(
     auth.require(CoreScope::Write)?;
 
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("claim_upsert", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -157,7 +151,6 @@ async fn recall(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("recall", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -173,7 +166,6 @@ async fn receipts(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("receipts", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -189,7 +181,6 @@ async fn key_value_get(
     auth.require(CoreScope::Read)?;
 
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("key_value_get", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -205,7 +196,6 @@ async fn key_value_put(
     auth.require(CoreScope::Write)?;
 
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("key_value_put", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -221,7 +211,6 @@ async fn key_value_delete(
     auth.require(CoreScope::Write)?;
 
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("key_value_delete", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -237,7 +226,6 @@ async fn key_value_search(
     auth.require(CoreScope::Read)?;
 
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("key_value_search", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -253,7 +241,6 @@ async fn key_value_namespaces(
     auth.require(CoreScope::Read)?;
 
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("key_value_namespaces", &value)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),

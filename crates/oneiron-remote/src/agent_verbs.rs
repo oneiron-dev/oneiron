@@ -23,6 +23,25 @@ impl OneironClient {
             Backend::Remote(client) => client.call(verb, &input),
         }
     }
+    fn typed_agent_verb<R: serde::de::DeserializeOwned>(
+        &self,
+        verb: &str,
+        input: serde_json::Value,
+    ) -> Result<R, MemoryError> {
+        match &self.backend {
+            Backend::Remote(client) => {
+                self.ensure_dispatch_pid()?;
+                oneiron::task_verb::sdk::validate_input(verb, &input)?;
+                client.call(verb, &input)
+            }
+            Backend::Embedded(_) => {
+                let result = self.agent_verb(verb, input)?;
+                serde_json::from_value(result).map_err(|error| crate::error::transport_error(
+                    format!("the embedded SDK answered {verb} with a body this verb could not decode: {error}")
+                ))
+            }
+        }
+    }
     pub fn tasks_ack(
         &self,
         input: &oneiron::task_verb::sdk::TaskRequest,
@@ -33,13 +52,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("tasks.ack", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("tasks.ack", value)
     }
     pub fn tasks_cancel(
         &self,
@@ -51,13 +64,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("tasks.cancel", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("tasks.cancel", value)
     }
     pub fn tasks_check(
         &self,
@@ -69,13 +76,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("tasks.check", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("tasks.check", value)
     }
     pub fn tasks_create(
         &self,
@@ -87,13 +88,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("tasks.create", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("tasks.create", value)
     }
     pub fn tasks_expand(
         &self,
@@ -105,13 +100,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("tasks.expand", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("tasks.expand", value)
     }
     /// Witnesses one conversational turn.
     ///
@@ -129,13 +118,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("witness", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("witness", value)
     }
     /// Upserts one claim through the gated claim-candidate path.
     pub fn claim_upsert(
@@ -149,13 +132,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("claim_upsert", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("claim_upsert", value)
     }
     /// Recalls a memory pack.
     ///
@@ -186,13 +163,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("recall", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("recall", value)
     }
     /// Lists governance receipts, newest first.
     pub fn receipts(
@@ -207,13 +178,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("receipts", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("receipts", value)
     }
     /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
     pub fn key_value_get(
@@ -226,13 +191,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("key_value_get", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("key_value_get", value)
     }
     /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
     pub fn key_value_put(
@@ -245,13 +204,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("key_value_put", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("key_value_put", value)
     }
     /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
     pub fn key_value_delete(
@@ -264,13 +217,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("key_value_delete", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("key_value_delete", value)
     }
     /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
     pub fn key_value_search(
@@ -283,13 +230,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("key_value_search", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("key_value_search", value)
     }
     /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
     pub fn key_value_namespaces(
@@ -302,13 +243,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("key_value_namespaces", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("key_value_namespaces", value)
     }
     pub fn tasks_ask(
         &self,
@@ -320,13 +255,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("tasks.ask", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("tasks.ask", value)
     }
     pub fn tasks_wait(
         &self,
@@ -338,13 +267,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("tasks.wait", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("tasks.wait", value)
     }
     pub fn tasks_answer(
         &self,
@@ -356,13 +279,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("tasks.answer", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("tasks.answer", value)
     }
     pub fn tasks_outcomes(
         &self,
@@ -374,13 +291,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("tasks.outcomes", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("tasks.outcomes", value)
     }
     pub fn rooms_list(
         &self,
@@ -392,13 +303,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("rooms.list", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("rooms.list", value)
     }
     pub fn rooms_messages(
         &self,
@@ -410,13 +315,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("rooms.messages", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("rooms.messages", value)
     }
     pub fn rooms_claim(
         &self,
@@ -428,13 +327,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("rooms.claim", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("rooms.claim", value)
     }
     pub fn rooms_speak(
         &self,
@@ -446,12 +339,6 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        let result = self.agent_verb("rooms.speak", value)?;
-        serde_json::from_value(result).map_err(|_| {
-            crate::error::bad_request(
-                "SDK output decoding failed",
-                &["Report this SDK response mismatch."],
-            )
-        })
+        self.typed_agent_verb("rooms.speak", value)
     }
 }

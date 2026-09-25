@@ -9,6 +9,19 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 class AgentSdkProjectionTests(unittest.TestCase):
+    def test_facade_handler_decodes_each_call_once(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        server = generator.outputs()["crates/oneiron-server/src/api/facade/agent_verbs.rs"]
+        handlers = server.split("async fn ")[1:]
+        self.assertTrue(any("sdk::invoke(" in handler for handler in handlers))
+        for handler in handlers:
+            if "sdk::invoke(" in handler:
+                self.assertNotIn("sdk::validate_input(", handler, handler.split("(", 1)[0])
+        # tasks.check uses facade_input instead of invoke; it still needs admission.
+        self.assertIn('sdk::validate_input("tasks.check", &value)?;', server)
+
     def test_manifest_removal_suppresses_facade_bindings(self):
         spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
         generator = importlib.util.module_from_spec(spec)
