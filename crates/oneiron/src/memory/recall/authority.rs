@@ -8,9 +8,9 @@ impl Memory<'_> {
         crate::gate::ResolvedRetrievalFilter,
         Option<crate::claim::ScopedRead<'_>>,
     )> {
-        // Persist authorization time before the read snapshot; never open a
-        // writer while that snapshot is live.
-        self.vault.store.authorization_now()?;
+        // Resolve the actor before deciding whether this is a grant-bound read.
+        // The trusted owner lane must not write a clock floor during recall:
+        // anonymous off-record reads promise no base-store mutations.
         let txn = self
             .vault
             .store
@@ -49,6 +49,11 @@ impl Memory<'_> {
             None,
         )?;
         drop(txn);
+        if actor_key.is_some() {
+            // Persist grant time before the retrieval snapshot, never while a
+            // read transaction is live. Owner recall needs no grant clock.
+            self.vault.store.authorization_now()?;
+        }
         Ok((filter, actor_key.map(|key| self.vault.scoped_read(key))))
     }
 }
