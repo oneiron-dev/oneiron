@@ -88,6 +88,21 @@ class DenyPolicyTests(unittest.TestCase):
                         find_stale_ignores(deny, lock, root / "db"), [advisory_id]
                     )
 
+    def test_prerelease_unaffected_by_real_advisory_is_stale(self):
+        # RustSec treats a prerelease below an unaffected upper bound as
+        # unaffected, even when the bound does not name that prerelease.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            advisory_id = "RUSTSEC-2023-0074"
+            deny = root / "deny.toml"
+            deny.write_text(
+                '[advisories]\ndb-path = "~/.cargo/advisory-db"\nignore = '
+                f'[{{id = "{advisory_id}", reason = "zerocopy@0.2.1-alpha reviewed"}}]\n'
+            )
+            lock = root / "Cargo.lock"
+            lock.write_text('[[package]]\nname = "zerocopy"\nversion = "0.2.1-alpha"\n')
+            self.assertEqual(find_stale_ignores(deny, lock), [advisory_id])
+
     def test_advisory_semver_ranges(self):
         self.assertTrue(requirement_matches("1.2.3", ">= 1.2.3, < 2.0.0"))
         self.assertFalse(requirement_matches("1.2.3", "> 1.2.3"))
@@ -98,8 +113,10 @@ class DenyPolicyTests(unittest.TestCase):
         self.assertFalse(requirement_matches("1.0.0", "^0"))
         self.assertFalse(requirement_matches("1.0.0", "0"))
         self.assertFalse(requirement_matches("0.9.10", "^0.0"))
+        self.assertTrue(requirement_matches("0.2.1-alpha", "< 0.2.2"))
+        self.assertTrue(requirement_matches("1.2.3-beta", "< 1.2.3"))
         self.assertTrue(requirement_matches("1.2.3-beta", ">=1.2.3-alpha, <1.2.3"))
-        self.assertFalse(requirement_matches("1.2.4-beta", ">=1.2.3-alpha"))
+        self.assertTrue(requirement_matches("1.2.4-beta", ">=1.2.3-alpha"))
         with self.assertRaises(ValueError):
             requirement_matches("1.2.3", "unsupported syntax")
 

@@ -44,12 +44,9 @@ def requirement_matches(version: str, requirement: str) -> bool:
         op, text = match.groups()
         target = version_parts(text)
         clauses.append((op or "^", target))
-    if candidate[1] and not any(
-        target[1] and candidate[0] == target[0] for _, target in clauses
-    ):
-        # Cargo SemVer does not match a prerelease unless the requirement
-        # explicitly names a prerelease of this same major.minor.patch.
-        return False
+    # RustSec advisory ranges compare prereleases by SemVer ordering; they do
+    # not apply Cargo's dependency-selection prerelease opt-in rule. A version
+    # like 0.2.1-alpha is unaffected by an advisory range of "< 0.2.2".
     key = version_key(candidate)
     for op, target in clauses:
         bound = version_key(target)
