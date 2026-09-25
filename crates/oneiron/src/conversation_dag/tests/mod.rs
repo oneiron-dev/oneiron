@@ -3,7 +3,7 @@
 use super::fixtures as support;
 use super::*;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
-use crate::{EdgeActorClass, EdgeKind, EntityId, ErrorKind, WriteActor};
+use crate::{EdgeActorClass, EdgeKind, EntityId, ErrorKind, Vault, WriteActor};
 use proptest::prelude::*;
 use support::*;
 
