@@ -54,6 +54,60 @@ impl LfsPathPolicy for FixedPolicy {
 }
 
 #[test]
+fn an_lfs_upload_spools_inside_the_vault_directory() {
+    let (dir, vault) = open_test_vault_with(embedding_test_config());
+    let staging = dir.path().join("lfs-staging");
+    std::fs::write(&staging, b"not a directory").expect("block staging directory");
+    let bytes = b"staging location proof";
+    let error = vault
+        .put_lfs_object(LfsOid::digest(bytes), bytes, test_time(), LEARNED_AT)
+        .expect_err("spool cannot be created beneath a plain file");
+    assert_eq!(error.kind(), ErrorKind::Io);
+}
+
+#[test]
+fn an_lfs_upload_over_the_set_cap_writes_nothing() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let bytes = vec![b'x'; 2048];
+    let oid = LfsOid::digest(&bytes);
+    let error = vault
+        .put_lfs_object_stream_with_cap(
+            oid,
+            Some(bytes.len() as u64),
+            Some(1024),
+            bytes.as_slice(),
+            test_time(),
+            LEARNED_AT,
+        )
+        .expect_err("operator cap rejects the body");
+    assert_eq!(error.kind(), ErrorKind::InvalidLfsObject);
+    assert!(error.to_string().contains("object cap"));
+    assert_eq!(vault.lfs_object(oid).expect("record read"), None);
+}
+
+#[test]
+fn an_lfs_upload_with_no_cap_set_accepts_a_large_object() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let bytes = vec![b'x'; 8 * 1024 * 1024];
+    let oid = LfsOid::digest(&bytes);
+    let outcome = vault
+        .put_lfs_object_stream_with_cap(
+            oid,
+            Some(bytes.len() as u64),
+            None,
+            bytes.as_slice(),
+            test_time(),
+            LEARNED_AT,
+        )
+        .expect("unset cap allows the full object");
+    assert_eq!(outcome.object.size_bytes, bytes.len() as u64);
+    assert_eq!(
+        vault.lfs_object(oid).expect("record read"),
+        Some(outcome.object)
+    );
+}
+
+#[test]
 fn lfs_oid_digest_matches_sha256() {
     let bytes = b"vault lfs object bytes";
     let expected = Sha256::digest(bytes);

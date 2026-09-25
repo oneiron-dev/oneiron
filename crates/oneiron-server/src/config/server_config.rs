@@ -76,6 +76,8 @@ pub struct SyncServerConfig {
     pub max_ephemeral_snapshot_bytes: usize,
     /// Maximum entity blob size in bytes (M5/M6 bulk + materialization paths).
     pub max_entity_blob: usize,
+    /// Optional per-object LFS upload cap in bytes; unset imposes no limit.
+    pub max_lfs_object_bytes: Option<u64>,
     /// Maximum decompressed BulkTransfer chunk in bytes (M5 Phase-3).
     pub max_bulk_decompressed: usize,
     /// Runtime mode and per-role model routing defaults. The single source of
@@ -105,7 +107,8 @@ impl Default for SyncServerConfig {
             max_ephemeral_payload_bytes: 64 * 1024,   // 64 KB
             max_ephemeral_snapshot_bytes: 256 * 1024, // 256 KB
             max_entity_blob: 64 * 1024,               // 64 KB
-            max_bulk_decompressed: 8 * 1024 * 1024,   // 8 MB
+            max_lfs_object_bytes: None,
+            max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
             runtime: RuntimeConfig::default(),
         }
     }
@@ -174,6 +177,7 @@ impl fmt::Debug for SyncServerConfig {
                 &self.max_ephemeral_snapshot_bytes,
             )
             .field("max_entity_blob", &self.max_entity_blob)
+            .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
             .finish()
@@ -214,6 +218,8 @@ pub struct ServeConfig {
     pub max_ephemeral_payload_bytes: usize,
     pub max_ephemeral_snapshot_bytes: usize,
     pub max_entity_blob: usize,
+    /// Optional per-object LFS upload cap in bytes; unset imposes no limit.
+    pub max_lfs_object_bytes: Option<u64>,
     pub max_bulk_decompressed: usize,
     pub runtime: RuntimeConfig,
     /// The `[embedder]` section, absent until some layer names a key in it.
@@ -263,6 +269,7 @@ impl Default for ServeConfig {
             max_ephemeral_payload_bytes: server.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: server.max_ephemeral_snapshot_bytes,
             max_entity_blob: server.max_entity_blob,
+            max_lfs_object_bytes: server.max_lfs_object_bytes,
             max_bulk_decompressed: server.max_bulk_decompressed,
             runtime: server.runtime,
             embedder: None,
@@ -315,6 +322,7 @@ impl fmt::Debug for ServeConfig {
                 &self.max_ephemeral_snapshot_bytes,
             )
             .field("max_entity_blob", &self.max_entity_blob)
+            .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
             .field("embedder", &self.embedder)
@@ -349,6 +357,7 @@ impl ServeConfig {
             max_ephemeral_payload_bytes: self.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: self.max_ephemeral_snapshot_bytes,
             max_entity_blob: self.max_entity_blob,
+            max_lfs_object_bytes: self.max_lfs_object_bytes,
             max_bulk_decompressed: self.max_bulk_decompressed,
             runtime: self.runtime.clone(),
         };

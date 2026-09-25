@@ -143,6 +143,7 @@ pub(crate) async fn lfs_upload(
         Arc::clone(&server.vault),
         oid,
         declared_size(&headers),
+        server.config.max_lfs_object_bytes,
         body,
         now_secs()?,
     )

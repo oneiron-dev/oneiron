@@ -99,6 +99,7 @@ impl EnvConfig {
         values.max_ephemeral_snapshot_bytes =
             lookup_parse(&mut lookup, "ONEIRON_MAX_EPHEMERAL_SNAPSHOT_BYTES")?;
         values.max_entity_blob = lookup_parse(&mut lookup, "ONEIRON_MAX_ENTITY_BLOB")?;
+        values.max_lfs_object_bytes = lookup_parse(&mut lookup, "ONEIRON_MAX_LFS_OBJECT_BYTES")?;
         values.max_bulk_decompressed = lookup_parse(&mut lookup, "ONEIRON_MAX_BULK_DECOMPRESSED")?;
         values.runtime = lookup_runtime_override(&mut lookup)?;
         values.embedder = lookup_embedder_override(&mut lookup)?;
@@ -375,6 +376,7 @@ struct FileServeConfig {
     max_ephemeral_payload_bytes: Option<usize>,
     max_ephemeral_snapshot_bytes: Option<usize>,
     max_entity_blob: Option<usize>,
+    max_lfs_object_bytes: Option<u64>,
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
     embedder: Option<EmbedderConfigOverride>,
@@ -414,6 +416,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
             max_entity_blob: value.max_entity_blob,
+            max_lfs_object_bytes: value.max_lfs_object_bytes,
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: value.runtime,
             embedder: value.embedder,
@@ -454,6 +457,7 @@ struct PartialServeConfig {
     max_ephemeral_payload_bytes: Option<usize>,
     max_ephemeral_snapshot_bytes: Option<usize>,
     max_entity_blob: Option<usize>,
+    max_lfs_object_bytes: Option<u64>,
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
     embedder: Option<EmbedderConfigOverride>,
@@ -505,6 +509,7 @@ impl fmt::Debug for PartialServeConfig {
                 &self.max_ephemeral_snapshot_bytes,
             )
             .field("max_entity_blob", &self.max_entity_blob)
+            .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
             .field("embedder", &self.embedder)
@@ -600,6 +605,9 @@ impl PartialServeConfig {
         if let Some(value) = self.max_entity_blob {
             resolved.max_entity_blob = value;
         }
+        if let Some(value) = self.max_lfs_object_bytes {
+            resolved.max_lfs_object_bytes = Some(value);
+        }
         if let Some(value) = self.max_bulk_decompressed {
             resolved.max_bulk_decompressed = value;
         }
@@ -665,6 +673,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
             max_entity_blob: value.max_entity_blob,
+            max_lfs_object_bytes: value.max_lfs_object_bytes,
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: runtime_override_from_args(value),
             embedder: embedder_override_from_args(value),
