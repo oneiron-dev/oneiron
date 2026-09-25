@@ -36,6 +36,7 @@ pub(super) fn local_claim_sync_allowed(vault: &Vault, id: &EntityId) -> Result<b
 /// Edge-only endpoints are checked too, including endpoints in other windows.
 pub(super) fn withheld_claim_carriers(
     vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
     entities: &LoroMap,
     edges: &LoroMap,
 ) -> Result<(Vec<String>, HashSet<EntityId>)> {
@@ -59,11 +60,10 @@ pub(super) fn withheld_claim_carriers(
             candidates.extend([src, tgt]);
         }
     });
-    let rtxn = vault.store.env.read_txn()?;
     for id in candidates {
         if !ids.contains(&id)
             && vault
-                .get_raw_in(&rtxn, &id)?
+                .get_raw_in(rtxn, &id)?
                 .is_some_and(|raw| !claim_sync_allowed(&raw))
         {
             ids.insert(id);
