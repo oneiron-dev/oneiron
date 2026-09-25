@@ -501,6 +501,78 @@ fn branch_scope_with_forks_includes_siblings_but_not_retained_sub_sessions() {
     assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
 }
 
+// The cycle is disconnected from the only root but remains within the same
+// conversation. This reaches the Kahn walk, not the multiple-roots guard.
+fn legacy_conversations_with_cycle() -> (tempfile::TempDir, Vault, EntityId, EntityId, EntityId) {
+    let (dir, vault, _unused, _actor) = fixture();
+    let cyclic = EntityId::from_bytes([0x01; 16]).unwrap();
+    let healthy = EntityId::from_bytes([0xfe; 16]).unwrap();
+    let root = EntityId::now();
+    let a = EntityId::now();
+    let b = EntityId::now();
+    let healthy_root = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &cyclic,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("cyclic"),
+        )
+        .put(
+            &healthy,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("healthy"),
+        )
+        .put(&root, ENTITY_TYPE_TURN, time(1), 1, &body("root"))
+        .put(&a, ENTITY_TYPE_TURN, time(2), 2, &body("cycle-a"))
+        .put(&b, ENTITY_TYPE_TURN, time(3), 3, &body("cycle-b"))
+        .put(
+            &healthy_root,
+            ENTITY_TYPE_TURN,
+            time(1),
+            1,
+            &body("healthy-root"),
+        )
+        .edge_checked(&root, &cyclic, 1.0)
+        .edge_checked(&a, &cyclic, 1.0)
+        .edge_checked(&b, &cyclic, 1.0)
+        .edge_checked(&healthy_root, &healthy, 1.0)
+        .edge_with_value_fields(&a, EdgeKind::Parent, &b, super::writes::value(2))
+        .edge_with_value_fields(&b, EdgeKind::Parent, &a, super::writes::value(3))
+        .commit()
+        .unwrap();
+    (dir, vault, cyclic, healthy, healthy_root)
+}
+
+#[test]
+fn maintenance_skips_a_cyclic_conversation_and_migrates_the_rest() {
+    let (_dir, vault, cyclic, healthy, healthy_root) = legacy_conversations_with_cycle();
+    assert!(matches!(
+        vault.migrate_conversation_dag(&cyclic).unwrap_err(),
+        crate::error::Error::Record(crate::error::RecordError::InvalidConversationDag(reason))
+            if reason.contains("cycle")
+    ));
+    let report = vault.maintain().migrate_conversation_dags().run().unwrap();
+    assert_eq!(report.conversation_dags_migrated, 1);
+    assert_eq!(vault.head(&healthy).unwrap(), Some(healthy_root));
+    // The skipped write transaction did not adopt HEAD or mark the cyclic DAG.
+    assert!(matches!(
+        vault.migrate_conversation_dag(&cyclic).unwrap_err(),
+        crate::error::Error::Record(crate::error::RecordError::InvalidConversationDag(_))
+    ));
+}
+
+#[test]
+fn maintenance_names_the_skipped_conversation() {
+    let (_dir, vault, cyclic, _healthy, _healthy_root) = legacy_conversations_with_cycle();
+    let report = vault.maintain().migrate_conversation_dags().run().unwrap();
+    assert_eq!(report.conversation_dags_skipped_invalid, vec![cyclic]);
+}
+
 #[test]
 fn migration_rejects_disconnected_received_roots_without_adopting_the_forest() {
     let (_dir, vault, conv, _actor) = fixture();
@@ -549,7 +621,7 @@ fn migration_rejects_disconnected_received_roots_without_adopting_the_forest() {
     }
     let report = vault.maintain().migrate_conversation_dags().run().unwrap();
     assert_eq!(report.conversation_dags_migrated, 2);
-    assert_eq!(report.conversation_dags_skipped_invalid, 1);
+    assert_eq!(report.conversation_dags_skipped_invalid, vec![conv]);
     for (conversation, turn) in healthy {
         assert_eq!(vault.head(&conversation).unwrap(), Some(turn));
     }
@@ -571,7 +643,7 @@ fn migration_rejects_disconnected_received_roots_without_adopting_the_forest() {
         .unwrap();
     let report = vault.maintain().migrate_conversation_dags().run().unwrap();
     assert_eq!(report.conversation_dags_migrated, 1);
-    assert_eq!(report.conversation_dags_skipped_invalid, 0);
+    assert!(report.conversation_dags_skipped_invalid.is_empty());
     assert!(!vault.migrate_conversation_dag(&conv).unwrap());
     assert_eq!(
         vault
