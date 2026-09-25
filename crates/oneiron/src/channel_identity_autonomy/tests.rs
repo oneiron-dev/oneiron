@@ -16,8 +16,20 @@ fn fixture(
     AuthenticatedOwner,
     ChannelIdentityAutonomyRequest,
 ) {
+    fixture_with_config(rung, embedding_test_config())
+}
+
+fn fixture_with_config(
+    rung: ChannelIdentityAutonomyRung,
+    config: crate::VaultConfig,
+) -> (
+    tempfile::TempDir,
+    Vault,
+    AuthenticatedOwner,
+    ChannelIdentityAutonomyRequest,
+) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), embedding_test_config()).unwrap();
+    let vault = Vault::open(dir.path(), config).unwrap();
     let owner_id = entity(0x51);
     vault
         .put_entity(
@@ -827,6 +839,68 @@ fn authenticated_apply_verify_is_exact_and_idempotent() {
     assert!(
         other
             .apply_channel_identity_autonomy(&request, &owner)
+            .is_err()
+    );
+}
+
+#[test]
+fn autonomy_mode_rejects_expired_read_grant_even_with_historical_at() {
+    let clock = crate::ports::ManualClock::new(1_000);
+    let mut config = embedding_test_config();
+    config.store_clock = clock.bundle();
+    let (_dir, vault, owner, request) =
+        fixture_with_config(ChannelIdentityAutonomyRung::ScopedRead, config);
+    let state = vault
+        .apply_channel_identity_autonomy(&request, &owner)
+        .unwrap();
+    let reference = state.mode.read_grant_ref.unwrap();
+    let mut grant = vault.get_access_grant(&reference).unwrap().unwrap();
+    grant.expires_at = Some(2_000);
+    let mut txn = vault.store.env.write_txn().unwrap();
+    vault
+        .apply_access_grant_body(
+            &mut txn,
+            &reference,
+            1_000,
+            crate::access_grant::encode_access_grant_body(&grant).unwrap(),
+        )
+        .unwrap();
+    txn.commit().unwrap();
+    assert_eq!(
+        vault
+            .get_access_grant(&reference)
+            .unwrap()
+            .unwrap()
+            .expires_at,
+        Some(2_000)
+    );
+    assert!(
+        vault
+            .resolve_channel_identity_autonomy_mode(
+                &request.read_envelope.identity_ref,
+                &request.relationship_context,
+                1_000,
+            )
+            .is_ok()
+    );
+    clock.set(2_100);
+    assert!(
+        vault
+            .resolve_channel_identity_autonomy_mode(
+                &request.read_envelope.identity_ref,
+                &request.relationship_context,
+                1_000,
+            )
+            .is_err()
+    );
+    clock.set(1_900);
+    assert!(
+        vault
+            .resolve_channel_identity_autonomy_mode(
+                &request.read_envelope.identity_ref,
+                &request.relationship_context,
+                1_000,
+            )
             .is_err()
     );
 }

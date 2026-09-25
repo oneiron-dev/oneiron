@@ -315,17 +315,13 @@ impl AccessGrant {
         }
     }
 
-    /// Whether a grant is active at the current wall-clock observation.
-    pub fn is_active(&self) -> bool {
-        self.effective_status_at(crate::unix_seconds_now()) == AccessGrantStatus::Active
-    }
-
     /// Authorizes only this principal, exact space and data type.
     pub fn allows_relationship_read(
         &self,
         principal: EntityId,
         space: EntityId,
         capability: AccessGrantCapability,
+        now: u64,
     ) -> bool {
         let scoped = match self.scope {
             AccessGrantScope::Messages { space_ref }
@@ -334,7 +330,7 @@ impl AccessGrant {
             _ => false,
         };
         self.validate().is_ok()
-            && self.is_active()
+            && self.effective_status_at(now) == AccessGrantStatus::Active
             && self.principal_ref == principal
             && self.capability == capability
             && scoped
@@ -390,9 +386,10 @@ impl AccessGrant {
         principal_ref: &EntityId,
         person_ref: &EntityId,
         persona_ref: &EntityId,
+        now: u64,
     ) -> bool {
         crate::federation::grant_scope::admits_preset(&self.authority_scope, "read")
-            && self.is_active()
+            && self.effective_status_at(now) == AccessGrantStatus::Active
             && self.capability == AccessGrantCapability::CompanionProfileRead
             && self.principal_ref.as_bytes() == principal_ref.as_bytes()
             && self
@@ -411,9 +408,10 @@ impl AccessGrant {
         &self,
         principal_ref: &EntityId,
         calendar_ref: &EntityId,
+        now: u64,
     ) -> Option<DisclosureRung> {
         if !crate::federation::grant_scope::admits_preset(&self.authority_scope, "read")
-            || !self.is_active()
+            || self.effective_status_at(now) != AccessGrantStatus::Active
             || self.capability != AccessGrantCapability::CalendarDisclosureRead
             || self.principal_ref.as_bytes() != principal_ref.as_bytes()
         {

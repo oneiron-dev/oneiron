@@ -9,8 +9,14 @@ use crate::test_util::{embedding_test_config, entity, entity_record, put_policy_
 mod recipient_class;
 
 pub(crate) fn fixture() -> Result<(tempfile::TempDir, Vault, WriteActor, Share)> {
+    fixture_with_config(embedding_test_config())
+}
+
+pub(crate) fn fixture_with_config(
+    config: crate::VaultConfig,
+) -> Result<(tempfile::TempDir, Vault, WriteActor, Share)> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), embedding_test_config())?;
+    let vault = Vault::open(dir.path(), config)?;
     let issuer = WriteActor::new(entity(0x51), EdgeActorClass::Human);
     let share = Share {
         recipient_ref: entity(0x52),

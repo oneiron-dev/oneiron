@@ -40,7 +40,7 @@ fn consent_access_grant_adapter_borrows_legacy_scopes_without_changing_projectio
             let projected =
                 disclosure_grant_from_access_grant(source).expect("project borrowed grant");
             assert_eq!(projected.bound(), &expected);
-            assert_eq!(access_grant_projection_is_active(source), active);
+            assert_eq!(access_grant_projection_is_active(source, 43), active);
             assert_eq!(
                 disclosure_grant_from_access_grant(source).expect("project same borrow again"),
                 projected
@@ -66,7 +66,7 @@ fn consent_access_grant_adapter_borrows_legacy_scopes_without_changing_projectio
                 .kind(),
             ErrorKind::InvalidConsentBound
         );
-        assert!(!access_grant_projection_is_active(&mispaired));
+        assert!(!access_grant_projection_is_active(&mispaired, 43));
     }
 }
 
@@ -107,7 +107,7 @@ fn consent_shared_brief_generic_projection_is_rejected_and_not_active() {
         // Only Vault::resolve_share_for_view may resolve view authority after
         // rereading revocation and current recipient/claim scope. Neither an
         // active snapshot nor a revoked record may enter the generic live set.
-        assert!(!access_grant_projection_is_active(source));
+        assert!(!access_grant_projection_is_active(source, 43));
         assert_eq!(
             encode_access_grant_body(source).expect("encode after rejection"),
             before

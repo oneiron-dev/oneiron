@@ -403,6 +403,7 @@ pub(crate) fn companion_profile_access_grant(
     person_ref: &EntityId,
     persona_ref: &EntityId,
 ) -> Result<Option<EntityId>> {
+    let now = store.clock.now_recorded_at();
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_ACCESS_GRANT, None)? {
         let id = index_entry?;
         let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
@@ -423,7 +424,7 @@ pub(crate) fn companion_profile_access_grant(
                 return Err(Error::CorruptedIndex("access grant body"));
             }
         };
-        if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref) {
+        if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref, now) {
             return Ok(Some(id));
         }
     }

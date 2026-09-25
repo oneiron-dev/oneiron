@@ -88,8 +88,13 @@ fn access_grant_codec_round_trips_scoped_active_grant() -> Result<()> {
     let decoded = decode_access_grant_body(&encoded)?;
 
     assert_eq!(decoded, grant);
-    assert!(decoded.allows_companion_profile_read(&entity(0x51), &entity(0xB1), &entity(0xC1)));
-    assert!(!decoded.allows_companion_profile_read(&entity(0x51), &entity(0xB2), &entity(0xC1)));
+    assert!(decoded.allows_companion_profile_read(&entity(0x51), &entity(0xB1), &entity(0xC1), 43));
+    assert!(!decoded.allows_companion_profile_read(
+        &entity(0x51),
+        &entity(0xB2),
+        &entity(0xC1),
+        43
+    ));
     Ok(())
 }
 
@@ -97,7 +102,12 @@ fn access_grant_codec_round_trips_scoped_active_grant() -> Result<()> {
 fn access_grant_revocation_removes_authorization() -> Result<()> {
     let revoked = test_grant().revoked(60)?;
 
-    assert!(!revoked.allows_companion_profile_read(&entity(0x51), &entity(0xB1), &entity(0xC1)));
+    assert!(!revoked.allows_companion_profile_read(
+        &entity(0x51),
+        &entity(0xB1),
+        &entity(0xC1),
+        43
+    ));
     let encoded = encode_access_grant_body(&revoked)?;
     let decoded = decode_access_grant_body(&encoded)?;
     assert_eq!(decoded.status, AccessGrantStatus::Revoked);
@@ -209,11 +219,13 @@ fn calendar_access_grant_scope_round_trip_preserves_old_tags() -> Result<()> {
         &entity(0x51),
         &entity(0xB1),
         &entity(0xC1),
+        43
     ));
     assert!(!decoded_companion.allows_companion_profile_read(
         &entity(0x52),
         &entity(0xB1),
         &entity(0xC1),
+        43
     ));
 
     // The calendar scope round-trips and authorizes only its audience and calendar.
@@ -222,15 +234,15 @@ fn calendar_access_grant_scope_round_trip_preserves_old_tags() -> Result<()> {
     validate_access_grant_body_bytes(&encoded)?;
     let decoded = decode_access_grant_body(&encoded)?;
     assert_eq!(
-        decoded.calendar_disclosure_rung(&entity(0x52), &entity(0xB2)),
+        decoded.calendar_disclosure_rung(&entity(0x52), &entity(0xB2), 43),
         Some(DisclosureRung::Titles),
     );
     assert_eq!(
-        decoded.calendar_disclosure_rung(&entity(0x51), &entity(0xB2)),
+        decoded.calendar_disclosure_rung(&entity(0x51), &entity(0xB2), 43),
         None,
     );
     assert_eq!(
-        decoded.calendar_disclosure_rung(&entity(0x52), &entity(0xB1)),
+        decoded.calendar_disclosure_rung(&entity(0x52), &entity(0xB1), 43),
         None,
     );
 
@@ -323,20 +335,20 @@ fn calendar_grant_reuses_access_grant_entity_type() {
         AccessGrantCapability::CalendarDisclosureRead
     );
     assert_eq!(
-        grant.calendar_disclosure_rung(&entity(0x52), &entity(0xB2)),
+        grant.calendar_disclosure_rung(&entity(0x52), &entity(0xB2), 43),
         Some(DisclosureRung::Titles)
     );
     // Wrong principal, wrong calendar, and the companion capability all deny.
     assert_eq!(
-        grant.calendar_disclosure_rung(&entity(0x53), &entity(0xB2)),
+        grant.calendar_disclosure_rung(&entity(0x53), &entity(0xB2), 43),
         None
     );
     assert_eq!(
-        grant.calendar_disclosure_rung(&entity(0x52), &entity(0xB3)),
+        grant.calendar_disclosure_rung(&entity(0x52), &entity(0xB3), 43),
         None
     );
     assert_eq!(
-        test_grant().calendar_disclosure_rung(&entity(0x51), &entity(0xB1)),
+        test_grant().calendar_disclosure_rung(&entity(0x51), &entity(0xB1), 43),
         None
     );
     // The calendar scope is not a companion-profile scope.
@@ -385,6 +397,7 @@ fn calendar_grant_registry_lists_and_revokes() {
     assert_eq!(
         project_calendar_grant(
             &revoked,
+            43,
             &reader,
             &calendar,
             &[],
@@ -784,18 +797,19 @@ fn relationship_scopes_and_expiry_fail_closed() -> Result<()> {
             decode_access_grant_body(&encode_access_grant_body(&grant)?)?,
             grant
         );
-        assert!(grant.allows_relationship_read(principal, space, grant.capability));
-        assert!(!grant.allows_relationship_read(principal, entity(0xB2), grant.capability));
+        assert!(grant.allows_relationship_read(principal, space, grant.capability, 43));
+        assert!(!grant.allows_relationship_read(principal, entity(0xB2), grant.capability, 43));
         if grant.capability == AccessGrantCapability::MessagesRead {
             assert!(!grant.allows_relationship_read(
                 principal,
                 space,
-                AccessGrantCapability::SummariesRead
+                AccessGrantCapability::SummariesRead,
+                43
             ));
         }
         grant.expires_at = Some(2);
         assert_eq!(grant.effective_status_at(2), AccessGrantStatus::Expired);
-        assert!(!grant.allows_relationship_read(principal, space, grant.capability));
+        assert!(!grant.allows_relationship_read(principal, space, grant.capability, 2));
         let revoked = grant.revoked(3)?;
         assert_eq!(revoked.effective_status_at(4), AccessGrantStatus::Revoked);
     }
@@ -843,5 +857,64 @@ fn access_scope_migration_rejects_mixed_versions_and_malformed_scope() -> Result
             ErrorKind::InvalidAccessGrantBody
         );
     }
+    Ok(())
+}
+
+fn expiring_share_vault() -> Result<(
+    tempfile::TempDir,
+    crate::Vault,
+    std::sync::Arc<crate::ports::ManualClock>,
+    crate::EntityId,
+    crate::EntityId,
+)> {
+    let clock = crate::ports::ManualClock::new(1_000);
+    let mut config = crate::test_util::embedding_test_config();
+    config.store_clock = clock.bundle();
+    let (dir, vault, issuer, mut share) = crate::share::tests::fixture_with_config(config)?;
+    share.expires_at = Some(2_000);
+    let id = entity(0x81);
+    let recipient = share.recipient_ref;
+    vault.create_share(&id, &issuer, &share)?;
+    Ok((dir, vault, clock, id, recipient))
+}
+
+#[test]
+fn an_expired_grant_stays_expired_after_the_recorded_clock_steps_back() -> Result<()> {
+    let (_dir, vault, clock, id, recipient) = expiring_share_vault()?;
+    assert!(
+        vault
+            .resolve_share_for_view(&id, &recipient, None, &[])?
+            .is_some()
+    );
+    clock.set(2_100);
+    assert!(
+        vault
+            .resolve_share_for_view(&id, &recipient, None, &[])?
+            .is_none()
+    );
+    clock.set(1_900);
+    // StoreClock retains the 2_100 floor even though the injected source stepped back.
+    assert!(
+        vault
+            .resolve_share_for_view(&id, &recipient, None, &[])?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_grant_expiry_follows_the_injected_clock_forward() -> Result<()> {
+    let (_dir, vault, clock, id, recipient) = expiring_share_vault()?;
+    assert!(
+        vault
+            .resolve_share_for_view(&id, &recipient, None, &[])?
+            .is_some()
+    );
+    clock.set(2_001);
+    assert!(
+        vault
+            .resolve_share_for_view(&id, &recipient, None, &[])?
+            .is_none()
+    );
     Ok(())
 }

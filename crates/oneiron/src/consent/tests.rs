@@ -1184,7 +1184,7 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
         access.capability.as_str(),
         "the capability becomes the disclosure class"
     );
-    assert!(access_grant_projection_is_active(&access));
+    assert!(access_grant_projection_is_active(&access, 43));
     let after = crate::access_grant::encode_access_grant_body(&access).expect("encode");
     assert_eq!(
         before, after,

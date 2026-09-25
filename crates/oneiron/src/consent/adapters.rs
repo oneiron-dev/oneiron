@@ -78,9 +78,9 @@ fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>>
 /// `SharedBriefRead` is deliberately excluded even for an active record:
 /// only [`crate::Vault::resolve_share_for_view`] can resolve its live view authority.
 #[must_use]
-pub fn access_grant_projection_is_active(grant: &AccessGrant) -> bool {
+pub fn access_grant_projection_is_active(grant: &AccessGrant, now: u64) -> bool {
     crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read")
-        && grant.is_active()
+        && grant.effective_status_at(now) == crate::access_grant::AccessGrantStatus::Active
         && matches!(
             grant.capability,
             AccessGrantCapability::MessagesRead

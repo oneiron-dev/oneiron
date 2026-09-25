@@ -19,7 +19,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/access_grant/codec.rs` | src | m | 2 fn · 2 const · 21 crate-vis | — | Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec |
 | `src/access_grant/context.rs` | src | m | 3 struct · 3 fn · 1 crate-vis | AccessContext, AccessLimited, GrantedData | Relationship read authority built from live grants and stored membership evidence |
 | `src/access_grant/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | AccessGrant control-plane record substrate |
-| `src/access_grant/record.rs` | src | m | 2 struct · 3 enum · 19 fn | AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow | AccessGrant record and scope, capability, and status enums |
+| `src/access_grant/record.rs` | src | m | 2 struct · 3 enum · 18 fn | AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow | AccessGrant record and scope, capability, and status enums |
 | `src/access_grant/request.rs` | src | s | 1 struct · 1 enum · 3 fn | AccessRequest, AccessRequestStatus | Durable request/response lifecycle |
 | `src/access_grant/tests.rs` | test | L | — | — | — |
 | `src/access_grant/vault_doors.rs` | src | s | 6 fn · 1 crate-vis | — | Vault doors for AccessGrant put, create, revoke, read, and calendar registry |
@@ -2225,7 +2225,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/settings/model_versioning/tests.rs` | test | s | — | — | — |
 | `src/settings/tests.rs` | test | s | — | — | — |
 | `src/share.rs` | src | m | 3 struct · 5 fn · 10 crate-vis | ResolvedShare, Share, ShareViewerScope | Revocable brief read grants |
-| `src/share/tests.rs` | test | m | 1 crate-vis | — | — |
+| `src/share/tests.rs` | test | m | 2 crate-vis | — | — |
 | `src/share/tests/recipient_class.rs` | test | m | — | — | — |
 | `src/skill/codec.rs` | src | m | 2 fn · 3 crate-vis | — | MessagePack encode and decode for SKILL bodies and dependencies |
 | `src/skill/doors.rs` | src | m | 5 fn · 7 crate-vis | — | Typed Vault doors for SKILL records |

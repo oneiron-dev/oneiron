@@ -15,6 +15,7 @@ pub struct AccessContext {
     principal: Option<EntityId>,
     relationships: BTreeSet<EntityId>,
     grants: Vec<AccessGrant>,
+    clock: crate::ports::StoreClock,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -38,10 +39,13 @@ impl AccessContext {
         txn: &heed::RoTxn<'_>,
         principal: Option<EntityId>,
     ) -> Result<Self> {
+        let clock = vault.store.clock.clone();
+        let now = clock.now_recorded_at();
         let mut context = Self {
             principal,
             relationships: BTreeSet::new(),
             grants: Vec::new(),
+            clock,
         };
         if principal.is_none() {
             return Ok(context);
@@ -62,7 +66,9 @@ impl AccessContext {
                 }
                 if kind == ENTITY_TYPE_ACCESS_GRANT {
                     let grant = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-                    if Some(grant.principal_ref) == principal && grant.is_active() {
+                    if Some(grant.principal_ref) == principal
+                        && grant.effective_status_at(now) == super::AccessGrantStatus::Active
+                    {
                         context.grants.push(grant);
                     }
                 } else if raw.len() > ENTITY_METADATA_HEADER_LEN {
@@ -112,12 +118,14 @@ impl AccessContext {
             ENTITY_TYPE_CLAIM => AccessGrantCapability::RelationshipClaimsRead,
             _ => return false,
         };
+        let now = self.clock.now_recorded_at();
         self.grants.iter().any(|grant| {
             grant.allows_relationship_read(
                 self.principal
                     .expect("a grant is loaded only for a bound principal"),
                 space,
                 capability,
+                now,
             )
         })
     }
