@@ -34,6 +34,65 @@ fn call(
         approval_receipt_ref: "approval",
     })
 }
+#[test]
+fn a_feedback_request_with_a_space_posting_sends_nothing() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/ingest", listener.local_addr().unwrap());
+    let mut transport = HttpFeedbackTransport::new(
+        FeedbackDeliveryConfig {
+            destination: FeedbackDestination::Collector,
+            endpoint: url.clone(),
+        },
+        None,
+    )
+    .unwrap();
+    let route = transport.config.route();
+    let intent = OutboundIntent::from_trigger(
+        OutboundIntentDraft::new("actor", &route.verb, &route.channel, &url),
+        OutboundIntentTrigger::agent_immediate("approval"),
+    );
+    let posting = serde_json::from_value(serde_json::json!({
+        "identity_ref": "identity",
+        "space_ref": url,
+        "setting_ref": "setting",
+        "actor_ref": "actor",
+        "preset": "named_participant",
+    }))
+    .unwrap();
+    let execution = OutboundExecutionRequest {
+        intent_ref: "intent",
+        intent: &intent,
+        idempotency_key: Some("intent"),
+        verb_contract: outbound_verb_contract(&route.channel, &route.verb).unwrap(),
+        channel_identity_ref: None,
+        counterparty_ref: None,
+        hygiene_headers: Default::default(),
+        apns_interruption_level: None,
+        calendar_invite: None,
+        space_posting: Some(posting),
+    };
+    let outcome = transport.send_feedback_bundle(&FeedbackTransportRequest {
+        execution: &execution,
+        bundle_bytes: b"approved",
+        bundle_digest: "digest",
+        bundle_encoding: oneiron::feedback::FEEDBACK_BUNDLE_ENCODING,
+        approval_receipt_ref: "approval",
+    });
+    assert_eq!(
+        outcome.kind,
+        oneiron::outbound::OutboundExecutionOutcomeKind::Failed
+    );
+    assert!(!outcome.delivery_may_have_occurred);
+    assert_eq!(
+        transport.last_error(),
+        Some(&FeedbackDeliveryError::RouteMismatch)
+    );
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+    );
+}
+
 fn endpoint(status: u16) -> (String, std::thread::JoinHandle<Vec<u8>>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/ingest", listener.local_addr().unwrap());
