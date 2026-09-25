@@ -336,13 +336,16 @@ pub(super) fn evidence_in(
 }
 
 fn validate_word(group: &AskGroup, word: &TaskAskWord) -> Result<()> {
-    if word.provenance_refs.len() > 64
-        || match &word.option {
-            Some(option) => !group.effective.what.options.contains_key(option),
-            None => !group.effective.what.options.is_empty(),
-        }
-    {
+    if word.provenance_refs.len() > 64 {
         return Err(invalid());
+    }
+    if match &word.option {
+        Some(option) => !group.effective.what.options.contains_key(option),
+        None => !group.effective.what.options.is_empty(),
+    } {
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.ask.option",
+        )));
     }
     Ok(())
 }
@@ -465,6 +468,7 @@ pub(super) fn record_answer(
     body: &super::consult_result::TaskVerbBody,
     actor: crate::WriteActor,
     terminal: &super::TaskTerminalRecord,
+    option: Option<&super::TaskAskOptionId>,
     now: u64,
 ) -> Result<Option<EntityId>> {
     let Some(payload) = &body.consult else {
@@ -492,7 +496,7 @@ pub(super) fn record_answer(
             actor,
             &TaskAskWord {
                 result_ref: terminal.result_ref.ok_or_else(invalid)?,
-                option: None,
+                option: option.cloned(),
                 inform_for: None,
                 provenance_refs: evidence_refs.iter().copied().collect(),
             },

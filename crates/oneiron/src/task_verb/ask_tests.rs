@@ -637,6 +637,80 @@ impl RuledAskFixture {
     }
 }
 
+// A PERSON holder explicitly addressed as a peer is an agent-bound consult TASK.
+fn peer_option_ask() -> Result<(RuledAskFixture, TaskAskHandle, EntityId, EntityId)> {
+    let fixture = RuledAskFixture::new(1)?;
+    let peer = fixture.people[0];
+    let mut spec = fixture.spec();
+    spec.who = Some(TaskAskTarget::Responder(TaskAssignee::Peer {
+        actor_ref: peer,
+    }));
+    let receipt = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask(&spec)?;
+    let task = receipt.task_refs[0];
+    Ok((fixture, receipt.handle, peer, task))
+}
+
+#[test]
+fn consult_result_with_an_option_settles_its_member_task() -> Result<()> {
+    let (fixture, handle, peer, task) = peer_option_ask()?;
+    let yes = TaskAskOptionId::new("yes")?;
+    let input = ConsultResultInput {
+        kind: ConsultResultKind::Answer {
+            result_ref: fixture.question.entity_ref(),
+            option: Some(yes.clone()),
+            evidence_refs: vec![fixture.question],
+        },
+        completed_at: 1_001,
+    };
+    fixture
+        .vault
+        .memory(peer, EdgeActorClass::Agent)
+        .land_consult_result(task, &input)?;
+    assert!(
+        super::wire_decode::task_verb_body(&fixture.vault, task)?
+            .expect("member task")
+            .terminal()
+            .is_some()
+    );
+    let evidence = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask_evidence(handle)?;
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].word.option, Some(yes));
+    Ok(())
+}
+
+#[test]
+fn consult_result_without_an_option_on_an_options_ask_is_refused_before_the_write() -> Result<()> {
+    let (fixture, _handle, peer, task) = peer_option_ask()?;
+    let input = ConsultResultInput {
+        kind: ConsultResultKind::Answer {
+            result_ref: fixture.question.entity_ref(),
+            option: None,
+            evidence_refs: vec![fixture.question],
+        },
+        completed_at: 1_001,
+    };
+    let refused = fixture
+        .vault
+        .memory(peer, EdgeActorClass::Agent)
+        .land_consult_result(task, &input)
+        .expect_err("an options ask needs an option id");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    assert!(refused.suggestions.iter().any(|s| s.contains("option ids")));
+    assert!(
+        super::wire_decode::task_verb_body(&fixture.vault, task)?
+            .expect("member task")
+            .terminal()
+            .is_none()
+    );
+    Ok(())
+}
+
 #[test]
 fn ask_three_replies_one_yes_all_has_coverage_but_no_decision_and_fallback() -> Result<()> {
     let fixture = RuledAskFixture::new(3)?;

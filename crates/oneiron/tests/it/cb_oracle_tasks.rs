@@ -1533,6 +1533,7 @@ mod cb_a {
             let kind = if index < 2 {
                 ConsultResultKind::Answer {
                     result_ref: result_ref.entity_ref(),
+                    option: None,
                     evidence_refs: vec![question],
                 }
             } else {

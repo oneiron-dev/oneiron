@@ -225,6 +225,7 @@ fn result_contract_is_addressed_and_partitioned() {
             &ConsultResultInput {
                 kind: ConsultResultKind::Answer {
                     result_ref,
+                    option: None,
                     evidence_refs: Vec::new(),
                 },
                 completed_at: CONSULT_NOW + 10,
