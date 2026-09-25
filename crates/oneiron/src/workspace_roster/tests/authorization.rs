@@ -140,7 +140,11 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
         )?;
         let before = durable_rows(&vault)?;
         let err = mutate(&vault, &intent, &owner).expect_err(name);
-        assert_eq!(err.kind(), ErrorKind::ActorLacksClaimAuthority, "{name}");
+        assert_eq!(
+            err.kind(),
+            ErrorKind::WriteConcurrentWithRevocation,
+            "{name}"
+        );
         assert_eq!(
             durable_rows(&vault)?,
             before,
@@ -190,7 +194,7 @@ fn final_roster_write_observes_revocation_while_waiting_for_writer_lock() -> Res
     });
     assert_eq!(
         result.expect_err("revoked admin").kind(),
-        ErrorKind::ActorLacksClaimAuthority
+        ErrorKind::WriteConcurrentWithRevocation
     );
     let txn = vault.store.env.read_txn()?;
     assert!(vault.store.vault_meta.get(&txn, &key)?.is_none());
@@ -237,7 +241,7 @@ fn journal_completion_rechecks_authority_after_an_authorized_roster_write() -> R
         None,
     )
     .expect_err("revoked admin cannot publish completion");
-    assert_eq!(err.kind(), ErrorKind::ActorLacksClaimAuthority);
+    assert_eq!(err.kind(), ErrorKind::WriteConcurrentWithRevocation);
     assert_eq!(durable_rows(&vault)?, before);
     assert_eq!(
         read_journal(&vault, &onboarding_key(&intent.onboarding_id))?

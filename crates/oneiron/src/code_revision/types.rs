@@ -1,7 +1,9 @@
 //! Code-revision domain values and their constructors.
 
+use crate::code_document::CodeDocumentFrontier;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use std::collections::BTreeMap;
 
 use super::codec::CODE_REVISION_HASH_LEN;
 use crate::error::ArtifactError;
@@ -42,6 +44,9 @@ pub struct CodeRevision {
     pub reverted_to_revision_id: Option<EntityId>,
     pub provenance_claim_id: Option<EntityId>,
     pub finalized_at: u64,
+    /// Tested per-file states, distinct from the per-session revision frontier.
+    pub file_frontiers: BTreeMap<[u8; 32], CodeDocumentFrontier>,
+    pub commit_metadata: Option<super::CodeCommitMetadata>,
 }
 
 impl CodeRevision {
@@ -55,6 +60,8 @@ impl CodeRevision {
             reverted_to_revision_id: None,
             provenance_claim_id: None,
             finalized_at,
+            file_frontiers: BTreeMap::new(),
+            commit_metadata: None,
         }
     }
 
@@ -86,7 +93,22 @@ impl CodeRevision {
             reverted_to_revision_id: Some(reverted_to_revision_id),
             provenance_claim_id: None,
             finalized_at,
+            file_frontiers: BTreeMap::new(),
+            commit_metadata: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_commit_metadata(mut self, metadata: super::CodeCommitMetadata) -> Self {
+        self.commit_metadata = Some(metadata);
+        self
+    }
+
+    /// Attaches the exact file state tested by the checker.
+    #[must_use]
+    pub fn with_file_frontier(mut self, frontier: CodeDocumentFrontier) -> Self {
+        self.file_frontiers.insert(frontier.document_id, frontier);
+        self
     }
 
     #[must_use]

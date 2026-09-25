@@ -85,7 +85,7 @@ pub fn set_escalation_standing_n(vault: &Vault, n: u32) -> Result<()> {
 /// magnitude band rides a trigger that has no magnitude; plus Δ encode and
 /// storage failures.
 pub fn record_escalation(vault: &Vault, receipt: EscalationReceipt) -> Result<EntityId> {
-    record_escalation_at(vault, receipt, crate::unix_seconds_now())
+    record_escalation_at(vault, receipt, vault.store.clock.now_recorded_at())
 }
 
 /// [`record_escalation`] against a caller-supplied clock.
@@ -101,7 +101,7 @@ pub(crate) fn record_escalation_at(
         )));
     }
     let (ruling, delta) = ruling_parts(&receipt.ruling)?;
-    let id = EntityId::now();
+    let id = vault.store.clock.entity_id()?;
     let key = escalation_key(&scope, &id);
     let row = StoredEscalation {
         v: ROW_VERSION,

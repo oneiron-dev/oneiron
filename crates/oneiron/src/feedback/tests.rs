@@ -3,11 +3,9 @@ use super::*;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::board_verb::BOARD_VERBS;
 use crate::genui::{ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface};
 use crate::outbound::OutboundDispatchOutcome;
 use crate::receipt::{ReceiptKind, ReceiptRecord};
-use crate::task_verb::TASKS_VERBS;
 use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
 
 /// The feedback module source, read at compile time so the network-freedom and
@@ -330,13 +328,20 @@ fn policy_manifest(actor_ref: &str, channel: &str, verbs: &[&str]) -> Vec<u8> {
                 ),
                 (
                     Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::effect_preset(),
+                    )
+                    .expect("scope fixture"),
+                ),
+                (
+                    Value::from("selectors"),
                     Value::Map(vec![(Value::from("channel"), Value::from(channel))]),
                 ),
             ])
         })
         .collect::<Vec<_>>();
     encode_generic(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("feedback-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (
@@ -1556,14 +1561,7 @@ fn feedback_verb_registration_is_local_and_exact() {
     assert_eq!(FeedbackVerb::Send.as_str(), FEEDBACK_SEND_VERB);
     assert!(FEEDBACK_VERBS.contains(&FeedbackVerb::Send.as_str()));
 
-    assert!(
-        !TASKS_VERBS.contains(&FEEDBACK_SEND_VERB),
-        "feedback does not join the agent-visible task verb surface"
-    );
-    assert!(
-        !BOARD_VERBS.contains(&FEEDBACK_SEND_VERB),
-        "feedback does not join the agent-visible board verb surface"
-    );
+    assert!(crate::task_verb::sdk::AgentVerb::from_name(FEEDBACK_SEND_VERB).is_none());
 }
 
 // ----------------------------------------------------------- module cohesion
@@ -1584,4 +1582,46 @@ fn feedback_module_owns_its_own_wire_and_domain_tokens() {
         feedback_logical_send_ref(preview.digest(), "consent:x"),
         format!("feedback-send:{}:consent:x", preview.digest())
     );
+}
+
+#[test]
+fn configured_destinations_keep_exact_preview_and_independent_consent() {
+    for channel in ["feedback_cloud", "feedback_collector", "feedback_github"] {
+        let (_dir, vault) = temp_vault();
+        let agent = entity(0xBA);
+        vault
+            .put_entity(
+                &agent,
+                crate::registry::ENTITY_TYPE_PERSON,
+                crate::TimeRange { start: 1, end: 1 },
+                1,
+                b"actor",
+            )
+            .unwrap();
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest_bytes(
+            &vault,
+            entity(0xBB),
+            &policy_manifest(actor.actor_ref.as_deref().unwrap(), channel, &["send"]),
+        )
+        .unwrap();
+        let route = FeedbackSendRoute::new(channel, "send", "https://example.test/feedback");
+        let preview = preview_of(full_bundle());
+        let approval = approved_for(&preview, &FeedbackApprovalScope::Send(route.clone()));
+        let context = send_context(route, actor);
+        let mut transport = RecordingTransport::default();
+        let sent = send_feedback(&vault, &preview, &context, &approval, &mut transport).unwrap();
+        assert_eq!(
+            sent.dispatch.outcome,
+            OutboundDispatchOutcome::DeliveredToChannel
+        );
+        assert_eq!(transport.payloads, vec![preview.bytes.clone()]);
+        let mut other = context.clone();
+        other.route.target.push_str("/other");
+        assert!(matches!(
+            send_feedback(&vault, &preview, &other, &approval, &mut transport),
+            Err(FeedbackError::StalePreviewDigest { .. })
+        ));
+        assert_eq!(transport.payloads.len(), 1);
+    }
 }

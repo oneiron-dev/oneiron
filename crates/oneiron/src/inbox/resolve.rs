@@ -1,20 +1,24 @@
 //! Write-side inbox bulk bundle consent, approve-with-edit, and bundle-reopen doors.
 
-use sha2::{Digest, Sha256};
+use crate::ports::EntityStoreRead;
+use sha2::Digest;
+use sha2::Sha256;
 
 use crate::Vault;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edit_distance::delta::{
     AmendmentDelta, DeltaCaptureContext, OUTCOME_APPROVED_AMENDED, attach_amendment_deltas,
     capture_delta_best, put_amendment_delta_in_txn,
 };
+use crate::edit_distance::miner::{CompilationTarget, record_inbox_learning_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::gate_decision_receipt;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord};
 use crate::temporal::TimeRange;
+use crate::write_envelope::WriteActor;
 
 use super::model::{
     INBOX_BUNDLE_ACTOR_CLASS, INBOX_BUNDLE_CONTENT_KIND, INBOX_BUNDLE_REF_PREFIX,
@@ -55,7 +59,7 @@ impl Vault {
         group_key: &str,
         verb: InboxBulkVerb,
     ) -> Result<InboxBundleResolution> {
-        self.resolve_inbox_group_at(group_key, verb, None, crate::unix_seconds_now())
+        self.resolve_inbox_group_at(group_key, verb, None, self.store.clock.now_recorded_at())
     }
 
     /// Applies one bulk verb to a group: B2 RS6 bundle consent at
@@ -80,6 +84,33 @@ impl Vault {
         verb_class: Option<&str>,
         now: u64,
     ) -> Result<InboxBundleResolution> {
+        self.resolve_inbox_group_bound_at(group_key, verb, verb_class, now, None)
+    }
+
+    /// Resolves consent as a host-authenticated human and captures that
+    /// principal's learning evidence atomically. `target` is an explicit
+    /// host classification, not permission to install a rule. The old door
+    /// records no principal and contributes no preference influence.
+    pub fn resolve_inbox_group_as_at(
+        &self,
+        actor: WriteActor,
+        group_key: &str,
+        verb: InboxBulkVerb,
+        target: &CompilationTarget,
+        now: u64,
+    ) -> Result<InboxBundleResolution> {
+        target.validate()?;
+        self.resolve_inbox_group_bound_at(group_key, verb, None, now, Some((actor, target)))
+    }
+
+    fn resolve_inbox_group_bound_at(
+        &self,
+        group_key: &str,
+        verb: InboxBulkVerb,
+        verb_class: Option<&str>,
+        now: u64,
+        learning: Option<(WriteActor, &CompilationTarget)>,
+    ) -> Result<InboxBundleResolution> {
         let group = explicit_inbox_group(self, group_key, now)?.ok_or(Error::EntityNotFound)?;
 
         let mut targets = Vec::new();
@@ -98,6 +129,9 @@ impl Vault {
 
         let bundle_ref = bundle_ref_for_group(&group.group_key);
         let (bundle_record, item_records, vad_claim_ids) = self.with_write_txn(|wtxn| {
+            if let Some((actor, _)) = learning {
+                self.verify_owner_write_actor_in_txn(wtxn, &actor)?;
+            }
             let mut item_records = Vec::new();
             let mut vad_claim_ids = Vec::new();
             let mut basis: Vec<GateDecisionRecord> = Vec::new();
@@ -107,13 +141,17 @@ impl Vault {
                 match verb {
                     InboxBulkVerb::AcceptAll => {
                         if let Some(accepted) =
-                            accept_member_in_txn(self, wtxn, &id, &bundle_ref, now)?
+                            accept_member_in_txn(self, wtxn, &id, &bundle_ref, now, learning)?
                         {
                             vad_claim_ids.extend(accepted.vad_claim_id);
                             item_records.push(accepted.record);
                         }
                     }
                     InboxBulkVerb::RejectAll => {
+                        let reviewed = self.get_claim_in_txn(wtxn, &id)?;
+                        if let Some(reviewed) = &reviewed {
+                            require_preference_decider(reviewed, learning)?;
+                        }
                         if let Some(record) = self.store.close_pending_gate_consent_in_txn(
                             wtxn,
                             &id,
@@ -122,6 +160,18 @@ impl Vault {
                             vec![INBOX_REASON_BUNDLE_REJECT.to_owned()],
                             Some(bundle_ref.clone()),
                         )? {
+                            if let (Some((actor, target)), Some(reviewed)) =
+                                (learning, reviewed.as_ref())
+                            {
+                                record_inbox_learning_in_txn(
+                                    self,
+                                    wtxn,
+                                    &record,
+                                    reviewed,
+                                    actor.entity_ref(),
+                                    target,
+                                )?;
+                            }
                             item_records.push(record);
                         }
                     }
@@ -201,7 +251,11 @@ impl Vault {
         claim_id: &EntityId,
         amended_body: &[u8],
     ) -> Result<InboxAmendedApproval> {
-        self.approve_inbox_member_with_edit_at(claim_id, amended_body, crate::unix_seconds_now())
+        self.approve_inbox_member_with_edit_at(
+            claim_id,
+            amended_body,
+            self.store.clock.now_recorded_at(),
+        )
     }
 
     /// Testable variant of [`Vault::approve_inbox_member_with_edit`] with an
@@ -216,32 +270,35 @@ impl Vault {
         amended_body: &[u8],
         now: u64,
     ) -> Result<InboxAmendedApproval> {
+        self.approve_inbox_member_bound_at(claim_id, amended_body, now, None)
+    }
+
+    /// Actor-bound amendment intake. The principal and classification are
+    /// captured with the measured delta, never inferred from the generator.
+    pub fn approve_inbox_member_with_edit_as_at(
+        &self,
+        actor: WriteActor,
+        claim_id: &EntityId,
+        amended_body: &[u8],
+        target: &CompilationTarget,
+        now: u64,
+    ) -> Result<InboxAmendedApproval> {
+        target.validate()?;
+        self.approve_inbox_member_bound_at(claim_id, amended_body, now, Some((actor, target)))
+    }
+
+    fn approve_inbox_member_bound_at(
+        &self,
+        claim_id: &EntityId,
+        amended_body: &[u8],
+        now: u64,
+        learning: Option<(WriteActor, &CompilationTarget)>,
+    ) -> Result<InboxAmendedApproval> {
         let (approval, vad_claim_id) = self.with_write_txn(|wtxn| {
-            let accepted = accept_member_with_amendment_in_txn(
-                self,
-                wtxn,
-                claim_id,
-                None,
-                now,
-                Some(amended_body),
-            )?
-            .ok_or(Error::EntityNotFound)?;
-            let mut receipt = gate_decision_receipt(&accepted.record);
-            // The Δ rides the same attach pass every receipt query uses, so
-            // the door's own return and a later query cannot disagree about
-            // it — and it rides it INSIDE the write txn, which is what keeps
-            // the returned Result honest. Enriching after the commit meant a
-            // read failure reported Err on a consent decision that had
-            // already landed; here the same failure rolls it back.
-            attach_amendment_deltas(self, wtxn, std::slice::from_mut(&mut receipt))?;
-            Ok((
-                InboxAmendedApproval {
-                    claim_id: claim_id.to_hex(),
-                    receipt,
-                    delta: accepted.delta,
-                },
-                accepted.vad_claim_id,
-            ))
+            if let Some((actor, _)) = learning {
+                self.verify_owner_write_actor_in_txn(wtxn, &actor)?;
+            }
+            self.approve_inbox_member_with_edit_in_txn(wtxn, claim_id, amended_body, now, learning)
         })?;
         if let Some(claim_id) = vad_claim_id {
             self.consolidate_claim_vad_now(&claim_id, now)?;
@@ -249,11 +306,47 @@ impl Vault {
         Ok(approval)
     }
 
+    pub(crate) fn approve_inbox_member_with_edit_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claim_id: &EntityId,
+        amended_body: &[u8],
+        now: u64,
+        learning: Option<(WriteActor, &CompilationTarget)>,
+    ) -> Result<(InboxAmendedApproval, Option<EntityId>)> {
+        let accepted = accept_member_with_amendment_in_txn(
+            self,
+            wtxn,
+            claim_id,
+            None,
+            now,
+            Some(amended_body),
+            learning,
+        )?
+        .ok_or(Error::EntityNotFound)?;
+        let mut receipt = gate_decision_receipt(&accepted.record);
+        // The Δ rides the same attach pass every receipt query uses, so
+        // the door's own return and a later query cannot disagree about
+        // it — and it rides it INSIDE the write txn, which is what keeps
+        // the returned Result honest. Enriching after the commit meant a
+        // read failure reported Err on a consent decision that had
+        // already landed; here the same failure rolls it back.
+        attach_amendment_deltas(self, wtxn, std::slice::from_mut(&mut receipt))?;
+        Ok((
+            InboxAmendedApproval {
+                claim_id: claim_id.to_hex(),
+                receipt,
+                delta: accepted.delta,
+            },
+            accepted.vad_claim_id,
+        ))
+    }
+
     /// RS3 door: reopens the group behind a bundle receipt reference
     /// (`bundle:dreamer_run:<key>` or `dreamer_run:<key>`), returning the
     /// still-open remainder plus every receipt its bundles emitted.
     pub fn reopen_inbox_group(&self, door_ref: &str) -> Result<InboxGroupReopen> {
-        self.reopen_inbox_group_at(door_ref, crate::unix_seconds_now())
+        self.reopen_inbox_group_at(door_ref, self.store.clock.now_recorded_at())
     }
 
     /// Testable variant of [`Vault::reopen_inbox_group`] with an explicit
@@ -295,8 +388,9 @@ fn accept_member_in_txn(
     id: &EntityId,
     bundle_ref: &str,
     now: u64,
+    learning: Option<(WriteActor, &CompilationTarget)>,
 ) -> Result<Option<AcceptedMember>> {
-    accept_member_with_amendment_in_txn(vault, wtxn, id, Some(bundle_ref), now, None)
+    accept_member_with_amendment_in_txn(vault, wtxn, id, Some(bundle_ref), now, None, learning)
 }
 
 /// One accepted member: the resolution decision plus the Δ its amendment
@@ -326,6 +420,7 @@ fn accept_member_with_amendment_in_txn(
     bundle_ref: Option<&str>,
     now: u64,
     amended_body: Option<&[u8]>,
+    learning: Option<(WriteActor, &CompilationTarget)>,
 ) -> Result<Option<AcceptedMember>> {
     let Some(pending) = vault.store.pending_gate_consent_in_txn(wtxn, id)? else {
         return Ok(None);
@@ -336,14 +431,15 @@ fn accept_member_with_amendment_in_txn(
     else {
         return Err(Error::CorruptedIndex("pending gate consent"));
     };
-    let Some(raw) = vault.store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(raw) = vault.store.port_entity_record(wtxn, id)? else {
         return Err(Error::CorruptedIndex("pending gate consent"));
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_CLAIM {
+
+    if raw.entity_type != ENTITY_TYPE_CLAIM {
         return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
     }
-    let reviewed = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    let reviewed = crate::claim::decode_claim_body(&raw.body, true)?;
+    require_preference_decider(&reviewed, learning)?;
 
     let (diff_handle, read_frontier_hash) =
         crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &reviewed)?;
@@ -354,6 +450,15 @@ fn accept_member_with_amendment_in_txn(
     let amended = amended_body
         .map(|body| amended_claim_body(&reviewed, body))
         .transpose()?;
+    if let Some(amended) = &amended
+        && crate::edit_distance::miner::is_mined_preference(&reviewed.predicate)
+        && crate::claim::claim_principal_id(amended)?
+            != crate::claim::claim_principal_id(&reviewed)?
+    {
+        return Err(Error::InvalidClaimBody(
+            "amendment changes the preference principal",
+        ));
+    }
     let amended_approval = amended.is_some();
     // Both sides are normalized to Approved before the Δ is measured, so it
     // reports the DECIDER's edit and not the approval flip this door performs
@@ -365,39 +470,55 @@ fn accept_member_with_amendment_in_txn(
         (None, Vec::new())
     };
 
-    if amended_approval || reviewed.approval != ClaimApprovalStatus::Approved {
-        apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            vec![BatchOp::Put {
-                id: *id,
-                entity_type: ENTITY_TYPE_CLAIM,
-                occurred: TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                },
-                learned_at: header.learned_at,
-                data: approved,
-                allow_maintenance: false,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
+    if amended_approval && learning.is_some() {
+        // The owner authenticated this exact edit after the original binding
+        // was checked above. Rebind only its content, inside the same txn;
+        // the gate still evaluates the edited body under the live policy.
+        // An unbound caller cannot relabel a generated proposal's consent.
+        rebind_amended_consent(vault, wtxn, &pending, &approved)?;
     }
+    if amended_approval || reviewed.approval != ClaimApprovalStatus::Approved {
+        let unamended = approved == approved_body(&reviewed)?;
+        let put = BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred: TimeRange {
+                start: raw.occurred.start,
+                end: raw.occurred.end,
+            },
+            learned_at: raw.learned_at,
+            data: approved,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        };
+        if unamended {
+            crate::batch::ClaimMaterialization::apply_approval(vault, wtxn, put, true)?;
+        } else {
+            // The approver rewrote the text: the landed body has no single author.
+            apply_ops(
+                &vault.store,
+                &vault.config,
+                &vault.analyzer,
+                wtxn,
+                vec![put],
+                vault
+                    .text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                true,
+            )?;
+        }
+    }
+
+    vault.complete_deferred_claim_in_txn(wtxn, id, false, now)?;
 
     // The gated rewrite may already have redeemed and removed the tray row;
     // the delete is idempotent either way.
     vault.store.delete_pending_gate_consent_in_txn(wtxn, id)?;
     let record = GateDecisionRecord {
         version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
+        decision_id: crate::store::GateDecisionId::from_bytes(vault.store.clock.ulid()?),
         created_at: now,
         outcome: if amended_approval {
             OUTCOME_APPROVED_AMENDED.to_owned()
@@ -425,6 +546,9 @@ fn accept_member_with_amendment_in_txn(
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(wtxn, &record)?;
+    if let Some((actor, target)) = learning {
+        record_inbox_learning_in_txn(vault, wtxn, &record, &reviewed, actor.entity_ref(), target)?;
+    }
 
     if let Some(delta) = delta.as_ref() {
         put_amendment_delta_in_txn(
@@ -519,7 +643,7 @@ fn append_bundle_decision_in_txn(
 
     let record = GateDecisionRecord {
         version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
+        decision_id: crate::store::GateDecisionId::from_bytes(vault.store.clock.ulid()?),
         created_at: now,
         outcome: verb.bundle_outcome().to_owned(),
         reason_codes,
@@ -542,4 +666,38 @@ fn append_bundle_decision_in_txn(
     };
     vault.store.append_gate_decision_in_txn(wtxn, &record)?;
     Ok(record)
+}
+
+/// A learned rule is reviewed by its own audience, not by another human whose
+/// proposals happened to be grouped into the same Dreamer run.
+fn require_preference_decider(
+    body: &ClaimBody,
+    learning: Option<(WriteActor, &CompilationTarget)>,
+) -> Result<()> {
+    if crate::edit_distance::miner::is_mined_preference(&body.predicate)
+        && let Some(principal) = crate::claim::claim_principal_id(body)?
+        && learning.map(|(actor, _)| actor.entity_ref()) != Some(principal)
+    {
+        return Err(Error::InvalidClaimBody(
+            "learned preference requires its bound principal",
+        ));
+    }
+    Ok(())
+}
+
+fn rebind_amended_consent(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    pending: &crate::store::PendingGateConsentRecord,
+    approved: &[u8],
+) -> Result<()> {
+    let edited = crate::claim::decode_claim_body(approved, true)?;
+    let (diff_handle, read_frontier_hash) =
+        crate::gate::claim_consent_binding_parts(&vault.store, txn, &edited)?;
+    let mut redemption = pending.clone();
+    redemption.diff_handle = diff_handle;
+    redemption.read_frontier_hash = read_frontier_hash;
+    vault
+        .store
+        .put_pending_gate_consent_in_txn(txn, &redemption)
 }

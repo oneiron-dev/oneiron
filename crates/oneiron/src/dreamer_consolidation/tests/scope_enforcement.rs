@@ -239,6 +239,7 @@ fn derive_id(
         facts.world,
         facts.facet,
         facts.rel,
+        facts.topic.as_deref(),
     );
     Ok(())
 }
@@ -297,7 +298,7 @@ fn scoped_signals_preserve_ranking_and_filter_foreign_and_private_refs() -> Resu
     )?;
     let diary = EntityId::now();
     let diary_body = crate::note::encode_note_body(&crate::note::NoteBody {
-        kind: crate::note::NoteKind::Diary,
+        kind: crate::note::NoteKind::parse("diary").expect("shipped kind"),
         author_ref: author,
         markdown: "private graph evidence".to_owned(),
         source_revision_ref: [1; 16],
@@ -383,6 +384,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
     for resolution in ["accumulate", "merge", "missing", "unlisted"] {
         let (_dir, vault) =
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        grant_fixture_reads(&vault)?;
         let store = DreamerRunnerStore::new(&vault);
         let (attempt, turns, _) =
             admitted_attempt_fixture(&vault, &store, 0x46, &[("user", "two related facts")])?;
@@ -402,20 +404,23 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             "value": "same text", "evidence_turn_refs": [turns[0].to_hex()]}),
             );
         }
+        let judge = text_response(match resolution {
+            "accumulate" => serde_json::json!({"resolution":"accumulate"}),
+            "merge" => serde_json::json!({"resolution":"merge", "candidate_ref":selected_id.to_hex(), "value":"selected alias"}),
+            "missing" => serde_json::json!({"resolution":"merge", "value":"unbound"}),
+            _ => serde_json::json!({"resolution":"merge", "candidate_ref":EntityId::now().to_hex(), "value":"unlisted"}),
+        }.to_string());
+        // The non-native JSON shim rejects unlisted identities before decode,
+        // including both paid corrective attempts. Other refusals are semantic.
+        let judge_attempts = if resolution == "unlisted" { 3 } else { 1 };
+        let mut replies = vec![Ok(text_response(
+            serde_json::json!({"candidates": items}).to_string(),
+        ))];
+        replies.extend((0..judge_attempts).map(|_| Ok(judge.clone())));
         let backend = ScopeBackend {
-        seen: Mutex::new(Vec::new()),
-        inner: ScriptedBackend::new(vec![
-            Ok(text_response(
-                serde_json::json!({"candidates": items}).to_string(),
-            )),
-            Ok(text_response(match resolution {
-                "accumulate" => serde_json::json!({"resolution":"accumulate"}),
-                "merge" => serde_json::json!({"resolution":"merge", "candidate_ref":selected_id.to_hex(), "value":"selected alias"}),
-                "missing" => serde_json::json!({"resolution":"merge", "value":"unbound"}),
-                _ => serde_json::json!({"resolution":"merge", "candidate_ref":EntityId::now().to_hex(), "value":"unlisted"}),
-            }.to_string())),
-        ]),
-    };
+            seen: Mutex::new(Vec::new()),
+            inner: ScriptedBackend::new(replies),
+        };
         let guard = crate::BudgetGuard::with_reserve_units(
             "wake",
             10_000,
@@ -440,14 +445,19 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             now_ms: 21_000,
         };
         let result = block_on_ready(executor.execute(&attempt, &mut ctx));
-        if matches!(resolution, "missing" | "unlisted") {
-            assert!(result.is_err());
+        if resolution == "missing" {
+            assert!(matches!(result, Err(Error::InvalidClaimBody(_))));
+        } else if resolution == "unlisted" {
+            assert!(matches!(result?, DreamerAttemptExecution::Park { .. }));
         } else {
             assert!(matches!(result?, DreamerAttemptExecution::Completed { .. }));
         }
         drop(executor);
         // Different predicate keys only reach this judge through stored cosine input.
-        assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            backend.inner.calls.load(Ordering::SeqCst),
+            1 + judge_attempts
+        );
         assert_eq!(
             sink.accepted.len(),
             match resolution {
@@ -463,7 +473,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             );
         }
         let scopes = backend.seen.lock().unwrap();
-        assert_eq!(scopes[0], scopes[1]);
+        assert!(scopes.iter().all(|scope| scope == &scopes[0]));
     }
     Ok(())
 }
@@ -738,6 +748,16 @@ fn graph_signals_enforce_relationship_and_exact_project_slice() -> Result<()> {
     let (attempt, turns, _) = admitted_attempt_fixture(&vault, &store, 0x48, &[("user", "slice")])?;
     let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
     let relationship = EntityId::now();
+    let other_relationship = EntityId::now();
+    for id in [relationship, other_relationship] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            occurred(1),
+            1,
+            b"relationship fixture",
+        )?;
+    }
     let subject = EntityId::now();
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"subject")?;
     let author = EntityId::now();
@@ -763,7 +783,7 @@ fn graph_signals_enforce_relationship_and_exact_project_slice() -> Result<()> {
     for (rel, pinned) in [
         (Some(relationship), true),
         (None, true),
-        (Some(EntityId::now()), true),
+        (Some(other_relationship), true),
         (Some(relationship), false),
     ] {
         let id = EntityId::now();
@@ -1080,5 +1100,39 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             assert!(sink.accepted[0].evidence_turn_refs.contains(&next_turn));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn admitted_branch_does_not_infer_read_authority_from_its_queue() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, turns, _) =
+        admitted_attempt_fixture(&vault, &store, 0x49, &[("user", "read grant required")])?;
+    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    assert!(matches!(
+        BranchResources::open(
+            &vault,
+            vault.dreamer_authority()?,
+            partition,
+            &turns,
+            attempt.status.attempt.id,
+            None,
+        ),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    grant_fixture_reads(&vault)?;
+    let branch = BranchResources::open(
+        &vault,
+        vault.dreamer_authority()?,
+        partition,
+        &turns,
+        attempt.status.attempt.id,
+        None,
+    )?;
+    assert_eq!(
+        branch.turn(branch.scope(), &turns[0])?.text.as_deref(),
+        Some("read grant required")
+    );
     Ok(())
 }

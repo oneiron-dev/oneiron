@@ -21,6 +21,7 @@ pub(crate) fn fixture() -> Result<(tempfile::TempDir, Vault, WriteActor, Share)>
         status: AccessGrantStatus::Active,
         created_at: 42,
         revoked_at: None,
+        expires_at: None,
     };
     vault.put_entity(
         &issuer.entity_ref(),
@@ -64,6 +65,13 @@ fn policy(
             (Value::from("effector"), Value::from("external:share_brief")),
             (
                 Value::from("scope"),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::effect_preset(),
+                )
+                .unwrap(),
+            ),
+            (
+                Value::from("selectors"),
                 Value::Map(vec![(Value::from("channel"), Value::from("shared_brief"))]),
             ),
         ]));
@@ -74,11 +82,18 @@ fn policy(
             Value::from(share.recipient_ref.to_hex()),
         ),
         (Value::from("effector"), Value::from("core:read")),
-        (Value::from("scope"), read_scope.unwrap_or(Value::Nil)),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .unwrap(),
+        ),
+        (Value::from("selectors"), read_scope.unwrap_or(Value::Nil)),
         (Value::from("receipt_required"), Value::Boolean(false)),
     ]));
     let value = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("brief-share-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (
@@ -601,5 +616,28 @@ fn include_unscoped_is_conjunctive_in_both_dimensions() -> Result<()> {
             .visible_claim_refs,
         vec![candidates[3]]
     );
+    Ok(())
+}
+
+#[test]
+fn sharing_a_brief_leaves_its_facet_stamp_unchanged() -> Result<()> {
+    let (_dir, vault, issuer, mut share) = fixture()?;
+    let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
+    memory.bless_brief_kind().expect("brief kind");
+    let brief = memory
+        .author_brief("shared brief", &[])
+        .expect("brief NOTE");
+    let brief = EntityId::from_hex(&brief.id_hex)?;
+    let default = vault.default_facet()?;
+    share.brief_ref = format!("brief:{}", brief.to_hex());
+    vault.create_share(&entity(0x82), &issuer, &share)?;
+    let stamps: Vec<_> = vault
+        .edges_out(&brief)?
+        .into_iter()
+        .filter(|edge| edge.kind == crate::edge::EdgeKind::FacetOf)
+        .map(|edge| edge.target)
+        .collect();
+
+    assert_eq!(stamps, vec![default]);
     Ok(())
 }

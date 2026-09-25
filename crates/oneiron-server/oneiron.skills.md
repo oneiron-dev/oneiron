@@ -83,11 +83,12 @@ await self.memory.put_claim(/* claim */); // first-party trap: gate-checked writ
 const projection = await self.context({ /* projection descriptor */ });
 ```
 
-`execute_code` is the code-mode entry a host supplies. This release registers it on
-no endpoint and refuses a direct call with `execute_code_unavailable`, so the
-dispatcher above is the code-mode surface. Do not install the HTTP client for this
-lane: the dispatcher already speaks the same wire, actor identity, and Gate that
-this pack documents.
+`execute_code` is the code-mode entry a host supplies. A server registers it only
+after binding a verified runtime, backend and budget lease; an unconfigured server
+lists it nowhere and refuses a direct call with `code_host_unbound` before any run
+is created. Either way the dispatcher above is the code-mode surface. Do not
+install the HTTP client for this lane: the dispatcher already speaks the same wire,
+actor identity, and Gate that this pack documents.
 
 ## Lane: thin-client
 
@@ -170,11 +171,11 @@ which endpoint a connector reaches is a registration the operator makes.
 One credential travels, in the standard header: `Authorization: Bearer <credential>`.
 
 - **Owner-grade** — the configured trust-root secret sent verbatim, or a minted token carrying no narrowing claims. Required by the legacy `/api/*` routes and the `/ws` sync upgrade, which read the whole vault.
-- **Scoped** — a minted token of the form `v2.<claims>.<mac>`, where `<claims>` is `scope=…[;principal_ref=…][;jti=<hex32>]`. Accepted on `/v1/core/*` and companion control-plane routes with exactly the scopes it names. Mint one with `oneiron token mint --scope core:read[,…] [--principal-ref <hex32>]`.
+- **Scoped** — a paired slip `v2.slip.<hex>`, sent with a fresh `x-oneiron-binding` holder proof `{"timestamp","nonce","signature"}` signed by its connection key on every request. Accepted on `/v1/core/*` and companion control-plane routes with exactly the verbs it carries. Create a one-hour pairing link with `oneiron-server token pair --scope core:read[,…] --principal-ref <hex32> [--actor-class human]` and redeem it once at `POST /v1/core/pairing/redeem`; the SDKs' `pair(link)` does both halves.
 
 The claims are visible but not editable: they are authenticated by a MAC keyed on the server's secret, which appears in no token. Editing, widening, or deleting the claims invalidates the token. Every authentication failure — absent, malformed, wrong MAC, unknown claim, revoked — returns the same `UNAUTHORIZED`; the response never says which.
 
-Every token minted by the current `token mint` carries a `jti`, its identity: mint always attaches one. The claim itself is optional in the grammar, because tokens minted before the identity claim existed are still authentic and still resolve — they simply have no id to revoke, and rotation is the only lever that retires them. A `jti` narrows nothing on its own: a token whose only claim is its id stays owner-grade. `token mint` prints the token on stdout and its id on stderr. Two mints of identical claims produce two distinct tokens, so one can be revoked without touching the other.
+Every paired slip carries a slip id, its identity. Two pairings of identical claims produce two distinct slips, so one can be revoked without touching the other. A slip without its connection key authenticates nothing: the holder proof, not the slip, is what each request spends.
 
 **Revoking one token.** `oneiron token revoke --jti <hex32>`. Its own explicit act, on one named token, effective immediately on every route including the owner-grade ones; idempotent, and it reports `{"revoked": false}` when the id was already revoked. It does not affect any other token, whatever claims they share.
 
@@ -381,47 +382,20 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "enqueue goodbye artifact"
 - safety: Mutating teardown endpoint. Requires companion register write auth and an idempotency key for retries; skips the goodbye-artifact hook when the request marks the ending as bad.
 
-#### consumer-usage - `GET /v1/consumer/usage`
-
-- when-to-use: Read consumer usage counters, credited allowance, remaining balance, and explicit allowance warning state for a tenant or tenant/vault scope.
-- trigger phrases:
-  - "show consumer usage"
-  - "check allowance balance"
-  - "read allowance warning"
-- safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
-
-#### consumer-usage-details - `GET /v1/consumer/usage/details`
-
-- when-to-use: Read consumer usage details with agent, model, and service breakdowns alongside the same allowance and warning state.
-- trigger phrases:
-  - "show detailed consumer usage"
-  - "break down consumer usage"
-  - "inspect usage by service"
-- safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
-
-#### consumer-top-up - `POST /v1/consumer/top-up`
-
-- when-to-use: Credit a tenant allowance without payment-processor integration, replaying by top-up idempotency key on retries.
-- trigger phrases:
-  - "top up allowance"
-  - "add consumer credits"
-  - "credit tenant usage allowance"
-- safety: Mutating. Requires auth. The request body idempotency key records each tenant top-up once; no external payment processor is called.
-
 #### usage-event - `POST /v1/usage/events`
 
-- when-to-use: Submit tenant usage telemetry for cost and credit-unit calculation. Local and BYO sources return a no-debit response; Oneiron Cloud mode records each idempotency key once.
+- when-to-use: Submit per-owner, per-vault meter facts stamped with provider-list money, currency, and price-table snapshot. Local and BYO routes return an unrecorded response; hosted mode records each idempotency key once.
 - trigger phrases:
   - "record usage telemetry"
-  - "calculate credit units"
-  - "submit tenant usage event"
-- safety: Mutating only in Oneiron Cloud debit mode. Requires auth. Include an event idempotency key when retrying after transport failure.
+  - "record provider list cost"
+  - "submit vault usage event"
+- safety: Mutating only in hosted metered mode. Requires auth. Include an event idempotency key when retrying after transport failure. An existing key cannot be reused with changed facts.
 
-#### usage-rollup - `GET /v1/usage/tenants/{tenant_id}/rollup`
+#### usage-rollup - `GET /v1/usage/owners/{owner}/vaults/{vault_id}/rollup`
 
-- when-to-use: Read tenant-wide usage totals, or pass a vault id query parameter to read one tenant/vault rollup with agent, model, and service breakdowns.
+- when-to-use: Read one vault's usage totals, grouped by provider currency, with agent, model, and service breakdowns. There is no owner-wide aggregate or wallet route.
 - trigger phrases:
-  - "show tenant usage"
+  - "show vault usage"
   - "read vault usage rollup"
   - "break down usage by model"
 - safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
@@ -487,6 +461,36 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "MCP booking operations"
 - safety: One tool, four ops — `availability`, `book`, `reschedule`, `cancel`. Requires a connector credential whose actor matches the request and a live scoped-MCP grant naming this server, this tool, and this operation. The grant authorizes the tool call and nothing more; caps, revalidation, and dispatch gates still apply.
 
+#### facade-key-value-get - `POST /v1/core/facade/key_value_get`
+
+- when-to-use: Read exact actor-owned worldless long-term keys or namespaces.
+- trigger phrases: "key value get", "long-term namespace memory"
+- safety: Requires an actor-bound slip and `core:read`. No actor selector, world wildcard, or owner erasure authority.
+
+#### facade-key-value-put - `POST /v1/core/facade/key_value_put`
+
+- when-to-use: Mutate exact actor-owned worldless long-term keys through the claim gate.
+- trigger phrases: "key value put", "long-term namespace memory"
+- safety: Requires an actor-bound slip and `core:write`. No actor selector, world wildcard, or owner erasure authority.
+
+#### facade-key-value-delete - `POST /v1/core/facade/key_value_delete`
+
+- when-to-use: Mutate exact actor-owned worldless long-term keys through the claim gate.
+- trigger phrases: "key value delete", "long-term namespace memory"
+- safety: Requires an actor-bound slip and `core:write`. No actor selector, world wildcard, or owner erasure authority.
+
+#### facade-key-value-search - `POST /v1/core/facade/key_value_search`
+
+- when-to-use: Read exact actor-owned worldless long-term keys or namespaces.
+- trigger phrases: "key value search", "long-term namespace memory"
+- safety: Requires an actor-bound slip and `core:read`. No actor selector, world wildcard, or owner erasure authority.
+
+#### facade-key-value-namespaces - `POST /v1/core/facade/key_value_namespaces`
+
+- when-to-use: Read exact actor-owned worldless long-term keys or namespaces.
+- trigger phrases: "key value namespaces", "long-term namespace memory"
+- safety: Requires an actor-bound slip and `core:read`. No actor selector, world wildcard, or owner erasure authority.
+
 ## Tier-2: Endpoint Details
 
 Fetch Tier-2 only after a Tier-1 block matches the task. This tier expands parameters, defaults, and representative responses by endpoint name without repeating route literals.
@@ -521,7 +525,7 @@ Example response:
   "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
   "rate_limit": {
     "api_enforced": false,
-    "websocket_enforced": true,
+    "websocket_enforced": false,
     "max_messages_per_sec": 30,
     "max_windows_per_connection": 16,
     "max_frame_size_bytes": 1048576,
@@ -722,7 +726,7 @@ Request body:
 - `limit` optional: max returned items, default `10`.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
-- `depth` optional: `minimal`, `standard`, or `deep`; default `minimal`.
+- `depth` optional: `light`, `medium`, `high`, `xhigh`, or `max`; default `light`.
 
 Response:
 
@@ -1119,9 +1123,65 @@ Disclosure: availability answers carry ranked public slots and nothing else. Cal
 descriptions, attendees, busy sources, and free/busy internals are not representable in any booking
 response.
 
+### Keyed memory facade
+
+The five `facade-key-value-*` endpoints use the same engine DTOs as the SDK.
+Every request requires a credential with both `principal_ref` and `actor_class`.
+Read endpoints require `core:read`; put and delete require `core:write`.
+All are bound to that exact actor/class and WORLDLESS claims. Requests deny
+unknown fields; omitted scope never means all worlds.
+
+| Endpoint name | Body | Response |
+|---|---|---|
+| facade-key-value-get | `KeyValueAddress` | `KeyValueItem` or `null` |
+| facade-key-value-put | `KeyValuePut` | `{item, replayed, receipt_ref}` |
+| facade-key-value-delete | `KeyValueAddress` | `{existed, receipt_refs}` |
+| facade-key-value-search | `KeyValueSearch` | array of `KeyValueItem` |
+| facade-key-value-namespaces | `KeyValueNamespaces` | array of namespace string arrays |
+
+Puts use canonical gated claim candidates and same-transaction supersession.
+Default source is `generated`. Review-required puts fail and roll back instead
+of returning a proposed claim as a successful write. A request ID binds one
+actor/class/address/source/value revision; reuse is an identical retry only
+while that revision remains current. Reuse after supersession or deletion is
+`INVALID_STATE`, not resurrection. Delete is claim retraction, not physical
+or owner-authorized erasure. An absent key returns `existed: false`.
+
+Search applies exact namespace segment prefixes and exact top-level value
+field equality. Operators and semantic queries are unsupported. Results sort
+lexically by namespace then key; offset applies after filtering. Namespace
+listing applies exact prefix/suffix, optional depth truncation, deduplication,
+then lexical pagination. Each page is one snapshot, not a cross-page snapshot.
+
 ## Tier-3: Schemas And Error Catalog
 
 Fetch Tier-3 only when writing validation code, generating clients, or recovering from a specific error. This tier contains reusable schemas and the structured error catalog.
+
+### Keyed memory schemas
+
+These objects use snake_case JSON keys and reject unknown fields. Namespace
+segments are nonempty strings, at most 32 segments and 4096 UTF-8 bytes total;
+NUL and the wildcard segment `"*"` are rejected. Keys are nonempty strings up
+to 4096 UTF-8 bytes with no NUL. Empty prefixes/suffixes select all namespaces
+of the bound actor/class, not other actors or worlds.
+
+- `KeyValueAddress`: required `namespace: string[]`, `key: string`.
+- `KeyValuePut`: address fields plus required `value: object`,
+  `request_id: string` (1–128 bytes, no NUL); optional `source: string`, default
+  `generated`, from the canonical claim-source vocabulary. Payload cap: 64 KiB.
+- `KeyValueItem`: address fields plus `value: object`, `created_at: integer`,
+  `updated_at: integer` (Unix seconds), `revision: string` (canonical claim ID).
+- `KeyValueSearch`: optional `namespace_prefix: string[]` (default `[]`),
+  `filter: object|null` (exact field equality), `limit: integer` (default 100,
+  1–1000), `offset: integer` (default 0, 0–1000000).
+- `KeyValueNamespaces`: optional `prefix: string[]`, `suffix: string[]`
+  (both default `[]`), `max_depth: integer|null` (1–32), and the same limit/offset.
+
+The facade's existing `{error:{code,message,requestId,suggestions}}` envelope
+carries failures verbatim. `BAD_REQUEST` rejects invalid selectors/payloads;
+`FORBIDDEN` includes the real claim-gate refusal; `INVALID_STATE` rejects stale
+request replay or conflicting current heads. No new error-code vocabulary or
+storage type byte is added.
 
 ### Common Schemas
 
@@ -1400,3 +1460,25 @@ Closed code catalog currently emitted by server API code:
 - Missing entity: do not invent a record. Report no record and keep any search result as stale or deleted.
 - Idempotency conflict: reuse the original body for the same key, or generate a fresh key for a new mutation attempt.
 - Internal server error: retry later and inspect server logs if repeated.
+
+
+## First-run self-hosted embedder onboarding
+
+Ask once whether the user wants `local`, `endpoint`, or `none`.
+Local downloads the pinned Harrier model (~1.2 GB) and uses ~0.7 GB steady memory.
+Use `oneiron-server init <vault-path> --config <config-path> --embedder local`.
+For an existing OpenAI-compatible server, add `--embedder endpoint --embedder-endpoint <url>`
+and its `--embedder-model-key <served-key>`. A non-default model also needs
+`--embedder-model-id <model_id@revision> --dimensions <dimensions>`.
+For a network endpoint, also supply `--embedder-fallback-endpoint <loopback-url>`
+serving the same model for on-device fallback and query embedding. Init defaults network URLs
+to `third-party`; use `--embedder-locality owner-server` only for owner-controlled infrastructure.
+Ask for egress authorization: pass `--embedder-egress-allow <entity-id,...>` for selected rows,
+or `--embedder-egress-allow-all` only after the user explicitly authorizes all embeddable rows.
+Interactive init asks for the fallback and consent. A missing consent refuses before vault creation.
+Locality, HTTPS, and per-entity egress checks still apply; this does not install an endpoint server.
+Keys come from an environment variable named by `--embedder-api-key-env NAME`.
+Never put key values in argv, chat, or TOML. `--embedder none` keeps lexical-only operation.
+Run `oneiron-server serve --config <config-path>` with the file init reports.
+Do not reimplement the config write or model download. Hosted provisioning passes
+these flags noninteractively and does not ask the user.

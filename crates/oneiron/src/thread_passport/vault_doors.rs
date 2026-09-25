@@ -35,81 +35,87 @@ impl Vault {
         &self,
         input: ThreadPassportInput,
     ) -> Result<ThreadPassportResolution> {
-        self.with_write_txn(|wtxn| {
-            require_channel_identity(self, wtxn, input.identity_ref)?;
-            let before = ThreadState::load(self, wtxn)?;
-            let existing = before.logical_rows().into_iter().find(|row| {
-                row.passport.identity_ref == input.identity_ref
-                    && row.passport.message_id == input.message_id
-            });
-            let mut roots = BTreeSet::new();
-            for message in std::iter::once(&input.message_id).chain(input.reference_chain()) {
-                if let Some(thread) = before.message_threads.get(message) {
-                    roots.insert(thread.clone());
-                }
+        self.with_write_txn(|txn| self.record_thread_passport_in_txn(txn, input))
+    }
+
+    pub(crate) fn record_thread_passport_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: ThreadPassportInput,
+    ) -> Result<ThreadPassportResolution> {
+        require_channel_identity(self, wtxn, input.identity_ref)?;
+        let before = ThreadState::load(self, wtxn)?;
+        let existing = before.logical_rows().into_iter().find(|row| {
+            row.passport.identity_ref == input.identity_ref
+                && row.passport.message_id == input.message_id
+        });
+        let mut roots = BTreeSet::new();
+        for message in std::iter::once(&input.message_id).chain(input.reference_chain()) {
+            if let Some(thread) = before.message_threads.get(message) {
+                roots.insert(thread.clone());
             }
-            let chosen = roots
-                .first()
-                .cloned()
-                .unwrap_or_else(|| input.message_id.minted_thread_ref());
-            let passport = existing.as_ref().map_or_else(
-                || ThreadPassport {
-                    identity_ref: input.identity_ref,
-                    message_id: input.message_id.clone(),
-                    thread_ref: chosen,
-                    mask: input.mask(),
-                    observed_at: input.observed_at,
-                },
-                |row| row.passport.clone(),
-            );
-            let mut references = input.references.clone();
-            let mut seen = BTreeSet::new();
-            references.retain(|reference| seen.insert(reference.clone()));
-            // Replays keep every original passport field. New header evidence
-            // is append-only so concurrent observations cannot overwrite each
-            // other through the entity-id CRDT. Logical readers deduplicate.
-            let already_recorded = before.rows.iter().any(|row| {
-                row.passport.identity_ref == input.identity_ref
-                    && row.passport.message_id == input.message_id
-                    && references
-                        .iter()
-                        .all(|reference| row.references.contains(reference))
-                    && input
-                        .in_reply_to
-                        .as_ref()
-                        .is_none_or(|parent| row.in_reply_to.as_ref() == Some(parent))
-            });
-            if !already_recorded {
-                put_passport_claim(
-                    self,
-                    wtxn,
-                    &passport,
-                    &references,
-                    input.in_reply_to.as_ref(),
-                )?;
-            }
-            let after = ThreadState::load(self, wtxn)?;
-            let canonical_thread_ref = resolve_thread_alias(&after.edges, &passport.thread_ref)?;
-            let aliased_thread_refs: Vec<_> = roots
-                .into_iter()
-                .filter(|thread| *thread != canonical_thread_ref)
-                .collect();
-            // Evidence lands before its derived receipts, in the same txn.
-            for from in &aliased_thread_refs {
-                put_alias_claim(
-                    self,
-                    wtxn,
-                    input.identity_ref,
-                    from,
-                    &canonical_thread_ref,
-                    input.observed_at,
-                )?;
-            }
-            Ok(ThreadPassportResolution {
-                passport,
-                canonical_thread_ref,
-                aliased_thread_refs,
-            })
+        }
+        let chosen = roots
+            .first()
+            .cloned()
+            .unwrap_or_else(|| input.message_id.minted_thread_ref());
+        let passport = existing.as_ref().map_or_else(
+            || ThreadPassport {
+                identity_ref: input.identity_ref,
+                message_id: input.message_id.clone(),
+                thread_ref: chosen,
+                mask: input.mask(),
+                observed_at: input.observed_at,
+            },
+            |row| row.passport.clone(),
+        );
+        let mut references = input.references.clone();
+        let mut seen = BTreeSet::new();
+        references.retain(|reference| seen.insert(reference.clone()));
+        // Replays keep every original passport field. New header evidence
+        // is append-only so concurrent observations cannot overwrite each
+        // other through the entity-id CRDT. Logical readers deduplicate.
+        let already_recorded = before.rows.iter().any(|row| {
+            row.passport.identity_ref == input.identity_ref
+                && row.passport.message_id == input.message_id
+                && references
+                    .iter()
+                    .all(|reference| row.references.contains(reference))
+                && input
+                    .in_reply_to
+                    .as_ref()
+                    .is_none_or(|parent| row.in_reply_to.as_ref() == Some(parent))
+        });
+        if !already_recorded {
+            put_passport_claim(
+                self,
+                wtxn,
+                &passport,
+                &references,
+                input.in_reply_to.as_ref(),
+            )?;
+        }
+        let after = ThreadState::load(self, wtxn)?;
+        let canonical_thread_ref = resolve_thread_alias(&after.edges, &passport.thread_ref)?;
+        let aliased_thread_refs: Vec<_> = roots
+            .into_iter()
+            .filter(|thread| *thread != canonical_thread_ref)
+            .collect();
+        // Evidence lands before its derived receipts, in the same txn.
+        for from in &aliased_thread_refs {
+            put_alias_claim(
+                self,
+                wtxn,
+                input.identity_ref,
+                from,
+                &canonical_thread_ref,
+                input.observed_at,
+            )?;
+        }
+        Ok(ThreadPassportResolution {
+            passport,
+            canonical_thread_ref,
+            aliased_thread_refs,
         })
     }
 

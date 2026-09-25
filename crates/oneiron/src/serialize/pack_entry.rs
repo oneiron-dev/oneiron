@@ -53,6 +53,7 @@ pub struct SerializeConfig {
 pub(super) struct PreparedEntity {
     pub(super) entity_type: u8,
     pub(super) score: f32,
+    pub(super) critical: bool,
     pub(super) source: PreparedEntitySource,
     pub(super) source_id: [u8; 16],
     pub(super) id: String,
@@ -67,6 +68,7 @@ pub(super) enum PreparedEntitySource {
 
 #[derive(Debug, Clone)]
 pub(super) struct PreparedPack {
+    pub(super) l2_base: Option<crate::context_pack::L2BaseSummary>,
     pub(super) merged: bool,
     pub(super) results: Vec<(GroupKey, Vec<PreparedEntity>)>,
     pub(super) neighbors: Vec<(GroupKey, Vec<PreparedEntity>)>,
@@ -77,11 +79,22 @@ pub(super) type PreparedGroups = Vec<(GroupKey, Vec<PreparedEntity>)>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SerializedPackTelemetry {
+    pub(crate) has_l2_base: bool,
     pub(crate) result_ids: Vec<[u8; 16]>,
     pub(crate) stats: PackStats,
 }
 
 pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
+    let sanitized;
+    let pack = if matches!(
+        config.format,
+        PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini
+    ) {
+        sanitized = super::provider_codecs::sanitize_pack(pack);
+        &sanitized
+    } else {
+        pack
+    };
     let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
     serialize_prepared_pack(pack, config, prepared)
 }
@@ -90,6 +103,16 @@ pub(crate) fn serialize_pack_with_telemetry(
     pack: &ContextPack,
     config: &SerializeConfig,
 ) -> (Vec<u8>, SerializedPackTelemetry) {
+    let sanitized;
+    let pack = if matches!(
+        config.format,
+        PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini
+    ) {
+        sanitized = super::provider_codecs::sanitize_pack(pack);
+        &sanitized
+    } else {
+        pack
+    };
     let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
     let telemetry = serialize_prepared_pack_telemetry(&prepared);
     let bytes = serialize_prepared_pack(pack, config, prepared);
@@ -104,6 +127,7 @@ pub fn project_pack_for_json_response(
 ) -> ContextPack {
     let prepared = prepare_pack(&pack, config, true);
     let stats = prepared.stats.clone();
+    pack.l2_base = prepared.l2_base.clone();
     let mut projected_results = HashMap::<[u8; 16], Vec<(String, Value)>>::new();
     let mut projected_neighbors = HashMap::<[u8; 16], Vec<(String, Value)>>::new();
     collect_projected_json_rows(
@@ -146,7 +170,7 @@ fn apply_projected_json_rows(
     entities: Vec<ContextEntity>,
     mut projected_rows: HashMap<[u8; 16], Vec<(String, Value)>>,
 ) -> Vec<ContextEntity> {
-    entities
+    let mut projected: Vec<_> = entities
         .into_iter()
         .filter_map(|mut entity| {
             let fields = projected_rows.remove(entity.id.as_bytes())?;
@@ -155,21 +179,57 @@ fn apply_projected_json_rows(
             }
             Some(entity)
         })
-        .collect()
+        .collect();
+    projected.sort_by(|a, b| {
+        b.critical
+            .cmp(&a.critical)
+            .then_with(|| b.score.total_cmp(&a.score))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    projected
 }
 
 pub(super) fn serialize_prepared_pack(
     pack: &ContextPack,
     config: &SerializeConfig,
-    prepared: PreparedPack,
+    mut prepared: PreparedPack,
 ) -> Vec<u8> {
-    match config.format {
-        PackFormat::Json => serialize_json(pack, config, prepared),
+    let empty =
+        prepared.results.is_empty() && prepared.neighbors.is_empty() && prepared.l2_base.is_none();
+    let l2_base = prepared.l2_base.clone();
+    let mut handles = super::handles::Handles::new(pack, &mut prepared);
+    if !matches!(config.format, PackFormat::Json | PackFormat::Toon) {
+        handles.rows(&mut prepared.results, config.format != PackFormat::Yaml);
+        handles.rows(&mut prepared.neighbors, config.format != PackFormat::Yaml);
+    }
+    let bytes = match config.format {
+        PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini => {
+            super::provider_codecs::serialize_provider(config.format, prepared)
+        }
+        PackFormat::Json => serialize_json(pack, config, prepared, &mut handles),
         PackFormat::Yaml => serialize_yaml(config, prepared).into_bytes(),
-        PackFormat::Toon => serialize_toon(config, prepared).into_bytes(),
+        PackFormat::Toon => serialize_toon(config, prepared, &mut handles).into_bytes(),
         PackFormat::Markdown => serialize_markdown(config, prepared).into_bytes(),
         PackFormat::Plaintext => serialize_plaintext(config, prepared).into_bytes(),
+    };
+    let bytes = super::l2_prefix::with_l2_prefix(l2_base.as_ref(), config.format, bytes);
+    if empty
+        && !matches!(
+            config.format,
+            PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini
+        )
+        && config.budget > 0
+        && crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER
+            .count(std::str::from_utf8(&bytes).expect("serialized UTF-8"))
+            > config.budget
+    {
+        return if config.format == PackFormat::Json {
+            b"{}".to_vec()
+        } else {
+            Vec::new()
+        };
     }
+    bytes
 }
 
 fn serialize_prepared_pack_telemetry(prepared: &PreparedPack) -> SerializedPackTelemetry {
@@ -181,6 +241,7 @@ fn serialize_prepared_pack_telemetry(prepared: &PreparedPack) -> SerializedPackT
         .map(|entity| entity.source_id)
         .collect();
     SerializedPackTelemetry {
+        has_l2_base: prepared.l2_base.is_some(),
         result_ids,
         stats: prepared.stats.clone(),
     }
@@ -232,7 +293,12 @@ pub fn compressed_code_run_output_preview(raw: &[u8], max_chars: usize) -> (Stri
     (preview, truncated)
 }
 
-fn serialize_json(pack: &ContextPack, config: &SerializeConfig, prepared: PreparedPack) -> Vec<u8> {
+fn serialize_json(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+    prepared: PreparedPack,
+    handles: &mut super::handles::Handles,
+) -> Vec<u8> {
     let stats = prepared.stats.clone();
     let mut root = Map::new();
 
@@ -266,16 +332,22 @@ fn serialize_json(pack: &ContextPack, config: &SerializeConfig, prepared: Prepar
         root.insert("empty".to_owned(), value);
     }
 
-    serde_json::to_vec(&Value::Object(root)).unwrap_or_else(|_| b"{}".to_vec())
+    let mut value = Value::Object(root);
+    handles.value(&mut value);
+    serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec())
 }
 
-fn serialize_toon(config: &SerializeConfig, prepared: PreparedPack) -> String {
+fn serialize_toon(
+    config: &SerializeConfig,
+    prepared: PreparedPack,
+    handles: &mut super::handles::Handles,
+) -> String {
     let mut out = String::new();
     if prepared.merged {
-        out.push_str(&encode_toon_section(&prepared.results));
+        out.push_str(&encode_toon_section(&prepared.results, handles));
     } else {
-        let results = encode_toon_section(&prepared.results);
-        let neighbors = encode_toon_section(&prepared.neighbors);
+        let results = encode_toon_section(&prepared.results, handles);
+        let neighbors = encode_toon_section(&prepared.neighbors, handles);
 
         if !results.is_empty() {
             out.push_str(&results);

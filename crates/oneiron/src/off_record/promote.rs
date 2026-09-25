@@ -11,10 +11,10 @@ use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, TxnBatchBuilder, parse_short_id_value};
+use crate::batch::TxnBatchBuilder;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+
 use crate::session_overlay::PromotePlan;
 use crate::store::{GateDecisionRecord, Store};
 
@@ -66,21 +66,9 @@ impl<'store> FloorWrites<'store> {
         learned_at: u64,
         body: &[u8],
     ) -> Result<()> {
-        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-        payload.extend_from_slice(&crate::deletion::receipt_envelope_header(learned_at));
-        payload.extend_from_slice(body);
-        self.store
-            .entities
-            .put(wtxn, receipt_id.as_bytes(), &payload)?;
-
-        let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, receipt_id);
-        self.store.type_index.put(wtxn, &type_key, &[])?;
-        let temporal_key = Store::encode_temporal_key(learned_at, receipt_id);
-        self.store
-            .temporal_occurred_start
-            .put(wtxn, &temporal_key, &[])?;
-        self.store.temporal_learned.put(wtxn, &temporal_key, &[])?;
-        Ok(())
+        crate::ports::EntityStoreMaintenance::port_redaction_audit_append(
+            self.store, self, wtxn, receipt_id, learned_at, body,
+        )
     }
 }
 
@@ -225,6 +213,11 @@ impl FloorWrites<'_> {
         plan: &PromotePlan,
         promoted_at: u64,
     ) -> Result<PromoteOutcome> {
+        // Defense at the only overlay-to-base replay door, before even a
+        // durable retry receipt can answer on behalf of an anonymous room.
+        if let Some(record) = self.store.off_record_sessions.record(session_ref) {
+            record.mode.write_target().require_recording(session_ref)?;
+        }
         let turn = plan.turn();
         let receipt_key = off_record_promote_key(&turn);
         if let Some(stored) = self.store.vault_meta.get(wtxn, &receipt_key)? {
@@ -246,14 +239,11 @@ impl FloorWrites<'_> {
 
         let mut short_id_mapping = Vec::with_capacity(plan.temporary_short_ids.len());
         for (id, temporary) in &plan.temporary_short_ids {
-            let canonical = self
-                .store
-                .short_ids_reverse
-                .get(wtxn, id.as_bytes())?
-                .ok_or(Error::InvariantViolation(
-                    "promotion replay left a promoted entity without a canonical short id",
-                ))?;
-            let (canonical, _content_hash) = parse_short_id_value(&canonical)?;
+            let (canonical, _content_hash) =
+                crate::ports::ShortIdStoreRead::port_short_id_reference(self.store, wtxn, id)?
+                    .ok_or(Error::InvariantViolation(
+                        "promotion replay left a promoted entity without a canonical short id",
+                    ))?;
             short_id_mapping.push((temporary.clone(), canonical.to_owned()));
         }
 

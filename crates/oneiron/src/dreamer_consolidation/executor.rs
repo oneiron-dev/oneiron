@@ -99,11 +99,14 @@ impl ConsolidationExecutor<'_> {
             run_id: run_id_ref.cloned(),
             envelope_actor: self.actor,
             subject: partition.conversation_ref,
-            pinned_config: None,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
         };
-        let request = self.extraction_request(&partition, &transcript, resources.scope());
+        let mut request = self.extraction_request(&partition, &transcript, resources.scope());
+        ctx.vault.bind_model_role(
+            crate::llm::manifest::ModelRole::ExtractionTeacher,
+            &mut request,
+        )?;
         let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await?;
         let (response, spent) = match outcome {
             StepOutcome::Finished { response, .. } => {
@@ -180,6 +183,10 @@ impl ConsolidationExecutor<'_> {
         let assembled = super::assembly::assemble(ctx.vault, resources, candidates, ctx.now_ms)?;
         let candidates = assembled.candidates;
         let conflicts = assembled.conflicts;
+        let policy = {
+            let txn = ctx.vault.store.env.read_txn().map_err(crate::Error::from)?;
+            crate::gate::resolve_policy_manifest(&ctx.vault.store, &txn)?
+        };
         if conflicts.is_empty() {
             return Ok(if assembled.held {
                 PartitionRun::Held {
@@ -210,23 +217,61 @@ impl ConsolidationExecutor<'_> {
                 .prior_head
                 .map(|id| resources.prior(id))
                 .transpose()?;
-            let request =
-                self.merge_request(&conflict.identity, &members, prior, resources.scope())?;
+            if super::judge_context::fast_path(&policy, conflict, &members, prior) {
+                let mut candidate = (*members[0]).clone();
+                candidate.supersedes = conflict.prior_head;
+                dropped.extend(conflict.candidate_indexes.iter().copied());
+                merged.push(candidate);
+                continue;
+            }
+            let prior_heads = conflict
+                .prior_heads
+                .iter()
+                .map(|id| resources.prior(*id).cloned())
+                .collect::<Result<Vec<_>>>()?;
+            let mut request = self.merge_request(
+                &conflict.identity,
+                &members,
+                &prior_heads,
+                resources.scope(),
+            )?;
+            ctx.vault.bind_model_role(
+                crate::llm::manifest::ModelRole::GenerativeReasoner,
+                &mut request,
+            )?;
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
                 attempt_id: step_identity.0,
                 run_id: step_identity.1.clone(),
                 envelope_actor: self.actor,
                 subject: conflict.identity.subject,
-                pinned_config: None,
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
-            let outcome = match call_as_step(&step_ctx, self.backend, self.guard, request).await {
-                Ok(outcome) => outcome,
+            let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
+            let response = match outcome {
+                Ok(StepOutcome::Finished { response, .. }) => {
+                    spent = spent.saturating_add(
+                        response
+                            .usage
+                            .input
+                            .total
+                            .saturating_add(response.usage.output.total),
+                    );
+                    response
+                }
+                Ok(StepOutcome::Trapped(_)) => {
+                    // Suspended mid-merge: the attempt is parked. STOP and surface
+                    // the trap. Writing a contradiction gap here would fabricate
+                    // a `ContradictionLeftStanding` for a merge that never
+                    // decided (#485-2); accepting partial survivors would drop
+                    // the rest as done. On resume the memoized steps replay and
+                    // this merge re-runs to a real resolution.
+                    return Ok(PartitionRun::Trapped);
+                }
                 Err(error) => {
-                    // Budget/consent traps are StepOutcome, not judge outages.
-                    // A failed admitted judge leaves an observable open question.
+                    // Park the attempt, with a durable Proposed marker. The
+                    // marker and every source pin share the write transaction.
                     resources.require_output(resources.scope())?;
                     super::open_conflict::park_open_conflict(
                         ctx.vault,
@@ -240,29 +285,8 @@ impl ConsolidationExecutor<'_> {
                     return Err(error);
                 }
             };
-            let response = match outcome {
-                StepOutcome::Finished { response, .. } => {
-                    spent = spent.saturating_add(
-                        response
-                            .usage
-                            .input
-                            .total
-                            .saturating_add(response.usage.output.total),
-                    );
-                    response
-                }
-                StepOutcome::Trapped(_) => {
-                    // Suspended mid-merge: the attempt is parked. STOP and surface
-                    // the trap. Writing a contradiction gap here would fabricate
-                    // a `ContradictionLeftStanding` for a merge that never
-                    // decided (#485-2); accepting partial survivors would drop
-                    // the rest as done. On resume the memoized steps replay and
-                    // this merge re-runs to a real resolution.
-                    return Ok(PartitionRun::Trapped);
-                }
-            };
 
-            match decode_merge_resolution(&response)? {
+            match decode_merge_resolution(&response).unwrap_or(MergeResolution::Escalate) {
                 MergeResolution::Accumulate => {} // keep every member
                 MergeResolution::Merge {
                     value,
@@ -278,10 +302,8 @@ impl ConsolidationExecutor<'_> {
                             })?;
                         selected.identity =
                             super::routing::candidate_keys(member, resources.key_rules())?.identity;
-                        selected.prior_head = resources
-                            .matching_priors(member, resources.key_rules())?
-                            .first()
-                            .map(|(id, _)| *id);
+                        let matching = resources.matching_priors(member, resources.key_rules())?;
+                        selected.prior_head = (matching.len() == 1).then(|| matching[0].0);
                     } else if members.iter().any(|member| {
                         candidate_facts(&member.candidate)
                             .is_ok_and(|facts| facts.predicate != conflict.identity.predicate)
@@ -295,14 +317,36 @@ impl ConsolidationExecutor<'_> {
                     merged.push(merged_candidate(
                         &selected,
                         &members,
+                        &prior_heads,
                         value,
                         step_identity.0,
                         ctx.now_ms,
-                    ));
+                    )?);
                 }
                 MergeResolution::Escalate => {
+                    // A durable outage fallback is still an unresolved question,
+                    // not permission to lose the prior head's conflict marker.
+                    resources.require_output(resources.scope())?;
+                    super::open_conflict::park_open_conflict(
+                        ctx.vault,
+                        self.actor,
+                        step_identity.0,
+                        conflict,
+                        &members,
+                        &resources.write_fence(),
+                        ctx.now_ms,
+                    )?;
                     dropped.extend(conflict.candidate_indexes.iter().copied());
                     escalated.push(contradiction_gap(conflict, &members, ctx.now_ms));
+                    super::open_conflict::park_open_conflict(
+                        ctx.vault,
+                        self.actor,
+                        step_identity.0,
+                        conflict,
+                        &members,
+                        &resources.write_fence(),
+                        ctx.now_ms,
+                    )?;
                 }
             }
         }
@@ -335,17 +379,19 @@ impl ConsolidationExecutor<'_> {
         &self,
         identity: &ConflictIdentity,
         members: &[&PromotionCandidate],
-        prior: Option<&super::PriorHead>,
+        prior_heads: &[super::PriorHead],
         scope: &crate::llm::Scope,
     ) -> Result<LlmRequest> {
         let mut lines = String::new();
-        if let Some(prior) = prior {
-            lines.push_str(&format!(
-                "prior_head: {} predicate: {} value: {}\n",
-                prior.claim_id.to_hex(),
-                prior.body.predicate,
-                serde_json::to_string(&rmpv_to_json(&prior.body.value)).unwrap_or_default(),
-            ));
+        for prior in prior_heads {
+            lines.push_str(
+                &serde_json::json!({"prior_head": prior.claim_id.to_hex(),
+                "predicate": prior.body.predicate,
+                "source": prior.body.source.map(crate::claim::ClaimSource::as_str),
+                "value": rmpv_to_json(&prior.body.value)})
+                .to_string(),
+            );
+            lines.push('\n');
         }
         for member in members {
             let facts = candidate_facts(&member.candidate)?;
@@ -365,13 +411,18 @@ impl ConsolidationExecutor<'_> {
             envelope: CallEnvelope {
                 scope: scope.clone(),
                 purpose: CallPurpose::Consolidation,
-                class: CallClass::BestEffort,
-                tier: TierPrecedence {
-                    per_call: None,
-                    vault_policy: None,
-                    purpose_default: None,
-                    global_default: ModelTierRef("consolidation".to_owned()),
+                class: CallClass::Durable {
+                    fallback: crate::llm::DeterministicFallback {
+                        name: "json_rules_v1".into(),
+                        config: Some(
+                            serde_json::json!({"version":1,"rows":[{"failure":"fatal","value":{"resolution":"escalate"}}]}),
+                        ),
+                    },
                 },
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Consolidation,
+                    ModelTierRef("consolidation".into()),
+                ),
                 response_format: ResponseFormat::Json {
                     schema: serde_json::json!({"type": "object", "properties": {
                         "resolution": {"enum": ["merge", "supersede", "accumulate", "escalate"]},
@@ -380,7 +431,7 @@ impl ConsolidationExecutor<'_> {
                     }, "required": ["resolution"]}),
                 },
                 locality: ModelLocality::OwnServer,
-            },
+            }.with_purpose_defaults(),
             messages: vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
@@ -447,10 +498,11 @@ fn decode_merge_resolution(response: &LlmResponse) -> Result<MergeResolution> {
 fn merged_candidate(
     conflict: &ConflictSet,
     members: &[&PromotionCandidate],
+    priors: &[super::conflict::PriorHead],
     value: Value,
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
-) -> PromotionCandidate {
+) -> Result<PromotionCandidate> {
     let mut evidence: Vec<EntityId> = Vec::new();
     let mut chain: Vec<ConsolidationProvenanceHop> = Vec::new();
     let mut meet = ClaimSource::UserStated;
@@ -473,6 +525,17 @@ fn merged_candidate(
     }
     evidence.sort();
     evidence.dedup();
+    for prior in priors
+        .iter()
+        .filter(|p| conflict.prior_heads.contains(&p.claim_id))
+    {
+        meet = source_meet(
+            meet,
+            crate::claim::claim_evidence_taint(&prior.body)
+                .or(prior.body.source)
+                .unwrap_or(ClaimSource::Generated),
+        );
+    }
     let claim_id = deterministic_claim_id(
         attempt_id,
         conflict.identity.subject,
@@ -481,6 +544,7 @@ fn merged_candidate(
         conflict.identity.world,
         conflict.identity.facet,
         conflict.identity.rel,
+        conflict.identity.topic.as_deref(),
     );
     let mut candidate = ClaimCandidate::new(
         conflict.identity.predicate.clone(),
@@ -494,13 +558,8 @@ fn merged_candidate(
     if let Some(world) = conflict.identity.world {
         candidate = candidate.with_world(world);
     }
-    if let Some(facet) = conflict.identity.facet {
-        candidate = candidate.with_scope(Value::Map(vec![(
-            Value::from(TURN_BODY_FACET_REF_KEY),
-            Value::Binary(facet.as_bytes().to_vec()),
-        )]));
-    }
-    PromotionCandidate {
+    candidate = candidate.with_scope(super::persistence::identity_scope(&conflict.identity)?);
+    Ok(PromotionCandidate {
         claim_id,
         candidate,
         evidence_turn_refs: evidence,
@@ -512,7 +571,7 @@ fn merged_candidate(
             end: now_ms,
         },
         learned_at: now_ms,
-    }
+    })
 }
 
 fn contradiction_gap(

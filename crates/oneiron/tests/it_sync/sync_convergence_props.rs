@@ -78,9 +78,19 @@ fn two_vault_entity_convergence_both_directions() {
     // Expectations are LITERAL envelope bytes built by the test, not engine
     // output: type u8 | occurred u64 BE ×2 | learned_at u64 BE | body.
     let a_src_blob = entity_blob(1, time_range(T0 + 10), T0 + 10, b"a-source");
-    let a_tgt_blob = entity_blob(4, time_range(T0 + 11), T0 + 11, b"a-target");
+    let a_tgt_blob = entity_blob(
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        time_range(T0 + 11),
+        T0 + 11,
+        b"a-target",
+    );
     let b_src_blob = entity_blob(1, time_range(T0 + 20), T0 + 20, b"b-source");
-    let b_tgt_blob = entity_blob(4, time_range(T0 + 21), T0 + 21, b"b-target");
+    let b_tgt_blob = entity_blob(
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        time_range(T0 + 21),
+        T0 + 21,
+        b"b-target",
+    );
 
     a.put_entity_in_window(WINDOW, &a_src, &a_src_blob);
     a.put_entity_in_window(WINDOW, &a_tgt, &a_tgt_blob);
@@ -415,22 +425,25 @@ fn concurrent_edit_same_entity_lww_converges_and_displaces_loser_metadata_rows()
     assert_converged(&a, &b, WINDOW);
 }
 
-/// Spec 2(b) text leg: after the LWW merge replaces the loser's body, the
-/// loser node's text postings for its OWN losing payload must be displaced
-/// — a stale posting would keep serving content the converged vault no
-/// longer holds.
-///
-/// ONE-1141 (ARCH-0031 amendment, ratified 2026-06-13): deindex-on-overwrite
-/// — "no replicated overwrite ever leaves loser postings live". A replicated
-/// overwrite that changes the stored body drops the loser's BM25F postings
-/// in the SAME transaction as the overwrite (`put_replicated` → `apply_put`,
-/// replicated arm); lazy-stale + periodic sweep was REJECTED by the ruling
-/// (it leaves a window where dead content matches searches). The byte-compare
-/// guard keeps the WINNER node's own postings intact: its replayed value is
-/// byte-identical to what it already stores, so its index is never touched.
+/// OF-476 keeps each node's indexed body with its text postings until idle.
+/// Both Live rows converge immediately; idle atomically retires the loser's
+/// postings while leaving the unchanged winner's index intact.
 #[test]
 fn concurrent_edit_same_entity_lww_displaces_loser_text_postings() {
     let (a, b) = vault_pair();
+    // Vault::open seeds the bootstrap skills, whose activation edits wait for
+    // idle publication like any other revision. Publish them first on both
+    // nodes so the idle report below covers only the contested entity.
+    for node in [&a, &b] {
+        node.vault.set_indexed_idle_delay_ms(0).unwrap();
+        let seeded = node.vault.refresh_staged_indexed_at_idle(u64::MAX).unwrap();
+        assert!(
+            seeded.failed.is_empty(),
+            "{}: seeded revisions need no model",
+            node.name
+        );
+        assert!(seeded.superseded.is_empty(), "{}", node.name);
+    }
 
     let id = EntityId::now();
     let blob_a = entity_blob(1, time_range(T0 + 100), T0 + 100, b"payload-from-a");
@@ -453,18 +466,54 @@ fn concurrent_edit_same_entity_lww_displaces_loser_text_postings() {
     exchange(&a, &b, WINDOW);
 
     let winner = map_get_bytes(&a.doc(WINDOW).get_map("entities"), &id.to_hex()).unwrap();
-    let (loser_node, loser_term) = if winner == blob_a {
-        (&b, "betaonlyterm")
+    let (loser_node, loser_term, loser_body, winner_node, winner_term) = if winner == blob_a {
+        (&b, "betaonlyterm", &blob_b, &a, "alphaonlyterm")
     } else {
-        (&a, "alphaonlyterm")
+        (&a, "alphaonlyterm", &blob_a, &b, "betaonlyterm")
     };
+    assert_eq!(
+        loser_node.vault.get_raw(&id).unwrap().as_ref(),
+        Some(&winner)
+    );
+    assert_eq!(
+        loser_node
+            .vault
+            .get_raw_with_mode(&id, oneiron::memory::ReadMode::Indexed)
+            .unwrap()
+            .as_ref(),
+        Some(loser_body),
+    );
+    assert_eq!(
+        loser_node.vault.search_text(loser_term, 10).unwrap()[0].id,
+        id
+    );
+    loser_node.vault.set_indexed_idle_delay_ms(0).unwrap();
+    let published = loser_node
+        .vault
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    assert_eq!(published.refreshed.len(), 1);
+    assert_eq!(published.refreshed[0].0, id);
+    assert!(published.failed.is_empty());
+    assert_eq!(
+        loser_node
+            .vault
+            .get_raw_with_mode(&id, oneiron::memory::ReadMode::Indexed)
+            .unwrap()
+            .as_ref(),
+        Some(&winner),
+    );
+    assert_eq!(
+        winner_node.vault.search_text(winner_term, 10).unwrap()[0].id,
+        id
+    );
     assert!(
         loser_node
             .vault
             .search_text(loser_term, 10)
             .unwrap()
             .is_empty(),
-        "{}: loser's text postings must be displaced after the LWW merge",
+        "{}: loser's text postings must be displaced after idle publication",
         loser_node.name
     );
 }
@@ -478,7 +527,12 @@ fn idempotent_reimport_is_byte_stable() {
     let src = EntityId::now();
     let tgt = EntityId::now();
     let src_blob = entity_blob(1, time_range(T0 + 1), T0 + 1, b"idempotent-src");
-    let tgt_blob = entity_blob(4, time_range(T0 + 2), T0 + 2, b"idempotent-tgt");
+    let tgt_blob = entity_blob(
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        time_range(T0 + 2),
+        T0 + 2,
+        b"idempotent-tgt",
+    );
     a.put_entity_in_window(WINDOW, &src, &src_blob);
     a.put_entity_in_window(WINDOW, &tgt, &tgt_blob);
     a.put_edge_in_window(
@@ -569,13 +623,31 @@ fn retracted_provenance_crosses_bit_exact_and_edge_is_kept() {
     let src = EntityId::now();
     let tgt = EntityId::now();
     a.vault
-        .put_entity(&actor, 4, time_range(T0 + 1), T0 + 1, b"actor")
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(T0 + 1),
+            T0 + 1,
+            b"actor",
+        )
         .unwrap();
     a.vault
-        .put_entity(&src, 4, time_range(T0 + 2), T0 + 2, b"src")
+        .put_entity(
+            &src,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(T0 + 2),
+            T0 + 2,
+            b"src",
+        )
         .unwrap();
     a.vault
-        .put_entity(&tgt, 4, time_range(T0 + 3), T0 + 3, b"tgt")
+        .put_entity(
+            &tgt,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(T0 + 3),
+            T0 + 3,
+            b"tgt",
+        )
         .unwrap();
     let _claim = provenanced_edge(
         &a,
@@ -643,12 +715,22 @@ fn structural_edge_carrying_provenance_bytes_is_rejected_without_poisoning_batch
     a.put_entity_in_window(
         WINDOW,
         &src,
-        &entity_blob(4, time_range(T0 + 1), T0 + 1, b"src"),
+        &entity_blob(
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(T0 + 1),
+            T0 + 1,
+            b"src",
+        ),
     );
     a.put_entity_in_window(
         WINDOW,
         &tgt,
-        &entity_blob(4, time_range(T0 + 2), T0 + 2, b"tgt"),
+        &entity_blob(
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(T0 + 2),
+            T0 + 2,
+            b"tgt",
+        ),
     );
 
     // The write-side gate already refuses to ENCODE this shape (ARCH-0034:
@@ -721,13 +803,31 @@ fn edge_provenance_claim_convergence_both_directions() {
         let src = EntityId::now();
         let tgt = EntityId::now();
         node.vault
-            .put_entity(&actor, 4, time_range(T0 + 1), T0 + 1, b"actor")
+            .put_entity(
+                &actor,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                time_range(T0 + 1),
+                T0 + 1,
+                b"actor",
+            )
             .unwrap();
         node.vault
-            .put_entity(&src, 4, time_range(T0 + 2), T0 + 2, b"src")
+            .put_entity(
+                &src,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                time_range(T0 + 2),
+                T0 + 2,
+                b"src",
+            )
             .unwrap();
         node.vault
-            .put_entity(&tgt, 4, time_range(T0 + 3), T0 + 3, b"tgt")
+            .put_entity(
+                &tgt,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                time_range(T0 + 3),
+                T0 + 3,
+                b"tgt",
+            )
             .unwrap();
         let claim = provenanced_edge(
             node,
@@ -883,7 +983,12 @@ fn soft_delete_propagates_end_to_end_keeping_shell_without_receipt() {
     let id = EntityId::now();
     let other = EntityId::now();
     let blob = entity_blob(1, time_range(T0 + 5), T0 + 5, b"soft-delete-me");
-    let other_blob = entity_blob(4, time_range(T0 + 6), T0 + 6, b"bystander");
+    let other_blob = entity_blob(
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        time_range(T0 + 6),
+        T0 + 6,
+        b"bystander",
+    );
     a.put_entity_in_window(WINDOW, &id, &blob);
     a.put_entity_in_window(WINDOW, &other, &other_blob);
     a.put_edge_in_window(

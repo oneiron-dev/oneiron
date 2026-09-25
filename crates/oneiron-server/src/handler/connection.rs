@@ -17,7 +17,6 @@ use super::conn_state::ConnState;
 use super::ephemeral::encode_late_join_ephemeral_snapshot;
 use super::hello::{HelloOutcome, await_protocol_hello};
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
-use oneiron::sync::FederationQuotaConfig;
 
 use crate::auth::{RevokedTokenJtis, is_revoked_or_unreadable, require_owner_auth};
 use crate::broadcast::BroadcastSubscriber;
@@ -28,7 +27,11 @@ use crate::server::SyncServer;
 pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
     Router::new()
         .route("/ws", get(ws_upgrade_handler))
-        .with_state(server)
+        .with_state(server.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            crate::auth::admit_http_binding,
+        ))
 }
 
 /// Handles WebSocket upgrade requests.
@@ -52,6 +55,9 @@ async fn ws_upgrade_handler(
 ) -> Result<impl IntoResponse, StatusCode> {
     let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let vault_binding = server
+        .require_vault_binding(&headers)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
     let session_jti = auth.jti().map(str::to_owned);
 
     let conn_id = server.alloc_conn_id();
@@ -67,7 +73,9 @@ async fn ws_upgrade_handler(
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
-        .on_upgrade(move |socket| handle_connection(socket, server, conn_id, session_jti)))
+        .on_upgrade(move |socket| {
+            handle_connection(socket, server, conn_id, session_jti, vault_binding)
+        }))
 }
 
 /// Whether this socket's credential has since been revoked.
@@ -117,6 +125,7 @@ async fn handle_connection(
     server: Arc<SyncServer>,
     conn_id: u32,
     session_jti: Option<String>,
+    vault_binding: Option<crate::server::vault_binding::VaultBinding>,
 ) {
     // Every frame this connection ever writes goes through here, and each one
     // re-consults the revocation registry first. The hello close below is the
@@ -128,6 +137,8 @@ async fn handle_connection(
         session_jti.clone(),
         conn_id,
     );
+
+    transport.vault_binding = vault_binding.map(|binding| (Arc::clone(server.vault()), binding));
 
     // Phase 0: protocol-version hello (ONE-1127). The client's FIRST frame
     // must be a supported protocol hello. Malformed frames or unsupported
@@ -184,15 +195,7 @@ async fn handle_connection(
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-    let federation_quota = FederationQuotaConfig::new(
-        server.config.max_federation_windows_per_connection,
-        server.config.federation_flood_pause_secs,
-    );
-    let mut conn_state = ConnState::new(
-        server.config.max_messages_per_sec,
-        protocol_version,
-        federation_quota,
-    );
+    let mut conn_state = ConnState::new(protocol_version);
 
     let mut app_connection = crate::livequery::connection::Connection::new(
         crate::livequery::connection::Hub::for_server(&server),
@@ -244,6 +247,10 @@ async fn handle_connection(
                         Err(_) => break,
                     }
                 }
+                // Delivery/revocation work is level-triggered. Its synchronous
+                // authority checks may outlast a period; a backlog of timer
+                // ticks must not crowd out inbound frames or queued replies.
+                app_tick.reset();
                 continue;
             }
             ConnEvent::Broadcast(broadcast_result) => {
@@ -321,8 +328,15 @@ async fn handle_connection(
                 let mut data = data;
                 let app_frame = matches!(
                     data.first().copied(),
-                    Some(protocol::TAG_RPC | protocol::TAG_SUB)
-                );
+                    Some(
+                        protocol::TAG_RPC
+                            | protocol::TAG_SUB
+                            | oneiron::sync::transport::TAG_DOCUMENT
+                            | oneiron::sync::transport::TAG_BATCH
+                    )
+                ) || (conn_state.window_sync_mode
+                    == super::conn_state::WindowSyncMode::Selector
+                    && data.first().copied() == Some(protocol::TAG_WINDOW_SYNC));
                 if app_frame
                     && conn_state.bound_auth.as_ref().is_none_or(|auth| {
                         session_credential_revoked(server.vault().as_ref(), auth.jti())
@@ -336,7 +350,12 @@ async fn handle_connection(
                         .await;
                     break;
                 }
-                transport.app_jti = if app_frame {
+                let document_frame = matches!(
+                    data.first(),
+                    Some(&oneiron::sync::transport::TAG_DOCUMENT)
+                        | Some(&oneiron::sync::transport::TAG_BATCH)
+                );
+                transport.app_jti = if app_frame || document_frame {
                     conn_state
                         .bound_auth
                         .as_ref()
@@ -374,25 +393,9 @@ async fn handle_connection(
                 break;
             }
             Ok(WsMessage::Ping(_)) | Ok(WsMessage::Pong(_)) => {
-                if !conn_state.record_inbound_message() {
-                    tracing::warn!(
-                        conn_id,
-                        max = server.config.max_messages_per_sec,
-                        "message rate limit exceeded by control frame — closing"
-                    );
-                    break;
-                }
                 continue;
             }
             Ok(WsMessage::Text(_)) => {
-                if !conn_state.record_inbound_message() {
-                    tracing::warn!(
-                        conn_id,
-                        max = server.config.max_messages_per_sec,
-                        "message rate limit exceeded — closing"
-                    );
-                    break;
-                }
                 tracing::warn!(conn_id, "received unexpected text message");
                 continue;
             }
@@ -401,15 +404,6 @@ async fn handle_connection(
                 break;
             }
         };
-
-        if !conn_state.record_inbound_message() {
-            tracing::warn!(
-                conn_id,
-                max = server.config.max_messages_per_sec,
-                "message rate limit exceeded — closing"
-            );
-            break;
-        }
 
         // Size check
         if data.len() > server.config.max_frame_size {
@@ -436,6 +430,17 @@ async fn handle_connection(
                         "credential revoked — refusing sync message and closing"
                     );
                     break;
+                }
+                if let Err(error) = server.vault().resume_from_slim_on_inbound() {
+                    tracing::warn!(conn_id, %error, "failed to resume vault for inbound frame");
+                    break;
+                }
+                if !matches!(&msg, SyncMessage::Rpc(_) | SyncMessage::Sub(_)) {
+                    let _ = server.wire_telemetry.record(
+                        &format!("sync:{:02x}", data[0]),
+                        "sync-owner",
+                        oneiron_vault_contract::now_ts(),
+                    );
                 }
                 let handle_result = match msg {
                     SyncMessage::Rpc(payload) => handle_app_message_with_connection(
@@ -550,6 +555,7 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
     match msg {
         SyncMessage::RootUpdate(_) => false,
         SyncMessage::Ephemeral(_)
+        | SyncMessage::LfsChunks(_)
         | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
         | SyncMessage::Doc { .. }
@@ -567,6 +573,7 @@ pub(super) fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> boo
     ) {
         return false; // Only document_delivery may construct a recipient's export.
     }
-    protocol_version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
+    (protocol_version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
+        || protocol_version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
         || data.first().copied() != Some(protocol::TAG_WINDOW_SYNC)
 }

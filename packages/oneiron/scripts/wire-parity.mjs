@@ -53,12 +53,18 @@ if (mode === "write") {
 const recalled = memory.recall("window seat")
 const receipts = memory.receipts()
 const errors = {
-  deep: refusal(() => memory.recall("window seat", { effort: "deep" }), "LEASE_REQUIRED"),
+  deep: refusal(() => memory.recall("window seat", { effort: "high" }), "LEASE_REQUIRED"),
   rebind: refusal(() => memory.asActor("human:00000000000000000000000000000001"), "FORBIDDEN"),
 }
-for (const name of ["ONEIRON_WIRE_NO_CLASS_KEY", "ONEIRON_WIRE_NO_PRINCIPAL_KEY"]) {
-  const unbound = Oneiron.connect(url, required(name))
-  errors[name] = refusal(() => unbound.receipts(), "FORBIDDEN")
+const unbound = Oneiron.connect(url, required("ONEIRON_WIRE_NO_CLASS_KEY"))
+errors.ONEIRON_WIRE_NO_CLASS_KEY = refusal(() => unbound.receipts(), "FORBIDDEN")
+if (mode === "read") {
+  // A link pairs once. A spent link and a link whose holder names no vault
+  // entity are refused, and a refused pairing mints nothing.
+  const { memory: paired } = Oneiron.pair(required("ONEIRON_WIRE_NODE_PAIR_LINK"))
+  assert.ok(Array.isArray(paired.receipts()))
+  errors.pairTwice = refusal(() => Oneiron.pair(required("ONEIRON_WIRE_NODE_PAIR_LINK")), "UNAUTHORIZED")
+  errors.pairStranger = refusal(() => Oneiron.pair(required("ONEIRON_WIRE_STRANGER_LINK")), "UNAUTHORIZED")
 }
 const reader = Oneiron.connect(url, required("ONEIRON_WIRE_READ_KEY"))
 assert.ok(Array.isArray(reader.receipts()))

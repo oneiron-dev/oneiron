@@ -439,7 +439,7 @@ fn either_manifest_key_rejects_malformed_values_and_duplicates() -> Result<()> {
 
 // Independent preimage for the small frontier fixture below: landed main
 // a56c0398edbecd8126ffebac525871444b629fd8's hash_policy_frontier_v0,
-// plus ONE-1453's intentional breaker-presence byte. Posture still follows
+// with the single-valued predicate domain and no retired breaker byte. Posture follows
 // budget exhaustion even WITHOUT a checker; an absent checker adds no bytes.
 fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     use sha2::{Digest, Sha256};
@@ -467,6 +467,8 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
         text(&mut bytes, source);
         bytes.push(0); // no source-trust row
     }
+    text(&mut bytes, "single_valued_predicates");
+    len(&mut bytes, 0);
     text(&mut bytes, "suspend");
     text(&mut bytes, posture);
     len(&mut bytes, 0); // budget-policy rows
@@ -804,7 +806,10 @@ fn checker_preflight_rejection_discards_earlier_allows_and_all_batch_writes() ->
         .expect("actual held candidate receipt");
     assert_eq!(rejection.outcome, "pending");
     assert_eq!(rejection.reason_codes, ["gate.pending.checker"]);
-    assert_eq!(rejection.receipt_reasons, [HOLD_RECEIPT_REASON]);
+    assert_eq!(
+        checker_reasons(&rejection.receipt_reasons),
+        [HOLD_RECEIPT_REASON]
+    );
     Ok(())
 }
 
@@ -942,6 +947,13 @@ fn restricted_lineage_consults_checker_once_and_preserves_declared_source() -> R
         );
         assert_eq!(seen[0].lineage.as_ref(), Some(envelope.lineage()));
         let request = crate::llm::auto_check_llm_request(CHECKER_REF, &seen[0].borrowed(), "");
+        assert_eq!(
+            request.envelope.locality,
+            crate::llm::CallPurpose::AutoCheck
+                .default_policy()
+                .unwrap()
+                .locality
+        );
         let text_parts: Vec<_> = request
             .messages
             .iter()
@@ -1013,7 +1025,10 @@ fn restricted_lineage_consults_checker_once_and_preserves_declared_source() -> R
             records[0].reason_codes,
             [pending_reason.unwrap_or("gate.allow")]
         );
-        assert_eq!(records[0].receipt_reasons, receipt_reasons);
+        assert_eq!(
+            checker_reasons(&records[0].receipt_reasons),
+            receipt_reasons
+        );
     }
     Ok(())
 }
@@ -1081,6 +1096,7 @@ fn source_aware_checker_holds_tool_output_history_with_observed_declaration() ->
         lineage: Some(&observed_lineage),
         actor_class: "agent",
         sensitivity_band: Some(0),
+        burst: None,
     };
     assert_eq!(checker.check(&observed), AutoCheckOutcome::Allow);
     Ok(())
@@ -1128,7 +1144,7 @@ fn restricted_lineage_without_matching_permit_never_consults_checker() -> Result
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].outcome, "pending");
         assert_eq!(records[0].reason_codes, ["gate.pending.source_trust"]);
-        assert!(records[0].receipt_reasons.is_empty());
+        assert!(checker_reasons(&records[0].receipt_reasons).is_empty());
     }
     Ok(())
 }
@@ -1181,7 +1197,10 @@ fn lineage_checker_exclusions_keep_ordinary_allow() -> Result<()> {
         assert_eq!(records.len(), 1, "{label}");
         assert_eq!(records[0].outcome, "allow", "{label}");
         assert_eq!(records[0].reason_codes, ["gate.allow"], "{label}");
-        assert!(records[0].receipt_reasons.is_empty(), "{label}");
+        assert!(
+            checker_reasons(&records[0].receipt_reasons).is_empty(),
+            "{label}"
+        );
     }
     Ok(())
 }
@@ -1251,6 +1270,131 @@ fn non_dreamer_paths_pass_none() -> Result<()> {
         ClaimApprovalStatus::Auto
     );
     assert_eq!(unreachable.calls(), 0);
+    Ok(())
+}
+
+#[test]
+fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Result<()> {
+    use crate::llm::manifest::*;
+    use crate::llm::{ModelId, ModelLocality, ModelTierRef};
+    for mode in [VerdictMode::Enforce, VerdictMode::Shadow] {
+        let (_dir, vault) = checker_vault(None)?;
+        let id = test_id(0x33);
+        let proposed = checker_body(&vault, ClaimApprovalStatus::Proposed)?;
+        attempt_checked_candidate_write(&vault, &id, &proposed, None)?;
+        assert_eq!(
+            vault.get_claim(&id)?.expect("proposal landed").approval,
+            ClaimApprovalStatus::Proposed
+        );
+        let model = ModelId::new("test/verdict@1").expect("model");
+        vault.set_model_manifest(&ModelManifest {
+            version: 2,
+            roles: MODEL_ROLES
+                .into_iter()
+                .map(|role| {
+                    (
+                        role,
+                        ModelBinding {
+                            model: model.clone(),
+                            slot: ModelSlot::Llm,
+                            tier: ModelTierRef("test".into()),
+                            route_models: std::collections::BTreeMap::new(),
+                        },
+                    )
+                })
+                .collect(),
+            routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
+                .into_iter()
+                .map(|slot| (slot, ModelLocality::OnDevice))
+                .collect(),
+            verdict: Some(VerdictBinding {
+                model: model.clone(),
+                slot: ModelSlot::Llm,
+                floor: ConfidenceBand::High,
+                mode,
+            }),
+        })?;
+        let checker = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Verdict(
+            CalibratedVerdict {
+                model,
+                allow: true,
+                confidence_millionths: 700_000,
+                band: ConfidenceBand::Medium,
+                basis: VerdictBasis::CalibratedModel,
+            },
+        )));
+        let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+        let result = attempt_checked_candidate_write(&vault, &id, &body, Some(&checker));
+        match mode {
+            VerdictMode::Enforce => {
+                assert!(result.is_err());
+                assert_eq!(
+                    vault.get_claim(&id)?.expect("proposal retained").approval,
+                    ClaimApprovalStatus::Proposed
+                );
+                assert!(
+                    decision_rows(&vault)?
+                        .iter()
+                        .any(|(reasons, _)| reasons.contains(&"gate.pending.checker".to_owned()))
+                );
+            }
+            VerdictMode::Shadow => {
+                result?;
+                assert_eq!(
+                    vault.get_claim(&id)?.expect("landed").approval,
+                    ClaimApprovalStatus::Auto
+                );
+                assert!(decision_rows(&vault)?.iter().any(|(_, receipts)| {
+                    receipts.contains(&"checker_verdict_shadow_hold".to_owned())
+                }));
+            }
+        }
+    }
+    Ok(())
+}
+
+// Tripwire observations share the receipt but do not describe checker outcomes.
+fn checker_reasons(reasons: &[String]) -> Vec<String> {
+    reasons
+        .iter()
+        .filter(|reason| !reason.starts_with("tripwire_normal_"))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn native_checker_observes_structural_streak_outage_neutrality_and_success_reset() -> Result<()> {
+    let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+    let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+    let mut invalid = body.clone();
+    invalid.evidence = None;
+    let checker = Arc::new(RecordingAutoChecker::allow());
+    let bounded_checker = BoundedAutoChecker::new(checker.clone());
+    let error =
+        attempt_checked_candidate_write(&vault, &test_id(0x60), &invalid, Some(&bounded_checker))
+            .expect_err("structural refusal");
+    assert_gate_rejected(error, "deny", &["gate.deny.dreamer_precommit.no_evidence"]);
+    // A checker outage is not structural evidence against the writer.
+    let unavailable = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Unavailable));
+    let error = attempt_checked_candidate_write(&vault, &test_id(0x61), &body, Some(&unavailable))
+        .expect_err("unavailable checker parks auto");
+    assert_gate_rejected(error, "pending", &["gate.pending.checker.unavailable"]);
+    attempt_checked_candidate_write(&vault, &test_id(0x62), &body, Some(&bounded_checker))?;
+    attempt_checked_candidate_write(&vault, &test_id(0x63), &body, Some(&bounded_checker))?;
+    let seen = checker.seen();
+    assert_eq!(seen.len(), 2);
+    let first = seen[0].burst.expect("native burst observations");
+    assert!(first.rate_ratio.is_finite() && first.rate_ratio > 0.0);
+    assert_eq!(first.streak, 1);
+    assert_eq!(seen[1].burst.expect("native burst observations").streak, 0);
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x62))?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x63))?.approval,
+        ClaimApprovalStatus::Auto
+    );
     Ok(())
 }
 

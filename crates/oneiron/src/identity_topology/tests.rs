@@ -705,9 +705,9 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
 #[test]
 fn type_76_is_a_pinned_engine_authored_maintenance_kind() {
     // Conformance pin for the owner-ruled seat (byte-space v3 canon row).
-    assert_eq!(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, 76);
-    assert!(!crate::registry::is_structural_kind(76));
-    assert!(crate::registry::short_id_prefix(76).is_err());
+    assert_eq!(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, 74);
+    assert!(!crate::registry::is_structural_kind(74));
+    assert!(crate::registry::short_id_prefix(74).is_err());
 
     // D5/MODEL pattern: public puts are rejected typed; only the
     // identity-topology door (allow_maintenance) writes the byte.
@@ -726,7 +726,7 @@ fn type_76_is_a_pinned_engine_authored_maintenance_kind() {
         .expect_err("public put of type 76 must reject");
     assert!(matches!(
         err,
-        Error::Registry(RegistryError::MaintenanceKindNotWritable(76))
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(74))
     ));
     assert_eq!(event_count(&vault), 0);
 }
@@ -1537,7 +1537,13 @@ fn facet_and_assert_distinct_doors_mint_their_own_effects() {
     // the op's only new ids are the masks themselves.
     assert!(transitions.is_empty());
     assert_eq!(event_count(&vault), 2);
-    let masks = vault.facets_of(&other).expect("facets of");
+    let all_masks = vault.facets_of(&other).expect("facets of");
+    assert_eq!(all_masks.len(), 2);
+    assert!(all_masks.contains(&crate::claim::substrate_facet_id(other)));
+    let masks: Vec<_> = all_masks
+        .into_iter()
+        .filter(|mask| *mask != crate::claim::substrate_facet_id(other))
+        .collect();
     assert_eq!(masks.len(), 1);
     assert_eq!(
         vault
@@ -1563,10 +1569,20 @@ fn facet_and_assert_distinct_doors_mint_their_own_effects() {
             .entity_type,
         crate::registry::ENTITY_TYPE_FACET
     );
-    assert_eq!(
-        vault.get(&masks[0]).expect("read mask body"),
-        Some(b"fixture-mask".to_vec())
-    );
+    let mask_bytes = vault
+        .get(&masks[0])
+        .expect("read mask body")
+        .expect("mask exists");
+    let mask = rmpv::decode::read_value(&mut mask_bytes.as_slice()).expect("mask map");
+    let fields = mask.as_map().expect("mask fields");
+    assert!(fields.contains(&(
+        rmpv::Value::from("label"),
+        rmpv::Value::from("fixture-mask")
+    )));
+    assert!(fields.contains(&(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("sensitive")
+    )));
 
     // The propose lane is NOT armed for this kind: a park would name masks it
     // never minted, and the resolution door has no scope target for it.
@@ -3762,7 +3778,7 @@ fn undo_of_a_facet_event_is_typed_not_silent() {
         IdentityTopologyRejection::NotUndoable { event }
     );
     // Nothing was orphaned by the refusal: the mask and its wiring stand.
-    assert_eq!(vault.facets_of(&base).expect("facets").len(), 1);
+    assert_eq!(vault.facets_of(&base).expect("facets").len(), 2);
     assert_eq!(event_count(&vault), 1);
 }
 
@@ -3872,7 +3888,7 @@ fn split_reconcile_never_erases_facet_scoping_on_the_same_base() {
         vault.claims_assigned_to(&masks[0]).expect("mask a"),
         vec![scoped]
     );
-    assert_eq!(vault.facets_of(&base).expect("facets").len(), 2);
+    assert_eq!(vault.facets_of(&base).expect("facets").len(), 3);
 }
 
 /// Applies a facet op and returns its minted masks in spec order.

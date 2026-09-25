@@ -1,0 +1,21 @@
+{
+  "complete": true,
+  "mode": "english",
+  "e1_e3_qualified": false,
+  "default_changed": false,
+  "cohort": "public-synthetic-smoke-only",
+  "input_sha256": "0401d5626fa0a5e6401da721f62479033358d9b3dc2db6a19c889913d4c0d089",
+  "pcm_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+  "reference": "The library opens at nine. Please bring the blue notebook.\nThe train leaves at noon. We will meet by the station.",
+  "word_time_truth": null,
+  "speaker_truth": null,
+  "profile_sha256": "8e40caaa33020b874d94aee05a2ecc301d9b82217aa81c5d3ebd5e5c1e531e6f",
+  "code_sha256": {
+    "meeting_audio_process.py": "707ef32d057dbb478889c070119659db4113c80524df684c5bc3af63880f9abb",
+    "meeting-audio-native.py": "b9661ba32cb2a52e1c3db59902bf1dde6a20f403a9c6363ce2d0029c72571133",
+    "meeting-audio-worker.py": "8de86b391dee7d5267ed27bcc6106771fd6de22f544b8d188ff30a6216ba2851",
+    "meeting-audio-e3.py": "c120e184f21a90285f2d191006e729cdda009d10179646155450f940cf982dab",
+    "meeting_audio_ctc.py": "d9a89905d461db38b995c7dac166453452d680cf6ae06be0f106933cbcd295ba",
+    "meeting_audio_runtime.py": "446f9c57b257fb221aacd30900d6cb22a5355b1f61d4d53030abf9714be65e47"
+  }
+}

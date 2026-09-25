@@ -1225,6 +1225,7 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
 
     // PolicyScopedGrant → ActionGrant. `receipt_required` may only RESTRICT.
     let policy_grant = PolicyScopedGrant {
+        authority_scope: crate::federation::scope_codec::read_preset(),
         actor_class: Some("agent".to_owned()),
         actor_ref: Some("agent-a".to_owned()),
         effector: "external:send".to_owned(),

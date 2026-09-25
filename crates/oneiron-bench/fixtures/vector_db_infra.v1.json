@@ -1,0 +1,27 @@
+{
+  "schema": "vector-db-infra-v1",
+  "purpose": "cost-framing-only",
+  "rows": [
+    {
+      "system": "Chroma",
+      "card_id": "chroma-v2-infra",
+      "source": "https://docs.trychroma.com/",
+      "measurement": null,
+      "caveat": "No matched recall/latency/cost triple was present in the supplied evidence. Run against the same corpus and host before comparison."
+    },
+    {
+      "system": "Qdrant",
+      "card_id": "qdrant-infra-v1",
+      "source": "https://qdrant.tech/benchmarks/",
+      "measurement": null,
+      "caveat": "No matched recall/latency/cost triple was present in the supplied evidence. Run against the same corpus and host before comparison."
+    },
+    {
+      "system": "Weaviate",
+      "card_id": "weaviate-infra-v1",
+      "source": "https://weaviate.io/developers/weaviate/benchmarks",
+      "measurement": null,
+      "caveat": "No matched recall/latency/cost triple was present in the supplied evidence. Run against the same corpus and host before comparison."
+    }
+  ]
+}

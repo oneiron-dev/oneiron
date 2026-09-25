@@ -211,7 +211,7 @@ fn seeded_entity_id(counter: u128) -> EntityId {
 // LOCAL `h:` sweep row; never-downgrade on receive; D16 in the same txn.
 // ═══════════════════════════════════════════════════════════════════════
 
-const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 25] = [
+const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 31] = [
     (0, EdgeKind::AuthoredBy),
     (1, EdgeKind::ScopedTo),
     (2, EdgeKind::PartOf),
@@ -235,6 +235,8 @@ const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 25] = [
     // ONE-1414: byte 20 is now MINTED — the cross-vault `same_as` link this
     // slot was parked for. It is the only byte that ticket allocates.
     (20, EdgeKind::SameAs),
+    (21, EdgeKind::MergedInto),
+    (22, EdgeKind::SplitInto),
     // ONE-1924: minted at byte 23, above the 21/22 identity-redirect pair and
     // clear of the byte-20 ONE-1414 `same_as` slot.
     (23, EdgeKind::BlockedBy),
@@ -246,6 +248,10 @@ const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 25] = [
     // creation-causation claim.
     (25, EdgeKind::Fulfills),
     (26, EdgeKind::DischargedBy),
+    (27, EdgeKind::Parent),
+    (28, EdgeKind::SpawnedBy),
+    (29, EdgeKind::AddressedTo),
+    (30, EdgeKind::RepliesTo),
 ];
 
 // ─── Phase 2A: Productivity Entity Types ──────────────────

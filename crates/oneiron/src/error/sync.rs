@@ -172,6 +172,9 @@ pub enum SyncProtocolValidation {
     SweepSnapshotRace,
     SweepUpdateRowsRace,
     FederatedTombstoneAdmission,
+    FederationReplayMismatch,
+    FederationPeerUnbound,
+    SelectorVersionVector,
     TombstoneRemovalDelta,
     DocumentAdmissionDenied,
     DocumentPendingUpdate,
@@ -202,6 +205,11 @@ impl fmt::Display for SyncProtocolValidation {
             Self::SweepUpdateRowsRace => {
                 f.write_str("sweep raced: u:w: row set changed between read and write")
             }
+            Self::FederationReplayMismatch => f.write_str("federation replay identity mismatch"),
+            Self::FederationPeerUnbound => f.write_str("authenticated federation peer required"),
+            Self::SelectorVersionVector => {
+                f.write_str("selector sync requires empty version vector resync")
+            }
             Self::FederatedTombstoneAdmission => {
                 f.write_str("federated tombstone updates require delete admission")
             }
@@ -230,6 +238,7 @@ pub enum SyncEngineContext {
     LoroRevert,
     RebootstrapEncode,
     DreamerProgressTransport,
+    FederationReplayStartup,
 }
 
 #[cfg(feature = "sync")]
@@ -247,6 +256,7 @@ impl SyncEngineContext {
             Self::LoroRevert => "loro revert",
             Self::RebootstrapEncode => "re-bootstrap encode",
             Self::DreamerProgressTransport => "dreamer progress transport",
+            Self::FederationReplayStartup => "federation replay startup",
         }
     }
 }

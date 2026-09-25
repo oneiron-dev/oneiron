@@ -1,0 +1,4 @@
+# Engine-owned code only. Vendored code and generated fixtures are not mutated.
+exclude_globs = ["crates/heed/**", "**/tests/**", "**/*tests.rs", "**/vendor/**"]
+minimum_test_timeout = 60.0
+timeout_multiplier = 3.0

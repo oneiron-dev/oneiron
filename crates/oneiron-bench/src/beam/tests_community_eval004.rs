@@ -205,7 +205,7 @@ pub(crate) mod tests {
     pub(crate) fn eval004_record_json(id: &str, timestamp: u64, text: &str) -> serde_json::Value {
         serde_json::json!({
             "id": id,
-            "entityType": 8,
+            "entityType": oneiron::registry::ENTITY_TYPE_SUMMARY,
             "occurred": {
                 "start": timestamp,
                 "end": timestamp
@@ -231,6 +231,15 @@ pub(crate) mod tests {
         manifest_json["runId"] = serde_json::json!(case_id);
         manifest_json["dataset"]["fixtureId"] = serde_json::json!(fixture.fixture_id.as_str());
         manifest_json["caseIds"] = serde_json::json!([case_id]);
+        let limit = fixture
+            .cases
+            .iter()
+            .find(|case| case.case_id == case_id)
+            .unwrap()
+            .limit;
+        for row in manifest_json["competitors"].as_array_mut().unwrap() {
+            row["card"]["axes"]["retrievalK"] = serde_json::json!(limit);
+        }
 
         parse_manifest_json(&manifest_json.to_string()).expect("EVAL-004 manifest parses")
     }
@@ -358,7 +367,7 @@ pub(crate) mod tests {
             .map(|(idx, id)| ContextEntityReport {
                 id: (*id).to_owned(),
                 short_id: format!("g{idx}"),
-                entity_type: 8,
+                entity_type: oneiron::registry::ENTITY_TYPE_SUMMARY,
                 score: 1.0,
             })
             .collect();

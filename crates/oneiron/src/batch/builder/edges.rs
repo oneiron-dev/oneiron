@@ -238,7 +238,9 @@ impl BatchBuilder<'_> {
         self
     }
 
-    /// Adds a text indexing operation to the batch.
+    /// Adds a text indexing operation to the batch. Inputs for a pending live
+    /// revision are retained durably and published with that revision at idle;
+    /// model-free hosts use [`crate::Vault::refresh_staged_indexed_at_idle`].
     pub fn text(mut self, id: &EntityId, fields: &[(&str, &str)]) -> Self {
         self.ops.push(BatchOp::Text {
             id: *id,

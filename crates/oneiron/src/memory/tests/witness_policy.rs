@@ -8,9 +8,9 @@ use super::*;
 fn witness_refuses_a_human_or_agent_actor_claiming_system_authorship() {
     for actor_class in [EdgeActorClass::Human, EdgeActorClass::Agent] {
         let (_dir, vault) = open_vault();
-        let edges_before = witness_edge_count(&vault);
         let actor = put_person(&vault, 0x31);
         let facade = vault.memory(actor, actor_class);
+        let edges_before = witness_edge_count(&vault);
 
         let err = facade
             .witness(&WitnessTurn {
@@ -201,9 +201,9 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
 #[test]
 fn witness_refuses_an_arbitrary_verified_system_actor_without_ceiling_row() {
     let (_dir, vault) = open_vault();
-    let edges_before = witness_edge_count(&vault);
     let machine = put_machine(&vault, 0x5F);
     install_default_policy_manifest(&vault);
+    let edges_before = witness_edge_count(&vault);
     let err = system_facade_for(&vault, machine)
         .witness(&WitnessTurn {
             conversation_ref: EntityId::from_bytes([0x62; 16]).expect("conv").to_hex(),
@@ -232,12 +232,12 @@ fn witness_refuses_an_arbitrary_verified_system_actor_without_ceiling_row() {
 #[test]
 fn witness_ceiling_row_clamping_the_actor_refuses_every_row() {
     let (_dir, vault) = open_vault();
-    let edges_before = witness_edge_count(&vault);
     let machine = put_machine(&vault, 0xA9);
     append_actor_ceiling_rows(
         &vault,
         vec![("system".to_owned(), machine.to_hex(), "proposed".to_owned())],
     );
+    let edges_before = witness_edge_count(&vault);
 
     let err = system_facade_for(&vault, machine)
         .witness(&WitnessTurn {
@@ -283,8 +283,8 @@ fn witness_refuses_a_hidden_system_row_with_hostile_metadata() {
 
     // Human actor: refused on AUTHORITY before the metadata is even reached.
     let (_dir, vault) = open_vault();
-    let edges_before = witness_edge_count(&vault);
     let facade = facade_for(&vault, put_person(&vault, 0xB1));
+    let edges_before = witness_edge_count(&vault);
     let err = facade
         .witness(&WitnessTurn {
             conversation_ref: EntityId::from_bytes([0xB2; 16]).expect("conv").to_hex(),
@@ -302,8 +302,8 @@ fn witness_refuses_a_hidden_system_row_with_hostile_metadata() {
     // Machine actor: refused on the METADATA side channel. Authority to author
     // engine rows is not authority to smuggle a second copy of the envelope.
     let (_dir, vault) = open_vault();
-    let edges_before = witness_edge_count(&vault);
     let facade = authorized_system_facade_for(&vault, put_machine(&vault, 0xB3));
+    let edges_before = witness_edge_count(&vault);
     let err = facade
         .witness(&WitnessTurn {
             conversation_ref: EntityId::from_bytes([0xB4; 16]).expect("conv").to_hex(),
@@ -416,8 +416,8 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
 
     for (label, hostile) in cases {
         let (_dir, vault) = open_vault();
-        let edges_before = witness_edge_count(&vault);
         let facade = facade_for(&vault, put_person(&vault, 0xB5));
+        let edges_before = witness_edge_count(&vault);
         // Sharing the speaker isolates the envelope axis under test.
         let legitimate = witness_message(0, hostile.author, "legitimate half");
         let result = facade.witness(&WitnessTurn {
@@ -449,8 +449,8 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
 #[test]
 fn witness_refuses_out_of_range_and_colliding_message_orders() {
     let (_dir, vault) = open_vault();
-    let edges_before = witness_edge_count(&vault);
     let facade = facade_for(&vault, put_person(&vault, 0xB7));
+    let edges_before = witness_edge_count(&vault);
     let conversation_hex = EntityId::from_bytes([0xB8; 16]).expect("conv").to_hex();
 
     let out_of_range = facade

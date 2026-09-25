@@ -16,6 +16,8 @@ use crate::context_board::MemoriesSection;
 use crate::error::{ClaimError, Error, Result};
 use crate::prompt::PromptRecompileStamp;
 
+const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
+
 const BOARD_STATE_REF_PREFIX: &str = "board:";
 const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';
 
@@ -192,6 +194,11 @@ pub fn append_pack_manifest_fields(
     receipt: &mut ReceiptRecord,
     manifest: &[ManifestEntry],
 ) -> Result<()> {
+    let ordered = serde_json::to_string(manifest)
+        .map_err(|_| Error::InvariantViolation("ordered pack manifest encode"))?;
+    receipt
+        .fields
+        .insert(FIELD_MANIFEST_ENTRIES.to_owned(), ordered);
     let skills = manifest_wire_forms(manifest, ManifestKind::Skill);
     let actor_claims = manifest_wire_forms(manifest, ManifestKind::ActorClaim);
     receipt.fields.insert(
@@ -241,6 +248,12 @@ pub fn append_context_receipt_fields(
 }
 
 impl ReceiptRecord {
+    /// The complete index/pull/claim sequence frozen by the terminal transaction.
+    #[must_use]
+    pub fn pack_manifest_entries(&self) -> Option<Vec<ManifestEntry>> {
+        serde_json::from_str(self.fields.get(FIELD_MANIFEST_ENTRIES)?).ok()
+    }
+
     /// Reads the ARCH-0053 §2 pack manifest recorded on this receipt: the
     /// `skill_id@version` rows the attempt's pack loaded, in append order.
     ///

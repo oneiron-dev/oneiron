@@ -1,193 +1,186 @@
-//! SSE accumulation into LlmStreamEvent sequences with abort and empty-content rules.
-
-use std::collections::{BTreeMap, VecDeque};
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
-use futures_core::Stream;
-use oneiron::{
-    ContentPart, FatalLlmError, FinishReason, LlmMessage, LlmMessageRole, LlmResult,
-    LlmStreamEvent, LlmUsage,
-};
-use serde_json::Value as JsonValue;
-
+//! Anthropic block-indexed SSE decoder, including thinking and tool input.
 use super::wire::{anthropic_finish_reason, parse_anthropic_usage};
 use super::{
     AnthropicMessagesProviderStream, AnthropicMessagesStreamFrame, classify_anthropic_status,
 };
+use futures_core::Stream;
+use oneiron::llm::StreamAssembly;
+use oneiron::{FatalLlmError, FinishReason, LlmResult, LlmStreamEvent, LlmUsage};
+use serde_json::Value as JsonValue;
+use std::{
+    collections::{BTreeMap, VecDeque},
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 #[derive(Debug, Clone)]
 pub struct AnthropicMessagesStreamAccumulator {
-    text_part_id: String,
-    text: String,
-    text_started: bool,
-    usage: Option<LlmUsage>,
+    assembly: StreamAssembly,
+    tools: BTreeMap<u64, (String, String, Option<JsonValue>)>,
+    tool_has_delta: std::collections::BTreeSet<u64>,
+    signatures: BTreeMap<u64, String>,
+    usage: LlmUsage,
     finish_reason: FinishReason,
-    done: bool,
 }
-
 impl Default for AnthropicMessagesStreamAccumulator {
     fn default() -> Self {
         Self {
-            text_part_id: "text-0".to_owned(),
-            text: String::new(),
-            text_started: false,
-            usage: None,
+            assembly: StreamAssembly::default(),
+            tools: BTreeMap::new(),
+            tool_has_delta: Default::default(),
+            signatures: BTreeMap::new(),
+            usage: LlmUsage::zero(),
             finish_reason: FinishReason::Stop,
-            done: false,
         }
     }
 }
-
 impl AnthropicMessagesStreamAccumulator {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
-
     pub fn push_event(&mut self, event: JsonValue) -> LlmResult<Vec<LlmStreamEvent>> {
-        if self.done {
+        if self.assembly.is_done() {
             return Ok(Vec::new());
         }
-
+        let index = event.get("index").and_then(JsonValue::as_u64).unwrap_or(0);
+        let id = format!("block-{index}");
         let mut events = Vec::new();
         match event.get("type").and_then(JsonValue::as_str) {
             Some("message_start") => {
-                if let Some(usage) = event
-                    .get("message")
-                    .and_then(|message| message.get("usage"))
-                {
-                    self.usage = Some(parse_anthropic_usage(usage));
+                if let Some(usage) = event.get("message").and_then(|m| m.get("usage")) {
+                    self.usage = parse_anthropic_usage(usage);
                 }
             }
             Some("content_block_start") => {
-                if event
-                    .get("content_block")
-                    .and_then(|block| block.get("type"))
-                    .and_then(JsonValue::as_str)
-                    == Some("text")
-                    && !self.text_started
-                {
-                    self.text_started = true;
-                    events.push(LlmStreamEvent::TextStart {
-                        part_id: self.text_part_id.clone(),
-                    });
+                let block = &event["content_block"];
+                match block.get("type").and_then(JsonValue::as_str) {
+                    Some("text") => events.extend(
+                        self.assembly
+                            .text(&id, block["text"].as_str().unwrap_or(""))?,
+                    ),
+                    Some("thinking") => {
+                        let signature = block["signature"].as_str().map(str::to_owned);
+                        if let Some(signature) = &signature {
+                            self.signatures.insert(index, signature.clone());
+                        }
+                        events.extend(self.assembly.reasoning(
+                            &id,
+                            block["thinking"].as_str().unwrap_or(""),
+                            signature,
+                        )?);
+                    }
+                    Some("tool_use") => {
+                        let call_id = block["id"]
+                            .as_str()
+                            .ok_or(FatalLlmError::InvalidRequest)?
+                            .to_owned();
+                        let name = block["name"]
+                            .as_str()
+                            .ok_or(FatalLlmError::InvalidRequest)?
+                            .to_owned();
+                        events.extend(self.assembly.tool(&id, &call_id, &name, "")?);
+                        self.tools
+                            .insert(index, (call_id, name, block.get("input").cloned()));
+                    }
+                    _ => return Err(FatalLlmError::InvalidRequest.into()),
                 }
             }
             Some("content_block_delta") => {
-                if let Some(text) = event
-                    .get("delta")
-                    .and_then(|delta| delta.get("text"))
-                    .and_then(JsonValue::as_str)
-                    && !text.is_empty()
-                {
-                    self.push_text_delta(text, &mut events);
+                let delta = &event["delta"];
+                match delta.get("type").and_then(JsonValue::as_str) {
+                    Some("text_delta") => events.extend(
+                        self.assembly.text(
+                            &id,
+                            delta["text"]
+                                .as_str()
+                                .ok_or(FatalLlmError::InvalidRequest)?,
+                        )?,
+                    ),
+                    Some("thinking_delta") => events.extend(
+                        self.assembly.reasoning(
+                            &id,
+                            delta["thinking"]
+                                .as_str()
+                                .ok_or(FatalLlmError::InvalidRequest)?,
+                            None,
+                        )?,
+                    ),
+                    Some("signature_delta") => {
+                        let fragment = delta["signature"]
+                            .as_str()
+                            .ok_or(FatalLlmError::InvalidRequest)?;
+                        let signature = self.signatures.entry(index).or_default();
+                        signature.push_str(fragment);
+                        events.extend(self.assembly.reasoning(&id, "", Some(signature.clone()))?);
+                    }
+                    Some("input_json_delta") => {
+                        let (call_id, name, _) = self
+                            .tools
+                            .get(&index)
+                            .ok_or(FatalLlmError::InvalidRequest)?;
+                        self.tool_has_delta.insert(index);
+                        events.extend(
+                            self.assembly.tool(
+                                &id,
+                                call_id,
+                                name,
+                                delta["partial_json"]
+                                    .as_str()
+                                    .ok_or(FatalLlmError::InvalidRequest)?,
+                            )?,
+                        );
+                    }
+                    _ => return Err(FatalLlmError::InvalidRequest.into()),
                 }
+            }
+            Some("content_block_stop") => {
+                if let Some((call_id, name, input)) = self.tools.get(&index)
+                    && !self.tool_has_delta.contains(&index)
+                {
+                    events.extend(self.assembly.tool(
+                        &id,
+                        call_id,
+                        name,
+                        &input.as_ref().unwrap_or(&serde_json::json!({})).to_string(),
+                    )?);
+                }
+                events.push(self.assembly.end(&id)?);
             }
             Some("message_delta") => {
                 if let Some(usage) = event.get("usage") {
-                    self.usage = Some(parse_anthropic_usage(usage));
+                    let parsed = parse_anthropic_usage(usage);
+                    // Message deltas usually contain output only: do not erase input spend.
+                    if usage.get("input_tokens").is_some() {
+                        self.usage.input = parsed.input;
+                    }
+                    if usage.get("output_tokens").is_some() {
+                        self.usage.output = parsed.output;
+                    }
+                    if let (Some(total), Some(delta)) =
+                        (self.usage.raw_provider.as_object_mut(), usage.as_object())
+                    {
+                        total.extend(delta.clone());
+                    } else {
+                        self.usage.raw_provider = usage.clone();
+                    }
                 }
-                if let Some(stop_reason) = event
-                    .get("delta")
-                    .and_then(|delta| delta.get("stop_reason"))
-                    .and_then(JsonValue::as_str)
-                {
-                    self.finish_reason = anthropic_finish_reason(stop_reason);
+                if let Some(reason) = event["delta"]["stop_reason"].as_str() {
+                    self.finish_reason = anthropic_finish_reason(reason);
                 }
             }
-            Some("message_stop") => {
-                events.extend(self.finish()?);
-            }
-            Some("error") => {
-                return Err(classify_anthropic_status(500, &BTreeMap::new(), &event));
-            }
+            Some("message_stop") => events.extend(
+                self.assembly
+                    .finish(self.usage.clone(), self.finish_reason.clone())?,
+            ),
+            Some("error") => return Err(classify_anthropic_status(500, &BTreeMap::new(), &event)),
             _ => {}
         }
-
         Ok(events)
     }
-
     #[must_use]
     pub fn abort_with_usage(&mut self, usage: LlmUsage) -> Vec<LlmStreamEvent> {
-        if self.done {
-            return Vec::new();
-        }
-        self.usage = Some(usage);
-        self.done = true;
-
-        let mut events = Vec::new();
-        if self.text_started {
-            events.push(LlmStreamEvent::TextEnd {
-                part_id: self.text_part_id.clone(),
-            });
-        }
-        events.push(LlmStreamEvent::Done {
-            message: LlmMessage {
-                role: LlmMessageRole::Assistant,
-                content: self.partial_content(),
-            },
-            usage: self.usage.clone().unwrap_or_else(LlmUsage::zero),
-            finish_reason: FinishReason::Cancelled,
-        });
-        events
-    }
-
-    fn push_text_delta(&mut self, text: &str, events: &mut Vec<LlmStreamEvent>) {
-        if !self.text_started {
-            self.text_started = true;
-            events.push(LlmStreamEvent::TextStart {
-                part_id: self.text_part_id.clone(),
-            });
-        }
-        self.text.push_str(text);
-        events.push(LlmStreamEvent::TextDelta {
-            part_id: self.text_part_id.clone(),
-            text: text.to_owned(),
-        });
-    }
-
-    fn finish(&mut self) -> LlmResult<Vec<LlmStreamEvent>> {
-        if self.done {
-            return Ok(Vec::new());
-        }
-        self.done = true;
-
-        if self.text.is_empty() {
-            return Err(
-                if matches!(self.finish_reason, FinishReason::ContentFiltered) {
-                    FatalLlmError::ContentFiltered.into()
-                } else {
-                    FatalLlmError::EmptyResponse.into()
-                },
-            );
-        }
-
-        let mut events = Vec::new();
-        if self.text_started {
-            events.push(LlmStreamEvent::TextEnd {
-                part_id: self.text_part_id.clone(),
-            });
-        }
-        events.push(LlmStreamEvent::Done {
-            message: LlmMessage {
-                role: LlmMessageRole::Assistant,
-                content: self.partial_content(),
-            },
-            usage: self.usage.clone().unwrap_or_else(LlmUsage::zero),
-            finish_reason: self.finish_reason.clone(),
-        });
-        Ok(events)
-    }
-
-    fn partial_content(&self) -> Vec<ContentPart> {
-        if self.text.is_empty() {
-            Vec::new()
-        } else {
-            vec![ContentPart::Text {
-                text: self.text.clone(),
-            }]
-        }
+        self.assembly.abort(usage)
     }
 }
 

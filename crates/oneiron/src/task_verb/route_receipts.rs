@@ -13,6 +13,7 @@ pub enum TaskRouteLane {
     Dreamer,
     AgentDefinition,
     PeerActor,
+    ChildActor,
     /// A person was asked. Nothing realizes the task; the Dreamer follows up.
     HumanAssignee,
 }
@@ -20,7 +21,7 @@ pub enum TaskRouteLane {
 /// What routing one created TASK actually did. The peer variant naming zero
 /// attempts is the point: the synced entity IS the transport. The human variant
 /// names zero attempts for a different reason — a person is not a worker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TaskRouteOutcome {
     DreamerAttempt {
         attempt_ref: AttemptId,
@@ -30,6 +31,9 @@ pub enum TaskRouteOutcome {
         agent_def_ref: EntityId,
     },
     PeerSyncedOnly {
+        actor_ref: EntityId,
+    },
+    ChildAddressed {
         actor_ref: EntityId,
     },
     HumanFollowup {
@@ -46,6 +50,7 @@ impl TaskRouteOutcome {
             Self::AgentDispatch { .. } => TaskRouteLane::AgentDefinition,
             Self::PeerSyncedOnly { .. } => TaskRouteLane::PeerActor,
             Self::HumanFollowup { .. } => TaskRouteLane::HumanAssignee,
+            Self::ChildAddressed { .. } => TaskRouteLane::ChildActor,
         }
     }
 
@@ -56,13 +61,15 @@ impl TaskRouteOutcome {
             Self::DreamerAttempt { attempt_ref } | Self::AgentDispatch { attempt_ref, .. } => {
                 Some(attempt_ref)
             }
-            Self::PeerSyncedOnly { .. } | Self::HumanFollowup { .. } => None,
+            Self::PeerSyncedOnly { .. }
+            | Self::ChildAddressed { .. }
+            | Self::HumanFollowup { .. } => None,
         }
     }
 }
 
 /// Result of one `tasks.create` invocation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TaskCreateReceipt {
     pub task_ref: Option<EntityId>,
     pub proposal_ref: Option<EntityId>,
@@ -132,7 +139,7 @@ pub enum TaskCancelTarget {
 }
 
 /// Result of one `tasks.cancel` invocation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TaskCancelReceipt {
     pub approval: ClaimApprovalStatus,
     pub effected: bool,
@@ -151,7 +158,7 @@ pub struct TaskCancelReceipt {
 }
 
 /// Result of persisting one render-tier task acknowledgement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TaskAckReceipt {
     pub task_ref: EntityId,
     pub acked: bool,

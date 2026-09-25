@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use heed::RwTxn;
 
 use crate::claim::ClaimLifecycleStatus;
-use crate::companion::{ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body};
+use crate::companion::decode_companion_record_body;
 use crate::edge::{encode_edge_value, validate_edge_weight};
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, RecordError, RegistryError, Result};
@@ -196,8 +196,8 @@ pub(super) fn check_decode_point_taint_guard(
             if let Some(world) = candidate.world() {
                 check(&world)?;
             }
-            if let Some(rel) = candidate.relationship() {
-                check(&rel)?;
+            if let Some(relationship) = candidate.relationship() {
+                check(&relationship)?;
             }
             check_claim_subject_refs(candidate.subject(), &check)?;
             check(&envelope.actor().entity_ref())?;
@@ -242,6 +242,9 @@ pub(super) fn check_claim_body_refs(
     check_claim_subject_refs(body.subject, check)?;
     if let Some(world) = body.world {
         check(&world)?;
+    }
+    if let Some(rel) = body.rel {
+        check(&rel)?;
     }
     Ok(())
 }
@@ -543,7 +546,9 @@ pub(super) fn companion_retired_histories_in_batch(
         else {
             continue;
         };
-        if *entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+        if *entity_type != crate::registry::ENTITY_TYPE_FACET
+            || !crate::companion::is_identity_facet_body(data)
+        {
             continue;
         }
         let record = decode_companion_record_body(data)?;

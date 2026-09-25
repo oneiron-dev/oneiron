@@ -209,16 +209,25 @@ fn claim_upsert_supersedes_prior_single_cardinality() {
     second_input.occurred_at = Some(200);
     let second = facade.claim_upsert(&second_input).expect("second revision");
 
+    assert!(second.superseded_short_id.is_none());
+    assert_eq!(second.approval, "proposed");
+    let new_id = facade.resolve_ref(&second.claim_short_id).expect("new id");
+    let old_id = facade.resolve_ref(&first.claim_short_id).expect("old id");
     assert_eq!(
-        second.superseded_short_id.as_deref().map(short_id_part),
-        Some(short_id_part(&first.claim_short_id)),
-        "second revision supersedes the first"
+        vault.get_claim(&old_id).unwrap().unwrap().lifecycle,
+        ClaimLifecycleStatus::Active
     );
+    let proposed = vault.get_claim(&new_id).unwrap().unwrap();
+    vault
+        .approve_inbox_member_with_edit_at(
+            &new_id,
+            &crate::claim::encode_claim_body(&proposed).unwrap(),
+            201,
+        )
+        .expect("owner confirms replacement");
 
     // Prior claim stays readable with lifecycle superseded.
-    let history = facade
-        .claim_history(&second.claim_short_id)
-        .expect("history");
+    let history = facade.claim_history(&new_id.to_hex()).expect("history");
     assert_eq!(history.len(), 2);
     assert_eq!(history[0].lifecycle, "superseded");
     assert_eq!(history[0].value, serde_json::json!("Ada"));
@@ -270,14 +279,8 @@ fn multi_cardinality_supersede_matches_on_question_id() {
     let re_answer_a = facade
         .claim_upsert(&answer("q-a", "3", 102))
         .expect("re-answer a");
-    assert_eq!(
-        re_answer_a
-            .superseded_short_id
-            .as_deref()
-            .map(short_id_part),
-        Some(short_id_part(&answer_a.claim_short_id)),
-        "re-answer supersedes the same question's prior claim"
-    );
+    assert!(re_answer_a.superseded_short_id.is_none());
+    assert_eq!(re_answer_a.approval, "proposed");
 
     // B's claim is untouched.
     let claims = facade
@@ -288,7 +291,11 @@ fn multi_cardinality_supersede_matches_on_question_id() {
             limit: 10,
         })
         .expect("list");
-    assert_eq!(claims.len(), 2, "one active claim per question id");
+    assert_eq!(
+        claims.len(),
+        3,
+        "a proposed replacement does not close either question"
+    );
 }
 
 #[test]
@@ -497,8 +504,9 @@ fn put_structural_carries_text_index_fields_and_edges() {
         .expect_err("CLAIM kind must go through commit");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 
-    // Entities land with correct type bytes.
-    assert_eq!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len(), 1);
+    // Entities land with correct type bytes. The four bootstrap seed skills
+    // each persist one source carrier ASSET alongside the fixture ASSET.
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len(), 5);
 }
 
 #[test]
@@ -640,7 +648,8 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
     }
 
     // Exactly one entity of each checked fixture kind exists, and no
-    // refusal minted a second row.
+    // refusal minted a second row. The four bootstrap seed skills each persist
+    // one source carrier ASSET alongside the fixture ASSET.
     assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_TASK)
@@ -653,7 +662,7 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
             .entities_by_type(ENTITY_TYPE_ASSET)
             .expect("asset entities")
             .len(),
-        1
+        5
     );
 }
 
@@ -746,8 +755,9 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
         vault
             .edges_out(&neighbor_id)
             .expect("neighbor edges")
-            .is_empty(),
-        "no edge may reach the neighbor either"
+            .iter()
+            .all(|edge| edge.kind == crate::edge::EdgeKind::FacetOf),
+        "no edge may reach the neighbor either; it carries only its birth stamp"
     );
     let view_after = facade
         .get_entity(&victim.entity_ref)
@@ -1130,11 +1140,29 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
 fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
     let (_dir, vault) = open_vault();
     let first_agent = put_person(&vault, 0x19);
-    let replacement_agent = put_person(&vault, 0x1A);
+    let replacement_agent = put_machine(&vault, 0x1A);
     let subject = put_person(&vault, 0x1B);
     let first_facade = vault.memory(first_agent, EdgeActorClass::Agent);
-    let replacement_facade = vault.memory(replacement_agent, EdgeActorClass::Agent);
+    let replacement_facade = vault.memory(replacement_agent, EdgeActorClass::System);
     let claim_id = EntityId::from_bytes([0x1C; 16]).expect("claim id");
+    let owner = put_person(&vault, 0x1D);
+    root_vault_binding(&vault, 0x1E, owner, "human");
+    let proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    facade_for(&vault, owner)
+        .delegate_memory_authoring(
+            &proof,
+            crate::write_envelope::WriteActor::new(replacement_agent, EdgeActorClass::System),
+            MemoryAuthoringAction::EditClaim,
+            claim_id,
+        )
+        .expect("exact delegated edit slice");
 
     let mut first = claim_input(
         "profile.mood",
@@ -1162,7 +1190,7 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
         .claim_retract_with_pre_txn_hook(&claim_id.to_hex(), || {
             replacement_facade
                 .claim_upsert(&replacement)
-                .expect("second agent replaces same id in former race window");
+                .expect("delegated daemon replaces same id in former race window");
         })
         .expect_err("prior author has no authority over same-id replacement");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
@@ -1321,4 +1349,43 @@ fn put_structural_refuses_to_mint_a_same_as_link() {
             .iter()
             .all(|edge| edge.kind != EdgeKind::SameAs)
     );
+}
+
+#[test]
+fn relationship_upserts_do_not_supersede_another_relationship() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x21);
+    let subject = put_person(&vault, 0x22);
+    let facade = facade_for(&vault, actor);
+    let mut rows = Vec::new();
+    for value in ["Ada", "A"] {
+        let relationship = EntityId::now();
+        vault
+            .put_entity(
+                &relationship,
+                crate::registry::ENTITY_TYPE_RELATIONSHIP,
+                test_time(1),
+                1,
+                b"relationship",
+            )
+            .unwrap();
+        let mut input = claim_input(
+            "profile.nickname",
+            &subject,
+            "user_stated",
+            serde_json::json!(value),
+        );
+        input.relationship_ref = Some(relationship.to_hex());
+        let receipt = facade.claim_upsert(&input).unwrap();
+        let id = facade.resolve_ref(&receipt.claim_short_id).unwrap();
+        let body = vault.get_claim(&id).unwrap().unwrap();
+        assert_eq!(body.rel, Some(relationship));
+        rows.push(id);
+    }
+    for id in rows {
+        assert_eq!(
+            vault.get_claim(&id).unwrap().unwrap().lifecycle,
+            ClaimLifecycleStatus::Active
+        );
+    }
 }

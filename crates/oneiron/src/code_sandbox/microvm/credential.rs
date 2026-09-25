@@ -157,6 +157,22 @@ pub trait CredentialResolver: Send + Sync {
     ) -> Result<Vec<u8>>;
 }
 
+/// Host-only transport for a credential-backed READ operation.
+///
+/// Implementations must use the supplied destination without redirects or
+/// guest-controlled routing overrides, verify its TLS identity, and bound I/O.
+/// Only a completion receipt leaves this door: reflected responses can contain
+/// secrets, so this interface deliberately cannot return response bytes.
+pub trait CredentialReadTransport: Send + Sync {
+    fn read(
+        &self,
+        destination: &CredentialDestination,
+        operation: &crate::code_sandbox::SandboxCredentialOperation,
+        args: &Value,
+        credential: &[u8],
+    ) -> Result<()>;
+}
+
 /// Host receipt for one boundary injection. Carries no secret material.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CredentialInjection {
@@ -236,6 +252,46 @@ impl CredentialEgressProxy {
     /// Marks the VM-internal transport as bound and ready.
     pub const fn arm(&mut self) {
         self.armed = true;
+    }
+
+    /// Performs one allowlisted, read-only egress operation outside the guest.
+    /// Material is scrubbed on success AND refusal. The guest gets no secret,
+    /// request headers, host exception text, or reflected response body.
+    pub fn forward_read(
+        &self,
+        vm: &MicroVmHandle,
+        call: &crate::code_sandbox::SandboxCredentialCall,
+        transport: &dyn CredentialReadTransport,
+    ) -> Result<CredentialInjection> {
+        let destination = egress_destination_from_args(call.args())?;
+        let credential = call.credential();
+        if !self.armed {
+            return Err(backend_error(
+                EGRESS_PROXY_NAME,
+                "credential proxy is not armed",
+            ));
+        }
+        if !self.allowlist.permits(credential, &destination) {
+            return Err(Error::Code(CodeError::MicroVmCredentialDestinationDenied {
+                credential: credential.as_str().to_owned(),
+                scheme: destination.scheme().to_owned(),
+                host: destination.host_suffix().to_owned(),
+            }));
+        }
+        let material = SecretMaterial(self.resolver.resolve_for(credential, &destination)?);
+        if material.0.is_empty() {
+            return Err(backend_error(
+                EGRESS_PROXY_NAME,
+                "credential resolver returned empty material",
+            ));
+        }
+        transport.read(&destination, call.operation(), call.args(), &material.0)?;
+        Ok(CredentialInjection {
+            vm_id: vm.id().to_owned(),
+            credential: credential.clone(),
+            destination,
+            injected_bytes: material.0.len(),
+        })
     }
 
     /// Resolves, measures and scrubs `credential` at the outbound boundary.
@@ -335,4 +391,16 @@ fn abi_str<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a str> {
         .iter()
         .find(|(name, _)| name.as_str() == Some(key))
         .and_then(|(_, value)| value.as_str())
+}
+
+// The scope guard also scrubs on a transport error or unwind.
+struct SecretMaterial(Vec<u8>);
+impl Drop for SecretMaterial {
+    fn drop(&mut self) {
+        for byte in &mut self.0 {
+            // SAFETY: each byte is a valid uniquely borrowed element.
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    }
 }

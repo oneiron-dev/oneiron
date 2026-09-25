@@ -2,22 +2,46 @@
 export type AgentInvoke = (method: string, input: unknown) => unknown;
 export interface OutcomeBinding { source: {kind: "claim" | "event"; predicate: string} | {kind: "edge"; relation: string} | {kind: "stage"; campaign: string}; horizon: number; mapping: Record<string, boolean>; noise_weight: number; linked_by?: string | null }
 export interface CalibrationPair { prediction: unknown; probability: number; outcome: {answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number} }
-export interface TaskAskSpec { question: Record<string, unknown>; holders: string[]; idempotency_key: string; outcome_binding?: OutcomeBinding | null }
-export interface TaskAskHandle { task_ref: string }
-export interface TaskAskReceipt { handle: TaskAskHandle; count: number; replayed: boolean }
-export interface TaskAskAnswer { task_ref: string; actor_ref: string; result_ref: string; at: number; answer_ref: string | null; question_version: number | null }
-export type TaskWaitOutcome = { Pending: {trap_ref: string} } | { Ready: TaskAskAnswer } | { AlreadyResumed: TaskAskAnswer };
+export type TaskAssignee = "dreamer" | {agent_def: {agent_def_ref: string}} | {peer: {actor_ref: string}} | {child: {actor_ref: string}} | {human: {actor_ref: string}};
+export type ConsultPayloadRef = {claim: string} | {turn: string};
+export type TaskAskOptionId = string;
+export type TaskAskTarget = {responder: TaskAssignee} | {people: string[]} | {authority: {class: string; selectors: string[]; target: string | null; budget: number | null; receipt_required: boolean}};
+export interface TaskAskQuestion { reference: ConsultPayloadRef; revision: number; options: Record<TaskAskOptionId, string>; context_refs: ConsultPayloadRef[]; label?: string | null; outcome_binding?: OutcomeBinding | null }
+export type TaskAskElectorate = "any" | {people: string[]};
+export interface TaskAskNeed {count: number; of?: TaskAskElectorate}
+export type TaskAskDecide = "first" | {all: {of: TaskAskElectorate; answer: TaskAskOptionId}} | {at_least: {count: number; of: TaskAskElectorate; answer: TaskAskOptionId}};
+export type TaskAskDefault = "proceed" | "hold" | "ask_me";
+export interface TaskAskDisagree {branch: "hold" | "proceed"; surface: "card" | "none"}
+export interface TaskAskClass {key: string; version: number; governance: boolean; deadline_seconds: number; allowed_recipients: string[]; required_people: string[]; minimum_responses: number; required_sources: ConsultPayloadRef[]; decision: TaskAskDecide | null; disclosure: Record<string, ConsultPayloadRef[]>; fallback: TaskAskDefault[]; remind: number[]}
+export interface TaskAskSpec { intent_key: string; task_ref?: string | null; class?: TaskAskClass | null; who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault; need?: TaskAskNeed; decide?: TaskAskDecide | null; provisional?: "inform"; on_disagree?: TaskAskDisagree; remind?: number[] | null }
+export interface TaskAskHandle { group_ref: string }
+export interface TaskAskReceipt { handle: TaskAskHandle; task_refs: string[]; hold: "NoLiveRoute" | null; idempotent_replay: boolean }
+export interface TaskAskWord {result_ref: string; option?: TaskAskOptionId | null; inform_for?: string | null; provenance_refs?: ConsultPayloadRef[]}
+export interface TaskAskAnswer { task_ref: string; actor_ref: string; result_ref: string; word_ref: string }
+export interface TaskAskCoverage {met: boolean; required: number; responded: string[]; unknown: string[]; unmet_people: string[]}
+export type TaskAskDecision = "collected" | {first: TaskAskAnswer} | {answer: TaskAskOptionId} | "no" | "conflict" | "unknown";
+export interface TaskAskFallback {branch: TaskAskDefault; surface: "card" | "none"}
+export interface TaskAskEvidence {answer: TaskAskAnswer; word: TaskAskWord; source: "human" | "inform" | "executor"; person_ref: string; order: number; reason: "counted" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"}
+export interface TaskAskSettlement {group_ref: string; reference: string; revision: number; at: number; cutoff_order: number; reason: "first_word" | "all_responded" | "deadline" | "stale"; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: string[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref: string | null}
+export interface TaskAskResult {coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
+export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Settled: TaskAskResult};
+export type TaskAskWait = { Pending: {trap_ref: string} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
 export function agentVerbs(invoke: AgentInvoke) {
   return {
 tasks: {
+ack(turn: Record<string, unknown>): unknown { return invoke("tasksAck", turn) as unknown },
+cancel(turn: Record<string, unknown>): unknown { return invoke("tasksCancel", turn) as unknown },
+check(): {rows: unknown[]; overflow: unknown | null} { return invoke("tasksCheck", {}) as {rows: unknown[]; overflow: unknown | null} },
+create(turn: Record<string, unknown>): unknown { return invoke("tasksCreate", turn) as unknown },
+expand(turn: Record<string, unknown>): unknown { return invoke("tasksExpand", turn) as unknown },
 ask(spec: TaskAskSpec): TaskAskReceipt { return invoke("tasksAsk", spec) as TaskAskReceipt },
-wait(handle: TaskAskHandle, stepKey = "sdk.wait"): TaskWaitOutcome { return invoke("tasksWait", {handle, step_key: stepKey}) as TaskWaitOutcome },
-answer(handle: TaskAskHandle, resultRef: string): TaskAskAnswer { return invoke("tasksAnswer", {handle, result_ref: resultRef}) as TaskAskAnswer },
+wait(handle: TaskAskHandle, stepKey = "sdk.wait"): TaskAskWait { return invoke("tasksWait", {handle, step_key: stepKey}) as TaskAskWait },
+answer(handle: TaskAskHandle, word: TaskAskWord): TaskAskAnswer { return invoke("tasksAnswer", {handle, word}) as TaskAskAnswer },
 outcomes(handle: TaskAskHandle): CalibrationPair[] { return invoke("tasksOutcomes", handle) as CalibrationPair[] },
 },
 rooms: {
 list(): unknown[] { return invoke("roomsList", {}) as unknown[] },
-messages(roomRef: string, after?: string, limit?: number): unknown[] { return invoke("roomsMessages", {room_ref: roomRef, after, limit}) as unknown[] },
+messages(roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} { return invoke("roomsMessages", {room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null} },
 claim(roomRef: string, turnRef: string): unknown { return invoke("roomsClaim", {room_ref: roomRef, turn_ref: turnRef}) as unknown },
 speak(turn: Record<string, unknown>): unknown { return invoke("roomsSpeak", turn) as unknown },
 },

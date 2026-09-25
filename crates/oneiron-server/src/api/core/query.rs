@@ -8,7 +8,6 @@ use super::super::parse_entity_id_param;
 use super::super::scoped_read_for_core_auth;
 use super::super::search_fetch_limit;
 use super::super::search_meta;
-use super::super::search_response;
 use super::write_shape::CORE_MAX_LIST_LIMIT;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -65,6 +64,20 @@ pub(crate) struct CoreQueryRequest {
     )]
     #[schema(example = "estimate")]
     count_mode: CountMode,
+    /// Session receiving the result. Defaults to the caller's current board session.
+    #[serde(default)]
+    session_id: Option<String>,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+pub(crate) struct CoreScopedQueryResponse {
+    #[serde(flatten)]
+    #[schema(value_type = super::read_receipt::GrantedDataSchema)]
+    access: oneiron::access_grant::GrantedData<String>,
+    #[serde(flatten)]
+    response: SearchResponse,
+    #[schema(value_type = super::read_receipt::ReadReceiptSchema)]
+    narrowing: oneiron::claim::ScopedReadReceipt,
 }
 
 /// Query core memory through text and/or vector retrieval.
@@ -73,7 +86,7 @@ pub(crate) struct CoreQueryRequest {
     path = "/v1/core/query",
     request_body(content = CoreQueryRequest, content_type = "application/json"),
     responses(
-        (status = 200, description = "Projected query results.", body = Object, content_type = "application/json"),
+        (status = 200, description = "Projected query results.", body = CoreScopedQueryResponse, content_type = "application/json"),
         (status = 400, description = "Malformed query request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -84,7 +97,7 @@ pub(crate) async fn core_query(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CoreQueryRequest>, JsonRejection>,
-) -> Result<Json<SearchResponse>, EnvelopedApiError> {
+) -> Result<Json<CoreScopedQueryResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let req = json_payload(payload)?;
     let query = non_empty_query(req.query.as_deref());
@@ -93,6 +106,9 @@ pub(crate) async fn core_query(
     let view = req.view.unwrap_or(View::Summary);
     let count_mode = req.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, req.limit);
+    let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
+    let mut observations =
+        super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let results = run_core_query(
         &scoped_read,
@@ -104,11 +120,67 @@ pub(crate) async fn core_query(
         tracing::error!(error = %error, "core query failed");
         core_engine_error("core query failed", error)
     })?;
-    let total = results.len();
-    let response = search_response(&scoped_read, results, view, req.limit)?;
+    let mut narrowing = results.receipt;
+    let projected = scoped_read
+        .get_entities_parts_with_modes_with_receipt(
+            &results
+                .value
+                .iter()
+                .map(|row| (row.id, oneiron::memory::ReadMode::Indexed))
+                .collect::<Vec<_>>(),
+            Some(&narrowing.applied.as_filter()),
+        )
+        .map_err(|error| core_engine_error("core query projection failed", error))?;
+    narrowing.restrict_with(&projected.receipt);
+    let total = projected.value.iter().filter(|row| row.is_some()).count();
+    let mut staged = observations.as_deref().cloned();
+    let mut response = Vec::with_capacity(total.min(req.limit));
+    for (result, parts) in results.value.into_iter().zip(projected.value) {
+        let Some((entity_type, learned_at, body)) = parts else {
+            continue;
+        };
+        if response.len() >= req.limit {
+            continue;
+        }
+        if let Some(observations) = staged.as_mut() {
+            observations
+                .observe_snapshot(
+                    &scoped_read,
+                    result.id,
+                    entity_type,
+                    &body,
+                    matches!(view, View::Full),
+                )
+                .map_err(|error| core_engine_error("session body observation failed", error))?;
+        }
+        let mut value = if matches!(view, View::Standard) {
+            serde_json::json!({"id": result.id.to_hex(), "score": result.score})
+        } else {
+            projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view)
+        };
+        if matches!(view, View::Full)
+            && let Value::Object(object) = &mut value
+        {
+            object.insert("score".to_owned(), serde_json::json!(result.score));
+        }
+        response.push(value);
+    }
+    if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged) {
+        *target = staged;
+    }
     let meta = search_meta(count_mode, total);
 
-    Ok(Json(PaginatedResponse::new(response, None, meta)))
+    Ok(Json(CoreScopedQueryResponse {
+        access: oneiron::access_grant::GrantedData::new(
+            response
+                .iter()
+                .filter_map(|row| row.get("id").and_then(Value::as_str).map(str::to_owned))
+                .collect(),
+            narrowing.suppressed_count,
+        ),
+        response: PaginatedResponse::new(response, None, meta),
+        narrowing,
+    }))
 }
 
 pub(crate) fn non_empty_query(query: Option<&str>) -> Option<&str> {
@@ -139,12 +211,15 @@ pub(crate) fn run_core_query(
     query: Option<&str>,
     vector: Option<&[f32]>,
     limit: usize,
-) -> oneiron::Result<Vec<oneiron::ScoredEntity>> {
+) -> oneiron::Result<oneiron::claim::ScopedReadResult<Vec<oneiron::ScoredEntity>>> {
     match (query, vector) {
         (Some(query), Some(vector)) => scoped_read.search(query, vector, limit, None),
         (Some(query), None) => scoped_read.search_text(query, limit, None),
         (None, Some(vector)) => scoped_read.search_vector(vector, limit, None),
-        (None, None) => Ok(Vec::new()),
+        (None, None) => Ok(oneiron::claim::ScopedReadResult {
+            value: Vec::new(),
+            receipt: scoped_read.read_receipt(None, 0)?,
+        }),
     }
 }
 

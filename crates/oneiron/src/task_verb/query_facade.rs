@@ -1,3 +1,4 @@
+use crate::task_verb::sdk::AgentVerb;
 use std::sync::atomic::Ordering;
 
 use rmpv::Value;
@@ -22,7 +23,7 @@ use crate::gate::{
 use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::run_tree::RunTreeStatus;
 use crate::temporal::TimeRange;
-use crate::unix_seconds_now;
+
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
 use super::consts::{
@@ -38,7 +39,6 @@ use super::rate_limit::{task_create_owner_in, task_verb_contract};
 use super::route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskAckReceipt, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
 };
-use super::verb_kind::TasksVerb;
 
 impl Memory<'_> {
     /// Renders the current TASKS section through the existing board renderer.
@@ -49,7 +49,7 @@ impl Memory<'_> {
     /// scan or the render cap left out is stated in the section's additive
     /// overflow footer, never silently dropped.
     pub fn tasks_check(&self) -> MemoryResult<TasksSection> {
-        let _provenance = facade_provenance(task_verb_contract(TasksVerb::Check));
+        let _provenance = facade_provenance(task_verb_contract(AgentVerb::TasksCheck));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let snapshot = task_presence(self.vault())?;
         Ok(TasksSection::render_bounded(
@@ -64,7 +64,7 @@ impl Memory<'_> {
     /// Direct by id: a row outside the collapsed board prefix is hidden, never
     /// gone, so this never inherits `tasks.check`'s scan cap.
     pub fn tasks_expand(&self, task_ref: EntityId) -> MemoryResult<Vec<String>> {
-        let _provenance = facade_provenance(task_verb_contract(TasksVerb::Expand));
+        let _provenance = facade_provenance(task_verb_contract(AgentVerb::TasksExpand));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
             return Err(MemoryError::from(Error::EntityNotFound));
@@ -80,7 +80,7 @@ impl Memory<'_> {
 
     /// Persists the free render-tier acknowledgement bit for one TASK.
     pub fn tasks_ack(&self, task_ref: EntityId) -> MemoryResult<TaskAckReceipt> {
-        let _provenance = facade_provenance(task_verb_contract(TasksVerb::Ack));
+        let _provenance = facade_provenance(task_verb_contract(AgentVerb::TasksAck));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         // Ack applies only to a currently-FAILED task: failed rows stay
         // surfaced until acked (08b §3). Acking a queued/running task would
@@ -101,7 +101,7 @@ impl Memory<'_> {
         // The acknowledgement is a FACT about a real failed row, stamped with
         // who acknowledged it and when, and it commits inside the verified
         // actor's write transaction like every other engine-authored fact.
-        let now = unix_seconds_now();
+        let now = self.vault().store.clock.now_recorded_at();
         self.with_verified_actor_write_txn(|wtxn| {
             ack_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)
                 .map_err(MemoryError::from)
@@ -169,8 +169,8 @@ impl Memory<'_> {
     ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let state = cancel_target_state(self.vault(), self.actor(), target)?;
-        let verb = task_verb_contract(TasksVerb::Cancel);
-        let now = unix_seconds_now();
+        let verb = task_verb_contract(AgentVerb::TasksCancel);
+        let now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
 
         // Not the owner, or not an owner-addressable TASK target: nothing hard
@@ -320,8 +320,8 @@ impl Memory<'_> {
         mode: TaskCancelMode,
         state: CancelTargetState,
     ) -> MemoryResult<TaskCancelReceipt> {
-        let verb = task_verb_contract(TasksVerb::Cancel);
-        let now = unix_seconds_now();
+        let verb = task_verb_contract(AgentVerb::TasksCancel);
+        let now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
         if !state.owned || mode.ceiling() == PolicyApprovalCeiling::Proposed {
             let (proposal_ref, gate_decision_ref) = self.persist_task_proposal(
@@ -586,7 +586,7 @@ impl Memory<'_> {
         now: u64,
         provenance: Value,
     ) -> MemoryResult<(EntityId, Option<String>)> {
-        let proposal_ref = EntityId::now();
+        let proposal_ref = self.vault().store.clock.entity_id()?;
         let candidate = ClaimCandidate::new(
             predicate.to_owned(),
             ClaimSubject::Entity(subject),

@@ -190,7 +190,11 @@ pub(super) fn append_demotion_in_txn(
     let data = encode_row(&row, "ramp demotion row encode failed")?;
     vault.store.vault_meta.put(
         wtxn,
-        &ramp_row_key(RAMP_DEMOTION_KEY_PREFIX, at, &EntityId::now()),
+        &ramp_row_key(
+            RAMP_DEMOTION_KEY_PREFIX,
+            at,
+            &vault.store.clock.entity_id()?,
+        ),
         &data,
     )?;
 
@@ -223,7 +227,7 @@ fn append_door_outcome_in_txn(
     let data = encode_row(&row, "ramp outcome row encode failed")?;
     vault.store.vault_meta.put(
         wtxn,
-        &ramp_row_key(RAMP_OUTCOME_KEY_PREFIX, at, &EntityId::now()),
+        &ramp_row_key(RAMP_OUTCOME_KEY_PREFIX, at, &vault.store.clock.entity_id()?),
         &data,
     )?;
     Ok(())

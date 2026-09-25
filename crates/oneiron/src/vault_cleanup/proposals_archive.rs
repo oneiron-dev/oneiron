@@ -8,9 +8,7 @@ use super::{
 };
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
-use crate::deletion::{
-    ARCHIVE_TOMBSTONE_PREFIX, TombstoneReason, entity_id_from_archive_tombstone_key,
-};
+use crate::deletion::TombstoneReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, MaintenanceError, Result};
 use uuid::Uuid;
@@ -68,6 +66,7 @@ pub(super) fn accept_cleanup_proposal_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     proposal: &EntityId,
 ) -> Result<CleanupAcceptOutcome> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let key = proposal_key(proposal);
     let Some(raw) = vault.store.vault_meta.get(wtxn, &key)? else {
         return Err(Error::Maintenance(
@@ -79,12 +78,12 @@ pub(super) fn accept_cleanup_proposal_in_txn(
     let row = decode_proposal(&key, &raw)?;
     let applied = apply_archives_in_txn(vault, wtxn, &row.candidates)?;
     let digest = CleanupDigest {
-        id: fresh_row_id()?,
+        id: fresh_row_id(vault)?,
         attempt: Some(row.attempt),
         proposal: Some(row.id),
         decision: CleanupDecision::ProposalAccepted,
         posture: cleanup_posture_in_txn(vault, wtxn)?,
-        at: crate::unix_seconds_now(),
+        at: mutation_recorded_at,
         archived: applied.archived.clone(),
         skipped: applied.skipped.clone(),
     };
@@ -142,16 +141,12 @@ impl Vault {
     pub fn archived_entities(&self) -> Result<Vec<ArchivedEntity>> {
         let rtxn = self.store.env.read_txn()?;
         let mut out = Vec::new();
-        for row in self
-            .store
-            .sync_state
-            .prefix_iter(&rtxn, ARCHIVE_TOMBSTONE_PREFIX)?
-        {
-            let (key, raw) = row?;
-            let Some(entity) = entity_id_from_archive_tombstone_key(&key) else {
-                continue;
-            };
-            let decoded = crate::deletion::decode_tombstone_value(&raw);
+        for row in crate::ports::TombstoneStoreRead::port_tombstone_records(
+            &self.store,
+            &rtxn,
+            crate::ports::DeletionFamily::Archive,
+        )? {
+            let (entity, decoded) = row?;
             if decoded.reason != Some(TombstoneReason::ArchivedByCleanup) {
                 continue;
             }

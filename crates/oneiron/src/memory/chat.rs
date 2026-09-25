@@ -41,60 +41,14 @@ use crate::llm::BudgetLease;
 use crate::registry::ENTITY_TYPE_REGISTRY;
 use crate::serialize::{SerializeConfig, serialize_pack};
 
-/// Wire depth for [`Memory::chat`] — the single cost gate a caller turns.
-///
-/// Canonical serialization is always `minimal | standard | deep`;
-/// [`ChatDepth::parse`] additionally accepts `low | med | high` as INPUT
-/// aliases. Deliberately distinct from the `llm.rs` `ReasoningEffort` (the LLM
-/// dial) and from `context_pack.rs` `FieldProfile`: this is the retrieval
-/// price, expressed in the one [`Effort`] enum it maps onto.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChatDepth {
-    /// Zero-model extractive tier: the pack answers for itself and the
-    /// composer is never invoked, so the call reports zero tokens used.
-    Minimal,
-    /// Graph-expanded retrieval followed by exactly one composer call.
-    Standard,
-    /// Lease-gated retrieval followed by exactly one composer call. The deep
-    /// executor has not landed, so `recall` runs the standard body and stamps
-    /// `retrieval_meta.deep_pending`, which travels out untouched.
-    Deep,
-}
+/// Chat uses the same closed five-level effort vocabulary as retrieval.
+pub type ChatDepth = Effort;
 
-impl ChatDepth {
-    /// Parses the wire form, accepting `low | med | high` as aliases for the
-    /// canonical values. Exact match, mirroring [`Effort::parse`]: no
-    /// trimming and no case folding, so anything else is `None`.
+impl Effort {
+    /// The retrieval effort priced by a chat request.
     #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "minimal" | "low" => Some(Self::Minimal),
-            "standard" | "med" => Some(Self::Standard),
-            "deep" | "high" => Some(Self::Deep),
-            _ => None,
-        }
-    }
-
-    /// The canonical string form. Aliases never round-trip back out.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Minimal => "minimal",
-            Self::Standard => "standard",
-            Self::Deep => "deep",
-        }
-    }
-
-    /// The retrieval effort this depth prices. `low`/`med`/`high` are aliases
-    /// INTO this mapping — never a second effort enum.
-    #[must_use]
-    pub const fn effort(self) -> Effort {
-        match self {
-            Self::Minimal => Effort::Minimal,
-            Self::Standard => Effort::Standard,
-            Self::Deep => Effort::Deep,
-        }
+    pub const fn effort(self) -> Self {
+        self
     }
 }
 
@@ -270,6 +224,22 @@ impl Memory<'_> {
         depth: ChatDepth,
         options: ChatOptions<'_>,
     ) -> MemoryResult<ChatResponse> {
+        self.chat_with_execution(
+            question,
+            depth,
+            options,
+            &crate::retrieval_depth::RecallExecution::default(),
+        )
+    }
+
+    /// Same chat pipeline with explicit prepared scoring and stage-boundary budget.
+    pub fn chat_with_execution(
+        &self,
+        question: &str,
+        depth: ChatDepth,
+        options: ChatOptions<'_>,
+        execution: &crate::retrieval_depth::RecallExecution<'_>,
+    ) -> MemoryResult<ChatResponse> {
         if question.trim().is_empty() {
             return Err(MemoryError::bad_request_with(
                 "chat question must not be blank",
@@ -286,30 +256,33 @@ impl Memory<'_> {
         // request the host cannot answer at any price, and at minimal the
         // composer is structurally out of reach even when one is supplied.
         let composer = match depth {
-            ChatDepth::Minimal => None,
-            ChatDepth::Standard | ChatDepth::Deep => match options.composer {
-                Some(composer) => Some(composer),
-                None => {
-                    return Err(MemoryError::bad_request_with(
-                        format!("{} chat requires a composer", depth.as_str()),
-                        &[
-                            "Inject a ChatComposer as ChatOptions.composer.",
-                            "Or ask at minimal depth for a zero-model extractive answer.",
-                        ],
-                    ));
+            ChatDepth::Light => None,
+            ChatDepth::Medium | ChatDepth::High | ChatDepth::Xhigh | ChatDepth::Max => {
+                match options.composer {
+                    Some(composer) => Some(composer),
+                    None => {
+                        return Err(MemoryError::bad_request_with(
+                            format!("{} chat requires a composer", depth.as_str()),
+                            &[
+                                "Inject a ChatComposer as ChatOptions.composer.",
+                                "Or ask at minimal depth for a zero-model extractive answer.",
+                            ],
+                        ));
+                    }
                 }
-            },
+            }
         };
 
         let (pack, mut gaps) = match &options.scope {
             ChatScope::Recall(scope) => {
-                let pack = self.recall(
+                let pack = self.recall_with_execution(
                     question,
                     depth.effort(),
                     scope,
                     options.limit,
                     options.format,
                     options.lease,
+                    execution,
                 )?;
                 (pack, Vec::new())
             }
@@ -445,6 +418,7 @@ impl Memory<'_> {
                     total_candidates,
                     claims_returned,
                     deep_pending: None,
+                    partial: false,
                     ..RetrievalMeta::default()
                 },
                 pack_version: MEMORY_PACK_VERSION,
@@ -554,10 +528,14 @@ fn render_document_pack(views: &[EntityView], format: PackFormat) -> MemoryResul
     }
     let resolved = results.len();
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results,
         neighbors: Vec::new(),
         stats: PackStats {
+            critical_over_budget: false,
+            critical_count: 0,
             // The caller named this set, so every document in it was resolved
             // rather than ranked: no signals were used and no query was run.
             candidates_considered: resolved,
@@ -606,6 +584,13 @@ fn document_entity(view: &EntityView) -> MemoryResult<ContextEntity> {
         _ => None,
     };
     Ok(ContextEntity {
+        source_revision_ref: view
+            .short_ref
+            .as_deref()
+            .and_then(|s| s.rsplit_once('@'))
+            .and_then(|(_, r)| crate::memory::RevisionRef::from_hex(r).ok())
+            .map(|r| r.0),
+        critical: false,
         id: EntityId::from_hex(&view.id_hex)?,
         short_id,
         content_hash,
@@ -622,6 +607,7 @@ fn document_entity(view: &EntityView) -> MemoryResult<ContextEntity> {
 /// tail. A ref of any other shape falls back to the hex id with a zero hash,
 /// which is what hydration itself does when no short id is assigned.
 fn split_short_ref(short_ref: &str) -> Option<(String, u8)> {
+    let short_ref = short_ref.split('@').next()?;
     let (short_id, content_hash) = short_ref.rsplit_once(':')?;
     Some((
         short_id.to_owned(),

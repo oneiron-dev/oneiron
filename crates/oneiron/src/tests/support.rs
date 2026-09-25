@@ -25,7 +25,7 @@ pub(super) fn seed_generated_auto_source_trust_manifest(vault: &Vault) -> Result
     let manifest = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("schema_version"),
-            rmpv::Value::from("1.1"),
+            rmpv::Value::from(crate::gate::POLICY_SCHEMA_VERSION),
         ),
         (
             rmpv::Value::from("pack_id"),
@@ -90,6 +90,7 @@ pub(super) fn seed_generated_auto_source_trust_manifest(vault: &Vault) -> Result
     payload.extend_from_slice(&data);
 
     let mut wtxn = vault.store.env.write_txn()?;
+    crate::gate::stamp_manifest_origin(&vault.store, &mut wtxn, &id, &data, false)?;
     vault
         .store
         .entities
@@ -363,7 +364,7 @@ impl ContractEdgeLayout {
     }
 }
 
-pub(super) const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 24] = [
+pub(super) const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 31] = [
     (EdgeKind::AuthoredBy, ContractEdgeLayout::Structural),
     (EdgeKind::ScopedTo, ContractEdgeLayout::Structural),
     (EdgeKind::PartOf, ContractEdgeLayout::Structural),
@@ -391,6 +392,13 @@ pub(super) const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 2
     // ONE-1541: u8 25/26 `fulfills` / `discharged_by`, structural 12 B.
     (EdgeKind::Fulfills, ContractEdgeLayout::Structural),
     (EdgeKind::DischargedBy, ContractEdgeLayout::Structural),
+    (EdgeKind::SameAs, ContractEdgeLayout::Structural),
+    (EdgeKind::MergedInto, ContractEdgeLayout::Structural),
+    (EdgeKind::SplitInto, ContractEdgeLayout::Structural),
+    (EdgeKind::Parent, ContractEdgeLayout::Structural),
+    (EdgeKind::SpawnedBy, ContractEdgeLayout::Structural),
+    (EdgeKind::AddressedTo, ContractEdgeLayout::Structural),
+    (EdgeKind::RepliesTo, ContractEdgeLayout::Structural),
 ];
 
 pub(super) fn assert_f32_exact(actual: f32, expected: f32) {
@@ -587,10 +595,47 @@ pub(super) fn assert_no_erasure_audit_artifacts(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
-/// Orders a headerful deleter's read before the eraser commits. The staged
-/// erasure remains invisible to the read probe until the vault-local hook
-/// signals; the held write transaction then commits before deletion continues.
-/// Only valid for headerful deletes, which reach the post-header-read hook.
+/// Constructs RACED-TO-NOTHING after the deleter has proved a live scope
+/// and published its tombstone, but before it opens the purge transaction.
+/// The existing vault-local, entity-keyed rendezvous parks the deleter while
+/// the eraser commits. No scheduling assumption, held writer lock or retry
+/// is needed; the headerful and headerless paths both reach this seam.
+pub(super) fn run_raced_delete<F>(
+    vault: &Vault,
+    id: &EntityId,
+    reason: DeleteReason,
+    erase_scope: F,
+) -> Result<DeleteEntityOutcome>
+where
+    F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+{
+    let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+    vault.test_hooks().install_delete_rendezvous(
+        crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+        *id,
+        arrived_tx,
+        resume_rx,
+    );
+    std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
+        let deleter = scope.spawn(|| vault.delete_entity_with_reason(id, reason));
+        arrived_rx
+            .recv()
+            .expect("deleter must reach the publish seam");
+        let erased = vault.with_write_txn(erase_scope);
+        // Release even if the eraser fails, so scope teardown can join.
+        resume_tx
+            .send(())
+            .expect("deleter must wait for the eraser");
+        let outcome = deleter.join().expect("deleter thread must not panic");
+        erased?;
+        outcome
+    })
+}
+
+/// Orders the deleter's positive header/scope probe before the eraser commits.
+/// The staged erasure stays invisible to the lock-free read under LMDB MVCC.
+/// Both headerful and headerless deletes signal before taking any write lock.
 pub(super) fn run_raced_delete_rendezvous<F>(
     vault: &Vault,
     id: &EntityId,
@@ -600,15 +645,17 @@ pub(super) fn run_raced_delete_rendezvous<F>(
 where
     F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
 {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
     std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
         let mut wtxn = vault.store.env.write_txn()?;
+        // Stage the erase, but keep the old scope visible to the deleter's read.
         erase_scope(&mut wtxn)?;
-        let (tx, rx) = std::sync::mpsc::sync_channel(0);
-        vault.test_hooks().install_after_header_read_signal(tx);
+        vault.test_hooks().install_after_delete_probe_signal(tx);
         let deleter = scope.spawn(|| vault.delete_entity_with_reason(id, reason));
-        // The signal fires before the deleter needs the write lock held here.
-        rx.recv_timeout(std::time::Duration::from_secs(30))
-            .expect("deleter must signal after the header read");
+        // The deleter cannot request a write lock until it signals. Once this
+        // read is complete, release the held lock with the scope already gone.
+        rx.recv()
+            .expect("deleter must signal after its scope probe");
         wtxn.commit()?;
         deleter.join().expect("deleter thread must not panic")
     })
@@ -1177,6 +1224,11 @@ pub(super) fn federation_grant_body_with_role_and_preset(role: &str, preset: &st
                 ("vault_id".into(), rmpv::Value::from(7_u64)),
             ]),
         ),
+        (
+            "authority_scope".into(),
+            crate::federation::scope_codec::encode_scope_value(&crate::federation::Scope::top())
+                .expect("fixture scope"),
+        ),
         ("member_ref".into(), rmpv::Value::from(member_ref.as_str())),
         ("role".into(), rmpv::Value::from(role)),
         ("preset".into(), rmpv::Value::from(preset)),
@@ -1317,7 +1369,13 @@ pub(super) fn lifecycle_fixture() -> Result<LifecycleFixture> {
     let machine = EntityId::now();
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_entity(&person, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
     vault.put_entity(
         &machine,
         ENTITY_TYPE_MACHINE,
@@ -1325,8 +1383,20 @@ pub(super) fn lifecycle_fixture() -> Result<LifecycleFixture> {
         1,
         b"machine",
     )?;
-    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
-    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_entity(
+        &a,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"a",
+    )?;
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"b",
+    )?;
     let vad = Vad {
         valence: 0.25,
         arousal: 0.5,

@@ -68,7 +68,7 @@ fn seed_conversation(vault: &Vault, at: u64) -> EntityId {
             oneiron::registry::ENTITY_TYPE_CONVERSATION,
             oneiron::TimeRange { start: at, end: at },
             at,
-            b"conversation",
+            b"\x80",
         )
         .unwrap();
     id

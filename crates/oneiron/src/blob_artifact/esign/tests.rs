@@ -266,11 +266,11 @@ fn ceremony_setup() -> Result<(
         crate::store::GateDecisionId::from_bytes(*EntityId::now().as_bytes()),
     )?;
     let manifest = serde_json::json!({
-        "schema_version":"1.1", "pack_id":"esign-test", "pack_version":"v1",
+        "schema_version":"1.2", "pack_id":"esign-test", "pack_version":"v1",
         "min_engine_version":env!("CARGO_PKG_VERSION"),
         "defaults":{"criticality":"normal","sensitivity":"normal"},
         "rules":[], "actor_ceilings":[{"actor_class":"human","actor_ref":owner.to_hex(),"ceiling":"auto"}],
-        "scoped_grants":(["send_for_signature","remind","void"].into_iter().map(|verb|serde_json::json!({"actor_ref":owner.to_hex(),"effector":format!("external:{verb}"),"scope":{"channel":"esign"}})).collect::<Vec<_>>())
+        "scoped_grants":(["send_for_signature","remind","void"].into_iter().map(|verb|serde_json::json!({"actor_ref":owner.to_hex(),"effector":format!("external:{verb}"),"scope":crate::federation::scope_codec::effect_preset(),"selectors":{"channel":"esign"}})).collect::<Vec<_>>())
     });
     crate::test_util::put_policy_manifest_bytes(
         &vault,

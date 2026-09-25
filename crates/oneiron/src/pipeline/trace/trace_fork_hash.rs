@@ -56,7 +56,9 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     );
 
     fork_hash_bm25_config(&mut hasher, bm25_config);
-    fork_hash_bool(&mut hasher, builder.recency_blend_enabled);
+    // The recency the run applies: a host temporal window switches a
+    // requested blend off, the effort's default anchor keeps it.
+    fork_hash_bool(&mut hasher, builder.recency_blend_applies());
     fork_hash_opt_u64(&mut hasher, explicit_time_dependent_now_secs);
     fork_hash_access_factor_overrides(&mut hasher, builder.access_factor_overrides);
     fork_hash_bool(&mut hasher, builder.apply_salience);
@@ -73,11 +75,19 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_relationship_filter(&mut hasher, builder.relationship_filter);
     fork_hash_world_scope(
         &mut hasher,
-        builder.world_scope,
+        &builder.world_scope,
         builder.active_world_selection.as_ref(),
         evidence.world_authority,
     );
     fork_hash_corpus_scope(&mut hasher, &builder.corpus_scope);
+    fork_hash_bytes(
+        &mut hasher,
+        match builder.made_by {
+            crate::provenance::made_by::MadeByPredicate::All => b"made_by:all",
+            crate::provenance::made_by::MadeByPredicate::Stated => b"made_by:stated",
+            crate::provenance::made_by::MadeByPredicate::Concluded => b"made_by:concluded",
+        },
+    );
     fork_hash_authority_filter(&mut hasher, builder.authority_filter.as_ref());
     fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
     fork_hash_len(&mut hasher, builder.result_limit);
@@ -342,7 +352,7 @@ fn fork_hash_relationship_filter(hasher: &mut Sha256, filter: Option<(EntityId, 
 /// when the candidate set is unchanged. Sets and claim ids use canonical order.
 fn fork_hash_world_scope(
     hasher: &mut Sha256,
-    scope: WorldScope,
+    scope: &WorldScope,
     selection: Option<&ActiveWorldSelection>,
     authority: Option<&ResolvedWorldAuthority>,
 ) {
@@ -353,9 +363,13 @@ fn fork_hash_world_scope(
             fork_hash_str(hasher, "world");
             fork_hash_raw_bytes(hasher, id.as_bytes());
         }
-        WorldScope::WorldSet(scope_key) => {
+        WorldScope::CodebaseSet(scope_key) => {
+            fork_hash_str(hasher, "codebase_set");
+            fork_hash_raw_bytes(hasher, scope_key);
+        }
+        WorldScope::WorldSet(worlds) => {
             fork_hash_str(hasher, "world_set");
-            fork_hash_raw_bytes(hasher, &scope_key);
+            fork_hash_world_authority_set(hasher, worlds);
         }
         WorldScope::ActiveSet => {
             fork_hash_str(hasher, "active_set");

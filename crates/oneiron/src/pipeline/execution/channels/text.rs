@@ -50,6 +50,7 @@ impl PipelineBuilder<'_> {
         claim_gate_widening_probe: &mut ClaimStatusGateCache,
     ) -> Result<bool> {
         let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
+            && !self.deadline_reached()
             && *limit > 0
             && self.candidate_filter.is_none()
         {
@@ -129,7 +130,9 @@ impl PipelineBuilder<'_> {
         claim_gate: &mut ClaimStatusGateCache,
     ) -> Result<Option<usize>> {
         let mut text_channel_index = None;
-        if let Some((query, limit)) = &self.text_search {
+        if let Some((query, limit)) = &self.text_search
+            && !self.deadline_reached()
+        {
             let scoped_text_limit = scoped_text_channel_limit(
                 &self.vault.store,
                 rtxn,
@@ -162,27 +165,35 @@ impl PipelineBuilder<'_> {
                 .map_or(query.as_str(), |expansion| {
                     expansion.grounded_query.as_str()
                 });
-            let search = if self.candidate_filter.is_some() {
-                crate::bm25::search_text_filtered_with_recency
+            let candidate_limit = if self.candidate_filter.is_some() {
+                *limit
             } else {
-                crate::bm25::search_text_scoped_with_recency
+                text_channel_limit
             };
-            let mut text_results = search(
-                &self.vault.store,
-                rtxn,
-                &self.vault.analyzer,
-                inputs.bm25_config,
-                text_query,
-                if self.candidate_filter.is_some() {
-                    *limit
-                } else {
-                    text_channel_limit
-                },
-                crate::bm25::Bm25SearchOptions {
-                    recency: None,
-                    exact_posting_matches_scope: &mut exact_posting_matches_scope,
-                },
-            )?;
+            let mut text_results = if self.memory_category {
+                self.search_text_candidates(
+                    rtxn,
+                    inputs.bm25_config,
+                    text_query,
+                    candidate_limit,
+                    crate::bm25::Bm25SearchOptions {
+                        recency: None,
+                        exact_posting_matches_scope: &mut exact_posting_matches_scope,
+                    },
+                )?
+            } else {
+                crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
+                    self.vault,
+                    rtxn,
+                    crate::ports::TextQuery {
+                        query: text_query,
+                        limit: candidate_limit,
+                        rank: inputs.bm25_config,
+                        filter_all: self.candidate_filter.is_some(),
+                        matches_scope: &mut exact_posting_matches_scope,
+                    },
+                )?
+            };
             diagnostics.succeeded.push(RetrievalSignal::Text);
             if self.candidate_filter.is_none()
                 && text_channel_limit > *limit
@@ -217,6 +228,9 @@ impl PipelineBuilder<'_> {
                 metadata_cache,
             )?);
             for query in inputs.overrides.extra_text_queries {
+                if self.deadline_reached() {
+                    break;
+                }
                 let retry_scoped_text_limit = scoped_text_channel_limit(
                     &self.vault.store,
                     rtxn,
@@ -242,18 +256,35 @@ impl PipelineBuilder<'_> {
                         &mut retry_prefix_probe_claim_gate,
                     )
                 };
-                let mut results = crate::bm25::search_text_scoped_with_recency(
-                    &self.vault.store,
-                    rtxn,
-                    &self.vault.analyzer,
-                    inputs.bm25_config,
-                    query,
-                    retry_text_channel_limit,
-                    crate::bm25::Bm25SearchOptions {
-                        recency: None,
-                        exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
-                    },
-                )?;
+                let candidate_limit = if self.candidate_filter.is_some() {
+                    retry_channel_limit(*limit)
+                } else {
+                    retry_text_channel_limit
+                };
+                let mut results = if self.memory_category {
+                    self.search_text_candidates(
+                        rtxn,
+                        inputs.bm25_config,
+                        query,
+                        candidate_limit,
+                        crate::bm25::Bm25SearchOptions {
+                            recency: None,
+                            exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
+                        },
+                    )?
+                } else {
+                    crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
+                        self.vault,
+                        rtxn,
+                        crate::ports::TextQuery {
+                            query,
+                            limit: candidate_limit,
+                            rank: inputs.bm25_config,
+                            filter_all: self.candidate_filter.is_some(),
+                            matches_scope: &mut retry_exact_posting_matches_scope,
+                        },
+                    )?
+                };
                 if retry_text_channel_limit > *limit && inputs.text_scope_widening_active {
                     let scoped_result_limit = if inputs.recency.is_some() {
                         limit.saturating_mul(PER_SCAN_CAP_FACTOR)
@@ -289,5 +320,77 @@ impl PipelineBuilder<'_> {
             }
         }
         Ok(text_channel_index)
+    }
+    fn search_text_candidates<F>(
+        &self,
+        rtxn: &RoTxn<'_>,
+        config: &Bm25Config,
+        query: &str,
+        limit: usize,
+        options: crate::bm25::Bm25SearchOptions<'_, F>,
+    ) -> Result<Vec<crate::pipeline::ScoredEntity>>
+    where
+        F: FnMut(&EntityId) -> Result<bool>,
+    {
+        let in_category = |id: &EntityId| {
+            super::super::super::capabilities::CapabilityLane::Memory.admits(
+                &self.vault.store,
+                rtxn,
+                id,
+            )
+        };
+        let mut matches_scope = |id: &EntityId| {
+            if self.memory_category && !in_category(id)? {
+                return Ok(false);
+            }
+            (options.exact_posting_matches_scope)(id)
+        };
+        let scope = crate::bm25::Bm25SearchOptions {
+            recency: options.recency,
+            exact_posting_matches_scope: &mut matches_scope,
+        };
+        if self.candidate_filter.is_some() {
+            crate::bm25::search_text_filtered_with_recency(
+                &self.vault.store,
+                rtxn,
+                &self.vault.analyzer,
+                config,
+                query,
+                limit,
+                scope,
+            )
+        } else if self.memory_category {
+            // Category admission consumes no claim body. D19 decisions made by
+            // prefix/widening probes remain reusable by fusion and projection.
+            let mut category = |id: &EntityId| {
+                super::super::super::capabilities::CapabilityLane::Memory.admits(
+                    &self.vault.store,
+                    rtxn,
+                    id,
+                )
+            };
+            crate::bm25::search_text_category_with_recency(
+                &self.vault.store,
+                rtxn,
+                &self.vault.analyzer,
+                config,
+                query,
+                limit,
+                crate::bm25::Bm25CategorySearchOptions {
+                    scope,
+                    category: &mut category,
+                },
+            )
+        } else {
+            crate::bm25::search_text_scoped_with_recency(
+                &self.vault.store,
+                rtxn,
+                &self.vault.analyzer,
+                config,
+                query,
+                limit,
+                scope,
+            )
+        }
     }
 }

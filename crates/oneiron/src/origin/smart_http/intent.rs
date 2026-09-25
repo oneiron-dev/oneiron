@@ -10,14 +10,14 @@ use super::evidence::{
     receive_pack_provenance_refused,
 };
 use super::landing::ReceivePackLanding;
-use super::serve::repo_common_dir;
 use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, lock_repository};
+use crate::git_wire::{GitOid, GitWire, lock_repository};
 use crate::origin::lfs::{LfsOid, LfsPushedPointer};
+use crate::origin::residence::OriginAuthorityStamp;
 use serde::{Deserialize, Serialize};
 
 // A local operation journal, not an exported claim or caller-supplied authority.
@@ -72,6 +72,7 @@ pub(super) struct ReceivePackIntent {
     actor_id: String,
     repo_root: String,
     admitted_at: u64,
+    origin_authority: Option<OriginAuthorityStamp>,
     // Written once after the exchange, before any outcome evidence. Recovery
     // without this checkpoint has no measured transport totals.
     pub(super) transport_bytes: Option<(u64, u64)>,
@@ -79,11 +80,12 @@ pub(super) struct ReceivePackIntent {
     pointers: Vec<(String, String, u64)>,
 }
 
-fn receive_pack_intent_prefix(repo_root: &Path) -> Result<Vec<u8>> {
+fn receive_pack_intent_prefix(vault: &Vault, repo_root: &Path) -> Result<Vec<u8>> {
     let mut key = RECEIVE_PACK_INTENT_PREFIX.to_vec();
-    key.extend_from_slice(
-        blake3::hash(path_arg(&repo_root.canonicalize()?)?.as_bytes()).as_bytes(),
-    );
+    // Authority and the coordinator name the object store, not a worktree.
+    // A cutover from any linked root must drain every accepted operation.
+    let identity = GitWire::new(vault)?.repository_identity(repo_root)?;
+    key.extend_from_slice(identity.as_hex().as_bytes());
     Ok(key)
 }
 
@@ -113,29 +115,37 @@ impl Vault {
             || receive_pack_field(&admission, "effector_check")?.as_str() != Some("admitted")
             || receive_pack_field(&admission, "actor_id")?.as_str() != Some(stamp.principal_ref())
             || receive_pack_field(&admission, "repo_root")?.as_str() != Some(root_text.as_str())
+            || receive_pack_field(&admission, "origin_authority")?
+                != &OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref())
         {
             return Err(receive_pack_provenance_refused(
                 "intent was not admitted and scanned",
             ));
         }
+        // The serving thread holds the coordinator while this hook runs.
+        // Do not acquire that thread's lock here; only verify its epoch.
+        self.require_receive_pack_host_at(&root, stamp.origin_authority.as_ref())?;
         let intent = ReceivePackIntent {
             operation_id: stamp.operation_id.to_hex(),
             actor_id: stamp.principal_ref().to_owned(),
             repo_root: root_text,
             admitted_at: stamp.admitted_at(),
+            origin_authority: stamp.origin_authority.clone(),
             transport_bytes: None,
             refs: door
                 .ref_updates
                 .iter()
-                .map(|update| ReceivePackIntentRef {
-                    name: update.name.clone(),
-                    old_oid: update.old_oid.as_ref().map(|oid| oid.as_str().to_owned()),
-                    new_oid: update.new_oid.as_ref().map(|oid| oid.as_str().to_owned()),
-                    outcome_id: EntityId::now().to_hex(),
-                    observed: false,
-                    status: ReceivePackRefStatus::Pending,
+                .map(|update| {
+                    Ok(ReceivePackIntentRef {
+                        name: update.name.clone(),
+                        old_oid: update.old_oid.as_ref().map(|oid| oid.as_str().to_owned()),
+                        new_oid: update.new_oid.as_ref().map(|oid| oid.as_str().to_owned()),
+                        outcome_id: self.store.clock.entity_id()?.to_hex(),
+                        observed: false,
+                        status: ReceivePackRefStatus::Pending,
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>>>()?,
             pointers: door
                 .lfs_pointers
                 .iter()
@@ -148,7 +158,7 @@ impl Vault {
                 })
                 .collect(),
         };
-        let mut key = receive_pack_intent_prefix(&root)?;
+        let mut key = receive_pack_intent_prefix(self, &root)?;
         key.extend_from_slice(stamp.operation_id.as_bytes());
         let encoded = rmp_serde::to_vec_named(&intent)
             .map_err(|_| receive_pack_provenance_refused("intent does not encode"))?;
@@ -178,18 +188,34 @@ impl Vault {
     /// claim existed. Only observed post-images are published: recovery never
     /// applies a ref that the backend declined. GitWire remains the effect owner.
     pub fn reconcile_receive_pack_operations(&self, repo_root: &Path) -> Result<()> {
-        let _guard = lock_repository(&repo_common_dir(repo_root)?)?;
+        let wire = GitWire::new(self)?;
+        let _guard = lock_repository(&wire.canonical_common_dir(repo_root)?)?;
         for (key, mut intent) in self.receive_pack_intents(repo_root)? {
             self.resume_receive_pack_intent(&key, &mut intent)?;
         }
         Ok(())
     }
 
+    pub(in crate::origin) fn has_pending_receive_pack_operations(
+        &self,
+        repo_root: &Path,
+    ) -> Result<bool> {
+        Ok(self
+            .receive_pack_intents(repo_root)?
+            .iter()
+            .any(|(_, intent)| {
+                intent
+                    .refs
+                    .iter()
+                    .any(|entry| entry.status == ReceivePackRefStatus::Pending)
+            }))
+    }
+
     pub(super) fn receive_pack_intents(
         &self,
         repo_root: &Path,
     ) -> Result<Vec<(Vec<u8>, ReceivePackIntent)>> {
-        let prefix = receive_pack_intent_prefix(repo_root)?;
+        let prefix = receive_pack_intent_prefix(self, repo_root)?;
         let rtxn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
         for (index, row) in self
@@ -214,15 +240,41 @@ impl Vault {
         key: &[u8],
         intent: &mut ReceivePackIntent,
     ) -> Result<(Option<ReceivePackOutcome>, Option<ReceivePackLanding>)> {
+        if !intent
+            .refs
+            .iter()
+            .any(|entry| entry.status == ReceivePackRefStatus::Pending)
+        {
+            return Ok((None, None));
+        }
         let root = Path::new(&intent.repo_root);
         let stamp = DoorAdmissionStamp {
             principal_ref: intent.actor_id.clone(),
             credential_fingerprint: None,
             method: "bearer+registered-principal",
             admitted_at: intent.admitted_at,
+            origin_authority: intent.origin_authority.clone(),
             operation_id: EntityId::from_hex(&intent.operation_id)
                 .map_err(|_| Error::CorruptedIndex("receive-pack operation id"))?,
         };
+        // Recovery uses the accepted host, never the current pusher or a new
+        // lease. The producer receipt seals the journal's epoch binding too.
+        let admission = {
+            let rtxn = self.store.env.read_txn()?;
+            self.receive_pack_evidence_in_txn(
+                &rtxn,
+                stamp.operation_id,
+                RECEIVE_PACK_ADMISSION_PREDICATE,
+            )?
+        };
+        if receive_pack_field(&admission, "origin_authority")?
+            != &OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref())
+        {
+            return Err(receive_pack_provenance_refused(
+                "recovery host authority differs from admission",
+            ));
+        }
+        self.require_receive_pack_host_at(root, stamp.origin_authority.as_ref())?;
         let pointers = intent
             .pointers
             .iter()

@@ -1,46 +1,489 @@
 {
-  "legacy_mcp": [
-    "board.expand",
-    "board.refresh",
-    "board.subscribe",
-    "board.unsubscribe",
-    "tasks.ack",
-    "tasks.cancel",
-    "tasks.check",
-    "tasks.create",
-    "tasks.expand"
-  ],
   "verbs": [
+    {
+      "name": "board.expand",
+      "input": "BoardExpandRequest",
+      "output": "crate::board_verb::BoardVerbOutput",
+      "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Expand { key: input.key, frame_epoch: input.frame_epoch })?",
+      "scope": "Read",
+      "context": "board",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "key": "key",
+        "frame_epoch": "frame_epoch"
+      },
+      "mcp_required_fields": [
+        "key"
+      ],
+      "mcp_scope": "filtered",
+      "mcp_page": true,
+      "section": true
+    },
+    {
+      "name": "board.refresh",
+      "input": "BoardRefreshRequest",
+      "output": "crate::board_verb::BoardVerbOutput",
+      "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Refresh { frame_epoch: input.frame_epoch })?",
+      "scope": "Read",
+      "context": "board",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "frame_epoch": "frame_epoch"
+      },
+      "mcp_required_fields": [],
+      "mcp_scope": "filtered",
+      "section": true
+    },
+    {
+      "name": "board.subscribe",
+      "input": "BoardSubscriptionRequest",
+      "output": "crate::board_verb::BoardVerbOutput",
+      "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Subscribe { scopes: input.scopes })?",
+      "scope": "Read",
+      "context": "board",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "scopes": "scopes"
+      },
+      "mcp_required_fields": [
+        "scopes"
+      ],
+      "mcp_scope": "filtered",
+      "section": true
+    },
+    {
+      "name": "board.unsubscribe",
+      "input": "BoardSubscriptionRequest",
+      "output": "crate::board_verb::BoardVerbOutput",
+      "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Unsubscribe { scopes: input.scopes })?",
+      "scope": "Read",
+      "context": "board",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "scopes": "scopes"
+      },
+      "mcp_required_fields": [
+        "scopes"
+      ],
+      "mcp_scope": "filtered",
+      "section": true
+    },
+    {
+      "name": "tasks.ack",
+      "input": "TaskRequest",
+      "output": "crate::task_verb::TaskAckReceipt",
+      "call": "memory.tasks_ack(crate::EntityId::from_hex(&input.task_ref)?)?",
+      "scope": "Write",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "task_ref": "task_ref"
+      },
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": "task_ref"
+      },
+      "section": true
+    },
+    {
+      "name": "tasks.cancel",
+      "input": "TaskRequest",
+      "output": "crate::task_verb::TaskCancelReceipt",
+      "call": "memory.tasks_cancel(crate::task_verb::TaskCancelTarget::Task(crate::EntityId::from_hex(&input.task_ref)?))?",
+      "scope": "Write",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "task_ref": "task_ref"
+      },
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": "task_ref"
+      },
+      "section": true
+    },
+    {
+      "name": "tasks.check",
+      "input": "EmptyRequest",
+      "output": "crate::context_board::TasksSection",
+      "call": "memory.tasks_check()?",
+      "scope": "Read",
+      "mcp": "tool-first",
+      "mcp_fields": {},
+      "mcp_result": "mcp_tasks_section(server, actor, output)?",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": "rows"
+      },
+      "mcp_scope": "filtered",
+      "mcp_page": true,
+      "section": true
+    },
+    {
+      "name": "tasks.create",
+      "input": "TaskCreateRequest",
+      "output": "crate::task_verb::TaskCreateReceipt",
+      "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::companion_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(crate::unix_seconds_now())))?",
+      "scope": "Write",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "spec": "spec",
+        "label": "label"
+      },
+      "mcp_required_fields": [
+        "spec"
+      ],
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "unrestricted",
+      "section": true
+    },
+    {
+      "name": "tasks.expand",
+      "input": "TaskRequest",
+      "output": "Vec<String>",
+      "call": "memory.tasks_expand(crate::EntityId::from_hex(&input.task_ref)?)?",
+      "scope": "Read",
+      "mcp": "tool-first",
+      "mcp_fields": {
+        "task_ref": "task_ref"
+      },
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": "task_ref"
+      },
+      "section": true
+    },
+    {
+      "name": "witness",
+      "input": "crate::memory::WitnessTurn",
+      "output": "crate::memory::WitnessReceipt",
+      "call": "memory.witness(&input)?",
+      "scope": "Write",
+      "admission": {
+        "validate": "crate::memory::caps::check_witness_turn(&input)?;"
+      },
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "args": [
+          {
+            "name": "turn",
+            "kind": "witness"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Witnesses one conversational turn.\n    ///\n    /// `turn.occurred_at` is already stamped by the caller through\n    /// [`stamp_occurred_at`], because the engine DTO's field is required and a\n    /// backend cannot tell an omitted `0` from a deliberate one.\n",
+          "ts": "/**\n   * Witnesses one conversational turn.\n   *\n   * Omitting `occurredAt` stamps the current wall clock, in Unix seconds, at\n   * the call boundary.\n   */",
+          "py": "Witnesses one conversational turn.\n\n        Omitting ``occurred_at`` stamps the current wall clock, in Unix\n        seconds, at the call boundary.\n        "
+        }
+      },
+      "uniffi": {
+        "args": {
+          "turn": "WitnessTurn"
+        },
+        "output": "WitnessReceipt"
+      }
+    },
+    {
+      "name": "claim_upsert",
+      "input": "crate::memory::ClaimInput",
+      "output": "crate::memory::CommitReceipt",
+      "call": "memory.claim_upsert(&input)?",
+      "scope": "Write",
+      "admission": {
+        "validate": "crate::memory::caps::check_claim_input(&input)?;"
+      },
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "args": [
+          {
+            "name": "claim",
+            "kind": "claim"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Upserts one claim through the gated claim-candidate path.\n",
+          "ts": "/** Upserts one claim. The consent gate, not this call, decides approval. */",
+          "py": "Upserts one claim. The consent gate, not this call, decides approval."
+        }
+      },
+      "uniffi": {
+        "args": {
+          "claim": "ClaimInput"
+        },
+        "output": "CommitReceipt"
+      }
+    },
+    {
+      "name": "recall",
+      "input": "RecallRequest",
+      "output": "crate::memory::MemoryPack",
+      "call": "memory.recall(&input.query, input.effort.unwrap_or(crate::memory::Effort::Medium), &input.scope.unwrap_or_default(), input.limit.unwrap_or(10), input.format.as_deref(), None)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;"
+      },
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "assemble": true,
+        "options": "RecallOptions",
+        "args": [
+          {
+            "name": "query",
+            "kind": "text"
+          },
+          {
+            "name": "effort",
+            "kind": "effort",
+            "default": "medium"
+          },
+          {
+            "name": "scope",
+            "kind": "scope"
+          },
+          {
+            "name": "limit",
+            "kind": "limit",
+            "default": 10
+          },
+          {
+            "name": "format",
+            "kind": "format"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease argument the engine takes is `None` and is NOT a client\n    /// input: no lease issuer exists, and a bearer slip is not one. An\n    /// `Effort::High` call therefore returns the engine's `LEASE_REQUIRED`\n    /// through both backends, spelled identically.\n",
+          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` is lease-gated and returns `LEASE_REQUIRED` until a\n   * lease-bearing constructor exists; this package neither mints nor\n   * simulates a lease.\n   */",
+          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` is lease-gated and raises ``LEASE_REQUIRED`` until a\n        lease-bearing constructor exists; this package neither mints nor\n        simulates a lease. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        "
+        }
+      },
+      "uniffi": {
+        "args": {
+          "query": "String",
+          "effort": "Effort",
+          "scope": "Option<RecallScope>",
+          "limit": "u32",
+          "format": "Option<String>"
+        },
+        "output": "MemoryPack"
+      }
+    },
+    {
+      "name": "receipts",
+      "input": "ReceiptsRequest",
+      "output": "Vec<crate::memory::MemoryReceipt>",
+      "call": "memory.receipts(input.limit.unwrap_or(100))?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::memory::caps::check_limit(input.limit.unwrap_or(100))?;"
+      },
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "assemble": true,
+        "args": [
+          {
+            "name": "limit",
+            "kind": "limit",
+            "default": 100
+          }
+        ],
+        "docs": {
+          "remote": "    /// Lists governance receipts, newest first.\n",
+          "ts": "/** Governance receipts, newest first. */",
+          "py": "Governance receipts, newest first."
+        }
+      },
+      "uniffi": {
+        "args": {
+          "limit": "u32"
+        },
+        "output": "Vec<FacadeReceipt>"
+      }
+    },
+    {
+      "name": "key_value_get",
+      "input": "crate::memory::KeyValueAddress",
+      "output": "Option<crate::memory::KeyValueItem>",
+      "call": "memory.key_value_get(&input)?",
+      "scope": "Read",
+      "admission": {},
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+          "ts": "/** Exact actor-owned worldless key lookup, never recall. */",
+          "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+        }
+      }
+    },
+    {
+      "name": "key_value_put",
+      "input": "crate::memory::KeyValuePut",
+      "output": "crate::memory::KeyValuePutReceipt",
+      "call": "memory.key_value_put(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "input_fields": {
+          "requestId": "request_id"
+        },
+        "output_fields": {
+          "item": "crate::memory::KeyValueItem",
+          "replayed": "bool",
+          "receipt_ref": "String"
+        },
+        "docs": {
+          "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+          "ts": "/** Synchronous gated write. Review-required writes fail without changing the key. */",
+          "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+        }
+      }
+    },
+    {
+      "name": "key_value_delete",
+      "input": "crate::memory::KeyValueAddress",
+      "output": "crate::memory::KeyValueDeleteReceipt",
+      "call": "memory.key_value_delete(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "output_fields": {
+          "existed": "bool",
+          "receipt_refs": "Vec<String>"
+        },
+        "docs": {
+          "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+          "ts": "/** Retracts only the caller's current key; preserves claim history. */",
+          "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+        }
+      }
+    },
+    {
+      "name": "key_value_search",
+      "input": "crate::memory::KeyValueSearch",
+      "output": "Vec<crate::memory::KeyValueItem>",
+      "call": "memory.key_value_search(&input)?",
+      "scope": "Read",
+      "admission": {},
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "input_fields": {
+          "namespacePrefix": "namespace_prefix"
+        },
+        "input_defaults": {
+          "namespacePrefix": []
+        },
+        "docs": {
+          "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+          "ts": "/** Exact prefix search, ordered lexically and paginated after filtering. */",
+          "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+        }
+      }
+    },
+    {
+      "name": "key_value_namespaces",
+      "input": "crate::memory::KeyValueNamespaces",
+      "output": "Vec<Vec<String>>",
+      "call": "memory.key_value_namespaces(&input)?",
+      "scope": "Read",
+      "admission": {},
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "input_fields": {
+          "maxDepth": "max_depth"
+        },
+        "docs": {
+          "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+          "ts": "/** Exact segment namespace enumeration. Empty namespaces are not retained. */",
+          "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+        }
+      }
+    },
     {
       "name": "tasks.ask",
       "input": "crate::task_verb::TaskAskSpec",
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input)?",
       "scope": "Write",
-      "mcp_fields": [
-        "spec"
-      ]
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": true
     },
     {
       "name": "tasks.wait",
-      "input": "TaskWaitRequest",
-      "output": "crate::task_verb::TaskWaitOutcome",
-      "call": "memory.tasks_wait_external(&input.handle, &input.step_key)?",
+      "input": "crate::task_verb::sdk::TaskWaitRequest",
+      "output": "crate::task_verb::TaskAskWait",
+      "call": "memory.tasks_wait(input.handle, Some(&input.step_key))?",
       "scope": "Write",
-      "mcp_fields": [
-        "task_ref",
-        "key"
-      ]
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": true
     },
     {
       "name": "tasks.answer",
-      "input": "TaskAnswerRequest",
+      "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
-      "call": "memory.tasks_answer(&input.handle, crate::EntityId::from_hex(&input.result_ref)?)?",
+      "call": "memory.tasks_answer(&input.handle, &input.word)?",
       "scope": "Write",
-      "mcp_fields": [
-        "spec"
-      ]
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": true
     },
     {
       "name": "tasks.outcomes",
@@ -48,9 +491,12 @@
       "output": "Vec<crate::llm::decision::questions::CalibrationPair>",
       "call": "memory.tasks_ask_outcomes(&input)?",
       "scope": "Read",
-      "mcp_fields": [
-        "task_ref"
-      ]
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": true
     },
     {
       "name": "rooms.list",
@@ -58,21 +504,31 @@
       "output": "Vec<crate::task_verb::sdk::RoomEntry>",
       "call": "memory.rooms_list()?.into_iter().map(|(id, room)| RoomEntry { id: id.to_hex(), room }).collect::<Vec<_>>()",
       "scope": "Read",
-      "mcp_fields": []
+      "mcp_fields": {},
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "rooms.messages",
       "input": "RoomRequest",
-      "output": "Vec<crate::workspace_roster::RoomTurn>",
+      "output": "crate::workspace_roster::RoomPage",
       "call": "memory.rooms_messages_page(crate::EntityId::from_hex(&input.room_ref)?, input.after.as_deref().map(crate::EntityId::from_hex).transpose()?, input.limit.unwrap_or(256))?",
       "scope": "Read",
-      "mcp_fields": [
-        "room_ref",
-        "turn_ref"
-      ],
+      "mcp_fields": {
+        "room_ref": "room_ref",
+        "turn_ref": "after"
+      },
       "mcp_required_fields": [
         "room_ref"
-      ]
+      ],
+      "mcp": "tool-first",
+      "page": {
+        "rows": "rows",
+        "cursor": "next_after"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "rooms.claim",
@@ -80,10 +536,13 @@
       "output": "crate::workspace_roster::RoomClaimOutcome",
       "call": "memory.rooms_claim(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?, crate::unix_seconds_now())?",
       "scope": "Write",
-      "mcp_fields": [
-        "room_ref",
-        "turn_ref"
-      ]
+      "mcp_fields": {
+        "room_ref": "room_ref",
+        "turn_ref": "turn_ref"
+      },
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "rooms.speak",
@@ -91,16 +550,251 @@
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.rooms_speak(&input)?",
       "scope": "Write",
-      "mcp_fields": [
-        "room_ref",
-        "spec"
-      ]
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=conversation_ref"
+      },
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "commit",
+      "uniffi": {
+        "args": {
+          "claims": "Vec<ClaimInput>"
+        },
+        "output": "Vec<CommitReceipt>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "remember",
+      "uniffi": {
+        "args": {
+          "claim": "ClaimInput"
+        },
+        "output": "CommitReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "claim_retract",
+      "uniffi": {
+        "args": {
+          "claim_ref": "String"
+        },
+        "output": "CommitReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "forget",
+      "uniffi": {
+        "args": {
+          "selector": "ForgetSelector"
+        },
+        "output": "Vec<CommitReceipt>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "claim_list",
+      "uniffi": {
+        "args": {
+          "filter": "ClaimListFilter"
+        },
+        "output": "Vec<ClaimView>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "claim_history",
+      "uniffi": {
+        "args": {
+          "claim_ref": "String"
+        },
+        "output": "Vec<ClaimView>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "safe_delete",
+      "uniffi": {
+        "args": {
+          "entity_ref": "String",
+          "reason": "SafeDeleteReason"
+        },
+        "output": "DeleteReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "pending_writes",
+      "uniffi": {
+        "args": {
+          "limit": "u32"
+        },
+        "output": "Vec<PendingWrite>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "hydrate",
+      "uniffi": {
+        "args": {
+          "refs": "Vec<String>"
+        },
+        "output": "Vec<EntityView>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "get_entity",
+      "uniffi": {
+        "args": {
+          "entity_ref": "String"
+        },
+        "output": "Option<EntityView>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "query_bm25",
+      "uniffi": {
+        "args": {
+          "query": "String",
+          "limit": "u32"
+        },
+        "output": "Vec<LexicalHit>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "neighbors",
+      "uniffi": {
+        "args": {
+          "entity_ref": "String",
+          "opts": "NeighborOpts"
+        },
+        "output": "Vec<NeighborHit>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "put_structural",
+      "uniffi": {
+        "args": {
+          "input": "StructuralPutInput"
+        },
+        "output": "EntityRefReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "put_habit_checkin",
+      "uniffi": {
+        "args": {
+          "input": "HabitCheckinInput"
+        },
+        "output": "EntityRefReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "put_companion_record",
+      "uniffi": {
+        "args": {
+          "input": "CompanionRecordInput"
+        },
+        "output": "EntityRefReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "admit_imported_claim",
+      "uniffi": {
+        "args": {
+          "input": "AdmitImportedClaimInput"
+        },
+        "output": "CommitReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "put_blob_artifact",
+      "uniffi": {
+        "args": {
+          "input": "BlobArtifactInput"
+        },
+        "output": "EntityRefReceipt"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "append_blob_version",
+      "uniffi": {
+        "args": {
+          "artifact_ref": "String",
+          "content": "Vec<u8>",
+          "run_ref": "Option<String>",
+          "occurred_at": "Option<i64>",
+          "learned_at": "Option<i64>"
+        },
+        "output": "BlobVersionView"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "read_blob_version",
+      "uniffi": {
+        "args": {
+          "artifact_ref": "String",
+          "version": "u64"
+        },
+        "output": "Option<Vec<u8>>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "enqueue_consolidation",
+      "uniffi": {
+        "args": {
+          "input": "ConsolidationJobInput"
+        },
+        "output": "DreamerJobRef"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "dreamer_job_status",
+      "uniffi": {
+        "args": {
+          "job_ref": "String"
+        },
+        "output": "Option<DreamerJobView>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "seed_claims",
+      "uniffi": {
+        "args": {
+          "claims": "Vec<ClaimInput>"
+        },
+        "output": "Vec<CommitReceipt>"
+      },
+      "context": "definition"
+    },
+    {
+      "name": "schedule_outbound",
+      "uniffi": {
+        "args": {
+          "draft": "OutboundDraftInput"
+        },
+        "output": "OutboundIntentReceipt"
+      },
+      "context": "definition"
     }
-  ],
-  "legacy_facade": [
-    "witness",
-    "claim_upsert",
-    "recall",
-    "receipts"
   ]
 }

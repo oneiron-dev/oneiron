@@ -1,6 +1,7 @@
 //! Receive-pack wire types and the admission/outcome evidence claims: producer
 //! receipts plus the source/attribution validation `publication.rs` calls.
 
+use crate::ports::EntityStoreRead;
 use std::path::{Path, PathBuf};
 
 use super::door::{DoorAdmissionStamp, DoorSeam};
@@ -21,6 +22,7 @@ use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire};
 use crate::origin::lfs::{LfsOid, LfsPushedPointer, lfs_repo_id};
 use crate::origin::publication::OriginPublicationRequest;
+use crate::origin::residence::OriginAuthorityStamp;
 use crate::temporal::TimeRange;
 use rmpv::Value;
 
@@ -240,7 +242,7 @@ impl Vault {
         let encoded = encode_claim_body(body)?;
         let key = receive_pack_evidence_key(id);
         self.with_write_txn(|wtxn| {
-            if self.store.entities.get(wtxn, id.as_bytes())?.is_some()
+            if self.store.port_entity_record(wtxn, &id)?.is_some()
                 || self.store.vault_meta.get(wtxn, &key)?.is_some()
             {
                 return Err(receive_pack_provenance_refused(
@@ -285,6 +287,7 @@ impl Vault {
         stamp: &DoorAdmissionStamp,
         seam: DoorSeam,
     ) -> Result<()> {
+        self.require_receive_pack_host_at(repo_dir, stamp.origin_authority.as_ref())?;
         // Preserve the explicit no-op transport seam, but never describe it
         // as landed policy or scanning evidence. The authenticated server pins
         // Landed; the seam is not selected by any request field or claim id.
@@ -319,6 +322,10 @@ impl Vault {
                 ("effector", Value::from(DOOR_RECEIVE_PACK_EFFECTOR)),
                 ("effector_check", Value::from(effector_check)),
                 ("admitted_at", Value::from(stamp.admitted_at())),
+                (
+                    "origin_authority",
+                    OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref()),
+                ),
             ]),
         );
         self.put_receive_pack_evidence(stamp.operation_id, &body, stamp.admitted_at())
@@ -336,7 +343,13 @@ impl Vault {
         outcome: &ReceivePackOutcome,
         status: u16,
     ) -> Result<ReceivePackAttribution> {
-        self.record_receive_pack_outcome_at(stamp, door, outcome, status, EntityId::now())
+        self.record_receive_pack_outcome_at(
+            stamp,
+            door,
+            outcome,
+            status,
+            self.store.clock.entity_id()?,
+        )
     }
 
     pub(super) fn record_receive_pack_outcome_at(
@@ -386,6 +399,14 @@ impl Vault {
                 RECEIVE_PACK_ADMISSION_PREDICATE,
             )?
         };
+        if receive_pack_field(&admission, "origin_authority")?
+            != &OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref())
+        {
+            return Err(receive_pack_provenance_refused(
+                "host authority differs from admission",
+            ));
+        }
+        self.require_receive_pack_host(repo_id, stamp.origin_authority.as_ref())?;
         let scan = match receive_pack_field(&admission, "door_seam")?.as_str() {
             Some("landed") => "clean",
             Some("noop") => "not_performed",
@@ -430,6 +451,10 @@ impl Vault {
                     Value::from(path_arg(&outcome.staged_objects_dir)?),
                 ),
                 ("scan", Value::from(scan)),
+                (
+                    "origin_authority",
+                    OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref()),
+                ),
                 (
                     "backend_exited_successfully",
                     if status == 0 {
@@ -508,13 +533,28 @@ impl Vault {
             || receive_pack_field(&admission, "repo_root")? != &root
             || receive_pack_field(&body, "operation")? != &Value::from("git-receive-pack")
             || receive_pack_field(&admission, "operation")? != &Value::from("git-receive-pack")
+            || receive_pack_field(&admission, "origin_authority")?
+                != receive_pack_field(&body, "origin_authority")?
             || !observation_matches_seam
         {
             return Err(receive_pack_provenance_refused(
                 "actor, repository or operation does not match",
             ));
         }
+        let authority =
+            OriginAuthorityStamp::from_evidence(receive_pack_field(&body, "origin_authority")?)?;
+        self.require_receive_pack_host_in_txn(&rtxn, repo_id, authority.as_ref())?;
         Ok(body)
+    }
+
+    pub(super) fn receive_pack_landing_authority(
+        &self,
+        repo_id: EntityId,
+        repo_root: &Path,
+        attribution: &ReceivePackAttribution,
+    ) -> Result<Option<OriginAuthorityStamp>> {
+        let body = self.receive_pack_source(repo_id, repo_root, attribution)?;
+        OriginAuthorityStamp::from_evidence(receive_pack_field(&body, "origin_authority")?)
     }
 
     pub(super) fn validate_receive_pack_attribution(

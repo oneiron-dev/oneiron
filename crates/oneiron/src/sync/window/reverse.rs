@@ -7,21 +7,18 @@ use super::loro_support::{
     map_contains_binary, map_delete, map_for_each_tombstone_value, map_for_each_value_bytes,
     map_get_bytes, map_insert_bytes, tombstone_map_contains_id, tombstone_values_for_id,
 };
+use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
 use super::types::WindowKey;
 use super::window_packing_excludes_entity;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::{
-    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
-};
+use crate::companion::decode_companion_record_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
-use crate::registry::{
-    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SECRET_CUSTODY,
-};
+use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::sync::local_claims::{claim_sync_allowed, local_claim_sync_allowed};
 use loro::{CommitOptions, LoroDoc, LoroMap};
 
@@ -43,6 +40,10 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
     super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
     let entities_in_range = vault.entities_in_learned_range(start_ts, end_ts)?;
+    let device_only = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::settings::device_only_worlds_in(&vault.store, &rtxn)?
+    };
 
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
@@ -71,9 +72,6 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let Some(raw) = vault.get_raw_unsealed(&id)? else {
             continue;
         };
-        if reverse_remat_skip_policy_manifest_mirror(&raw) {
-            continue;
-        }
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
@@ -123,7 +121,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let hex_id = id.to_hex();
 
         // Defer-sync egress door, before reading or packing the payload.
-        if window_packing_excludes_entity(vault, id)? {
+        if window_packing_excludes_entity(vault, &device_only, id)? {
             continue;
         }
 
@@ -131,14 +129,13 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         };
 
-        if reverse_remat_skip_policy_manifest_mirror(&raw) {
-            continue;
-        }
-
-        // Excluded credentials have no live carrier or incident edge. If a
-        // local dial narrowed an existing portable row, ordinary history must
-        // not carry its old value after the live-map scrub.
-        if !claim_sync_allowed(&raw) || is_unsyncable_secret_custody(&raw) {
+        // Excluded credentials and the local default manifest have no live
+        // carrier or incident edge. Scrub history as well as the live map when
+        // a local dial narrows an existing portable credential.
+        if !claim_sync_allowed(&raw)
+            || is_unsyncable_secret_custody(&raw)
+            || *id == crate::gate::default_policy_manifest_id()?
+        {
             let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if removed {
                 super::egress::require_history_free_window(vault, window_key)?;
@@ -181,7 +178,15 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // preserving.
             let dominates = authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw);
             if !map_contains_binary(&entities_map, &hex_id) || dominates {
-                map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
+                // Pack rows mirror the canonical wire header/body (origin
+                // handle/generation, exact identity/payload), not the
+                // receiver-local materialization. A corrupt local pack row
+                // fails closed here; it is never quarantined as remote.
+                if let Some(canonical) = pack_sync::canonical_outbound_blob(&raw)? {
+                    map_insert_bytes(&entities_map, hex_id.as_str(), &canonical)?;
+                } else {
+                    map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
+                }
                 wrote_any = true;
                 count += 1;
             }
@@ -240,7 +245,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // purge-txn crash window must not re-enter the replicated edges
             // map. Plain containment = skip on this branch; reason-aware
             // (skip iff HARD) once tombstone v2 lands in M4-06.
-            if tombstone_map_contains_id(&tombstones_map, &edge.target) {
+            if tombstone_map_contains_id(&tombstones_map, &edge.target)
+                || window_packing_excludes_entity(vault, &device_only, &edge.target)?
+            {
                 continue;
             }
             if !local_claim_sync_allowed(vault, &edge.target)?
@@ -263,6 +270,10 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         }
     }
 
+    // NOTE text, mutable workflows and head moves change even when the
+    // entity carrier already exists. Refresh through the same export gates.
+    wrote_any |= crate::sync::note::refresh(vault, doc, window_key)?;
+
     // Commit all bridge writes with origin tag
     if wrote_any {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
@@ -274,18 +285,24 @@ pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Ok(false);
     };
-    if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+    if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
+        return Ok(true);
+    }
+    if header.entity_type != crate::registry::ENTITY_TYPE_FACET
+        || !crate::companion::is_identity_facet_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+    {
         return Ok(false);
     }
     decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])
-        .map(|record| record.export_classification == CompanionExportClassification::LocalOnly)
+        .map(|record| record.sensitivity == crate::federation::Sensitivity::Restricted)
 }
 
-/// Credentials refused by the shared same-vault locality predicate.
+/// Local-only diagnostics and credentials refused by the same-vault locality predicate.
 pub(super) fn is_unsyncable_secret_custody(raw: &[u8]) -> bool {
     EntityMetadataHeader::parse(raw).is_some_and(|header| {
-        header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
-            && !crate::secret_custody::custody_sync_allowed(&raw[ENTITY_METADATA_HEADER_LEN..])
+        header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
+            || (header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
+                && !crate::secret_custody::custody_sync_allowed(&raw[ENTITY_METADATA_HEADER_LEN..]))
     })
 }
 
@@ -381,11 +398,6 @@ pub(super) fn delete_edges_touching_entities(
         map_delete(edges_map, key)?;
     }
     Ok(!edge_keys.is_empty())
-}
-
-fn reverse_remat_skip_policy_manifest_mirror(raw: &[u8]) -> bool {
-    EntityMetadataHeader::parse(raw)
-        .is_some_and(|header| header.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
 }
 
 /// ONE-1604-D1 dominance on the outbound door: `true` when the LOCAL row is a

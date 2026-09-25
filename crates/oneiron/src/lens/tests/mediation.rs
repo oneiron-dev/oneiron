@@ -97,6 +97,7 @@ fn forged_and_foreign_backing_ref_tokens_do_not_resolve() -> Result<()> {
     let (_tmp, vault) = test_vault();
     let target_id = test_entity_id(7);
     put_person(&vault, &target_id)?;
+    install_viewer_base_grant(&vault)?;
 
     let viewer_key = actor_key("viewer");
     let scoped_read = vault.scoped_read(viewer_key.clone());
@@ -152,6 +153,7 @@ fn lens_actions_resolve_only_host_bound_handles() -> Result<()> {
     let (_tmp, vault) = test_vault();
     let target_id = test_entity_id(8);
     put_person(&vault, &target_id)?;
+    install_viewer_base_grant(&vault)?;
 
     let viewer_key = actor_key("viewer");
     let scoped_read = vault.scoped_read(viewer_key.clone());
@@ -225,6 +227,7 @@ fn backing_refs_recheck_short_ref_and_target_kind_under_scoped_read() -> Result<
     let claim_id = test_entity_id(10);
     put_person(&vault, &subject_id)?;
     put_profile_claim(&vault, &claim_id, &subject_id)?;
+    install_viewer_base_grant(&vault)?;
 
     let viewer_key = actor_key("viewer");
     let scoped_read = vault.scoped_read(viewer_key.clone());

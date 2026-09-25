@@ -213,7 +213,7 @@ pub fn apply_federation_stale_stamps(vault: &Vault) -> Result<usize> {
 
     // ONE timestamp for the whole sweep: two worlds stamped by one transition
     // are stale at one instant, not at two clock reads.
-    let stamped_at_secs = crate::unix_seconds_now();
+    let stamped_at_secs = vault.store.clock.now_recorded_at();
     vault.with_write_txn(|wtxn| {
         let mut stamped = 0usize;
         for (pact_id, reason, disconnect_epoch) in &terminal {

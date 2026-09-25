@@ -92,10 +92,6 @@ impl EnvConfig {
         values.max_update_payload = lookup_parse(&mut lookup, "ONEIRON_MAX_UPDATE_PAYLOAD")?;
         values.max_windows_per_connection =
             lookup_parse(&mut lookup, "ONEIRON_MAX_WINDOWS_PER_CONNECTION")?;
-        values.max_federation_windows_per_connection =
-            lookup_parse(&mut lookup, "ONEIRON_MAX_FEDERATION_WINDOWS_PER_CONNECTION")?;
-        values.federation_flood_pause_secs =
-            lookup_parse(&mut lookup, "ONEIRON_FEDERATION_FLOOD_PAUSE_SECS")?;
         values.max_messages_per_sec = lookup_parse(&mut lookup, "ONEIRON_MAX_MESSAGES_PER_SEC")?;
         values.ephemeral_timeout_ms = lookup_parse(&mut lookup, "ONEIRON_EPHEMERAL_TIMEOUT_MS")?;
         values.max_ephemeral_payload_bytes =
@@ -107,6 +103,9 @@ impl EnvConfig {
         values.runtime = lookup_runtime_override(&mut lookup)?;
         values.embedder = lookup_embedder_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
+        values.failure_signal_export = lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_EXPORT")?;
+        values.failure_signal_training =
+            lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_TRAINING")?;
         values.hosted_kms_key_ref = lookup("ONEIRON_HOSTED_KMS_KEY_REF");
 
         Ok(Self {
@@ -158,8 +157,10 @@ pub fn resolve_serve_config_with_sources(
     // Only the final posture may discard inherited custody. An intermediate
     // self-host layer can still be overridden by a later hosted layer, which
     // needs the highest-precedence reference even when it came from the file.
-    if resolved.privacy_posture == HostingPrivacyPosture::SelfHostLocal
-        && let (Some(posture_source), Some(key_ref_source)) = (posture_source, key_ref_source)
+    if matches!(
+        resolved.privacy_posture,
+        HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay
+    ) && let (Some(posture_source), Some(key_ref_source)) = (posture_source, key_ref_source)
         && key_ref_source < posture_source
     {
         resolved.hosted_kms_key_ref = None;
@@ -209,7 +210,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
                 );
             }
         }
-        HostingPrivacyPosture::SelfHostLocal => {
+        HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay => {
             // ANY reference, including a whitespace-only one, is refused: a
             // self-hosted owner holds their own key and stores no host
             // reference.
@@ -232,6 +233,7 @@ fn validate_embedder_config(config: &ServeConfig) -> anyhow::Result<()> {
     let Some(embedder) = config.embedder.as_ref() else {
         return Ok(());
     };
+    super::remote_embedder::validate_remote(embedder)?;
     if !embedder.is_active() {
         return Ok(());
     }
@@ -368,8 +370,6 @@ struct FileServeConfig {
     max_frame_size: Option<usize>,
     max_update_payload: Option<usize>,
     max_windows_per_connection: Option<usize>,
-    max_federation_windows_per_connection: Option<usize>,
-    federation_flood_pause_secs: Option<u64>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
     max_ephemeral_payload_bytes: Option<usize>,
@@ -379,6 +379,8 @@ struct FileServeConfig {
     runtime: Option<RuntimeConfigOverride>,
     embedder: Option<EmbedderConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
+    failure_signal_export: Option<bool>,
+    failure_signal_training: Option<bool>,
     hosted_kms_key_ref: Option<String>,
 }
 
@@ -407,8 +409,6 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_frame_size: value.max_frame_size,
             max_update_payload: value.max_update_payload,
             max_windows_per_connection: value.max_windows_per_connection,
-            max_federation_windows_per_connection: value.max_federation_windows_per_connection,
-            federation_flood_pause_secs: value.federation_flood_pause_secs,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
             max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
@@ -418,6 +418,8 @@ impl From<FileServeConfig> for PartialServeConfig {
             runtime: value.runtime,
             embedder: value.embedder,
             privacy_posture: value.privacy_posture,
+            failure_signal_export: value.failure_signal_export,
+            failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref,
         }
     }
@@ -447,8 +449,6 @@ struct PartialServeConfig {
     max_frame_size: Option<usize>,
     max_update_payload: Option<usize>,
     max_windows_per_connection: Option<usize>,
-    max_federation_windows_per_connection: Option<usize>,
-    federation_flood_pause_secs: Option<u64>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
     max_ephemeral_payload_bytes: Option<usize>,
@@ -458,6 +458,8 @@ struct PartialServeConfig {
     runtime: Option<RuntimeConfigOverride>,
     embedder: Option<EmbedderConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
+    failure_signal_export: Option<bool>,
+    failure_signal_training: Option<bool>,
     hosted_kms_key_ref: Option<String>,
 }
 
@@ -491,14 +493,6 @@ impl fmt::Debug for PartialServeConfig {
             .field(
                 "max_windows_per_connection",
                 &self.max_windows_per_connection,
-            )
-            .field(
-                "max_federation_windows_per_connection",
-                &self.max_federation_windows_per_connection,
-            )
-            .field(
-                "federation_flood_pause_secs",
-                &self.federation_flood_pause_secs,
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
@@ -591,12 +585,6 @@ impl PartialServeConfig {
         if let Some(value) = self.max_windows_per_connection {
             resolved.max_windows_per_connection = value;
         }
-        if let Some(value) = self.max_federation_windows_per_connection {
-            resolved.max_federation_windows_per_connection = value;
-        }
-        if let Some(value) = self.federation_flood_pause_secs {
-            resolved.federation_flood_pause_secs = value;
-        }
         if let Some(value) = self.max_messages_per_sec {
             resolved.max_messages_per_sec = value;
         }
@@ -626,6 +614,12 @@ impl PartialServeConfig {
                 .embedder
                 .get_or_insert_with(EmbedderConfig::default)
                 .apply_override(value);
+        }
+        if let Some(value) = self.failure_signal_export {
+            resolved.failure_signal_export = value;
+        }
+        if let Some(value) = self.failure_signal_training {
+            resolved.failure_signal_training = value;
         }
         if let Some(value) = self.privacy_posture {
             resolved.privacy_posture = value;
@@ -666,8 +660,6 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_frame_size: value.max_frame_size,
             max_update_payload: value.max_update_payload,
             max_windows_per_connection: value.max_windows_per_connection,
-            max_federation_windows_per_connection: value.max_federation_windows_per_connection,
-            federation_flood_pause_secs: value.federation_flood_pause_secs,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
             max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
@@ -677,6 +669,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             runtime: runtime_override_from_args(value),
             embedder: embedder_override_from_args(value),
             privacy_posture: value.privacy_posture,
+            failure_signal_export: value.failure_signal_export,
+            failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref.clone(),
         }
     }

@@ -17,6 +17,7 @@ use crate::claim::{
 };
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::temporal::TimeRange;
 
 // ---------------------------------------------------------------------------
@@ -231,12 +232,16 @@ fn retract_target(
     subject: &EntityId,
     scope: &str,
 ) -> Result<()> {
-    let now = crate::unix_seconds_now();
+    let now = vault.store.clock.now_recorded_at();
     let key = target_key(predicate, subject, scope);
     vault.with_write_txn(|wtxn| {
         for (id, mut body) in active_cost_heads_in_txn(vault, wtxn, predicate, subject, scope)? {
             let header = {
-                let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? else {
+                let Some(raw) = vault
+                    .store
+                    .port_entity_record(&*wtxn, &id)?
+                    .map(|row| row.encode())
+                else {
                     continue;
                 };
                 EntityMetadataHeader::parse(&raw)
@@ -365,7 +370,7 @@ fn write_skill_edit_cost(
     vault.with_write_txn(|wtxn| {
         let heads =
             active_cost_heads_in_txn(vault, wtxn, PREDICATE_SKILL_EDIT_COST, skill, &scope)?;
-        let claim_id = EntityId::now();
+        let claim_id = vault.store.clock.entity_id()?;
         let mut body = ClaimBody::new(
             PREDICATE_SKILL_EDIT_COST,
             ClaimSubject::Entity(*skill),
@@ -428,6 +433,8 @@ fn active_cost_heads_in_txn(
         };
         if body.predicate != predicate
             || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.source != Some(ClaimSource::Observed)
+            || body.approval != ClaimApprovalStatus::Auto
             || edit_cost_scope_name(body.scope.as_ref()) != Some(scope)
         {
             continue;
@@ -459,6 +466,8 @@ pub fn edit_cost_for(vault: &Vault, subject: &EntityId, scope: &str) -> Result<O
             body.predicate.as_str(),
             PREDICATE_SKILL_EDIT_COST | PREDICATE_ACTOR_EDIT_COST
         ) || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.source != Some(ClaimSource::Observed)
+            || body.approval != ClaimApprovalStatus::Auto
             || edit_cost_scope_name(body.scope.as_ref()) != Some(scope)
         {
             continue;

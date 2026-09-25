@@ -52,7 +52,7 @@ pub fn recover_authorized_outbound_intents<S: OutboundResultSender>(
     if lease_duration_ms == 0 {
         return Err(AuthorizedRecoveryError::InvalidLeaseDuration);
     }
-    let token = AttemptId::now();
+    let token = AttemptId::from_bytes(&vault.store.clock.ulid()?)?;
     let lease_until_ms = now_ms
         .checked_add(lease_duration_ms)
         .ok_or(AuthorizedRecoveryError::InvalidLeaseDuration)?;

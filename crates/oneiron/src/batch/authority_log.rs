@@ -6,23 +6,12 @@ use heed::RwTxn;
 
 use crate::claim::ClaimLifecycleStatus;
 use crate::companion::CompanionLifecycleEventKind;
-use crate::companion::{
-    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
-};
+use crate::companion::decode_companion_record_body;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::store::Store;
-
-pub(crate) struct ReplicatedAuthorityLogValidation {
-    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(crate) signer_key: crate::authority::AuthorityKey,
-    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(crate) signer_known: bool,
-    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(crate) local_vault_id: crate::authority::AuthorityVaultId,
-}
 
 /// What currently occupies a validated AUTHORITY_LOG row's content-derived store
 /// key. `CrossTypeSquatter` is NOT a rejection — see
@@ -179,14 +168,14 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     data: &[u8],
-) -> Result<ReplicatedAuthorityLogValidation> {
+) -> Result<()> {
     crate::authority::validate_authority_log_entry_body_bytes(data)?;
     let entry = crate::authority::decode_authority_log_entry_body(data)?;
     let entry_hash = crate::authority::authority_entry_hash(&entry)?;
     // ONE-1604-D1 mirror at the replicated door: content-address + append-only
     // are STORE checks, not ancestry checks — the door stays structural +
-    // origin-sig + vault_id (ONE-1604-D2). Rejecting here (before the quota
-    // debit) quarantines hostile rows without consuming ingest quota. A
+    // origin-sig + vault_id (ONE-1604-D2). Ingest observation happens only
+    // after successful admission and never refuses rows for rate. A
     // cross-type squatter is not a rejection — this row dominates it — and
     // the eviction itself belongs to the `apply_put` chokepoint that writes
     // the row, so this validator stays a pure check.
@@ -214,11 +203,7 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
             "foreign authority log vault id",
         )));
     }
-    Ok(ReplicatedAuthorityLogValidation {
-        signer_known: local_fold.roster.contains_key(&entry.signer.public_key),
-        signer_key: entry.signer.public_key,
-        local_vault_id,
-    })
+    Ok(())
 }
 
 pub(super) fn stored_authority_log_entries(
@@ -272,7 +257,7 @@ pub(super) fn validate_companion_register_put(
     if let Some(existing_raw) = store.entities.get(&*wtxn, id.as_bytes())? {
         let header = EntityMetadataHeader::parse(&existing_raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+        if header.entity_type == crate::registry::ENTITY_TYPE_FACET {
             let existing =
                 decode_companion_record_body(&existing_raw[ENTITY_METADATA_HEADER_LEN..])?;
             if existing.key() != key {
@@ -305,13 +290,6 @@ pub(super) fn validate_companion_register_put(
                         "companion lifecycle events must preserve history",
                     ));
                 }
-            }
-            if existing.export_classification != CompanionExportClassification::LocalOnly
-                && record.export_classification == CompanionExportClassification::LocalOnly
-            {
-                return Err(Error::InvalidClaimBody(
-                    "companion record export cannot be downgraded to local_only",
-                ));
             }
         }
     }

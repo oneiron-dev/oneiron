@@ -153,7 +153,7 @@ pub(super) fn floor_check_in_txn(
     {
         return Ok(Some(existing));
     }
-    let proposal_id = EntityId::now();
+    let proposal_id = vault.store.clock.entity_id()?;
     let mut body = ClaimBody::new(
         PREDICATE_SKILL_QUARANTINE_PROPOSAL,
         ClaimSubject::Entity(*skill),

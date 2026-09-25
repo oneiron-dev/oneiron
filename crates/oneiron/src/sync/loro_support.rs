@@ -191,6 +191,22 @@ pub(crate) fn doc_from_snapshot(bytes: &[u8]) -> Result<LoroDoc> {
     })
 }
 
+/// Deep value without empty root maps: `get_map` registers a root on the
+/// local doc at first read, so an empty root is not replicated state.
+#[cfg(test)]
+pub(crate) fn replicated_deep_value(doc: &LoroDoc) -> LoroValue {
+    match doc.get_deep_value() {
+        LoroValue::Map(roots) => LoroValue::Map(
+            roots
+                .iter()
+                .filter(|(_, value)| !matches!(value, LoroValue::Map(map) if map.is_empty()))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

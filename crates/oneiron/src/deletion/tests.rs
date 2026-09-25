@@ -388,6 +388,7 @@ fn receipt_attestation_transcript_literal() {
     let receipt_id = EntityId::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
     let subject = EntityId::from_hex("101112131415161718191a1b1c1d1e1f").unwrap();
     let input = RedactionReceiptInput {
+        actor_principal: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b".to_owned(),
         scope: RedactionScope::entity(&subject),
         reason: DeleteReason::GdprDelete,
@@ -471,4 +472,137 @@ fn receipt_attestation_transcript_literal() {
         &receipt_envelope_header(0x0102_0304_0506_0708)[..],
         &msg[38..63]
     );
+}
+
+#[test]
+fn no_remote_deletion_attestation_surface() {
+    use super::*;
+    use ed25519_dalek::Signer;
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[19; 32]);
+    let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let body = CooperativeDeletionRequest {
+        pact_id: [1; 32],
+        requester_vault_id: [2; 32],
+        peer_vault_id: [3; 32],
+        worlds: vec![],
+        epoch_cutoff: 7,
+        ts: 42,
+        nonce: [4; 16],
+    };
+    let bytes = encode_cooperative_deletion_request_body(&body).unwrap();
+    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(&bytes)).unwrap();
+    let keys: Vec<_> = value
+        .as_map()
+        .unwrap()
+        .iter()
+        .map(|(k, _)| k.as_str().unwrap())
+        .collect();
+    assert_eq!(keys, COOP_DELETION_REQUEST_BODY_KEYS);
+    let signed = SignedCooperativeDeletionRequest {
+        body: body.clone(),
+        signature: crate::authority::AuthoritySignature {
+            suite: key.suite(),
+            public_key: key.clone(),
+            signature: signing
+                .sign(&[COOP_DELETION_REQUEST_DOMAIN, &bytes].concat())
+                .to_bytes()
+                .to_vec(),
+        },
+    };
+    let encoded = encode_signed_cooperative_deletion_request(&signed).unwrap();
+    assert_eq!(
+        decode_and_verify_cooperative_deletion_request(&encoded, &key).unwrap(),
+        body
+    );
+    let wrong = crate::authority::AuthorityKey::Ed25519(
+        ed25519_dalek::SigningKey::from_bytes(&[20; 32])
+            .verifying_key()
+            .to_bytes(),
+    );
+    assert!(decode_and_verify_cooperative_deletion_request(&encoded, &wrong).is_err());
+    let mut trailing = encoded.clone();
+    trailing.push(0);
+    assert!(decode_and_verify_cooperative_deletion_request(&trailing, &key).is_err());
+    // This is the entire two-type request surface: no receiver result is encoded.
+    for index in 0..encoded.len() {
+        let mut flipped = encoded.clone();
+        flipped[index] ^= 1;
+        assert!(decode_and_verify_cooperative_deletion_request(&flipped, &key).is_err());
+    }
+}
+
+#[test]
+fn cooperative_request_rejects_noncanonical_scope_and_wrong_domain() {
+    use super::*;
+    use ed25519_dalek::Signer;
+    use rmpv::Value;
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[21; 32]);
+    let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let mut body = CooperativeDeletionRequest {
+        pact_id: [1; 32],
+        requester_vault_id: [2; 32],
+        peer_vault_id: [3; 32],
+        worlds: vec![],
+        epoch_cutoff: 7,
+        ts: 42,
+        nonce: [4; 16],
+    };
+    body.worlds = vec![EntityId::from_bytes([0xf1; 16]).unwrap()];
+    assert!(encode_cooperative_deletion_request_body(&body).is_err());
+    body.worlds = vec![
+        EntityId::from_bytes([1; 16]).unwrap(),
+        EntityId::from_bytes([2; 16]).unwrap(),
+    ];
+    let bytes = encode_cooperative_deletion_request_body(&body).unwrap();
+    let sign_wire = |bytes: Vec<u8>, domain: &[u8]| {
+        let value = Value::Map(vec![
+            (Value::from("body"), Value::Binary(bytes.clone())),
+            (
+                Value::from("signature"),
+                Value::Map(vec![
+                    (Value::from("suite"), Value::from("ed25519")),
+                    (
+                        Value::from("public_key"),
+                        Value::Binary(signing.verifying_key().to_bytes().to_vec()),
+                    ),
+                    (
+                        Value::from("signature"),
+                        Value::Binary(signing.sign(&[domain, &bytes].concat()).to_bytes().to_vec()),
+                    ),
+                ]),
+            ),
+        ]);
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &value).unwrap();
+        encoded
+    };
+    for domain in [&b""[..], &b"oneiron/receipt-att/v1"[..]] {
+        assert!(
+            decode_and_verify_cooperative_deletion_request(&sign_wire(bytes.clone(), domain), &key)
+                .is_err()
+        );
+    }
+    for duplicate in [false, true] {
+        let mut v = rmpv::decode::read_value(&mut std::io::Cursor::new(&bytes)).unwrap();
+        let Value::Map(ref mut fields) = v else {
+            panic!()
+        };
+        let Value::Array(ref mut worlds) = fields[4].1 else {
+            panic!()
+        };
+        if duplicate {
+            worlds.push(worlds[0].clone());
+        } else {
+            worlds.reverse();
+        }
+        let mut bad = Vec::new();
+        rmpv::encode::write_value(&mut bad, &v).unwrap();
+        assert!(
+            decode_and_verify_cooperative_deletion_request(
+                &sign_wire(bad, COOP_DELETION_REQUEST_DOMAIN),
+                &key
+            )
+            .is_err()
+        );
+    }
 }

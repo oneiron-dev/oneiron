@@ -21,6 +21,9 @@
 // Contract shapes are constructed only once their arming ticket lands.
 #![allow(dead_code)]
 
+#[path = "cb_oracle_plugin/admission.rs"]
+mod admission;
+
 // ════════════════════════════════════════════════════════════════════════
 // CB-X — plugin sections (ONE-1706 admission/lifecycle/fuzz · ONE-1707
 //        plugin suggestions)
@@ -741,42 +744,47 @@ mod cb_x_props {
         .prop_map(|parts| parts.concat())
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(48))]
+    /// Every hostile leaf set preserves the structure of its benign twin.
+    /// Admission is fixed across cases; rendering performs only reads.
+    #[test]
+    fn no_generated_claim_value_alters_board_structure() {
+        let fixture = PluginFixture::open();
+        let registry = fixture.admit_crm_section();
+        let config = ProptestConfig {
+            cases: 48,
+            source_file: Some(file!()),
+            test_name: Some(concat!(
+                module_path!(),
+                "::no_generated_claim_value_alters_board_structure"
+            )),
+            ..ProptestConfig::default()
+        };
+        let strategy = prop::collection::vec(hostile_leaf(), plugin_fixture::SECTIONS_UNDER_FUZZ);
+        proptest::test_runner::TestRunner::new(config)
+            .run(&strategy, |leaves| {
+                let benign: Vec<String> = plugin_fixture::BENIGN_VALUES
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect();
+                let clean = fixture.render_all_owned(&registry, &benign);
+                let hostile = fixture.render_all_owned(&registry, &leaves);
 
-        /// The keystone property. For any hostile leaf set, the rendered
-        /// block is structurally IDENTICAL to its benign twin: same physical
-        /// line count, exactly one canonical wrapper pair, the same five
-        /// section headers, the same row count, and no raw `</memory>` other
-        /// than the engine's own close.
-        #[test]
-        fn no_generated_claim_value_alters_board_structure(
-            leaves in prop::collection::vec(hostile_leaf(), plugin_fixture::SECTIONS_UNDER_FUZZ)
-        ) {
-            let fixture = PluginFixture::open();
-            let registry = fixture.admit_crm_section();
-
-            let benign: Vec<String> = plugin_fixture::BENIGN_VALUES
-                .iter()
-                .map(|value| (*value).to_owned())
-                .collect();
-            let clean = fixture.render_all_owned(&registry, &benign);
-            let hostile = fixture.render_all_owned(&registry, &leaves);
-
-            prop_assert_eq!(hostile.text.lines().count(), clean.text.lines().count());
-            prop_assert_eq!(hostile.open_wrappers, 1);
-            prop_assert_eq!(hostile.close_wrappers, 1);
-            prop_assert_eq!(hostile.open_angles, 2);
-            prop_assert_eq!(hostile.close_angles, 2);
-            prop_assert_eq!(hostile.legend_lines, 1);
-            prop_assert_eq!(hostile.section_headers, plugin_fixture::SECTIONS_UNDER_FUZZ);
-            prop_assert_eq!(hostile.section_headers, clean.section_headers);
-            prop_assert_eq!(hostile.rendered_rows, clean.rendered_rows);
-            // Every physical row stays one physical row.
-            for line in hostile.text.lines() {
-                prop_assert!(!line.contains('\n') && !line.contains('\r'));
-            }
-        }
+                prop_assert_eq!(hostile.text.lines().count(), clean.text.lines().count());
+                prop_assert_eq!(hostile.open_wrappers, 1);
+                prop_assert_eq!(hostile.close_wrappers, 1);
+                prop_assert_eq!(hostile.open_angles, 2);
+                prop_assert_eq!(hostile.close_angles, 2);
+                prop_assert_eq!(hostile.legend_lines, 1);
+                prop_assert_eq!(hostile.section_headers, plugin_fixture::SECTIONS_UNDER_FUZZ);
+                prop_assert_eq!(hostile.section_headers, clean.section_headers);
+                prop_assert_eq!(hostile.rendered_rows, clean.rendered_rows);
+                // Every physical row stays one physical row.
+                for line in hostile.text.lines() {
+                    prop_assert!(!line.contains('\n') && !line.contains('\r'));
+                }
+                Ok(())
+            })
+            .expect("hostile leaves cannot change board structure");
     }
 }
 
@@ -912,6 +920,7 @@ mod plugin_fixture {
         /// When false, `admit_candidate_under_claim` leaves the skill
         /// `Candidate` so the `PendingActivation` arm is reachable.
         activate: bool,
+        admission: &'a super::admission::Admission,
     }
 
     impl PluginInstallSource for CrmPackSource<'_> {
@@ -969,24 +978,8 @@ mod plugin_fixture {
             _approved_claim_id: &EntityId,
             now: u64,
         ) -> PluginResult<SkillRecord> {
-            let mut record = vault.get_skill_record(skill_ref)?.ok_or_else(|| {
-                PluginSectionError::MissingInstallTarget {
-                    reference: skill_ref.to_hex(),
-                }
-            })?;
             if self.activate {
-                // The existing Candidate→Active door, under the SAME approved
-                // install claim — no second consent prompt.
-                record.lifecycle_status = SkillLifecycle::Active;
-                vault.update_skill_record(
-                    skill_ref,
-                    &record,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                )?;
+                return Ok(self.admission.activate(vault, *skill_ref, now)?);
             }
             vault.get_skill_record(skill_ref)?.ok_or_else(|| {
                 PluginSectionError::MissingInstallTarget {
@@ -1021,6 +1014,7 @@ mod plugin_fixture {
         skill_ref: EntityId,
         package: HubPackage,
         content_hash_hex: String,
+        admission: super::admission::Admission,
     }
 
     impl PluginFixture {
@@ -1041,15 +1035,18 @@ mod plugin_fixture {
                 end: now,
             };
             vault
-                .put_entity(&actor, 4, occurred, now, b"agent")
+                .put_entity(
+                    &actor,
+                    oneiron::registry::ENTITY_TYPE_PERSON,
+                    occurred,
+                    now,
+                    b"agent",
+                )
                 .expect("seed the proposing actor");
             // The claim subject for an UNINSTALLED package is the existing
             // hub/provider entity — never the unwritten skill row.
-            vault
-                .put_entity(&hub_id, 4, occurred, now, b"crm hub")
-                .expect("seed the hub entity");
-
             let package = crm_package();
+            let admission = super::admission::Admission::new(&vault, hub_id, &package);
             let content_hash_hex = package.content_hash().expect("canonical hash").to_hex();
 
             Self {
@@ -1060,6 +1057,7 @@ mod plugin_fixture {
                 skill_ref,
                 package,
                 content_hash_hex,
+                admission,
             }
         }
 
@@ -1076,6 +1074,7 @@ mod plugin_fixture {
                 hub: self.hub(),
                 skill_ref: self.skill_ref,
                 activate,
+                admission: &self.admission,
             }
         }
 
@@ -1311,7 +1310,9 @@ mod plugin_fixture {
         }
 
         pub(crate) fn activate_skill(&self) {
-            self.set_lifecycle(SkillLifecycle::Active);
+            self.admission
+                .activate(&self.vault, self.skill_ref, 5_000)
+                .expect("held-out activation");
         }
 
         /// The plugin leaves canon. `Stale` is a lifecycle exit, not a
@@ -1498,6 +1499,7 @@ mod plugin_fixture {
             };
             let legend = BoardLegend::canonical();
             let frame = BoardFrame {
+                changes: None,
                 header: &header,
                 legend: &legend,
                 sections: &sections,
@@ -1583,7 +1585,7 @@ mod plugin_fixture {
             self.vault
                 .put_entity(
                     &evidence,
-                    4,
+                    oneiron::registry::ENTITY_TYPE_PERSON,
                     TimeRange {
                         start: 1_500,
                         end: 1_500,
@@ -1777,7 +1779,7 @@ mod plugin_fixture {
         );
         HubPackage::new(
             record,
-            vec![HubFile::new("SKILL.md", b"# CRM contacts".to_vec())],
+            vec![HubFile::new("SKILL.md", format!("---\nname: {CRM_SKILL_ID}\ndescription: CRM contact pack\nversion: {CRM_SKILL_VERSION}\n---\n# CRM contacts\n").into_bytes())],
             SkillCapabilitySurface::default(),
         )
     }
@@ -1785,6 +1787,12 @@ mod plugin_fixture {
     /// The engine's pinned CLAIM body encoding, mirrored for the bound
     /// consent door (which takes the reviewed body as bytes). Field order
     /// and key names follow `oneiron::claim::CLAIM_BODY_KEYS`.
+    ///
+    /// v2 stamps are REQUIRED: `worldId` always stamps (base id for
+    /// `None`), `scopeRelationshipId` is `all` or a singleton id array,
+    /// `scopeFacetId`/`scopeProjectId` round-trip the reviewed body's own
+    /// stamps, and `scopeVersion` is 2. The helper re-encodes the EXACT
+    /// reviewed body — the decision stays "yes to this", not an edit.
     fn encode_claim_body(body: &ClaimBody) -> Vec<u8> {
         let mut entries: Vec<(Value, Value)> = Vec::new();
         entries.push((Value::from("pred"), Value::from(body.predicate.as_str())));
@@ -1805,15 +1813,22 @@ mod plugin_fixture {
         if let Some(source) = body.source {
             entries.push((Value::from("src"), Value::from(source.as_str())));
         }
-        if let Some(world) = body.world {
-            entries.push((
-                Value::from("world"),
-                Value::Binary(world.as_bytes().to_vec()),
-            ));
-        }
-        if let Some(rel) = body.rel {
-            entries.push((Value::from("rel"), Value::Binary(rel.as_bytes().to_vec())));
-        }
+        entries.push((
+            Value::from("worldId"),
+            Value::Binary(
+                body.world
+                    .unwrap_or_else(oneiron::claim::base_world_id)
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        ));
+        entries.push((
+            Value::from("scopeRelationshipId"),
+            body.rel.map_or_else(
+                || Value::from("all"),
+                |id| Value::Array(vec![Value::Binary(id.as_bytes().to_vec())]),
+            ),
+        ));
         let subject = match body.subject {
             ClaimSubject::Entity(id) => id.as_bytes().to_vec(),
             ClaimSubject::Edge { .. } => panic!("fixture claims are entity-subject"),
@@ -1830,6 +1845,15 @@ mod plugin_fixture {
         if let Some(session_tag) = &body.session_tag {
             entries.push((Value::from("sess"), Value::from(session_tag.as_str())));
         }
+        entries.push((
+            Value::from("scopeFacetId"),
+            Value::Binary(body.scope_facet.as_bytes().to_vec()),
+        ));
+        entries.push((
+            Value::from("scopeProjectId"),
+            Value::Binary(body.scope_project.as_bytes().to_vec()),
+        ));
+        entries.push((Value::from("scopeVersion"), Value::from(2_u64)));
         let mut out = Vec::new();
         rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("encode claim body");
         out

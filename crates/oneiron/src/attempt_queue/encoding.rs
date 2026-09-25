@@ -204,6 +204,9 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
         )));
     }
     validate_kind(&record.kind)?;
+    if let Some(worker) = record.placement.as_ref().and_then(|p| p.worker.as_deref()) {
+        validate_lease_owner(worker)?;
+    }
     validate_optional_dedupe(record.dedupe_key.as_deref())?;
     validate_optional_dedupe_actor_ref(record.dedupe_actor_ref.as_deref())?;
     // An actor scope with nothing to scope is a corrupted row, not a quirk:
@@ -337,4 +340,36 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
         _ => {}
     }
     Ok(record)
+}
+
+/// Reconstruct disposable queue indexes after a canonical restore.
+pub(crate) fn rebuild_checkpoint_indexes(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    let rows: Vec<_> = store
+        .attempt_records
+        .iter(txn)?
+        .map(|row| row.map(|(key, value)| (key.to_vec(), value.to_vec())))
+        .collect::<std::result::Result<_, _>>()?;
+    for (key, value) in rows {
+        let id = AttemptId::from_bytes(&key)?;
+        let record = decode_record(&value, id)?;
+        if matches!(record.state, AttemptState::Queued | AttemptState::Scheduled) {
+            store
+                .attempt_ready
+                .put(txn, &ready_key(ready_at(&record), id), id.as_bytes())?;
+        }
+        if record.state.is_pending()
+            && let Some(dedupe) = record.dedupe_key.as_deref()
+        {
+            store.attempt_dedupe.put(
+                txn,
+                &DedupeIndexKeys::new(&record.kind, record.dedupe_actor_ref.as_deref(), dedupe)
+                    .primary,
+                id.as_bytes(),
+            )?;
+        }
+    }
+    Ok(())
 }

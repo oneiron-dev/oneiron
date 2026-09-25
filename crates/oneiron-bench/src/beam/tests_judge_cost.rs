@@ -55,7 +55,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             deterministic_competitor["costs"]["offline"]["tokenSource"],
-            "fixture_declared_zero"
+            "tokenizer_count"
         );
         assert_eq!(
             deterministic_competitor["costs"]["judge"]["tokenSource"],
@@ -89,10 +89,14 @@ pub(crate) mod tests {
         };
         let pack = BudgetedContextPack {
             raw: ContextPack {
+                capabilities: Vec::new(),
+                l2_base: None,
                 retrieval_quality: Default::default(),
                 results: Vec::new(),
                 neighbors: Vec::new(),
                 stats: PackStats {
+                    critical_over_budget: false,
+                    critical_count: 0,
                     candidates_considered: 0,
                     signals_used: Vec::new(),
                     query_time_us: 11,
@@ -109,6 +113,8 @@ pub(crate) mod tests {
             serialized: Vec::new(),
             serialized_tokens: 7,
             serialized_stats: PackStats {
+                critical_over_budget: false,
+                critical_count: 0,
                 candidates_considered: 0,
                 signals_used: Vec::new(),
                 query_time_us: 11,

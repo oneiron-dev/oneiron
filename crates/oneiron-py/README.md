@@ -1,6 +1,9 @@
-# oneiron
+# Memory Wire — oneiron
 
-Memory for agents. Witness a turn, claim a fact, recall it, read the receipts.
+Memory Wire is the Oneiron developer profile. Start with `witness`, `recall`, and
+`receipts`. The same package also ships `claim_upsert` (`claimUpsert` in JS),
+the fourth verb in the engine’s authoritative `FACADE_VERB_CATALOG`.
+There is no separate lite SDK and no alternate mutation path.
 
 ```sh
 pip install oneiron
@@ -72,12 +75,13 @@ from oneiron import Oneiron
 memory = Oneiron.connect("http://127.0.0.1:8080", os.environ["ONEIRON_KEY"])
 ```
 
-`key` is a slip minted by the server operator and passed verbatim as
-`Authorization: Bearer v2.<claims>.<mac-hex>`. This package never parses,
-splits, or validates it: every authority decision is made server-side from the
-MAC-verified `principal_ref` and `actor_class` claims. A connected handle's
-`as_actor` therefore raises `FORBIDDEN` — reconnect with a differently scoped
-slip instead.
+`key` is the credential `Oneiron.pair(link)` returned once, from a link the
+server's owner created with `oneiron-server token pair`: it holds the slip and
+its connection key, and this package signs every request with that key. The
+package never reads the slip's claims: write identity comes from the
+server-verified slip, and every authority decision is made server-side. A
+connected handle's `as_actor` therefore raises `FORBIDDEN` — pair a link
+created for the actor you want to act as instead.
 
 ## API
 
@@ -85,16 +89,17 @@ slip instead.
 |---|---|
 | `Oneiron.open(path=None, *, dimensions=None)` | an embedded handle |
 | `Oneiron.connect(url, key)` | a remote handle |
+| `Oneiron.pair(link)` | `(handle, credential)`: a remote handle and the credential to store |
 | `handle.as_actor(actor_key)` | a new handle bound to another actor |
 | `handle.witness(turn)` | `WitnessReceipt` |
 | `handle.claim_upsert(claim)` | `CommitReceipt` |
 | `handle.recall(query, ...)` | `MemoryPack` |
 | `handle.receipts(limit=100)` | `list[FacadeReceipt]` |
 
-`recall` keyword arguments are `effort` (`"minimal" | "standard" | "deep"`,
-default `"standard"`), `scope` (`{"world_ref": ..., "facet": ...}`), `limit`
+`recall` keyword arguments are `effort` (`"light" | "medium" | "high" | "xhigh" | "max"`,
+default `"medium"`), `scope` (`{"world_ref": ..., "facet": ...}`), `limit`
 (default `10`) and `format` (`"json" | "yaml" | "toon" | "md" | "txt"`).
-`deep` is lease-gated and raises `LEASE_REQUIRED`; this package neither mints
+`high`, `xhigh` and `max` are lease-gated and raises `LEASE_REQUIRED`; this package neither mints
 nor simulates a lease.
 
 Timestamps are Unix **seconds** everywhere and are never converted. Omitting
@@ -108,7 +113,7 @@ Every failure is an `OneironError` carrying the engine's own vocabulary:
 from oneiron import Oneiron, OneironError
 
 try:
-    memory.recall("window seat", effort="deep")
+    memory.recall("window seat", effort="high")
 except OneironError as error:
     print(error.code, error.message, error.suggestions)
 ```

@@ -262,6 +262,7 @@ pub(super) fn critical_confirm_owner_entry(
                 roles: ROLE_OWNER | ROLE_ADMIN,
             },
             genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
@@ -605,5 +606,177 @@ fn replicated_changed_claim_duplicate_in_one_batch_stays_proposed() -> Result<()
             .approval,
         ClaimApprovalStatus::Proposed
     );
+    Ok(())
+}
+
+#[test]
+fn critical_demotion_holds_body_until_bound_human_clear() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x86);
+    put_critical_auto_claim(&vault, claim)?;
+    let before = vault.get_claim(&claim)?.expect("critical head");
+    let now = crate::unix_seconds_now();
+    let error = vault
+        .apply_claim_demotion(
+            &claim,
+            crate::claim::ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.1,
+            },
+            now,
+        )
+        .expect_err("human hold");
+    assert_eq!(error.kind(), crate::ErrorKind::GateWriteRejected);
+    assert_eq!(
+        vault.pending_claim_demotion(&claim)?,
+        Some(crate::claim::ClaimDemotionAction::Decay {
+            new_claim_of_weight: 0.1
+        })
+    );
+    assert_eq!(vault.get_claim(&claim)?.expect("held head"), before);
+    let pending = vault
+        .with_write_txn(|txn| vault.store.pending_gate_consent_in_txn(txn, &claim))?
+        .expect("operation confirm");
+    let binding = critical_write_confirm_binding(&pending)?;
+    let (genesis, clear) = critical_confirm_owner_entry(
+        &pending,
+        crate::authority::CriticalWriteConfirmDisposition::Clear,
+        0x87,
+    );
+    vault.put_authority_log_entries(&[(genesis, test_time(1), 1), (clear, test_time(2), 2)])?;
+    assert_eq!(
+        vault.settle_critical_write_confirm(binding.confirm_id)?,
+        CriticalWriteConfirmResolution::Cleared
+    );
+    assert_eq!(
+        crate::claim::claim_demotion_rung(&vault.get_claim(&claim)?.expect("demoted"))?,
+        Some(crate::claim::ClaimDemotionRung::Decayed)
+    );
+    assert_eq!(
+        vault.settle_critical_write_confirm(binding.confirm_id)?,
+        CriticalWriteConfirmResolution::AlreadySettled
+    );
+    Ok(())
+}
+
+#[test]
+fn critical_demotion_expiry_and_decline_do_not_retract_original_truth() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x88);
+    put_critical_auto_claim(&vault, claim)?;
+    let before = vault.get_claim(&claim)?.expect("head");
+    let now = crate::unix_seconds_now();
+    assert!(
+        vault
+            .apply_claim_demotion(
+                &claim,
+                crate::claim::ClaimDemotionAction::Decay {
+                    new_claim_of_weight: 0.1
+                },
+                now
+            )
+            .is_err()
+    );
+    let pending = vault
+        .with_write_txn(|txn| vault.store.pending_gate_consent_in_txn(txn, &claim))?
+        .expect("confirm");
+    vault.expire_critical_write_confirms_at(now + CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS + 1)?;
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("expiry is not demotion"),
+        before
+    );
+    let (genesis, decline) = critical_confirm_owner_entry(
+        &pending,
+        crate::authority::CriticalWriteConfirmDisposition::Decline,
+        0x89,
+    );
+    vault.put_authority_log_entries(&[(genesis, test_time(1), 1), (decline, test_time(2), 2)])?;
+    vault.settle_critical_write_confirm(critical_write_confirm_binding(&pending)?.confirm_id)?;
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("decline is not retraction"),
+        before
+    );
+    Ok(())
+}
+
+#[test]
+fn critical_supersession_closes_only_after_bound_clear_with_companion() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let old = test_id(0x8a);
+    put_critical_auto_claim(&vault, old)?;
+    let mut replacement = vault.get_claim(&old)?.expect("old");
+    replacement.value = Value::from("replacement");
+    replacement.approval = ClaimApprovalStatus::Proposed;
+    let (candidate, envelope) = claim_candidate_write_parts(&vault, &replacement)?;
+    let new = test_id(0x8b);
+    let now = crate::unix_seconds_now();
+    vault.with_write_txn(|txn| {
+        vault
+            .batch_in()
+            .claim_candidate(&new, candidate, &envelope, test_time(now), now)
+            .apply_recording_gate_decisions(txn)?;
+        vault.stage_claim_supersession_in_txn(txn, &new, &old, &envelope, now)
+    })?;
+    assert_eq!(
+        vault.get_claim(&new)?.expect("proposal").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(
+        vault.get_claim(&old)?.expect("prior").lifecycle,
+        crate::claim::ClaimLifecycleStatus::Active
+    );
+    let demotion = crate::claim::ClaimDemotionAction::Decay {
+        new_claim_of_weight: 0.1,
+    };
+    assert_eq!(
+        vault
+            .apply_claim_demotion(&old, demotion, now)
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::GateWriteRejected
+    );
+    let _old_pending = vault
+        .with_write_txn(|txn| vault.store.pending_gate_consent_in_txn(txn, &old))?
+        .expect("independent old consent");
+    let pending = vault
+        .with_write_txn(|txn| vault.store.pending_gate_consent_in_txn(txn, &new))?
+        .expect("confirm");
+    let (genesis, clear) = critical_confirm_owner_entry(
+        &pending,
+        crate::authority::CriticalWriteConfirmDisposition::Clear,
+        0x8c,
+    );
+    vault.put_authority_log_entries(&[(genesis, test_time(1), 1), (clear, test_time(2), 2)])?;
+    vault.settle_critical_write_confirm(critical_write_confirm_binding(&pending)?.confirm_id)?;
+    assert_eq!(
+        vault.get_claim(&new)?.expect("granted").approval,
+        ClaimApprovalStatus::Auto
+    );
+    assert_eq!(
+        vault.get_claim(&old)?.expect("closed").lifecycle,
+        crate::claim::ClaimLifecycleStatus::Superseded
+    );
+    let retained = vault
+        .with_write_txn(|txn| vault.store.pending_gate_consent_in_txn(txn, &old))?
+        .expect("old consent retained");
+    assert_eq!(retained.claim_id, *old.as_bytes());
+    assert_eq!(vault.pending_claim_demotion(&old)?, Some(demotion));
+    assert!(
+        vault
+            .with_write_txn(|txn| vault.store.pending_gate_consent_in_txn(txn, &new))?
+            .is_none()
+    );
+    assert!(vault.store.gate_decisions(100)?.iter().any(|row| {
+        row.claim_id == Some(*new.as_bytes())
+            && row
+                .reason_codes
+                .iter()
+                .any(|reason| reason == "gate.supersede.contradiction_closure")
+    }));
+    assert!(vault.claims_for_subject(&new)?.into_iter().any(|id| {
+        vault
+            .get_claim(&id)
+            .expect("read")
+            .is_some_and(|body| body.predicate == "core.supersession.provenance")
+    }));
     Ok(())
 }

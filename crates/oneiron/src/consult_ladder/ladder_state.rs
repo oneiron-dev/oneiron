@@ -177,7 +177,8 @@ pub struct InterruptedState {
 /// Terminal ladder outcome. `Rejected` is a completed decision; `Failed` is
 /// retry/infrastructure semantics. Collapsing them would erase the difference
 /// between "the owner said no" and "the machine broke".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LadderTerminalDisposition {
     Approved,
     Overridden,

@@ -2,22 +2,21 @@
 
 use std::collections::BTreeSet;
 
+use super::owned_body::guard_storage_owned_body;
 use heed::RwTxn;
 
 use super::{
     AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,
-    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
-    StagedClaimGateOutcome, apply_short_id_plan, authority_observation_secs_for_write,
+    ENTITY_METADATA_HEADER_LEN, apply_short_id_plan, authority_observation_secs_for_write,
     check_authority_log_store_key, delete_short_id_rows_for_id,
-    evict_authority_log_store_key_squatter, index_thread_claim_subject,
-    lexical_query_hint_claim_id, parse_entity_metadata, plan_short_id_update,
-    reject_overlay_member_base_write, stage_entity_body_row, stage_entity_index_rows,
-    stage_optimizer_birth_marker_row, validate_companion_register_put,
+    evict_authority_log_store_key_squatter, parse_entity_metadata, plan_short_id_update,
+    reject_overlay_member_base_write, stage_claim_projection, stage_entity_body_row,
+    stage_entity_index_rows, stage_optimizer_birth_marker_row, validate_companion_register_put,
     validate_local_agent_definition_create, validate_local_skill_create,
     validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
     validate_task_checkin_immutable,
 };
-use crate::claim::ClaimApprovalStatus;
+use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, ErrorKind, RecordError, RegistryError, Result};
@@ -47,6 +46,7 @@ pub(in crate::batch) fn apply_put(
     allow_reserved_predicate: bool,
     replicated: bool,
     hub_sync_imported: bool,
+    hub_admission: Option<&crate::skill_hub::HubAdmissionProof>,
     has_later_covering_text_op: bool,
     write_policy: Option<&crate::gate::PolicyManifestResolution>,
     write_envelope: Option<&WriteEnvelope>,
@@ -57,33 +57,45 @@ pub(in crate::batch) fn apply_put(
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
-    staged_claim_gate: Option<&StagedClaimGateOutcome>,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
-    if crate::workspace_roster::is_project_type(store, entity_type) {
-        for referenced in crate::workspace_roster::validate_project_body(id, data)? {
-            reject_overlay_member_base_write(store, &referenced, origin)?;
-        }
-    }
-    if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
-        crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
-    }
-    // Publication admission reuses the write-door decode and must precede
-    // gate receipts, debits, and every other write effect.
-    let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {
-        Some(crate::claim::validate_claim_body_and_decode(
-            data,
-            allow_reserved_predicate,
-        )?)
+    super::super::person_substrate::validate_scope_identity(id)?;
+    // Normalize before body comparison, short-id hashing and scope stamping so
+    // every index names the bytes actually stored. Malformed policy stays intact
+    // and is diagnosed fail-closed by the policy resolver, never defaulted away.
+    let normalized_policy = if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
+        crate::gate::normalize_policy_manifest_scope(data)
     } else {
         None
     };
-    crate::booking::publication::guard_publication_put(
+    let data = normalized_policy.as_deref().unwrap_or(data);
+    super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
+    guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
+    super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
+    crate::skill_hub::validate_hub_source_carrier_put(store, wtxn, &id, entity_type, data)?;
+    crate::agent_def::validate_birth_source_put(store, wtxn, &id, entity_type, data)?;
+    crate::receipt::validate_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
+    let mut portable_agent_source = None;
+    store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
+    store.guard_pack_instance_identity_in_txn(wtxn, &id, entity_type, data)?;
+    // Publication admission reuses the write-door decode and must precede
+    // gate receipts, debits, and every other write effect.
+    let incoming_claim_body = super::claim_admission::admit_claim_put(
         store,
         wtxn,
         id,
-        incoming_claim_body.as_ref(),
+        super::claim_admission::ClaimPutAdmission {
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            allow_reserved_predicate,
+            write_envelope,
+            replicated,
+        },
     )?;
     // ARCH-0052 D2: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A base row
@@ -107,12 +119,14 @@ pub(in crate::batch) fn apply_put(
         plan_replicated_name_index(store, wtxn, &id, entity_type, data, replicated)?;
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
+    let mut hub_origin_marker = None;
     let mut new_agent_definition = None;
     // STO-03: `Some` only when the incoming TASK body named a derived streak
     // counter, i.e. only on the sync door — the body that gets stored instead.
     let mut task_body_without_streaks = None;
     let mut decoded_claim_body = None;
     let mut authority_entry_hash_pin: Option<crate::authority::AuthorityEntryHash> = None;
+    let mut authority_entry_observation = None;
     // ONE-1604-D1 dominance VERDICT, recorded by the AUTHORITY_LOG arm below
     // and acted on only at the pre-write site: see the eviction comment there
     // for why the mutation cannot ride along with the check.
@@ -139,7 +153,17 @@ pub(in crate::batch) fn apply_put(
         crate::thread_passport::validate_thread_claim_in_txn(store, wtxn, &id, &body, replicated)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
         if is_lexical_query_hint_claim {
-            validate_lexical_hint_put(store, wtxn, id, &body, replicated)?;
+            super::lexical_hint::validate_lexical_query_hint(store, wtxn, id, &body, replicated)?;
+        }
+        if let Some(prior) = store.entities.get(wtxn, id.as_bytes())?
+            && crate::batch::EntityMetadataHeader::parse(&prior)
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+            && crate::claim::decode_claim_body(&prior[ENTITY_METADATA_HEADER_LEN..], true)
+                .is_ok_and(|stored| stored.scope_facet != body.scope_facet)
+        {
+            return Err(Error::Registry(RegistryError::FacetStampImmutable {
+                src: id,
+            }));
         }
         if body.session_tag.is_some()
             && !replicated
@@ -159,48 +183,14 @@ pub(in crate::batch) fn apply_put(
             let policy = write_policy.ok_or(Error::InvariantViolation(
                 "local claim write policy snapshot missing",
             ))?;
-            if let Some(staged) = staged_claim_gate {
-                // Enforce this operation's preflight verdict without a second debit.
-                crate::gate::apply_staged_claim_gate_in_txn(
-                    store,
-                    wtxn,
-                    &id,
-                    &body,
-                    write_envelope,
-                    policy,
-                    staged,
-                    crate::gate::GateWriteMode {
-                        record_decision: record_gate_decisions,
-                        persist_pending_consent: persist_gate_pending_consent,
-                        resolve_pending: true,
-                        can_resolve_pending_consent,
-                        include_source_in_gate_input,
-                    },
-                )?;
-            } else if allow_reserved_predicate {
+            if allow_reserved_predicate {
                 crate::gate::check_reserved_claim_policy(&body, write_envelope, policy)?;
-            } else if let Some(write_envelope) = write_envelope {
-                crate::gate::check_claim_policy_for_write_with_preflight_decision(
-                    store,
-                    wtxn,
-                    &id,
-                    crate::gate::ClaimGateWrite::plain(&body, Some(write_envelope)),
-                    policy,
-                    crate::gate::GateWriteMode {
-                        record_decision: record_gate_decisions,
-                        persist_pending_consent: persist_gate_pending_consent,
-                        resolve_pending: true,
-                        can_resolve_pending_consent,
-                        include_source_in_gate_input,
-                    },
-                    preflight_gate_decision_id,
-                )?;
             } else {
                 crate::gate::check_claim_policy_for_write_with_preflight_decision(
                     store,
                     wtxn,
                     &id,
-                    crate::gate::ClaimGateWrite::plain(&body, None),
+                    crate::gate::ClaimGateWrite::plain(&body, write_envelope),
                     policy,
                     crate::gate::GateWriteMode {
                         record_decision: record_gate_decisions,
@@ -214,30 +204,10 @@ pub(in crate::batch) fn apply_put(
             }
         }
         decoded_claim_body = Some(body);
+    } else if entity_type == crate::registry::ENTITY_TYPE_NOTE {
+        validate_note_birth_put(store, wtxn, &id, data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
-        // ONE-1686 (RT-04): the witness ENVELOPE law, at the one arm every
-        // road to a MESSAGE body converges on — the witness door, promote
-        // replay, and sync rematerialization alike. The AUTHORITY half
-        // (which actor may write which author bucket) is answered before
-        // staging by `gate::check_witness_message_ceiling`, which is the only
-        // way to reach `TxnBatchBuilder::put_witness_message`; what is left
-        // for a chokepoint that holds bytes and no actor is proving the bytes
-        // ARE the canonical envelope those axes encode. A local row already
-        // is one by construction (the put consumes the door's own output), so
-        // this costs the witness path nothing and closes every other road.
-        //
-        // Placed BEFORE any store mutation in this function, so a refusal on
-        // either road leaves nothing partial behind for the caller's
-        // quarantine-and-continue to clean up.
-        if replicated {
-            // The REPLICATED road has no actor to run the ceiling against and
-            // the protocol carries no verified source actor or peer signer at
-            // this door, so it fails closed for every author bucket: see
-            // `gate::validate_replicated_witness_message_body`.
-            crate::gate::validate_replicated_witness_message_body(data)?;
-        } else {
-            crate::gate::validate_canonical_witness_message_body(data)?;
-        }
+        validate_witness_message_body(data, replicated)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
@@ -259,6 +229,7 @@ pub(in crate::batch) fn apply_put(
             check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?
                 == AuthorityLogKeyOccupant::CrossTypeSquatter;
         authority_entry_hash_pin = Some(entry_hash);
+        authority_entry_observation = Some(entry);
     } else if entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
         crate::federation::validate_federation_grant_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
@@ -279,8 +250,19 @@ pub(in crate::batch) fn apply_put(
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
+    } else if entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
+        crate::skill_hub::decode_skill_hub_record(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
-        new_skill_record = Some(crate::skill::decode_skill_record(data)?);
+        let decoded = crate::skill::decode_skill_record(data)?;
+        hub_origin_marker = crate::skill_hub::check_hub_skill_put(
+            store,
+            &*wtxn,
+            &id,
+            &decoded,
+            hub_sync_imported,
+            hub_admission,
+        )?;
+        new_skill_record = Some(decoded);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {
         let decoded = crate::agent_def::decode_agent_definition(data)?;
         // ONE-1890 `sys.*` reservation, at the one arm that holds both the
@@ -288,7 +270,15 @@ pub(in crate::batch) fn apply_put(
         // SKILL's decode-site capture of `new_skill_record`.
         crate::agent_def::validate_reserved_logical_id(&id, &decoded)?;
         new_agent_definition = Some(decoded);
+    } else if entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
+        crate::agent_def::workflow::validate_workflow_put(store, wtxn, &id, data, replicated)?;
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+        return Err(Error::InvalidClaimBody(
+            "CompanionRecord storage retired; use PERSON/FACET",
+        ));
+    } else if entity_type == crate::registry::ENTITY_TYPE_FACET
+        && crate::companion::is_identity_facet_body(data)
+    {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     } else if entity_type == ENTITY_TYPE_TASK {
         // The role's TREE invariants are not judged here: `ChildOf` nesting
@@ -370,44 +360,8 @@ pub(in crate::batch) fn apply_put(
     // decides whether the body changed, so nothing downstream ever sees the
     // discarded counters.
     let data = task_body_without_streaks.as_deref().unwrap_or(data);
-    // A sync replay deliberately bypasses the local claim gate. If it changes
-    // a claim with a persisted critical-confirm attachment, that attachment
-    // binds the old body and cannot authorize the new one. Delete it in this
-    // same write transaction and demote an inbound Auto status; notably, do
-    // not derive a replacement binding from the changed peer body.
     let reconciled_critical_claim_body = if replicated && entity_type == ENTITY_TYPE_CLAIM {
-        let body_changed = store
-            .entities
-            .get(wtxn, id.as_bytes())?
-            .map(|old| {
-                old.get(ENTITY_METADATA_HEADER_LEN..)
-                    .ok_or(Error::CorruptedIndex("entity header"))
-                    .map(|body| body != data)
-            })
-            .transpose()?
-            // A live attachment can outlast an entity row during deletion or
-            // rematerialization; recreating that row is an overwrite of the
-            // ceremony-bound state, not an authority restoration.
-            .unwrap_or(true);
-        if crate::gate::reconcile_critical_write_confirm_on_replicated_overwrite(
-            store,
-            wtxn,
-            &id,
-            data,
-            body_changed,
-        )? {
-            let mut reconciled = decoded_claim_body
-                .as_ref()
-                .ok_or(Error::InvariantViolation("validated CLAIM body missing"))?
-                .clone();
-            if reconciled.approval == ClaimApprovalStatus::Auto {
-                reconciled.approval = ClaimApprovalStatus::Proposed;
-            }
-            decoded_claim_body = Some(reconciled.clone());
-            Some(crate::claim::encode_claim_body(&reconciled)?)
-        } else {
-            None
-        }
+        reconcile_replicated_critical_confirm(store, wtxn, &id, data, &mut decoded_claim_body)?
     } else {
         None
     };
@@ -424,6 +378,8 @@ pub(in crate::batch) fn apply_put(
     // fail with `InvalidEntityType` on the missing prefix.
     let short_id_prefix = if is_lexical_query_hint_claim {
         None
+    } else if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
+        Some(store.pack_short_id_prefix_in_txn(wtxn, entity_type, data)?)
     } else {
         store.short_id_prefix(entity_type).ok()
     };
@@ -451,19 +407,7 @@ pub(in crate::batch) fn apply_put(
     let mut optimizer_birth_marker = None;
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
-        if old_type == ENTITY_TYPE_SKILL {
-            let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
-            previous_skill_record = match crate::skill::decode_skill_record(prior_body) {
-                Ok(record) => Some(record),
-                Err(error)
-                    if error.kind() == ErrorKind::InvalidSkillBody
-                        && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
-                {
-                    None
-                }
-                Err(error) => return Err(error),
-            };
-        }
+        previous_skill_record = decode_previous_skill_record(old_type, &old_record)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.
@@ -476,7 +420,18 @@ pub(in crate::batch) fn apply_put(
         // same-bytes replay must NOT touch the index, and metadata-only
         // (occurred/learned) changes are not body changes.
         body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
-        let should_deindex_stale_text = body_changed && (replicated || !has_later_covering_text_op);
+        // Retaining an indexed text revision is not permission to retain a
+        // withdrawn claim in the search index. Lifecycle/approval takes effect
+        // immediately; only still-surfaceable text edits await idle publication.
+        let withdrawn_claim = decoded_claim_body
+            .as_ref()
+            .is_some_and(|body| !crate::claim::claim_surfaceable(body));
+        let should_deindex_stale_text = body_changed
+            && (withdrawn_claim
+                || ((replicated || !has_later_covering_text_op)
+                    && !crate::vault::entity_revision::storage_manages_text(
+                        store, wtxn, &id, data,
+                    )?));
         let old_code_artifact_body =
             if old_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT && body_changed {
                 Some(old_record[ENTITY_METADATA_HEADER_LEN..].to_vec())
@@ -519,13 +474,12 @@ pub(in crate::batch) fn apply_put(
                 .as_ref()
                 .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
             validate_skill_body_overwrite(
-                store,
-                wtxn,
                 &id,
                 &old_record[ENTITY_METADATA_HEADER_LEN..],
                 updated,
                 hub_sync_imported,
                 replicated,
+                hub_admission,
             )?;
         }
         if old_type == ENTITY_TYPE_AGENT_DEF && body_changed {
@@ -562,29 +516,15 @@ pub(in crate::batch) fn apply_put(
             crate::bm25::deindex_text(store, wtxn, &id)?;
         }
 
-        if old_occurred.end.saturating_sub(old_occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
-            let old_long_interval_key = Store::encode_temporal_key(old_occurred.end, &id);
-            store
-                .temporal_long_intervals
-                .delete(wtxn, &old_long_interval_key)?;
-        }
-
-        if old_occurred.start != occurred.start {
-            let old_start_key = Store::encode_temporal_key(old_occurred.start, &id);
-            store.temporal_occurred_start.delete(wtxn, &old_start_key)?;
-        }
-
-        let old_is_range = old_occurred.start != old_occurred.end;
-        let new_is_range = occurred.start != occurred.end;
-        if old_is_range && (!new_is_range || old_occurred.end != occurred.end) {
-            let old_end_key = Store::encode_temporal_key(old_occurred.end, &id);
-            store.temporal_occurred_end.delete(wtxn, &old_end_key)?;
-        }
-
-        if old_learned != learned_at {
-            let old_learned_key = Store::encode_temporal_key(old_learned, &id);
-            store.temporal_learned.delete(wtxn, &old_learned_key)?;
-        }
+        super::put_staging::remove_prior_temporal_index_rows(
+            store,
+            wtxn,
+            &id,
+            old_occurred,
+            old_learned,
+            occurred,
+            learned_at,
+        )?;
     } else if entity_type == ENTITY_TYPE_AGENT_DEF && !replicated {
         // ONE-1890 mirror of the SKILL create gate below, one entity type
         // over: LOCAL creates only, so genuine creates are gated and updates
@@ -599,6 +539,8 @@ pub(in crate::batch) fn apply_put(
                 "validated AGENT_DEF record missing",
             ))?;
         validate_local_agent_definition_create(store, wtxn, &id, created)?;
+        portable_agent_source =
+            crate::agent_def::bind_agent_birth_in_txn(store, wtxn, &id, created)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let created = new_skill_record
             .as_ref()
@@ -638,9 +580,40 @@ pub(in crate::batch) fn apply_put(
     // never be re-presented as an ordinary birth. Only a genuine optimizer-born
     // create at an unmarked id produces a row here.
     stage_optimizer_birth_marker_row(store, wtxn, optimizer_birth_marker)?;
-    if let Some(body) = decoded_claim_body.as_ref() {
-        crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+    crate::ports::audit_entity_put_in_txn(
+        store,
+        wtxn,
+        crate::ports::EntityPutAudit {
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            envelope: write_envelope,
+        },
+    )?;
+    crate::gate::manifest_authenticity::update_manifest_origin(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        replicated,
+    )?;
+    crate::ingest::invalidate_blob_fingerprint(store, wtxn, &id)?;
+    stage_claim_projection(store, wtxn, id, decoded_claim_body.as_ref())?;
+    if let Some((key, value)) = hub_origin_marker {
+        store.vault_meta.put(wtxn, &key, &value)?;
     }
+    crate::skill_hub::stage_source_custody_put(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        previous_skill_record.as_ref(),
+        new_skill_record.as_ref(),
+    )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if entity_type == ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
@@ -648,22 +621,12 @@ pub(in crate::batch) fn apply_put(
             crate::task_verb::note_task_write(store, wtxn, id, data)?;
         }
     }
+    if entity_type == crate::registry::ENTITY_TYPE_TURN {
+        crate::conversation_dag::stage_session_carrier(store, wtxn, id, data)?;
+    }
     crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {
-        crate::skill_hub::maintain_skill_content_hash_index_for_put(
-            store,
-            wtxn,
-            &id,
-            previous_skill_record
-                .as_ref()
-                .and_then(|previous| previous.content_hash),
-            record.content_hash,
-        )?;
-        // ONE-1447: the reverse "which skills cite this message" index, kept at
-        // the same chokepoint as the content-hash index so every road that can
-        // land a SKILL body — typed doors, hub import, sync remat — maintains
-        // it without a call site of its own.
-        crate::skill_convert::maintain_skill_source_index_for_put(
+        super::put_staging::stage_skill_index_rows(
             store,
             wtxn,
             &id,
@@ -672,26 +635,34 @@ pub(in crate::batch) fn apply_put(
         )?;
     }
     if let Some(body) = decoded_claim_body.as_ref() {
-        // Thread readers reuse ClaimOf, not a private unsynchronized cache.
-        // Raw puts and replicated materialization must maintain that same index.
-        if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
-            index_thread_claim_subject(store, wtxn, &id, body, learned_at)?;
-        }
-        crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
-            store, wtxn, &id, body, learned_at,
-        )?;
-        crate::llm::index_dreamer_step_claim_for_put(store, wtxn, &id, body, learned_at)?;
+        super::put_staging::stage_claim_projection_indexes(store, wtxn, &id, body, learned_at)?;
     }
     if let Some(key) = authority_first_seen_key {
-        let observed_secs =
-            authority_observation_secs_for_write(store, wtxn, crate::unix_seconds_now())?;
-        if store.sync_state.get(wtxn, key.as_str())?.is_none() {
-            let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
-            store.sync_state.put(wtxn, key.as_str(), &first_seen)?;
-        }
+        observe_authority_put(
+            store,
+            wtxn,
+            &key,
+            authority_entry_observation.as_ref(),
+            authority_entry_hash_pin.as_ref(),
+            replicated,
+            mutation_recorded_at,
+        )?;
     }
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
+    crate::federation::record_scope::stamp_put(store, wtxn, id, entity_type, data, replicated)?;
+    if entity_type == crate::registry::ENTITY_TYPE_FACET {
+        super::super::facet_identity::reconcile_identity_facet(
+            store, wtxn, id, data, occurred, learned_at,
+        )?;
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_PERSON {
+        super::super::person_substrate::ensure_person_substrate(
+            store, wtxn, id, occurred, learned_at,
+        )?;
+    }
+    crate::agent_def::stage_birth_custody_put(store, wtxn, &id, entity_type, data)?;
+    crate::receipt::stage_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;
@@ -708,6 +679,9 @@ pub(in crate::batch) fn apply_put(
     }
     let pending_embedding_token =
         if entity_type == crate::registry::ENTITY_TYPE_CLAIM && !is_lexical_query_hint_claim {
+            // Mint the new invalidation token even while idle publication is
+            // pending. The worker skips these revisions; old completions must
+            // still observe that their token no longer owns the current body.
             let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, &id)?;
             let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
             if !body_changed && has_vector && !has_current_pending {
@@ -719,6 +693,7 @@ pub(in crate::batch) fn apply_put(
             None
         };
     Ok(AppliedPut {
+        portable_agent_source,
         pending_embedding_token,
         cleared_pending_embedding,
         had_vector_mutation,
@@ -727,69 +702,146 @@ pub(in crate::batch) fn apply_put(
     })
 }
 
-fn validate_lexical_hint_put(
+/// A sync replay deliberately bypasses the local claim gate. If it changes a
+/// claim with a persisted critical-confirm attachment, that attachment binds
+/// the old body and cannot authorize the new one. Delete it in this same write
+/// transaction and demote an inbound Auto status; notably, do not derive a
+/// replacement binding from the changed peer body. Returns the demoted body's
+/// bytes, which the put stores instead of `data`, and leaves
+/// `decoded_claim_body` holding the demoted body.
+fn reconcile_replicated_critical_confirm(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    data: &[u8],
+    decoded_claim_body: &mut Option<ClaimBody>,
+) -> Result<Option<Vec<u8>>> {
+    let body_changed = store
+        .entities
+        .get(wtxn, id.as_bytes())?
+        .map(|old| {
+            old.get(ENTITY_METADATA_HEADER_LEN..)
+                .ok_or(Error::CorruptedIndex("entity header"))
+                .map(|body| body != data)
+        })
+        .transpose()?
+        // A live attachment can outlast an entity row during deletion or
+        // rematerialization; recreating that row is an overwrite of the
+        // ceremony-bound state, not an authority restoration.
+        .unwrap_or(true);
+    if crate::gate::reconcile_critical_write_confirm_on_replicated_overwrite(
+        store,
+        wtxn,
+        id,
+        data,
+        body_changed,
+    )? {
+        let mut reconciled = decoded_claim_body
+            .as_ref()
+            .ok_or(Error::InvariantViolation("validated CLAIM body missing"))?
+            .clone();
+        if reconciled.approval == ClaimApprovalStatus::Auto {
+            reconciled.approval = ClaimApprovalStatus::Proposed;
+        }
+        *decoded_claim_body = Some(reconciled.clone());
+        Ok(Some(crate::claim::encode_claim_body(&reconciled)?))
+    } else {
+        Ok(None)
+    }
+}
+
+// The ledger is immutable birth identity, never a second text plane. This
+// shared guard covers local writes and replicated/window rematerialization.
+fn validate_note_birth_put(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    body: &crate::claim::ClaimBody,
-    replicated: bool,
+    id: &EntityId,
+    data: &[u8],
 ) -> Result<()> {
-    if !id
-        .as_bytes()
-        .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+    crate::note::decode_note_body_in_txn(store, txn, data)?;
+    if let Some(old) = store.entities.get(txn, id.as_bytes())?
+        && old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
     {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint claim id must use LH prefix",
-        ));
+        return Err(Error::Record(RecordError::InvalidNoteBody(
+            "NOTE birth body is immutable",
+        )));
     }
-    let hint_value = crate::claim::decode_lexical_query_hint_value(&body.value)?;
-    let target = hint_value.target;
-    let expected_id = lexical_query_hint_claim_id(&target, &hint_value.query)?;
-    if expected_id != id {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint claim id must match target and query",
-        ));
+    Ok(())
+}
+
+fn validate_witness_message_body(data: &[u8], replicated: bool) -> Result<()> {
+    // ONE-1686 (RT-04): the witness ENVELOPE law, at the one arm every
+    // road to a MESSAGE body converges on — the witness door, promote
+    // replay, and sync rematerialization alike. The AUTHORITY half
+    // (which actor may write which author bucket) is answered before
+    // staging by `gate::check_witness_message_ceiling`, which is the only
+    // way to reach `TxnBatchBuilder::put_witness_message`; what is left
+    // for a chokepoint that holds bytes and no actor is proving the bytes
+    // ARE the canonical envelope those axes encode. A local row already
+    // is one by construction (the put consumes the door's own output), so
+    // this costs the witness path nothing and closes every other road.
+    //
+    // Placed BEFORE any store mutation in this function, so a refusal on
+    // either road leaves nothing partial behind for the caller's
+    // quarantine-and-continue to clean up.
+    if replicated {
+        // The REPLICATED road has no actor to run the ceiling against and
+        // the protocol carries no verified source actor or peer signer at
+        // this door, so it fails closed for every author bucket: see
+        // `gate::validate_replicated_witness_message_body`.
+        crate::gate::validate_replicated_witness_message_body(data)?;
+    } else {
+        crate::gate::validate_canonical_witness_message_body(data)?;
     }
-    if !body.stale {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint claims must be stale",
-        ));
+    Ok(())
+}
+
+fn decode_previous_skill_record(
+    old_type: u8,
+    old_record: &[u8],
+) -> Result<Option<crate::skill::SkillRecord>> {
+    if old_type != ENTITY_TYPE_SKILL {
+        return Ok(None);
     }
-    if body.lifecycle != crate::claim::ClaimLifecycleStatus::Active {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint claims must be active",
-        ));
-    }
-    if target == id {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint target must not be self",
-        ));
-    }
-    if let Some(target_raw) = store.entities.get(txn, target.as_bytes())? {
-        let Some(target_header) = EntityMetadataHeader::parse(&target_raw) else {
-            return Err(Error::CorruptedIndex("entity header"));
-        };
-        if target_header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-            return Err(Error::InvalidClaimBody(
-                "lexical query hint target must be claim",
-            ));
+    let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+    match crate::skill::decode_skill_record(prior_body) {
+        Ok(record) => Ok(Some(record)),
+        Err(error)
+            if error.kind() == ErrorKind::InvalidSkillBody
+                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
+        {
+            Ok(None)
         }
-        let Ok(target_body) =
-            crate::claim::decode_claim_body(&target_raw[ENTITY_METADATA_HEADER_LEN..], true)
-        else {
-            return Err(Error::InvalidClaimBody(
-                "lexical query hint target must be claim",
-            ));
-        };
-        if target_body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
-            return Err(Error::InvalidClaimBody(
-                "lexical query hint target must not be synthetic hint",
-            ));
+        Err(error) => Err(error),
+    }
+}
+/// Keep first observation, signer maximum and replay advisory in the same put transaction.
+fn observe_authority_put(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    key: &str,
+    entry: Option<&crate::authority::AuthorityLogEntry>,
+    hash: Option<&crate::authority::AuthorityEntryHash>,
+    replicated: bool,
+    mutation_recorded_at: u64,
+) -> Result<()> {
+    let observed_secs = authority_observation_secs_for_write(store, wtxn, mutation_recorded_at)?;
+    if store.sync_state.get(wtxn, key)?.is_none() {
+        let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
+        store.sync_state.put(wtxn, key, &first_seen)?;
+    }
+    if let (Some(entry), Some(hash)) = (entry, hash) {
+        let first_observation = crate::authority::record_authority_sequence_observation_in_txn(
+            store, wtxn, entry, hash,
+        )?;
+        if replicated && first_observation {
+            crate::authority::observe_authority_replay_in_txn(
+                store,
+                wtxn,
+                &entry.signer.public_key,
+                observed_secs,
+            )?;
         }
-    } else if !replicated {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint target must be claim",
-        ));
     }
     Ok(())
 }

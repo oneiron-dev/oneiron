@@ -378,6 +378,13 @@ fn effect_actor_class_spoof_fails_closed() -> Result<()> {
             (Value::from(GRANT_EFFECTOR_KEY), Value::from("external:*")),
             (
                 Value::from(GRANT_SCOPE_KEY),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::effect_preset(),
+                )
+                .unwrap(),
+            ),
+            (
+                Value::from(GRANT_SELECTORS_KEY),
                 Value::Map(vec![(Value::from("channel"), Value::from("email"))]),
             ),
         ])

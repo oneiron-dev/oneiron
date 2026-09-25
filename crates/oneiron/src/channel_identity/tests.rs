@@ -491,6 +491,7 @@ fn delegated_births_outside_requested_are_refused_at_the_store() -> Result<()> {
     // An assembled body claiming ACTIVE asserts a provision decision, a bind
     // edge, a fulfillment and a receipt that never happened.
     let crafted = ChannelIdentity {
+        auth_mode: crate::channel_identity::ChannelAuthMode::OAuth,
         channel: EMAIL_CHANNEL.to_owned(),
         address_or_handle: "member@member-owned.example".to_owned(),
         shape: ChannelIdentityShape::DelegatedGrant,
@@ -577,9 +578,67 @@ fn channel_identity_type_registration_is_stable() {
     let entry = entity_type_registry_entry(ENTITY_TYPE_CHANNEL_IDENTITY)
         .expect("CHANNEL_IDENTITY registry row");
 
-    assert_eq!(ENTITY_TYPE_CHANNEL_IDENTITY, 79);
+    assert_eq!(ENTITY_TYPE_CHANNEL_IDENTITY, 81);
     assert_eq!(entry.kind, "CHANNEL_IDENTITY");
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);
     assert_eq!(entry.zone, TypeByteZone::System);
 }
+
+#[test]
+fn channel_auth_modes_register_without_credential_material() -> Result<()> {
+    use crate::channel_identity::ChannelAuthMode;
+    for mode in [
+        ChannelAuthMode::Local,
+        ChannelAuthMode::ApiKey,
+        ChannelAuthMode::OAuth,
+    ] {
+        let (_dir, vault) = test_vault();
+        let mut identity = sample_identity();
+        identity.auth_mode = mode;
+        let id = entity(0xD1);
+        vault.create_channel_identity(&id, &identity)?;
+        assert_eq!(vault.get_channel_identity(&id)?, Some(identity.clone()));
+        let bytes = encode_channel_identity_body(&identity)?;
+        let decoded = decode_channel_identity_body(&bytes)?;
+        assert_eq!(decoded.auth_mode, mode);
+        assert_eq!(mode.as_str().parse::<ChannelAuthMode>()?, mode);
+        let claims = identity.claim_bodies(entity(0xD1));
+        assert!(
+            claims
+                .iter()
+                .any(|claim| claim.predicate == "channel_identity.auth_mode"
+                    && claim.value.as_str() == Some(mode.as_str()))
+        );
+        // An unknown mode or a credential-bearing body is refused by the same
+        // decoder used at the record write chokepoint.
+        let Value::Map(fields) = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap() else {
+            panic!()
+        };
+        for credential in [false, true] {
+            let mut fields = fields.clone();
+            if credential {
+                fields.push((
+                    Value::from("credentials"),
+                    Value::from("must-stay-host-side"),
+                ));
+            } else {
+                fields
+                    .iter_mut()
+                    .find(|(k, _)| k.as_str() == Some("auth_mode"))
+                    .unwrap()
+                    .1 = Value::from("unknown");
+            }
+            let mut raw = Vec::new();
+            rmpv::encode::write_value(&mut raw, &Value::Map(fields)).unwrap();
+            assert_eq!(
+                decode_channel_identity_body(&raw).unwrap_err().kind(),
+                ErrorKind::InvalidChannelIdentityBody
+            );
+        }
+        drop(vault);
+    }
+    Ok(())
+}
+
+mod actors;

@@ -1,11 +1,10 @@
 use super::*;
 use crate::claim::ClaimSource;
-use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-};
+use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::config::VaultConfig;
 use crate::deletion::DeleteReason;
 use crate::edge::EdgeActorClass;
+use crate::federation::Sensitivity;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::{ErrorKind, Vault};
@@ -68,7 +67,13 @@ fn put_claim(
     Ok(id)
 }
 
-fn put_relationship(vault: &Vault, source: EntityId, target: EntityId, role: &str) -> Result<()> {
+fn put_relationship(
+    vault: &Vault,
+    source: EntityId,
+    target: EntityId,
+    role: &str,
+    sensitivity: Sensitivity,
+) -> Result<()> {
     let record = CompanionRecord::relationship(
         CompanionScope::neutral(),
         source,
@@ -81,7 +86,7 @@ fn put_relationship(vault: &Vault, source: EntityId, target: EntityId, role: &st
             ClaimApprovalStatus::Approved,
             Value::from("test"),
         ),
-        CompanionExportClassification::Portable,
+        sensitivity,
     );
     vault.create_companion_record(&EntityId::now(), &record, 5)
 }
@@ -204,7 +209,7 @@ fn export_honors_strike_list_and_explicit_unstrike() -> Result<()> {
         0.7,
         Some(2),
     )?;
-    put_relationship(&vault, subject, friend, "coworker")?;
+    put_relationship(&vault, subject, friend, "coworker", Sensitivity::Public)?;
 
     let compile =
         vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
@@ -278,7 +283,7 @@ fn third_party_rows_default_coarse_name_and_role() -> Result<()> {
         0.7,
         None,
     )?;
-    put_relationship(&vault, subject, friend, "coworker")?;
+    put_relationship(&vault, subject, friend, "coworker", Sensitivity::Public)?;
 
     let compile =
         vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
@@ -651,7 +656,7 @@ fn relationship_rows_render_coarse_without_internal_refs() -> Result<()> {
     let friend = put_person(&vault, 0xB1)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
     put_claim(&vault, friend, "profile.name", "Kenji", 0.9, None)?;
-    put_relationship(&vault, subject, friend, "coworker")?;
+    put_relationship(&vault, subject, friend, "coworker", Sensitivity::Public)?;
 
     let compile =
         vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
@@ -761,5 +766,58 @@ fn struck_identity_line_stays_out_of_export_record() -> Result<()> {
         !record.identity_line.contains("Lexi"),
         "struck identity text must not survive in the queryable export record"
     );
+    Ok(())
+}
+
+#[test]
+fn portable_card_excludes_nonpublic_relationships_and_their_claims() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let subject = put_person(&vault, 0x61)?;
+    let cases = [
+        (Sensitivity::Public, 0xB1, "public contact"),
+        (Sensitivity::Private, 0xB2, "private contact"),
+        (Sensitivity::Sensitive, 0xB3, "sensitive contact"),
+        (Sensitivity::Restricted, 0xB4, "restricted contact"),
+    ];
+    for (sensitivity, byte, name) in cases {
+        let contact = put_person(&vault, byte)?;
+        put_claim(&vault, contact, "profile.name", name, 0.9, Some(0))?;
+        put_claim(&vault, contact, "profile.hobby", "hiking", 0.8, Some(0))?;
+        put_relationship(&vault, subject, contact, "coworker", sensitivity)?;
+    }
+
+    let compile =
+        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
+    for (sensitivity, byte, _) in cases {
+        let contact = EntityId::from_bytes([byte; 16])?;
+        for kind in [
+            PersonaSnapshotRowKind::Relationship,
+            PersonaSnapshotRowKind::ThirdPartyClaim,
+        ] {
+            assert_eq!(
+                compile
+                    .rows
+                    .iter()
+                    .any(|row| row.subject_ref == contact && row.kind == kind),
+                sensitivity == Sensitivity::Public,
+                "{sensitivity:?}: {kind:?}"
+            );
+        }
+    }
+    let artifact = vault.export_persona_snapshot(
+        &compile,
+        &PersonaSnapshotStrikeList::default(),
+        &owner_consent(&compile),
+    )?;
+    for (sensitivity, _, name) in cases {
+        assert_eq!(
+            artifact.memory_pack_json.contains(name),
+            sensitivity == Sensitivity::Public
+        );
+        assert_eq!(
+            artifact.markdown.contains(name),
+            sensitivity == Sensitivity::Public
+        );
+    }
     Ok(())
 }

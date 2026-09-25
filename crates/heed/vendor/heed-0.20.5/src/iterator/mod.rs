@@ -30,15 +30,39 @@ mod tests {
 
         // Create an ordered list of keys...
         let mut wtxn = env.write_txn().unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 254, 119, 111, 114, 108, 100], "world").unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 255, 104, 101, 108, 108, 111], "hello").unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 255, 119, 111, 114, 108, 100], "world").unwrap();
-        db.put(&mut wtxn, &[0, 0, 1, 0, 119, 111, 114, 108, 100], "world").unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 254, 119, 111, 114, 108, 100], "world")
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 255, 104, 101, 108, 108, 111], "hello")
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 255, 119, 111, 114, 108, 100], "world")
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 1, 0, 119, 111, 114, 108, 100], "world")
+            .unwrap();
 
-        db.put(&mut wtxn, &[255, 255, 0, 254, 119, 111, 114, 108, 100], "world").unwrap();
-        db.put(&mut wtxn, &[255, 255, 0, 255, 104, 101, 108, 108, 111], "hello").unwrap();
-        db.put(&mut wtxn, &[255, 255, 0, 255, 119, 111, 114, 108, 100], "world").unwrap();
-        db.put(&mut wtxn, &[255, 255, 1, 0, 119, 111, 114, 108, 100], "world").unwrap();
+        db.put(
+            &mut wtxn,
+            &[255, 255, 0, 254, 119, 111, 114, 108, 100],
+            "world",
+        )
+        .unwrap();
+        db.put(
+            &mut wtxn,
+            &[255, 255, 0, 255, 104, 101, 108, 108, 111],
+            "hello",
+        )
+        .unwrap();
+        db.put(
+            &mut wtxn,
+            &[255, 255, 0, 255, 119, 111, 114, 108, 100],
+            "world",
+        )
+        .unwrap();
+        db.put(
+            &mut wtxn,
+            &[255, 255, 1, 0, 119, 111, 114, 108, 100],
+            "world",
+        )
+        .unwrap();
 
         // Lets check that we properly get the last entry.
         let iter = db.prefix_iter(&wtxn, &[0, 0, 0, 255]).unwrap();
@@ -285,21 +309,39 @@ mod tests {
         let iter = db
             .range(
                 &wtxn,
-                &(ops::Bound::Excluded(&[0, 0, 0][..]), ops::Bound::Included(&[0, 0, 1, 0][..])),
+                &(
+                    ops::Bound::Excluded(&[0, 0, 0][..]),
+                    ops::Bound::Included(&[0, 0, 1, 0][..]),
+                ),
             )
             .unwrap();
-        assert_eq!(iter.last().transpose().unwrap(), Some((&[0, 0, 1, 0][..], ())));
+        assert_eq!(
+            iter.last().transpose().unwrap(),
+            Some((&[0, 0, 1, 0][..], ()))
+        );
 
         // Lets check that we can range_iter on that sequence with the key "255".
         let mut iter = db
             .range(
                 &wtxn,
-                &(ops::Bound::Excluded(&[0, 0, 0][..]), ops::Bound::Included(&[0, 0, 1, 0][..])),
+                &(
+                    ops::Bound::Excluded(&[0, 0, 0][..]),
+                    ops::Bound::Included(&[0, 0, 1, 0][..]),
+                ),
             )
             .unwrap();
-        assert_eq!(iter.next().transpose().unwrap(), Some((&[0, 0, 0, 1][..], ())));
-        assert_eq!(iter.next().transpose().unwrap(), Some((&[0, 0, 0, 2][..], ())));
-        assert_eq!(iter.next().transpose().unwrap(), Some((&[0, 0, 1, 0][..], ())));
+        assert_eq!(
+            iter.next().transpose().unwrap(),
+            Some((&[0, 0, 0, 1][..], ()))
+        );
+        assert_eq!(
+            iter.next().transpose().unwrap(),
+            Some((&[0, 0, 0, 2][..], ()))
+        );
+        assert_eq!(
+            iter.next().transpose().unwrap(),
+            Some((&[0, 0, 1, 0][..], ()))
+        );
         assert_eq!(iter.next().transpose().unwrap(), None);
         drop(iter);
 
@@ -326,10 +368,14 @@ mod tests {
 
         // Create an ordered list of keys...
         let mut wtxn = env.write_txn().unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 254, 119, 111, 114, 108, 100], &()).unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 255, 104, 101, 108, 108, 111], &()).unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 255, 119, 111, 114, 108, 100], &()).unwrap();
-        db.put(&mut wtxn, &[0, 0, 1, 0, 119, 111, 114, 108, 100], &()).unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 254, 119, 111, 114, 108, 100], &())
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 255, 104, 101, 108, 108, 111], &())
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 255, 119, 111, 114, 108, 100], &())
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 1, 0, 119, 111, 114, 108, 100], &())
+            .unwrap();
 
         // Lets check that we properly get the last entry.
         let iter = db.prefix_iter(&wtxn, &[0, 0, 0]).unwrap();
@@ -403,10 +449,14 @@ mod tests {
 
         // Create an ordered list of keys...
         let mut wtxn = env.write_txn().unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 254, 119, 111, 114, 108, 100], &()).unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 255, 104, 101, 108, 108, 111], &()).unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 255, 119, 111, 114, 108, 100], &()).unwrap();
-        db.put(&mut wtxn, &[0, 0, 1, 0, 119, 111, 114, 108, 100], &()).unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 254, 119, 111, 114, 108, 100], &())
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 255, 104, 101, 108, 108, 111], &())
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 255, 119, 111, 114, 108, 100], &())
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 1, 0, 119, 111, 114, 108, 100], &())
+            .unwrap();
 
         // Lets check that we properly get the last entry.
         let iter = db.rev_prefix_iter(&wtxn, &[0, 0, 0]).unwrap();
@@ -480,15 +530,23 @@ mod tests {
 
         // Create an ordered list of keys...
         let mut wtxn = env.write_txn().unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 254, 119, 111, 114, 108, 100], &()).unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 255, 104, 101, 108, 108, 111], &()).unwrap();
-        db.put(&mut wtxn, &[0, 0, 0, 255, 119, 111, 114, 108, 100], &()).unwrap();
-        db.put(&mut wtxn, &[0, 0, 1, 0, 119, 111, 114, 108, 100], &()).unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 254, 119, 111, 114, 108, 100], &())
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 255, 104, 101, 108, 108, 111], &())
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 0, 255, 119, 111, 114, 108, 100], &())
+            .unwrap();
+        db.put(&mut wtxn, &[0, 0, 1, 0, 119, 111, 114, 108, 100], &())
+            .unwrap();
 
-        db.put(&mut wtxn, &[255, 255, 0, 254, 119, 111, 114, 108, 100], &()).unwrap();
-        db.put(&mut wtxn, &[255, 255, 0, 255, 104, 101, 108, 108, 111], &()).unwrap();
-        db.put(&mut wtxn, &[255, 255, 0, 255, 119, 111, 114, 108, 100], &()).unwrap();
-        db.put(&mut wtxn, &[255, 255, 1, 0, 119, 111, 114, 108, 100], &()).unwrap();
+        db.put(&mut wtxn, &[255, 255, 0, 254, 119, 111, 114, 108, 100], &())
+            .unwrap();
+        db.put(&mut wtxn, &[255, 255, 0, 255, 104, 101, 108, 108, 111], &())
+            .unwrap();
+        db.put(&mut wtxn, &[255, 255, 0, 255, 119, 111, 114, 108, 100], &())
+            .unwrap();
+        db.put(&mut wtxn, &[255, 255, 1, 0, 119, 111, 114, 108, 100], &())
+            .unwrap();
 
         // Lets check that we can get last entry on that sequence ending with the key "255".
         let iter = db.rev_prefix_iter(&wtxn, &[0, 0, 0, 255]).unwrap();
@@ -614,21 +672,39 @@ mod tests {
         let iter = db
             .rev_range(
                 &wtxn,
-                &(ops::Bound::Excluded(&[0, 0, 0][..]), ops::Bound::Included(&[0, 0, 1, 0][..])),
+                &(
+                    ops::Bound::Excluded(&[0, 0, 0][..]),
+                    ops::Bound::Included(&[0, 0, 1, 0][..]),
+                ),
             )
             .unwrap();
-        assert_eq!(iter.last().transpose().unwrap(), Some((&[0, 0, 0, 1][..], ())));
+        assert_eq!(
+            iter.last().transpose().unwrap(),
+            Some((&[0, 0, 0, 1][..], ()))
+        );
 
         // Lets check that we can range_iter on that sequence with the key "255".
         let mut iter = db
             .rev_range(
                 &wtxn,
-                &(ops::Bound::Excluded(&[0, 0, 0][..]), ops::Bound::Included(&[0, 0, 1, 0][..])),
+                &(
+                    ops::Bound::Excluded(&[0, 0, 0][..]),
+                    ops::Bound::Included(&[0, 0, 1, 0][..]),
+                ),
             )
             .unwrap();
-        assert_eq!(iter.next().transpose().unwrap(), Some((&[0, 0, 1, 0][..], ())));
-        assert_eq!(iter.next().transpose().unwrap(), Some((&[0, 0, 0, 2][..], ())));
-        assert_eq!(iter.next().transpose().unwrap(), Some((&[0, 0, 0, 1][..], ())));
+        assert_eq!(
+            iter.next().transpose().unwrap(),
+            Some((&[0, 0, 1, 0][..], ()))
+        );
+        assert_eq!(
+            iter.next().transpose().unwrap(),
+            Some((&[0, 0, 0, 2][..], ()))
+        );
+        assert_eq!(
+            iter.next().transpose().unwrap(),
+            Some((&[0, 0, 0, 1][..], ()))
+        );
         assert_eq!(iter.next().transpose().unwrap(), None);
         drop(iter);
 

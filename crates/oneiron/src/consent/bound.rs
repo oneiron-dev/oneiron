@@ -185,7 +185,7 @@ impl DisclosureClass {
 /// Invariant 3 forbids a bare verb from constituting a bound, which is why an
 /// [`ActionClass`] is only usable inside a [`GrantBound`] alongside a subject
 /// and an envelope; it can never authorize on its own.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, schemars::JsonSchema)]
 pub struct ActionClass {
     value: String,
 }
@@ -266,7 +266,7 @@ impl DisclosureEnvelope {
 }
 
 /// The target envelope of an action bound: WHICH targets, under WHICH budget.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, schemars::JsonSchema)]
 pub struct ActionEnvelope {
     pub(super) selectors: Vec<String>,
     pub(super) target: Option<String>,

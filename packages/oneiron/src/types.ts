@@ -92,8 +92,8 @@ export type CommitReceipt = {
   receiptRef: string
 }
 
-/** Retrieval effort dial. `deep` is lease-gated and returns `LEASE_REQUIRED`. */
-export type Effort = "minimal" | "standard" | "deep"
+/** Retrieval effort dial. `high`, `xhigh` and `max` need a budget lease and return `LEASE_REQUIRED` without one. */
+export type Effort = "light" | "medium" | "high" | "xhigh" | "max"
 
 /** Rendered pack formats; these are the engine's exact tokens. */
 export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
@@ -106,7 +106,7 @@ export type RecallScope = {
 
 /** Options for {@link Oneiron.recall}. */
 export type RecallOptions = {
-  /** Defaults to `standard`. */
+  /** Defaults to `medium`. */
   effort?: Effort
   /** Defaults to the vault floor. */
   scope?: RecallScope
@@ -144,6 +144,7 @@ export type ScopeHonesty = {
 
 /** Retrieval accounting. */
 export type RetrievalMeta = {
+  partial: boolean
   sparse?: boolean
   totalCandidates: number
   claimsReturned: number
@@ -173,4 +174,36 @@ export type FacadeReceipt = {
   actorRef?: string
   contentKind: string
   claimRef?: string
+}
+
+/** Exact namespace/key address in the bound actor/class's WORLDLESS store. */
+export interface KeyValueAddress { namespace: string[]; key: string }
+export interface KeyValuePut extends KeyValueAddress {
+  value: Record<string, unknown>
+  /** Reuse only for an identical retry. */
+  requestId: string
+  /** Omitted means generated. The gate still decides admission. */
+  source?: string
+}
+export interface KeyValueItem extends KeyValueAddress {
+  value: Record<string, unknown>
+  createdAt: number
+  updatedAt: number
+  revision: string
+}
+export interface KeyValuePutReceipt { item: KeyValueItem; replayed: boolean; receiptRef: string }
+export interface KeyValueDeleteReceipt { existed: boolean; receiptRefs: string[] }
+export interface KeyValueSearch {
+  namespacePrefix?: string[]
+  /** Exact top-level field equality; operators are refused. */
+  filter?: Record<string, unknown> | null
+  limit?: number
+  offset?: number
+}
+export interface KeyValueNamespaces {
+  prefix?: string[]
+  suffix?: string[]
+  maxDepth?: number | null
+  limit?: number
+  offset?: number
 }

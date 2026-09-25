@@ -1,4 +1,4 @@
-//! Window egress: packing policy, secret scrub, exports, and mirror replay.
+//! Window egress: packing policy, local-only scrub, exports, and mirror replay.
 
 use std::collections::HashSet;
 
@@ -8,6 +8,7 @@ use super::loro_support::{
     export_snapshot, map_contains_binary, map_delete, map_for_each_value_bytes, map_get_bytes,
     map_insert_bytes, tombstone_map_contains_id,
 };
+use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
 use super::reverse::{
     delete_edges_touching_entities, is_unsyncable_secret_custody,
@@ -45,7 +46,20 @@ use loro::{CommitOptions, ExportMode, LoroDoc, VersionVector};
 /// normally. Edge targets are deliberately not re-tested: the K4 taint guard
 /// refuses any base edge naming a live overlay member, so `edges_out` over
 /// base rows cannot produce one.
-pub(super) fn window_packing_excludes_entity(vault: &Vault, id: &EntityId) -> Result<bool> {
+///
+/// A world flagged device-only (`device_only`, read once per packing pass)
+/// keeps its WORLD row, its claims and its NOTEs on this device too.
+pub(super) fn window_packing_excludes_entity(
+    vault: &Vault,
+    device_only: &std::collections::BTreeSet<EntityId>,
+    id: &EntityId,
+) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, id)?
+        || crate::settings::device_only_withholds(&vault.store, &rtxn, device_only, id)?
+    {
+        return Ok(true);
+    }
     vault.store.off_record_sessions.contains_entity(id)
 }
 
@@ -70,10 +84,10 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
     })
 }
 
-/// Removes any SECRET_CUSTODY carrier resident in the window doc and returns
-/// whether one was found. ONE-1865 arm-pending seal: the type byte is sealed
-/// from the CRDT plane, so a custody body must never ship in an exported
-/// update. The write-side mirror (`reverse_rematerialize`) already refuses to
+/// Removes local-only diagnostic and secret-custody carriers from the window
+/// doc. Diagnostic observations never sync; secret custody follows its
+/// same-vault locality predicate. Neither refused body may ship in an update.
+/// The write-side mirror (`reverse_rematerialize`) already refuses to
 /// insert one; this is the export-side backstop for a carrier that landed
 /// before the seal or arrived from a peer. Deleting the row does not erase its
 /// prior set-op bytes from ordinary Loro history, so any removal forces the
@@ -85,7 +99,7 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
 /// type byte is not. A malformed key cannot name an entity to scrub by id, so
 /// that row is deleted by its raw key and quarantined as the protocol violation
 /// it is.
-fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<bool> {
+fn scrub_local_only_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<bool> {
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let mut custody_ids = HashSet::new();
@@ -93,14 +107,22 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
     let mut portable_ids = Vec::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
-        if crate::batch::EntityMetadataHeader::parse(blob)
-            .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
+        let lfs_chunk = EntityId::from_hex(raw_key)
+            .ok()
+            .is_some_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob));
+        if crate::batch::EntityMetadataHeader::parse(blob).is_none_or(|h| {
+            !matches!(
+                h.entity_type,
+                crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                    | crate::registry::ENTITY_TYPE_DIAGNOSTIC
+            )
+        }) && !lfs_chunk
         {
             return;
         }
         match EntityId::from_hex(raw_key) {
             Ok(id) if id.to_hex() == raw_key => {
-                if is_unsyncable_secret_custody(blob) {
+                if lfs_chunk || is_unsyncable_secret_custody(blob) {
                     custody_ids.insert(id);
                 } else {
                     portable_ids.push(id);
@@ -117,17 +139,30 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
             custody_ids.insert(id);
         }
     }
+    // Pin before touching the live map. If storage fails, the carrier stays
+    // visible to the next scrub instead of leaving unpinned private history.
+    if !custody_ids.is_empty() || !malformed_key_carriers.is_empty() {
+        require_history_free_window(vault, key)?;
+    }
     let mut removed = false;
     for raw_key in &malformed_key_carriers {
         // Quarantine keeps hashed evidence (never the bytes); the delete is
         // what stops the body from reaching an exported update.
+        let blob = map_get_bytes(&entities_map, raw_key).unwrap_or_default();
+        let rejection = if crate::batch::EntityMetadataHeader::parse(&blob)
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
+        {
+            Error::InvalidKey
+        } else {
+            crate::secret_custody::reject_secret_custody_byte()
+        };
         quarantine::quarantine_rejected_op(
             vault,
             key.as_str(),
             QuarantineContainer::Entities,
             raw_key,
-            &crate::secret_custody::reject_secret_custody_byte(),
-            &map_get_bytes(&entities_map, raw_key).unwrap_or_default(),
+            &rejection,
+            &blob,
         )?;
         map_delete(&entities_map, raw_key)?;
         removed = true;
@@ -137,7 +172,6 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
     }
     if removed {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-        require_history_free_window(vault, key)?;
     }
     Ok(removed)
 }
@@ -191,8 +225,10 @@ pub fn export_window_updates_since(
             source,
         })
     })?;
+    crate::sync::note::refresh(vault, doc, key)?;
+    let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
-    let scrubbed = scrub_secret_custody_carriers(vault, key, doc)? || claims_scrubbed;
+    let scrubbed = secret_scrubbed || claims_scrubbed;
     if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -219,8 +255,9 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<Vec<u8>> {
+    crate::sync::note::refresh(vault, doc, key)?;
     scrub_local_claim_carriers(vault, key, doc)?;
-    scrub_secret_custody_carriers(vault, key, doc)?;
+    scrub_local_only_carriers(vault, key, doc)?;
     if history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -254,6 +291,10 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
     let entities_map = doc.get_map("entities");
     let tombstones_map = doc.get_map("tombstones");
     let edges_map = doc.get_map("edges");
+    let device_only = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::settings::device_only_worlds_in(&vault.store, &rtxn)?
+    };
 
     let mut replayed = 0u32;
 
@@ -276,7 +317,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         // Defer-sync egress door: a live overlay member is device-local until
         // explicit promotion. Keep the pending marker so the promoted turn can
         // flow through this ordinary path later.
-        if window_packing_excludes_entity(vault, id)? {
+        if window_packing_excludes_entity(vault, &device_only, id)? {
             continue;
         }
 
@@ -310,9 +351,16 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             continue;
         }
 
-        // Byte-compare with existing CRDT value
+        // Canonical outbound bytes for pack rows (origin handle/generation);
+        // non-pack rows mirror byte-exactly. A corrupt local pack row fails
+        // closed here, never quarantined as remote.
+        let outbound = pack_sync::canonical_outbound_blob(&raw)?.unwrap_or_else(|| raw.clone());
+        // Byte-compare with existing CRDT value. Pack carriers compare
+        // canonical-to-canonical, with a canonical/local echo fallback so a
+        // stale pre-canonical carrier does not rewrite every boot.
         if let Some(existing) = map_get_bytes(&entities_map, &hex_id)
-            && existing.as_slice() == raw.as_slice()
+            && (existing.as_slice() == outbound.as_slice()
+                || pack_sync::pack_echo_equal(&raw, &existing))
         {
             // The entity bytes already reached the CRDT, but the marker may
             // cover a crash between the entity insert and its edge inserts
@@ -343,6 +391,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 // tombstone decodes HARD) once tombstone v2 lands in M4-06.
                 if !local_claim_sync_allowed(vault, &edge.target)?
                     || tombstone_map_contains_id(&tombstones_map, &edge.target)
+                    || window_packing_excludes_entity(vault, &device_only, &edge.target)?
                 {
                     continue;
                 }
@@ -381,7 +430,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             })?;
             continue;
         }
-        map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
+        map_insert_bytes(&entities_map, hex_id.as_str(), outbound.as_slice())?;
 
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
@@ -395,6 +444,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             // the full mirror must not re-insert edges to deleted targets.
             if !local_claim_sync_allowed(vault, &edge.target)?
                 || tombstone_map_contains_id(&tombstones_map, &edge.target)
+                || window_packing_excludes_entity(vault, &device_only, &edge.target)?
             {
                 continue;
             }

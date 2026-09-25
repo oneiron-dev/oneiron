@@ -21,6 +21,7 @@ use crate::error::{Error, Result};
 pub struct GitWire<'a> {
     pub(super) vault: &'a Vault,
     pub(super) process_env: GitWireProcessEnv,
+    pub(super) checkout_door: Option<String>,
 }
 
 impl<'a> GitWire<'a> {
@@ -29,12 +30,17 @@ impl<'a> GitWire<'a> {
         Ok(Self {
             vault,
             process_env: GitWireProcessEnv::capture()?,
+            checkout_door: None,
         })
     }
 
     /// Opens the wire with an explicit process baseline.
     pub fn with_process_env(vault: &'a Vault, process_env: GitWireProcessEnv) -> Self {
-        Self { vault, process_env }
+        Self {
+            vault,
+            process_env,
+            checkout_door: None,
+        }
     }
 }
 
@@ -65,7 +71,19 @@ impl GitWire<'_> {
         Ok(repo)
     }
 
-    fn canonical_common_dir(&self, root: &Path) -> Result<PathBuf> {
+    /// Object-store identity before a receive-pack has a commit to pin.
+    /// This does not create a proven `GitWireRepo` or permit a ref effect.
+    pub(crate) fn repository_identity(
+        &self,
+        repo_root: &Path,
+    ) -> GitWireResult<super::GitWireRepoIdentity> {
+        let repo_root = repo_root
+            .canonicalize()
+            .map_err(|_| invalid("git wire repo root does not resolve"))?;
+        Ok(repo_identity_for(&self.canonical_common_dir(&repo_root)?))
+    }
+
+    pub(crate) fn canonical_common_dir(&self, root: &Path) -> Result<PathBuf> {
         let output = self.run_at(root, &FrozenGitArgv::git_common_dir())?;
         let text = String::from_utf8_lossy(&output.stdout);
         let path = PathBuf::from(text.trim_end_matches(['\r', '\n']));

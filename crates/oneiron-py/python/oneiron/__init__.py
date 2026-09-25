@@ -3,7 +3,8 @@
 Four calls are the whole quickstart: witness a turn, claim a fact, recall it,
 read the receipts. ``Oneiron.open()`` gives you an embedded vault bound to a
 local owner actor; ``Oneiron.connect(url, key)`` gives you the same handle
-against a running ``oneiron-server``. The two differ by one line.
+against a running ``oneiron-server``, where ``key`` is the credential
+``Oneiron.pair(link)`` returned once. The two differ by one line.
 
 Every method below is a one-line delegate to the private native client. There
 are deliberately no service classes, repositories, or per-verb error wrappers:
@@ -145,13 +146,21 @@ class Oneiron:
         Remote connect remains available on targets without embedded open,
         including Windows; the server must run on a supported host.
 
-        ``key`` is a minted slip passed verbatim as
-        ``Authorization: Bearer v2.<claims>.<mac-hex>``. This package never
-        parses, splits, or validates it: every authority decision is made
-        server-side from the MAC-verified ``principal_ref`` and ``actor_class``
-        claims.
+        ``key`` is the credential :meth:`pair` returned. This package signs
+        every request with it and never reads the slip's claims: write
+        identity is the server's to decide from the slip it verifies.
         """
         return cls(_translate(lambda: _NativeClient.connect(url, key)))
+
+    @classmethod
+    def pair(cls, link: str) -> tuple["Oneiron", str]:
+        """Redeems a one-use pairing link and connects with its credential.
+
+        Returns the connected handle and the credential. Store the credential
+        as ``ONEIRON_KEY``; the link cannot be redeemed twice.
+        """
+        url, credential = _translate(lambda: _NativeClient.pair(link))
+        return cls.connect(url, credential), credential
 
     def as_actor(self, actor_key: str) -> "Oneiron":
         """Returns a NEW handle bound to another actor; this one is unchanged.
@@ -163,6 +172,7 @@ class Oneiron:
         """
         return Oneiron(_translate(lambda: self._client.as_actor(actor_key)))
 
+    # BEGIN GENERATED FACADE VERBS
     def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
         """Witnesses one conversational turn.
 
@@ -170,44 +180,38 @@ class Oneiron:
         seconds, at the call boundary.
         """
         return json.loads(_translate(lambda: self._client.witness(json.dumps(turn))))
-
     def claim_upsert(self, claim: dict[str, Any]) -> dict[str, Any]:
         """Upserts one claim. The consent gate, not this call, decides approval."""
-        return json.loads(
-            _translate(lambda: self._client.claim_upsert(json.dumps(claim)))
-        )
-
-    def recall(
-        self,
-        query: str,
-        *,
-        effort: str = "standard",
-        scope: dict[str, Any] | None = None,
-        limit: int = 10,
-        format: str | None = None,
-    ) -> dict[str, Any]:
+        return json.loads(_translate(lambda: self._client.claim_upsert(json.dumps(claim))))
+    def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None) -> dict[str, Any]:
         """Recalls a memory pack.
 
-        ``effort="deep"`` is lease-gated and raises ``LEASE_REQUIRED`` until a
+        ``effort="high"`` is lease-gated and raises ``LEASE_REQUIRED`` until a
         lease-bearing constructor exists; this package neither mints nor
         simulates a lease. ``format`` takes the engine's exact tokens:
         ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
         """
-        return json.loads(
-            _translate(
-                lambda: self._client.recall(
-                    query,
-                    effort,
-                    json.dumps(scope) if scope is not None else None,
-                    limit,
-                    format,
-                )
-            )
-        )
-
+        return json.loads(_translate(lambda: self._client.recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format)))
     def receipts(self, limit: int = 100) -> list[dict[str, Any]]:
         """Governance receipts, newest first."""
         return json.loads(_translate(lambda: self._client.receipts(limit)))
+    def key_value_get(self, request: dict[str, Any]) -> dict[str, Any] | None:
+        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+        return json.loads(_translate(lambda: self._client.key_value_get(json.dumps(request, allow_nan=False))))
+    def key_value_put(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+        return json.loads(_translate(lambda: self._client.key_value_put(json.dumps(request, allow_nan=False))))
+    def key_value_delete(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+        return json.loads(_translate(lambda: self._client.key_value_delete(json.dumps(request, allow_nan=False))))
+    def key_value_search(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+        return json.loads(_translate(lambda: self._client.key_value_search(json.dumps(request, allow_nan=False))))
+    def key_value_namespaces(self, request: dict[str, Any]) -> list[list[str]]:
+        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+        return json.loads(_translate(lambda: self._client.key_value_namespaces(json.dumps(request, allow_nan=False))))
+
+# END GENERATED FACADE VERBS
 
     def _agent_verb(self, method: str, value: object) -> Any:
         return json.loads(_translate(lambda: getattr(self._client, method)(json.dumps(value))))

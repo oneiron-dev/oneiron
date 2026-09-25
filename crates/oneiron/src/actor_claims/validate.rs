@@ -44,9 +44,9 @@ pub fn is_actor_claim_predicate(predicate: &str) -> bool {
 /// The source pin mirrors `actor.confidence_prior`'s trust boundary exactly.
 /// Same-owner multi-device sync preserves `src`, so a user's own rows replicate
 /// and materialize; the cross-vault federation door restamps foreign claims
-/// `src → Imported`, and this pin then rejects them. That is the intended
-/// injection defense, not an oversight: a peer's opinion of who is careless
-/// must never enter this vault's routing signal.
+/// `src → Imported`. Imported rows can exist only as inert Proposed/Rejected
+/// data with an Imported evidence floor. Routing and projector head reads still
+/// require Observed/Auto; a peer's opinion never becomes local learned truth.
 pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
     if !matches!(body.subject, ClaimSubject::Entity(_)) {
         return Err(invalid("actor.* claim subject must be an entity"));
@@ -54,11 +54,23 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
     if body.confidence != 1.0 {
         return Err(invalid("actor.* claim confidence must be 1.0"));
     }
-    if body.approval != ClaimApprovalStatus::Auto {
-        return Err(invalid("actor.* claim approval must be auto"));
+    let archived = body.source == Some(ClaimSource::Imported)
+        && matches!(
+            body.approval,
+            ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Rejected
+        );
+    if !archived
+        && (body.approval != ClaimApprovalStatus::Auto
+            || body.source != Some(ClaimSource::Observed))
+    {
+        return Err(invalid(
+            "actor.* needs a native observation or inert imported proposal",
+        ));
     }
-    if body.source != Some(ClaimSource::Observed) {
-        return Err(invalid("actor.* claim source must be observed"));
+    if archived && actor_claim_lineage(body) != Some(ClaimSource::Imported) {
+        return Err(invalid(
+            "archived actor row must carry the imported evidence floor",
+        ));
     }
     if body.evidence.is_none() {
         return Err(invalid("actor.* claim must carry the trace it rests on"));
@@ -155,6 +167,23 @@ fn actor_scope_is_exact(scope: Option<&Value>, pair_key: Option<&str>) -> bool {
 /// on every write path.
 #[must_use]
 pub fn actor_claim_lineage(body: &ClaimBody) -> Option<ClaimSource> {
+    if body.source == Some(ClaimSource::Imported) {
+        if !matches!(
+            body.approval,
+            ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Rejected
+        ) {
+            return None;
+        }
+        let Some(Value::Map(scope)) = body.scope.as_ref() else {
+            return None;
+        };
+        let mut entries = scope
+            .iter()
+            .filter(|(key, _)| key.as_str() == Some(ACTOR_CLAIM_LINEAGE_KEY));
+        let first = entries.next()?;
+        return (entries.next().is_none() && first.1.as_str() == Some("imported"))
+            .then_some(ClaimSource::Imported);
+    }
     match claim_evidence_taint(body) {
         Some(meet @ (ClaimSource::ToolOutput | ClaimSource::Generated)) => Some(meet),
         _ => None,

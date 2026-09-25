@@ -22,13 +22,12 @@ use crate::store::Store;
 /// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) from the substrate update gate, the hub-sync
 /// door's variant of it, or ONE-1449's admission gate.
 pub(super) fn validate_skill_body_overwrite(
-    store: &Store,
-    wtxn: &RwTxn<'_>,
     id: &EntityId,
     prior_body: &[u8],
     updated: &crate::skill::SkillRecord,
     hub_sync_imported: bool,
     replicated: bool,
+    proof: Option<&crate::skill_hub::HubAdmissionProof>,
 ) -> Result<()> {
     match crate::skill::decode_skill_record(prior_body) {
         Ok(prior) if hub_sync_imported => {
@@ -49,7 +48,7 @@ pub(super) fn validate_skill_body_overwrite(
             // question to answer, so the road travels with the call rather
             // than deciding here whether to make it.
             crate::skill_optimize::check_optimizer_admission_in_txn(
-                store, wtxn, id, &prior, updated, replicated,
+                id, &prior, updated, replicated, proof,
             )
         }
         Err(error)

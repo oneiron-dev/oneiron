@@ -112,10 +112,11 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         PreparedAuthorization::None => None,
         PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
     };
+    let posting_gate = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
     let mut governance = gate::evaluate_external_effect_policy(
         &vault.store,
         &mut wtxn,
-        &prepared.gate,
+        &posting_gate,
         &policy,
         required_grant_id,
         match &prepared.authorization {
@@ -256,6 +257,7 @@ fn charge_once(
     budget_class: BudgetClass,
     now_ms: u64,
 ) -> Result<(BudgetChargeMarker, Option<EffectorBudgetCharge>, bool), IntentLedgerError> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let Some(target) = governance.budget_target_mut() else {
         return Ok((
             BudgetChargeMarker {
@@ -272,7 +274,7 @@ fn charge_once(
     // Budget windows are enforcement state, so they advance on the engine's
     // trusted clock rather than a caller-supplied occurrence timestamp. This
     // also keeps the post-charge echo aligned with `effector_budget_read`.
-    let budget_now = crate::unix_seconds_now();
+    let budget_now = mutation_recorded_at;
     let outcome = connector_key::charge_effector_budgets(
         &vault.store,
         wtxn,

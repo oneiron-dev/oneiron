@@ -22,6 +22,9 @@ pub struct ChannelIdentityLifecycleReceiptId {
 }
 
 impl ChannelIdentityLifecycleReceiptId {
+    pub(crate) fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self { bytes }
+    }
     #[must_use]
     pub fn now() -> Self {
         Self {
@@ -68,6 +71,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &ChannelIdentityLifecycleReceiptRecord,
     ) -> Result<()> {
+        crate::ports::recorded_at_in_txn(self, wtxn)?;
         vet_channel_identity_lifecycle_receipt_record(record)?;
         let key = channel_identity_lifecycle_key(record.receipt_id);
         if self.vault_meta.get(wtxn, &key)?.is_some() {

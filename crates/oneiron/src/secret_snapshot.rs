@@ -1,5 +1,6 @@
 //! Snapshot-time secret custody filtering (ARCH-0069 S4/S5).
 
+use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
@@ -30,15 +31,9 @@ impl SnapshotExclusionSet {
         let mut registered_hashes = BTreeSet::new();
         for entry in vault
             .store
-            .type_index
-            .prefix_iter(txn, &[ENTITY_TYPE_SECRET_CUSTODY])?
+            .port_entity_ids_by_type(txn, ENTITY_TYPE_SECRET_CUSTODY, None)?
         {
-            let (key, _) = entry?;
-            let Some(raw_id) = key.get(1..) else { continue };
-            let Ok(id) = raw_id.try_into() else { continue };
-            let Ok(id) = crate::EntityId::from_bytes(id) else {
-                continue;
-            };
+            let id = entry?;
             if let Some(record) = read_secret_custody_in_txn(&vault.store, txn, &id)? {
                 declared_paths.extend(record.declared_paths);
             }

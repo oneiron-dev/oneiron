@@ -1,0 +1,279 @@
+use super::super::{LlmCapability, LlmCatalogCost, ModelLocality, score_scraper::*};
+use super::*;
+fn row(provider: &str) -> ModelRegistryRow {
+    ModelRegistryRow {
+        version: 1,
+        wire: ModelWireFormat::OpenaiCompat,
+        catalog: LlmCatalogEntry {
+            model: ModelId::new(format!("{provider}/model@r1")).unwrap(),
+            display_name: provider.into(),
+            locality: ModelLocality::ThirdParty,
+            context_window_tokens: 8192,
+            max_output_tokens: Some(1024),
+            cost: Some(LlmCatalogCost {
+                input_per_million: "1.25".into(),
+                output_per_million: "3.50".into(),
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+            capabilities: vec![LlmCapability::Streaming],
+            metadata: BTreeMap::new(),
+        },
+        scores: BTreeMap::new(),
+        fetched_at: BTreeMap::new(),
+    }
+}
+#[test]
+fn prices_survive_restart_and_catalog_always_exposes_both_prices() -> Result<()> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vault");
+    let a = row("one");
+    let b = row("two");
+    {
+        let vault = Vault::open(&path, crate::VaultConfig::device())?;
+        vault.put_model_registry_row(&a)?;
+        vault.put_model_registry_row(&b)?;
+    }
+    let vault = Vault::open(&path, crate::VaultConfig::device())?;
+    assert_eq!(vault.model_registry_rows()?, vec![a, b]);
+    let catalog = vault.model_catalog_entries(ModelWireFormat::OpenaiCompat)?;
+    assert_eq!(catalog.len(), 2);
+    for entry in catalog {
+        let cost = entry.cost.unwrap();
+        assert_eq!(cost.input_per_million, "1.25");
+        assert_eq!(cost.output_per_million, "3.50");
+    }
+    Ok(())
+}
+#[test]
+fn seeded_vendors_validate_and_flags_gate_admission() -> Result<()> {
+    let seed = CatalogSeed::bundled()?;
+    assert!(seed.rows.len() >= 40);
+    let vendors: std::collections::BTreeSet<_> = seed
+        .rows
+        .iter()
+        .map(|r| r.catalog.model.provider())
+        .collect();
+    assert!(vendors.len() >= 40);
+    for row in &seed.rows {
+        row.validate()?;
+        assert!(row.catalog.cost.is_some());
+        assert!(row.catalog.context_window_tokens > 0);
+    }
+    let entry = row("restricted").catalog;
+    assert!(entry.require(LlmCapability::ToolCalling).is_err());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    vault.seed_model_catalog(&seed)?;
+    vault.seed_model_catalog(&seed)?;
+    assert_eq!(vault.model_registry_rows()?.len(), seed.rows.len());
+    Ok(())
+}
+#[test]
+fn configured_scraper_diffs_only_changes_and_only_nominates() -> Result<()> {
+    struct Fetch(std::collections::VecDeque<serde_json::Value>);
+    impl ScoreFetch for Fetch {
+        fn fetch(&mut self, _: &ScoreSourceConfig) -> Result<serde_json::Value> {
+            Ok(self.0.pop_front().unwrap())
+        }
+    }
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let registered = row("one");
+    vault.put_model_registry_row(&registered)?;
+    let model = registered.catalog.model.clone();
+    let config = ScoreScraperConfig {
+        version: 1,
+        fetch_interval_secs: 60,
+        sources: vec![ScoreSourceConfig {
+            id: "artificialanalysis.ai".into(),
+            url: "https://artificialanalysis.ai/fixture".into(),
+            rows_pointer: "/data".into(),
+            model_pointer: "/model".into(),
+            score_pointer: "/score".into(),
+            benchmark: "held-out-candidate-index".into(),
+            model_bindings: BTreeMap::from([("external-name".into(), model.clone())]),
+        }],
+    };
+    for field in ["id", "benchmark"] {
+        let mut invalid = config.clone();
+        if field == "id" {
+            invalid.sources[0].id = "a".repeat(129);
+        } else {
+            invalid.sources[0].benchmark = "a".repeat(129);
+        }
+        assert!(invalid.validate().is_err());
+    }
+    let snapshot = |score| serde_json::json!({"data":[{"model":"external-name","score":score}]});
+    let mut scraper = ScoreScraper::new(
+        config,
+        Fetch(vec![snapshot(50), snapshot(50), snapshot(70)].into()),
+    )?;
+    assert_eq!(scraper.refresh(&vault, 100)?.len(), 1);
+    assert!(scraper.refresh(&vault, 101)?.is_empty());
+    assert!(scraper.refresh(&vault, 160)?.is_empty());
+    assert_eq!(scraper.refresh(&vault, 220)?.len(), 1);
+    assert_eq!(vault.model_score_diffs(&model)?.len(), 2);
+    assert_eq!(
+        scraper.nominate(&vault, "artificialanalysis.ai", "held-out-candidate-index")?,
+        Some(model.clone())
+    );
+    // The updater cannot change catalog bindings, capabilities, or prices.
+    assert_eq!(
+        vault.model_registry_row(&model)?.unwrap().catalog,
+        registered.catalog
+    );
+    assert!(vault.model_manifest()?.is_none());
+    Ok(())
+}
+
+#[test]
+fn unchanged_observation_advances_watermark_without_diff_and_blocks_stale_change() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let row = row("one");
+    vault.put_model_registry_row(&row)?;
+    let model = row.catalog.model;
+    let snapshot = |at, score| ScoreSnapshot {
+        source: "bench".into(),
+        fetched_at: at,
+        observations: vec![ScoreObservation {
+            model: model.clone(),
+            benchmark: "quality".into(),
+            score,
+        }],
+    };
+    assert_eq!(vault.apply_model_scores(&snapshot(100, 50.0))?.len(), 1);
+    assert!(vault.apply_model_scores(&snapshot(160, 50.0))?.is_empty());
+    assert!(vault.apply_model_scores(&snapshot(120, 60.0)).is_err());
+    assert!(vault.apply_model_scores(&snapshot(160, 50.0))?.is_empty());
+    assert!(vault.apply_model_scores(&snapshot(160, 60.0)).is_err());
+    let current = vault.model_registry_row(&model)?.expect("row");
+    assert_eq!(current.scores["bench"]["quality"], 50.0);
+    assert_eq!(current.fetched_at["bench"], 160);
+    assert_eq!(vault.model_score_diffs(&model)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn newer_multi_benchmark_snapshot_uses_prior_watermark_and_replay_is_atomic() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let row = row("one");
+    vault.put_model_registry_row(&row)?;
+    let model = row.catalog.model;
+    let snapshot = |at, a, b| ScoreSnapshot {
+        source: "bench".into(),
+        fetched_at: at,
+        observations: vec![
+            ScoreObservation {
+                model: model.clone(),
+                benchmark: "a".into(),
+                score: a,
+            },
+            ScoreObservation {
+                model: model.clone(),
+                benchmark: "b".into(),
+                score: b,
+            },
+        ],
+    };
+    assert_eq!(vault.apply_model_scores(&snapshot(10, 1.0, 2.0))?.len(), 2);
+    assert_eq!(vault.apply_model_scores(&snapshot(20, 3.0, 4.0))?.len(), 2);
+    assert!(
+        vault
+            .apply_model_scores(&snapshot(20, 3.0, 4.0))?
+            .is_empty()
+    );
+    assert!(vault.apply_model_scores(&snapshot(20, 3.0, 5.0)).is_err());
+    let stored = vault.model_registry_row(&model)?.unwrap();
+    assert_eq!(stored.scores["bench"]["a"], 3.0);
+    assert_eq!(stored.scores["bench"]["b"], 4.0);
+    assert_eq!(vault.model_score_diffs(&model)?.len(), 4);
+    Ok(())
+}
+
+#[test]
+fn seed_rejects_score_watermarks_without_inserting_any_rows() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let mut poisoned = row("poisoned");
+    poisoned.fetched_at.insert("bench".into(), u64::MAX);
+    let seed = CatalogSeed {
+        version: 1,
+        rows: vec![row("valid"), poisoned],
+    };
+    assert!(matches!(
+        CatalogSeed::from_json(&serde_json::to_vec(&seed).unwrap()),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(matches!(
+        vault.seed_model_catalog(&seed),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(vault.model_registry_rows()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn multi_source_refresh_is_atomic_on_parse_and_storage_refusals() -> Result<()> {
+    struct Fetch(std::collections::VecDeque<serde_json::Value>);
+    impl ScoreFetch for Fetch {
+        fn fetch(&mut self, _: &ScoreSourceConfig) -> Result<serde_json::Value> {
+            Ok(self.0.pop_front().expect("scheduled fetch"))
+        }
+    }
+    for storage_failure in [false, true] {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+        let registered = row("one");
+        vault.put_model_registry_row(&registered)?;
+        let model = registered.catalog.model.clone();
+        if storage_failure {
+            vault.apply_model_scores(&ScoreSnapshot {
+                source: "second".into(),
+                fetched_at: 200,
+                observations: vec![ScoreObservation {
+                    model: model.clone(),
+                    benchmark: "quality".into(),
+                    score: 30.0,
+                }],
+            })?;
+        }
+        let before = vault.model_registry_row(&model)?.unwrap();
+        let before_diffs = vault.model_score_diffs(&model)?;
+        let config = ScoreScraperConfig {
+            version: 1,
+            fetch_interval_secs: 60,
+            sources: ["first", "second"]
+                .into_iter()
+                .map(|id| ScoreSourceConfig {
+                    id: id.into(),
+                    url: "https://example.invalid/scores".into(),
+                    rows_pointer: "/data".into(),
+                    model_pointer: "/model".into(),
+                    score_pointer: "/score".into(),
+                    benchmark: "quality".into(),
+                    model_bindings: BTreeMap::from([("external".into(), model.clone())]),
+                })
+                .collect(),
+        };
+        let good = serde_json::json!({"data":[{"model":"external","score":50.0}]});
+        let bad = if storage_failure {
+            good.clone()
+        } else {
+            serde_json::json!({"data":{}})
+        };
+        let mut scraper = ScoreScraper::new(
+            config,
+            Fetch(vec![good.clone(), bad, good.clone(), good].into()),
+        )?;
+        assert!(matches!(
+            scraper.refresh(&vault, 100),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert_eq!(vault.model_registry_row(&model)?.unwrap(), before);
+        assert_eq!(vault.model_score_diffs(&model)?, before_diffs);
+        let retry_at = if storage_failure { 201 } else { 100 };
+        assert_eq!(scraper.refresh(&vault, retry_at)?.len(), 2);
+        assert!(scraper.refresh(&vault, retry_at)?.is_empty());
+        let after = vault.model_registry_row(&model)?.unwrap();
+        assert_eq!(after.scores["first"]["quality"], 50.0);
+        assert_eq!(after.scores["second"]["quality"], 50.0);
+    }
+    Ok(())
+}

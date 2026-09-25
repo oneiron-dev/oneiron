@@ -21,7 +21,11 @@ impl Vault {
         grant_ref: &EntityId,
         candidate: &crate::channel_identity_autonomy::ChannelIdentityEffectCandidate,
     ) -> Result<bool> {
-        self.consume_channel_identity_grant_at(grant_ref, candidate, crate::unix_seconds_now())
+        self.consume_channel_identity_grant_at(
+            grant_ref,
+            candidate,
+            self.store.clock.now_recorded_at(),
+        )
     }
 
     fn consume_channel_identity_grant_at(

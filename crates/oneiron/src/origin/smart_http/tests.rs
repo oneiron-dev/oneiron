@@ -11,7 +11,8 @@ use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
 
 pub(super) fn fixture_intent(vault: &Vault, root: &Path, updates: Vec<RefUpdate>) -> EntityId {
-    let stamp = DoorAdmissionStamp::from_principal(&EntityId::now().to_hex(), now_secs());
+    let stamp =
+        DoorAdmissionStamp::from_principal(EntityId::now(), &EntityId::now().to_hex(), now_secs());
     vault
         .record_receive_pack_admission(root, &stamp, DoorSeam::Landed)
         .expect("admission");
@@ -33,7 +34,8 @@ pub(super) fn fixture_attribution(
     vault: &Vault,
     outcome: &ReceivePackOutcome,
 ) -> ReceivePackAttribution {
-    let stamp = DoorAdmissionStamp::from_principal(&EntityId::now().to_hex(), now_secs());
+    let stamp =
+        DoorAdmissionStamp::from_principal(EntityId::now(), &EntityId::now().to_hex(), now_secs());
     vault
         .record_receive_pack_admission(&outcome.repo_root, &stamp, DoorSeam::Landed)
         .expect("fixture admission evidence");
@@ -414,6 +416,10 @@ impl PublicationTestOrigin {
     pub(super) fn url(&self) -> String {
         format!("http://{}/demo.git", self.addr)
     }
+
+    pub(super) fn door_base_url(&self) -> String {
+        format!("http://{}/git", self.addr)
+    }
 }
 
 impl Drop for PublicationTestOrigin {
@@ -465,10 +471,19 @@ fn serve_publication_test_connection(
     let length = headers
         .get("content-length")
         .map(|value| value.parse::<u64>().expect("length"));
+    let (path, query) = if let Some(leased) = path.strip_prefix("/git/lease/") {
+        let (ticket, path) = leased.split_once('/').expect("lease route");
+        (
+            format!("/{path}"),
+            format!("{query}&checkout-lease={ticket}"),
+        )
+    } else {
+        (path.to_owned(), query.to_owned())
+    };
     let request = ServeRequest {
         method,
-        path_info: path.to_owned(),
-        query_string: query.to_owned(),
+        path_info: path,
+        query_string: query,
         content_type: headers.get("content-type").cloned(),
         content_length: length,
         content_encoding: headers.get("content-encoding").cloned(),
@@ -488,6 +503,11 @@ fn serve_publication_test_connection(
     )
     .expect("serve stock client");
     if request.is_receive_pack() {
+        if request.query_string.contains("checkout-lease=") {
+            let stamp = report.admission.as_ref().expect("lease admission");
+            assert_eq!(stamp.method(), "door-credential+registered-principal");
+            assert!(stamp.credential_fingerprint().is_some());
+        }
         let outcome = report.outcome.as_ref().expect("served push outcome");
         // Independent wire counts, not constants copied from the producer.
         assert_eq!(

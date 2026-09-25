@@ -90,6 +90,43 @@ fn owned(values: &[&str]) -> Vec<String> {
     values.iter().copied().map(String::from).collect()
 }
 
+/// Existing-only opens are descriptor-bound on Linux and fail closed elsewhere.
+/// Exercise the production command on every host; callers also check whether
+/// outcomes and tuning state changed, rather than skipping unsupported hosts.
+fn run_existing_eval(argv: &[String]) -> bool {
+    let result = match argv[0].as_str() {
+        "outcome-ingest" => run_outcome_ingest(&argv[1..]),
+        "tune" => run_tune(&argv[1..]),
+        other => panic!("unexpected eval subcommand: {other}"),
+    };
+    let supported = cfg!(target_os = "linux");
+    if !supported {
+        assert!(
+            matches!(
+                &result,
+                Err(EvalError::Oneiron(oneiron::Error::Store(
+                    oneiron::error::StoreError::VaultRootPreflight {
+                        problem: oneiron::error::VaultRootProblem::UnsupportedPlatform {
+                            entry: VaultRootEntry::Data,
+                        },
+                        ..
+                    }
+                )))
+            ),
+            "expected the descriptor-bound open refusal, got {result:?}"
+        );
+    }
+    assert_eq!(
+        report(result),
+        if supported {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        }
+    );
+    supported
+}
+
 fn put_text(vault: &Vault, text: &str, learned_at: u64) {
     let id = EntityId::now();
     vault
@@ -282,6 +319,10 @@ fn eval_outcome_ingest_stops_at_the_first_rejected_row_and_keeps_earlier_rows() 
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let vault = open_vault(tempdir.path());
@@ -291,7 +332,7 @@ fn eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault() {
     let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
     std::fs::write(&rewards_path, rows).expect("rewards file");
 
-    let exit = run(&eval_argv(
+    let applied = run_existing_eval(&eval_argv(
         "outcome-ingest",
         tempdir.path(),
         &VaultConfig::device(),
@@ -303,11 +344,17 @@ fn eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault() {
         ],
     ));
 
-    assert!(matches!(exit, ExitCode::SUCCESS));
     let vault = open_vault(tempdir.path());
     let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-    assert_eq!(outcomes.len(), 1);
-    assert_eq!(outcomes[0].reward, Some(0.75));
+    if applied {
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].reward, Some(0.75));
+    } else {
+        assert!(
+            outcomes.is_empty(),
+            "refused ingest must not write outcomes"
+        );
+    }
 }
 
 #[test]
@@ -360,6 +407,10 @@ fn eval_outcome_ingest_parses_the_stdin_and_key_flags() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_tune_persists_and_prints_the_bounded_weight_table_entry() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let vault = open_vault(tempdir.path());
@@ -370,7 +421,7 @@ fn eval_tune_persists_and_prints_the_bounded_weight_table_entry() {
     let before = vault.retrieval_blend_weight_table().expect("table");
     drop(vault);
 
-    let exit = run(&eval_argv(
+    let applied = run_existing_eval(&eval_argv(
         "tune",
         tempdir.path(),
         &VaultConfig::device(),
@@ -384,17 +435,24 @@ fn eval_tune_persists_and_prints_the_bounded_weight_table_entry() {
         ]),
     ));
 
-    assert!(matches!(exit, ExitCode::SUCCESS));
     let vault = open_vault(tempdir.path());
     let tuned = vault.retrieval_blend_weight_table().expect("table");
-    assert_ne!(tuned.weights, before.weights);
-    assert_eq!(tuned.data_window.run_count, 1);
-    assert_eq!(tuned.data_window.outcome_count, 1);
-    let max_runs = tuned.provenance.get("max_runs").map(String::as_str);
-    assert_eq!(max_runs, Some("8"));
+    if applied {
+        assert_ne!(tuned.weights, before.weights);
+        assert_eq!(tuned.data_window.run_count, 1);
+        assert_eq!(tuned.data_window.outcome_count, 1);
+        let max_runs = tuned.provenance.get("max_runs").map(String::as_str);
+        assert_eq!(max_runs, Some("8"));
+    } else {
+        assert_eq!(tuned, before, "refused tune must not write weights");
+    }
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_tune_honors_the_max_runs_bound() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let vault = open_vault(tempdir.path());
@@ -405,20 +463,24 @@ fn eval_tune_honors_the_max_runs_bound() {
     }
     let ingested = ingest(&vault, &jsonl(&rows), Some("beam.reward")).expect("ingest");
     assert_eq!(ingested, 2);
+    let before = vault.retrieval_blend_weight_table().expect("table");
     drop(vault);
 
-    let exit = run(&eval_argv(
+    let applied = run_existing_eval(&eval_argv(
         "tune",
         tempdir.path(),
         &VaultConfig::device(),
         &owned(&["--max-runs", "1"]),
     ));
 
-    assert!(matches!(exit, ExitCode::SUCCESS));
     let vault = open_vault(tempdir.path());
     let tuned = vault.retrieval_blend_weight_table().expect("table");
-    assert_eq!(tuned.data_window.run_count, 1);
-    assert_eq!(tuned.data_window.outcome_count, 1);
+    if applied {
+        assert_eq!(tuned.data_window.run_count, 1);
+        assert_eq!(tuned.data_window.outcome_count, 1);
+    } else {
+        assert_eq!(tuned, before, "refused tune must not write weights");
+    }
 }
 
 #[test]
@@ -539,6 +601,10 @@ fn seed_non_device_vault(path: &Path, runs: usize) -> Vec<RetrievalRunId> {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let run_id = seed_non_device_vault(tempdir.path(), 1)[0];
@@ -549,7 +615,7 @@ fn eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config() {
     let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
     std::fs::write(&rewards_path, rows).expect("rewards file");
 
-    let exit = run(&eval_argv(
+    let applied = run_existing_eval(&eval_argv(
         "outcome-ingest",
         tempdir.path(),
         &non_device_vault_config(),
@@ -561,16 +627,26 @@ fn eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config() {
         ],
     ));
 
-    assert!(matches!(exit, ExitCode::SUCCESS));
     let vault = open_vault_with(tempdir.path(), non_device_vault_config());
     let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-    assert_eq!(outcomes.len(), 1);
-    assert_eq!(outcomes[0].key, "beam.reward");
-    assert_eq!(outcomes[0].reward, Some(0.75));
-    assert_eq!(metadata_of(&outcomes[0], "evaluator"), Some("judge.v1"));
+    if applied {
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].key, "beam.reward");
+        assert_eq!(outcomes[0].reward, Some(0.75));
+        assert_eq!(metadata_of(&outcomes[0], "evaluator"), Some("judge.v1"));
+    } else {
+        assert!(
+            outcomes.is_empty(),
+            "refused ingest must not write outcomes"
+        );
+    }
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_tune_opens_a_non_device_vault_through_the_explicit_config() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let run_id = seed_non_device_vault(tempdir.path(), 1)[0];
@@ -584,7 +660,7 @@ fn eval_tune_opens_a_non_device_vault_through_the_explicit_config() {
     let before = vault.retrieval_blend_weight_table().expect("table");
     drop(vault);
 
-    let exit = run(&eval_argv(
+    let applied = run_existing_eval(&eval_argv(
         "tune",
         tempdir.path(),
         &non_device_vault_config(),
@@ -598,14 +674,17 @@ fn eval_tune_opens_a_non_device_vault_through_the_explicit_config() {
         ]),
     ));
 
-    assert!(matches!(exit, ExitCode::SUCCESS));
     let vault = open_vault_with(tempdir.path(), non_device_vault_config());
     let tuned = vault.retrieval_blend_weight_table().expect("table");
-    assert_ne!(tuned.weights, before.weights);
-    assert_eq!(tuned.data_window.run_count, 1);
-    assert_eq!(tuned.data_window.outcome_count, 1);
-    let max_runs = tuned.provenance.get("max_runs").map(String::as_str);
-    assert_eq!(max_runs, Some("8"));
+    if applied {
+        assert_ne!(tuned.weights, before.weights);
+        assert_eq!(tuned.data_window.run_count, 1);
+        assert_eq!(tuned.data_window.outcome_count, 1);
+        let max_runs = tuned.provenance.get("max_runs").map(String::as_str);
+        assert_eq!(max_runs, Some("8"));
+    } else {
+        assert_eq!(tuned, before, "refused tune must not write weights");
+    }
 }
 
 #[test]
@@ -830,6 +909,10 @@ fn custom_dict_vault_config(dict_root: &Path) -> VaultConfig {
 /// contract, both subcommands reach their intended mutation; a dictionary root
 /// that exists but is not this vault's own still fails closed.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let dict_root = trusted_dict_root(tempdir.path());
@@ -862,13 +945,13 @@ fn eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune() {
     wrong_argv.extend_from_slice(&reward_flags);
     let refused = run(&wrong_argv);
 
-    let ingest = run(&eval_argv(
+    let ingested = run_existing_eval(&eval_argv(
         "outcome-ingest",
         &vault_path,
         &config,
         &reward_flags,
     ));
-    let tune = run(&eval_argv(
+    let tuned = run_existing_eval(&eval_argv(
         "tune",
         &vault_path,
         &config,
@@ -883,15 +966,22 @@ fn eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune() {
     ));
 
     assert!(matches!(refused, ExitCode::FAILURE));
-    assert!(matches!(ingest, ExitCode::SUCCESS));
-    assert!(matches!(tune, ExitCode::SUCCESS));
+    assert_eq!(ingested, tuned);
     let vault = open_vault_with(&vault_path, config);
     let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-    assert_eq!(outcomes.len(), 1);
-    assert_eq!(outcomes[0].reward, Some(0.75));
-    let tuned = vault.retrieval_blend_weight_table().expect("table");
-    assert_ne!(tuned.weights, before.weights);
-    assert_eq!(tuned.data_window.outcome_count, 1);
+    let weights = vault.retrieval_blend_weight_table().expect("table");
+    if ingested {
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].reward, Some(0.75));
+        assert_ne!(weights.weights, before.weights);
+        assert_eq!(weights.data_window.outcome_count, 1);
+    } else {
+        assert!(
+            outcomes.is_empty(),
+            "refused ingest must not write outcomes"
+        );
+        assert_eq!(weights, before, "refused tune must not write weights");
+    }
 }
 
 /// The top-level help names `eval --help` as the place to read the vault-open
@@ -904,14 +994,6 @@ fn eval_help_flags_print_usage_and_succeed() {
         assert!(matches!(exit, ExitCode::SUCCESS), "{flag}");
     }
     assert!(matches!(run(&owned(&["nope"])), ExitCode::FAILURE));
-}
-
-/// The stored analyzer identity, read back through the engine's own doctor
-/// seam on the existing-only door — the one door that never rewrites it. The
-/// bench still decodes no vault byte of its own.
-fn stored_analyzer_manifest_hash(path: &Path, config: &VaultConfig) -> Option<String> {
-    let vault = Vault::open_existing(path, config.clone()).expect("existing vault reopens");
-    vault.doctor().expect("doctor").analyzer_manifest_hash
 }
 
 /// The M1 class at bench level: a real vault root is renamed away and an empty
@@ -996,15 +1078,28 @@ fn eval_outcome_ingest_refuses_a_supplied_model_against_an_unstamped_vault() {
 /// existing-only door compares the manifest in every state and refuses, leaving
 /// the stored identity exactly as it was.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
+)]
 fn eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let dict_root = trusted_dict_root(tempdir.path());
     let config = custom_dict_vault_config(&dict_root);
     let vault_path = tempdir.path().join("vault");
     // No text is seeded, so the empty-index rewrite branch is the reachable one.
-    drop(open_vault_with(&vault_path, config.clone()));
-    let before = stored_analyzer_manifest_hash(&vault_path, &config);
-    assert!(before.is_some(), "the fixture stamps an analyzer manifest");
+    let vault = open_vault_with(&vault_path, config.clone());
+    assert!(
+        vault
+            .doctor()
+            .expect("doctor")
+            .analyzer_manifest_hash
+            .is_some()
+    );
+    drop(vault);
+    // Read the durable bytes without another open that could repair the manifest.
+    let data_path = vault_path.join(VaultRootEntry::Data.to_string());
+    let before = std::fs::read(&data_path).expect("stored vault bytes");
     let wrong_root = tempdir.path().join("other-dicts");
     std::fs::create_dir(&wrong_root).expect("other dict dir");
     let wrong_root_arg = wrong_root.display().to_string();
@@ -1020,5 +1115,86 @@ fn eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index() {
     let exit = run(&argv);
 
     assert!(matches!(exit, ExitCode::FAILURE));
-    assert_eq!(stored_analyzer_manifest_hash(&vault_path, &config), before);
+    // Do not use a create-capable reopen to inspect an empty text index: that
+    // door could repair the manifest and hide a write by the refused command.
+    assert_eq!(
+        std::fs::read(&data_path).expect("persisted vault bytes"),
+        before
+    );
+}
+
+/// Existing-only opens fail closed on hosts without descriptor-bound LMDB
+/// paths. Keep this refusal visible rather than weakening the production door
+/// to make the Linux success-path cases pass on macOS.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn eval_existing_vault_refuses_unsupported_platform_without_writing() {
+    use oneiron::error::{StoreError, VaultRootProblem};
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let root = tempdir.path().join("vault");
+    drop(open_vault(&root));
+    let data = std::fs::read(root.join("data.mdb")).expect("data before");
+    let lock = std::fs::read(root.join("lock.mdb")).expect("lock before");
+    let rewards_path = tempdir.path().join("rewards.jsonl");
+    std::fs::write(&rewards_path, "").expect("empty rewards");
+
+    for argv in device_argv_for_both(&root, &rewards_path) {
+        let result = match argv[0].as_str() {
+            "outcome-ingest" => run_outcome_ingest(&argv[1..]),
+            "tune" => run_tune(&argv[1..]),
+            _ => unreachable!("fixture subcommand"),
+        };
+        assert!(matches!(
+            result,
+            Err(EvalError::Oneiron(oneiron::Error::Store(
+                StoreError::VaultRootPreflight {
+                    problem: VaultRootProblem::UnsupportedPlatform {
+                        entry: VaultRootEntry::Data,
+                    },
+                    ..
+                }
+            )))
+        ));
+        assert_eq!(std::fs::read(root.join("data.mdb")).expect("data"), data);
+        assert_eq!(std::fs::read(root.join("lock.mdb")).expect("lock"), lock);
+        assert_eq!(entry_count(&root), 2);
+    }
+}
+
+#[test]
+fn scoped_read_receipt_drives_a_non_widening_replan() {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = open_vault(dir.path());
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"eval-reader").unwrap();
+    let proof = vault.verified_host_root_slip(&issuer).unwrap();
+    let reader =
+        vault.scoped_read(oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof).unwrap());
+    let request = oneiron::RetrievalFilter {
+        include_stale: Some(true),
+        ..Default::default()
+    };
+    let first = reader
+        .search_text("receipt-replan-absent", 1, Some(&request))
+        .unwrap();
+    assert!(
+        first
+            .receipt
+            .replan_hint
+            .iter()
+            .any(|axis| axis == "include_stale")
+    );
+    let mut replanned = request;
+    // The benchmark consumer acts on the typed hint rather than parsing prose.
+    for axis in &first.receipt.replan_hint {
+        if axis == "include_stale" {
+            replanned.include_stale = Some(first.receipt.applied.include_stale);
+        }
+    }
+    let second = reader
+        .search_text("receipt-replan-absent", 1, Some(&replanned))
+        .unwrap();
+    assert!(second.receipt.replan_hint.is_empty());
+    assert_eq!(second.receipt.requested, second.receipt.applied);
+    assert_eq!(second.receipt.applied, first.receipt.applied);
 }

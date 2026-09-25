@@ -38,18 +38,10 @@ pub(super) fn apply_edge(
     weight: f32,
     vad: Vad,
 ) -> Result<()> {
+    crate::conversation_dag::validate_local_membership(store, wtxn, src, kind, tgt)?;
     reject_if_existing_edge_is_provenanced(store, wtxn, src, kind, tgt)?;
-    apply_edge_with_created_at(
-        store,
-        wtxn,
-        src,
-        kind,
-        tgt,
-        weight,
-        crate::unix_seconds_now(),
-        vad,
-        None,
-    )
+    let recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    apply_edge_with_created_at(store, wtxn, src, kind, tgt, weight, recorded_at, vad, None)
 }
 
 pub(super) fn reject_if_existing_edge_is_provenanced(
@@ -89,6 +81,7 @@ pub(super) fn apply_public_edge_with_created_at(
     created_at: u64,
     vad: Vad,
 ) -> Result<()> {
+    crate::conversation_dag::validate_local_membership(store, wtxn, src, kind, tgt)?;
     reject_if_existing_edge_is_provenanced(store, wtxn, src, kind, tgt)?;
     apply_edge_with_created_at(store, wtxn, src, kind, tgt, weight, created_at, vad, None)
 }
@@ -139,6 +132,7 @@ pub(super) fn apply_set_edge_weight(
     value[0..4].copy_from_slice(&weight.to_le_bytes());
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
+    crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
     Ok(())
 }
 
@@ -173,6 +167,7 @@ pub(super) fn apply_set_edge_vad(
     value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
+    crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
     Ok(())
 }
 

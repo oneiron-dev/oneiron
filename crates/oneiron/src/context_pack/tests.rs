@@ -111,6 +111,8 @@ fn put_text_entity(
 
 fn empty_pack_stats() -> PackStats {
     PackStats {
+        critical_over_budget: false,
+        critical_count: 0,
         candidates_considered: 0,
         signals_used: Vec::new(),
         query_time_us: 0,
@@ -126,9 +128,11 @@ fn empty_pack_stats() -> PackStats {
 
 fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> ContextEntity {
     ContextEntity {
+        critical: false,
         id: crate::test_util::entity(seed),
         short_id: short_id.to_owned(),
         content_hash: seed,
+        source_revision_ref: None,
         entity_type,
         score,
         fields: None,
@@ -140,6 +144,8 @@ fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> Contex
 #[test]
 fn memories_section_serializes_rows_in_stable_slot_order() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![
             board_entity(0x41, ENTITY_TYPE_TURN, 0.25, "tn41"),
@@ -182,6 +188,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
             },
             "rows": [
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 0,
                     "slot": "claims",
                     "source": "result",
@@ -192,6 +202,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
                     "score": 1.0
                 },
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 1,
                     "slot": "claims",
                     "source": "result",
@@ -202,6 +216,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
                     "score": 0.50
                 },
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 2,
                     "slot": "turns",
                     "source": "result",
@@ -212,6 +230,10 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
                     "score": 0.25
                 },
                 {
+                    "claim_source": null,
+                    "world": null,
+                    "tier": "snippet",
+                    "snippet": null,
                     "row_index": 3,
                     "slot": "companions",
                     "source": "result",
@@ -237,6 +259,8 @@ fn memories_section_serializes_rows_in_stable_slot_order() {
 #[test]
 fn memories_section_routes_asset_rows_by_ref_without_local_downgrade() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![
             board_entity(0x51, ENTITY_TYPE_ASSET, 0.9, "as15"),
@@ -286,7 +310,7 @@ fn companion_register_api_context_pack_retrieves_affect_without_private_note_lea
         EntityId::from_bytes_unchecked([0x75; 16]),
         crate::companion_value_from_json(&serde_json::json!({ "note": private_note }))?,
         provenance,
-        crate::CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
     vault.create_companion_record(&companion_id, &record, 20)?;
     vault
@@ -609,6 +633,9 @@ fn raw_entity_record(
 
 fn overwrite_raw_entity(vault: &Vault, id: &EntityId, raw: &[u8]) -> Result<()> {
     vault.with_write_txn(|wtxn| {
+        // These fixtures exercise live-row validation, not a torn revision ledger.
+        // Keep the forged row unversioned so indexed pin capture reaches the same bytes.
+        crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, id)?;
         vault.store.entities.put(wtxn, id.as_bytes(), raw)?;
         Ok(())
     })
@@ -738,6 +765,9 @@ fn hydrate_entity_rejects_present_corrupt_header() -> Result<()> {
         id,
         0.0,
         HydrateOptions {
+            read_mode: crate::vault::ReadMode::Indexed,
+            policy: &crate::gate::resolve_policy_manifest(&vault.store, &rtxn).unwrap(),
+            criticality: None,
             hydrate_fields: true,
             include_edges: false,
             include_vectors: false,
@@ -1488,7 +1518,19 @@ fn status_suppressed_empty_reports_all_activated() -> Result<()> {
 
 #[test]
 fn retract_claim_end_to_end_removes_stale_text_from_context_pack() -> Result<()> {
+    struct NoWithdrawnEmbedding;
+    impl crate::memory::IndexedRevisionEmbedder for NoWithdrawnEmbedding {
+        fn embed_revision(&self, _: &crate::memory::IndexedRevisionInput) -> Result<Vec<f32>> {
+            panic!("withdrawn claims must not be reindexed at idle");
+        }
+    }
+
     let (_dir, vault) = open_test_vault();
+    // Vault::open seeds the bootstrap skills, whose activation edits wait for
+    // idle publication with a millisecond open stamp. The wall clock below is
+    // second-truncated, so publish them first: otherwise a second boundary
+    // between open and refresh hands them to the panicking embedder.
+    crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::from_bytes([0x43; 16])?;
     put_claim_text_entity(
         &vault,
@@ -1506,6 +1548,13 @@ fn retract_claim_end_to_end_removes_stale_text_from_context_pack() -> Result<()>
     assert_eq!(before.results[0].id, id);
 
     vault.retract_claim(&id, 2_000)?;
+
+    vault.set_indexed_idle_delay_ms(0)?;
+    let idle = vault.refresh_indexed_at_idle(
+        crate::unix_seconds_now().saturating_mul(1000),
+        &NoWithdrawnEmbedding,
+    )?;
+    assert!(idle.refreshed.is_empty());
 
     let after = vault
         .context_pack()
@@ -1795,6 +1844,7 @@ fn pack_validation_skips_world_partition_dropped_results() -> Result<()> {
 
     let pack = vault
         .context_pack()
+        .read_mode(crate::vault::ReadMode::Live)
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
         .run()?;
 
@@ -1869,6 +1919,7 @@ fn pack_validation_rejects_missing_required_evidence() -> Result<()> {
 
     let err = vault
         .context_pack()
+        .read_mode(crate::vault::ReadMode::Live)
         .search_text("missingevidenceneedle", 10)
         .run()
         .expect_err("provenance claim without actor-class evidence must fail pack validation");
@@ -2040,6 +2091,7 @@ fn pack_validation_rejects_impossible_time_ordering() -> Result<()> {
 
     let err = vault
         .context_pack()
+        .read_mode(crate::vault::ReadMode::Live)
         .search_text("reversedtimeneedle", 10)
         .run()
         .expect_err("reversed entity envelope must fail pack validation");
@@ -2049,7 +2101,7 @@ fn pack_validation_rejects_impossible_time_ordering() -> Result<()> {
 }
 
 #[test]
-fn pack_validation_rejects_deleted_payload_reference() -> Result<()> {
+fn deleted_payload_is_excluded_before_pack_assembly() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::from_bytes([0x94; 16])?;
     put_claim_text_entity(
@@ -2069,13 +2121,12 @@ fn pack_validation_rejects_deleted_payload_reference() -> Result<()> {
         Ok(())
     })?;
 
-    let err = vault
+    let pack = vault
         .context_pack()
         .search_text("deletedreferenceneedle", 10)
-        .run()
-        .expect_err("deleted payload reference must fail pack validation");
-
-    assert_context_pack_validation(err, id, PACK_VALIDATION_DELETED_PAYLOAD);
+        .run()?;
+    assert!(pack.results.is_empty());
+    assert!(pack.neighbors.is_empty());
     Ok(())
 }
 
@@ -2981,7 +3032,8 @@ fn context_pack_serialized_telemetry_reflects_budget_surviving_results() -> Resu
         .context_pack()
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
         .format(PackFormat::Plaintext)
-        .token_budget(24)
+        // Revision-qualified citations are longer; still admit exactly one row.
+        .token_budget(48)
         .run_serialized_with_telemetry()?;
     assert!(!serialized.value.is_empty());
     let run_id = serialized.run_id.expect("serialized telemetry run id");
@@ -3613,9 +3665,11 @@ fn n12_validate_pack_disclosure_fails_a_tampered_pack() -> Result<()> {
     let ctx = absence_ctx_for_contact(&vault, contact_id);
 
     let smuggled = ContextEntity {
+        critical: false,
         id: marked,
         short_id: "tn_smuggled".to_owned(),
         content_hash: 0,
+        source_revision_ref: None,
         entity_type: ENTITY_TYPE_TURN,
         score: 1.0,
         fields: None,
@@ -3765,11 +3819,17 @@ fn explicitly_surfaced_stale_world_carries_the_pinned_marker() -> Result<()> {
         "engine diagnostic contract text is matched verbatim by readers"
     );
 
-    let base = pack
+    assert!(!pack.results.iter().any(|entity| entity.id == base_claim));
+    let base_pack = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .world(WorldScope::Base)
+        .run()?;
+    let base = base_pack
         .results
         .iter()
         .find(|entity| entity.id == base_claim)
-        .expect("base reality is surfaced under every scope");
+        .expect("base reality surfaces under explicit base scope");
     assert_eq!(
         stale_marker_of(base),
         None,
@@ -3836,10 +3896,29 @@ fn stale_world_claims_never_re_enter_a_pack_through_edge_expansion() -> Result<(
         4,
     )?;
 
+    // A named-world read needs its own in-scope anchor; base is not implicit.
+    let explicit_seed = EntityId::from_bytes([0x63; 16])?;
+    put_world_claim(
+        &vault,
+        explicit_seed,
+        [0.0, 0.0, 0.0, 1.0],
+        Some(stale_world),
+    )?;
+    vault.put_edge(
+        &explicit_seed,
+        crate::edge::EdgeKind::Supports,
+        &stale_neighbor,
+        1.0,
+    )?;
     let pack_of = |scope: WorldScope| {
+        let vector = if matches!(scope, WorldScope::World(_)) {
+            [0.0, 0.0, 0.0, 1.0]
+        } else {
+            [1.0, 0.0, 0.0, 0.0]
+        };
         vault
             .context_pack()
-            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .search_vector(&vector, 1)
             .edge_hop(1)
             .world(scope)
             .run()
@@ -4232,4 +4311,137 @@ fn retrieval_quality_old_empty_context_defaults_to_passthrough() {
         empty.retrieval_quality.confidence_adjustment,
         ConfidenceAdjustment::PASSTHROUGH
     );
+}
+
+#[test]
+fn pack_vectors_follow_the_selected_indexed_frontier() -> Result<()> {
+    use crate::vault::ReadMode;
+    let (_dir, vault) = open_test_vault();
+    crate::test_util::publish_seeded_revisions(&vault);
+    let id = EntityId::now();
+    let old_vector = vec![1.0, 0.0, 0.0, 0.0];
+    let new_vector = vec![0.0, 1.0, 0.0, 0.0];
+    put_claim_text_entity(&vault, &id, "vectorfrontier", "test.vector", "old")?;
+    vault.put_vector(&id, &old_vector)?;
+    let old_pin = vault.pin_entity_revision(&id)?;
+    let read = |mode| {
+        vault
+            .context_pack()
+            .search_text("vectorfrontier", 10)
+            .read_mode(mode)
+            .include_vectors(true)
+            .run()
+    };
+    let original = read(ReadMode::Pinned(old_pin))?;
+    assert_eq!(original.results.len(), 1);
+    assert_eq!(original.results[0].vector.as_ref(), Some(&old_vector));
+
+    put_claim_text_entity(&vault, &id, "vectorfrontier", "test.vector", "new")?;
+    vault.put_vector(&id, &new_vector)?;
+    let new_pin = vault.pin_entity_revision(&id)?;
+    assert_ne!(old_pin, new_pin);
+    // Caller-staged input has not replaced the indexed vector yet. Historical
+    // content can still use that row; live/new-pinned content cannot.
+    assert_eq!(
+        read(ReadMode::Pinned(old_pin))?.results[0].vector.as_ref(),
+        Some(&old_vector)
+    );
+    assert!(read(ReadMode::Pinned(new_pin))?.results[0].vector.is_none());
+    assert!(read(ReadMode::Live)?.results[0].vector.is_none());
+    vault.set_indexed_idle_delay_ms(0)?;
+    assert_eq!(
+        vault.refresh_staged_indexed_at_idle(u64::MAX)?.refreshed,
+        vec![(id, new_pin)]
+    );
+    let historical = read(ReadMode::Pinned(old_pin))?;
+    assert_eq!(historical.results.len(), 1);
+    assert_eq!(historical.results[0].source_revision_ref, Some(old_pin.0));
+    assert_eq!(
+        historical.results[0].fields.as_ref().unwrap().get("val"),
+        Some(&serde_json::json!("old"))
+    );
+    assert!(historical.results[0].vector.is_none());
+    let current = read(ReadMode::Pinned(new_pin))?;
+    assert_eq!(current.results[0].source_revision_ref, Some(new_pin.0));
+    assert_eq!(current.results[0].vector.as_ref(), Some(&new_vector));
+    assert_eq!(
+        read(ReadMode::Indexed)?.results[0].vector.as_ref(),
+        Some(&new_vector)
+    );
+    assert_eq!(
+        read(ReadMode::Live)?.results[0].vector.as_ref(),
+        Some(&new_vector)
+    );
+    Ok(())
+}
+mod criticality;
+mod source_ranking;
+
+#[test]
+fn live_memories_keep_foreign_world_fences_without_edges() -> Result<()> {
+    use crate::context_board::{BoardBlockHeader, BoardBudgetRequest, MemoryTier};
+
+    let (_dir, vault) = open_test_vault();
+    let world = crate::test_util::entity(0xF1);
+    let guest = crate::test_util::entity(0x71);
+    let home = crate::test_util::entity(0x61);
+    put_world_claim(&vault, guest, [1.0, 0.0, 0.0, 0.0], Some(world))?;
+    put_world_claim(&vault, home, [0.8, 0.2, 0.0, 0.0], None)?;
+    let mut pack = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .non_base_world_claim_fraction(1.0)
+        .run()?;
+    assert_eq!(pack.results.len(), 2);
+    assert!(pack.results.iter().all(|entity| entity.edges.is_none()));
+    // Exercise both projection lanes with genuinely hydrated claim fields.
+    for neighbor in [false, true] {
+        if neighbor {
+            let index = pack
+                .results
+                .iter()
+                .position(|entity| entity.id == guest)
+                .unwrap();
+            pack.neighbors.push(pack.results.remove(index));
+        }
+        let section = vault.project_memories_section(
+            &pack,
+            MemoriesBudget::new(2, 0, 0, 0, 0, 0),
+            None,
+            None,
+            &Default::default(),
+        )?;
+        assert_eq!(section.rows.len(), 2);
+        assert_eq!(section.rows[0].id, home.to_hex());
+        assert_eq!(section.rows[0].tier, MemoryTier::Snippet);
+        assert_eq!(section.rows[0].snippet.as_deref(), Some("\"v\""));
+        let row = &section.rows[1];
+        assert_eq!(row.id, guest.to_hex());
+        assert_eq!(row.world.as_deref(), Some(world.to_hex().as_str()));
+        assert_eq!(row.tier, MemoryTier::IndexOnly);
+        assert_eq!(row.snippet, None);
+        let rendered = section
+            .render_board(
+                &BoardBlockHeader {
+                    epoch: 1,
+                    scope: "all".into(),
+                },
+                BoardBudgetRequest {
+                    harness_default_tok: 4096,
+                    caller_limit_tok: None,
+                    explicit_override_tok: None,
+                },
+            )
+            .unwrap()
+            .text;
+        let (home_text, guest_text) = rendered.split_once("</memory>\n").unwrap();
+        assert!(home_text.contains(&section.rows[0].short_id));
+        assert!(guest_text.starts_with(&format!(
+            "<evidence role=\"guest\" host=\"{world}\" consolidatable=\"false\">",
+            world = world.to_hex(),
+        )));
+        assert!(guest_text.contains("tier=index-only"));
+        assert!(!guest_text.contains("\"v\""));
+    }
+    Ok(())
 }

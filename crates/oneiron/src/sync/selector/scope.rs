@@ -8,20 +8,20 @@ use crate::Vault;
 use crate::authority::{AuthorityFold, FederationPactStatus};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{COREFERENCE_PACT_ID_LEN, ClaimLifecycleStatus};
-use crate::companion::{
-    CompanionExportClassification, CompanionScope, ENTITY_TYPE_COMPANION_REGISTER,
-    decode_companion_record_body,
-};
+use crate::companion::decode_companion_record_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::{FederationGrantScope, selector_range_of};
+use crate::federation::{
+    FederationDirectionScope, FederationGrantScope, FederationScopeBands, FederationScopeFacets,
+    SelectorRange, selector_range_of,
+};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_WORLD};
 use crate::sync::bridge::parse_edge_key;
 use crate::sync::local_claims::claim_sync_allowed;
 use crate::sync::loro_support::map_for_each_value_bytes;
 
-use super::codec::{EmptyAxis, SyncSelector, SyncSelectorWorld};
+use super::codec::{SyncSelector, SyncSelectorWorld};
 
 /// Which coreference material this ONE export request may carry (ONE-1414).
 ///
@@ -124,6 +124,7 @@ fn normalized_coreference_pair(source: EntityId, target: EntityId) -> (EntityId,
 /// withheld.
 pub(super) fn coreference_export_context(
     vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
     source: &LoroDoc,
     selector: &SyncSelector,
 ) -> Result<CoreferenceExportContext> {
@@ -140,16 +141,120 @@ pub(super) fn coreference_export_context(
         return Ok(CoreferenceExportContext::default());
     }
 
-    let fold = vault.authority_fold()?;
+    // Single-snapshot export: the caller holds `rtxn` for the whole filter
+    // pass, so this reuses it instead of opening nested transactions.
+    // `authority_fold` opens its own read+write txns (backfill + clock) and
+    // `coreference_shared_for_pact` opens one per edge/claim read — either
+    // would nest inside the caller's read txn and fail with
+    // `Storage(Mdb(BadRslot))` on LMDB's single-reader-slot-per-thread rule.
+    // The readonly fold is pact-equivalent for this check: first-seen timing
+    // only gates delayable widens, never pact binding or status.
+    let fold = vault.authority_fold_readonly_in_txn(rtxn)?;
     let Some(pact_id) = active_export_pact(&fold, &selector.grant_id) else {
         return Ok(CoreferenceExportContext::default());
     };
 
     let mut allowed_links = BTreeSet::new();
     for (a, b) in pairs {
-        if crate::federation::coreference_shared_for_pact(vault, a, b, &pact_id)? {
+        if coreference_shared_for_pact_in_txn(vault, rtxn, a, b, &pact_id)? {
             allowed_links.insert((a, b));
         }
+    }
+    Ok(CoreferenceExportContext {
+        pact_id: Some(pact_id),
+        allowed_links,
+    })
+}
+
+/// Transaction-composable [`crate::federation::coreference_shared_for_pact`]:
+/// same two-orientation scan, same link-must-exist gate, but every read rides
+/// the caller's `rtxn` so the export filter holds one snapshot.
+///
+/// A copy rather than a call: the federation door opens its own transactions
+/// per read, which cannot nest inside the export's open read txn.
+fn coreference_shared_for_pact_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    a: EntityId,
+    b: EntityId,
+    pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
+) -> Result<bool> {
+    for (source, target) in [(a, b), (b, a)] {
+        if edge_exists_in_txn(vault, rtxn, &source, EdgeKind::SameAs, &target)?
+            && coreference_consent_names_pact_in_txn(vault, rtxn, source, target, pact_id)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Transaction-composable consent scan for ONE stored link orientation.
+/// Mirrors `federation::coreference_consent_names_pact`: Active + Approved +
+/// exact pact + locally authored (`Imported` rows vouch for nothing) + Edge
+/// subject match; a malformed stored consent body is not consent.
+fn coreference_consent_names_pact_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    source: EntityId,
+    target: EntityId,
+    pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
+) -> Result<bool> {
+    for claim in vault.claims_for_subject_in_txn(rtxn, &source)? {
+        let Some(body) = vault.get_claim_in_txn(rtxn, &claim)? else {
+            continue;
+        };
+        if body.predicate != crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT
+            || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.approval != crate::claim::ClaimApprovalStatus::Approved
+            || body.source == Some(crate::claim::ClaimSource::Imported)
+            || body.subject
+                != (crate::claim::ClaimSubject::Edge {
+                    source,
+                    kind: EdgeKind::SameAs,
+                    target,
+                })
+        {
+            continue;
+        }
+        if crate::claim::coreference_share_consent_pact_id(&body)
+            .is_ok_and(|claimed| claimed == *pact_id)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Transaction-composable [`Vault::edge_exists`]: same key, caller's txn.
+fn edge_exists_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    src: &EntityId,
+    kind: EdgeKind,
+    tgt: &EntityId,
+) -> Result<bool> {
+    let key = crate::store::Store::encode_edge_key(src, kind, tgt);
+    Ok(vault.store.edges_out.get(rtxn, &key)?.is_some())
+}
+
+/// Resolve just the candidate link from the committing document writer.
+/// The fold and consent rows use the same snapshot as its grant and append.
+pub(super) fn document_coreference_context_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    selector: &SyncSelector,
+    source: EntityId,
+    target: EntityId,
+) -> Result<CoreferenceExportContext> {
+    let Some(pact_id) = active_export_pact(fold, &selector.grant_id) else {
+        return Ok(CoreferenceExportContext::default());
+    };
+    let mut allowed_links = BTreeSet::new();
+    if crate::federation::coreference_shared_for_pact_in_txn(vault, txn, source, target, &pact_id)?
+    {
+        allowed_links.insert(normalized_coreference_pair(source, target));
     }
     Ok(CoreferenceExportContext {
         pact_id: Some(pact_id),
@@ -266,17 +371,21 @@ pub(super) struct EntitySelectorDecision {
 /// (pinned by `tests::selector_denies_event_scoped_to_unselected_facet`).
 pub(super) fn facet_scope_by_source(
     vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
     entities: &loro::LoroMap,
     edges: &loro::LoroMap,
-    selector: &SyncSelector,
+    position: &FederationDirectionScope,
 ) -> Result<HashMap<EntityId, FacetScope>> {
-    let selected: HashSet<EntityId> = selector.facets.iter().copied().collect();
+    let selected: HashSet<EntityId> = facet_filter(position)
+        .unwrap_or_default()
+        .iter()
+        .copied()
+        .collect();
     let mut scopes = HashMap::<EntityId, FacetScope>::new();
     if selected.is_empty() {
         return Ok(scopes);
     }
 
-    let rtxn = vault.store.env.read_txn()?;
     // Endpoint types are read once per id, not once per row: a source may
     // carry many stamps and a facet may be named by many sources. One rule
     // serves both roles, so an id appearing in both still costs one read.
@@ -297,8 +406,8 @@ pub(super) fn facet_scope_by_source(
         // the peer's: fail the export closed rather than silently drop a scope
         // and over-disclose.
         let (src_type, tgt_type) = match (
-            mirrored_endpoint_type(vault, &rtxn, entities, &mut types, &src),
-            mirrored_endpoint_type(vault, &rtxn, entities, &mut types, &tgt),
+            mirrored_endpoint_type(vault, rtxn, entities, &mut types, &src),
+            mirrored_endpoint_type(vault, rtxn, entities, &mut types, &tgt),
         ) {
             (Ok(src_type), Ok(tgt_type)) => (src_type, tgt_type),
             (Err(local), _) | (_, Err(local)) => {
@@ -399,15 +508,36 @@ fn mirrored_endpoint_type(
     Ok(resolved)
 }
 
+/// The facets a resolved position filters on. `None` filters nothing on the
+/// axis, and the ⊥ ceiling's empty list lets nothing pass.
+pub(super) fn facet_filter(position: &FederationDirectionScope) -> Option<&[EntityId]> {
+    match &position.facets {
+        FederationScopeFacets::All => None,
+        FederationScopeFacets::Some(facets) => Some(facets),
+        FederationScopeFacets::Bottom => Some(&[]),
+    }
+}
+
+/// The bands a resolved position filters on, read as [`facet_filter`] reads
+/// facets.
+pub(super) fn band_filter(position: &FederationDirectionScope) -> Option<&[SelectorRange]> {
+    match &position.bands {
+        FederationScopeBands::All => None,
+        FederationScopeBands::Some(bands) => Some(bands),
+        FederationScopeBands::Bottom => Some(&[]),
+    }
+}
+
 pub(super) fn entity_selector_decision(
-    id: &EntityId,
-    blob: &[u8],
+    vault: &Vault,
+    entity: (&EntityId, &[u8]),
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
     facet_scope: &HashMap<EntityId, FacetScope>,
-    empty: EmptyAxis,
+    position: &FederationDirectionScope,
     coreference: &CoreferenceExportContext,
 ) -> Option<EntitySelectorDecision> {
+    let (id, blob) = entity;
     let header = EntityMetadataHeader::parse(blob)?;
     if !claim_sync_allowed(blob) {
         return None;
@@ -415,31 +545,37 @@ pub(super) fn entity_selector_decision(
     if !coreference_claim_passes(header.entity_type, blob, coreference) {
         return None;
     }
-    // The same per-credential locality dial governs every sync door.
-    if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-        && !crate::secret_custody::custody_sync_allowed(&blob[ENTITY_METADATA_HEADER_LEN..])
+    // Diagnostics are local-only. Credentials use the shared per-credential dial.
+    if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
+        || (header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+            && !crate::secret_custody::custody_sync_allowed(&blob[ENTITY_METADATA_HEADER_LEN..]))
     {
         return None;
     }
-    if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER
+    if header.entity_type == crate::registry::ENTITY_TYPE_FACET
+        && crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
         && !companion_register_passes_selector(blob, grant_scope)
     {
         return None;
     }
-    if selector.band_filter_active(empty)
-        && !selector
-            .bands
-            .contains(&selector_range_of(header.entity_type))
+    // Registration is mandatory even for an unfiltered selector. Unknown
+    // bytes do not gain a scope from their numeric position.
+    let identity = selector_range_of(header.entity_type).or_else(|| {
+        vault
+            .structural_kind_registration(header.entity_type)
+            .and_then(|registration| registration.family)
+            .map(crate::federation::SelectorRange::Family)
+    })?;
+    if band_filter(position).is_some_and(|bands| !bands.iter().any(|band| band.includes(identity)))
     {
         return None;
     }
-    if selector.facet_filter_active(empty)
-        && header.entity_type == ENTITY_TYPE_FACET
-        && !selector.facets.contains(id)
+    let facets = facet_filter(position);
+    if facets.is_some_and(|facets| header.entity_type == ENTITY_TYPE_FACET && !facets.contains(id))
     {
         return None;
     }
-    if selector.facet_filter_active(empty)
+    if facets.is_some()
         && facet_scope.get(id).is_some_and(|scope| {
             scope.malformed || scope.unselected || (scope.any && !scope.selected)
         })
@@ -461,11 +597,9 @@ pub(super) fn entity_selector_decision(
     ) {
         return None;
     }
-    let facet_visible = selector.facet_filter_active(empty)
-        && header.entity_type == ENTITY_TYPE_FACET
-        && selector.facets.contains(id);
-    let facet_seed = selector.facet_filter_active(empty)
-        && facet_scope.get(id).is_some_and(|scope| scope.selected);
+    let facet_visible =
+        facets.is_some_and(|facets| header.entity_type == ENTITY_TYPE_FACET && facets.contains(id));
+    let facet_seed = facets.is_some() && facet_scope.get(id).is_some_and(|scope| scope.selected);
     Some(EntitySelectorDecision {
         facet_visible,
         facet_seed,
@@ -515,21 +649,11 @@ fn companion_register_passes_selector(blob: &[u8], grant_scope: FederationGrantS
     ) {
         return false;
     }
-    match record.export_classification {
-        CompanionExportClassification::LocalOnly => false,
-        CompanionExportClassification::Portable => {
-            !matches!(record.scope, CompanionScope::SharedVault { .. })
-        }
-        CompanionExportClassification::SharedVault => {
-            let FederationGrantScope::Vault {
-                vault_id: grant_vault_id,
-            } = grant_scope;
-            matches!(
-                record.scope,
-                CompanionScope::SharedVault { vault_id } if vault_id == grant_vault_id
-            )
-        }
-    }
+    let FederationGrantScope::Vault { vault_id } = grant_scope;
+    crate::channel_identity::ChannelIdentityBinding::vault(vault_id)
+        .permits_companion_scope(&record.scope)
+        && crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Sensitive)
+            .permits(record.sensitivity)
 }
 
 fn world_passes(entity_type: u8, body: &[u8], world: SyncSelectorWorld) -> bool {

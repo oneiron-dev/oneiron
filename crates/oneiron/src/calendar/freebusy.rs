@@ -20,7 +20,9 @@
 //! before `normalize_busy` runs and its typed `CalendarError` propagates —
 //! an expansion failure must never degrade to a silently empty union.
 
-use super::query::{CalendarRead, CalendarSel, validate_selectors, visit_calendar_events};
+use super::query::{
+    CalendarRead, CalendarSel, matches_selectors, validate_selectors, visit_calendar_events,
+};
 use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -76,30 +78,38 @@ fn freebusy_in(
     validate_selectors(calendars)?;
 
     let bounds = ordered(range);
-    let mut intervals = Vec::new();
+    let mut rows = Vec::new();
     visit_calendar_events(read, |row| {
-        if !row.facts.blocks_time() || row.facts.is_cancelled() {
-            return Ok(());
-        }
-        // An EVENT that stores no occurrence is undated, not epoch-anchored; it
-        // occupies no availability at all.
-        let Some(occurrence) = row.occurred else {
-            return Ok(());
-        };
-        // CAL-03's `expand_window` slots in here once ONE-1785 merges: a series
-        // master contributes one interval per expanded occurrence inside
-        // `bounds`, and its typed CalendarError propagates unchanged.
-        let Some(clipped) = clip(occurrence, bounds) else {
-            return Ok(());
-        };
-        let (start_utc, end_utc) = half_open(clipped)?;
-        intervals.push(BusyInterval {
-            start_utc,
-            end_utc,
-            source: row.id,
-        });
+        rows.push(row);
         Ok(())
     })?;
+    let exceptions: Vec<_> = rows
+        .iter()
+        .filter_map(|row| row.facts.exception().cloned())
+        .collect();
+    let withheld_exception = read.withheld_exception_series()?;
+    let mut intervals = Vec::new();
+    for row in rows {
+        if !matches_selectors(row.facts.systems(), calendars)
+            || !row.facts.blocks_time()
+            || row.facts.is_cancelled()
+            || row.facts.series_withheld()
+        {
+            continue;
+        }
+        let occurrences =
+            super::query::occurrences(&row, bounds, &exceptions, &withheld_exception)?;
+        for occurrence in occurrences {
+            if let Some(clipped) = clip(occurrence, bounds) {
+                let (start_utc, end_utc) = half_open(clipped)?;
+                intervals.push(BusyInterval {
+                    start_utc,
+                    end_utc,
+                    source: row.id,
+                });
+            }
+        }
+    }
 
     Ok(normalize_busy(intervals))
 }

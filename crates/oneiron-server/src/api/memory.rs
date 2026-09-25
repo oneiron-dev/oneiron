@@ -36,6 +36,9 @@ use utoipa::ToSchema;
 /// Supersession timeline response for one memory anchor.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreMemoryTimelineResponse {
+    /// Requested scope, resolved ceiling, final intersection and exclusions.
+    #[schema(value_type = super::read_receipt::ReadReceiptSchema)]
+    narrowing: oneiron::claim::ScopedReadReceipt,
     /// Requested anchor entity id.
     #[serde(rename = "anchor_id")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
@@ -247,14 +250,20 @@ pub(crate) async fn core_memory_timeline(
         || (timeline.records.len() == 1
             && timeline.records[0].state == oneiron::MemoryTimelineRecordState::Missing)
     {
-        return Err(ApiError::not_found("entity", Some(&id.to_hex())).into());
+        return Err(
+            EnvelopedApiError::from(ApiError::not_found("entity", Some(&id.to_hex())))
+                .with_read_receipt(timeline.receipt),
+        );
     }
 
-    Ok(Json(core_memory_timeline_response(
-        &server.vault,
-        timeline,
-        view,
-    )?))
+    let response = core_memory_timeline_response(&scoped_read, timeline, view)?;
+    if response.records.is_empty() {
+        return Err(
+            EnvelopedApiError::from(ApiError::not_found("entity", Some(&id.to_hex())))
+                .with_read_receipt(response.narrowing),
+        );
+    }
+    Ok(Json(response))
 }
 
 /// Execute a named memory verb after resolving it to a typed vault operation.
@@ -426,26 +435,78 @@ pub(crate) async fn core_memory_verb(
 }
 
 pub(crate) fn core_memory_timeline_response(
-    vault: &oneiron::Vault,
-    timeline: oneiron::MemoryTimeline,
+    read: &oneiron::claim::ScopedRead<'_>,
+    result: oneiron::claim::ScopedReadResult<oneiron::MemoryTimeline>,
     view: View,
 ) -> Result<CoreMemoryTimelineResponse, ApiError> {
+    let timeline = result.value;
+    let mut narrowing = result.receipt;
+    let ids: Vec<_> = timeline
+        .records
+        .iter()
+        .filter(|record| record.state != oneiron::MemoryTimelineRecordState::Deleted)
+        .map(|record| record.id)
+        .collect();
+    let projected = read
+        .get_entities_parts_with_receipt(&ids, Some(&narrowing.applied.as_filter()))
+        .map_err(|error| core_engine_error("core memory timeline projection failed", error))?;
+    narrowing.restrict_with(&projected.receipt);
+    let mut parts: std::collections::BTreeMap<_, _> = ids
+        .into_iter()
+        .zip(projected.value)
+        .filter_map(|(id, body)| body.map(|body| (id, body)))
+        .collect();
     let mut records = Vec::with_capacity(timeline.records.len());
+    let deleted_anchor_visible = timeline.records.iter().any(|record| {
+        record.id == timeline.anchor
+            && record.state == oneiron::MemoryTimelineRecordState::Deleted
+            && !narrowing.applied.deny_all
+            && record.entity_type.is_some_and(|kind| {
+                narrowing
+                    .applied
+                    .entity_types
+                    .as_ref()
+                    .is_none_or(|types| types.contains(&kind))
+            })
+    });
+    if !parts.contains_key(&timeline.anchor) && !deleted_anchor_visible {
+        narrowing.add_suppressed(parts.len());
+        return Ok(CoreMemoryTimelineResponse {
+            narrowing,
+            anchor_id: timeline.anchor.to_hex(),
+            records,
+        });
+    }
     for record in timeline.records {
-        let item = if matches!(
-            record.state,
-            oneiron::MemoryTimelineRecordState::Live
-                | oneiron::MemoryTimelineRecordState::Superseded
-                | oneiron::MemoryTimelineRecordState::Retracted
-        ) {
-            projection::project_entity(vault, &record.id, view).map_err(|error| {
-                tracing::error!(error = %error, id = %record.id.to_hex(), "core memory timeline projection failed");
-                core_engine_error("core memory timeline projection failed", error)
-            })?
-        } else {
+        let item = if record.state == oneiron::MemoryTimelineRecordState::Deleted {
+            if narrowing.applied.deny_all
+                || record.entity_type.is_none_or(|kind| {
+                    narrowing
+                        .applied
+                        .entity_types
+                        .as_ref()
+                        .is_some_and(|types| !types.contains(&kind))
+                })
+            {
+                narrowing.add_suppressed(1);
+                continue;
+            }
             None
+        } else {
+            let Some((kind, learned_at, body)) = parts.remove(&record.id) else {
+                continue;
+            };
+            if record.entity_type != Some(kind)
+                || record.learned_at != Some(learned_at)
+                || record.body_bytes != Some(body.len())
+            {
+                narrowing.add_suppressed(1);
+                continue;
+            }
+            Some(projection::project_entity_parts(
+                &record.id, kind, learned_at, &body, view,
+            ))
         };
-
         records.push(CoreMemoryTimelineRecord {
             id: record.id.to_hex(),
             state: core_memory_timeline_state(record.state),
@@ -468,8 +529,14 @@ pub(crate) fn core_memory_timeline_response(
             item,
         });
     }
-
+    let visible: std::collections::BTreeSet<_> =
+        records.iter().map(|record| record.id.clone()).collect();
+    for record in &mut records {
+        record.supersedes.retain(|id| visible.contains(id));
+        record.superseded_by.retain(|id| visible.contains(id));
+    }
     Ok(CoreMemoryTimelineResponse {
+        narrowing,
         anchor_id: timeline.anchor.to_hex(),
         records,
     })

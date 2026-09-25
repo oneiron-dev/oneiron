@@ -230,7 +230,7 @@ fn persist_turns(
     turns: &[ParsedTranscriptTurn],
     arrived_at_ms: u64,
 ) -> crate::Result<Vec<crate::EntityId>> {
-    let conversation_ref = crate::EntityId::now();
+    let conversation_ref = vault.store.clock.entity_id()?;
     vault
         .batch_in()
         .put(
@@ -246,7 +246,7 @@ fn persist_turns(
         .apply(wtxn)?;
     let mut ids = Vec::with_capacity(turns.len());
     for turn in turns {
-        let id = crate::EntityId::now();
+        let id = vault.store.clock.entity_id()?;
         // GATE-10 keys carry the ROLE, never the display name: the shared
         // turn-body decoder is first-wins across the `speaker|spkr` alias set,
         // so a human label parked in `speaker` would decode as the turn's role
@@ -321,7 +321,7 @@ pub fn seed_file_drop_machine_fixture(
     let manifest = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("schema_version"),
-            rmpv::Value::from("1.1"),
+            rmpv::Value::from(crate::gate::POLICY_SCHEMA_VERSION),
         ),
         (
             rmpv::Value::from("pack_id"),
@@ -363,28 +363,7 @@ pub fn seed_file_drop_machine_fixture(
             ]),
         ),
     ]);
-    let mut body = Vec::new();
-    rmpv::encode::write_value(&mut body, &manifest)
-        .map_err(|_| crate::Error::InvariantViolation("fixture policy manifest encode"))?;
-    let id = crate::EntityId::now();
-    let mut raw = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + body.len());
-    raw.push(crate::registry::ENTITY_TYPE_POLICY_MANIFEST);
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&body);
-    vault.with_write_txn(|wtxn| {
-        vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
-        vault.store.type_index.put(
-            wtxn,
-            &crate::store::Store::encode_type_key(
-                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
-                &id,
-            ),
-            &[],
-        )?;
-        Ok(())
-    })?;
+    put_calendar_test_policy(vault, &manifest, at)?;
     Ok(actor)
 }
 
@@ -403,7 +382,10 @@ pub fn permit_imported_calendar_source_for_test(
     use rmpv::Value;
 
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("calendar-ingest-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (
@@ -431,28 +413,83 @@ pub fn permit_imported_calendar_source_for_test(
             )]),
         ),
     ]);
+    put_calendar_test_policy(vault, &manifest, 1)
+}
+
+/// Grants only an actor's calendar fixture reads. This contributes no write,
+/// approval, predicate, ceiling or source authority and does not rewrite defaults.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn permit_calendar_read_for_test(
+    vault: &crate::Vault,
+    actor: crate::EntityId,
+) -> crate::Result<()> {
+    use rmpv::Value;
+    let manifest = Value::Map(vec![
+        (
+            "schema_version".into(),
+            crate::gate::POLICY_SCHEMA_VERSION.into(),
+        ),
+        ("pack_id".into(), "calendar-read-test".into()),
+        ("pack_version".into(), "v1".into()),
+        (
+            "min_engine_version".into(),
+            env!("CARGO_PKG_VERSION").into(),
+        ),
+        ("defaults".into(), Value::Map(Vec::new())),
+        ("rules".into(), Value::Array(Vec::new())),
+        ("actor_ceilings".into(), Value::Array(Vec::new())),
+        (
+            "scoped_grants".into(),
+            Value::Array(vec![Value::Map(vec![
+                ("actor_ref".into(), actor.to_hex().into()),
+                ("actor_class".into(), "human".into()),
+                ("effector".into(), "core:read".into()),
+                (
+                    "scope".into(),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::read_preset(),
+                    )?,
+                ),
+                ("receipt_required".into(), Value::Boolean(false)),
+            ])]),
+        ),
+    ]);
+    put_calendar_test_policy(vault, &manifest, 1)
+}
+
+#[cfg(feature = "test-support")]
+fn put_calendar_test_policy(
+    vault: &crate::Vault,
+    manifest: &rmpv::Value,
+    at: u64,
+) -> crate::Result<()> {
     let mut body = Vec::new();
-    rmpv::encode::write_value(&mut body, &manifest)
+    rmpv::encode::write_value(&mut body, manifest)
         .map_err(|_| crate::Error::InvariantViolation("fixture policy manifest encode"))?;
     let id = crate::EntityId::now();
-    let at = 1_u64;
-    let mut raw = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + body.len());
-    raw.push(crate::registry::ENTITY_TYPE_POLICY_MANIFEST);
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&at.to_be_bytes());
-    raw.extend_from_slice(&body);
     vault.with_write_txn(|wtxn| {
-        vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
-        vault.store.type_index.put(
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
             wtxn,
-            &crate::store::Store::encode_type_key(
-                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
-                &id,
-            ),
-            &[],
-        )?;
-        Ok(())
+            vec![crate::batch::BatchOp::Put {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                occurred: crate::temporal::TimeRange { start: at, end: at },
+                learned_at: at,
+                data: body,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            true,
+            true,
+        )
     })
 }
 

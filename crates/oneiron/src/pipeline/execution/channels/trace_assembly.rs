@@ -16,6 +16,7 @@ use std::collections::HashMap;
 
 /// Every face the trace records, plus the fork-hash inputs.
 pub(super) struct TraceInputs<'a> {
+    pub(super) derivation_owner: Option<crate::federation::derivation::DerivationOwner>,
     /// The run's final scores, after budget and truncation.
     pub(super) scores: &'a [ScoredEntity],
     pub(super) trace_channels: Vec<RetrievalTraceChannelRecord>,
@@ -67,6 +68,16 @@ impl PipelineBuilder<'_> {
             hash.update(fork_hash);
             hash.update(identity);
             hash.finalize().into()
+        } else {
+            fork_hash
+        };
+        let fork_hash = if let Some(owner) = inputs.derivation_owner {
+            crate::federation::derivation::sealed_digest(
+                owner,
+                crate::federation::derivation::DerivationKind::Replay,
+                b"retrieval-trace-v1",
+                &fork_hash,
+            )
         } else {
             fork_hash
         };

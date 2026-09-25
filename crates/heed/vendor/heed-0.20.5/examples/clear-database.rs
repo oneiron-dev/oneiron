@@ -34,7 +34,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     db.put(&mut wtxn, "And I come back", "to test things")?;
 
     let mut iter = db.iter(&wtxn)?;
-    assert_eq!(iter.next().transpose()?, Some(("And I come back", "to test things")));
+    assert_eq!(
+        iter.next().transpose()?,
+        Some(("And I come back", "to test things"))
+    );
     assert_eq!(iter.next().transpose()?, None);
 
     drop(iter);
@@ -42,7 +45,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let rtxn = env.read_txn()?;
     let mut iter = db.iter(&rtxn)?;
-    assert_eq!(iter.next().transpose()?, Some(("And I come back", "to test things")));
+    assert_eq!(
+        iter.next().transpose()?,
+        Some(("And I come back", "to test things"))
+    );
     assert_eq!(iter.next().transpose()?, None);
 
     Ok(())

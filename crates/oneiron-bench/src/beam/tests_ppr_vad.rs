@@ -43,6 +43,7 @@ pub(crate) mod tests {
         manifest_json["arms"] = serde_json::json!(["ppr_vad_sweep"]);
         let mut competitor = manifest_json["competitors"][0].clone();
         competitor["arm"] = serde_json::json!("ppr_vad_sweep");
+        competitor["card"]["axes"]["retrievalK"] = serde_json::json!(15);
         competitor["card"]["comparator"]["baselineCompetitorId"] =
             competitor["competitorId"].clone();
         manifest_json["competitors"] = serde_json::json!([competitor]);
@@ -588,6 +589,8 @@ pub(crate) mod tests {
             fixture_class: FixtureClass::EvidenceSupported,
             offline_amortized_cost: not_applicable_cost(),
             competitors: Vec::new(),
+            appendix: Vec::new(),
+            dropped: Vec::new(),
             arms: vec![ArmReport {
                 arm: ArmKind::PprVadSweep,
                 outcome: ArmOutcome::RetrievalSweep {

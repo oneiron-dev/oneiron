@@ -153,6 +153,7 @@ fn authority_and_corpus_conjoin_before_channel_limits_and_trace() -> Result<()> 
 #[test]
 fn authority_and_corpus_both_fork_equal_candidate_traces() -> Result<()> {
     let (_tmp, vault) = open_test_vault();
+    install_grant(&vault, Value::Nil)?;
     put_claim(&vault, entity_id(0x43), &claim())?;
     let a = CorpusId::from_entity_id(entity_id(0xE4));
     let b = CorpusId::from_entity_id(entity_id(0xE5));

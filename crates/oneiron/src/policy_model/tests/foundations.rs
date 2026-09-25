@@ -18,6 +18,7 @@ fn decision_vocabulary_is_exactly_four_arms() {
             PolicyClassifyDecision::Warn => "warn",
             PolicyClassifyDecision::Block => "block",
             PolicyClassifyDecision::RouteToHelp => "route-to-help",
+            PolicyClassifyDecision::Hold => "hold",
         };
         assert_eq!(decision.as_str(), expected);
     }

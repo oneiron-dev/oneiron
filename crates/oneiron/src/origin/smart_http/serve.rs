@@ -19,8 +19,8 @@ use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
 use super::paths::{
-    DOOR_WINDOW_TIMEOUT, SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, now_secs,
-    origin_door_root, origin_repo_dir, origin_serving_root, serve_failed,
+    DOOR_WINDOW_TIMEOUT, SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root,
+    origin_repo_dir, origin_serving_root, serve_failed,
 };
 use super::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
@@ -29,6 +29,7 @@ use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::lock_repository;
+use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 
 /// Where a serve invocation writes its response.
 ///
@@ -120,14 +121,53 @@ pub fn serve_with_provenance(
             "a new exchange cannot reuse external evidence",
         ));
     }
+    serve_request(vault, repo_name, request, seam, None, body, sink)
+}
+
+/// Serves using a lease supplied by trusted host configuration, not by the
+/// pusher or a CGI/header field. A configured origin refuses ordinary `serve`.
+/// The coordinator pins this epoch from admission through durable landing.
+pub fn serve_with_authority(
+    vault: &Arc<Vault>,
+    repo_name: &str,
+    request: &ServeRequest,
+    seam: DoorSeam,
+    authority: &OriginAuthorityLease,
+    body: &mut (dyn Read + Send),
+    sink: &mut dyn ServeSink,
+) -> Result<ServeReport> {
+    serve_request(vault, repo_name, request, seam, Some(authority), body, sink)
+}
+
+fn serve_request(
+    vault: &Arc<Vault>,
+    repo_name: &str,
+    request: &ServeRequest,
+    seam: DoorSeam,
+    authority: Option<&OriginAuthorityLease>,
+    body: &mut (dyn Read + Send),
+    sink: &mut dyn ServeSink,
+) -> Result<ServeReport> {
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
+    let mut tickets = request
+        .query_string
+        .split('&')
+        .filter_map(|pair| pair.strip_prefix("checkout-lease="));
+    if let Some(ticket) = tickets.next() {
+        if tickets.next().is_some() || seam != DoorSeam::Landed {
+            return Err(serve_failed("invalid checkout lease route"));
+        }
+        let principal = request
+            .remote_user
+            .as_deref()
+            .ok_or_else(|| serve_failed("checkout lease requires a registered principal"))?;
+        CredentialDoorService::new(Arc::clone(vault))
+            .checkout_credential(ticket, principal, &unpinned_repo_ref(&repo_dir))
+            .map_err(|error| super::paths::door_refused(&error))?;
+    }
     let hooks = DoorHooksDir::materialize(&origin_door_root(vault)?)?;
     let command = ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?;
-    let admission = stamp_admission(vault, request, &repo_dir, seam)?;
-    if let Some(stamp) = admission.as_ref() {
-        vault.record_receive_pack_admission(&repo_dir, stamp, seam)?;
-    }
     let coordinator = if request.is_receive_pack() {
         Some(lock_repository(&repo_common_dir(&repo_dir)?)?)
     } else {
@@ -135,6 +175,13 @@ pub fn serve_with_provenance(
         // a push and neither delays one.
         None
     };
+    // The same coordinator guards epoch cutover. Stamp and persist only after
+    // acquiring it, so an old accepted request cannot cross an epoch change.
+    let mut admission = stamp_admission(vault, request, &repo_dir, seam)?;
+    if let Some(stamp) = admission.as_mut() {
+        stamp.origin_authority = authority.map(OriginAuthorityStamp::from_lease);
+        vault.record_receive_pack_admission(&repo_dir, stamp, seam)?;
+    }
     // This also runs for advertisements and no-op retries. A crash after the
     // backend effect must not leave a ref hidden merely because no new hook runs.
     vault.reconcile_receive_pack_operations(&repo_dir)?;
@@ -229,18 +276,49 @@ pub(super) fn stamp_admission(
         .ok_or_else(|| serve_failed("receive-pack requires a registered principal"))?;
     let repo = unpinned_repo_ref(repo_dir);
     let peer_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    let now = now_secs();
+    let now = vault.now_recorded_at();
+    let operation_id = vault.new_entity_id()?;
     let stamp = match seam {
         DoorSeam::Noop => {
-            NoopDoorHook.admit_receive_pack(None, principal_ref, &repo, peer_addr, now)?
+            if request
+                .query_string
+                .split('&')
+                .any(|part| part.starts_with("checkout-lease="))
+            {
+                return Err(serve_failed("checkout lease requires the credential door"));
+            }
+            NoopDoorHook.admit_receive_pack(
+                operation_id,
+                None,
+                principal_ref,
+                &repo,
+                peer_addr,
+                now,
+            )?
         }
-        DoorSeam::Landed => CredentialDoorService::new(Arc::clone(vault)).admit_receive_pack(
-            None,
-            principal_ref,
-            &repo,
-            peer_addr,
-            now,
-        )?,
+        DoorSeam::Landed => {
+            let door = CredentialDoorService::new(Arc::clone(vault));
+            let mut tickets = request
+                .query_string
+                .split('&')
+                .filter_map(|part| part.strip_prefix("checkout-lease="));
+            let ticket = tickets.next();
+            if tickets.next().is_some() {
+                return Err(serve_failed("ambiguous checkout lease"));
+            }
+            let credential = ticket
+                .map(|ticket| door.checkout_credential(ticket, principal_ref, &repo))
+                .transpose()
+                .map_err(|error| super::paths::door_refused(&error))?;
+            door.admit_receive_pack(
+                operation_id,
+                credential.as_ref(),
+                principal_ref,
+                &repo,
+                peer_addr,
+                now,
+            )?
+        }
     };
     Ok(Some(stamp))
 }

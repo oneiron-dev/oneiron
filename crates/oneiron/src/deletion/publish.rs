@@ -320,6 +320,7 @@ impl Vault {
         if let Err(refusal) =
             crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
+                .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
         {
             self.discard_staged_deletion_gate_recovery_in_txn(&mut wtxn, id, value, gate_decision)?;
             self.withdraw_own_pending_tombstone_in_txn(&mut wtxn, window_key.as_str(), id, value)?;
@@ -378,7 +379,8 @@ impl Vault {
     ) -> Result<bool> {
         Ok(
             crate::sync::window::history_free_window_required(self, window_key)?
-                || doc.is_shallow(),
+                || doc.is_shallow()
+                || crate::sync::note::is_native(doc),
         )
     }
 
@@ -439,6 +441,7 @@ impl Vault {
             // SAME txn that stages it — a revocation landing since the gate ran
             // stops the deletion before it becomes remote truth.
             reverify_deletion_authority_before_publication(gate, wtxn)?;
+            crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
             self.store.put_pending_deletion_gate_decision_in_txn(
                 wtxn,
                 decision,

@@ -33,48 +33,16 @@ impl<'vault> ScopedRead<'vault> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
     ) -> Result<bool> {
-        if filter.deny_all {
-            return Ok(false);
-        }
-        let Some(raw) = self.entities().get(txn, id.as_bytes())? else {
-            return Ok(false);
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if self
-            .vault
-            .store
-            .validate_entity_type(header.entity_type)
-            .is_err()
-            || filter
-                .entity_types
-                .as_ref()
-                .is_some_and(|types| !types.contains(&header.entity_type))
-        {
-            return Ok(false);
-        }
-        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            return self.note_readable_in(txn, &raw[ENTITY_METADATA_HEADER_LEN..]);
-        }
-        if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(true);
-        }
-        let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        let facets = self.claim_facet_refs_in(txn, id)?;
-        Ok(crate::pipeline::retrieval_claim_allowed(filter, &body)
-            && crate::gate::scoped_read_claim_allowed(policy, &self.actor_key, &body, &facets))
+        // Audience, NOTE privacy, relationship grants, credential scope and
+        // type/scalar ceilings all live in the shared row predicate; graph
+        // traversal must not fork it.
+        self.is_entity_readable_with_filter_in(txn, policy, id, filter)
     }
 }
 
 impl crate::ppr::PprNodeVisibility for RetrievalVisibility<'_, '_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-        if !self
-            .scoped
-            .is_entity_retrievable_with_policy_in(txn, &self.policy, &self.filter, id)?
-        {
-            return Ok(false);
-        }
         self.scoped
-            .is_entity_readable_with_policy_in(txn, &self.policy, id)
+            .is_entity_retrievable_with_policy_in(txn, &self.policy, &self.filter, id)
     }
 }

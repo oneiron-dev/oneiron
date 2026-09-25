@@ -350,6 +350,11 @@ fn terminal_spawn_cancel_is_uneffected_and_preserves_terminal_state() {
         .expect("dispatch parent")
     {
         AgentDispatchOutcome::Dispatched(status) => status,
+        AgentDispatchOutcome::ProposedWiden(_)
+        | AgentDispatchOutcome::WorkflowDispatched(_)
+        | AgentDispatchOutcome::WorkflowExisting(_) => {
+            panic!("ordinary dispatch unexpectedly proposed widening")
+        }
         AgentDispatchOutcome::Existing(_) => panic!("parent dispatch must be fresh"),
     };
     let child = match dispatcher
@@ -357,6 +362,11 @@ fn terminal_spawn_cancel_is_uneffected_and_preserves_terminal_state() {
         .expect("dispatch child")
     {
         AgentDispatchOutcome::Dispatched(status) => status,
+        AgentDispatchOutcome::ProposedWiden(_)
+        | AgentDispatchOutcome::WorkflowDispatched(_)
+        | AgentDispatchOutcome::WorkflowExisting(_) => {
+            panic!("ordinary dispatch unexpectedly proposed widening")
+        }
         AgentDispatchOutcome::Existing(_) => panic!("child dispatch must be fresh"),
     };
     let queue = AttemptQueue::new(&vault);
@@ -542,6 +552,11 @@ fn tasks_cancel_owned_agent_dispatch_spawn_still_effects_under_auto() {
         .expect("dispatch parent")
     {
         AgentDispatchOutcome::Dispatched(status) => status,
+        AgentDispatchOutcome::ProposedWiden(_)
+        | AgentDispatchOutcome::WorkflowDispatched(_)
+        | AgentDispatchOutcome::WorkflowExisting(_) => {
+            panic!("ordinary dispatch unexpectedly proposed widening")
+        }
         AgentDispatchOutcome::Existing(_) => panic!("fresh parent"),
     };
     let child = match dispatcher
@@ -549,6 +564,11 @@ fn tasks_cancel_owned_agent_dispatch_spawn_still_effects_under_auto() {
         .expect("dispatch child")
     {
         AgentDispatchOutcome::Dispatched(status) => status,
+        AgentDispatchOutcome::ProposedWiden(_)
+        | AgentDispatchOutcome::WorkflowDispatched(_)
+        | AgentDispatchOutcome::WorkflowExisting(_) => {
+            panic!("ordinary dispatch unexpectedly proposed widening")
+        }
         AgentDispatchOutcome::Existing(_) => panic!("fresh child"),
     };
     let queue = AttemptQueue::new(&vault);

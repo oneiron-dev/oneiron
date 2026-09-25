@@ -49,9 +49,13 @@ pub(crate) fn bind_token(params: &Value) -> Result<String, ProtocolError> {
     #[serde(deny_unknown_fields)]
     struct Bind {
         token: String,
+        binding: crate::auth::BindingProof,
     }
     serde_json::from_value::<Bind>(params.clone())
-        .map(|bind| bind.token)
+        .map(|bind| {
+            let _ = bind.binding;
+            bind.token
+        })
         .map_err(|_| ProtocolError::RpcNoPrincipal)
 }
 
@@ -69,6 +73,7 @@ fn rpc_error(request_id: u64, error: AppError) -> Result<Vec<Vec<u8>>, ProtocolE
 /// Both identity claims come from the credential, exactly as on the HTTP facade.
 fn bound_memory<'a>(vault: &'a oneiron::Vault, auth: &CoreAuth) -> Result<Memory<'a>, AppError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let principal = auth.principal_ref().ok_or_else(|| {
         AppError::forbidden(
             "facade routes bind writes to an authenticated principal",
@@ -113,6 +118,7 @@ pub(crate) fn bound_rpc(
         }
         // HTTP order: scope, request/limit validation, identity, engine call.
         auth.require(CoreScope::Read)?;
+        auth.require_unrestricted_record_scope()?;
         let read = Read::parse(&request.method, request.params)?;
         let memory = bound_memory(vault, auth)?;
         read.run(&memory)
@@ -197,6 +203,7 @@ impl SubRequest {
 }
 
 pub(crate) mod connection;
+mod membership;
 mod source;
 
 /// Opaque Loro cursor plus a container-batch ordinal. A single Loro commit

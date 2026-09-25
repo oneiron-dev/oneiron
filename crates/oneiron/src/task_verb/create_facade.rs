@@ -1,3 +1,4 @@
+use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
 use crate::agent_dispatch::{
@@ -10,13 +11,12 @@ use crate::error::Error;
 use crate::gate::PolicyApprovalCeiling;
 use crate::habit::TaskRole;
 use crate::human_task::{register_human_followup_in_txn, resolve_native_human_route};
-use crate::memory::{Memory, MemoryResult, facade_provenance, verify_actor_binding};
+use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
 };
 use crate::temporal::TimeRange;
-use crate::unix_seconds_now;
 
 use super::consts::{
     TASK_CREATE_PROPOSAL_PREDICATE, TASK_REALIZE_ATTEMPT_KIND, TASK_VERB_BODY_SCHEMA_VERSION,
@@ -31,7 +31,7 @@ use super::create_validation::{
 use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
 use super::terminal_state::TaskExecutionState;
-use super::verb_kind::{TaskAssignee, TasksVerb};
+use super::verb_kind::TaskAssignee;
 use super::wire_encode::{canonical_bytes, encode_task_realization_input, encode_task_verb_body};
 
 /// Canonical bytes of one create-proposal payload with its `created_at`
@@ -86,19 +86,14 @@ impl Memory<'_> {
         spec: &TaskCreateSpec,
         rate_limit: TaskCreateRateLimit,
     ) -> MemoryResult<TaskCreateReceipt> {
-        let verb = task_verb_contract(TasksVerb::Create);
+        let verb = task_verb_contract(AgentVerb::TasksCreate);
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let now = spec.now.unwrap_or_else(unix_seconds_now);
-        let rate_now = unix_seconds_now();
+        let now = spec.now.unwrap_or_else(|| self.vault().now_recorded_at());
+        let rate_now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
         // The typed shape is settled BEFORE any write transaction opens: an
         // invalid consult never reaches the TASK write, so a rejected request
         // leaves no partial entity and burns no rate slot.
-        if spec.assignee == Some(TaskAssignee::AnswerHolders) {
-            return Err(crate::memory::MemoryError::bad_request(
-                "answer-holder tasks use tasks.ask",
-            ));
-        }
         let validated = validate_task_create(self.vault(), spec, now)?;
         let direct = self.with_verified_actor_write_txn(|wtxn| {
             let ceiling =
@@ -228,7 +223,30 @@ impl Memory<'_> {
         provenance: &Value,
         now: u64,
     ) -> MemoryResult<EntityId> {
-        let task_ref = EntityId::now();
+        self.mint_task_at_in_txn(
+            wtxn,
+            (self.vault().store.clock.entity_id()?, owner_ref),
+            validated,
+            label,
+            provenance,
+            now,
+        )
+    }
+
+    /// Engine-selected id for an idempotent ask member. Never a public raw door.
+    pub(super) fn mint_task_at_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        identity: (EntityId, EntityId),
+        validated: &ValidatedTaskCreate,
+        label: Option<String>,
+        provenance: &Value,
+        now: u64,
+    ) -> MemoryResult<EntityId> {
+        let (task_ref, owner_ref) = identity;
+        if self.vault().get_raw_in(&*wtxn, &task_ref)?.is_some() {
+            return Err(MemoryError::bad_request("task mint id is already occupied"));
+        }
         let body = encode_task_verb_body(TaskVerbBody {
             role: TaskRole::Task.role_byte(),
             schema_version: TASK_VERB_BODY_SCHEMA_VERSION,
@@ -296,9 +314,6 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<TaskRouteOutcome> {
         match validated.assignee {
-            Some(TaskAssignee::AnswerHolders) => Err(crate::memory::MemoryError::bad_request(
-                "asks have no realizing attempt",
-            )),
             // Absent assignee is the schema-v1 representation of the Dreamer
             // lane and routes identically — old rows are never rewritten.
             None | Some(TaskAssignee::Dreamer) => {
@@ -321,7 +336,15 @@ impl Memory<'_> {
                 // Dispatched and deduped-existing are ONE idempotent outcome: a
                 // retried route returns the attempt already realizing the task.
                 let (AgentDispatchOutcome::Dispatched(status)
-                | AgentDispatchOutcome::Existing(status)) = outcome;
+                | AgentDispatchOutcome::Existing(status)) = outcome
+                else {
+                    return Err(crate::error::Error::Artifact(
+                        crate::error::ArtifactError::InvalidAgentDispatchInput(
+                            "root TASK dispatch unexpectedly proposed widening",
+                        ),
+                    )
+                    .into());
+                };
                 Ok(TaskRouteOutcome::AgentDispatch {
                     attempt_ref: status.attempt.id,
                     agent_def_ref,
@@ -331,6 +354,11 @@ impl Memory<'_> {
             // reach an executor on another machine, so none is minted.
             Some(TaskAssignee::Peer { actor_ref }) => {
                 Ok(TaskRouteOutcome::PeerSyncedOnly { actor_ref })
+            }
+            // A child is already running. The addressed TASK is its inbox input,
+            // not permission to spawn a second executor for the same child.
+            Some(TaskAssignee::Child { actor_ref }) => {
+                Ok(TaskRouteOutcome::ChildAddressed { actor_ref })
             }
             // A person is not a worker. The TASK row and its follow-up cursor
             // commit together and NOTHING else is minted: no `tasks.realize`

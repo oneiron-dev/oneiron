@@ -34,7 +34,7 @@
 use crate::Vault;
 use crate::error::Result;
 use crate::gate;
-use crate::store::{GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord};
+use crate::store::{GateDecisionRecord, GateSystemNoticeRecord};
 
 use super::planes::PolicyPlane;
 use super::request::PolicyClassifyRequest;
@@ -78,13 +78,27 @@ impl Vault {
         reason_codes: Vec<String>,
         system_notices: Vec<GateSystemNoticeRecord>,
     ) -> Result<String> {
-        let decision_id = GateDecisionId::now();
+        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+        let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
+        let mut reason_codes = reason_codes;
+        if verdict.decision == super::PolicyClassifyDecision::Hold {
+            let queue_ref = self.queue_policy_hold_in_txn(
+                wtxn,
+                request,
+                verdict,
+                format!("gate:{}", decision_id.to_hex()),
+            )?;
+            reason_codes.push(format!(
+                "gate.policy_model.hold_queued.{}",
+                queue_ref.rsplit(':').next().expect("queue token")
+            ));
+        }
         self.store.append_gate_decision_in_txn(
             wtxn,
             &GateDecisionRecord {
                 version: 0,
                 decision_id,
-                created_at: crate::unix_seconds_now(),
+                created_at: mutation_recorded_at,
                 outcome: outcome.to_owned(),
                 reason_codes,
                 receipt_reasons: Vec::new(),

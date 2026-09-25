@@ -1,0 +1,86 @@
+{
+  "classification": "native_diagnostic_not_accepted_alignment",
+  "transcript": "こんにちは。これは音声のテストです。青いノートを持ってきてください。",
+  "model": "Qwen/Qwen3-ForcedAligner-0.6B",
+  "revision": "c7cbfc2048c462b0d63a45797104fc9db3ad62b7",
+  "words": [
+    {
+      "text": "こんにちは",
+      "start_time": 0.08,
+      "end_time": 0.88
+    },
+    {
+      "text": "これ",
+      "start_time": 1.12,
+      "end_time": 1.36
+    },
+    {
+      "text": "は",
+      "start_time": 1.36,
+      "end_time": 1.6
+    },
+    {
+      "text": "音声",
+      "start_time": 1.6,
+      "end_time": 2.16
+    },
+    {
+      "text": "の",
+      "start_time": 2.16,
+      "end_time": 2.32
+    },
+    {
+      "text": "テスト",
+      "start_time": 2.32,
+      "end_time": 2.72
+    },
+    {
+      "text": "です",
+      "start_time": 2.72,
+      "end_time": 3.04
+    },
+    {
+      "text": "青い",
+      "start_time": 3.2,
+      "end_time": 3.52
+    },
+    {
+      "text": "ノート",
+      "start_time": 3.52,
+      "end_time": 4.0
+    },
+    {
+      "text": "を",
+      "start_time": 4.0,
+      "end_time": 4.0
+    },
+    {
+      "text": "持っ",
+      "start_time": 4.0,
+      "end_time": 4.16
+    },
+    {
+      "text": "て",
+      "start_time": 4.16,
+      "end_time": 4.48
+    },
+    {
+      "text": "き",
+      "start_time": 4.48,
+      "end_time": 4.56
+    },
+    {
+      "text": "て",
+      "start_time": 4.56,
+      "end_time": 4.72
+    },
+    {
+      "text": "ください",
+      "start_time": 4.72,
+      "end_time": 5.28
+    }
+  ],
+  "refusal": "InvalidAlignmentOutput",
+  "cause": "native returned を with identical 4.0s start/end",
+  "e1_e3_qualified": false
+}

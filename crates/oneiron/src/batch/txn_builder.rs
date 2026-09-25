@@ -28,6 +28,7 @@ pub struct TxnBatchBuilder<'a> {
     ops: Vec<BatchOp>,
     validation_error: Option<Error>,
     origin: BaseWriteOrigin<'a>,
+    mask: Option<EntityId>,
     #[cfg(feature = "sync")]
     import_tier: crate::sync::client::ImportTier,
     #[cfg(feature = "sync")]
@@ -41,11 +42,53 @@ impl<'a> TxnBatchBuilder<'a> {
             ops: Vec::new(),
             validation_error: None,
             origin: BaseWriteOrigin::Ordinary,
+            mask: None,
             #[cfg(feature = "sync")]
             import_tier: crate::sync::client::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]
             federated_puts: Vec::new(),
         }
+    }
+
+    /// Sets the active mask every NOTE and ASSET this batch births is
+    /// stamped with. It must be a stored FACET row.
+    pub(crate) fn mask(mut self, mask: Option<EntityId>) -> Self {
+        self.mask = mask;
+        self
+    }
+
+    /// Stages phonetic codes in the caller-owned transaction.
+    pub(crate) fn phonetic(mut self, id: &EntityId, codes: &[&str]) -> Self {
+        self.ops.push(BatchOp::Phonetic {
+            id: *id,
+            codes: codes.iter().map(|code| (*code).to_owned()).collect(),
+        });
+        self
+    }
+
+    /// Stages a vector without acquiring a second writer.
+    pub fn vector(mut self, id: &EntityId, vector: &[f32]) -> Self {
+        if self.validation_error.is_none() {
+            self.validation_error = Error::invalid_vector_component(vector);
+        }
+        self.ops.push(BatchOp::Vector {
+            id: *id,
+            vector: vector.to_vec(),
+            pending_embedding_token: None,
+        });
+        self
+    }
+
+    /// Stages lexical text in the same transaction as its owning record/document.
+    pub fn text(mut self, id: &EntityId, fields: &[(&str, &str)]) -> Self {
+        self.ops.push(BatchOp::Text {
+            id: *id,
+            fields: fields
+                .iter()
+                .map(|(f, v)| ((*f).to_owned(), (*v).to_owned()))
+                .collect(),
+        });
+        self
     }
 
     /// The off-record promotion entry (ARCH-0052 D4, ONE-1730).
@@ -72,11 +115,18 @@ impl<'a> TxnBatchBuilder<'a> {
             ops,
             validation_error: None,
             origin: BaseWriteOrigin::PromoteReplay(grant),
+            mask: None,
             #[cfg(feature = "sync")]
             import_tier: crate::sync::client::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]
             federated_puts: Vec::new(),
         }
+    }
+
+    /// Queues a scoped deletion in the caller-owned transaction.
+    pub(crate) fn delete(mut self, id: &EntityId) -> Self {
+        self.ops.push(BatchOp::Delete { id: *id });
+        self
     }
 
     /// Adds an entity put operation.
@@ -132,6 +182,31 @@ impl<'a> TxnBatchBuilder<'a> {
             data,
             RawPutDoor::Internal,
         )
+    }
+
+    /// Engine-authored TASK facts cannot pass a raw put, which refuses their
+    /// reserved role. The materialization checks still run at apply time.
+    pub(crate) fn put_task_fact(mut self, id: &EntityId, data: &[u8], at: u64) -> Self {
+        if self.validation_error.is_none() {
+            self.validation_error = match crate::habit::task_role_from_body_bytes(data) {
+                Ok(crate::habit::TaskRole::AuthorityFact) => None,
+                Ok(_) => Some(Error::Record(crate::error::RecordError::InvalidTaskBody(
+                    "task fact requires AuthorityFact role",
+                ))),
+                Err(error) => Some(error),
+            };
+        }
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_TASK,
+            occurred: TimeRange { start: at, end: at },
+            learned_at: at,
+            data: data.to_vec(),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        });
+        self
     }
 
     /// The ONE-1686 witness MESSAGE put: the only door that stages an
@@ -652,7 +727,7 @@ impl<'a> TxnBatchBuilder<'a> {
             wtxn,
             this.ops,
             text_index_trusted,
-            gate_mode,
+            gate_mode.with_birth_mask(this.mask),
             this.origin,
         )?;
         // Queue only after admitted apply. The owner checks the final body and

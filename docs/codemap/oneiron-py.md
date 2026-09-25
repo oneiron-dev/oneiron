@@ -12,4 +12,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `build.rs` | src | s | — | — | Asserts the PyPI major still equals the engine's `MEMORY_PACK_VERSION` |
-| `src/lib.rs` | src | s | — | — | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) |
+| `src/lib.rs` | src | m | — | — | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) |

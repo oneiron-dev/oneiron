@@ -1,9 +1,7 @@
-//! The per-process MEMORIES cursor store, keyed by vault, principal scope and session.
+//! Server-owned MEMORIES cursors and session read sets, keyed by principal and session.
 
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
-use std::sync::OnceLock;
-use tokio::sync::Mutex;
 
 use super::super::CoreContextPackEvidence;
 
@@ -16,16 +14,29 @@ pub(crate) const MEMORIES_CURSOR_LAST_RESULT_IDS_MAX: usize = 256;
 pub(crate) const SHARED_SESSION_SCOPE_IDS: &[&str] =
     &["bearer", "dev-bearer", "default", "legacy-shared-secret"];
 
-pub(crate) static MEMORIES_CURSOR_STORE: OnceLock<Mutex<MemoriesCursorStore>> = OnceLock::new();
-
 #[derive(Default)]
 pub(crate) struct MemoriesCursorStore {
     pub(crate) entries: BTreeMap<String, oneiron::MemoriesCursor>,
+    pub(crate) read_sets: BTreeMap<String, oneiron::context_board::SessionReadSet>,
     active_sessions: BTreeMap<String, String>,
     insertion_order: VecDeque<String>,
 }
 
 impl MemoriesCursorStore {
+    pub(crate) fn session_reads(
+        &mut self,
+        scope: &str,
+        session: Option<&str>,
+    ) -> &mut oneiron::context_board::SessionReadSet {
+        let cursor = match session {
+            Some(session) => self.current(session_key(scope, session), session),
+            None => self.current_for_scope(scope.to_owned(), session_key(scope, scope), scope),
+        };
+        let key = session_key(scope, &cursor.session_id);
+        self.active_sessions.insert(scope.to_owned(), key.clone());
+        self.read_sets.entry(key).or_default()
+    }
+
     pub(crate) fn current(&mut self, key: String, session_id: &str) -> oneiron::MemoriesCursor {
         if let Some(state) = self.entries.get(&key) {
             return state.clone();
@@ -91,10 +102,12 @@ impl MemoriesCursorStore {
         while self.entries.len() >= MEMORIES_CURSOR_MAX_ENTRIES {
             let Some(key) = self.insertion_order.pop_front() else {
                 self.entries.clear();
+                self.read_sets.clear();
                 self.active_sessions.clear();
                 break;
             };
             if self.entries.remove(&key).is_some() {
+                self.read_sets.remove(&key);
                 self.active_sessions
                     .retain(|_, active_key| active_key != &key);
                 break;
@@ -103,45 +116,62 @@ impl MemoriesCursorStore {
     }
 }
 
-pub(crate) fn memories_cursor_store() -> &'static Mutex<MemoriesCursorStore> {
-    MEMORIES_CURSOR_STORE.get_or_init(|| Mutex::new(MemoriesCursorStore::default()))
-}
-
 pub(crate) fn memories_cursor_key(
     vault: &oneiron::Vault,
     scope_id: &str,
     session_id: &str,
 ) -> String {
-    format!("{vault:p}:{scope_id}:{session_id}")
+    let _ = vault; // Server ownership is the vault boundary; keys cannot alias through pointers.
+    session_key(scope_id, session_id)
 }
 
 pub(crate) fn memories_cursor_scope_key(vault: &oneiron::Vault, scope_id: &str) -> String {
-    format!("{vault:p}:{scope_id}")
+    let _ = vault;
+    scope_id.to_owned()
 }
 
 pub(crate) async fn current_memories_cursor(
-    vault: &oneiron::Vault,
+    server: &crate::server::SyncServer,
     scope_id: &str,
 ) -> oneiron::MemoriesCursor {
+    let vault = &server.vault;
     let scope_key = memories_cursor_scope_key(vault, scope_id);
     let default_key = memories_cursor_key(vault, scope_id, scope_id);
-    memories_cursor_store()
+    server
+        .memories_cursors
         .lock()
         .await
         .current_for_scope(scope_key, default_key, scope_id)
 }
 
 pub(crate) async fn advance_memories_cursor(
-    vault: &oneiron::Vault,
+    server: &crate::server::SyncServer,
     scope_id: &str,
     session_id: &str,
     pack: &oneiron::ContextPack,
     evidence: &CoreContextPackEvidence,
-) -> oneiron::MemoriesCursor {
+    read: &oneiron::claim::ScopedRead<'_>,
+) -> oneiron::Result<oneiron::MemoriesCursor> {
+    let vault = &server.vault;
     let scope_key = memories_cursor_scope_key(vault, scope_id);
     let key = memories_cursor_key(vault, scope_id, session_id);
-    memories_cursor_store()
-        .lock()
-        .await
-        .advance(scope_key, key, session_id, pack, evidence)
+    let mut store = server.memories_cursors.lock().await;
+    let mut observed = store.session_reads(scope_id, Some(session_id)).clone();
+    let mut ids: Vec<_> = pack
+        .results
+        .iter()
+        .chain(&pack.neighbors)
+        .map(|entity| entity.id)
+        .collect();
+    if let Some(base) = &pack.l2_base {
+        ids.extend_from_slice(base.evidence_ids());
+    }
+    observed.observe_rows(read, &ids)?;
+    let cursor = store.advance(scope_key, key, session_id, pack, evidence);
+    *store.session_reads(scope_id, Some(session_id)) = observed;
+    Ok(cursor)
+}
+
+fn session_key(scope_id: &str, session_id: &str) -> String {
+    serde_json::to_string(&(scope_id, session_id)).expect("string tuple serializes")
 }

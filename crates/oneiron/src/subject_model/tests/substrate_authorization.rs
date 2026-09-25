@@ -90,7 +90,7 @@ fn substrate_write_observes_revocation_committed_after_preflight() -> Result<()>
     });
     assert_eq!(
         result.expect_err("revoked owner").kind(),
-        ErrorKind::ActorLacksClaimAuthority
+        ErrorKind::WriteConcurrentWithRevocation
     );
     assert_eq!(vault.get_claim(&claim)?, before);
     assert_eq!(

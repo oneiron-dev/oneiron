@@ -12,15 +12,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `examples/provision-fixture-actor.rs` | src | s | — | — | Provisions the wire fixture's owner actor on a PRE-SERVER vault |
-| `src/agent_verbs.rs` | src | s | 9 fn · 1 const | — | — |
+| `src/agent_verbs.rs` | src | m | 23 fn | — | — |
 | `src/caps.rs` | src | s | 1 re-export | — | Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators |
 | `src/embedded.rs` | src | m | 1 fn · 14 crate-vis | — | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
 | `src/error.rs` | src | s | 5 crate-vis | — | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
-| `src/lib.rs` | src | m | 2 struct · 15 fn · 2 const · 3 re-export | OneironClient, OpenOptions | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) |
-| `src/remote.rs` | src | m | 4 crate-vis | — | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
+| `src/lib.rs` | src | s | 2 struct · 12 fn · 2 const · 1 mod · 2 re-export | OneironClient, OpenOptions | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) |
+| `src/llm.rs` | src | s | 1 struct · 1 trait · 2 fn | OwnServerTransport, RemoteLlmClient | Own-server raw LLM transport over the SDK's single authenticated HTTP client |
+| `src/remote.rs` | src | L | 8 crate-vis | — | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
 | `tests/agent_verbs.rs` | test | s | — | — | Generated SDK calls preserve handles and durable C9 wait results |
 | `tests/error_mapping.rs` | test | s | — | — | ONE-1441 error-contract tests (blueprint §Test/Shared #5–#6, §Typed error contract) |
 | `tests/facade_contract.rs` | test | s | — | — | ONE-1441 shared-backend contract tests (blueprint §Test/Shared #1–#4) |
+| `tests/key_value_contract.rs` | test | s | — | — | The dispatcher exposes exact keyed memory, not recall reconstruction |
 | `tests/numeric_boundaries.rs` | test | s | — | — | The shared timestamp bound must agree with JavaScript's safe integers |
 | `tests/origin_security.rs` | test | s | — | — | Credentials may travel over HTTP only to loopback development endpoints |
 | `tests/retained_correctness.rs` | test | s | — | — | Retained admission regressions through the actual shared SDK dispatcher |

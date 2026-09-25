@@ -15,6 +15,12 @@ pub trait SelfDispatcher {
 /// Typed first-party host call.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelfCall {
+    /// Typed bounded dispatch. Parent/run identity comes from the host binding.
+    AgentsSpawn(Box<SelfAgentSpawnCall>),
+    /// Async question to live scope authority holders. Returns without waiting.
+    TasksAsk(Box<crate::task_verb::TaskAskSpec>),
+    /// Requests a C9 wait for this handle, only at the caller's idle point.
+    TasksWait(crate::task_verb::TaskAskHandle),
     /// Fixture for `self.memory.search(...)`.
     MemorySearch(SelfMemorySearchCall),
     /// Internal fixture proving dispatcher-stamped writes use the batch/gate path.
@@ -47,6 +53,7 @@ pub enum SelfCall {
     Think(SelfSpeechCall),
     /// Public first-party `self.express(text)` (ONE-1686, RT-04).
     Express(SelfSpeechCall),
+    ReportBlocked(super::blocked::SelfReportBlockedCall),
 }
 
 impl SelfCall {
@@ -54,6 +61,9 @@ impl SelfCall {
     #[must_use]
     pub const fn effect(&self) -> SelfEffect {
         match self {
+            Self::AgentsSpawn(_) => SelfEffect::AgentsSpawn,
+            Self::TasksAsk(_) => SelfEffect::TasksAsk,
+            Self::TasksWait(_) => SelfEffect::TasksWait,
             Self::MemorySearch(_) => SelfEffect::MemorySearch,
             Self::MemoryWriteFixture(_) => SelfEffect::MemoryWriteFixture,
             Self::MemoryPutClaim(_) => SelfEffect::MemoryPutClaim,
@@ -66,6 +76,7 @@ impl SelfCall {
             Self::Speak(_) => SelfEffect::Speak,
             Self::Think(_) => SelfEffect::Think,
             Self::Express(_) => SelfEffect::Express,
+            Self::ReportBlocked(_) => SelfEffect::ReportBlocked,
         }
     }
 
@@ -88,14 +99,18 @@ impl SelfCall {
             Self::Speak(call) => Self::Speak(call.with_bridge_stamp(order, occurred_at)),
             Self::Think(call) => Self::Think(call.with_bridge_stamp(order, occurred_at)),
             Self::Express(call) => Self::Express(call.with_bridge_stamp(order, occurred_at)),
+            Self::ReportBlocked(call) => Self::ReportBlocked(call.stamped(order, occurred_at)),
             other => other,
         }
     }
 }
 
 /// Host effect class routed by the dispatcher.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SelfEffect {
+    AgentsSpawn,
+    TasksAsk,
+    TasksWait,
     MemorySearch,
     MemoryWriteFixture,
     MemoryPutClaim,
@@ -117,6 +132,7 @@ pub enum SelfEffect {
     Think,
     /// `self.express(text)` (ONE-1686) — non-verbal expression.
     Express,
+    ReportBlocked,
 }
 
 impl SelfEffect {
@@ -124,6 +140,9 @@ impl SelfEffect {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::AgentsSpawn => "agents.spawn",
+            Self::TasksAsk => "tasks.ask",
+            Self::TasksWait => "tasks.wait",
             Self::MemorySearch => "self.memory.search",
             Self::MemoryWriteFixture => "self.memory.write_fixture",
             Self::MemoryPutClaim => "self.memory.put_claim",
@@ -137,6 +156,7 @@ impl SelfEffect {
             Self::Speak => "self.speak",
             Self::Think => "self.think",
             Self::Express => "self.express",
+            Self::ReportBlocked => "self.report_blocked",
         }
     }
 
@@ -152,7 +172,10 @@ impl SelfEffect {
             Self::Speak => Some(ExecutorUtterance::Speak),
             Self::Think => Some(ExecutorUtterance::Think),
             Self::Express => Some(ExecutorUtterance::Express),
-            Self::MemorySearch
+            Self::AgentsSpawn
+            | Self::TasksAsk
+            | Self::TasksWait
+            | Self::MemorySearch
             | Self::MemoryWriteFixture
             | Self::MemoryPutClaim
             | Self::MemorySupersedeClaim
@@ -161,7 +184,8 @@ impl SelfEffect {
             | Self::DestructiveFixture
             | Self::OutboundFixture
             | Self::TaskDelegate
-            | Self::Context => None,
+            | Self::Context
+            | Self::ReportBlocked => None,
         }
     }
 
@@ -366,6 +390,9 @@ impl SelfFixtureEffectCall {
 /// Result of dispatching a `self.*` call.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelfDispatchOutcome {
+    AgentSpawn(SelfAgentSpawnResult),
+    TaskAsk(crate::task_verb::TaskAskReceipt),
+    TaskAskStatus(crate::task_verb::TaskAskStatus),
     MemorySearch(SelfMemorySearchResult),
     MemoryWrite(SelfMemoryWriteResult),
     MemoryEdgeWrite(SelfMemoryEdgeWriteResult),
@@ -376,6 +403,9 @@ pub enum SelfDispatchOutcome {
     Context(SelfContextResult),
     /// One durable MESSAGE bubble emitted by the speech family (ONE-1686).
     Speech(SelfSpeechResult),
+    ReportBlocked {
+        receipt: EntityId,
+    },
 }
 
 /// Result of one `self.speak`/`self.think`/`self.express` call.
@@ -445,7 +475,7 @@ pub struct SelfFailedResult {
 }
 
 /// Durable wait produced for effects that need human/external resolution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SelfDurableWait {
     pub wait_id: EntityId,
     pub effect: SelfEffect,
@@ -454,7 +484,7 @@ pub struct SelfDurableWait {
 }
 
 /// Why a dispatched effect parked instead of committing immediately.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SelfDurableWaitReason {
     HumanInput,
     DestructiveEffect,
@@ -476,4 +506,22 @@ pub const fn peer_result_wait(task_ref: EntityId) -> SelfDurableWait {
         reason: SelfDurableWaitReason::PeerResult,
         prompt: None,
     }
+}
+
+/// No parent/run/actor fields are accepted from guest code.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfAgentSpawnCall {
+    pub target: crate::agent_dispatch::AgentDispatchTarget,
+    pub context: crate::agent_dispatch::AgentSpawnContext,
+    pub intent_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelfAgentSpawnResult {
+    Queued {
+        attempt_ref: crate::attempt_queue::AttemptId,
+    },
+    ProposedWiden {
+        proposal_ref: String,
+    },
 }

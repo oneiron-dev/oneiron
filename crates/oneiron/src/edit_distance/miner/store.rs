@@ -128,6 +128,7 @@ fn decode_skill_edit(handle: &[u8], raw: &[u8]) -> Result<MinedSkillEditProposal
         })
         .transpose()?;
     Ok(MinedSkillEditProposal {
+        principal: row.principal,
         proposal_id: EntityId::from_bytes(bytes)
             .map_err(|_| Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL))?,
         skill: EntityId::from_hex(&row.skill)

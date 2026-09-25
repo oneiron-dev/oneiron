@@ -56,11 +56,7 @@ impl BoundSource {
     fn server(&self) -> Result<std::sync::Arc<SyncServer>, AppError> {
         let server = self.server.upgrade().ok_or_else(AppError::unauthorized)?;
         self.auth.require(CoreScope::Read)?;
-        if self
-            .auth
-            .jti()
-            .is_some_and(|jti| crate::auth::is_revoked_or_unreadable(jti, server.vault().as_ref()))
-        {
+        if !self.auth.credential_is_live(server.vault().as_ref()) {
             return Err(AppError::unauthorized());
         }
         Ok(server)
@@ -95,6 +91,7 @@ impl LiveQuerySource for BoundSource {
         }
         // The same verified principal/class pair binds RPC and subscription reads.
         let memory = bound_memory(server.vault(), &self.auth)?;
+        let mut dependencies = BTreeSet::new();
         let value = match channel {
             Channel::View => {
                 let scope = RecallScope {
@@ -112,6 +109,13 @@ impl LiveQuerySource for BoundSource {
                     .map_err(AppError::from)?;
                 // Do not publish out-of-scope-world accounting: a world-B
                 // mutation must not produce a world-A push through metadata.
+                for item in &pack.items {
+                    for id in &item.provenance.source_revision_ids {
+                        if let Ok(id) = oneiron::EntityId::from_hex(id) {
+                            dependencies.insert(format!("e:{}", id.to_hex()));
+                        }
+                    }
+                }
                 serde_json::to_value(pack.items)
             }
             Channel::Receipts => serde_json::to_value(
@@ -176,7 +180,7 @@ impl LiveQuerySource for BoundSource {
             state
                 .doc
                 .commit_with(CommitOptions::new().origin("livequery"));
-            state.current.insert(key, fingerprint);
+            state.current.insert(key.clone(), fingerprint);
             state.commits += 1;
             if state.commits >= super::subscriptions::LIVEQUERY_RING_CAPACITY {
                 let snapshot = state
@@ -202,11 +206,23 @@ impl LiveQuerySource for BoundSource {
                 version_vector: state.doc.oplog_vv().encode(),
                 batch: 0,
             },
-            // Coarse membership invalidation also covers inserts into empty
-            // results and cross-window world/facet edges. Output comparison
-            // suppresses changes outside the authorized scoped projection.
-            dependencies: BTreeSet::from(["w:".to_owned()]),
+            // Membership is a separate probe, never a wildcard window read.
+            // Current result rows use the entity-document index above.
+            dependencies: {
+                dependencies.insert(format!("membership:{key}"));
+                dependencies
+            },
         })
+    }
+
+    fn membership_changed(
+        &self,
+        view: &ScopedView,
+        channel: Channel,
+        diff: &oneiron::sync::bridge::MaterializedDiffSummary,
+    ) -> Result<bool, AppError> {
+        let server = self.server()?;
+        super::membership::changed(server.vault(), &self.auth, view, channel, diff)
     }
 
     fn ready(
@@ -220,8 +236,8 @@ impl LiveQuerySource for BoundSource {
         let server = self.server()?;
         for path in &diff.containers {
             let id = path
-                .rsplit('/')
-                .next()
+                .strip_prefix("e:")
+                .or_else(|| path.rsplit('/').next())
                 .and_then(|id| oneiron::EntityId::from_hex(id).ok())
                 .ok_or_else(|| AppError::internal_server_error("invalid purge dependency"))?;
             if !oneiron::sync::bridge::local_deletion_is_materialized(server.vault(), &id)
@@ -315,12 +331,10 @@ mod remediation_tests {
     #[tokio::test]
     async fn retained_loro_payloads_replay_after_delivery_ring_is_removed() {
         let (_dir, server) = super::super::production_tests::server();
-        let auth = CoreAuth::from_bind_token(
+        let auth = crate::test_credentials::authenticate(
+            &server,
             &super::super::production_tests::token("human"),
-            &server.config,
-            server.vault().as_ref(),
-        )
-        .unwrap();
+        );
         let source = std::sync::Arc::new(BoundSource::new(
             std::sync::Arc::downgrade(&server),
             auth,
@@ -374,12 +388,10 @@ mod remediation_tests {
     #[tokio::test]
     async fn journal_budget_expiry_expires_the_cursor_without_allocating_unbounded_history() {
         let (_dir, server) = super::super::production_tests::server();
-        let auth = CoreAuth::from_bind_token(
+        let auth = crate::test_credentials::authenticate(
+            &server,
             &super::super::production_tests::token("human"),
-            &server.config,
-            server.vault().as_ref(),
-        )
-        .unwrap();
+        );
         let source = BoundSource::with_budgets(
             std::sync::Arc::downgrade(&server),
             auth,
@@ -407,12 +419,10 @@ mod remediation_tests {
     #[tokio::test]
     async fn alternating_unchanged_views_do_not_consume_retention() {
         let (_dir, server) = super::super::production_tests::server();
-        let auth = CoreAuth::from_bind_token(
+        let auth = crate::test_credentials::authenticate(
+            &server,
             &super::super::production_tests::token("human"),
-            &server.config,
-            server.vault().as_ref(),
-        )
-        .unwrap();
+        );
         let source = BoundSource::new(std::sync::Arc::downgrade(&server), auth, "fixture".into());
         let a = ScopedView::default();
         let b = ScopedView {

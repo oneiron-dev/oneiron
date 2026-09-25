@@ -491,7 +491,7 @@ pub(super) fn claim_effective_at(body: &ClaimBody, at: u64) -> bool {
 /// evidence this query may read at all.
 pub(super) fn claim_in_scope(body: &ClaimBody, scope: &QueryScope) -> bool {
     match body.world {
-        None => true,
+        None => scope.worlds.is_empty() || scope.worlds.contains(&crate::claim::base_world_id()),
         Some(world) => scope.worlds.is_empty() || scope.worlds.contains(&world),
     }
 }

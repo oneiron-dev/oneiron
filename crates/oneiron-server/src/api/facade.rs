@@ -10,7 +10,9 @@
 //!
 //! L1 ships the canonical quickstart, which is four calls: `witness` →
 //! `claim_upsert` → `recall` → `receipts`. The rest of the §HEAD-CONTRACT
-//! catalog is deliberately ABSENT rather than stubbed. A `501` stub is still a
+//! catalog is deliberately ABSENT rather than stubbed, except the five
+//! exact keyed-memory routes below and eight generated tasks/rooms routes.
+//! A `501` stub is still a
 //! registered row: it enters the route census, a client's catalog test counts
 //! it as shipped, and the only thing it proves is that somebody meant to write
 //! the verb. An absent route says the same thing without the false positive.
@@ -36,20 +38,17 @@ use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::server::SyncServer;
-use oneiron::memory::caps::{
-    MAX_REMOTE_REQUEST_BYTES, check_claim_input, check_limit, check_query, check_witness_turn,
-};
+use oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
 use oneiron::memory::{
-    ClaimInput, CommitReceipt, Effort, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
-    MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED,
-    MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError, MemoryPack, MemoryReceipt, RecallScope,
-    WitnessReceipt, WitnessTurn,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_NOT_FOUND,
+    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+    MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
 use oneiron::{EdgeActorClass, EntityId};
 
@@ -59,12 +58,6 @@ use oneiron::{EdgeActorClass, EntityId};
 /// framing are paid for. Applied as a layer on THIS router, so the limit is a
 /// property of the facade projection and no other route's body handling moves.
 const FACADE_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
-
-/// `recall`'s default result count, per §HEAD-CONTRACT.
-const FACADE_DEFAULT_RECALL_LIMIT: usize = 10;
-
-/// `receipts`'s default row count, per §HEAD-CONTRACT.
-const FACADE_DEFAULT_RECEIPTS_LIMIT: usize = 100;
 
 /// The facade route table.
 ///
@@ -76,108 +69,7 @@ const FACADE_DEFAULT_RECEIPTS_LIMIT: usize = 100;
 pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .merge(agent_verbs::routes())
-        .route("/witness", post(facade_witness))
-        .route("/claim_upsert", post(facade_claim_upsert))
-        .route("/recall", post(facade_recall))
-        .route("/receipts", post(facade_receipts))
         .layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
-}
-
-/// `POST /v1/core/facade/witness` → `Memory::witness`.
-async fn facade_witness(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WitnessTurn>, JsonRejection>,
-) -> Result<Json<WitnessReceipt>, FacadeApiError> {
-    auth.require(CoreScope::Write)?;
-    let turn = facade_json(payload)?;
-    check_witness_turn(&turn)?;
-    let (actor, actor_class) = facade_actor(&auth)?;
-    let receipt = server.vault.memory(actor, actor_class).witness(&turn)?;
-    Ok(Json(receipt))
-}
-
-/// `POST /v1/core/facade/claim_upsert` → `Memory::claim_upsert`.
-async fn facade_claim_upsert(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ClaimInput>, JsonRejection>,
-) -> Result<Json<CommitReceipt>, FacadeApiError> {
-    auth.require(CoreScope::Write)?;
-    let claim = facade_json(payload)?;
-    check_claim_input(&claim)?;
-    let (actor, actor_class) = facade_actor(&auth)?;
-    let receipt = server
-        .vault
-        .memory(actor, actor_class)
-        .claim_upsert(&claim)?;
-    Ok(Json(receipt))
-}
-
-/// `recall`'s inputs, spelled exactly as §HEAD-CONTRACT does.
-///
-/// Every field but `query` is optional and defaults to the contract's default,
-/// so an omitting client and a spelling-everything client reach the same
-/// engine call.
-#[derive(Debug, Deserialize)]
-struct FacadeRecallRequest {
-    query: String,
-    #[serde(default)]
-    effort: Option<Effort>,
-    #[serde(default)]
-    scope: Option<RecallScope>,
-    #[serde(default)]
-    limit: Option<usize>,
-    #[serde(default)]
-    format: Option<String>,
-}
-
-/// `POST /v1/core/facade/recall` → `Memory::recall`.
-///
-/// The lease argument is `None` and is not a client input: no lease-issuer
-/// exists, and a bearer slip is not one. `Effort::Deep` therefore returns the
-/// engine's own `LEASE_REQUIRED`, which this projection forwards as that exact
-/// code — the bindings neither mint nor simulate a lease.
-async fn facade_recall(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<FacadeRecallRequest>, JsonRejection>,
-) -> Result<Json<MemoryPack>, FacadeApiError> {
-    auth.require(CoreScope::Read)?;
-    let request = facade_json(payload)?;
-    check_query(&request.query)?;
-    let limit = facade_limit(request.limit, FACADE_DEFAULT_RECALL_LIMIT)?;
-    let (actor, actor_class) = facade_actor(&auth)?;
-    let pack = server.vault.memory(actor, actor_class).recall(
-        &request.query,
-        request.effort.unwrap_or(Effort::Standard),
-        &request.scope.unwrap_or_default(),
-        limit,
-        request.format.as_deref(),
-        None,
-    )?;
-    Ok(Json(pack))
-}
-
-/// `receipts`'s one input.
-#[derive(Debug, Deserialize)]
-struct FacadeReceiptsRequest {
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-/// `POST /v1/core/facade/receipts` → `Memory::receipts`.
-async fn facade_receipts(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<FacadeReceiptsRequest>, JsonRejection>,
-) -> Result<Json<Vec<MemoryReceipt>>, FacadeApiError> {
-    auth.require(CoreScope::Read)?;
-    let request = facade_json(payload)?;
-    let limit = facade_limit(request.limit, FACADE_DEFAULT_RECEIPTS_LIMIT)?;
-    let (actor, actor_class) = facade_actor(&auth)?;
-    let receipts = server.vault.memory(actor, actor_class).receipts(limit)?;
-    Ok(Json(receipts))
 }
 
 /// Resolves the write identity every facade verb runs as, from the CREDENTIAL
@@ -198,7 +90,7 @@ fn facade_actor(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), FacadeApi
         FacadeApiError::forbidden(
             "facade routes bind writes to an authenticated principal",
             [
-                "Present a slip minted with --principal-ref <32-hex person id>.",
+                "Present a slip paired from a link created with --principal-ref <32-hex person id>.",
                 "An owner-grade credential names no principal and cannot write here.",
             ],
         )
@@ -224,7 +116,7 @@ fn facade_actor(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), FacadeApi
             return Err(FacadeApiError::forbidden(
                 "facade routes bind writes to a declared actor class",
                 [
-                    "Present a slip minted with --actor-class <human|agent|system>.",
+                    "Present a slip paired from a link created with --actor-class <human|agent|system>.",
                     "Reconnect with a differently scoped slip to act as another actor.",
                 ],
             ));
@@ -246,11 +138,77 @@ fn facade_json<T>(payload: Result<Json<T>, JsonRejection>) -> Result<T, FacadeAp
     })
 }
 
-/// Applies the verb default and the shared facade row-count ceiling.
-fn facade_limit(requested: Option<usize>, default: usize) -> Result<usize, FacadeApiError> {
-    let limit = requested.unwrap_or(default);
-    check_limit(limit)?;
-    Ok(limit)
+/// Decodes a request `validate_input` already admitted into the verb's typed
+/// input, for a route that works on the typed result before encoding it.
+fn facade_input<T: serde::de::DeserializeOwned>(
+    value: serde_json::Value,
+) -> Result<T, FacadeApiError> {
+    serde_json::from_value(value).map_err(|_| {
+        FacadeApiError::new(
+            StatusCode::BAD_REQUEST,
+            MEMORY_CODE_BAD_REQUEST,
+            "invalid typed SDK arguments",
+            ["Send a JSON body matching this verb's documented input."],
+        )
+    })
+}
+
+/// Refuses a caller-named entity this credential cannot read, with the
+/// NOT_FOUND a missing one gets, so the route never confirms that the id
+/// exists. A ref that is not an entity id is left for the engine to refuse.
+fn facade_admit_readable_ref(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    value: &serde_json::Value,
+    field: &str,
+) -> Result<(), FacadeApiError> {
+    let Some(id) = value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .and_then(|id| EntityId::from_hex(id).ok())
+    else {
+        return Ok(());
+    };
+    if auth
+        .can_read_entity(vault, &id)
+        .map_err(MemoryError::from)?
+    {
+        Ok(())
+    } else {
+        Err(MemoryError::from(oneiron::Error::EntityNotFound).into())
+    }
+}
+
+/// Drops every TASKS row this credential cannot read, as MCP's board does,
+/// then encodes the section. A row id that is not an entity id cannot be
+/// proven readable, so only a credential without a slip, which reads every
+/// entity, keeps it.
+fn facade_readable_task_rows(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    mut section: oneiron::context_board::TasksSection,
+) -> Result<serde_json::Value, FacadeApiError> {
+    let mut rows = Vec::with_capacity(section.rows.len());
+    for row in section.rows {
+        let readable = match EntityId::from_hex(&row.id) {
+            Ok(id) => auth
+                .can_read_entity(vault, &id)
+                .map_err(MemoryError::from)?,
+            Err(_) => auth.verified_slip().is_none(),
+        };
+        if readable {
+            rows.push(row);
+        }
+    }
+    section.rows = rows;
+    serde_json::to_value(section).map_err(|_| {
+        FacadeApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            MEMORY_CODE_INTERNAL,
+            "SDK result encoding failed",
+            ["Report this SDK response mismatch."],
+        )
+    })
 }
 
 /// A facade failure on its way to the wire.

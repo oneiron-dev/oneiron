@@ -16,7 +16,7 @@ pub(super) const fn default_limit() -> usize {
 }
 
 /// Read projection requested by the accepted routes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum View {
     /// Compact projection used by list/search results.
@@ -28,7 +28,7 @@ pub enum View {
 }
 
 /// Count precision requested by callers and reported in response metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum CountMode {
     /// Skip count work and report `total = 0`.
@@ -75,7 +75,7 @@ pub(super) const fn search_total(count_mode: CountMode, admitted: usize) -> u64 
     }
 }
 
-/// Entity record constructible from `ScopedRead::get_entity_parts`.
+/// Entity record constructible from `ScopedRead::get_entity_parts_with_receipt`.
 ///
 /// `body` is the one view-controlled field in v1: `Standard` omits it, while
 /// `Summary` and `Full` carry the public MessagePack → JSON projection.
@@ -96,7 +96,8 @@ pub struct CoreEntityRecord {
 }
 
 /// Accepted `POST /v1/core/query` request body.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CoreQueryRequest {
     /// Optional BM25 text query.
     #[serde(default)]
@@ -132,6 +133,11 @@ pub struct CoreQueryMeta {
 /// Query response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreQueryResponse {
+    /// Authorized references plus a typed withheld-data notice.
+    #[serde(flatten)]
+    pub access: crate::access_grant::GrantedData<String>,
+    /// Mandatory read clamp receipt, including un-narrowed reads.
+    pub narrowing: crate::claim::ScopedReadReceipt,
     /// Projected page of admitted entities.
     pub items: Vec<CoreEntityRecord>,
     /// Reserved cursor field; this contract version never paginates.
@@ -142,7 +148,8 @@ pub struct CoreQueryResponse {
 }
 
 /// Accepted `POST /v1/core/hydrate` request body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CoreHydrateRequest {
     /// Canonical short reference in `shortId:contentHashHex` form.
     #[serde(default, rename = "ref", alias = "short_ref", alias = "shortRef")]
@@ -171,6 +178,8 @@ pub enum CoreHydrateStatus {
 /// Hydrate response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreHydrateResponse {
+    /// Mandatory read clamp receipt, including un-narrowed reads.
+    pub narrowing: crate::claim::ScopedReadReceipt,
     /// Hydrate state for the resolved short ref.
     pub status: CoreHydrateStatus,
     /// Requested short id without content hash.
@@ -194,7 +203,8 @@ pub struct CoreHydrateResponse {
 }
 
 /// Accepted `POST /v1/core/batch/shortId/hydrate` request body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CoreBatchShortIdHydrateRequest {
     /// Canonical short references in `shortId:contentHashHex` form.
     #[serde(
@@ -241,6 +251,8 @@ pub struct CoreBatchShortIdHydrateItem {
 /// Batch hydrate response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreBatchShortIdHydrateResponse {
+    /// Mandatory read clamp receipt, including un-narrowed reads.
+    pub narrowing: crate::claim::ScopedReadReceipt,
     /// Per-input results, in caller order.
     pub results: Vec<CoreBatchShortIdHydrateItem>,
 }
@@ -251,7 +263,8 @@ pub struct CoreBatchShortIdHydrateResponse {
 /// An HTTP `WireTransport` places `id` in the route path and `view` in the
 /// query while still carrying this canonical JSON body at the `round_trip`
 /// seam.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CoreMemoryTimelineRequest {
     /// Hex entity id whose supersession chain is requested.
     pub id: String,
@@ -293,8 +306,10 @@ pub struct CoreMemoryTimelineRecord {
 }
 
 /// Timeline response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreMemoryTimelineResponse {
+    /// Policy intersection and withheld history count for this timeline.
+    pub narrowing: crate::claim::ScopedReadReceipt,
     /// Hex anchor entity id.
     #[serde(rename = "anchor_id")]
     pub anchor_id: String,
@@ -303,7 +318,7 @@ pub struct CoreMemoryTimelineResponse {
 }
 
 /// M8-reserved ask request payload. Opaque on purpose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct AskRequest(pub Value);
 
@@ -313,7 +328,7 @@ pub struct AskRequest(pub Value);
 pub struct AskResponse(pub Value);
 
 /// M8-reserved code-search request payload. Opaque on purpose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct CodeSearchRequest(pub Value);
 
@@ -323,7 +338,7 @@ pub struct CodeSearchRequest(pub Value);
 pub struct CodeSearchResponse(pub Value);
 
 /// M8-reserved code-execute request payload. Opaque on purpose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct CodeExecuteRequest(pub Value);
 

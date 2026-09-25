@@ -41,7 +41,7 @@ pub struct SyncServer {
     /// Root LoroDoc (server-authoritative, contains meta.windows).
     pub(crate) root_doc: LoroDoc,
     /// Hub-held Loro ephemeral state for late join/reconnect snapshots.
-    pub(crate) ephemeral_store: EphemeralStore,
+    pub(crate) ephemeral_store: Arc<EphemeralStore>,
     /// Producer state for Dreamer live attempt-progress rows on the ephemeral lane.
     pub(crate) dreamer_progress: Mutex<DreamerAttemptProgressProducer>,
     /// Node-local compiled standing blocks; rebuilt from claims, never synced.
@@ -62,10 +62,18 @@ pub struct SyncServer {
     pub(super) lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
+    /// Set only by managed boot after inherited-credential and DEK checks.
+    /// The supervisor authenticates callers before routing its private socket.
+    pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
     /// Tenant usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
+    pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
+    /// Vault-owned production code host. No request can replace it.
+    pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// Actor/session read observations share the server lifetime, never a process global.
+    pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
     /// ONE-207: the optional deep-retrieval host.
     ///
     /// `None` on every server [`SyncServer::new`] builds, and that is the
@@ -82,6 +90,10 @@ pub struct SyncServer {
     /// construction, the same way the deep-retrieval host is: `Self::new` pins
     /// no model and downloads nothing.
     pub(crate) embedder: Option<EmbedderSlot>,
+    pub(crate) llm: Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)>,
+    /// Instance-local booking clock override; production always reads wall time.
+    #[cfg(test)]
+    pub(crate) booking_test_now_secs: Option<u64>,
 }
 
 impl SyncServer {
@@ -106,6 +118,17 @@ impl SyncServer {
         config: SyncServerConfig,
     ) -> Result<Self, oneiron::Error> {
         config.validate()?;
+        // Genuine host authority must exist before any scoped-read fail-closed
+        // policy applies. Dev/no-secret and blind-relay modes mint nothing.
+        // An empty configured secret mints nothing either: it carries no key
+        // material, and every upgrade bearing it (or nothing) still 401s at
+        // the auth door, so booting rootless here is fail-closed, not open.
+        if vault.privacy_posture() != oneiron::HostingPrivacyPosture::Relay
+            && let Some(secret) = config.auth_secret.as_deref().filter(|s| !s.is_empty())
+        {
+            let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+            vault.ensure_host_root_slip(&issuer)?;
+        }
 
         let root_doc = match server_state::load_root_from_state(&vault)? {
             Some(doc) => doc,
@@ -168,11 +191,19 @@ impl SyncServer {
         // with it the outbound sink holding the sender) drops with this server.
         spawn_local_change_producer(&reassert_manager, &broadcast_tx);
 
+        let ephemeral_store = Arc::new(EphemeralStore::new(config.ephemeral_timeout_ms));
+        super::message_stream::spawn_message_stream_producer(
+            &vault,
+            &ephemeral_store,
+            &broadcast_tx,
+            &config,
+        );
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
+            wire_telemetry: crate::wire_telemetry::WireTelemetry::new(vault.clone()),
             vault,
             root_doc,
-            ephemeral_store: EphemeralStore::new(config.ephemeral_timeout_ms),
+            ephemeral_store,
             broadcast_tx,
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),
@@ -184,10 +215,44 @@ impl SyncServer {
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
             config,
+            managed_issuer: None,
             mcp_registry,
+            mcp_code_host: None,
+            memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             deep_retrieval: None,
             embedder: None,
+            llm: None,
+            #[cfg(test)]
+            booking_test_now_secs: None,
         })
+    }
+
+    /// Bind a readiness-verified QuickJS provider before exposing this vault's
+    /// routes. Missing components or providers keep execute_code unadvertised.
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    #[must_use]
+    pub fn with_mcp_quickjs_provider(mut self, provider: crate::mcp::McpQuickJsProvider) -> Self {
+        self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
+            Arc::new(provider),
+        )));
+        self
+    }
+
+    pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {
+        self.mcp_code_host
+            .as_ref()
+            .filter(|host| host.production_runtime_available())
+    }
+
+    pub(crate) fn mcp_surface(
+        &self,
+        mode: crate::mcp::McpSurfaceMode,
+    ) -> crate::mcp::McpRegisteredSurface {
+        crate::mcp::McpRegisteredSurface::register_with_execution(
+            mode,
+            self.code_execution_host().is_some(),
+        )
+        .expect("every exported verb projects onto an executable tool")
     }
 
     /// Attaches the ONE-207 deep-retrieval host.
@@ -199,6 +264,17 @@ impl SyncServer {
     #[allow(dead_code)] // No in-tree production host yet; the tests are its only caller.
     pub(crate) fn with_deep_retrieval_host(mut self, host: Arc<DeepRetrievalHost>) -> Self {
         self.deep_retrieval = Some(host);
+        self
+    }
+
+    /// Enables owner-authenticated raw inference with a host-owned backend and budget.
+    /// Remote lease IDs are correlation only; each call needs local admission.
+    pub fn with_llm_backend(
+        mut self,
+        backend: Arc<dyn oneiron::LlmBackend>,
+        budget: oneiron::BudgetGuard,
+    ) -> Self {
+        self.llm = Some((backend, budget));
         self
     }
 

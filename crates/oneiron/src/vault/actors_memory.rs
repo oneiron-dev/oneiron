@@ -8,7 +8,6 @@ use crate::error::{ClaimError, Error, RegistryError, Result};
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{StructuralKindRegistration, TypeByteZone};
 use crate::temporal::TimeRange;
-use crate::unix_seconds_now;
 
 /// A session-scoped actor binding created by [`Vault::as_actor`]
 /// (ONE-1113 ruling, session ergonomics): the handle carries
@@ -163,42 +162,52 @@ impl Vault {
     #[doc(hidden)]
     pub fn ensure_embedded_owner_actor(&self) -> crate::memory::MemoryResult<EntityId> {
         let owner = embedded_owner_actor_id()?;
-        let now = unix_seconds_now();
         self.try_with_write_txn(|wtxn| {
             if self.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                 return Err(crate::memory::hard_deleted_refusal(&owner));
             }
-            match self.get_entity_type_in_txn(wtxn, &owner)? {
-                Some(crate::registry::ENTITY_TYPE_PERSON) => return Ok(owner),
-                // Present but not a PERSON: refuse, never retype. The typed
-                // engine error carries the occupant's byte, and the central
-                // `From<Error>` mapping renders it — no bespoke code is minted
-                // for a case the vocabulary already spells.
-                Some(existing) => {
-                    return Err(crate::memory::MemoryError::from(Error::Registry(
-                        RegistryError::EntityTypeImmutable {
-                            id: owner,
-                            existing,
-                            attempted: crate::registry::ENTITY_TYPE_PERSON,
-                        },
-                    )));
-                }
-                None => {}
-            }
-            self.batch_in()
-                .put(
-                    &owner,
-                    crate::registry::ENTITY_TYPE_PERSON,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode_embedded_owner_actor_body()?,
-                )
-                .apply(wtxn)?;
-            Ok(owner)
+            let now = self.store.clock.now_recorded_at();
+            Ok(self.stage_embedded_owner_actor_in_txn(wtxn, now)?)
         })
+    }
+
+    /// [`Vault::ensure_embedded_owner_actor`] inside the caller's transaction,
+    /// born at `now`, for the seeded open and any other door that must see the
+    /// owner PERSON before it writes.
+    pub(crate) fn stage_embedded_owner_actor_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        now: u64,
+    ) -> Result<EntityId> {
+        let owner = embedded_owner_actor_id()?;
+        match self.get_entity_type_in_txn(wtxn, &owner)? {
+            Some(crate::registry::ENTITY_TYPE_PERSON) => return Ok(owner),
+            // Present but not a PERSON: refuse, never retype. The typed
+            // engine error carries the occupant's byte, and the central
+            // `From<Error>` mapping renders it — no bespoke code is minted
+            // for a case the vocabulary already spells.
+            Some(existing) => {
+                return Err(Error::Registry(RegistryError::EntityTypeImmutable {
+                    id: owner,
+                    existing,
+                    attempted: crate::registry::ENTITY_TYPE_PERSON,
+                }));
+            }
+            None => {}
+        }
+        self.batch_in()
+            .put(
+                &owner,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &encode_embedded_owner_actor_body()?,
+            )
+            .apply(wtxn)?;
+        Ok(owner)
     }
 
     pub(crate) fn scoped_read_search_candidate_limit(
@@ -231,7 +240,8 @@ impl Vault {
         Ok(limit)
     }
 
-    /// Registers a vault-scoped pack StructuralKind slot.
+    /// Registers a local-only vault-scoped StructuralKind slot.
+    /// Use [`Self::register_structural_kind_in_family`] for replicated kinds.
     ///
     /// The claim is persisted in `vault_meta` under the dynamic kind-registry
     /// key family and becomes visible to subsequent write validation and
@@ -249,6 +259,33 @@ impl Vault {
     ) -> Result<StructuralKindRegistration> {
         self.store
             .register_structural_kind(type_byte, short_id_prefix, zone, pack)
+    }
+
+    /// Registers an assigned slot with an explicit semantic family.
+    /// The family, not the numeric byte, determines replication scope and
+    /// persists across reopen. Slots must belong to the family's zone;
+    /// existing static slots and duplicate bytes or prefixes still reject.
+    pub fn register_structural_kind_in_family(
+        &self,
+        type_byte: u8,
+        short_id_prefix: impl Into<String>,
+        family: crate::registry::TypeByteFamily,
+        pack: impl Into<String>,
+    ) -> Result<StructuralKindRegistration> {
+        self.store
+            .register_structural_kind_in_family(type_byte, short_id_prefix, family, pack)
+    }
+
+    /// Allocates and persists the lowest free compiled-pack family slot.
+    /// A full family spills into pack overflow without losing its identity.
+    pub fn allocate_structural_kind(
+        &self,
+        family: crate::registry::TypeByteFamily,
+        short_id_prefix: impl Into<String>,
+        pack: impl Into<String>,
+    ) -> Result<StructuralKindRegistration> {
+        self.store
+            .allocate_structural_kind(family, short_id_prefix, pack)
     }
 
     /// Returns the dynamic StructuralKind registration for `type_byte`, if
@@ -389,7 +426,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         self.filtered_edge_peers(
             &rtxn,
-            &self.store.edges_out,
+            crate::ports::EdgeDirection::Out,
             &of,
             EdgeKind::Blocks,
             None,

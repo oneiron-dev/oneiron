@@ -24,6 +24,19 @@ pub(super) type VaultMetaCounterComponents = (Option<Vec<u8>>, Option<Vec<u8>>);
 pub enum OffRecordMode {
     OffRecord,
     OnRecord,
+    /// No transcript, derived memory, telemetry, or receipts are retained.
+    /// Entry is explicit; this mode cannot be changed or promoted.
+    Anonymous,
+}
+
+impl OffRecordMode {
+    pub(crate) const fn write_target(self) -> crate::session_overlay::RouteTarget {
+        match self {
+            Self::OffRecord => crate::session_overlay::RouteTarget::Overlay,
+            Self::OnRecord => crate::session_overlay::RouteTarget::Base,
+            Self::Anonymous => crate::session_overlay::RouteTarget::Discard,
+        }
+    }
 }
 
 /// Backend class the disclosure-honesty line is relative to (OF-326
@@ -94,6 +107,8 @@ pub enum ExecutorUtterance {
     Think,
     /// Non-verbal expression accompanying a turn.
     Express,
+    /// Host-selected, hidden receipt for the report-blocked effect.
+    ReportBlocked,
 }
 
 impl ExecutorUtterance {
@@ -104,6 +119,7 @@ impl ExecutorUtterance {
             Self::Speak => "executor.speak",
             Self::Think => "executor.think",
             Self::Express => "executor.express",
+            Self::ReportBlocked => crate::code_run::blocked::BLOCKED_REPORT_MESSAGE_TYPE,
         }
     }
 
@@ -116,7 +132,7 @@ impl ExecutorUtterance {
     pub const fn is_visible(self) -> bool {
         match self {
             Self::Speak | Self::Express => true,
-            Self::Think => false,
+            Self::Think | Self::ReportBlocked => false,
         }
     }
 }

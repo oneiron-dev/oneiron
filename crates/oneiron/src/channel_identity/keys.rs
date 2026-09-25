@@ -4,13 +4,13 @@
 ///
 /// Every row carries `binding_facet_ref`, which is `nil` when unmasked.
 /// Actor bindings use the `actor` scope.
-pub const CHANNEL_IDENTITY_SCHEMA_VERSION: u64 = 3;
+pub const CHANNEL_IDENTITY_SCHEMA_VERSION: u64 = 5;
 
 /// ChannelIdentity body schema version for `delegated_grant` rows.
 ///
 /// Only the fourth shape uses it. The version is what selects the pinned key
 /// set at decode, so the shapes' key sets can never be mixed.
-pub const CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION: u64 = 4;
+pub const CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION: u64 = 6;
 
 /// Minimum self-hold window for a quarantined released identity (90 days).
 pub const CHANNEL_IDENTITY_MIN_QUARANTINE_SECS: u64 = 90 * 24 * 60 * 60;
@@ -19,7 +19,7 @@ pub const CHANNEL_IDENTITY_MIN_QUARANTINE_SECS: u64 = 90 * 24 * 60 * 60;
 ///
 /// `binding_facet_ref` names the mask this identity wears on this channel,
 /// or is `nil` when unmasked.
-pub const CHANNEL_IDENTITY_BODY_KEYS: [&str; 13] = [
+pub const CHANNEL_IDENTITY_BODY_KEYS: [&str; 14] = [
     "schema_version",
     "channel",
     "address_or_handle",
@@ -33,6 +33,7 @@ pub const CHANNEL_IDENTITY_BODY_KEYS: [&str; 13] = [
     "reputation_ref",
     "manifest_ref",
     "binding_facet_ref",
+    "auth_mode",
 ];
 
 /// Pinned on-disk MessagePack key set for `delegated_grant` bodies.
@@ -40,7 +41,7 @@ pub const CHANNEL_IDENTITY_BODY_KEYS: [&str; 13] = [
 /// The thirteen self-held keys in the same order, then the two custody keys.
 /// `delegated_grant_ref` is a custody record NAME; no token bytes are ever
 /// written here.
-pub const CHANNEL_IDENTITY_DELEGATED_BODY_KEYS: [&str; 15] = [
+pub const CHANNEL_IDENTITY_DELEGATED_BODY_KEYS: [&str; 16] = [
     CHANNEL_IDENTITY_BODY_KEYS[0],
     CHANNEL_IDENTITY_BODY_KEYS[1],
     CHANNEL_IDENTITY_BODY_KEYS[2],
@@ -54,6 +55,7 @@ pub const CHANNEL_IDENTITY_DELEGATED_BODY_KEYS: [&str; 15] = [
     CHANNEL_IDENTITY_BODY_KEYS[10],
     CHANNEL_IDENTITY_BODY_KEYS[11],
     CHANNEL_IDENTITY_BODY_KEYS[12],
+    CHANNEL_IDENTITY_BODY_KEYS[13],
     "delegated_grant_ref",
     "grant_scopes",
 ];
@@ -85,13 +87,14 @@ pub(super) const KEY_MANIFEST_REF: &str = CHANNEL_IDENTITY_BODY_KEYS[11];
 /// Optional channel facet key in the canonical body.
 pub const KEY_BINDING_FACET_REF: &str = CHANNEL_IDENTITY_BODY_KEYS[12];
 
-pub(super) const KEY_DELEGATED_GRANT_REF: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[13];
+pub(super) const KEY_DELEGATED_GRANT_REF: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[14];
 
-pub(super) const KEY_GRANT_SCOPES: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[14];
+pub(super) const KEY_GRANT_SCOPES: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[15];
 
 /// Pinned `channel_identity.*` claim predicates for the CID-1 record fields.
-pub const CHANNEL_IDENTITY_CLAIM_PREDICATES: [&str; 12] = [
+pub const CHANNEL_IDENTITY_CLAIM_PREDICATES: [&str; 13] = [
     PREDICATE_CHANNEL_IDENTITY_CHANNEL,
+    PREDICATE_CHANNEL_IDENTITY_AUTH_MODE,
     PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
     PREDICATE_CHANNEL_IDENTITY_SHAPE,
     PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE,
@@ -134,3 +137,6 @@ pub const PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF: &str = "channel_identity.mani
 pub(super) const MAX_CHANNEL_BYTES: usize = 64;
 
 pub(super) const MAX_ADDRESS_OR_HANDLE_BYTES: usize = 512;
+
+/// Auth mechanism, never secret material.
+pub(super) const PREDICATE_CHANNEL_IDENTITY_AUTH_MODE: &str = "channel_identity.auth_mode";

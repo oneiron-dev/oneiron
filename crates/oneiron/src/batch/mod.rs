@@ -10,13 +10,20 @@ mod claim_candidate_apply;
 mod claim_materialization;
 mod deindex;
 mod edge_apply;
+mod facet_identity;
 mod facet_validation;
 mod gate_mode;
 mod gate_staging;
 mod lexical_query_hints;
 mod ops_pipeline;
+mod person_substrate;
 mod phonetic_apply;
 mod put_apply;
+pub(crate) use person_substrate::sweep_scope_stamps;
+#[cfg(feature = "sync")]
+mod recovery_shell;
+#[cfg(feature = "sync")]
+pub(crate) use recovery_shell::restore_recovery_shell_in_txn;
 mod short_id;
 mod thread_claim_index;
 mod txn_builder;
@@ -35,8 +42,11 @@ pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_
 use self::base_apply::apply_ops_with_origin;
 pub(crate) use self::base_apply::apply_session_bundle_claim_puts;
 pub(crate) use self::builder::BatchOp;
+#[cfg(feature = "sync")]
 pub(crate) use self::child_of_overlay::child_of_prefix;
-pub(crate) use self::claim_materialization::{ClaimMaterialization, apply_owner_bound_claim_puts};
+pub(crate) use self::claim_materialization::{
+    ClaimMaterialization, apply_owner_bound_claim_puts, authenticated_claim_author_in_txn,
+};
 #[cfg(test)]
 pub(crate) use self::deindex::deindex_entity_for_test;
 pub(crate) use self::deindex::{deindex_entity, deindex_lexical_query_hints_for_target};
@@ -49,13 +59,12 @@ pub(crate) use self::facet_validation::{
     facet_of_endpoint_types_on_table, facet_of_endpoints_provably_off_table, stored_entity_type,
 };
 pub(crate) use self::gate_mode::ApplyOpsGateMode;
-pub(crate) use self::gate_staging::StagedClaimGateOutcome;
-use self::gate_staging::{stage_preflight_decision, staged_claim_gate_outcomes};
+use self::gate_staging::stage_preflight_decision;
 pub(crate) use self::ops_pipeline::{
     BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode,
 };
 pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
-pub(crate) use self::put_apply::delete_entity_index_rows;
+pub(crate) use self::put_apply::{delete_entity_index_rows, stage_entity_index_rows};
 pub(crate) use self::short_id::{encode_short_id_forward_key, parse_short_id_value};
 pub(crate) use self::types::{
     ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
@@ -80,7 +89,7 @@ use self::deindex::*;
 use self::edge_apply::*;
 use self::lexical_query_hints::*;
 use self::ops_pipeline::*;
-use self::phonetic_apply::*;
+pub(crate) use self::phonetic_apply::apply_phonetic;
 use self::put_apply::*;
 use self::short_id::*;
 use self::thread_claim_index::*;

@@ -25,6 +25,7 @@ pub struct MaintenanceBuilder<'a> {
     do_cleanup_attempt_queue: bool,
     attempt_queue_lease_timeout_secs: u64,
     do_backfill_gate_claim_index: bool,
+    do_migrate_conversation_dags: bool,
 }
 
 /// Aggregate counters for maintenance operations.
@@ -113,6 +114,10 @@ pub struct MaintenanceReport {
     /// an unflagged empty ledger is a distinct signal from an already-complete
     /// one.
     pub gate_claim_index_backfill_already_complete: bool,
+    /// Conversations whose legacy chain was migrated in this run.
+    pub conversation_dags_migrated: u64,
+    /// Conversations skipped because their received DAG topology is invalid.
+    pub conversation_dags_skipped_invalid: u64,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
@@ -130,6 +135,7 @@ impl<'a> MaintenanceBuilder<'a> {
             do_cleanup_attempt_queue: false,
             attempt_queue_lease_timeout_secs: 0,
             do_backfill_gate_claim_index: false,
+            do_migrate_conversation_dags: false,
         }
     }
 
@@ -219,8 +225,20 @@ impl<'a> MaintenanceBuilder<'a> {
         self
     }
 
+    /// Migrates legacy conversations into local DAG chains, once each.
+    pub fn migrate_conversation_dags(mut self) -> Self {
+        self.do_migrate_conversation_dags = true;
+        self
+    }
+
     pub fn run(self) -> Result<MaintenanceReport> {
         let mut report = MaintenanceReport::default();
+        if self.do_migrate_conversation_dags {
+            (
+                report.conversation_dags_migrated,
+                report.conversation_dags_skipped_invalid,
+            ) = self.vault.migrate_all_conversation_dags()?;
+        }
 
         if self.do_rebuild_hnsw {
             // ONE-1933 / OF-447: a SLIM-dropped graph takes the marker-aware
@@ -298,7 +316,7 @@ impl<'a> MaintenanceBuilder<'a> {
         if self.do_cleanup_attempt_queue {
             let (warnings, cleanup) = attempt_lease::sweep_attempt_leases(
                 self.vault,
-                crate::unix_seconds_now(),
+                self.vault.store.clock.now_recorded_at(),
                 self.attempt_queue_lease_timeout_secs,
             )?;
             report.attempt_queue_lease_warnings = warnings;

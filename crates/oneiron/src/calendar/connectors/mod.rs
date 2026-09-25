@@ -62,6 +62,7 @@
 mod inbound;
 mod outbound;
 mod remote;
+mod resource;
 mod seat;
 
 // `super::` paths inside the moved bodies still name the calendar level

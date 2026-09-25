@@ -1,0 +1,13 @@
+{
+  "ok": false,
+  "error": {
+    "code": "Community1Unavailable",
+    "details": {
+      "requires": "pyannote/speaker-diarization-community-1"
+    }
+  },
+  "protocol": "oneiron.meeting_audio.host.v1",
+  "request_id": "9a752f60-6113-4550-8e9d-316d4d749013",
+  "body_bytes": 0,
+  "elapsed_seconds": 0.0014104580041021109
+}

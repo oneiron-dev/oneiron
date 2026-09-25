@@ -93,7 +93,6 @@ fn ctx<'a>(vault: &'a Vault, fixture: &StepFixture, now_ms: u64) -> DurableStepC
         run_id: Some("run-test".to_owned()),
         envelope_actor: fixture.actor,
         subject: fixture.subject,
-        pinned_config: None,
         deadline: None,
         now_ms,
     }
@@ -158,12 +157,14 @@ fn response_fixture(text: &str) -> LlmResponse {
 struct ScriptedBackend {
     calls: AtomicUsize,
     script: Mutex<VecDeque<LlmResult<LlmResponse>>>,
+    requests: Mutex<Vec<LlmRequest>>,
 }
 
 impl ScriptedBackend {
     fn new(script: Vec<LlmResult<LlmResponse>>) -> Self {
         Self {
             calls: AtomicUsize::new(0),
+            requests: Mutex::new(Vec::new()),
             script: Mutex::new(script.into_iter().collect()),
         }
     }
@@ -176,9 +177,10 @@ impl ScriptedBackend {
 impl LlmBackend for ScriptedBackend {
     fn generate<'a>(
         &'a self,
-        _request: LlmRequest,
+        request: LlmRequest,
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
+        self.requests.lock().unwrap().push(request);
         self.calls.fetch_add(1, Ordering::SeqCst);
         let next = self
             .script
@@ -401,7 +403,7 @@ fn fatal_besteffort_fails_fast_typed() -> Result<()> {
 }
 
 #[test]
-fn durable_fatal_demands_deterministic_fallback() -> Result<()> {
+fn durable_fatal_unknown_fallback_is_typed() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fixture = step_fixture(&vault, 10)?;
     let ctx = ctx(&vault, &fixture, 10_000);
@@ -417,8 +419,8 @@ fn durable_fatal_demands_deterministic_fallback() -> Result<()> {
 
     let error =
         block_on(call_as_step(&ctx, &backend, &guard, request)).expect_err("fatal must fail");
-    let DurableStepError::FallbackDemanded { fallback, .. } = error else {
-        panic!("expected FallbackDemanded, got {error:?}");
+    let DurableStepError::Fallback(crate::llm::FallbackError::Unknown(fallback)) = error else {
+        panic!("expected unknown fallback, got {error:?}");
     };
     assert_eq!(fallback, "template_summary_v1");
     Ok(())
@@ -1101,28 +1103,6 @@ fn trap_for_consent_scale_durable_wait_is_consent() {
     );
 }
 
-struct HungBackend;
-
-impl LlmBackend for HungBackend {
-    fn generate<'a>(
-        &'a self,
-        _request: LlmRequest,
-        _lease: &'a BudgetLease,
-    ) -> LlmGenerateFuture<'a> {
-        Box::pin(std::future::pending())
-    }
-
-    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        Err(LlmError::Fatal(FatalLlmError::Unsupported(
-            UnsupportedCapability {
-                capability: LlmCapability::Streaming,
-                model: None,
-                reason: None,
-            },
-        )))
-    }
-}
-
 fn injected_deadline(
     start_elapsed_ms: u64,
     ceiling_ms: u64,
@@ -1134,45 +1114,6 @@ fn injected_deadline(
         Arc::new(move || clock.load(Ordering::SeqCst)),
     );
     (elapsed, deadline)
-}
-
-#[test]
-fn deadline_race_aborts_hung_generate() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let fixture = step_fixture(&vault, 10)?;
-    // Not yet in the finalize window (elapsed 1s of 180s), so the step is
-    // admitted; the clock jumps past the ceiling while the call hangs.
-    let (elapsed, deadline) = injected_deadline(1_000, 180_000);
-    let mut ctx = ctx(&vault, &fixture, 10_000);
-    ctx.deadline = Some(&deadline);
-    let guard = guard_with_limit(10_000);
-
-    let advancer = {
-        let elapsed = Arc::clone(&elapsed);
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(120));
-            elapsed.store(180_001, Ordering::SeqCst);
-        })
-    };
-    let error = block_on(call_as_step(&ctx, &HungBackend, &guard, request_fixture()))
-        .expect_err("hung generate must lose the deadline race");
-    advancer.join().expect("advancer thread");
-
-    assert!(matches!(error, DurableStepError::DeadlineHardCut));
-    let read = guard.read();
-    assert_eq!(read.reserved_units, 0, "lease aborted with settled spend");
-    assert_eq!(read.used_units, 0);
-    let runner = DreamerRunnerStore::new(&vault);
-    let parked = runner
-        .parked_attempt(fixture.attempt_id)?
-        .expect("attempt parked");
-    assert_eq!(
-        parked.reason,
-        crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON
-    );
-    let step_hash = request_fixture().canonical_hash().expect("hash");
-    assert!(step_state_read(&vault, fixture.attempt_id, &step_hash)?.is_none());
-    Ok(())
 }
 
 /// Backend whose generate future lets the injected deadline pass while the
@@ -1220,27 +1161,21 @@ fn expired_deadline_never_records_finished() -> Result<()> {
     let mut ctx = ctx(&vault, &fixture, 10_000);
     ctx.deadline = Some(&deadline);
     let guard = guard_with_limit(10_000);
-    let backend = ExpireThenCompleteBackend {
-        clock: Arc::clone(&elapsed),
-    };
-
+    let backend = ExpireThenCompleteBackend { clock: elapsed };
     // The response ARRIVES, but only after the ceiling passed. Expiry is
     // checked before the completion poll, so the call loses the race — it
     // must never be recorded as a finished step.
     let error = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
         .expect_err("expired call must never finish");
     assert!(matches!(error, DurableStepError::DeadlineHardCut));
-
-    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let hash = request_fixture().canonical_hash().expect("hash");
     assert!(
-        step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.is_none(),
+        step_index_lookup(&vault, fixture.attempt_id, &hash)?.is_none(),
         "no terminal step claim for an expired call"
     );
-    let read = guard.read();
-    assert_eq!(read.reserved_units, 0, "lease aborted");
-    assert_eq!(read.used_units, 0, "no spend recorded");
-    let runner = DreamerRunnerStore::new(&vault);
-    let parked = runner
+    assert_eq!(guard.read().reserved_units, 0, "lease aborted");
+    assert_eq!(guard.read().used_units, 0, "no spend recorded");
+    let parked = DreamerRunnerStore::new(&vault)
         .parked_attempt(fixture.attempt_id)?
         .expect("attempt parked");
     assert_eq!(
@@ -1253,6 +1188,13 @@ fn expired_deadline_never_records_finished() -> Result<()> {
         parked.parked_at, 10,
         "deadline hard-cut park must store parked_at in seconds, not milliseconds"
     );
+    let mut next = request_fixture();
+    next.model = ModelId::new("other/model@r9").expect("model");
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, next)),
+        Err(DurableStepError::FinalizeRefused)
+    ));
+    assert_eq!(guard.read().used_units, 0);
     Ok(())
 }
 
@@ -1534,7 +1476,10 @@ fn delegation_wait_and_binding_survive_a_reopen() -> Result<()> {
 
     // Reopen: nothing but LMDB carried state across this boundary.
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("reopen vault");
-    let binding = peer_wait_binding_read(&vault, &task_ref)?.expect("binding survives restart");
+    let binding = peer_wait_bindings(&vault)?
+        .into_iter()
+        .find(|binding| binding.task_ref == task_ref)
+        .expect("binding survives restart");
     let (_, head) = trap_head(&vault, &trap.trap_claim_id)?;
 
     assert_eq!(binding.trap_claim_id, trap.trap_claim_id);
@@ -1611,7 +1556,7 @@ fn a_landed_peer_result_signals_once_and_resumes_once() -> Result<()> {
 /// is closed by reconciliation: it walks the BINDING index, finds the settled
 /// task, and sends the signal that never went out.
 #[test]
-fn reconciliation_replays_a_terminal_task_whose_signal_never_sent() -> Result<()> {
+fn registration_recovers_a_result_that_landed_before_wait() -> Result<()> {
     let (_dir, vault) = open_delegation_vault();
     let fixture = step_fixture(&vault, 10)?;
     let step_hash = request_fixture().canonical_hash().expect("hash");
@@ -1619,14 +1564,14 @@ fn reconciliation_replays_a_terminal_task_whose_signal_never_sent() -> Result<()
     let runner = DreamerRunnerStore::new(&vault);
 
     let (_, before) = trap_head(&vault, &trap.trap_claim_id)?;
-    assert_eq!(before.state, DreamerTrapState::Waiting);
+    assert_eq!(before.state, DreamerTrapState::Sent);
 
     let replayed = reconcile_peer_result_signals(&vault, DELEGATE_NOW + 30)?;
     let (_, after) = trap_head(&vault, &trap.trap_claim_id)?;
     let idempotent = reconcile_peer_result_signals(&vault, DELEGATE_NOW + 31)?;
     let resumed = consume_trap_signal(&vault, &runner, &trap, DELEGATE_NOW + 32)?;
 
-    assert_eq!(replayed, 1);
+    assert_eq!(replayed, 0);
     assert_eq!(after.state, DreamerTrapState::Sent);
     assert_eq!(idempotent, 0);
     assert_eq!(resumed, fixture.attempt_id);
@@ -1659,7 +1604,7 @@ fn a_mismatched_step_hash_can_neither_send_nor_consume_a_delegation() -> Result<
     );
 
     assert_eq!(usize::from(forged_send.is_err()), 1);
-    assert_eq!(usize::from(honest_send.is_some()), 1);
+    assert_eq!(honest_send, None);
     assert_eq!(usize::from(forged_consume.is_err()), 1);
     assert_eq!(
         usize::from(runner.parked_attempt(fixture.attempt_id)?.is_some()),
@@ -1685,20 +1630,6 @@ fn a_consent_trap_cannot_register_a_delegation_wait() -> Result<()> {
     assert_eq!(usize::from(refused.is_err()), 1);
     assert_eq!(peer_wait_bindings(&vault)?.len(), 0);
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// ONE-1344: opt-in per-call pinned-model admission + WITH-WHAT provenance
-// ---------------------------------------------------------------------------
-
-fn pinned_config(allowed: &[&str], background_tier_enabled: bool) -> PinnedModelConfig {
-    PinnedModelConfig {
-        allowed: allowed
-            .iter()
-            .map(|id| ModelId::new(*id).expect("pinned model id"))
-            .collect(),
-        background_tier_enabled,
-    }
 }
 
 /// Reads every claim attached to `subject` back out of the vault and decodes
@@ -1811,185 +1742,13 @@ fn provenance_recorded_for_every_call() -> Result<()> {
     Ok(())
 }
 
-/// A pinned model whose purpose is in the background tier is refused when the
-/// tier is disabled — before hashing, memo, state, budget, and backend — and
-/// leaves zero durable and zero private residue. Only the purpose changes for
-/// the admitted half: `Eval` is outside the background tier.
-#[test]
-fn purity_gate_blocks_background_tier() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let fixture = step_fixture(&vault, 10)?;
-    let config = pinned_config(&["test/model@r1"], false);
-    let mut ctx = ctx(&vault, &fixture, 10_000);
-    ctx.pinned_config = Some(&config);
-    let backend = ScriptedBackend::new(vec![Ok(response_fixture("admitted answer"))]);
-    let guard = guard_with_limit(10_000);
-
-    let refused = request_fixture();
-    let refused_hash = refused.canonical_hash().expect("hash");
-    let error = block_on(call_as_step(&ctx, &backend, &guard, refused))
-        .expect_err("background-tier purpose must be refused while the tier is disabled");
-    assert!(
-        matches!(
-            error,
-            DurableStepError::PinnedConfig(PinnedConfigViolation::BackgroundTierDisabled {
-                purpose: CallPurpose::Consolidation
-            })
-        ),
-        "expected BackgroundTierDisabled, got {error:?}"
-    );
-
-    assert_eq!(backend.calls(), 0, "no backend invocation");
-    let read = guard.read();
-    assert_eq!(read.used_units, 0, "no units spent");
-    assert_eq!(read.reserved_units, 0, "no lease reserved");
-    assert!(
-        step_state_read(&vault, fixture.attempt_id, &refused_hash)?.is_none(),
-        "no private step state"
-    );
-    assert!(
-        step_index_lookup(&vault, fixture.attempt_id, &refused_hash)?.is_none(),
-        "no memo index row"
-    );
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
-        0,
-        "no terminal step claim"
-    );
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_TRAP_PREDICATE)?,
-        0,
-        "no trap claim"
-    );
-
-    let mut admitted = request_fixture();
-    admitted.envelope.purpose = CallPurpose::Eval;
-    let outcome =
-        block_on(call_as_step(&ctx, &backend, &guard, admitted)).expect("Eval must be admitted");
-    let StepOutcome::Finished {
-        response, memoized, ..
-    } = outcome
-    else {
-        panic!("expected finished step");
-    };
-    assert!(!memoized);
-    assert_eq!(response, response_fixture("admitted answer"));
-    assert_eq!(backend.calls(), 1, "exactly one backend call");
-    let read = guard.read();
-    assert_eq!(read.used_units, 150, "usage settled");
-    assert_eq!(read.reserved_units, 0, "lease settled");
-
-    let claims = terminal_step_claims(&vault, &fixture.subject)?;
-    assert_eq!(claims.len(), 1, "one readable terminal claim");
-    assert_eq!(claims[0].purpose, "eval");
-    Ok(())
-}
-
-/// Membership is checked BEFORE background-tier classification, and admission
-/// runs BEFORE the memo lookup: an already-memoized step is still refused.
-#[test]
-fn unpinned_model_rejected() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let fixture = step_fixture(&vault, 10)?;
-    // Allows a DIFFERENT model with the background tier disabled, so the
-    // Consolidation request on `test/model@r1` fails BOTH checks; reporting
-    // ModelNotPinned proves membership is evaluated first.
-    let config = pinned_config(&["other/model@r9"], false);
-    let mut pinned_ctx = ctx(&vault, &fixture, 10_000);
-    pinned_ctx.pinned_config = Some(&config);
-    let backend = ScriptedBackend::new(vec![Ok(response_fixture("terminal answer"))]);
-    let guard = guard_with_limit(10_000);
-    let step_hash = request_fixture().canonical_hash().expect("hash");
-
-    let error = block_on(call_as_step(
-        &pinned_ctx,
-        &backend,
-        &guard,
-        request_fixture(),
-    ))
-    .expect_err("an unpinned model must be refused");
-    match &error {
-        DurableStepError::PinnedConfig(PinnedConfigViolation::ModelNotPinned { model }) => {
-            assert_eq!(*model, ModelId::new("test/model@r1").expect("model id"));
-        }
-        other => panic!("expected ModelNotPinned before the tier check, got {other:?}"),
-    }
-
-    assert_eq!(backend.calls(), 0, "no backend invocation");
-    assert_eq!(guard.read().used_units, 0, "no units spent");
-    assert_eq!(guard.read().reserved_units, 0, "no lease reserved");
-    assert!(step_state_read(&vault, fixture.attempt_id, &step_hash)?.is_none());
-    assert!(step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.is_none());
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
-        0
-    );
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_TRAP_PREDICATE)?,
-        0
-    );
-
-    // Run the identical request unpinned to completion, so the memo index and
-    // a terminal claim exist for this exact step hash.
-    let open_ctx = ctx(&vault, &fixture, 10_000);
-    let outcome = block_on(call_as_step(&open_ctx, &backend, &guard, request_fixture()))
-        .expect("unpinned execution");
-    assert!(matches!(
-        outcome,
-        StepOutcome::Finished {
-            memoized: false,
-            ..
-        }
-    ));
-    assert_eq!(backend.calls(), 1);
-    assert!(
-        step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.is_some(),
-        "memo index populated"
-    );
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
-        1
-    );
-    let used_after_execution = guard.read().used_units;
-
-    // The byte-identical request under the rejecting config must still be a
-    // typed refusal — NOT a memoized StepOutcome::Finished.
-    let error = block_on(call_as_step(
-        &pinned_ctx,
-        &backend,
-        &guard,
-        request_fixture(),
-    ))
-    .expect_err("admission must precede the memo lookup");
-    assert!(
-        matches!(
-            error,
-            DurableStepError::PinnedConfig(PinnedConfigViolation::ModelNotPinned { .. })
-        ),
-        "expected ModelNotPinned on the memoized step, got {error:?}"
-    );
-    assert_eq!(backend.calls(), 1, "backend count unchanged");
-    assert_eq!(
-        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
-        1,
-        "terminal claim count unchanged"
-    );
-    assert_eq!(guard.read().used_units, used_after_execution);
-    Ok(())
-}
-
-/// With `pinned_config: None` the ONE-1343 path is byte-for-byte unchanged:
-/// one call executes and settles, the identical repeat memo-hits with zero
+/// One call executes and settles, the identical repeat memo-hits with zero
 /// re-spend and no second claim.
 #[test]
 fn no_pin_no_change() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fixture = step_fixture(&vault, 10)?;
     let ctx = ctx(&vault, &fixture, 10_000);
-    assert!(
-        ctx.pinned_config.is_none(),
-        "the helper context stays unpinned by default"
-    );
     // A single scripted response: any second backend call would panic.
     let backend = ScriptedBackend::new(vec![Ok(response_fixture("unpinned answer"))]);
     let guard = guard_with_limit(10_000);
@@ -2190,5 +1949,632 @@ fn untrusted_active_step_claim_is_not_memo_indexed() -> Result<()> {
         step_index_lookup(&vault, fixture.attempt_id, &malformed_hash)?.is_none(),
         "an unusable model binding must not enter the memo index"
     );
+    Ok(())
+}
+
+#[test]
+fn fatal_runs_declared_rule_and_memoizes_nonempty_outcome() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into())]);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
+    let first = block_on(call_as_step(&ctx, &backend, &guard, request.clone())).expect("fallback");
+    let StepOutcome::Finished {
+        response,
+        memoized: false,
+        ..
+    } = first
+    else {
+        panic!("not finished")
+    };
+    assert_eq!(
+        response.message.content,
+        vec![ContentPart::Text {
+            text: json!({"verdict":"hold"}).to_string()
+        }]
+    );
+    assert!(
+        matches!(response.finish_reason, FinishReason::Other { name } if name.starts_with("fallback:json_rules_v1:"))
+    );
+    assert_eq!(guard.read().reserved_units, 0);
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)).expect("memo"),
+        StepOutcome::Finished { memoized: true, .. }
+    ));
+    assert_eq!(backend.calls(), 1);
+    Ok(())
+}
+
+#[test]
+fn fallback_runner_failure_is_typed_and_releases_reservation() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into())]);
+    let mut request = request_fixture();
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(json!({"version":2,"rows":[]})),
+        },
+    };
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)),
+        Err(DurableStepError::Fallback(
+            crate::llm::FallbackError::Failed { .. }
+        ))
+    ));
+    assert_eq!(guard.read().reserved_units, 0);
+    Ok(())
+}
+
+#[test]
+fn schema_correction_rechecks_budget_before_another_paid_call() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(600); // The fixture reserves 500 and spends 150 per response.
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("not json")),
+        Ok(response_fixture("{}")),
+    ]);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request.clone())),
+        Err(DurableStepError::Llm(LlmError::BudgetDenied(
+            crate::llm::BudgetDenied::Exhausted
+        )))
+    ));
+    assert_eq!(backend.calls(), 1);
+    assert_eq!(guard.read().used_units, 150);
+    assert_eq!(guard.read().reserved_units, 0);
+    // No failed/cut correction is memoized. A newly funded execution still calls the backend.
+    let funded = guard_with_limit(10_000);
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &funded, request)),
+        Ok(StepOutcome::Finished {
+            memoized: false,
+            ..
+        })
+    ));
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(funded.read().used_units, 150);
+    assert_eq!(funded.read().reserved_units, 0);
+    Ok(())
+}
+
+#[test]
+fn schema_shim_corrects_validates_and_charges_all_attempts() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object","required":["n"],"properties":{"n":{"type":"integer"}},"additionalProperties":false}),
+    };
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("{\"n\":\"4\"}")),
+        Ok(response_fixture("{\"n\":4}")),
+    ]);
+    let StepOutcome::Finished { response, .. } =
+        block_on(call_as_step(&ctx, &backend, &guard, request)).expect("corrected")
+    else {
+        panic!("not finished")
+    };
+    assert_eq!(response.usage.input.total, 200);
+    assert_eq!(response.usage.output.total, 100);
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(guard.read().used_units, 300);
+    assert_eq!(guard.read().reserved_units, 0);
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let text_json = |message: &LlmMessage| {
+        let [ContentPart::Text { text }] = message.content.as_slice() else {
+            panic!("schema message")
+        };
+        serde_json::from_str::<serde_json::Value>(text).unwrap()
+    };
+    let schema = json!({"type":"object","required":["n"],"properties":{"n":{"type":"integer"}},"additionalProperties":false});
+    assert_eq!(requests[0].envelope.response_format, ResponseFormat::Text);
+    assert_eq!(requests[0].messages[0].role, LlmMessageRole::System);
+    assert_eq!(
+        text_json(&requests[0].messages[0]),
+        json!({"response_format":{"type":"json_schema","schema":schema}})
+    );
+    assert_eq!(
+        requests[1].messages[2],
+        response_fixture("{\"n\":\"4\"}").message
+    );
+    assert_eq!(requests[1].messages[3].role, LlmMessageRole::User);
+    let feedback = text_json(&requests[1].messages[3]);
+    assert_eq!(feedback["required_schema"], schema);
+    assert!(
+        !feedback["schema_validation_errors"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn schema_shim_three_bad_responses_are_terminal_not_fallback() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "fail_closed_to_proposed".into(),
+            config: None,
+        },
+    };
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    let backend = ScriptedBackend::new(vec![Ok(response_fixture("bad")); 3]);
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)),
+        Err(DurableStepError::SchemaValidation { attempts: 3, .. })
+    ));
+    assert_eq!(backend.calls(), 3);
+    assert_eq!(guard.read().used_units, 450);
+    assert_eq!(guard.read().reserved_units, 0);
+    Ok(())
+}
+
+#[test]
+fn native_structured_output_receives_unchanged_request() -> Result<()> {
+    struct Native;
+    impl LlmBackend for Native {
+        fn supports(&self, _: &ModelId, capability: LlmCapability) -> bool {
+            capability == LlmCapability::JsonResponse
+        }
+        fn generate<'a>(
+            &'a self,
+            request: LlmRequest,
+            _: &'a BudgetLease,
+        ) -> LlmGenerateFuture<'a> {
+            assert!(matches!(
+                request.envelope.response_format,
+                ResponseFormat::Json { .. }
+            ));
+            assert_eq!(request.messages.len(), 1);
+            Box::pin(async { Ok(response_fixture("{}")) })
+        }
+        fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+            unreachable!()
+        }
+    }
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    block_on(call_as_step(&ctx, &Native, &guard, request)).expect("native");
+    Ok(())
+}
+
+#[test]
+fn boring_tags_spend_nothing_and_surprising_render_names_its_reads() -> Result<()> {
+    use crate::llm::tagger::*;
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("rendered")),
+        Ok(response_fixture("updated")),
+    ]);
+    let mut delta = InputDelta {
+        turn: fixture.subject,
+        text: "Ada".into(),
+        before: RetrievalTags::default(),
+        after: RetrievalTags::default(),
+        threshold: 0.5,
+    };
+    let skipped = block_on(render_on_delta(
+        &ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+        &delta,
+    ))
+    .expect("boring");
+    assert!(!skipped.receipt.admitted);
+    assert!(skipped.step.is_none());
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(guard.read().used_units, 0);
+    delta.after.mentions.push(MentionTag {
+        start: 0,
+        end: 3,
+        entity: fixture.subject,
+        weight: 1.0,
+    });
+    let rendered = block_on(render_on_delta(
+        &ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+        &delta,
+    ))
+    .expect("surprise");
+    assert!(rendered.receipt.admitted);
+    assert_eq!(rendered.receipt.read_refs, vec![fixture.subject]);
+    assert!(rendered.step.is_some());
+    assert_eq!(backend.calls(), 1);
+    let replayed = block_on(render_on_delta(
+        &ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+        &delta,
+    ))
+    .expect("replay");
+    assert!(matches!(
+        replayed.step,
+        Some(StepOutcome::Finished { memoized: true, .. })
+    ));
+    delta.text = "Eve".into();
+    let changed = block_on(render_on_delta(
+        &ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+        &delta,
+    ))
+    .expect("new delta");
+    assert_ne!(rendered.receipt.input_hash, changed.receipt.input_hash);
+    assert_eq!(backend.calls(), 2);
+    Ok(())
+}
+
+#[test]
+fn corrective_spend_survives_fatal_fallback_and_memo_replay() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("not json")),
+        Err(FatalLlmError::Auth.into()),
+    ]);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
+    let StepOutcome::Finished { response, .. } =
+        block_on(call_as_step(&ctx, &backend, &guard, request.clone())).expect("fallback")
+    else {
+        panic!("not finished");
+    };
+    assert_eq!(response.usage.input.total, 100);
+    assert_eq!(response.usage.output.total, 50);
+    assert_eq!(guard.read().used_units, 150);
+    assert_eq!(guard.read().reserved_units, 0);
+    let StepOutcome::Finished {
+        response: replay,
+        memoized: true,
+        ..
+    } = block_on(call_as_step(&ctx, &backend, &guard, request)).expect("replay")
+    else {
+        panic!("not memoized");
+    };
+    assert_eq!(response, replay);
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(guard.read().used_units, 150);
+    Ok(())
+}
+
+#[test]
+fn custom_fallback_empty_output_is_typed_and_not_memoized() -> Result<()> {
+    use crate::llm::{DeterministicRunner, FallbackError, FallbackRegistry};
+    struct Empty(ContentPart);
+    impl DeterministicRunner for Empty {
+        fn run(
+            &self,
+            _: &LlmRequest,
+            _: Option<&serde_json::Value>,
+            _: &FatalLlmError,
+        ) -> std::result::Result<LlmMessage, String> {
+            Ok(LlmMessage {
+                role: LlmMessageRole::Assistant,
+                content: vec![self.0.clone()],
+            })
+        }
+    }
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into()); 2]);
+    let guard = guard_with_limit(10_000);
+    let mut registry = FallbackRegistry::default();
+    registry
+        .register(
+            "empty".into(),
+            Box::new(Empty(ContentPart::Reasoning {
+                text: "".into(),
+                signature: None,
+            })),
+        )
+        .unwrap();
+    assert!(matches!(
+        registry.register(
+            "empty".into(),
+            Box::new(Empty(ContentPart::Reasoning {
+                text: "".into(),
+                signature: None
+            }))
+        ),
+        Err(FallbackError::Duplicate(_))
+    ));
+    let mut request = request_fixture();
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "empty".into(),
+            config: None,
+        },
+    };
+    for _ in 0..2 {
+        assert!(
+            matches!(block_on(call_as_step_with_fallbacks(&ctx, &backend, &guard, request.clone(), &registry)), Err(DurableStepError::Fallback(FallbackError::Empty(name))) if name == "empty")
+        );
+        assert_eq!(guard.read().reserved_units, 0);
+    }
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(guard.read().used_units, 0);
+    Ok(())
+}
+
+#[test]
+fn invalid_and_remote_reference_schemas_fail_before_backend_calls() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![]);
+    let guard = guard_with_limit(10_000);
+    for schema in [
+        json!({"type":"not-a-json-type"}),
+        json!({"$ref":"https://schema.invalid/no-fetch.json"}),
+    ] {
+        let mut request = request_fixture();
+        request.envelope.response_format = ResponseFormat::Json { schema };
+        assert!(matches!(
+            block_on(call_as_step(&ctx, &backend, &guard, request)),
+            Err(DurableStepError::SchemaValidation { attempts: 0, .. })
+        ));
+        assert_eq!(guard.read().reserved_units, 0);
+    }
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(guard.read().used_units, 0);
+    Ok(())
+}
+
+#[test]
+fn invalid_fallback_schema_is_terminal_settles_spend_and_is_not_memoized() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("not json")),
+        Err(FatalLlmError::Auth.into()),
+        Err(FatalLlmError::Auth.into()),
+    ]);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"integer"}),
+    };
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
+    for _ in 0..2 {
+        assert!(matches!(
+            block_on(call_as_step(&ctx, &backend, &guard, request.clone())),
+            Err(DurableStepError::SchemaValidation { attempts: 1, .. })
+        ));
+        assert_eq!(guard.read().reserved_units, 0);
+    }
+    assert_eq!(backend.calls(), 3);
+    assert_eq!(guard.read().used_units, 150);
+    Ok(())
+}
+
+#[test]
+fn invalid_previous_tags_refuse_before_paid_render() -> Result<()> {
+    use crate::llm::tagger::*;
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![]);
+    for case in 0..4 {
+        let mut before = RetrievalTags::default();
+        match case {
+            0 => before.mentions.push(MentionTag {
+                start: 0,
+                end: 9,
+                entity: fixture.subject,
+                weight: 1.0,
+            }),
+            1 => before.coreference.push(CoreferenceTag {
+                mention: 0,
+                antecedent: 0,
+            }),
+            2 => before.ppr_seeds.push(PprSeed {
+                entity: fixture.subject,
+                weight: f32::NAN,
+            }),
+            _ => before.affect[0] = 2.0,
+        }
+        let delta = InputDelta {
+            turn: fixture.subject,
+            text: "Ada".into(),
+            before,
+            after: RetrievalTags::default(),
+            threshold: 0.5,
+        };
+        assert!(
+            block_on(render_on_delta(
+                &ctx,
+                &backend,
+                &guard,
+                request_fixture(),
+                &delta
+            ))
+            .is_err()
+        );
+    }
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(guard.read().reserved_units, 0);
+    assert_eq!(guard.read().used_units, 0);
+    Ok(())
+}
+
+#[test]
+fn malformed_structured_fallback_is_rejected_before_memoization() -> Result<()> {
+    use crate::llm::{DeterministicRunner, FallbackError, FallbackRegistry};
+    struct Bad(ContentPart);
+    impl DeterministicRunner for Bad {
+        fn run(
+            &self,
+            _: &LlmRequest,
+            _: Option<&serde_json::Value>,
+            _: &FatalLlmError,
+        ) -> std::result::Result<LlmMessage, String> {
+            Ok(LlmMessage {
+                role: LlmMessageRole::Assistant,
+                content: vec![self.0.clone()],
+            })
+        }
+    }
+    for part in [
+        ContentPart::ToolCall {
+            call_id: "".into(),
+            name: "tool".into(),
+            input: json!([]),
+        },
+        ContentPart::ToolResult {
+            call_id: "valid-call-id".into(),
+            output: json!({"result":"not assistant output"}),
+            is_error: false,
+        },
+    ] {
+        let (_dir, vault) = open_vault();
+        let fixture = step_fixture(&vault, 10)?;
+        let ctx = ctx(&vault, &fixture, 10_000);
+        let guard = guard_with_limit(10_000);
+        let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into()); 2]);
+        let mut registry = FallbackRegistry::default();
+        registry
+            .register("bad".into(), Box::new(Bad(part)))
+            .unwrap();
+        let mut request = request_fixture();
+        request.envelope.class = CallClass::Durable {
+            fallback: DeterministicFallback {
+                name: "bad".into(),
+                config: None,
+            },
+        };
+        for _ in 0..2 {
+            assert!(matches!(
+                block_on(call_as_step_with_fallbacks(
+                    &ctx,
+                    &backend,
+                    &guard,
+                    request.clone(),
+                    &registry
+                )),
+                Err(DurableStepError::Fallback(FallbackError::Failed { .. }))
+            ));
+            assert_eq!(guard.read().reserved_units, 0);
+        }
+        assert_eq!(backend.calls(), 2);
+        assert_eq!(guard.read().used_units, 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn native_schema_validation_refuses_invalid_requests_and_unvalidated_terminals() -> Result<()> {
+    struct Native(ScriptedBackend);
+    impl LlmBackend for Native {
+        fn supports(&self, _: &ModelId, capability: LlmCapability) -> bool {
+            capability == LlmCapability::JsonResponse
+        }
+        fn generate<'a>(
+            &'a self,
+            request: LlmRequest,
+            lease: &'a BudgetLease,
+        ) -> LlmGenerateFuture<'a> {
+            self.0.generate(request, lease)
+        }
+        fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+            unreachable!()
+        }
+    }
+    for (schema, output, attempts) in [
+        (json!({"type":"not-a-type"}), "{}", 0),
+        (
+            json!({"$ref":"https://example.invalid/schema.json"}),
+            "{}",
+            0,
+        ),
+        (json!({"type":"object"}), "[]", 1),
+        (json!({"type":"object"}), "not json", 1),
+    ] {
+        let (_dir, vault) = open_vault();
+        let fixture = step_fixture(&vault, 10)?;
+        let ctx = ctx(&vault, &fixture, 10_000);
+        let guard = guard_with_limit(10_000);
+        let mut request = request_fixture();
+        request.envelope.response_format = ResponseFormat::Json { schema };
+        let hash = request.canonical_hash().unwrap();
+        let backend = Native(ScriptedBackend::new(vec![Ok(response_fixture(output))]));
+        assert!(matches!(
+            block_on(call_as_step(&ctx, &backend, &guard, request)),
+            Err(DurableStepError::SchemaValidation { attempts: actual, .. }) if actual == attempts
+        ));
+        assert_eq!(backend.0.calls(), attempts as usize);
+        assert_eq!(guard.read().used_units, u64::from(attempts) * 150);
+        assert_eq!(guard.read().reserved_units, 0);
+        assert!(step_index_lookup(&vault, fixture.attempt_id, &hash)?.is_none());
+        assert_eq!(
+            claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
+            0
+        );
+    }
     Ok(())
 }

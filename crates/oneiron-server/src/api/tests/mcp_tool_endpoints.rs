@@ -4,7 +4,7 @@ use super::*;
 
 #[tokio::test]
 async fn mcp_endpoints_register_distinct_tool_listings() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0001);
     let credential = "one-1704-listing-credential";
     register_mcp_actor(
@@ -57,7 +57,7 @@ async fn mcp_endpoints_register_distinct_tool_listings() {
 
 #[tokio::test]
 async fn mcp_tools_list_bytes_are_identical_across_credentials_and_scopes() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let wide_actor = seeded_test_entity_id(0x1704_0011);
     let scoped_actor = seeded_test_entity_id(0x1704_0012);
     register_mcp_actor(
@@ -99,7 +99,7 @@ async fn mcp_tools_list_bytes_are_identical_across_credentials_and_scopes() {
 
 #[tokio::test]
 async fn mcp_cross_endpoint_tool_calls_are_unknown_tool() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0021);
     let credential = "one-1704-cross-credential";
     register_mcp_actor(
@@ -147,7 +147,7 @@ async fn mcp_cross_endpoint_tool_calls_are_unknown_tool() {
 
 #[tokio::test]
 async fn mcp_setup_returns_keyframe_grammar_instructions_and_no_carrier() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0031);
     let credential = "one-1704-setup-credential";
     register_mcp_actor(
@@ -212,14 +212,13 @@ async fn mcp_setup_returns_keyframe_grammar_instructions_and_no_carrier() {
     assert!(result.get("carrier").is_none(), "{result:?}");
 }
 
-/// ONE-1704 B2: a direct `execute_code` call is refused with ONE stable typed
-/// code on BOTH routes, under full and narrowed credentials, BEFORE any run
-/// exists — and it stays refused even with a host bound, because the retirement
-/// is at the wire and not merely a missing provider.
+/// An unverified fixture host cannot enable execution. Both endpoints refuse
+/// before creating a run, under full and narrowed credentials alike. The real
+/// QuickJS-host test separately proves verified production registration.
 #[tokio::test]
-async fn mcp_direct_execute_code_is_typed_unavailable_before_any_run() {
+async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
     bind_mcp_test_code_host();
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let wide_actor = seeded_test_entity_id(0x1704_0041);
     let wide = "one-1704-code-credential";
     register_mcp_actor(&server, wide, wide_actor, oneiron::EdgeActorClass::Human).await;
@@ -261,7 +260,7 @@ async fn mcp_direct_execute_code_is_typed_unavailable_before_any_run() {
                 ),
             )
             .await;
-            assert_mcp_structured_error(&body, "execute_code_unavailable");
+            assert_mcp_structured_error(&body, "code_host_unbound");
             assert_eq!(
                 body["error"]["data"]["field"],
                 Value::from("name"),
@@ -302,7 +301,7 @@ async fn mcp_direct_execute_code_is_typed_unavailable_before_any_run() {
 /// vault-wide credential is untouched.
 #[tokio::test]
 async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_00d1);
     let world_only =
         crate::mcp::McpConnectorScope::scoped(Some(seeded_test_entity_id(0x1704_00d2)), None);
@@ -404,7 +403,7 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
         let context = crate::api::resolve_mcp_gateway_actor(
             crate::mcp::McpSurfaceMode::Primary,
             "axis-admission",
-            &mcp_credential_headers(credential),
+            &mcp_credential_headers(&server, credential),
             &server,
         )
         .await
@@ -435,7 +434,7 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
 /// decoder still sees the spelling the caller actually sent.
 #[tokio::test]
 async fn mcp_tool_call_preserves_request_number_text_at_advertised_integers() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0052);
     let credential = "one-1704-raw-number";
     register_mcp_actor(
@@ -508,7 +507,7 @@ async fn mcp_tool_call_preserves_request_number_text_at_advertised_integers() {
 
 #[tokio::test]
 async fn mcp_tool_first_verb_call_carries_scope_page_and_cache_metadata() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0051);
     let credential = "one-1704-verb-credential";
     register_mcp_actor(
@@ -554,7 +553,7 @@ async fn mcp_tool_first_verb_call_carries_scope_page_and_cache_metadata() {
 
 #[tokio::test]
 async fn mcp_missing_credential_returns_the_structured_error_contract() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let request = Request::builder()
         .method("POST")
         .uri("/mcp")
@@ -576,7 +575,7 @@ async fn mcp_missing_credential_returns_the_structured_error_contract() {
 
 #[tokio::test]
 async fn mcp_endpoint_tool_args_are_gated_before_execution() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0061);
     let credential = "one-1704-args-credential";
     register_mcp_actor(
@@ -605,4 +604,224 @@ async fn mcp_endpoint_tool_args_are_gated_before_execution() {
     assert_eq!(status, StatusCode::OK);
     assert_mcp_structured_error(&body, "tool_args_invalid");
     assert_eq!(body["error"]["data"]["field"], Value::from("key"));
+}
+
+#[tokio::test]
+async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
+    use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    use oneiron::workspace_roster::{ProjectRecord, RoomClaimOutcome, RoomPage};
+
+    let (_dir, server) = auth_test_server();
+    let owner = seeded_test_entity_id(0x2510_0001);
+    let other = seeded_test_entity_id(0x2510_0002);
+    let credential = "mcp-agent-room-owner";
+    let other_credential = "mcp-agent-room-other";
+    for (actor, credential) in [(owner, credential), (other, other_credential)] {
+        register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    }
+    let project = oneiron::EntityId::now();
+    let root = server.vault.root_project().expect("root");
+    let mut record = ProjectRecord::new(project, Some(root), root, owner);
+    record.roster.push(other.to_hex());
+    server
+        .vault
+        .put_project(project, &record, 1)
+        .expect("project");
+    let room = oneiron::EntityId::from_hex(&record.home_room).expect("room");
+    let memory = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
+    let mut turns = Vec::new();
+    for at in 0..256 {
+        let turn = oneiron::EntityId::now();
+        memory
+            .rooms_speak(&WitnessTurn {
+                conversation_ref: room.to_hex(),
+                turn_ref: Some(turn.to_hex()),
+                messages: vec![WitnessMessage {
+                    id: Some(oneiron::EntityId::now().to_hex()),
+                    author: WitnessAuthor::User,
+                    message_type: "text".to_owned(),
+                    content: "room message".to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: at + 2,
+            })
+            .expect("speak");
+        turns.push(turn);
+    }
+    let (_, exact) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "room-exact",
+            "rooms.messages",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_room"),
+                json!({
+                    "arguments": {"room_ref": room.to_hex()},
+                    "page": {"limit": 256, "forceful_override": true},
+                }),
+            ),
+        ),
+    )
+    .await;
+    assert!(exact.get("error").is_none(), "{exact}");
+    let exact = &exact["result"]["structuredContent"];
+    let page: RoomPage = serde_json::from_value(exact["output"].clone()).expect("typed page");
+    assert_eq!(
+        page,
+        memory
+            .rooms_messages_page(room, None, 256)
+            .expect("engine page")
+    );
+    assert_eq!(page.rows.len(), 256);
+    assert_eq!(page.next_after, None);
+    assert_eq!(exact["meta"]["end"], "Complete");
+
+    let (_, first) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "room-first",
+            "rooms.messages",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_room"),
+                json!({
+                    "arguments": {"room_ref": room.to_hex()}, "page": {"limit": 50},
+                }),
+            ),
+        ),
+    )
+    .await;
+    let first = &first["result"]["structuredContent"];
+    let mut ids = first["output"]["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| row["turn_id"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 50);
+    let mut cursor = first["meta"]["page"]["cursor"].as_str().map(str::to_owned);
+    while let Some(handle) = cursor {
+        let (_, next) = route_json(
+            server.clone(),
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                credential,
+                "room-next",
+                "rooms.messages",
+                mcp_merge_args(
+                    mcp_endpoint_envelope(owner, "read_room"),
+                    json!({
+                        "arguments": {"room_ref": room.to_hex()},
+                        "page": {"limit": 50, "cursor": handle},
+                    }),
+                ),
+            ),
+        )
+        .await;
+        assert!(next.get("error").is_none(), "{next}");
+        let next = &next["result"]["structuredContent"];
+        ids.extend(
+            next["output"]["rows"]
+                .as_array()
+                .expect("rows")
+                .iter()
+                .map(|row| row["turn_id"].clone()),
+        );
+        cursor = next["meta"]["page"]["cursor"].as_str().map(str::to_owned);
+        if cursor.is_none() {
+            assert_eq!(next["meta"]["end"], "Complete");
+        }
+    }
+    assert_eq!(
+        ids,
+        turns
+            .iter()
+            .map(|turn| json!(turn.to_hex()))
+            .collect::<Vec<_>>()
+    );
+
+    for (actor, credential) in [(owner, credential), (other, other_credential)] {
+        let (_, claimed) = route_json(
+            server.clone(),
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                credential,
+                "room-claim",
+                "rooms.claim",
+                mcp_merge_args(
+                    mcp_endpoint_envelope(actor, "claim_turn"),
+                    json!({
+                        "arguments": {"room_ref": room.to_hex(), "turn_ref": turns[0].to_hex()},
+                    }),
+                ),
+            ),
+        )
+        .await;
+        assert!(claimed.get("error").is_none(), "{claimed}");
+        let result: RoomClaimOutcome =
+            serde_json::from_value(claimed["result"]["structuredContent"]["output"].clone())
+                .expect("typed claim outcome");
+        assert_eq!(
+            result,
+            server
+                .vault
+                .memory(actor, oneiron::EdgeActorClass::Human)
+                .rooms_claim(room, turns[0], 999)
+                .expect("engine claim")
+        );
+    }
+    let second_project = oneiron::EntityId::now();
+    let second = ProjectRecord::new(second_project, Some(root), root, owner);
+    server
+        .vault
+        .put_project(second_project, &second, 1)
+        .expect("second project");
+    let (_, rooms) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "room-list-first",
+            "rooms.list",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_room"),
+                json!({"page": {"limit": 1}}),
+            ),
+        ),
+    )
+    .await;
+    let rooms = &rooms["result"]["structuredContent"];
+    assert_eq!(
+        rooms["output"].as_array().expect("typed room list").len(),
+        1
+    );
+    assert_eq!(rooms["meta"]["end"], "More");
+    let cursor = rooms["meta"]["page"]["cursor"]
+        .as_str()
+        .expect("room-list cursor");
+    let (_, rest) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "room-list-next",
+            "rooms.list",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_room"),
+                json!({
+                    "page": {"limit": 1, "cursor": cursor},
+                }),
+            ),
+        ),
+    )
+    .await;
+    let rest = &rest["result"]["structuredContent"];
+    assert_eq!(rest["output"].as_array().expect("remaining room").len(), 1);
+    assert_eq!(rest["meta"]["end"], "Complete");
+    assert_ne!(rooms["output"][0]["id"], rest["output"][0]["id"]);
 }

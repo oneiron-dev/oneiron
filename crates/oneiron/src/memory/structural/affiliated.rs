@@ -1,15 +1,13 @@
 //! Attributed takes, companion records, and imported-claim admission verbs.
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-};
+use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::edge::EdgeKind;
-use crate::entity_id::EntityId;
+
 use crate::error::ErrorKind;
 use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
-    NormalizedIngestClaim, admit_imported_evidence_claim,
+    NormalizedIngestClaim,
 };
 use crate::memory::claims::parse_claim_source;
 use crate::memory::support::{
@@ -51,17 +49,18 @@ impl Memory<'_> {
     /// staged, so a refused take leaves no orphan NOTE or edge.
     ///
     /// Exempt from the hard-delete recreation refusal BY CONSTRUCTION: the
-    /// NOTE id is a fresh [`EntityId::now`], never caller-supplied.
+    /// The vault's injected ID source mints the NOTE id; callers do not choose it.
     pub fn author_take(
         &self,
         target: TakeTarget,
         markdown: impl Into<String>,
     ) -> MemoryResult<EntityRefReceipt> {
         self.author_note(&NoteWriteEnvelope {
-            kind: NoteKind::OpinionTake,
+            kind: NoteKind::parse("opinion/take").expect("shipped kind"),
             scope: NoteScope::About(target),
             markdown: markdown.into(),
-            source_revision_ref: *EntityId::now().as_bytes(),
+            source_revision_ref: *self.vault.store.clock.entity_id()?.as_bytes(),
+            mask: None,
         })
     }
 
@@ -69,7 +68,7 @@ impl Memory<'_> {
     /// Diary requests are actor-private and owner-only to write. A scope/kind
     /// mismatch or a foreign owner is refused before any row is staged.
     pub fn author_note(&self, envelope: &NoteWriteEnvelope) -> MemoryResult<EntityRefReceipt> {
-        let (target_id, link, target_must_be_claim) = match (envelope.kind, envelope.scope) {
+        let (target_id, link, target_must_be_claim) = match (&envelope.kind, envelope.scope) {
             (NoteKind::OpinionTake, NoteScope::About(TakeTarget::Subject(id))) => {
                 (id, EdgeKind::About, false)
             }
@@ -88,13 +87,13 @@ impl Memory<'_> {
             }
         };
         let body = encode_note_body(&NoteBody {
-            kind: envelope.kind,
+            kind: envelope.kind.clone(),
             author_ref: self.actor,
             markdown: envelope.markdown.clone(),
             source_revision_ref: envelope.source_revision_ref,
         })?;
-        let note_id = EntityId::now();
-        let at = crate::unix_seconds_now();
+        let note_id = self.vault.store.clock.entity_id()?;
+        let at = self.vault.store.clock.now_recorded_at();
         let occurred = TimeRange { start: at, end: at };
 
         self.with_verified_actor_write_txn(|wtxn| {
@@ -112,6 +111,7 @@ impl Memory<'_> {
             }
             self.vault
                 .batch_in()
+                .mask(envelope.mask)
                 .put_authored_note(&note_id, &self.actor, occurred, at, &body)
                 .edge(
                     &note_id,
@@ -132,7 +132,7 @@ impl Memory<'_> {
         &self,
         input: &CompanionRecordInput,
     ) -> MemoryResult<EntityRefReceipt> {
-        let id = id_from_optional_hex(input.id.as_deref())?;
+        let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         self.refuse_hard_deleted_id(&id)?;
         let owner = self.resolve_ref(&input.owner_ref)?;
         let persona = self.resolve_ref(&input.persona_ref)?;
@@ -151,7 +151,7 @@ impl Memory<'_> {
             persona,
             json_to_rmpv(&input.value),
             CompanionProvenance::from_envelope(&envelope),
-            CompanionExportClassification::LocalOnly,
+            crate::federation::Sensitivity::Restricted,
         );
         self.with_verified_actor_write_txn(|wtxn| {
             // The early refusal above is only a fast path. Recheck in this
@@ -190,7 +190,7 @@ impl Memory<'_> {
                 &["Register the source in the ingest source registry first."],
             ));
         };
-        let id = id_from_optional_hex(input.id.as_deref())?;
+        let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         self.refuse_hard_deleted_id(&id)?;
         let subject = self.resolve_ref(&input.subject_ref)?;
         if self.vault.get_entity_type(&subject)?.is_none() {
@@ -224,7 +224,7 @@ impl Memory<'_> {
                 learned_at,
             )
             .with_approval(approval);
-            admit_imported_evidence_claim(self.vault, &claim, admission)
+            crate::ingest::admit_imported_evidence_claim_for_memory(self.vault, &claim, admission)
         };
         match admit(approval) {
             Ok(()) => {}

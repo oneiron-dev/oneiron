@@ -7,7 +7,20 @@ use crate::error::{Error, RecordError, Result};
 
 /// The only ref kinds a consult payload may carry. A consult asks ABOUT
 /// durable state; it never transports the state itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ConsultPayloadRef {
     Claim(EntityId),
     Turn(EntityId),

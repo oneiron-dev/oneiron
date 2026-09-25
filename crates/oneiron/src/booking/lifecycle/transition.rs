@@ -299,7 +299,11 @@ fn confirm_in_writer(
     }
 
     // (5) One atomic commit.
-    let event_ref = EntityId::now();
+    let event_ref = vault
+        .store
+        .clock
+        .entity_id()
+        .map_err(|error| engine_failure("booking id allocation", error))?;
     let uid = mint_booking_uid(&event_ref);
     let mut bindings = solved
         .host_bindings

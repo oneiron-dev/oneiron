@@ -53,6 +53,12 @@ impl From<&PreparedConflictResolution> for StoredPreparedConflictResolution {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct StoredPreparedCommit {
+    pub(super) base_head: String,
+    pub(super) new_head: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredRepoMutationOplogEntry {
     pub(super) schema_version: u8,
     pub(super) repo_ref: String,
@@ -68,6 +74,8 @@ pub(super) struct StoredRepoMutationOplogEntry {
     pub(super) expected_post_action_fork_hash: Option<RepoForkHash>,
     #[serde(default)]
     pub(super) prepared_conflict_resolution: Option<StoredPreparedConflictResolution>,
+    #[serde(default)]
+    pub(super) prepared_commit: Option<StoredPreparedCommit>,
     pub(super) status: String,
     pub(super) failure: Option<String>,
 }
@@ -161,11 +169,15 @@ impl Vault {
         let mut outcomes = Vec::new();
         for stored in prepared_entries {
             let recovery_intent = stored.prepared_conflict_resolution.clone();
+            let prepared_commit = stored.prepared_commit.clone();
             let stale = public_oplog_entry(stored)?;
-            let (actual_fork_hash, _) = capture_repo_snapshot(repo_root)?;
+            let (actual_fork_hash, actual_snapshot) = capture_repo_snapshot(repo_root)?;
+            // Old write-ahead records name the same manifest with SHA-256.
+            let legacy_hash = sha256_bytes(&actual_snapshot);
+            let actual_matches = |expected| expected == actual_fork_hash || expected == legacy_hash;
             if stale.operation_kind == "resolve_conflict_file"
                 && recovery_intent.is_none()
-                && actual_fork_hash != stale.pre_action_fork_hash
+                && !actual_matches(stale.pre_action_fork_hash)
             {
                 let entry = self.finish_repo_mutation(
                     &PreparedRepoMutation {
@@ -188,7 +200,7 @@ impl Vault {
             if stale
                 .expected_post_action_fork_hash
                 .is_some_and(|expected| {
-                    expected != stale.pre_action_fork_hash && actual_fork_hash == expected
+                    expected != stale.pre_action_fork_hash && actual_matches(expected)
                 })
             {
                 let repo_conflict_claim_id = finish_repo_mutation_roll_forward(
@@ -215,7 +227,7 @@ impl Vault {
             }
 
             if stale.expected_post_action_fork_hash.is_none()
-                && actual_fork_hash != stale.pre_action_fork_hash
+                && !actual_matches(stale.pre_action_fork_hash)
             {
                 let entry = self.finish_repo_mutation(
                     &PreparedRepoMutation {
@@ -236,7 +248,7 @@ impl Vault {
                 continue;
             }
 
-            if actual_fork_hash != stale.pre_action_fork_hash {
+            if !actual_matches(stale.pre_action_fork_hash) {
                 return Err(Error::Code(CodeError::RepoMutationRecoveryDiverged {
                     seq: stale.seq,
                     pre_action_fork_hash: Box::new(stale.pre_action_fork_hash),
@@ -245,6 +257,18 @@ impl Vault {
                         .map(Box::new),
                     actual_fork_hash: Box::new(actual_fork_hash),
                 }));
+            }
+
+            if let Some(outcome) = super::document::resume_reviewed_document(
+                self,
+                repo_ref,
+                repo_root,
+                &stale,
+                prepared_commit.as_ref(),
+                recovery_intent.as_ref(),
+            )? {
+                outcomes.push(outcome);
+                continue;
             }
 
             let request = RepoMutationRequest {

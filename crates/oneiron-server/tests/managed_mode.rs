@@ -113,6 +113,8 @@ fn managed_argv(root: &Path) -> Vec<String> {
         CONTRACT_VERSION.to_string(),
         "--vault-name".to_owned(),
         VAULT_NAME.to_owned(),
+        "--derivation-owner".to_owned(),
+        "09".repeat(32),
         "--data-dir".to_owned(),
         path("data"),
         "--http-socket".to_owned(),
@@ -400,6 +402,7 @@ fn each_missing_required_flag_fails_loudly() {
     for dropped in [
         "--contract-version",
         "--vault-name",
+        "--derivation-owner",
         "--data-dir",
         "--http-socket",
         "--ctl-socket",
@@ -960,7 +963,10 @@ fn spawn_ctl_fixture() -> CtlFixture {
     let dir = tempfile::tempdir().unwrap();
     let run = sockets_dir(dir.path());
     let vault = open_vault(&run.join("data"));
-    let server = sync_server(Arc::clone(&vault));
+    let args = parse_serve(&managed_argv(&run));
+    let managed = ManagedArgs::from_serve_args(&args).unwrap().unwrap();
+    let config = managed.serve_config(&args).sync_server_config();
+    let server = Arc::new(SyncServer::new(Arc::clone(&vault), config).unwrap());
     let creds = credentials(0x11, 0x22);
     let ledger = wake_ledger(&vault, &run.join("sup.sock"), &creds);
     let state = Arc::new(ManagedState::new(
@@ -1410,7 +1416,7 @@ async fn managed_shutdown_closes_ctl_and_leaves_the_inherited_socket_alone() {
 
     let fixture = spawn_ctl_fixture();
     // A reap was in flight when the signal landed.
-    fixture.state.freeze();
+    fixture.state.freeze().expect("freeze telemetry and writes");
     assert!(fixture.state.guard_write().is_err());
 
     let shutdown = ManagedShutdown::new();
@@ -1433,7 +1439,10 @@ async fn managed_shutdown_closes_ctl_and_leaves_the_inherited_socket_alone() {
     assert_eq!(std::fs::metadata(&http_path).unwrap().ino(), inode_before);
 
     // An interrupted reap must not outlive the process that started it.
-    fixture.state.unfreeze();
+    fixture
+        .state
+        .unfreeze()
+        .expect("resume telemetry and writes");
     fixture.state.guard_write().unwrap();
     drop(fixture.server);
 }
@@ -1602,6 +1611,13 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
     let read_back = http_get_over_unix(&http, &format!("/api/entity/{before}")).await;
     assert!(read_back.starts_with("HTTP/1.1 200 OK"), "{read_back}");
 
+    // The supervisor's authenticated socket is the principal. An arbitrary
+    // forwarded actor/token claim cannot replace that contract identity.
+    let forwarded = http_over_unix(&http, &format!(
+        "GET /api/entity/{before} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer v2.scope=core:read;principal_ref=ffffffffffffffffffffffffffffffff.unsigned\r\nx-oneiron-actor: hostile\r\nConnection: close\r\n\r\n"
+    )).await;
+    assert!(forwarded.starts_with("HTTP/1.1 200 OK"), "{forwarded}");
+
     // The supervisor asks for quiescence.
     match ctl_response(&ctl_roundtrip(&ctl, r#"{"op":"prepare_reap"}"#).await) {
         CtlResponse::PrepareReap { quiescent, .. } => {
@@ -1709,4 +1725,140 @@ fn signal_ready_writes_the_contract_byte() {
     let fd = std::fs::File::create(&path).unwrap().into_raw_fd();
     signal_ready(fd).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), vec![READY_BYTE]);
+}
+
+#[test]
+fn managed_owner_is_supplied_explicitly_and_malformed_ids_fail_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let full = managed_argv(dir.path());
+    let parsed = ManagedArgs::from_serve_args(&parse_serve(&full))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        parsed.derivation_owner,
+        oneiron::federation::derivation::DerivationOwner([9; 32])
+    );
+    for malformed in [
+        "",
+        "abc",
+        &"gg".repeat(32),
+        &"+9".repeat(32),
+        &"09".repeat(31),
+        &"09".repeat(33),
+    ] {
+        let argv = with_flag_value(&full, "--derivation-owner", malformed);
+        assert!(matches!(
+            ManagedArgs::from_serve_args(&parse_serve(&argv)),
+            Err(ManagedError::InvalidDerivationOwner)
+        ));
+    }
+}
+
+#[test]
+fn managed_failure_signal_environment_is_refused_before_configuration() {
+    const CHILD_CASE: &str = "W7_TEST_MANAGED_SIGNAL_ENV";
+    const SIGNAL_VARS: [&str; 2] = [
+        "ONEIRON_FAILURE_SIGNAL_EXPORT",
+        "ONEIRON_FAILURE_SIGNAL_TRAINING",
+    ];
+    if let Ok(expected) = std::env::var(CHILD_CASE) {
+        assert!(SIGNAL_VARS.contains(&expected.as_str()));
+        let dir = tempfile::tempdir().unwrap();
+        let error = ManagedArgs::from_serve_args(&parse_serve(&managed_argv(dir.path())))
+            .expect_err("an explicit environment layer is not argv");
+        assert!(
+            matches!(error, ManagedError::ConflictingEnvironment { env, .. } if env == expected)
+        );
+        return;
+    }
+    // Isolate environment changes in children, not in the parallel test process.
+    for name in SIGNAL_VARS {
+        for value in ["true", "false", ""] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "managed_failure_signal_environment_is_refused_before_configuration",
+                ])
+                .env_remove("ONEIRON_PRIVACY_POSTURE")
+                .env_remove("ONEIRON_HOSTED_KMS_KEY_REF")
+                .env_remove("ONEIRON_CONFIG")
+                .env_remove(SIGNAL_VARS[0])
+                .env_remove(SIGNAL_VARS[1])
+                .env(CHILD_CASE, name)
+                .env(name, value)
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "isolated managed configuration assertion failed"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
+    use axum::body::{Body, Bytes};
+    use axum::http::{Request, StatusCode};
+    use oneiron_vault_contract::CtlRequest;
+    use tower::ServiceExt;
+
+    let fixture = spawn_ctl_fixture();
+    let app = oneiron_server::managed::build_managed_app(
+        Arc::clone(&fixture.server),
+        Arc::clone(&fixture.state),
+    );
+    let id = probe_entity_id(0x45);
+    let entity = oneiron::EntityId::from_hex(&id).unwrap();
+    let body = serde_json::json!({"id": id, "body": {"name": "slow body"}}).to_string();
+    let len = body.len();
+    let (polled_tx, polled_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let stream = futures_util::stream::once(async move {
+        polled_tx.send(()).unwrap();
+        release_rx.await.unwrap();
+        Ok::<_, std::io::Error>(Bytes::from(body))
+    });
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/core/conversations")
+        .header("content-type", "application/json")
+        .header("content-length", len)
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let write = tokio::spawn(app.oneshot(request));
+    // The body is polled only after middleware admission, not merely after the
+    // client enqueues bytes. This deterministically holds the extractor open.
+    tokio::time::timeout(Duration::from_secs(10), polled_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        fixture
+            .state
+            .handle_request(CtlRequest::PrepareReap)
+            .await
+            .unwrap(),
+        CtlResponse::PrepareReap {
+            quiescent: false,
+            ..
+        }
+    ));
+    assert!(fixture.server.vault().get(&entity).unwrap().is_none());
+    release_tx.send(()).unwrap();
+    assert_eq!(write.await.unwrap().unwrap().status(), StatusCode::OK);
+    assert!(fixture.server.vault().get(&entity).unwrap().is_some());
+    assert!(matches!(
+        fixture
+            .state
+            .handle_request(CtlRequest::PrepareReap)
+            .await
+            .unwrap(),
+        CtlResponse::PrepareReap {
+            quiescent: true,
+            ..
+        }
+    ));
+    fixture.shutdown.trigger();
+    fixture.task.await.unwrap();
 }

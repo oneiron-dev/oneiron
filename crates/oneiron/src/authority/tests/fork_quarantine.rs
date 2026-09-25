@@ -183,7 +183,7 @@ fn quorum_revoke_resolves_authority_fork() {
         &second,
     );
     let fork_restrict = cosign_ed(
-        set_tier_floor_entry(vault_id, &enroll_third, &owner, 3, AuthorityTier::Hardware),
+        set_tier_floor_entry(vault_id, &enroll_third, &owner, 3, AuthorityTier::Software),
         &owner,
         &second,
     );
@@ -285,7 +285,7 @@ fn quorum_revoke_on_clean_prefix_resolves_authority_fork() {
         &second,
     );
     let fork_restrict = cosign_ed(
-        set_tier_floor_entry(vault_id, &enroll_third, &owner, 3, AuthorityTier::Hardware),
+        set_tier_floor_entry(vault_id, &enroll_third, &owner, 3, AuthorityTier::Software),
         &owner,
         &second,
     );
@@ -358,7 +358,7 @@ fn conflicting_root_preserves_resolved_authority_fork_status() {
         &second,
     );
     let fork_restrict = cosign_ed(
-        set_tier_floor_entry(vault_id, &enroll_third, &owner, 3, AuthorityTier::Hardware),
+        set_tier_floor_entry(vault_id, &enroll_third, &owner, 3, AuthorityTier::Software),
         &owner,
         &second,
     );
@@ -685,7 +685,7 @@ fn all_invalid_mixed_vault_claims_quarantine_every_plausible_vault() {
             Some(vault_id),
             2,
             vec![[0xfa; 32]],
-            AuthorityOp::SetCeiling {
+            AuthorityOp::RetiredCeiling {
                 authority_key: owner_key.clone(),
                 actor_class: "agent".to_owned(),
                 ceiling: 1,

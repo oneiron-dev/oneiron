@@ -31,8 +31,8 @@ use oneiron::calendar::caldav::{
     CALDAV_PROVIDER_KEY, CalDavConnector, CalDavDiscovery, CalDavWire, caldav_write_status_error,
 };
 use oneiron::calendar::claims::{
-    CalendarPassportDirection, CalendarPassportPresence, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
+    CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, PREDICATE_CALENDAR_ORIGIN,
+    PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
 };
 use oneiron::calendar::connectors::{
     CALDAV_SYNC_ATTEMPT_KIND, CalendarConnectorError, CalendarConnectorSeatConfig,
@@ -2535,6 +2535,8 @@ fn calendar_connector_poll_jitter_is_bounded_and_nonzero() {
 
 #[test]
 fn inbound_events_cross_the_existing_gate() {
+    use sha2::{Digest, Sha256};
+
     // The seeded default policy manifest is deliberate: this oracle measures
     // that admission crosses the Gate, so the Gate must be present.
     let (_dir, vault) = temp_vault_seeded();
@@ -2559,10 +2561,18 @@ fn inbound_events_cross_the_existing_gate() {
     let google_outcome = run_sync(&vault, &google_seat(), &google, T0);
     assert_eq!(counters(&google_outcome), (1, 0, 0, 0));
 
-    for (uid, provider) in [
-        ("uid-gate-c@x", CALDAV_PROVIDER_KEY),
-        ("uid-gate-g@x", GOOGLE_INTERNAL_PROVIDER_KEY),
+    for (uid, provider, seat) in [
+        ("uid-gate-c@x", CALDAV_PROVIDER_KEY, caldav_seat()),
+        ("uid-gate-g@x", GOOGLE_INTERNAL_PROVIDER_KEY, google_seat()),
     ] {
+        let property_prefix = format!(
+            "calendar-source:{:x}:",
+            Sha256::digest(seat.config.system.as_bytes())
+        );
+        let expected_ref = format!(
+            "calendar-connector:{provider}:{}:{}:{uid}:{uid}",
+            seat.config.system, seat.config.calendar_ref
+        );
         let event = resolve_event_by_uid(&vault, uid)
             .expect("resolve")
             .expect("event");
@@ -2571,7 +2581,44 @@ fn inbound_events_cross_the_existing_gate() {
             claims.len() >= 3,
             "origin + time_kind + passport at least, got {claims:?}"
         );
+        assert_eq!(
+            vault.calendar_event_origin(event).unwrap(),
+            CalendarOrigin::Imported
+        );
+        let raw = vault.get(&event).unwrap().unwrap();
+        let row = rmpv::decode::read_value(&mut std::io::Cursor::new(raw)).unwrap();
+        assert_eq!(
+            value_field(&row, "origin").and_then(rmpv::Value::as_str),
+            Some("imported")
+        );
+        assert_eq!(
+            value_field(&row, "externalId").and_then(rmpv::Value::as_str),
+            Some(uid)
+        );
+        assert!(
+            value_field(&row, "importSource")
+                .and_then(rmpv::Value::as_str)
+                .unwrap()
+                .starts_with(&format!("calendar-connector:{provider}:"))
+        );
+        let origins: Vec<_> = claims
+            .iter()
+            .filter(|(_, claim)| claim.predicate == PREDICATE_CALENDAR_ORIGIN)
+            .collect();
+        assert_eq!(origins.len(), 1);
+        let origin = &origins[0].1;
+        assert_eq!(origin.approval, oneiron::ClaimApprovalStatus::Auto);
+        assert_eq!(origin.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(origin.value.as_str(), Some("imported"));
+        assert_eq!(
+            value_field(origin.evidence.as_ref().unwrap(), "write_class")
+                .and_then(rmpv::Value::as_str),
+            Some("recorded")
+        );
         for (_, body) in &claims {
+            if body.predicate == PREDICATE_CALENDAR_ORIGIN {
+                continue;
+            }
             assert_eq!(
                 body.source,
                 Some(ClaimSource::Imported),
@@ -2600,10 +2647,16 @@ fn inbound_events_cross_the_existing_gate() {
             let source_record_id = value_field(candidate, "source_record_id")
                 .and_then(rmpv::Value::as_str)
                 .expect("source_record_id");
-            assert!(
-                source_record_id.starts_with(&format!("calendar-connector:{provider}:")),
-                "the provenance ref names the transport, got {source_record_id}"
-            );
+            // Reconciled properties carry source ownership before the same
+            // transport provenance retained by origin and passport claims.
+            let transport_ref = if body.predicate == PREDICATE_CALENDAR_TIME_KIND {
+                source_record_id
+                    .strip_prefix(&property_prefix)
+                    .expect("time-kind provenance is scoped to its source")
+            } else {
+                source_record_id
+            };
+            assert_eq!(transport_ref, expected_ref);
         }
     }
 }
@@ -2761,4 +2814,69 @@ fn timezone_conversion_stays_inside_calendar_tz() {
             assert!(byte.as_u64().expect("unsigned byte") <= u64::from(u8::MAX));
         }
     }
+}
+
+#[test]
+fn connector_drift_preserves_native_origin_and_authored_fields() {
+    use oneiron::calendar::origin::CalendarEventInput;
+    use oneiron::{EdgeActorClass, WriteActor};
+    let (_dir, vault) = temp_vault();
+    let actor = WriteActor::new(
+        vault.ensure_embedded_owner_actor().unwrap(),
+        EdgeActorClass::Human,
+    );
+    let event = vault
+        .create_native_calendar_event(
+            &CalendarEventInput {
+                name: "authored event".into(),
+                rrule: Some("FREQ=WEEKLY".into()),
+                calendar_name: Some("personal".into()),
+                ..Default::default()
+            },
+            TimeRange {
+                start: WRITE_START,
+                end: WRITE_END,
+            },
+            actor,
+        )
+        .unwrap();
+    let connector = CalDavConnector::new(StubCalDavWire::default());
+    let receipt = write_calendar_event(&vault, &caldav_seat(), &connector, event, T0).unwrap();
+    let mut spec = EventSpec::new("native-drift@x", receipt.sequence + 1);
+    spec.summary = "remote title";
+    let drift = String::from_utf8(body(&[spec]))
+        .unwrap()
+        .replace("native-drift@x", &receipt.uid)
+        .into_bytes();
+    connector
+        .wire()
+        .queue_sync(Ok(upsert_batch(None, drift, "/native.ics", Some("v1"))));
+    run_sync(&vault, &caldav_seat(), &connector, T1);
+    assert_eq!(
+        resolve_event_by_uid(&vault, &receipt.uid).unwrap(),
+        Some(event)
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_EVENT).unwrap(),
+        vec![event]
+    );
+    assert_eq!(
+        vault.calendar_event_origin(event).unwrap(),
+        CalendarOrigin::Native
+    );
+    let raw = vault.get(&event).unwrap().unwrap();
+    let row = rmpv::decode::read_value(&mut std::io::Cursor::new(raw)).unwrap();
+    for (key, expected) in [
+        ("name", "remote title"),
+        ("origin", "native"),
+        ("rrule", "FREQ=WEEKLY"),
+        ("calendarName", "personal"),
+    ] {
+        assert_eq!(
+            value_field(&row, key).and_then(rmpv::Value::as_str),
+            Some(expected)
+        );
+    }
+    assert!(value_field(&row, "importSource").is_none());
+    assert!(value_field(&row, "externalId").is_none());
 }

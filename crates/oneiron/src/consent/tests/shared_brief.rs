@@ -81,6 +81,7 @@ fn consent_shared_brief_generic_projection_is_rejected_and_not_active() {
     };
 
     let access = AccessGrant {
+        authority_scope: crate::federation::scope_codec::read_preset(),
         principal_ref: entity(0x51),
         scope: AccessGrantScope::SharedBrief {
             brief_ref: "brief:opaque".to_owned(),
@@ -92,6 +93,7 @@ fn consent_shared_brief_generic_projection_is_rejected_and_not_active() {
         status: AccessGrantStatus::Active,
         created_at: 42,
         revoked_at: None,
+        expires_at: None,
     };
     let revoked = access.revoked(50).expect("revoke shared brief");
     for source in [&access, &revoked] {

@@ -377,7 +377,47 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
         .memory(id(0x77), EdgeActorClass::Human)
         .claim_upsert(&changed)
         .expect("owner edits presentation");
-    assert!(receipt.superseded_short_id.is_some());
+    assert_eq!(receipt.approval, "proposed");
+    assert!(receipt.superseded_short_id.is_none());
+    assert_eq!(
+        fixture.route("GET", &path, Value::Null).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    let new_id =
+        oneiron::memory::resolve_entity_ref(&fixture.server.vault, &receipt.claim_short_id)
+            .expect("staged id");
+    let old_id = fixture
+        .server
+        .vault
+        .pending_claim_supersession(&new_id)
+        .expect("read deferred closure")
+        .expect("staged predecessor");
+    assert_eq!(
+        fixture
+            .server
+            .vault
+            .get_claim(&old_id)
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        oneiron::ClaimLifecycleStatus::Active
+    );
+    let confirmed = fixture
+        .server
+        .vault
+        .memory(id(0x77), EdgeActorClass::Human)
+        .confirm_booking_publication(&receipt.claim_short_id, now_secs().expect("clock"))
+        .expect("owner confirms presentation edit");
+    assert_eq!(
+        fixture
+            .server
+            .vault
+            .get_claim(&old_id)
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        oneiron::ClaimLifecycleStatus::Superseded
+    );
     let response = fixture.route("GET", &path, Value::Null).await;
     assert_eq!(response.status(), StatusCode::OK);
     let value: Value = serde_json::from_slice(&bytes(response).await).expect("page");
@@ -385,13 +425,9 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
         assert_eq!(value["model"][field], changed.value[field]);
     }
     // The same id as a HUMAN publication is not rewriteable as an agent head.
-    changed.id = Some(
-        oneiron::memory::resolve_entity_ref(&fixture.server.vault, &receipt.claim_short_id)
-            .expect("claim id")
-            .to_hex(),
-    );
+    changed.id = Some(confirmed.claim_id.clone());
     assert!(agent.claim_upsert(&changed).is_err());
-    assert!(agent.claim_retract(&receipt.claim_short_id).is_err());
+    assert!(agent.claim_retract(&confirmed.claim_id).is_err());
     assert_eq!(
         fixture.route("GET", &path, Value::Null).await.status(),
         StatusCode::OK

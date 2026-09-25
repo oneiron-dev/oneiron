@@ -12,7 +12,7 @@ use crate::authority::{
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::secret_custody::CustodyTier;
-use crate::unix_seconds_now;
+
 use crate::vault::Vault;
 
 /// The `vault_meta` key prefix for secret-lease rows
@@ -71,19 +71,6 @@ impl VaultInstant {
     pub(crate) fn secs(self) -> u64 {
         self.0
     }
-
-    /// The instant `secs` AFTER this one.
-    ///
-    /// Forward-only, and deliberately the only arithmetic this type offers.
-    /// It exists so a holder of a witnessed reading can name a DEADLINE
-    /// derived from it — a credential live at `now` has its absolute expiry at
-    /// exactly `now + remaining`, because `remaining` is
-    /// `expires_at - now` — without any way to manufacture an EARLIER
-    /// instant. An earlier instant is the dangerous direction: that is the one
-    /// that makes a dead credential look live.
-    pub(crate) fn after(self, secs: u64) -> Self {
-        Self(self.0.saturating_add(secs))
-    }
 }
 
 impl Vault {
@@ -118,7 +105,7 @@ impl Vault {
         Ok(VaultInstant(authority_observation_secs(
             &self.store,
             persisted_floor,
-            unix_seconds_now(),
+            self.store.clock.now_recorded_at(),
         )))
     }
 }

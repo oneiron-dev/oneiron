@@ -1,0 +1,459 @@
+{
+  "ticket": "W7-C11",
+  "assignment": "original fix-review",
+  "source_commit": "c82d8809b4fc70e4144567a96c4e8e67bc5eff37",
+  "factory_tested_head": "cb39cbb0bb3c013ccf7bd6193d024542dc25ea7b",
+  "source_binding": {
+    "saved_hashes_match": true,
+    "c82_to_factory_head_changed_paths": [
+      "impl-notes/W7-C11.md",
+      "impl-notes/W7-C11-review-disposition.md"
+    ],
+    "rust_source_sha256": {
+      "crates/oneiron/src/claim/lifecycle.rs": "35d069fd6e99ea6adce93974c0fef03520f4f0cf40f15652b19608d98387b91a",
+      "crates/oneiron/src/claim/put.rs": "ef60a9daabcd9b4ebee679a81d81669051381e5d669bfcd9c5805bb1127b272a",
+      "crates/oneiron/src/claim/write_target.rs": "df8881ddbbfcc408c348c7751c6f2676f2e19621e3a324bbeef42f8f08f5e510",
+      "crates/oneiron/src/claim/scoped_read.rs": "f219075c58f5f2fbdff826cf4c270ae0e36d33d8d02d26e394f0f587fd8bd982",
+      "crates/oneiron/src/claim/expression_preference.rs": "d7745d6dfe10312ff33a61008f9f1c7ef5e26dd6a02178b0a235b7acca6f3d16",
+      "crates/oneiron/src/claim/read.rs": "b8c1a2dbd39f95d44566c21d3334ea80ac94301b327c9b96c10e748cba149fb4",
+      "crates/oneiron/src/claim/scoped_read/retrieval_visibility.rs": "64d2faf2137f1aff00cf643e87b645bf6b048470ed371c25cfdb62305deb9d4f",
+      "crates/oneiron/src/calendar/origin.rs": "99f2e65884d69443e7d208f7ccf1dbbc97e9ac42387a067f27339d28591bf287",
+      "crates/oneiron/src/calendar/ingest/admission.rs": "bbd46bb94b3dc2c3f518ca80e5f6d055e2b536541a51fa29dc1cd3914637a7d4",
+      "crates/oneiron/src/calendar/ingest/mod.rs": "4a4d9c553f50af35a517f0d60adc7909502e26828b04af2f22eda519f1db3c85",
+      "crates/oneiron/src/calendar/connectors/inbound.rs": "a7788ccd205d8e33dc1693e60763ebac5ee8b5b19136b2d2adf84b7b7a3aa26d",
+      "crates/oneiron/tests/it/calendar_connector_smoke.rs": "be4cca386c919e6f28d1340a53ca51e2fb254fa064b7d29404232c0a8642ee18",
+      "crates/oneiron/src/gate/tests/scoped_read.rs": "9cb17453de865b5a052893efdadeee5651ad217f9b03f7b7782e1da3ca3adef9"
+    },
+    "clean_worktree_before_closeout": true
+  },
+  "retained_calendar": {
+    "source_commit": "b3a4678bfe95e0c305e90fa77b3cd63e7f3fd3c8",
+    "passed": 105,
+    "failed": 0,
+    "ignored": 0,
+    "filtered": 385
+  },
+  "featureless_initial": {
+    "passed": 6601,
+    "failed": 1,
+    "ignored": 4,
+    "failure": "gate::tests::scoped_read::a_session_staged_facet_edge_authorizes_a_facet_scoped_read",
+    "fix_commit": "c82d8809b4fc70e4144567a96c4e8e67bc5eff37",
+    "cause": "12-byte structural fixture for semantic FacetOf edge; repaired with shared encoder"
+  },
+  "review_chain_2": {
+    "invocation": "5abc9b2c87764f019fc21ca92626a089",
+    "exit_code": 101,
+    "stages": [
+      {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "oneiron",
+          "--lib",
+          "--no-default-features",
+          "gate::tests::scoped_read",
+          "-j",
+          "2",
+          "--",
+          "--test-threads=4"
+        ],
+        "exit_code": 0,
+        "passed": 20,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 6586
+      },
+      {
+        "command": [
+          "cargo",
+          "clippy",
+          "--locked",
+          "-p",
+          "oneiron",
+          "--all-targets",
+          "--no-default-features",
+          "-j",
+          "2",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "exit_code": 0
+      },
+      {
+        "command": [
+          "cargo",
+          "clippy",
+          "--locked",
+          "-p",
+          "oneiron",
+          "--all-targets",
+          "--all-features",
+          "-j",
+          "2",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "exit_code": 0
+      },
+      {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "--no-fail-fast",
+          "-p",
+          "oneiron",
+          "-p",
+          "oneiron-android",
+          "-p",
+          "oneiron-bench",
+          "-p",
+          "oneiron-driver",
+          "-p",
+          "oneiron-napi",
+          "-p",
+          "oneiron-server",
+          "-j",
+          "2",
+          "--",
+          "--test-threads=4"
+        ],
+        "exit_code": 101,
+        "passed": 9154,
+        "failed": 1,
+        "ignored": 21,
+        "filtered": 0
+      }
+    ],
+    "failure_test": "tests::deletion::headerless_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt",
+    "failure_cause": "Scheduling-sensitive fixture did not construct raced branch within three attempts; production invariant was not reached. This test is unchanged by this review repair.",
+    "flake_fixed": false,
+    "log_sha256": "c7d0d8521f5e399048da4a49ddb8554665883ea97061f13d193598d9cb0027df"
+  },
+  "factory_tests_after_review": {
+    "finished_at": "2026-09-19T22:33:39.731Z",
+    "exit_code": 0,
+    "passed": 9155,
+    "failed": 0,
+    "ignored": 21,
+    "filtered": 0,
+    "host": "Arch via installed dispatcher slot 1/2",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--no-fail-fast",
+      "-p",
+      "oneiron",
+      "-p",
+      "oneiron-android",
+      "-p",
+      "oneiron-bench",
+      "-p",
+      "oneiron-driver",
+      "-p",
+      "oneiron-napi",
+      "-p",
+      "oneiron-server",
+      "-j",
+      "2",
+      "--",
+      "--test-threads=4"
+    ],
+    "macbook_exclusion": "1",
+    "guards": "normal ticket lock, host capacity and compiler budget; no override",
+    "per_package": {
+      "oneiron": {
+        "passed": 7868,
+        "failed": 0,
+        "ignored": 16,
+        "measured": 0,
+        "filtered": 0
+      },
+      "oneiron-android": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0
+      },
+      "oneiron-bench": {
+        "passed": 295,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0
+      },
+      "oneiron-driver": {
+        "passed": 85,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0
+      },
+      "oneiron-napi": {
+        "passed": 22,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0
+      },
+      "oneiron-server": {
+        "passed": 884,
+        "failed": 0,
+        "ignored": 5,
+        "measured": 0,
+        "filtered": 0
+      }
+    },
+    "targets": [
+      {
+        "package": "oneiron",
+        "target": "Running unittests src/lib.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron-6874c7ccf9d8a062)",
+        "passed": 7107,
+        "failed": 0,
+        "ignored": 4,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron",
+        "target": "Running tests/build_cache.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/build_cache-9bdecb88148dd755)",
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron",
+        "target": "Running tests/code_memory.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/code_memory-17be3c63722f0f8f)",
+        "passed": 36,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron",
+        "target": "Running tests/git_smart_http.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/git_smart_http-d69de023177afcd7)",
+        "passed": 13,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron",
+        "target": "Running tests/it/main.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/it-0242943368d1fa9d)",
+        "passed": 482,
+        "failed": 0,
+        "ignored": 11,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron",
+        "target": "Running tests/it_sync/main.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/it_sync-db50a34cb7cd2be3)",
+        "passed": 184,
+        "failed": 0,
+        "ignored": 1,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron",
+        "target": "Running tests/lens_regen.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/lens_regen-5d613f0c1f759ed7)",
+        "passed": 17,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron",
+        "target": "Running tests/type_boundaries_compilefail.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/type_boundaries_compilefail-467082573462f970)",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron",
+        "target": "Running tests/vault_read_parity.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/vault_read_parity-be3598ed08d46a69)",
+        "passed": 9,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron",
+        "target": "Running tests/voice_segment_sync.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/voice_segment_sync-735808bba1fb0399)",
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-android",
+        "target": "Running unittests src/lib.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_android-74c1aea89620944d)",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-bench",
+        "target": "Running unittests src/main.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_bench-e4467123f0505bd1)",
+        "passed": 285,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-bench",
+        "target": "Running benches/materializer_mutex.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/materializer_mutex_contracts-c4a5227da68a4e0e)",
+        "passed": 10,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-driver",
+        "target": "Running unittests src/lib.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_driver-1436fe335d0abab6)",
+        "passed": 85,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-napi",
+        "target": "Running unittests src/lib/mod.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_napi-bff9a0671a1427ec)",
+        "passed": 22,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-server",
+        "target": "Running unittests src/lib.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_server-7596021d0ff74f1e)",
+        "passed": 750,
+        "failed": 0,
+        "ignored": 5,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-server",
+        "target": "Running unittests src/bin/oneiron.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron-616ba67019e6872f)",
+        "passed": 0,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-server",
+        "target": "Running unittests src/main.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_server-c60d08935d945a50)",
+        "passed": 0,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-server",
+        "target": "Running tests/it/main.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/it-ea33e870494a2040)",
+        "passed": 91,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-server",
+        "target": "Running tests/managed_mode.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/managed_mode-5583a77609ed5743)",
+        "passed": 36,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-server",
+        "target": "Running tests/managed_privacy.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/managed_privacy-477b09ee36ed4f8c)",
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-server",
+        "target": "Running tests/ws_app_tier.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/ws_app_tier-a62f5262667790b5)",
+        "passed": 4,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron",
+        "target": "doctests",
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron",
+        "target": "doctests",
+        "passed": 5,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      {
+        "package": "oneiron-android",
+        "target": "doctests",
+        "passed": 0,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      }
+    ],
+    "ignored_test_names": [
+      "cb_oracle_stream::cb_s::event_classes_route_wake_carrier_on_demand",
+      "cb_oracle_stream::cb_s::wake_class_mintable_from_own_task_events_only",
+      "channel_identity_slack_adapter_smoke::cid8_slack_dev_workspace_env_smoke_seam",
+      "effect_spine_oracle::es06_approval_persists_policy_row_and_later_plans_run_silent",
+      "effect_spine_oracle::es06_consult_cycle_pauses_surfaces_and_resumes_on_approve",
+      "effect_spine_oracle::es06_deny_ruling_dispatches_nothing_and_records_denial",
+      "effect_spine_oracle::es06_estimate_precedes_execution_with_per_peer_breakdown",
+      "effect_spine_oracle::es06_over_threshold_pauses_never_kills_never_sends",
+      "effect_spine_oracle::es06_peer_rate_spike_pauses_not_kills",
+      "effect_spine_oracle::es06_threshold_defaults_to_25_and_is_tunable",
+      "effect_spine_oracle::es06_under_threshold_runs_silent_with_board_row_only",
+      "embedder::local::tests::with_model::a_batched_input_embeds_exactly_as_it_does_alone",
+      "embedder::local::tests::with_model::the_committed_subset_matches_the_reference_runtime",
+      "embedder::local::tests::with_model::the_cpu_and_metal_devices_agree_on_the_same_input",
+      "embedder::local::tests::with_model::the_full_corpus_reproduces_the_recall_the_blueprint_pins",
+      "embedder::local::tests::with_model::the_tokenizer_appends_one_end_of_text_token_and_truncation_keeps_it",
+      "m8_forward_oracle::r1689_threads::one_1689_agent_reply_advances_the_thread_state_beyond_open",
+      "m8_forward_oracle::r1689_threads::one_1689_annotation_thread_anchors_to_a_conversation_dag_node",
+      "m8_forward_oracle::r1689_threads::one_1689_threads_progress_per_thread_not_one_global_handoff",
+      "rung0_cold_start_conformance::rung0_attach_uses_priority_three_without_migration_or_double_fill",
+      "task_verb::tests::cancel::terminal_spawn_cancel_is_uneffected_and_preserves_terminal_state"
+    ],
+    "prior_race_test": "passed on unchanged source in this normal factory-owned run",
+    "log_sha256": "45562ce434dfe52ef3da0a46cd5899f7f98877fa8867991c7034371e7410b5f4"
+  },
+  "current_review_sources": [
+    "review-opus.jsonl",
+    "review-grok.jsonl",
+    "review-opus-2.jsonl",
+    "target/w7-logs/review-fix/internal-ledger.md"
+  ],
+  "latest_opus_disposition": "S13 repeats partial-diff omissions; all nine findings refuted by committed source, exact implementation paths in review-disposition.md, and completed compiler/runtime evidence.",
+  "github": {
+    "branch": "w7/W7-C11",
+    "paginated_all_state_pr_result": [
+      []
+    ],
+    "explanation_posted": false,
+    "reason": "No actual C11 PR exists; no review/comment/thread surfaces or lawful posting target. No unrelated PR was posted to.",
+    "provider_quota_error": false
+  },
+  "qualification": "Not a full workspace verify.sh VERDICT. Host Android Rust test and NAPI Rust tests do not replace retained Android NDK/API36.1 or claim Node-host execution. Prior chain failure preserved, not recast as success."
+}

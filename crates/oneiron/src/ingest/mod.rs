@@ -5,8 +5,28 @@
 //! only mint claim writes through an explicit admission helper that requires
 //! entity resolution and routes through the normal Gate-backed candidate path.
 
+mod fingerprint;
+pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
+pub(crate) use fingerprint::{invalidate_blob_fingerprint, prepare_blob_artifact_birth};
+mod docs;
+mod docs_import;
+mod summary_ladder;
+pub use docs::{
+    DOCS_EXPORT_SOURCE_ID, DocsExport, DocsExportSource, DocsPage, DocsSegment, docs_extraction_id,
+    docs_semantic_segments,
+};
+pub use docs_import::{
+    DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier,
+    DocsSummaryModel,
+};
+pub use summary_ladder::DocsSummaryHit;
+mod identity_key;
+pub use identity_key::identity_fields_for_kind;
+pub(crate) use identity_key::reindex_identity_hints;
 mod admission;
 pub mod image;
+pub mod meeting_audio;
+mod provider;
 mod registry;
 mod resolution;
 mod transcripts;
@@ -18,9 +38,11 @@ pub use image::{
     parse_exif_evidence, register_image_caption_recognizer, register_image_text_recognizer,
 };
 
+pub(crate) use self::admission::admit_imported_evidence_claim_for_memory;
 pub use self::admission::{
     ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, admit_imported_entity,
     admit_imported_evidence_claim, admit_imported_evidence_claim_typed,
+    admit_imported_mention_claim,
 };
 pub use self::registry::{
     FILE_DROP_TRANSCRIPT_SOURCE_ID, ICS_FEED_SOURCE_ID, INGEST_SOURCE_REGISTRY,
@@ -39,6 +61,8 @@ pub use self::types::{
     NormalizedIngestRecord,
 };
 
+#[cfg(test)]
+mod docs_tests;
 #[cfg(test)]
 mod tests;
 

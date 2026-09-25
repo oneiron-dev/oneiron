@@ -15,7 +15,11 @@ pub struct RoIter<'txn, KC, DC, IM = MoveThroughDuplicateValues> {
 
 impl<'txn, KC, DC, IM> RoIter<'txn, KC, DC, IM> {
     pub(crate) fn new(cursor: RoCursor<'txn>) -> RoIter<'txn, KC, DC, IM> {
-        RoIter { cursor, move_on_first: true, _phantom: marker::PhantomData }
+        RoIter {
+            cursor,
+            move_on_first: true,
+            _phantom: marker::PhantomData,
+        }
     }
 
     /// Move on the first value of keys, ignoring duplicate values.
@@ -182,7 +186,10 @@ where
         let result = if self.move_on_first {
             self.cursor.move_on_last(IM::MOVE_OPERATION)
         } else {
-            match (self.cursor.current(), self.cursor.move_on_last(IM::MOVE_OPERATION)) {
+            match (
+                self.cursor.current(),
+                self.cursor.move_on_last(IM::MOVE_OPERATION),
+            ) {
                 (Ok(Some((ckey, _))), Ok(Some((key, data)))) if ckey != key => {
                     Ok(Some((key, data)))
                 }
@@ -220,7 +227,11 @@ pub struct RwIter<'txn, KC, DC, IM = MoveThroughDuplicateValues> {
 
 impl<'txn, KC, DC, IM> RwIter<'txn, KC, DC, IM> {
     pub(crate) fn new(cursor: RwCursor<'txn>) -> RwIter<'txn, KC, DC, IM> {
-        RwIter { cursor, move_on_first: true, _phantom: marker::PhantomData }
+        RwIter {
+            cursor,
+            move_on_first: true,
+            _phantom: marker::PhantomData,
+        }
     }
 
     /// Delete the entry the cursor is currently pointing to.
@@ -302,7 +313,8 @@ impl<'txn, KC, DC, IM> RwIter<'txn, KC, DC, IM> {
         F: FnOnce(&mut ReservedSpace) -> io::Result<()>,
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
-        self.cursor.put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
+        self.cursor
+            .put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
     }
 
     /// Insert a key-value pair in this database. The entry is written with the specified flags and data codec.
@@ -334,7 +346,8 @@ impl<'txn, KC, DC, IM> RwIter<'txn, KC, DC, IM> {
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
         let data_bytes: Cow<[u8]> = NDC::bytes_encode(data).map_err(Error::Encoding)?;
-        self.cursor.put_current_with_flags(flags, &key_bytes, &data_bytes)
+        self.cursor
+            .put_current_with_flags(flags, &key_bytes, &data_bytes)
     }
 
     /// Move on the first value of keys, ignoring duplicate values.
@@ -414,7 +427,10 @@ where
         let result = if self.move_on_first {
             self.cursor.move_on_last(IM::MOVE_OPERATION)
         } else {
-            match (self.cursor.current(), self.cursor.move_on_last(IM::MOVE_OPERATION)) {
+            match (
+                self.cursor.current(),
+                self.cursor.move_on_last(IM::MOVE_OPERATION),
+            ) {
                 (Ok(Some((ckey, _))), Ok(Some((key, data)))) if ckey != key => {
                     Ok(Some((key, data)))
                 }
@@ -449,7 +465,11 @@ pub struct RoRevIter<'txn, KC, DC, IM = MoveThroughDuplicateValues> {
 
 impl<'txn, KC, DC, IM> RoRevIter<'txn, KC, DC, IM> {
     pub(crate) fn new(cursor: RoCursor<'txn>) -> RoRevIter<'txn, KC, DC, IM> {
-        RoRevIter { cursor, move_on_last: true, _phantom: marker::PhantomData }
+        RoRevIter {
+            cursor,
+            move_on_last: true,
+            _phantom: marker::PhantomData,
+        }
     }
 
     /// Move on the first value of keys, ignoring duplicate values.
@@ -531,7 +551,10 @@ where
         let result = if self.move_on_last {
             self.cursor.move_on_first(IM::MOVE_OPERATION)
         } else {
-            match (self.cursor.current(), self.cursor.move_on_first(IM::MOVE_OPERATION)) {
+            match (
+                self.cursor.current(),
+                self.cursor.move_on_first(IM::MOVE_OPERATION),
+            ) {
                 (Ok(Some((ckey, _))), Ok(Some((key, data)))) if ckey != key => {
                     Ok(Some((key, data)))
                 }
@@ -569,7 +592,11 @@ pub struct RwRevIter<'txn, KC, DC, IM = MoveThroughDuplicateValues> {
 
 impl<'txn, KC, DC, IM> RwRevIter<'txn, KC, DC, IM> {
     pub(crate) fn new(cursor: RwCursor<'txn>) -> RwRevIter<'txn, KC, DC, IM> {
-        RwRevIter { cursor, move_on_last: true, _phantom: marker::PhantomData }
+        RwRevIter {
+            cursor,
+            move_on_last: true,
+            _phantom: marker::PhantomData,
+        }
     }
 
     /// Delete the entry the cursor is currently pointing to.
@@ -651,7 +678,8 @@ impl<'txn, KC, DC, IM> RwRevIter<'txn, KC, DC, IM> {
         F: FnOnce(&mut ReservedSpace) -> io::Result<()>,
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
-        self.cursor.put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
+        self.cursor
+            .put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
     }
 
     /// Insert a key-value pair in this database. The entry is written with the specified flags and data codec.
@@ -683,7 +711,8 @@ impl<'txn, KC, DC, IM> RwRevIter<'txn, KC, DC, IM> {
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
         let data_bytes: Cow<[u8]> = NDC::bytes_encode(data).map_err(Error::Encoding)?;
-        self.cursor.put_current_with_flags(flags, &key_bytes, &data_bytes)
+        self.cursor
+            .put_current_with_flags(flags, &key_bytes, &data_bytes)
     }
 
     /// Move on the first value of keys, ignoring duplicate values.
@@ -765,7 +794,10 @@ where
         let result = if self.move_on_last {
             self.cursor.move_on_first(IM::MOVE_OPERATION)
         } else {
-            match (self.cursor.current(), self.cursor.move_on_first(IM::MOVE_OPERATION)) {
+            match (
+                self.cursor.current(),
+                self.cursor.move_on_first(IM::MOVE_OPERATION),
+            ) {
                 (Ok(Some((ckey, _))), Ok(Some((key, data)))) if ckey != key => {
                     Ok(Some((key, data)))
                 }

@@ -49,7 +49,13 @@ fn range(at: u64) -> TimeRange {
 fn seed_person(vault: &Vault, byte: u8) -> EntityId {
     let person = id(byte);
     vault
-        .put_entity(&person, 4, range(1), 1, b"person")
+        .put_entity(
+            &person,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            range(1),
+            1,
+            b"person",
+        )
         .expect("seed person");
     person
 }
@@ -60,7 +66,13 @@ fn seed_person(vault: &Vault, byte: u8) -> EntityId {
 fn seed_code_artifact(vault: &Vault, byte: u8) -> EntityId {
     let artifact = id(byte);
     vault
-        .put_entity(&artifact, 15, range(1), 1, b"code artifact")
+        .put_entity(
+            &artifact,
+            oneiron::registry::ENTITY_TYPE_ASSET,
+            range(1),
+            1,
+            b"code artifact",
+        )
         .expect("seed code artifact");
     artifact
 }
@@ -947,7 +959,10 @@ fn free_lane_reuse_refuses_soft_deleted_record() {
 fn free_lane_reuse_refuses_divergent_occupant() {
     let record = free_lane_record_id_for("free-divergent-run");
     for (entity_type, body) in [
-        (4_u8, b"a person, not an admission record".as_slice()),
+        (
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            b"a person, not an admission record".as_slice(),
+        ),
         (
             ENTITY_TYPE_ASSET,
             b"an asset with the wrong body".as_slice(),

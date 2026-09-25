@@ -10,7 +10,6 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Number, Value};
 
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::context_pack::ContextPack;
 use crate::context_pack::PackFormat;
 use crate::context_pack::PackItemTokenStats;
@@ -19,6 +18,7 @@ use crate::context_pack::PackStats;
 use crate::context_pack::PackTokenStats;
 use crate::context_pack::TokenAllocation;
 use crate::pipeline::Signal;
+use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 #[cfg(test)]
 use crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER;
@@ -42,7 +42,12 @@ pub(super) fn group_entities(
     }
 
     for rows in buckets.values_mut() {
-        rows.sort_unstable_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
+        rows.sort_unstable_by(|a, b| {
+            b.critical
+                .cmp(&a.critical)
+                .then_with(|| b.score.total_cmp(&a.score))
+                .then_with(|| a.id.cmp(&b.id))
+        });
     }
 
     let mut out = Vec::new();
@@ -67,19 +72,15 @@ pub(super) fn group_entities(
 }
 
 pub(super) fn token_budget_droppable_count(groups: &[(GroupKey, Vec<PreparedEntity>)]) -> usize {
-    groups
-        .iter()
-        .flat_map(|(_, rows)| rows.iter())
-        .filter(|row| !is_critical_predicate_claim(row))
-        .count()
+    groups.iter().flat_map(|(_, rows)| rows.iter()).count()
 }
 
 pub(super) fn type_fraction(key: GroupKey, allocation: &TokenAllocation) -> f32 {
     match key {
-        GroupKey::Kind(ENTITY_TYPE_CLAIM | ENTITY_TYPE_COMPANION_REGISTER) => allocation.claims,
+        GroupKey::Kind(ENTITY_TYPE_CLAIM | ENTITY_TYPE_FACET) => allocation.claims,
         GroupKey::Kind(ENTITY_TYPE_TURN) => allocation.turns,
         GroupKey::Kind(ENTITY_TYPE_SUMMARY) => allocation.summaries,
-        GroupKey::Kind(_) | GroupKey::Other => allocation.other,
+        GroupKey::Kind(_) | GroupKey::Other | GroupKey::ExportSection(_) => allocation.other,
     }
 }
 
@@ -91,24 +92,8 @@ pub(super) fn enforce_token_budget_with_depth_limit(
     value_depth_limit: ValueDepthLimit,
 ) -> usize {
     if token_budget == 0 {
-        let mut total_used = 0_usize;
-        for (_, rows) in groups.iter_mut() {
-            let mut used = 0_usize;
-            rows.retain(|row| {
-                let keep = is_critical_predicate_claim(row);
-                if keep {
-                    used = used.saturating_add(estimate_entity_tokens_with_depth_limit(
-                        row,
-                        tokenizer,
-                        value_depth_limit,
-                    ));
-                }
-                keep
-            });
-            total_used = total_used.saturating_add(used);
-        }
-        groups.retain(|(_, rows)| !rows.is_empty());
-        return total_used;
+        groups.clear();
+        return 0;
     }
 
     // Normalize fractions so they sum to 1.0 (multiple "other" types each
@@ -158,25 +143,13 @@ pub(super) fn enforce_token_budget_with_depth_limit(
 
         let mut used = 0_usize;
         let mut kept = Vec::with_capacity(rows.len());
-        let mut kept_noncritical = 0_usize;
-        let mut noncritical_closed = final_budget == 0;
         for row in rows.drain(..) {
             let tokens =
                 estimate_entity_tokens_with_depth_limit(&row, tokenizer, value_depth_limit);
-            if is_critical_predicate_claim(&row) {
-                used = used.saturating_add(tokens);
-                kept.push(row);
+            if used.saturating_add(tokens) > final_budget {
                 continue;
             }
-            if noncritical_closed {
-                continue;
-            }
-            if used.saturating_add(tokens) > final_budget && kept_noncritical > 0 {
-                noncritical_closed = true;
-                continue;
-            }
-            kept_noncritical += 1;
-            used = used.saturating_add(tokens);
+            used += tokens;
             kept.push(row);
         }
         *rows = kept;
@@ -297,6 +270,9 @@ fn enforce_serialized_token_budget(
                 break;
             }
             may_drop_critical = true;
+            if prepared.stats.critical_count > 0 {
+                prepared.stats.critical_over_budget = true;
+            }
             continue;
         }
         prepared.stats.items_dropped.reason =
@@ -312,7 +288,10 @@ fn drop_last_token_budget_item(prepared: &mut PreparedPack, include_critical: bo
         return true;
     }
 
-    drop_last_token_budget_item_from_groups(&mut prepared.results, include_critical)
+    if drop_last_token_budget_item_from_groups(&mut prepared.results, include_critical) {
+        return true;
+    }
+    prepared.l2_base.take().is_some()
 }
 
 fn drop_last_token_budget_item_from_groups(
@@ -395,6 +374,12 @@ fn collect_pack_token_stats(
     tokenizer: PackTokenizer,
 ) -> PackTokenStats {
     let mut sections = Vec::new();
+    if let Some(summary) = &prepared.l2_base {
+        sections.push(PackSectionTokenStats {
+            section: "l2_base".to_owned(),
+            tokens: tokenizer.count(&summary.body),
+        });
+    }
     let mut items = Vec::new();
     if prepared.merged {
         collect_section_token_stats(
@@ -529,6 +514,12 @@ pub(super) fn append_stats_line(out: &mut String, stats: &PackStats, format: Pac
             stats.items_dropped.reason.as_str()
         ));
     }
+    if stats.critical_over_budget {
+        stats_line.push_str(&format!(
+            " | critical_over_budget: {}",
+            stats.critical_count
+        ));
+    }
     if format == PackFormat::Yaml {
         out.push_str("# ");
         out.push_str(&stats_line);
@@ -583,6 +574,14 @@ pub(super) fn json_stats(pack_stats: &PackStats) -> Value {
             item_accounting_json(pack_stats.items_dropped),
         );
     }
+    stats.insert(
+        "critical_over_budget".to_owned(),
+        Value::Bool(pack_stats.critical_over_budget),
+    );
+    stats.insert(
+        "critical_count".to_owned(),
+        Value::from(pack_stats.critical_count),
+    );
     Value::Object(stats)
 }
 

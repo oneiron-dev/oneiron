@@ -66,6 +66,7 @@ pub(super) struct CandidateFacts {
     pub(super) world: Option<EntityId>,
     pub(super) facet: Option<EntityId>,
     pub(super) rel: Option<EntityId>,
+    pub(super) topic: Option<Vec<u8>>,
 }
 
 pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFacts> {
@@ -77,7 +78,10 @@ pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFac
         WriteProvenance::new(Value::from("dreamer-consolidation-probe"))?,
         ClaimApprovalStatus::Proposed,
     );
-    let body = candidate.clone().into_claim_body(&envelope);
+    let body = candidate.clone().into_claim_body(
+        &envelope,
+        crate::claim::substrate_facet_id(candidate_probe_actor()),
+    );
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(invalid_consolidation(
             "consolidation candidates must have entity subjects",
@@ -85,12 +89,26 @@ pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFac
     };
     Ok(CandidateFacts {
         subject,
+        topic: topic_key(body.scope.as_ref())?,
         predicate: body.predicate,
         value: body.value,
         world: body.world,
         facet: facet_from_scope(body.scope.as_ref()),
         rel: body.rel,
     })
+}
+
+/// The extractor supplies the question key as scoped data. Do not guess it
+/// from answer prose: reversal of an answer must stay in the same set.
+pub(super) fn topic_key(scope: Option<&Value>) -> Result<Option<Vec<u8>>> {
+    let Some(Value::Map(fields)) = scope else {
+        return Ok(None);
+    };
+    fields
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some("topic_key")).then_some(value))
+        .map(canonical_value_bytes)
+        .transpose()
 }
 
 fn candidate_probe_actor() -> EntityId {
@@ -308,6 +326,8 @@ pub struct ConflictIdentity {
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
     pub rel: Option<EntityId>,
+    /// Canonical question key supplied by the per-predicate extractor.
+    pub topic: Option<Vec<u8>>,
 }
 
 /// One conflicting set: same full identity, non-equal canonical values.
@@ -317,6 +337,8 @@ pub struct ConflictSet {
     pub candidate_indexes: Vec<usize>,
     /// The consolidatable prior head with the same identity, when present.
     pub prior_head: Option<EntityId>,
+    /// All conflicting context heads; only a unique head may be superseded.
+    pub prior_heads: Vec<EntityId>,
 }
 
 /// Deterministic conflict trigger (DESIGN-PIN A4):
@@ -337,6 +359,7 @@ pub fn detect_conflicts(
             world: facts.world,
             facet: facts.facet,
             rel: facts.rel,
+            topic: facts.topic,
         };
         groups
             .entry(identity)
@@ -346,24 +369,26 @@ pub fn detect_conflicts(
 
     let mut conflicts = Vec::new();
     for (identity, members) in groups {
-        let prior = prior_heads.iter().find(|prior| {
-            claim_consolidatable(&prior.body) && prior_matches_identity(&prior.body, &identity)
-        });
-        let mut values: BTreeSet<&[u8]> =
-            members.iter().map(|(_, bytes)| bytes.as_slice()).collect();
-        let mut prior_value = None;
-        if let Some(prior) = prior {
-            let bytes = canonical_value_bytes(&prior.body.value)?;
-            prior_value = Some(bytes);
+        let mut priors = Vec::new();
+        for prior in prior_heads {
+            if claim_consolidatable(&prior.body) && prior_matches_identity(&prior.body, &identity)?
+            {
+                priors.push(prior);
+            }
         }
-        if let Some(bytes) = &prior_value {
-            values.insert(bytes.as_slice());
+        priors.sort_by_key(|prior| prior.claim_id);
+        priors.dedup_by_key(|prior| prior.claim_id);
+        let mut values: BTreeSet<Vec<u8>> =
+            members.iter().map(|(_, bytes)| bytes.clone()).collect();
+        for prior in &priors {
+            values.insert(canonical_value_bytes(&prior.body.value)?);
         }
         if values.len() > 1 {
             conflicts.push(ConflictSet {
                 identity,
                 candidate_indexes: members.into_iter().map(|(index, _)| index).collect(),
-                prior_head: prior.map(|prior| prior.claim_id),
+                prior_head: (priors.len() == 1).then(|| priors[0].claim_id),
+                prior_heads: priors.iter().map(|prior| prior.claim_id).collect(),
             });
         }
     }
@@ -387,22 +412,31 @@ pub fn conflict_open_marker_id(
         attempt_id,
         conflict.identity.subject,
         crate::claim::PREDICATE_CONFLICT_OPEN,
-        &Value::from(conflict.identity.predicate.as_str()),
+        &Value::Array(vec![
+            Value::from(conflict.identity.predicate.as_str()),
+            conflict
+                .identity
+                .topic
+                .as_ref()
+                .map_or(Value::Nil, |key| Value::Binary(key.clone())),
+        ]),
         conflict.identity.world,
         conflict.identity.facet,
         conflict.identity.rel,
+        conflict.identity.topic.as_deref(),
     )
 }
 
-fn prior_matches_identity(body: &ClaimBody, identity: &ConflictIdentity) -> bool {
+fn prior_matches_identity(body: &ClaimBody, identity: &ConflictIdentity) -> Result<bool> {
     let ClaimSubject::Entity(subject) = body.subject else {
-        return false;
+        return Ok(false);
     };
-    subject == identity.subject
+    Ok(subject == identity.subject
         && body.predicate == identity.predicate
         && body.world == identity.world
         && body.rel == identity.rel
         && facet_from_scope(body.scope.as_ref()) == identity.facet
+        && topic_key(body.scope.as_ref())? == identity.topic)
 }
 
 pub(super) fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
@@ -411,7 +445,7 @@ pub(super) fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
 
 /// Derives a [`PromotionCandidate`]'s write-once claim id DETERMINISTICALLY
 /// from its identity (owning attempt, subject, predicate, canonical value, world,
-/// facet).
+/// facet, question topic).
 ///
 /// `EntityId::now()` mints a fresh id on every call, so under the wake
 /// driver's at-least-once re-execution (a crash after `sink.accept` but before
@@ -419,6 +453,10 @@ pub(super) fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
 /// NEW ids for the same beliefs — DUPLICATE claims. A content-addressed id is
 /// stable across re-runs (and independent of `now`), so promotion stays
 /// idempotent (#485-3).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "claim identity includes both relationship and extractor topic axes"
+)]
 pub(super) fn deterministic_claim_id(
     attempt_id: crate::attempt_queue::AttemptId,
     subject: EntityId,
@@ -427,6 +465,7 @@ pub(super) fn deterministic_claim_id(
     world: Option<EntityId>,
     facet: Option<EntityId>,
     rel: Option<EntityId>,
+    topic: Option<&[u8]>,
 ) -> EntityId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(DREAMER_CLAIM_ID_HASH_DOMAIN);
@@ -446,6 +485,11 @@ pub(super) fn deterministic_claim_id(
         hasher.update(facet.as_bytes());
     }
     hash_optional_entity(&mut hasher, rel.as_ref());
+    hasher.update(&[u8::from(topic.is_some())]);
+    if let Some(topic) = topic {
+        hasher.update(&(topic.len() as u64).to_le_bytes());
+        hasher.update(topic);
+    }
     let digest = hasher.finalize();
     let mut raw = [0_u8; 16];
     raw.copy_from_slice(&digest.as_bytes()[..16]);

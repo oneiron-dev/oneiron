@@ -20,8 +20,10 @@ mod broadcast;
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub mod control_keys;
 mod embedder;
 pub mod error;
+pub mod feedback_delivery;
 mod handler;
 mod idempotency;
 mod livequery;
@@ -34,6 +36,7 @@ pub mod runtime;
 pub mod server;
 mod skills_pack;
 pub mod usage;
+pub mod wire_telemetry;
 // Process-local driver attachment only; this adds no HTTP/MCP route.
 // The stream/output owner still has to supply production serve prerequisites.
 #[cfg(unix)]
@@ -61,3 +64,6 @@ pub fn build_app(server: Arc<SyncServer>) -> Router {
         .merge(handler::ws_routes(server.clone()))
         .merge(api::api_routes(server))
 }
+
+#[cfg(test)]
+mod test_credentials;

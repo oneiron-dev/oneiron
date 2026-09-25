@@ -162,7 +162,7 @@ impl Vault {
                 "widen proposer must be an agent",
             )));
         }
-        let now = crate::unix_seconds_now();
+        let now = self.store.clock.now_recorded_at();
         if expires_at <= now || expires_at - now > 3600 {
             return Err(Error::Gate(GateError::InvalidConsentBound(
                 "widen proposal expiry must be within one hour",
@@ -249,7 +249,7 @@ impl Vault {
             let mut row = decode_row(&raw, reference)?;
             let proposal = &row.proposal;
             if row.resolved
-                || proposal.expires_at <= crate::unix_seconds_now()
+                || proposal.expires_at <= self.store.clock.now_recorded_at()
                 || proposal.owner_ref != owner.principal_ref()
                 || proposal.canonical_delta != expected_delta
             {

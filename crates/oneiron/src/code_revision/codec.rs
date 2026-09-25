@@ -10,7 +10,7 @@ use crate::error::ArtifactError;
 
 pub(crate) const CODE_REVISION_CLAIM_PREDICATE: &str = "code.revision";
 
-pub const CODE_REVISION_RECORD_KEYS: [&str; 7] = [
+pub const CODE_REVISION_RECORD_KEYS: [&str; 9] = [
     "revision_id",
     "kind",
     "session_id",
@@ -18,6 +18,8 @@ pub const CODE_REVISION_RECORD_KEYS: [&str; 7] = [
     "reverted_to_revision_id",
     "provenance_claim_id",
     "finalized_at",
+    "file_frontiers",
+    "commit_metadata",
 ];
 
 pub const CODE_REVISION_FORK_KEYS: [&str; 4] = [
@@ -40,6 +42,10 @@ pub(super) const KEY_REVERTED_TO_REVISION_ID: &str = CODE_REVISION_RECORD_KEYS[4
 pub(super) const KEY_PROVENANCE_CLAIM_ID: &str = CODE_REVISION_RECORD_KEYS[5];
 
 pub(super) const KEY_FINALIZED_AT: &str = CODE_REVISION_RECORD_KEYS[6];
+
+const KEY_COMMIT_METADATA: &str = CODE_REVISION_RECORD_KEYS[8];
+
+const KEY_FILE_FRONTIERS: &str = CODE_REVISION_RECORD_KEYS[7];
 
 const KEY_FORK_SESSION_ID: &str = CODE_REVISION_FORK_KEYS[0];
 
@@ -78,6 +84,14 @@ pub fn encode_code_revision(revision: &CodeRevision) -> Result<Vec<u8>> {
         (
             Value::from(KEY_FINALIZED_AT),
             Value::Integer(revision.finalized_at.into()),
+        ),
+        (
+            Value::from(KEY_COMMIT_METADATA),
+            super::commit_metadata::to_value(revision.commit_metadata.as_ref()),
+        ),
+        (
+            Value::from(KEY_FILE_FRONTIERS),
+            super::file_frontiers::to_value(revision)?,
         ),
     ]);
     encode_value(&value, "code revision MessagePack encode failed")
@@ -149,6 +163,8 @@ fn decode_code_revision_value(value: &Value) -> Result<CodeRevision> {
     let mut reverted_to_revision_id = None;
     let mut provenance_claim_id = None;
     let mut finalized_at = None;
+    let mut file_frontiers = None;
+    let mut commit_metadata = None;
     let mut seen = [false; CODE_REVISION_RECORD_KEYS.len()];
 
     for (key, value) in entries {
@@ -197,11 +213,20 @@ fn decode_code_revision_value(value: &Value) -> Result<CodeRevision> {
                     Some(optional_entity_from_value(value, "provenance_claim_id")?);
             }
             KEY_FINALIZED_AT => finalized_at = Some(u64_value(value, "finalized_at")?),
+            KEY_COMMIT_METADATA => {
+                commit_metadata = Some(super::commit_metadata::from_value(value)?);
+            }
+            KEY_FILE_FRONTIERS => file_frontiers = Some(super::file_frontiers::from_value(value)?),
             _ => unreachable!("index resolved from CODE_REVISION_RECORD_KEYS"),
         }
     }
 
     let revision = CodeRevision {
+        commit_metadata: commit_metadata
+            .ok_or(Error::InvalidClaimBody("missing commit_metadata"))?,
+        file_frontiers: file_frontiers.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody("missing file_frontiers"),
+        ))?,
         revision_id: revision_id.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "missing required code revision key revision_id",
         )))?,
@@ -309,6 +334,8 @@ fn decode_code_revision_fork_value(value: &Value) -> Result<CodeRevisionFork> {
 }
 
 pub(super) fn validate_code_revision_shape(revision: &CodeRevision) -> Result<()> {
+    super::commit_metadata::validate(revision)?;
+    super::file_frontiers::validate(revision)?;
     if revision.parent_revision_id == Some(revision.revision_id)
         || revision.reverted_to_revision_id == Some(revision.revision_id)
     {

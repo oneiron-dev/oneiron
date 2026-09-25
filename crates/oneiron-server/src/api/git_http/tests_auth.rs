@@ -6,12 +6,10 @@ use super::gate::{
 use super::routes::{GitService, git_http_routes};
 use crate::auth::CoreScope;
 use crate::auth::RevokedTokenJtis;
-use crate::auth::mint_core_token_v2;
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
 use axum::body::Body;
 use axum::http::HeaderMap;
-use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::http::header::AUTHORIZATION;
 use axum::http::header::WWW_AUTHENTICATE;
@@ -45,13 +43,22 @@ mod tests {
         }
     }
 
-    fn bearer(token: &str) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        let value = HeaderValue::from_str(&format!("Bearer {token}")).expect("bearer header");
-        headers.insert(AUTHORIZATION, value);
-        headers
+    fn fixture(config: SyncServerConfig) -> (tempfile::TempDir, Arc<SyncServer>) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+        let server = Arc::new(SyncServer::new(vault, config).unwrap());
+        (dir, server)
     }
-
+    fn bearer(server: &SyncServer, token: &str) -> HeaderMap {
+        let request = axum::http::Request::builder()
+            .header(AUTHORIZATION, token)
+            .body(Body::empty())
+            .unwrap();
+        crate::test_credentials::bind_request(server, request)
+            .headers()
+            .clone()
+    }
     /// A registered principal is an entity id, so the fixture mints one rather
     /// than inventing a spelling the grammar would reject.
     fn principal() -> String {
@@ -59,15 +66,12 @@ mod tests {
     }
 
     fn scoped_token(config: &SyncServerConfig, scopes: &str, principal: Option<&str>) -> String {
-        let secret = config
-            .auth_secret
-            .as_deref()
-            .expect("fixture configures a trust root");
+        assert!(config.auth_secret.is_some());
         let claims = match principal {
             Some(principal_ref) => format!("scope={scopes};principal_ref={principal_ref}"),
             None => format!("scope={scopes}"),
         };
-        mint_core_token_v2(secret, &claims)
+        format!("{}{claims}", crate::test_credentials::RECIPE_PREFIX)
     }
 
     #[test]
@@ -94,11 +98,12 @@ mod tests {
     #[test]
     fn git_http_read_scope_serves_upload_pack() {
         let config = secret_config();
+        let (_dir, server) = fixture(config.clone());
         let token = scoped_token(&config, "core:read", None);
         let auth = authenticate(
-            &bearer(&token),
+            &bearer(&server, &token),
             &config,
-            &NoRevocations,
+            server.vault().as_ref(),
             GitService::UploadPack,
         )
         .expect("read scope serves a fetch");
@@ -108,14 +113,15 @@ mod tests {
     #[test]
     fn git_smart_http_receive_pack_without_registered_principal_ref_refused_even_on_loopback() {
         let config = secret_config();
+        let (_dir, server) = fixture(config.clone());
         // A write-scoped bearer with no principal_ref: authenticated, but not a
         // registered actor. There is no loopback branch that could admit it,
         // because the gate never reads an address.
         let token = scoped_token(&config, "core:read,core:write", None);
         let refused = authenticate(
-            &bearer(&token),
+            &bearer(&server, &token),
             &config,
-            &NoRevocations,
+            server.vault().as_ref(),
             GitService::ReceivePack,
         )
         .expect_err("a push without a registered principal_ref is refused");
@@ -152,12 +158,13 @@ mod tests {
     #[test]
     fn git_http_receive_pack_admits_a_registered_principal() {
         let config = secret_config();
+        let (_dir, server) = fixture(config.clone());
         let pusher = principal();
         let token = scoped_token(&config, "core:read,core:write", Some(&pusher));
         let auth = authenticate(
-            &bearer(&token),
+            &bearer(&server, &token),
             &config,
-            &NoRevocations,
+            server.vault().as_ref(),
             GitService::ReceivePack,
         )
         .expect("a registered principal with write scope may push");
@@ -195,6 +202,17 @@ mod tests {
         let url = format!(
             "http://{}/git/demo.git",
             listener.local_addr().expect("address")
+        );
+        let headers = bearer(&server, &token);
+        let token = headers[AUTHORIZATION]
+            .to_str()
+            .unwrap()
+            .strip_prefix("Bearer ")
+            .unwrap()
+            .to_owned();
+        let binding = format!(
+            "http.extraHeader=X-Oneiron-Binding: {}",
+            headers["x-oneiron-binding"].to_str().unwrap()
         );
         let routes = git_http_routes().with_state(server);
         let serving = tokio::spawn(async move {
@@ -234,7 +252,10 @@ mod tests {
             );
             let repo_dir = root.join("demo.git");
             let auth = format!("http.extraHeader=Authorization: Bearer {token}");
-            let unpublished = stock_git(source.path(), &["-c", &auth, "ls-remote", &url]);
+            let unpublished = stock_git(
+                source.path(),
+                &["-c", &auth, "-c", &binding, "ls-remote", &url],
+            );
             assert!(
                 !unpublished.contains("refs/heads/main") && !unpublished.contains("\tHEAD"),
                 "raw main and HEAD are not advertisement authority"
@@ -244,7 +265,7 @@ mod tests {
             // CoreAuth -> run_serve -> serve -> landed door -> durable producer.
             stock_git(
                 source.path(),
-                &["-c", &auth, "push", &url, "refs/heads/main"],
+                &["-c", &auth, "-c", &binding, "push", &url, "refs/heads/main"],
             );
             let rows: Vec<_> = vault
                 .origin_publication_ids(None)
@@ -303,10 +324,16 @@ mod tests {
                 rmpv::Value::from("method"),
                 rmpv::Value::from("bearer+registered-principal")
             )));
-            let refs = stock_git(source.path(), &["-c", &auth, "ls-remote", &url]);
+            let refs = stock_git(
+                source.path(),
+                &["-c", &auth, "-c", &binding, "ls-remote", &url],
+            );
             assert!(refs.contains(&format!("{oid}\trefs/heads/main")));
             let clone = tempfile::tempdir().expect("client");
-            stock_git(clone.path(), &["-c", &auth, "clone", &url, "checkout"]);
+            stock_git(
+                clone.path(),
+                &["-c", &auth, "-c", &binding, "clone", &url, "checkout"],
+            );
             assert_eq!(
                 std::fs::read_to_string(clone.path().join("checkout/README.md")).expect("checkout"),
                 "public repository content\n"
@@ -340,7 +367,7 @@ mod tests {
             );
             let refused = std::process::Command::new("git")
                 .current_dir(source.path())
-                .args(["-c", &auth, "push", &url, "refs/heads/main"])
+                .args(["-c", &auth, "-c", &binding, "push", &url, "refs/heads/main"])
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .output()
                 .expect("push starts");
@@ -380,11 +407,14 @@ mod tests {
                 .method("POST")
                 .uri("/git/missing.git/git-receive-pack");
             if let Some(token) = token {
-                request = request.header(AUTHORIZATION, format!("Bearer {token}"));
+                request = request.header(AUTHORIZATION, token);
             }
             let response = git_http_routes()
                 .with_state(Arc::clone(&server))
-                .oneshot(request.body(Body::from("not a pack")).expect("request"))
+                .oneshot(crate::test_credentials::bind_request(
+                    &server,
+                    request.body(Body::from("not a pack")).expect("request"),
+                ))
                 .await
                 .expect("response");
             assert_eq!(
@@ -398,12 +428,13 @@ mod tests {
     #[test]
     fn git_http_read_only_bearer_cannot_reach_receive_pack() {
         let config = secret_config();
+        let (_dir, server) = fixture(config.clone());
         let token = scoped_token(&config, "core:read", Some(&principal()));
         assert!(
             authenticate(
-                &bearer(&token),
+                &bearer(&server, &token),
                 &config,
-                &NoRevocations,
+                server.vault().as_ref(),
                 GitService::ReceivePack,
             )
             .is_err(),
@@ -468,5 +499,188 @@ mod tests {
             ServiceRefusal::Unsupported.response().status(),
             StatusCode::FORBIDDEN
         );
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lease_checkout_stock_git_push_authenticates_at_the_real_door_route() {
+        use oneiron::checkout::lease::*;
+        struct Facts;
+        impl CheckoutFactSink for Facts {
+            fn apply_checkout_fact(&mut self, _: CheckoutFactMutation) -> CheckoutResult<()> {
+                Ok(())
+            }
+        }
+        #[derive(Default)]
+        struct Liveness(Option<CheckoutLivenessPulse>);
+        impl CheckoutLiveness for Liveness {
+            fn publish(&mut self, pulse: CheckoutLivenessPulse) -> CheckoutResult<()> {
+                self.0 = Some(pulse);
+                Ok(())
+            }
+            fn current(&self, _: CheckoutId) -> CheckoutResult<Option<CheckoutLivenessPulse>> {
+                Ok(self.0.clone())
+            }
+            fn clear(&mut self, _: CheckoutId, _: u64) -> CheckoutResult<()> {
+                self.0 = None;
+                Ok(())
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+        let config = secret_config();
+        let pusher = principal();
+        let token = scoped_token(&config, "core:read,core:write", Some(&pusher));
+        let server = Arc::new(SyncServer::new(Arc::clone(&vault), config).unwrap());
+        let headers = bearer(&server, &token);
+        let token = headers[AUTHORIZATION]
+            .to_str()
+            .unwrap()
+            .strip_prefix("Bearer ")
+            .unwrap()
+            .to_owned();
+        let binding = format!(
+            "http.extraHeader=X-Oneiron-Binding: {}",
+            headers["x-oneiron-binding"].to_str().unwrap()
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/git", listener.local_addr().unwrap());
+        let serving = tokio::spawn(async move {
+            axum::serve(listener, git_http_routes().with_state(server))
+                .await
+                .unwrap();
+        });
+        let checked = tokio::task::spawn_blocking(move || {
+            let source = tempfile::tempdir().unwrap();
+            stock_git(source.path(), &["init", "--initial-branch=main"]);
+            std::fs::write(source.path().join("README.md"), "lease route\n").unwrap();
+            stock_git(source.path(), &["add", "README.md"]);
+            stock_git(
+                source.path(),
+                &[
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "-m",
+                    "initial",
+                ],
+            );
+            let oid = stock_git(source.path(), &["rev-parse", "HEAD"]);
+            let root = smart_http::origin_serving_root(&vault).unwrap();
+            stock_git(
+                &root,
+                &[
+                    "clone",
+                    "--bare",
+                    source.path().to_str().unwrap(),
+                    "demo.git",
+                ],
+            );
+            let repo_dir = root.join("demo.git");
+            stock_git(&repo_dir, &["remote", "remove", "origin"]);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let mut leases = CheckoutLeaseService::new(vault.as_ref(), Facts, Liveness::default());
+            let grant = leases
+                .claim(CheckoutClaimRequest {
+                    checkout_id: CheckoutId::from_bytes(*oneiron::EntityId::now().as_bytes())
+                        .unwrap(),
+                    task_ref: oneiron::EntityId::now(),
+                    repo_ref: oneiron::codebase::RepoRef::LocalFolder {
+                        path: repo_dir.to_string_lossy().into_owned(),
+                        commit: oid.clone(),
+                    },
+                    holder_ref: pusher.clone(),
+                    task_class: CheckoutTaskClass::Build,
+                    ttl_secs: Some(600),
+                    now,
+                })
+                .unwrap();
+            let lease = leases.get(grant.checkout_id).unwrap().unwrap();
+            let wire = oneiron::git_wire::GitWire::new(&vault)
+                .unwrap()
+                .with_checkout_door(&base)
+                .unwrap();
+            wire.materialize(&lease).unwrap();
+            let tree = wire.checkout_worktree_path(&lease).unwrap();
+            let url = stock_git(&tree, &["remote", "get-url", "origin"]);
+            assert_eq!(
+                url,
+                format!(
+                    "{base}/lease/{}.{}/demo.git",
+                    grant.checkout_id, grant.epoch
+                )
+            );
+            let unauthenticated = std::process::Command::new("git")
+                .current_dir(&tree)
+                .args(["push", "origin", "HEAD:refs/heads/lease"])
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .unwrap();
+            assert!(!unauthenticated.status.success());
+            // A lease never substitutes for the registered actor's signed bearer.
+            let auth = format!("http.extraHeader=Authorization: Bearer {token}");
+            stock_git(
+                &tree,
+                &[
+                    "-c",
+                    &auth,
+                    "-c",
+                    &binding,
+                    "push",
+                    "origin",
+                    "HEAD:refs/heads/lease",
+                ],
+            );
+            assert_eq!(
+                stock_git(&repo_dir, &["rev-parse", "refs/heads/lease"]),
+                oid
+            );
+            let ids = vault.origin_publication_ids(None).unwrap();
+            assert_eq!(ids.len(), 1);
+            let row = vault.origin_publication(ids[0]).unwrap().unwrap();
+            let outcome = vault.get_claim(&row.provenance_claim_id).unwrap().unwrap();
+            let fields = outcome.value.as_map().unwrap();
+            let op = fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("operation_id"))
+                .unwrap()
+                .1
+                .as_str()
+                .unwrap();
+            let admission = vault
+                .get_claim(&oneiron::EntityId::from_hex(op).unwrap())
+                .unwrap()
+                .unwrap();
+            assert!(admission.value.as_map().unwrap().contains(&(
+                rmpv::Value::from("method"),
+                rmpv::Value::from("door-credential+registered-principal")
+            )));
+            assert!(!stock_git(&tree, &["config", "--list"]).contains(&token));
+            leases
+                .reclaim_idempotent(grant.checkout_id, principal(), now + 601)
+                .unwrap();
+            let stale = std::process::Command::new("git")
+                .current_dir(&tree)
+                .args([
+                    "-c",
+                    &auth,
+                    "-c",
+                    &binding,
+                    "push",
+                    "origin",
+                    "HEAD:refs/heads/stale",
+                ])
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .unwrap();
+            assert!(!stale.status.success());
+        })
+        .await;
+        serving.abort();
+        checked.unwrap();
     }
 }

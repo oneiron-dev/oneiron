@@ -33,6 +33,9 @@ pub(super) const DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION: f32 = 0.5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum PackFormat {
+    OpenaiCompat,
+    AnthropicMessages,
+    Gemini,
     #[default]
     Json,
     Yaml,
@@ -57,8 +60,14 @@ pub struct ContextEntity {
     pub id: EntityId,
     pub short_id: String,
     pub content_hash: u8,
+    /// Exact document frontier which supplied these fields. A scoped consumer
+    /// must gate this revision as well as the current entity's authority.
+    pub source_revision_ref: Option<[u8; 16]>,
     pub entity_type: u8,
     pub score: f32,
+    /// Predicate-class priority resolved from the vault manifest at hydration.
+    /// This never changes claim visibility, scope, or budget ceilings.
+    pub critical: bool,
     pub fields: Option<HashMap<String, serde_json::Value>>,
     pub edges: Option<Vec<EdgeInfo>>,
     pub vector: Option<Vec<f32>>,
@@ -90,6 +99,10 @@ pub struct PackStats {
     pub tokens: PackTokenStats,
     pub items_truncated: PackItemAccounting,
     pub items_dropped: PackItemAccounting,
+    /// Critical claims exceeded an item, section, or serialized allotment.
+    pub critical_over_budget: bool,
+    /// Critical claims eligible before budget truncation (not suppressed claims).
+    pub critical_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -179,6 +192,10 @@ impl PackItemAccounting {
 /// A fully hydrated context pack ready for serialization or programmatic use.
 #[derive(Debug, Clone)]
 pub struct ContextPack {
+    /// Turn-local discovery, separately budgeted from memory rows.
+    pub capabilities: Vec<crate::context_board::CapabilityHit>,
+    /// Cached, score-free subject evidence. Results and neighbors are its read-time delta.
+    pub l2_base: Option<super::L2BaseSummary>,
     /// Channel execution health, retained even when no entities surface.
     pub retrieval_quality: RetrievalQualityReport,
     pub results: Vec<ContextEntity>,

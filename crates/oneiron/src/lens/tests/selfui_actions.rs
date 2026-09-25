@@ -526,6 +526,7 @@ fn action_tiers_do_not_auto_forward() -> Result<()> {
     let (_tmp, vault) = test_vault();
     let target_id = test_entity_id(11);
     put_person(&vault, &target_id)?;
+    install_viewer_base_grant(&vault)?;
 
     let (viewer_key, mut frame) = viewer_frame("card-1")?;
     let scoped_read = vault.scoped_read(viewer_key);

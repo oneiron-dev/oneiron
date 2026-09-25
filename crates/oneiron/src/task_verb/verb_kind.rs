@@ -2,14 +2,14 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 
-include!("verb_catalog.rs");
-
 /// Shape discriminator on the typed TASK body. Absent on a schema-v1 row,
 /// where it means [`TaskKind::Standard`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskKind {
     Standard,
     Consult,
+    Reconciliation,
 }
 
 impl TaskKind {
@@ -19,6 +19,7 @@ impl TaskKind {
         match self {
             Self::Standard => "standard",
             Self::Consult => "consult",
+            Self::Reconciliation => "reconciliation",
         }
     }
 
@@ -26,6 +27,7 @@ impl TaskKind {
         match token {
             "standard" => Ok(Self::Standard),
             "consult" => Ok(Self::Consult),
+            "reconciliation" => Ok(Self::Reconciliation),
             _ => Err(Error::Record(RecordError::InvalidTaskBody(
                 "tasks.body.kind",
             ))),
@@ -39,15 +41,20 @@ impl TaskKind {
 /// Identity is the ACTOR — the connection — never a vendor, harness, or machine
 /// string. Two subscriptions of the same product under different config dirs
 /// are two actors; the harness is a display label resolved at projection time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum TaskAssignee {
     Dreamer,
-    /// Immutable holder set is carried by the typed ask spec.
-    AnswerHolders,
     AgentDef {
         agent_def_ref: EntityId,
     },
     Peer {
+        actor_ref: EntityId,
+    },
+    /// An already spawned child, addressed by its authenticated actor identity.
+    Child {
         actor_ref: EntityId,
     },
     Human {
@@ -61,9 +68,9 @@ impl TaskAssignee {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Dreamer => "dreamer",
-            Self::AnswerHolders => "answer_holders",
             Self::AgentDef { .. } => "agent_def",
             Self::Peer { .. } => "peer",
+            Self::Child { .. } => "child",
             Self::Human { .. } => "human",
         }
     }
@@ -72,25 +79,32 @@ impl TaskAssignee {
     #[must_use]
     pub const fn entity_ref(self) -> Option<EntityId> {
         match self {
-            Self::Dreamer | Self::AnswerHolders => None,
+            Self::Dreamer => None,
             Self::AgentDef { agent_def_ref } => Some(agent_def_ref),
-            Self::Peer { actor_ref } | Self::Human { actor_ref } => Some(actor_ref),
+            Self::Peer { actor_ref } | Self::Child { actor_ref } | Self::Human { actor_ref } => {
+                Some(actor_ref)
+            }
         }
     }
 
     /// Binds the assignee to a resolved entity of the right kind. A dangling
     /// or mistyped assignee is refused here, before any write transaction.
     pub fn validate(&self, vault: &Vault) -> Result<()> {
+        let txn = vault.store.env.read_txn()?;
+        self.validate_in(vault, &txn)
+    }
+
+    pub(super) fn validate_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
         let Some(entity_ref) = self.entity_ref() else {
             return Ok(());
         };
-        let stored = vault.get_entity_type(&entity_ref)?;
+        let stored = vault.get_entity_type_in_txn(txn, &entity_ref)?;
         let admitted = match self {
             // An agent definition is a typed row, so its kind is checkable.
             Self::AgentDef { .. } => stored == Some(crate::registry::ENTITY_TYPE_AGENT_DEF),
             // A peer/human actor is whatever kind the identity plane stores it
             // as (PERSON today); existence is the assertable invariant.
-            Self::Dreamer | Self::AnswerHolders | Self::Peer { .. } | Self::Human { .. } => {
+            Self::Dreamer | Self::Peer { .. } | Self::Child { .. } | Self::Human { .. } => {
                 stored.is_some()
             }
         };

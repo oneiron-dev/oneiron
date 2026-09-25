@@ -6,6 +6,10 @@
 //! surfaced separately as `critic_reliability.*` claims by callers that choose
 //! to write the public calibration state.
 
+mod findings;
+pub mod review;
+pub use findings::MergedFinding;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
@@ -365,20 +369,22 @@ impl ReliabilityOutcomeEvent {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct CritiqueTriageScores {
     pub accept: f64,
     pub revise: f64,
     pub discard: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CritiqueTriage {
     pub verdict: CritiqueVerdict,
     pub scores: CritiqueTriageScores,
     pub acted_on_artifact_ids: Vec<String>,
     pub hard_veto_artifact_ids: Vec<String>,
     pub out_of_scope_artifact_ids: Vec<String>,
+    pub findings: Vec<MergedFinding>,
+    pub auto_resolved: bool,
 }
 
 pub fn triage_critiques(
@@ -421,6 +427,7 @@ pub fn triage_critiques_with_exploration(
     let mut acted_on = Vec::new();
     let mut hard_vetoes = Vec::new();
     let mut out_of_scope = Vec::new();
+    let mut votes = BTreeSet::new();
 
     for critique in critiques {
         validate_critique_artifact(critique)?;
@@ -437,6 +444,14 @@ pub fn triage_critiques_with_exploration(
             continue;
         }
 
+        if !votes.insert((
+            critique.provenance.critic_ref.clone(),
+            critique.lens_id.clone(),
+            critique.domain.clone(),
+            findings::finding_key(critique),
+        )) {
+            continue;
+        }
         let reliability = reliability_by_lens
             .get(&(critique.lens_id.as_str(), critique.domain.as_str()))
             .copied();
@@ -467,12 +482,20 @@ pub fn triage_critiques_with_exploration(
         soft_verdict(scores)
     };
 
+    acted_on.sort();
+    acted_on.dedup();
+    hard_vetoes.sort();
+    hard_vetoes.dedup();
+    out_of_scope.sort();
+    out_of_scope.dedup();
     Ok(CritiqueTriage {
         verdict,
         scores,
         acted_on_artifact_ids: acted_on,
         hard_veto_artifact_ids: hard_vetoes,
         out_of_scope_artifact_ids: out_of_scope,
+        findings: findings::merge_findings(critiques, reliabilities, 0.9),
+        auto_resolved: findings::verdict_confidence(critiques, reliabilities, verdict) >= 0.9,
     })
 }
 

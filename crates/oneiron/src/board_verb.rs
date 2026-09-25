@@ -16,35 +16,7 @@ impl BoardWorldScope {
         self.0
     }
 }
-pub const BOARD_VERBS: [&str; 4] = [
-    "board.expand",
-    "board.refresh",
-    "board.subscribe",
-    "board.unsubscribe",
-];
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BoardVerb {
-    Expand,
-    Refresh,
-    Subscribe,
-    Unsubscribe,
-}
-impl BoardVerb {
-    pub const ALL: [Self; 4] = [
-        Self::Expand,
-        Self::Refresh,
-        Self::Subscribe,
-        Self::Unsubscribe,
-    ];
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Expand => "board.expand",
-            Self::Refresh => "board.refresh",
-            Self::Subscribe => "board.subscribe",
-            Self::Unsubscribe => "board.unsubscribe",
-        }
-    }
-}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoardVerbCall {
     Expand {
@@ -100,6 +72,7 @@ pub fn render_current_keyframe(
     let legend = BoardLegend::canonical();
     render_board_block(
         &BoardFrame {
+            changes: None,
             header,
             legend: &legend,
             sections,
@@ -310,15 +283,6 @@ mod tests {
     }
     #[test]
     fn subscription_verbs_are_sorted_agent_free_and_typed() {
-        assert_eq!(
-            BOARD_VERBS,
-            [
-                "board.expand",
-                "board.refresh",
-                "board.subscribe",
-                "board.unsubscribe"
-            ]
-        );
         let (source, scope, connection, mut streams) = setup();
         streams.attach_connection(
             connection.clone(),

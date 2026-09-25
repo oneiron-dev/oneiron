@@ -3,22 +3,22 @@ use super::TaskAskHandle;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskWaitRequest {
     pub handle: TaskAskHandle,
     pub step_key: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAnswerRequest {
     pub handle: TaskAskHandle,
-    pub result_ref: String,
+    pub word: super::TaskAskWord,
 }
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyRequest {}
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RoomRequest {
     pub room_ref: String,
@@ -27,11 +27,39 @@ pub struct RoomRequest {
     #[serde(default)]
     pub limit: Option<usize>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RoomClaimRequest {
     pub room_ref: String,
     pub turn_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRequest {
+    pub task_ref: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCreateRequest {
+    pub spec: serde_json::Value,
+    pub label: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoardExpandRequest {
+    pub key: String,
+    pub frame_epoch: Option<u64>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoardRefreshRequest {
+    pub frame_epoch: Option<u64>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSubscriptionRequest {
+    pub scopes: std::collections::BTreeSet<crate::context_board::SubscriptionScope>,
 }
 
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> MemoryResult<T> {
@@ -46,4 +74,50 @@ pub struct RoomEntry {
     pub id: String,
     pub room: crate::workspace_roster::ProjectRoom,
 }
+/// `recall`'s inputs, spelled exactly as §HEAD-CONTRACT does.
+///
+/// Every field but `query` is optional and defaults to the contract's default,
+/// so an omitting client and a spelling-everything client reach the same
+/// engine call.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RecallRequest {
+    pub query: String,
+    #[serde(default)]
+    pub effort: Option<crate::memory::Effort>,
+    #[serde(default)]
+    pub scope: Option<crate::memory::RecallScope>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub format: Option<String>,
+}
+
+/// `receipts`'s one input.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReceiptsRequest {
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+include!("verb_catalog.rs");
 include!("sdk_generated.rs");
+
+#[cfg(test)]
+#[test]
+fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
+    let mut names = std::collections::BTreeSet::new();
+    for verb in AgentVerb::ALL {
+        assert!(names.insert(verb.as_str()));
+        assert_eq!(AgentVerb::from_name(verb.as_str()), Some(*verb));
+        assert!(input_schema(verb.as_str()).is_some());
+        assert_eq!(verb.argument_fields().is_some(), verb.is_mcp());
+        assert_eq!(verb.required_fields().is_some(), verb.is_mcp());
+        assert_eq!(mcp_arguments_schema(verb.as_str()).is_some(), verb.is_mcp());
+    }
+    assert!(AgentVerb::TasksAsk.is_section());
+    assert!(AgentVerb::RoomsSpeak.writes());
+    assert!(AgentVerb::RoomsList.is_facade());
+    assert!(!AgentVerb::BoardExpand.is_facade());
+    assert!(!AgentVerb::Recall.is_mcp());
+    assert!(AgentVerb::from_name("not.a.verb").is_none());
+}

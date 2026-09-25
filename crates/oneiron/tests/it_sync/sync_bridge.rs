@@ -776,9 +776,10 @@ fn sync_client_handle_server_message_dispatch() {
 
     let build_root_vv = |client: &mut SyncClient| -> Vec<u8> {
         let initial_sync = client.generate_initial_sync();
-        // The current hello supports both ledger and document sync. The lease
-        // request and root VV follow it, including on the full-window path.
-        let expected_hello = transport::encode_protocol_hello();
+        // ONE-1127: the FIRST frame is the protocol hello. The in-tree client
+        // uses the full-window path; selector sync uses a distinct current
+        // protocol version. The lease request and root VV follow it.
+        let expected_hello = transport::encode_chunk_full_window_protocol_hello();
         assert_eq!(
             initial_sync.first().map(Vec::as_slice),
             Some(expected_hello.as_slice()),
@@ -1089,7 +1090,7 @@ fn edge_provenance_claim_survives_crdt_sync_round_trip() {
     vault_a
         .put_entity(
             &person,
-            4,
+            oneiron::registry::ENTITY_TYPE_PERSON,
             TimeRange {
                 start: 301,
                 end: 301,
@@ -1101,7 +1102,7 @@ fn edge_provenance_claim_survives_crdt_sync_round_trip() {
     vault_a
         .put_entity(
             &src,
-            4,
+            oneiron::registry::ENTITY_TYPE_PERSON,
             TimeRange {
                 start: 302,
                 end: 302,
@@ -1113,7 +1114,7 @@ fn edge_provenance_claim_survives_crdt_sync_round_trip() {
     vault_a
         .put_entity(
             &tgt,
-            4,
+            oneiron::registry::ENTITY_TYPE_PERSON,
             TimeRange {
                 start: 303,
                 end: 303,

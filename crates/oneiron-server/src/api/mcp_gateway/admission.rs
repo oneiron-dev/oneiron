@@ -5,6 +5,7 @@ use super::{
     mcp_scoped_read, mcp_tool_validation_error,
 };
 use crate::api::parse_entity_id_param;
+use crate::mcp::McpResolvedActor;
 use crate::mcp::McpSurfaceMode;
 use crate::mcp::McpValidatedToolArgs;
 use crate::server::SyncServer;
@@ -63,6 +64,11 @@ pub(crate) fn mcp_admit_scoped_call(
         // no wire name resolves onto them at all.
         _ => return mcp_admit_unscoped_execution(actor, tool_name, "name"),
     };
+    if verb.tool.memory_method().is_some() {
+        // Actor-scoped reads do NOT by themselves carry a connector's narrower
+        // ceiling. Never confuse the principal's grants with this credential.
+        mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.request")?;
+    }
     if let Some(scopes) = verb.payload.arguments.scopes.as_ref() {
         mcp_admit_subscription_scopes(actor, scopes)?;
     }
@@ -70,18 +76,7 @@ pub(crate) fn mcp_admit_scoped_call(
         let id = parse_entity_id_param(task_ref, "arguments.task_ref").map_err(mcp_api_error)?;
         mcp_admit_scoped_entity(server, actor, &id, "arguments.task_ref")?;
     }
-    if matches!(
-        verb.tool.binding,
-        crate::mcp::McpVerbBinding::TasksCreate
-            | crate::mcp::McpVerbBinding::TasksOutcomes
-            | crate::mcp::McpVerbBinding::TasksAnswer
-            | crate::mcp::McpVerbBinding::TasksAsk
-            | crate::mcp::McpVerbBinding::TasksWait
-            | crate::mcp::McpVerbBinding::RoomsList
-            | crate::mcp::McpVerbBinding::RoomsMessages
-            | crate::mcp::McpVerbBinding::RoomsSpeak
-            | crate::mcp::McpVerbBinding::RoomsClaim
-    ) {
+    if verb.tool.requires_unscoped() {
         mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.spec")?;
     }
     Ok(())
@@ -131,12 +126,11 @@ fn mcp_called_tool_name(args: &McpValidatedToolArgs) -> &'static str {
 /// credential was ATTACHED under.
 fn mcp_admit_subscription_scopes(
     actor: &McpCallContext,
-    requested: &[crate::mcp::McpSubscriptionScope],
+    requested: &[oneiron::context_board::SubscriptionScope],
 ) -> Result<(), McpGatewayError> {
     let asked = requested
         .iter()
         .copied()
-        .map(crate::mcp::McpSubscriptionScope::engine)
         .collect::<std::collections::BTreeSet<_>>();
     let admitted = actor.admitted_subscriptions(&asked);
     if admitted == asked {
@@ -162,8 +156,7 @@ fn mcp_admit_scoped_entity(
     field: &'static str,
 ) -> Result<(), McpGatewayError> {
     let scoped_read = mcp_scoped_read(&server.vault, actor)?;
-    let readable = scoped_read
-        .is_entity_readable(id)
+    let readable = mcp_credential_reads(&server.vault, actor, id)
         .map_err(|error| mcp_engine_error("mcp scope admission read failed", error))?;
     if !readable || !mcp_scope_covers_entity(&scoped_read, &actor.scope, id)? {
         return Err(McpGatewayError::new(
@@ -174,6 +167,20 @@ fn mcp_admit_scoped_entity(
         .with_field(field));
     }
     Ok(())
+}
+
+/// The readability half of MCP admission: the same predicate the HTTP task
+/// routes ask. A connector without a credential reads nothing here; its call
+/// was already refused by [`mcp_scoped_read`].
+pub(super) fn mcp_credential_reads(
+    vault: &oneiron::Vault,
+    actor: &McpResolvedActor,
+    id: &oneiron::EntityId,
+) -> oneiron::Result<bool> {
+    actor
+        .auth
+        .as_ref()
+        .map_or(Ok(false), |auth| auth.can_read_entity(vault, id))
 }
 
 /// True when the registered world/facet ceiling covers this entity.
@@ -215,10 +222,13 @@ pub(super) fn mcp_scope_covers_entity(
         }
     }
     if let Some(facet_ref) = scope.facet_ref {
+        // This is membership evidence, not returned graph data. A facet's
+        // separate read-type ceiling must not erase proof of a claim's scope.
+        // Payload projection still uses the receipted ScopedRead door.
         let edges = scoped_read
+            .vault()
             .edges_out(id)
-            .map_err(|error| mcp_engine_error("mcp scope facet read failed", error))?
-            .unwrap_or_default();
+            .map_err(|error| mcp_engine_error("mcp scope facet read failed", error))?;
         let carries_facet = edges
             .iter()
             .any(|edge| edge.kind == EdgeKind::FacetOf && edge.target == facet_ref);
@@ -237,13 +247,14 @@ pub(super) fn mcp_scope_covers_entity(
 /// argument catalog still exists in this process. Nothing falls back, so no
 /// unadvertised name can reach an executor or bypass the result envelope.
 pub(super) fn mcp_validated_call_args(
+    server: &SyncServer,
     mode: McpSurfaceMode,
     params: McpToolCallParams,
     raw_arguments: Option<&str>,
 ) -> Result<McpValidatedToolArgs, McpGatewayError> {
-    let Some(tool) = crate::mcp::registered_surface(mode).resolve(&params.name) else {
+    let Some(tool) = server.mcp_surface(mode).resolve(&params.name) else {
         if params.name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
-            return Err(mcp_execute_code_unavailable());
+            return Err(mcp_code_host_unbound());
         }
         return Err(McpGatewayError::new(
             -32602,
@@ -265,26 +276,13 @@ pub(super) fn mcp_validated_call_args(
     crate::mcp::validate_mcp_endpoint_tool_args(tool, arguments).map_err(mcp_tool_validation_error)
 }
 
-/// The ONE stable typed refusal a direct `execute_code` call receives
-/// (ONE-1704 B2).
-///
-/// It is raised at the single name-resolution chokepoint both routes share, so
-/// it lands BEFORE arguments decode, before admission, and before any executor:
-/// no run is created, no durable run handle is minted, no `Waiting` is
-/// published, and no `resume` block or `terminal:false` advancement claim can
-/// reach the wire, under full or narrowed credentials on either endpoint.
-///
-/// This is the FINAL release posture, not a placeholder for a host that is
-/// about to appear: `execute_code` is not shipped in this release, and the
-/// refusal says exactly that instead of the generic `unknown_tool` a retired
-/// name would otherwise get.
-pub(super) fn mcp_execute_code_unavailable() -> McpGatewayError {
+/// Refuse an unavailable interpreter before decoding arguments or creating a run.
+pub(super) fn mcp_code_host_unbound() -> McpGatewayError {
     McpGatewayError::new(
         -32020,
-        crate::mcp::MCP_EXECUTE_CODE_UNAVAILABLE_CODE,
+        crate::mcp::MCP_CODE_HOST_UNBOUND_CODE,
         format!(
-            "{tool} is not shipped in this release: it is registered on no endpoint and no run \
-             was created",
+            "{tool} has no verified production runtime on this server; no run was created",
             tool = crate::mcp::MCP_EXECUTE_CODE_TOOL,
         ),
     )

@@ -55,10 +55,10 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
 /// FEDERATION_GRANT, DIAGNOSTIC, CONNECTOR_KEY, PSYCH_PROFILE, ACCESS_GRANT,
 /// IDENTITY_TOPOLOGY_EVENT, SECRET_CUSTODY, CHANNEL_IDENTITY,
 /// COUNTERPARTY_CONTACT, OUTBOUND_GRANT, PERSONA_SNAPSHOT_EXPORT, COMM_RECORD,
-/// SKILL_CONTENT_ANCHOR). Classification, not zone position, is what makes a
+/// SKILL_CONTENT_ANCHOR, SKILL_HUB). Classification, not zone position, is what makes a
 /// kind engine-authored — COMPANION_REGISTER shares the zone and stays
 /// publicly writable. The canon-reserved system bytes with no engine substrate
-/// (SUSPICIOUS_WAKE = 72, CLAIM_CLASS_DESCRIPTOR = 74, SKILL_HUB = 75) still
+/// (SUSPICIOUS_WAKE = 75, CLAIM_CLASS_DESCRIPTOR = 91) still
 /// fail with [`Error::InvalidEntityType`] so API-boundary error codes never
 /// conflate "unknown byte" with "reserved system kind". SUSPICIOUS_WAKE stays
 /// on that list: ONE-1394 spends only byte 69, and a suspicious wake is a

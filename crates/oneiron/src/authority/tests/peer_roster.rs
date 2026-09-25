@@ -177,13 +177,11 @@ fn peer_consent_predicate_ignores_cloud_markings_the_local_one_keeps() {
     );
     assert!(
         !folded_device_can_authority_consent(&cloud_marked_owner),
-        "the LOCAL arm is unchanged and still excludes cloud-marked devices"
+        "the self-host arm still excludes cloud-marked devices"
     );
 
-    // ...and the divergence stays a forward-compatibility seam, not a live
-    // behaviour split: the standing admission guards refuse to MINT that shape
-    // at all (ONE-1410 item 16 — `validate_shape` rides both encode and decode,
-    // so lifting them would be engine-wide).
+    // Hosted roots now have the same wire shape as peer roots. The local
+    // self-host predicate above, not the codec, enforces device-only consent.
     assert!(
         device(
             key.clone(),
@@ -191,12 +189,12 @@ fn peer_consent_predicate_ignores_cloud_markings_the_local_one_keeps() {
             AuthorityTier::Software
         )
         .validate()
-        .is_err()
+        .is_ok()
     );
     assert!(
         device(key.clone(), ROLE_OWNER, AuthorityTier::CloudCustodial)
             .validate()
-            .is_err()
+            .is_ok()
     );
 
     // Both arms agree on every shape that CAN reach a fold.

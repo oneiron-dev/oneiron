@@ -5,11 +5,13 @@
 mod cursor;
 mod memories;
 mod prefix;
+mod session;
 mod standing;
 
 pub(crate) use cursor::*;
 pub(crate) use memories::*;
 pub(crate) use prefix::*;
+pub(crate) use session::*;
 
 use super::CoreContextPackRequest;
 use super::CoreContextPackResponse;
@@ -82,9 +84,18 @@ pub(crate) struct ContextBoardResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<ContextBoardMemories>)]
     memories: Option<oneiron::MemoriesSection>,
+    /// One-way renderer: foreign worlds are guest-attributed evidence, never first-party memory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rendered_memories: Option<String>,
     /// The context pack retrieval produced; absent when retrieval was skipped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pack: Option<CoreContextPackResponse>,
+    /// Read-time lifecycle changes; never an unsolicited push.
+    changed: Vec<String>,
+    /// Turn discovery rows plus the session-long loaded skill line.
+    skills: Vec<String>,
+    /// This turn's capability agent candidates.
+    agents: Vec<String>,
 }
 
 /// Session prefix: API level, entity counts by numeric type, latest activity.
@@ -175,6 +186,7 @@ pub(crate) async fn context_board_hydrate(
     payload: Result<Json<ContextBoardRequest>, JsonRejection>,
 ) -> Result<Json<ContextBoardResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let mut req = json_payload(payload)?;
     let standing = standing::standing_prefix(&server, &auth, req.standing.as_ref()).await?;
     if let Some(prefix) = &standing
@@ -222,10 +234,62 @@ pub(crate) async fn context_board_hydrate(
         }
         None => (None, None, None),
     };
+
+    let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
+    let reads = session_read_set(
+        &server,
+        caller,
+        req.session.as_ref().and_then(|s| s.session_id.as_deref()),
+    )
+    .await?;
+    let changed = reads
+        .as_deref()
+        .map(|reads| reads.refresh(&read, 16))
+        .transpose()
+        .map_err(|error| super::core_engine_error("board lifecycle resolution failed", error))?
+        .unwrap_or_default()
+        .render();
+    let empty = oneiron::context_board::SessionReadSet::default();
+    let hits = pack
+        .as_ref()
+        .map(|pack| pack.capabilities.as_slice())
+        .unwrap_or_default();
+    let agents = oneiron::context_board::AgentsSection { rows: Vec::new() }
+        .with_candidates(hits)
+        .rows
+        .into_iter()
+        .map(|row| row.line)
+        .collect();
+    let skills =
+        oneiron::context_board::SkillsSection::project(hits, reads.as_deref().unwrap_or(&empty));
+    let skills = std::iter::once(skills.loaded).chain(skills.found).collect();
+    drop(reads);
     let cursor = match advanced {
         Some(cursor) => cursor,
-        None => current_memories_cursor(&server.vault, caller).await,
+        None => current_memories_cursor(&server, caller).await,
     };
+
+    let rendered_memories = memories
+        .as_ref()
+        .map(|memories| {
+            memories.render_board(
+                &oneiron::context_board::BoardBlockHeader {
+                    epoch: cursor.revision,
+                    scope: caller.to_owned(),
+                },
+                oneiron::context_board::BoardBudgetRequest {
+                    harness_default_tok: usize::try_from(budget.tokens_remaining)
+                        .unwrap_or(usize::MAX),
+                    caller_limit_tok: None,
+                    explicit_override_tok: None,
+                },
+            )
+        })
+        .transpose()
+        .map_err(|_| {
+            crate::error::ApiError::bad_request("memory board render failed", Some("memories"))
+        })?
+        .map(|render| render.text);
 
     let response = ContextBoardResponse {
         standing,
@@ -235,7 +299,11 @@ pub(crate) async fn context_board_hydrate(
         budget,
         cursor,
         memories,
+        rendered_memories,
         pack,
+        changed,
+        skills,
+        agents,
     };
     if let Some(prefix) = &response.standing {
         let wire = serde_json::to_string(&response).map_err(|_| {

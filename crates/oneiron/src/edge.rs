@@ -125,6 +125,14 @@ pub enum EdgeKind {
     /// non-traversal contract as [`Self::Fulfills`], and written only in the
     /// same validated transaction as its forward twin.
     DischargedBy = 26,
+    /// Record-to-parent edge in the conversation DAG.
+    Parent = 27,
+    /// Sub-session-to-spawning-record edge.
+    SpawnedBy = 28,
+    /// Addressing, never a visibility restriction.
+    AddressedTo = 29,
+    /// Reply pointer, independent of the canonical parent.
+    RepliesTo = 30,
 }
 
 impl EdgeKind {
@@ -166,7 +174,9 @@ impl EdgeKind {
             Self::ChildOf => None,
             Self::AssignedTo => None,
             Self::BlockedBy => None,
-            Self::SameAs => None,
+            Self::SameAs | Self::Parent | Self::SpawnedBy | Self::AddressedTo | Self::RepliesTo => {
+                None
+            }
             // Identity-plumbing prior mirroring `supersedes` (0.3).
             Self::MergedInto => Some(0.3),
             Self::SplitInto => Some(0.3),
@@ -217,6 +227,10 @@ impl EdgeKind {
             24 => Some(Self::Blocks),
             25 => Some(Self::Fulfills),
             26 => Some(Self::DischargedBy),
+            27 => Some(Self::Parent),
+            28 => Some(Self::SpawnedBy),
+            29 => Some(Self::AddressedTo),
+            30 => Some(Self::RepliesTo),
             _ => None,
         }
     }
@@ -340,6 +354,10 @@ pub(crate) fn edge_value_layout_for_kind(
         | EdgeKind::Blocks
         | EdgeKind::Fulfills
         | EdgeKind::DischargedBy
+        | EdgeKind::Parent
+        | EdgeKind::SpawnedBy
+        | EdgeKind::AddressedTo
+        | EdgeKind::RepliesTo
         | EdgeKind::SameAs => EdgeValueLayout::Structural,
         EdgeKind::Mentions
         | EdgeKind::About
@@ -555,6 +573,11 @@ fn edge_record_error() -> crate::error::Error {
 /// one arm reserves BOTH generic doors — creation and deletion.
 pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<()> {
     match kind {
+        EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::AddressedTo | EdgeKind::RepliesTo => {
+            Err(crate::error::Error::Registry(
+                crate::error::RegistryError::ReservedEdgeKind("conversation_dag"),
+            ))
+        }
         EdgeKind::MergedInto => Err(crate::error::Error::Registry(
             crate::error::RegistryError::ReservedEdgeKind("merged_into"),
         )),
@@ -600,6 +623,15 @@ pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<
 pub(crate) fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error::Result<()> {
     validate_public_edge_kind(kind)?;
     match kind {
+        EdgeKind::Parent => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("parent"),
+        )),
+        EdgeKind::SpawnedBy => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("spawned_by"),
+        )),
+        EdgeKind::RepliesTo => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("replies_to"),
+        )),
         EdgeKind::SameAs => Err(crate::error::Error::Registry(
             crate::error::RegistryError::ReservedEdgeKind("same_as"),
         )),

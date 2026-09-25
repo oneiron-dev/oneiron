@@ -71,6 +71,9 @@ pub struct MemoriesBudget {
     pub facets: usize,
     pub companions: usize,
     pub other: usize,
+    /// One additional cap shared by every world. Pinned rows are never shed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_total: Option<usize>,
 }
 
 impl MemoriesBudget {
@@ -90,7 +93,14 @@ impl MemoriesBudget {
             facets,
             companions,
             other,
+            shared_total: None,
         }
+    }
+
+    #[must_use]
+    pub const fn with_shared_total(mut self, total: usize) -> Self {
+        self.shared_total = Some(total);
+        self
     }
 
     #[must_use]
@@ -130,6 +140,16 @@ pub struct CompanionAssembly {
     pub expression: Option<String>,
 }
 
+/// Content-detail tier, independent of the source-trust label.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryTier {
+    Pinned,
+    #[default]
+    Snippet,
+    IndexOnly,
+}
+
 /// One stable row in the MEMORIES section.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -144,6 +164,15 @@ pub struct MemoryRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub asset_ref: Option<String>,
     pub score: f32,
+    /// Engine-decoded source; missing source is unknown, never first-party.
+    #[serde(default)]
+    pub claim_source: Option<crate::claim::ClaimSource>,
+    #[serde(default)]
+    pub world: Option<String>,
+    #[serde(default)]
+    pub tier: MemoryTier,
+    #[serde(default)]
+    pub snippet: Option<String>,
 }
 
 /// Deterministic MEMORIES section envelope.

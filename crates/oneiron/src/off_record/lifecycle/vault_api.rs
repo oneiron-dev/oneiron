@@ -58,9 +58,43 @@ impl Vault {
             return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
         }
         vet_off_record_session_ref(session_ref)?;
-        self.store
-            .off_record_sessions
-            .enter(session_ref, backend, budget_bytes)
+        self.store.off_record_sessions.enter(
+            session_ref,
+            backend,
+            budget_bytes,
+            OffRecordMode::OffRecord,
+            &self.store.clock,
+        )
+    }
+
+    /// Enters an immutable anonymous session. Only explicit session-bound
+    /// reads are available. Operations requiring stored content or audit
+    /// evidence refuse without writing; close leaves no transcript to delete.
+    pub fn enter_anonymous_session(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+    ) -> Result<OffRecordSessionRecord> {
+        let entry = self.enter_anonymous_session_entry(session_ref, backend)?;
+        Ok(session_entry_state(&entry)?.record.clone())
+    }
+
+    pub(super) fn enter_anonymous_session_entry(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+    ) -> Result<Arc<OffRecordSessionEntry>> {
+        if !self.config.off_record_enabled {
+            return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
+        }
+        vet_off_record_session_ref(session_ref)?;
+        self.store.off_record_sessions.enter(
+            session_ref,
+            backend,
+            0,
+            OffRecordMode::Anonymous,
+            &self.store.clock,
+        )
     }
 
     /// Reads the off-record session record for `session_ref`, if any. A ref
@@ -113,7 +147,17 @@ impl Vault {
         if state.record.mode == mode {
             return Ok(state.record.clone());
         }
+        // Anonymous is an entry-time choice, never a way to hide an
+        // existing transcript or later publish one. Check both ends before
+        // touching the overlay's lifecycle or publishing another mode.
+        state
+            .record
+            .mode
+            .write_target()
+            .require_recording(session_ref)?;
+        mode.write_target().require_recording(session_ref)?;
         match mode {
+            OffRecordMode::Anonymous => unreachable!("anonymous mode change refused above"),
             OffRecordMode::OnRecord => entry.overlay.seal_writes()?,
             OffRecordMode::OffRecord => entry.overlay.rearm()?,
         }
@@ -132,11 +176,12 @@ impl Vault {
     /// direction).
     pub fn off_record_receipt_log(&self, session_ref: &str) -> Result<SessionLocalReceiptLog> {
         vet_off_record_session_ref(session_ref)?;
-        if self.off_record_session(session_ref)?.is_none() {
-            return Err(Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
+        let record = self.off_record_session(session_ref)?.ok_or_else(|| {
+            Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
                 session_ref: session_ref.to_owned(),
-            }));
-        }
+            })
+        })?;
+        record.mode.write_target().require_recording(session_ref)?;
         Ok(SessionLocalReceiptLog::off_record(session_ref))
     }
 

@@ -28,7 +28,7 @@ fn at(second: u64) -> TimeRange {
 fn seed_conversation(vault: &Vault, seed: u8) -> EntityId {
     let id = EntityId::from_bytes([seed; 16]).expect("conversation id");
     vault
-        .put_entity(&id, ENTITY_TYPE_CONVERSATION, at(1), 1, b"conversation")
+        .put_entity(&id, ENTITY_TYPE_CONVERSATION, at(1), 1, b"\x80")
         .expect("seed conversation");
     id
 }

@@ -41,7 +41,7 @@ mod parse;
 pub use self::emit::{
     IMIP_EVENT_TZID_PROPERTY, IMIP_PRODUCT_ID, ImipEmitRequest, emit_imip_ics, persist_imip_blob,
 };
-pub use self::parse::{ParsedIcsFeed, ParsedVEvent, parse_ics_feed};
+pub use self::parse::{ParsedCalendarProperties, ParsedIcsFeed, ParsedVEvent, parse_ics_feed};
 
 pub(crate) use self::parse::invite_organizer;
 

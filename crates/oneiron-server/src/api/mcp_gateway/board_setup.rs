@@ -1,8 +1,8 @@
 //! Board state, setup grammar, and page preflight.
 
 use super::{
-    McpCallContext, McpGatewayError, mcp_actor_result, mcp_engine_error, mcp_facade_error,
-    mcp_scope_covers_entity, mcp_scoped_read, mcp_text_content,
+    McpCallContext, McpGatewayError, mcp_actor_result, mcp_credential_reads, mcp_engine_error,
+    mcp_facade_error, mcp_scope_covers_entity, mcp_scoped_read, mcp_text_content,
 };
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpPageCursorState;
@@ -19,6 +19,8 @@ use std::sync::Arc;
 pub(super) enum McpCarrierPolicy {
     /// An ordinary result: drain AT MOST ONE pending frame beside it.
     Drain,
+    /// The response's capability channel, never retained as session state.
+    DrainWithCapabilities(Vec<oneiron::context_board::CapabilityHit>),
     /// This result carries its OWN freshly minted keyframe. `Some` is a frame
     /// the producer has not enqueued yet (setup mints one outside the
     /// registry); `None` is one the producer already enqueued (the engine's own
@@ -58,12 +60,17 @@ pub(super) async fn mcp_endpoint_result(
     structured: Value,
     policy: McpCarrierPolicy,
 ) -> Value {
-    let carrier = if actor.scope.is_narrow() {
+    let mut capabilities = Vec::new();
+    let carrier = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
         None
     } else {
         let mut registry = server.mcp_registry.lock().await;
         match policy {
             McpCarrierPolicy::Drain => registry.next_carrier_frame(&actor.stream_connection),
+            McpCarrierPolicy::DrainWithCapabilities(hits) => {
+                capabilities = hits;
+                registry.next_carrier_frame(&actor.stream_connection)
+            }
             McpCarrierPolicy::FreshKeyframe(minted) => {
                 if let Some(frame) = minted {
                     registry.enqueue_stream_frame(&actor.stream_connection, frame);
@@ -72,6 +79,16 @@ pub(super) async fn mcp_endpoint_result(
                 None
             }
         }
+    };
+    // Never turn lifecycle movement into a push. A narrowed connector never
+    // reaches the rider and an empty queue remains empty.
+    let carrier = if carrier.is_some() {
+        let original = carrier.clone();
+        super::board_observations::ride(server, actor, carrier, &capabilities)
+            .await
+            .unwrap_or(original)
+    } else {
+        None
     };
     let mut result = json!({
         "content": mcp_negotiated_content(message.into(), &structured),
@@ -136,6 +153,7 @@ pub(super) struct McpBoardState {
     pub(super) scope_label: String,
     /// The monotonic snapshot epoch this exact state owns (ONE-1704 M5).
     pub(super) epoch: u64,
+    pub(super) changes: oneiron::context_board::ChangedLine,
     /// TASKS rows the credential's REQUESTED SCOPE ceiling removed.
     scope_omitted: usize,
     /// TASKS rows the engine's own render row cap truncated away. A page
@@ -172,10 +190,17 @@ pub(super) async fn mcp_current_board(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
 ) -> Result<McpBoardState, McpGatewayError> {
-    let (sections, omissions) = mcp_board_sections(server, actor)?;
+    let (observations, changes) = super::board_observations::state(server, actor).await?;
+    let (mut sections, omissions) = mcp_board_sections(server, actor)?;
+    sections.push(
+        oneiron::context_board::SkillsSection::project(&[], &observations)
+            .board_section()
+            .map_err(mcp_board_frame_error)?,
+    );
     let scope_label = crate::mcp::mcp_effective_scope_label(&actor.scope);
-    let state_hash =
-        crate::mcp::mcp_board_state_hash(&scope_label, &mcp_board_state_rows(&sections));
+    let mut state_rows = mcp_board_state_rows(&sections);
+    state_rows.extend(changes.render());
+    let state_hash = crate::mcp::mcp_board_state_hash(&scope_label, &state_rows);
     let epoch = {
         let mut registry = server.mcp_registry.lock().await;
         registry.board_snapshot_epoch(&actor.stream_connection, state_hash)
@@ -184,6 +209,7 @@ pub(super) async fn mcp_current_board(
         sections,
         scope_label,
         epoch,
+        changes,
         scope_omitted: omissions.scope_omitted,
         window_truncated: omissions.window_truncated,
         source_exhausted: omissions.source_exhausted,
@@ -273,22 +299,19 @@ fn mcp_board_sections(
 
 /// Narrows one TASKS section to the credential's registered world/facet.
 ///
-/// A vault-wide credential is unchanged and pays nothing. A NARROWED one keeps
-/// only rows the store itself says the scope covers; the count it removed is
-/// returned so the page metadata can state the omission instead of hiding it.
+/// Every row passes the verified slip and registered world/facet checks,
+/// including slips whose record, kind, project or sensitivity bounds the old
+/// two-axis registry cannot express. The removed count states the omission.
 pub(super) fn mcp_scoped_tasks_section(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
     section: oneiron::context_board::TasksSection,
 ) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
-    if !actor.scope.is_narrow() {
-        return Ok((section, 0));
-    }
     let scoped_read = mcp_scoped_read(&server.vault, actor)?;
     let mut kept = Vec::with_capacity(section.rows.len());
     let mut omitted = 0_usize;
     for row in section.rows {
-        if mcp_scope_admits_row(&scoped_read, &actor.scope, &row.id)? {
+        if mcp_scope_admits_row(&server.vault, actor, &scoped_read, &row.id)? {
             kept.push(row);
         } else {
             omitted += 1;
@@ -308,29 +331,32 @@ pub(super) fn mcp_scoped_tasks_section(
 /// A row whose id is not an entity id cannot be proven in scope, so a narrowed
 /// credential does not see it: this fails closed.
 fn mcp_scope_admits_row(
+    vault: &oneiron::Vault,
+    actor: &McpResolvedActor,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
-    scope: &crate::mcp::McpConnectorScope,
     row_id: &str,
 ) -> Result<bool, McpGatewayError> {
     let Ok(id) = oneiron::EntityId::from_hex(row_id) else {
         return Ok(false);
     };
-    let readable = scoped_read
-        .is_entity_readable(&id)
+    let readable = mcp_credential_reads(vault, actor, &id)
         .map_err(|error| mcp_engine_error("mcp board row admission failed", error))?;
-    Ok(readable && mcp_scope_covers_entity(scoped_read, scope, &id)?)
+    Ok(readable && mcp_scope_covers_entity(scoped_read, &actor.scope, &id)?)
 }
 
 /// What a caller can actually DO next on this endpoint.
 ///
-/// ONE-1704 B1: every line is true of the release that is shipping. There is no
-/// `execute_code` lane to point at, so none is offered.
-fn mcp_setup_help() -> Vec<String> {
+/// Execution help follows the server's verified host binding, not a static
+/// release-wide assumption that no interpreter exists.
+fn mcp_setup_help(server: &SyncServer) -> Vec<String> {
     vec![
         "register the tool-first endpoint for one generated tool per verb".to_owned(),
-        "execute_code is not shipped in this release; a direct call is refused with \
-         execute_code_unavailable"
-            .to_owned(),
+        if server.code_execution_host().is_some() {
+            "execute_code resumes a durable run when called with the same run_ref and task"
+                .to_owned()
+        } else {
+            "execute_code has no verified runtime on this server; direct calls receive code_host_unbound".to_owned()
+        },
         "a More result carries an opaque cursor; send it back as page.cursor with the same \
          arguments"
             .to_owned(),
@@ -525,13 +551,24 @@ pub(crate) async fn execute_mcp_setup(
             epoch: board.epoch,
             scope: board.scope_label,
         };
-        let payload =
+        let mut payload =
             crate::mcp::mcp_setup_payload(&header, &board.sections, args.board_budget_request())
                 .map_err(mcp_setup_payload_error)?;
-        let keyframe = oneiron::context_board::BoardStreamFrame {
-            epoch: board.epoch,
-            kind: oneiron::context_board::FrameKind::Keyframe(payload.board.text.clone()),
-        };
+        payload.instructions =
+            crate::mcp::setup_instructions_for(server.code_execution_host().is_some());
+        let keyframe = board
+            .changes
+            .ride(Some(oneiron::context_board::BoardStreamFrame {
+                epoch: board.epoch,
+                kind: oneiron::context_board::FrameKind::Keyframe(payload.board.text.clone()),
+            }))
+            .expect("rider preserves an existing frame");
+        if let oneiron::context_board::FrameKind::Keyframe(text) = &keyframe.kind {
+            payload.board.text.clone_from(text);
+            payload.board.metadata.rendered_tok = oneiron::count_context_pack_tokens(text);
+            payload.board.metadata.floor_exceeds_cap =
+                payload.board.metadata.rendered_tok > payload.board.metadata.budget_tok;
+        }
         let structured = payload.to_value();
         let source = crate::mcp::McpPageSource::complete(mcp_setup_grammar_rows(&structured).len());
         let snapshot = McpPageSnapshot {
@@ -563,7 +600,7 @@ pub(crate) async fn execute_mcp_setup(
         object.insert("actor".to_owned(), mcp_actor_result(actor));
         object.insert(
             "meta".to_owned(),
-            actor.metadata(health, page, mcp_setup_help(), args.cache),
+            actor.metadata(health, page, mcp_setup_help(server), args.cache),
         );
     }
     // ONE-1704 carrier repair: PAGE ONE carries the keyframe it just minted and

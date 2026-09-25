@@ -136,7 +136,7 @@ impl Vault {
             .collect();
         self.write_identity_event_in_txn(
             wtxn,
-            EntityId::now(),
+            self.store.clock.entity_id()?,
             write,
             now,
             StoredIdentityOpAction::Undo { target: *event },

@@ -46,7 +46,7 @@ pub(super) fn log_terminal_step(
     payload: &[u8],
 ) -> DurableStepResult<EntityId> {
     let params_hash = request_params_hash(request)?;
-    let claim_id = EntityId::now();
+    let claim_id = ctx.vault.store.clock.entity_id()?;
     let occurred = TimeRange {
         start: ctx.now_ms,
         end: ctx.now_ms,
@@ -68,7 +68,7 @@ pub(super) fn log_terminal_step(
             let response_ref = if inline {
                 None
             } else {
-                let artifact_id = EntityId::now();
+                let artifact_id = ctx.vault.store.clock.entity_id()?;
                 let body = BlobArtifactBody::new("dreamer.step.response", "application/json");
                 let encoded = encode_blob_artifact_body(&body)?;
                 ctx.vault

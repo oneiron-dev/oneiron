@@ -1,12 +1,22 @@
 //! Sandbox boundary contract for code-mode execution.
 //!
-//! This module does not start a sandbox or link a production adapter. It pins
+//! The optional `code-sandbox-wasmtime` boundary instantiates a fresh sandbox. It pins
 //! the host/guest ABI that future runners must obey: plain JavaScript runs
 //! inside a QuickJS-class interpreter embedded as a WASM component in the
 //! existing Wasmtime/WIT boundary, guests target stable `/mnt` virtual paths,
 //! clock/random are deterministic host imports, credential use is handle-only,
 //! first-party writes are linked as typed traps, and foreign writes leave the
 //! sandbox as reviewable proposal deltas rather than commit authority.
+
+/// Host-pinned production QuickJS artifact loader and runtime factory.
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub mod quickjs;
+/// Fuel-limited Component Model request boundary (no WASI).
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub mod wasmtime_boundary;
+/// Typed Component Model adapter shared with the canonical CODE host boundary.
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub mod wasmtime_runtime;
 
 mod adapter;
 mod contract;
@@ -35,8 +45,8 @@ pub use self::paths::{
     SANDBOX_WORKSPACE_ROOT, SandboxMount, SandboxMountTable, SandboxVirtualPath,
 };
 pub use self::proposal::{
-    SandboxClaimProposal, SandboxFileWriteProposal, SandboxProposalDelta, SandboxProposalKind,
-    SandboxProposalWrite,
+    SandboxClaimProposal, SandboxFileEditProposal, SandboxFileWriteProposal, SandboxProposalDelta,
+    SandboxProposalKind, SandboxProposalWrite,
 };
 
 #[cfg(test)]

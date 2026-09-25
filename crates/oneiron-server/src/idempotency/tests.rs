@@ -116,10 +116,42 @@ async fn http_post_to(
     key: &str,
     credential: Option<&str>,
 ) -> Vec<u8> {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let auth_header = credential
         .map(|credential| format!("Authorization: Bearer {credential}\r\n"))
         .unwrap_or_default();
+    http_post_with_headers(addr, path, body, key, &auth_header).await
+}
+async fn http_post_bound(
+    server: &SyncServer,
+    addr: SocketAddr,
+    path: &str,
+    body: &str,
+    key: &str,
+    slip: &oneiron::authority::CapabilitySlip,
+    holder: &ed25519_dalek::SigningKey,
+) -> Vec<u8> {
+    let request = crate::test_credentials::bind_slip_request(
+        server,
+        slip,
+        holder,
+        axum::http::Request::new(Body::empty()),
+    );
+    let headers = request.headers();
+    let auth_header = format!(
+        "Authorization: {}\r\nX-Oneiron-Binding: {}\r\n",
+        headers[axum::http::header::AUTHORIZATION].to_str().unwrap(),
+        headers["x-oneiron-binding"].to_str().unwrap()
+    );
+    http_post_with_headers(addr, path, body, key, &auth_header).await
+}
+async fn http_post_with_headers(
+    addr: SocketAddr,
+    path: &str,
+    body: &str,
+    key: &str,
+    auth_header: &str,
+) -> Vec<u8> {
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\nIdempotency-Key: {key}\r\n{auth_header}\r\n{body}",
         body.len()
@@ -267,22 +299,34 @@ async fn same_key_and_body_are_isolated_by_principal() {
     )
     .await;
 
-    let read = crate::auth::mint_core_token_v2("secret", "scope=core:read");
-    let write = crate::auth::mint_core_token_v2("secret", "scope=core:write");
-    let first = http_post_to(
+    let server = SyncServer::new(
+        store.store.vault.clone(),
+        SyncServerConfig {
+            auth_secret: Some("secret".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (read, read_key) = crate::test_credentials::credential(&server, "scope=core:read");
+    let (write, write_key) = crate::test_credentials::credential(&server, "scope=core:write");
+    let first = http_post_bound(
+        &server,
         addr,
         "/v1/core/mutate",
         r#"{"value":1}"#,
         "shared-key",
-        Some(&read),
+        &read,
+        &read_key,
     )
     .await;
-    let second = http_post_to(
+    let second = http_post_bound(
+        &server,
         addr,
         "/v1/core/mutate",
         r#"{"value":1}"#,
         "shared-key",
-        Some(&write),
+        &write,
+        &write_key,
     )
     .await;
 
@@ -291,6 +335,41 @@ async fn same_key_and_body_are_isolated_by_principal() {
     assert_eq!(counter.load(Ordering::SeqCst), 2);
     assert_ne!(body(&first), body(&second));
 
+    // Same mint and same read verb, but a narrower record capability must not
+    // replay the broader result under the same idempotency key and request body.
+    let mut narrow = read.clone();
+    let mut scope = oneiron::federation::Scope::top();
+    scope.sensitivity =
+        oneiron::federation::SensitivityCeiling::AtMost(oneiron::federation::Sensitivity::Public);
+    narrow
+        .attenuate(oneiron::authority::SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        })
+        .unwrap();
+    let third = http_post_bound(
+        &server,
+        addr,
+        "/v1/core/mutate",
+        r#"{"value":1}"#,
+        "shared-key",
+        &narrow,
+        &read_key,
+    )
+    .await;
+    assert_eq!(status(&third), 200);
+    assert_ne!(body(&first), body(&third));
+    let replay = http_post_bound(
+        &server,
+        addr,
+        "/v1/core/mutate",
+        r#"{"value":1}"#,
+        "shared-key",
+        &narrow,
+        &read_key,
+    )
+    .await;
+    assert_eq!(body(&third), body(&replay));
     handle.abort();
 }
 
@@ -310,8 +389,25 @@ async fn non_core_route_rejects_scoped_token_and_accepts_owner_grade() {
     )
     .await;
 
-    let scoped = crate::auth::mint_core_token_v2("secret", "scope=core:write");
-    let rejected = http_post(addr, r#"{"value":1}"#, "scoped-key", Some(&scoped)).await;
+    let server = SyncServer::new(
+        store.store.vault.clone(),
+        SyncServerConfig {
+            auth_secret: Some("secret".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (scoped, key) = crate::test_credentials::credential(&server, "scope=core:write");
+    let rejected = http_post_bound(
+        &server,
+        addr,
+        "/mutate",
+        r#"{"value":1}"#,
+        "scoped-key",
+        &scoped,
+        &key,
+    )
+    .await;
     assert_eq!(status(&rejected), 401);
     assert_eq!(counter.load(Ordering::SeqCst), 0);
 

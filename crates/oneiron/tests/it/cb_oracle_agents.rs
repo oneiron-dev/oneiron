@@ -57,6 +57,7 @@ mod cb_a {
             run_id: None,
             parent_id: None,
             worker_kind: oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+            worker: None,
             agent_id: None,
             status: RunTreeStatus::Running,
             result_ref: None,
@@ -155,7 +156,7 @@ mod cb_a {
     /// and, separately, the registered system-default base logical id.
     fn arm_zero_config_spawn() -> DefaultPresetSpawn {
         use oneiron::agent_dispatch::{
-            AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
+            AgentDispatchOutcome, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
         };
         use oneiron::dreamer_runner::{
             DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload,
@@ -175,7 +176,11 @@ mod cb_a {
         else {
             panic!("expected one fresh spawn");
         };
-        let AgentDispatchTarget::Custom(resolved_id) = status.input.target;
+        let resolved_id = status
+            .input
+            .target
+            .agent_definition_ref()
+            .expect("agent target");
         let resolved_logical_id = vault
             .get_agent_definition(&resolved_id)
             .expect("read the resolved row")
@@ -537,7 +542,11 @@ mod cb_a {
         // Effective ceilings come from the row each dispatch NAMED, read back
         // live — never from the frozen payload snapshot, which carries none.
         let effective = |status: &AgentDispatchStatus| {
-            let AgentDispatchTarget::Custom(id) = status.input.target;
+            let id = status
+                .input
+                .target
+                .agent_definition_ref()
+                .expect("agent target");
             vault
                 .get_agent_definition(&id)
                 .expect("read the dispatched row")
@@ -1291,8 +1300,6 @@ mod cb_a {
 
     /// Trust-surface observations after a conflicting peer answer.
     struct TrustSurfaces {
-        /// Approval-queue entries anywhere in the flow (ratified: none).
-        approval_queue_entries: usize,
         /// Human digest entries for the landing.
         human_digest_entries: usize,
         /// conflict.open surfacings for the contradiction.
@@ -1339,7 +1346,6 @@ mod cb_a {
         let correction = fixture.correct_with_supersession(&answer, peer_claim, "Globex", 0.9);
 
         TrustSurfaces {
-            approval_queue_entries: fixture.pending_gate_consents(),
             human_digest_entries,
             conflict_open_surfacings,
             correction_writes: correction,
@@ -1347,13 +1353,11 @@ mod cb_a {
         }
     }
 
-    /// ONE-1710 · 08b r15: NO approval queues — digest only; wrong-note
-    /// protection is supersession + conflict.open + read-time confidence
-    /// weighting; one-write correctable.
+    /// Peer storage still needs no approval. Attributed contradiction closure
+    /// uses the W7 deferred gate, then the owner confirms the correction.
     #[test]
-    fn no_approval_queues_digest_and_supersession_only() {
+    fn peer_storage_is_unqueued_and_attributed_correction_is_confirmed() {
         let surfaces = arm_trust_surfaces();
-        assert_eq!(surfaces.approval_queue_entries, 0);
         assert_eq!(surfaces.human_digest_entries, 1);
         assert_eq!(surfaces.conflict_open_surfacings, 1);
         assert_eq!(surfaces.correction_writes, 1);
@@ -1491,6 +1495,22 @@ mod peer_fixture {
         entities
             .put(&mut wtxn, manifest_id.as_bytes(), &raw)
             .expect("store actor-bound source permits");
+        // This fixture authored the changed bytes locally. Preserve C06's
+        // body-hash authority binding in the same private fixture transaction;
+        // replayed or arbitrary raw manifests must not receive this stamp.
+        let sync_state: heed::Database<heed::types::Str, heed::types::Bytes> = env
+            .open_database(&wtxn, Some("sync_state"))
+            .expect("open fixture sync state")
+            .expect("sync state database exists");
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &manifest).expect("encode fixture stamp");
+        sync_state
+            .put(
+                &mut wtxn,
+                &format!("manifest:trusted:{}", manifest_id.to_hex()),
+                blake3::hash(&encoded).as_bytes(),
+            )
+            .expect("stamp fixture-authored policy");
         wtxn.commit().expect("commit fixture policy");
         let _closing_event = env.prepare_for_closing();
 
@@ -1797,10 +1817,14 @@ mod peer_fixture {
                 "peer consolidation must not be rejected: {:?}",
                 outcome.rejected
             );
-            assert!(
-                outcome.pended.is_empty(),
-                "ONE-1710: there is no approval lane to pend into"
-            );
+            if supersedes.is_some() {
+                // W7 contradiction closure holds attributed revisions until
+                // owner confirmation; peer storage itself needs no review.
+                assert!(outcome.landed.is_empty());
+                assert_eq!(outcome.pended, vec![candidate.claim_id]);
+            } else {
+                assert!(outcome.pended.is_empty(), "new peer facts need no approval");
+            }
             (outcome, candidate)
         }
 
@@ -1916,13 +1940,68 @@ mod peer_fixture {
             value: &str,
             confidence: f32,
         ) -> usize {
-            let (outcome, _) = self.consolidate_peer_answer(answer, value, confidence, Some(wrong));
+            let (outcome, candidate) =
+                self.consolidate_peer_answer(answer, value, confidence, Some(wrong));
+            assert_eq!(self.claim(wrong).lifecycle, ClaimLifecycleStatus::Active);
+            assert_eq!(
+                self.claim(candidate.claim_id).approval,
+                ClaimApprovalStatus::Proposed
+            );
+            let pending = self
+                .vault
+                .pending_gate_consents(1_000)
+                .expect("read correction and annotation consents");
+            assert!(
+                pending
+                    .iter()
+                    .any(|row| row.claim_id == *candidate.claim_id.as_bytes())
+            );
+            assert!(
+                pending
+                    .iter()
+                    .filter(|row| row.claim_id != *candidate.claim_id.as_bytes())
+                    .all(|row| self
+                        .claim(EntityId::from_bytes(row.claim_id).expect("stored pending claim id"))
+                        .predicate
+                        == "core.conflict.open")
+            );
+            let proposed = self
+                .vault
+                .get(&candidate.claim_id)
+                .expect("read proposed correction")
+                .expect("proposal bytes");
+            self.vault
+                .approve_inbox_member_with_edit_at(&candidate.claim_id, &proposed, PEER_NOW + 1)
+                .expect("owner confirms attributed correction");
+            let pending = self
+                .vault
+                .pending_gate_consents(1_000)
+                .expect("read correction and annotation consents");
+            assert!(
+                !pending
+                    .iter()
+                    .any(|row| row.claim_id == *candidate.claim_id.as_bytes())
+            );
+            assert!(pending.iter().all(|row| {
+                matches!(
+                    self.claim(
+                        EntityId::from_bytes(row.claim_id).expect("stored pending claim id")
+                    )
+                    .predicate
+                    .as_str(),
+                    "core.conflict.open" | "core.supersession.provenance"
+                )
+            }));
+            assert_eq!(
+                self.claim(candidate.claim_id).approval,
+                ClaimApprovalStatus::Approved
+            );
             assert_eq!(
                 self.claim(wrong).lifecycle,
                 ClaimLifecycleStatus::Superseded,
                 "the wrong note is superseded, never deleted"
             );
-            outcome.landed.len()
+            outcome.pended.len()
         }
 
         /// Attempts the SAME tool_output-lineage → generated restamp through
@@ -2597,7 +2676,6 @@ mod cb_x {
             run_id: Some("agent-run".to_owned()),
             envelope_actor: WriteActor::new(subject, EdgeActorClass::Agent),
             subject,
-            pinned_config: None,
             deadline: None,
             now_ms: 1,
         };

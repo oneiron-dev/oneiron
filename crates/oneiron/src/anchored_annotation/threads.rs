@@ -45,9 +45,9 @@ impl Vault {
         self.require_anchor_version(&anchor.artifact_id, anchor.version)?;
         validate_comment_text(first_comment)?;
 
-        let thread_id = EntityId::now();
-        let head_claim_id = EntityId::now();
-        let comment_claim_id = EntityId::now();
+        let thread_id = self.store.clock.entity_id()?;
+        let head_claim_id = self.store.clock.entity_id()?;
+        let comment_claim_id = self.store.clock.entity_id()?;
         let head = ThreadHead {
             thread_id,
             origin_version: anchor.version,
@@ -114,7 +114,7 @@ impl Vault {
         self.get_annotation_thread(artifact_id, thread_id)?
             .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
 
-        let claim_id = EntityId::now();
+        let claim_id = self.store.clock.entity_id()?;
         let envelope = annotation_envelope(author, "comment")?;
         let author_id = author.entity_ref();
         self.with_write_txn(|wtxn| {
@@ -306,8 +306,8 @@ impl Vault {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let task_id = EntityId::now();
-        let brief_claim_id = EntityId::now();
+        let task_id = self.store.clock.entity_id()?;
+        let brief_claim_id = self.store.clock.entity_id()?;
         let brief_ref = format!("brief:{}", thread_id.to_hex());
         let task_body = task_role_body(TaskRole::Task)?;
         let brief_envelope = annotation_envelope(actor, "assign_brief")?;
@@ -410,7 +410,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        let claim_id = EntityId::now();
+        let claim_id = self.store.clock.entity_id()?;
         let envelope = annotation_envelope(actor, op)?;
         let value = encode_thread_head_value(head);
         self.batch_in()

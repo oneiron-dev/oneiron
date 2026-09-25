@@ -47,6 +47,7 @@ pub(super) fn calendar_event_from_engine(
     view: CalendarEventView,
 ) -> BoundaryResult<NapiCalendarEventView> {
     Ok(NapiCalendarEventView {
+        origin: view.origin,
         event_ref: view.event_ref,
         name: view.name,
         start_utc: view
@@ -309,6 +310,7 @@ pub(super) fn memory_pack_from_engine(
                 "claims_returned",
             )?,
             deep_pending: pack.retrieval_meta.deep_pending,
+            partial: pack.retrieval_meta.partial,
         },
         pack_version: pack.pack_version,
         rendered: pack.rendered,

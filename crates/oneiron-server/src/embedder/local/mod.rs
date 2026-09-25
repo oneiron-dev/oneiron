@@ -44,6 +44,13 @@ pub(crate) struct LocalEmbedder {
     truncations: AtomicU64,
 }
 
+pub(crate) fn prepare(config: &EmbedderConfig) -> oneiron::Result<&'static str> {
+    model_manager::ModelManager::default().ensure_all(&config.local)?;
+    Ok(device::device_label(&device::resolve_device(
+        config.local.device,
+    )?))
+}
+
 impl LocalEmbedder {
     /// Fetches what is missing, loads the model, and quantises it.
     ///

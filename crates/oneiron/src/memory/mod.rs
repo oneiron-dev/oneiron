@@ -24,7 +24,10 @@
 //! unchanged from the flat-file era.
 
 mod archive_purge;
+mod authorship;
 mod booking;
+mod claim_conflict;
+mod skill_authoring;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) mod booking_publication;
@@ -35,6 +38,9 @@ mod claims;
 mod dreamer;
 mod error;
 mod expression_preference;
+pub mod extraction;
+mod key_value;
+mod notes;
 mod outbound;
 mod reads;
 mod recall;
@@ -48,10 +54,17 @@ mod tests;
 mod tests_regressions;
 
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
+pub use authorship::MemoryAuthoringAction;
+pub(crate) use authorship::{
+    explicit_claim_override_in_txn, guard_existing_claim_in_txn, require_claim_self_grant_in_txn,
+};
 pub use booking::EmergencyInstructionInput;
 pub use chat::{
     ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
     ChatScope, ComposedChatAnswer,
+};
+pub use claim_conflict::{
+    ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
 };
 pub use claims::{
     ClaimInput, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
@@ -67,6 +80,10 @@ pub use error::{
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };
+pub use key_value::{
+    KeyValueAddress, KeyValueDeleteReceipt, KeyValueItem, KeyValueNamespaces, KeyValuePut,
+    KeyValuePutReceipt, KeyValueSearch,
+};
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
     CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput,
@@ -78,16 +95,32 @@ pub use recall::{
     Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack, MemoryProvenance, RecallScope,
     RetrievalMeta, ScopeHonesty,
 };
+pub use skill_authoring::SkillAuthoringReceipt;
 pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CompanionRecordInput,
     EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput,
     TextIndexField,
 };
 pub use support::{Memory, parse_actor_key, resolve_entity_ref};
+pub(crate) use witness::MessageStreamRuntime;
+pub use witness::{
+    DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MAX_MESSAGE_STREAMS,
+    MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
+    MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
+    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
+};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use support::{
-    facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_deletion_authority_in_txn,
+    facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_actor_binding_in_txn,
+    verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
 };
 pub(crate) use witness::sole_edge_target;
+
+// Read-version and citation types are available under the existing memory
+// namespace; no additional crate-root surface is required.
+pub use crate::vault::{
+    IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
+    ResolvedCitation, RevisionRef,
+};

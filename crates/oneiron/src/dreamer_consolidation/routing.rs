@@ -47,8 +47,9 @@ pub fn candidate_keys(
             world: facts.world,
             facet: facts.facet,
             rel: facts.rel,
+            topic: facts.topic.clone(),
         },
-        topic_key: canonical_value_bytes(&topic)?,
+        topic_key: facts.topic.unwrap_or(canonical_value_bytes(&topic)?),
         value_key: canonical_value_bytes(&value)?,
     })
 }
@@ -177,6 +178,7 @@ pub fn judge_queue(
             identity: keys[members[0]].identity.clone(),
             candidate_indexes: members,
             prior_head: None,
+            prior_heads: Vec::new(),
         })
         .collect())
 }

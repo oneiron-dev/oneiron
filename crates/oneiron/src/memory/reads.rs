@@ -9,7 +9,11 @@ use super::*;
 use serde::{Deserialize, Serialize};
 
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
-use crate::companion::companion_value_to_json;
+fn companion_value_to_json(value: &rmpv::Value) -> serde_json::Value {
+    let mut value = crate::companion::companion_value_to_json(value);
+    crate::batch::export::redact_credentials(&mut value);
+    value
+}
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -109,6 +113,10 @@ impl Memory<'_> {
 
     /// Reads one entity as a typed view. `Ok(None)` when absent.
     pub fn get_entity(&self, entity_ref: &str) -> MemoryResult<Option<EntityView>> {
+        if let Some((reference, revision)) = entity_ref.rsplit_once('@') {
+            let revision = crate::vault::RevisionRef::from_hex(revision)?;
+            return self.get_entity_with_mode(reference, crate::vault::ReadMode::Pinned(revision));
+        }
         let id = match self.resolve_ref(entity_ref) {
             Ok(id) => id,
             Err(err) if err.code == MEMORY_CODE_NOT_FOUND => return Ok(None),
@@ -117,13 +125,54 @@ impl Memory<'_> {
         self.entity_view(&id)
     }
 
+    /// Reads LIVE, the last indexed revision, or an exact retained pin.
+    pub fn get_entity_with_mode(
+        &self,
+        entity_ref: &str,
+        mode: crate::vault::ReadMode,
+    ) -> MemoryResult<Option<EntityView>> {
+        let id = match mode {
+            crate::vault::ReadMode::Pinned(revision) => {
+                match self
+                    .vault
+                    .resolve_pinned_entity_reference(entity_ref, revision)?
+                {
+                    Some(id) => id,
+                    None => return Ok(None),
+                }
+            }
+            _ => match self.resolve_ref(entity_ref) {
+                Ok(id) => id,
+                Err(err) if err.code == MEMORY_CODE_NOT_FOUND => return Ok(None),
+                Err(err) => return Err(err),
+            },
+        };
+        self.entity_view_with_mode(&id, mode)
+    }
+
+    /// Hydrates every ref through the same explicit read frontier.
+    pub fn hydrate_with_mode(
+        &self,
+        refs: &[String],
+        mode: crate::vault::ReadMode,
+    ) -> MemoryResult<Vec<EntityView>> {
+        refs.iter()
+            .map(|reference| {
+                self.get_entity_with_mode(reference, mode)?.ok_or_else(|| {
+                    MemoryError::not_found(format!(
+                        "entity {reference:?} does not resolve at requested revision"
+                    ))
+                })
+            })
+            .collect()
+    }
+
     /// Hydrates short refs (or hex ids) to full entity views. Unresolvable
     /// refs are typed errors — hydrate is the OF-096 round-trip contract.
     pub fn hydrate(&self, refs: &[String]) -> MemoryResult<Vec<EntityView>> {
         let mut views = Vec::with_capacity(refs.len());
         for reference in refs {
-            let id = self.resolve_ref(reference)?;
-            let Some(view) = self.entity_view(&id)? else {
+            let Some(view) = self.get_entity(reference)? else {
                 return Err(MemoryError::not_found(format!(
                     "entity {reference:?} does not resolve"
                 )));
@@ -165,6 +214,9 @@ impl Memory<'_> {
             let Some(body) = self.vault.get_claim(&id)? else {
                 continue;
             };
+            if !crate::claim::claim_generic_readable(&body) {
+                continue;
+            }
             if let Some(predicate) = &filter.predicate
                 && body.predicate != *predicate
             {
@@ -192,7 +244,9 @@ impl Memory<'_> {
         records.sort_by_key(|record| (record.learned_at.unwrap_or(0), record.id.to_hex()));
         let mut views = Vec::with_capacity(records.len());
         for record in records {
-            if let Some(body) = self.vault.get_claim(&record.id)? {
+            if let Some(body) = self.vault.get_claim(&record.id)?
+                && crate::claim::claim_generic_readable(&body)
+            {
                 views.push(self.claim_view(&record.id, &body)?);
             }
         }
@@ -248,14 +302,14 @@ impl Memory<'_> {
             let Some(entity_type) = self.vault.get_entity_type(&hit.id)? else {
                 continue;
             };
-            let snippet = self
-                .entity_view(&hit.id)?
-                .and_then(|view| view.body)
-                .and_then(|body| {
-                    body.get("content")
-                        .and_then(serde_json::Value::as_str)
-                        .map(|content| truncate_text(content, SNIPPET_MAX_CHARS))
-                });
+            let Some(view) = self.entity_view(&hit.id)? else {
+                continue;
+            };
+            let snippet = view.body.and_then(|body| {
+                body.get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|content| truncate_text(content, SNIPPET_MAX_CHARS))
+            });
             out.push(LexicalHit {
                 short_id: self.short_ref_or_hex(&hit.id)?,
                 kind: kind_string_for_type(entity_type),
@@ -288,9 +342,7 @@ impl Memory<'_> {
             None => None,
         };
         let id = self.resolve_ref(entity_ref)?;
-        if self.vault.get_entity_type(&id)? == Some(crate::registry::ENTITY_TYPE_NOTE)
-            && self.entity_view(&id)?.is_none()
-        {
+        if self.entity_view(&id)?.is_none() {
             return Ok(Vec::new());
         }
         let mut hits = Vec::new();
@@ -311,10 +363,7 @@ impl Memory<'_> {
                 remaining,
             )?;
             for edge in edges {
-                if self.vault.get_entity_type(&edge.target)?
-                    == Some(crate::registry::ENTITY_TYPE_NOTE)
-                    && self.entity_view(&edge.target)?.is_none()
-                {
+                if self.entity_view(&edge.target)?.is_none() {
                     continue;
                 }
                 let kind = self
@@ -334,24 +383,70 @@ impl Memory<'_> {
     }
 
     pub(super) fn entity_view(&self, id: &EntityId) -> MemoryResult<Option<EntityView>> {
-        let Some(raw) = self.vault.get_raw(id)? else {
+        self.entity_view_with_mode(id, crate::vault::ReadMode::Live)
+    }
+
+    pub(super) fn entity_view_with_mode(
+        &self,
+        id: &EntityId,
+        mode: crate::vault::ReadMode,
+    ) -> MemoryResult<Option<EntityView>> {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let Some(raw) =
+            crate::vault::entity_revision::read_entity_revision_in_txn(self.vault, &txn, id, mode)?
+        else {
             return Ok(None);
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or_else(|| MemoryError::from(Error::CorruptedIndex("entity header")))?;
-        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            self.verified_actor_class()?;
-            if !crate::note::note_body_readable(
-                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                Some(&self.actor),
-            ) {
+        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte().into());
+        }
+        if header.entity_type == ENTITY_TYPE_CLAIM {
+            let Some(body) = raw
+                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                .and_then(|bytes| crate::claim::decode_claim_body(bytes, true).ok())
+            else {
+                return Ok(None);
+            };
+            if !crate::claim::claim_generic_readable(&body) {
                 return Ok(None);
             }
         }
-        let body = decode_body_json(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+            verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+            if !crate::note::note_body_readable(
+                &self.vault.store,
+                &txn,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                Some(&self.actor),
+            )? {
+                return Ok(None);
+            }
+        }
+        let projected = crate::note::live_body_in_txn(
+            &self.vault.store,
+            &txn,
+            id,
+            header.entity_type,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        let body = decode_body_json(&projected);
+        let short_ref = self.short_ref_of_in_txn(&txn, id)?.map(|reference| {
+            let short = reference.split(':').next().unwrap_or(&reference);
+            let hash =
+                (xxhash_rust::xxh32::xxh32(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], 0)
+                    % 256) as u8;
+            match mode {
+                crate::vault::ReadMode::Pinned(revision) => {
+                    format!("{short}:{hash:02x}@{}", revision.to_hex())
+                }
+                _ => format!("{short}:{hash:02x}"),
+            }
+        });
         Ok(Some(EntityView {
             id_hex: id.to_hex(),
-            short_ref: self.short_ref_of(id)?,
+            short_ref,
             kind: kind_string_for_type(header.entity_type),
             occurred_start: header.occurred_start,
             occurred_end: header.occurred_end,
@@ -380,7 +475,7 @@ impl Memory<'_> {
         })
     }
 
-    pub(super) fn entity_ref_receipt(&self, id: &EntityId) -> MemoryResult<EntityRefReceipt> {
+    pub(crate) fn entity_ref_receipt(&self, id: &EntityId) -> MemoryResult<EntityRefReceipt> {
         Ok(EntityRefReceipt {
             entity_ref: self.short_ref_or_hex(id)?,
             id_hex: id.to_hex(),
@@ -419,5 +514,9 @@ pub(super) const fn edge_kind_name(kind: EdgeKind) -> &'static str {
         EdgeKind::Fulfills => "fulfills",
         EdgeKind::DischargedBy => "discharged_by",
         EdgeKind::SameAs => "same_as",
+        EdgeKind::Parent => "parent",
+        EdgeKind::SpawnedBy => "spawned_by",
+        EdgeKind::AddressedTo => "addressed_to",
+        EdgeKind::RepliesTo => "replies_to",
     }
 }

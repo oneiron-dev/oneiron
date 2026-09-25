@@ -70,6 +70,6 @@ fn check_publication_in_writer(
         txn,
         page,
         &event,
-        crate::unix_seconds_now().max(now_utc),
+        vault.store.clock.now_recorded_at().max(now_utc),
     )
 }

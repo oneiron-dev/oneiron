@@ -66,7 +66,7 @@ pub(crate) fn is_corrupt_first_seen_sidecar(err: &Error) -> bool {
 /// So the fold assumes the safe end — first seen NOW, the maximum remaining
 /// delay — and that leaves every affected delayable widen pending. Pending is
 /// fail-closed for the ops that only GRANT, but `RotateKey` and
-/// `RecoveryReboot` also REVOKE: an un-applied rotation keeps the RETIRED key
+/// `ReRoot` also REVOKE: an un-applied rotation keeps the RETIRED key
 /// in the roster with its actor binding live. Whenever an indeterminate row
 /// actually lands in `pending_widens`, the fold therefore refuses instead of
 /// authorizing on a roster it cannot pin down.
@@ -141,7 +141,15 @@ impl AuthorityLocalClock {
                 anchored
             }
             None => {
-                let observed = candidate_wall_secs.max(previous_floor);
+                // A reopen resumes the persisted logical clock. Wall-clock
+                // changes while closed cannot age an approval or mature a
+                // widen. The wall value is only an arbitrary origin for a
+                // vault that has never recorded an observation.
+                let observed = if previous_floor == 0 {
+                    candidate_wall_secs
+                } else {
+                    previous_floor
+                };
                 self.anchor = Some(AuthorityClockAnchor {
                     anchor_instant: now,
                     anchor_secs: observed,

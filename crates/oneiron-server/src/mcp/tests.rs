@@ -458,7 +458,15 @@ fn propose_entity_rejects_impossible_occurrence_range() {
 fn assert_closed_object_schemas(value: &Value, path: &str) {
     match value {
         Value::Object(map) => {
-            if matches!(map.get("type"), Some(Value::String(kind)) if kind == "object") {
+            // A typed map (the ask's disclosure) keys on data, not fields;
+            // every value is still constrained by its item schema.
+            let typed_map = map.get("properties").is_none()
+                && map
+                    .get("additionalProperties")
+                    .is_some_and(Value::is_object);
+            if matches!(map.get("type"), Some(Value::String(kind)) if kind == "object")
+                && !typed_map
+            {
                 assert_eq!(
                     map.get("additionalProperties"),
                     Some(&Value::Bool(false)),
@@ -1227,9 +1235,11 @@ fn tool_first_endpoint_is_generated_from_the_exported_verb_rows() {
     assert_eq!(surface.tool_names(), expected);
     assert_eq!(
         expected.len(),
-        oneiron::board_verb::BOARD_VERBS.len()
-            + oneiron::task_verb::TASKS_VERBS.len()
-            + oneiron::workspace_roster::ROOMS_VERBS.len(),
+        oneiron::task_verb::sdk::AgentVerb::ALL
+            .iter()
+            .filter(|verb| verb.is_mcp())
+            .count()
+            + oneiron::code_run::vault_read::MEMORY_VERBS.len(),
     );
 
     // Every registered tool IS a projection of a row: nothing hand-written.
@@ -1286,6 +1296,18 @@ fn a_tool_registered_on_one_endpoint_is_unknown_on_the_other() {
 
 #[test]
 fn endpoint_listings_are_frozen_and_carry_no_actor_material() {
+    let credential = "very-secret-connector-key";
+    let mut actors = registry();
+    actors
+        .register(
+            credential,
+            McpConnectorActorRecord::new(
+                EntityId::from_hex(ACTOR_ID).expect("actor id"),
+                EdgeActorClass::Agent,
+                McpConnectorScope::vault_wide(),
+            ),
+        )
+        .expect("credential registers");
     for mode in McpSurfaceMode::ALL {
         let registered = registered_surface(mode);
         let frozen = serde_json::to_string(registered.listing()).expect("listing serializes");
@@ -1304,7 +1326,7 @@ fn endpoint_listings_are_frozen_and_carry_no_actor_material() {
             mode.as_str(),
         );
         assert!(
-            !frozen.contains("connector"),
+            !frozen.contains(credential),
             "{} listing echoes credential material",
             mode.as_str(),
         );
@@ -1678,7 +1700,7 @@ fn every_structured_error_code_carries_recovery_suggestions() {
         "scoped_mcp_grant_required",
         "board_render_failed",
         "verb_dispatch_failed",
-        MCP_EXECUTE_CODE_UNAVAILABLE_CODE,
+        MCP_CODE_HOST_UNBOUND_CODE,
         MCP_PAGE_CURSOR_INVALID_CODE,
         "an_error_code_no_one_has_minted_yet",
     ] {
@@ -1804,6 +1826,7 @@ fn claim_id_scopes_by_credential_scope_identity() {
 
     // Scope alone discriminates, with the credential identity held EQUAL.
     let restated = McpResolvedActor {
+        auth: None,
         scope: McpConnectorScope::scoped(Some(world_b), None),
         ..a.clone()
     };
@@ -1863,28 +1886,31 @@ fn endpoint_census_args(tool: McpEndpointTool) -> Value {
 
 /// The minimal in-grammar `arguments` object for one generated verb.
 fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
-    match verb.binding {
-        McpVerbBinding::TasksOutcomes => json!({"task_ref":ACTOR_ID}),
-        McpVerbBinding::TasksAnswer => {
-            json!({"spec":{"handle":{"task_ref":ACTOR_ID},"result_ref":ACTOR_ID}})
+    match verb.name {
+        "tasks.outcomes" => json!({"spec":{"group_ref":ACTOR_ID}}),
+        "tasks.answer" => {
+            json!({"spec":{"handle":{"group_ref":ACTOR_ID},"word":{"result_ref":ACTOR_ID,"option":null,"inform_for":null,"provenance_refs":[]}}})
         }
-        McpVerbBinding::TasksAsk => {
-            json!({"spec":{"question":{"text":"answer"},"holders":[ACTOR_ID],"idempotency_key":"ask-test","outcome_binding":null}})
+        "tasks.ask" => {
+            json!({"spec":{"intent_key":"ask-test","who":{"responder":{"human":{"actor_ref":ACTOR_ID}}},"what":{"reference":{"turn":ACTOR_ID},"revision":1,"options":{},"context_refs":[],"label":null,"outcome_binding":null},"until":9999999999_u64,"decide":"first"}})
         }
-        McpVerbBinding::TasksWait => json!({"task_ref":ACTOR_ID,"key":"step-one"}),
-        McpVerbBinding::RoomsList => json!({}),
-        McpVerbBinding::RoomsMessages => json!({"room_ref":ACTOR_ID}),
-        McpVerbBinding::RoomsClaim => json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID}),
-        McpVerbBinding::RoomsSpeak => json!({"room_ref":ACTOR_ID,"spec":{}}),
-        McpVerbBinding::BoardExpand => json!({ "key": "TASKS" }),
-        McpVerbBinding::BoardRefresh | McpVerbBinding::TasksCheck => json!({}),
-        McpVerbBinding::BoardSubscribe | McpVerbBinding::BoardUnsubscribe => {
+        "tasks.wait" => {
+            json!({"spec":{"handle":{"group_ref":ACTOR_ID},"step_key":"step-one"}})
+        }
+        "rooms.list" => json!({}),
+        "rooms.messages" => json!({"room_ref":ACTOR_ID}),
+        "rooms.claim" => json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID}),
+        "rooms.speak" => json!({"room_ref":ACTOR_ID,"spec":{}}),
+        "board.expand" => json!({ "key": "TASKS" }),
+        "board.refresh" | "tasks.check" => json!({}),
+        "board.subscribe" | "board.unsubscribe" => {
             json!({ "scopes": ["my_tasks"] })
         }
-        McpVerbBinding::TasksAck | McpVerbBinding::TasksCancel | McpVerbBinding::TasksExpand => {
+        "tasks.ack" | "tasks.cancel" | "tasks.expand" => {
             json!({ "task_ref": ACTOR_ID })
         }
-        McpVerbBinding::TasksCreate => json!({ "spec": { "kind": "review" } }),
+        "tasks.create" => json!({ "spec": { "kind": "review" } }),
+        _ => json!({ "request": {} }),
     }
 }
 
@@ -2995,7 +3021,7 @@ fn advertised_numeric_domains_equal_the_decoder_domains() {
             if matches!(
                 tool,
                 McpEndpointTool::Verb(McpGeneratedVerbTool {
-                    binding: McpVerbBinding::BoardExpand | McpVerbBinding::BoardRefresh,
+                    name: "board.expand" | "board.refresh",
                     ..
                 })
             ) {
@@ -3859,10 +3885,11 @@ fn retained_continuations_are_bounded_per_connection() {
 /// — unrenderable for every later reader of that board.
 #[test]
 fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
+    use oneiron::context_board::{TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES};
     // One limit system: the bound IS the engine's row ceiling less the fixed
     // tokens the rendered row adds beside the label.
     assert_eq!(
-        MCP_TASK_LABEL_MAX_BYTES + MCP_TASK_ROW_FIXED_TOKEN_BYTES,
+        TASK_LABEL_MAX_BYTES + TASK_ROW_FIXED_TOKEN_BYTES,
         oneiron::context_board::MAX_BOARD_ROW_BYTES,
         "the label ceiling is derived from the row ceiling, not invented beside it",
     );
@@ -3884,11 +3911,11 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
     let schema = create.schema().input_schema;
     assert_eq!(
         schema["properties"]["arguments"]["properties"]["label"]["maxLength"],
-        Value::from(MCP_TASK_LABEL_MAX_BYTES),
+        Value::from(TASK_LABEL_MAX_BYTES),
     );
 
     // Exactly at the boundary: admitted, and carried through unchanged.
-    let boundary = "x".repeat(MCP_TASK_LABEL_MAX_BYTES);
+    let boundary = "x".repeat(TASK_LABEL_MAX_BYTES);
     let McpValidatedToolArgs::Verb(verb) =
         decode(&boundary).expect("a label exactly at the ceiling is admitted")
     else {
@@ -3902,7 +3929,7 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
 
     // One byte over: the established typed argument error, on the label's own
     // field, before any facade is reached.
-    let over = "x".repeat(MCP_TASK_LABEL_MAX_BYTES + 1);
+    let over = "x".repeat(TASK_LABEL_MAX_BYTES + 1);
     let error = decode(&over).expect_err("a label one byte over the ceiling is refused");
     assert!(
         matches!(
@@ -3915,12 +3942,12 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
 
     // The bound is on BYTES because the row ceiling is: a multi-byte label
     // inside the advertised code-point ceiling is still refused here.
-    let multibyte = "é".repeat(MCP_TASK_LABEL_MAX_BYTES / 2 + 1);
+    let multibyte = "é".repeat(TASK_LABEL_MAX_BYTES / 2 + 1);
     assert!(
-        multibyte.chars().count() <= MCP_TASK_LABEL_MAX_BYTES,
+        multibyte.chars().count() <= TASK_LABEL_MAX_BYTES,
         "the multi-byte case is inside the advertised code-point ceiling",
     );
-    assert!(multibyte.len() > MCP_TASK_LABEL_MAX_BYTES);
+    assert!(multibyte.len() > TASK_LABEL_MAX_BYTES);
     decode(&multibyte).expect_err("a multi-byte label over the byte ceiling is refused");
 
     // Every ordinary label an actual caller writes is untouched, and a blank
@@ -3948,4 +3975,184 @@ fn room_history_cursor_is_optional_and_validated() {
     assert!(validate_mcp_endpoint_tool_args(tool, args.clone()).is_ok());
     args["arguments"]["turn_ref"] = json!("not-an-id");
     assert!(validate_mcp_endpoint_tool_args(tool, args).is_err());
+}
+
+#[test]
+fn memory_tool_census_keeps_native_names_schemas_and_reserved_refusals() {
+    use oneiron::code_run::vault_read::{MEMORY_VERBS, VaultReadMethod};
+    let surface = registered_surface(McpSurfaceMode::ToolFirst);
+    assert_eq!(MEMORY_VERBS.len(), VaultReadMethod::ALL.len());
+    for method in VaultReadMethod::ALL {
+        assert!(MEMORY_VERBS.contains(&method.tool_name()));
+        let tool = surface.resolve(method.tool_name()).unwrap();
+        let McpEndpointTool::Verb(verb) = tool else {
+            panic!("memory verb")
+        };
+        assert_eq!(verb.memory_method(), Some(method));
+        assert_eq!(
+            tool.schema().input_schema["properties"]["arguments"]["properties"]["request"],
+            method.request_schema()
+        );
+    }
+    let query = surface.resolve("memory.query").unwrap().schema();
+    assert_eq!(
+        query.input_schema["properties"]["arguments"]["properties"]["request"]["properties"]["query"]
+            ["type"],
+        json!(["string", "null"])
+    );
+    let ask = surface.resolve("memory.ask").unwrap();
+    let mut args = endpoint_census_args(ask);
+    args["arguments"]["request"] = Value::Null;
+    assert!(validate_mcp_endpoint_tool_args(ask, args).is_ok());
+    for retired in ["oneiron.nav", "oneiron.read", "oneiron.ask"] {
+        assert!(surface.resolve(retired).is_none());
+    }
+}
+
+#[test]
+fn claim_edit_accepts_and_preserves_relationship_scope() {
+    let args = edit_args(json!({
+        "verb": "propose_claim", "subject": { "entity": ACTOR_ID },
+        "predicate": "profile.nickname", "value": "Ada", "confidence": 1.0,
+        "relationship": RESULT_ID,
+    }));
+    assert_eq!(args.relationship.as_deref(), Some(RESULT_ID));
+    let wire = serde_json::to_value(&args).unwrap();
+    let decoded: McpEditToolArgs = serde_json::from_value(wire).unwrap();
+    assert_eq!(decoded.relationship, args.relationship);
+}
+
+#[test]
+fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
+    let manifest: Value =
+        serde_json::from_str(include_str!("../../../../scripts/sdk/agent-verbs.json"))
+            .expect("manifest");
+    let surface = McpRegisteredSurface::register(McpSurfaceMode::ToolFirst).expect("surface");
+    for row in manifest["verbs"].as_array().expect("verb rows") {
+        let name = row["name"].as_str().expect("verb name");
+        if row["context"] == "definition" {
+            assert!(oneiron::task_verb::sdk::AgentVerb::from_name(name).is_none());
+            assert!(surface.resolve(name).is_none());
+            continue;
+        }
+        let input = oneiron::task_verb::sdk::input_schema(name).expect("input schema");
+        assert_eq!(input["type"], "object", "{name}");
+        if row["mcp"] == "none" {
+            assert!(oneiron::task_verb::sdk::mcp_arguments_schema(name).is_none());
+            assert!(surface.resolve(name).is_none());
+            continue;
+        }
+        let tool = surface.resolve(name).expect("projected tool");
+        let schema = tool.schema().input_schema;
+        let arguments = &schema["properties"]["arguments"];
+        let projected = oneiron::task_verb::sdk::mcp_arguments_schema(name).expect("arguments");
+        assert_eq!(arguments["required"], projected["required"], "{name}");
+        assert_eq!(arguments["additionalProperties"], false, "{name}");
+        for (field, path) in row["mcp_fields"].as_object().expect("argument paths") {
+            let path = path.as_str().expect("path");
+            let pointer = if path == "$" {
+                String::new()
+            } else {
+                path.trim_start_matches('=')
+                    .split('.')
+                    .map(|part| format!("/properties/{part}"))
+                    .collect()
+            };
+            let expected = input.pointer(&pointer).expect("typed input field");
+            assert_eq!(&projected["properties"][field], expected, "{name}.{field}");
+            let shipped = &arguments["properties"][field];
+            if let Some(properties) = expected.as_object() {
+                for (key, value) in properties {
+                    if key == "type" && value.is_array() && shipped[key] != *value {
+                        assert!(value.as_array().expect("types").contains(&shipped[key]));
+                    } else {
+                        // Schemars stores numeric bounds as f64; the envelope
+                        // publishes exact integers. Compare their values, not
+                        // the spelling, without rounding through another f64.
+                        let expected = if matches!(key.as_str(), "minimum" | "maximum") {
+                            super::codec::schema_normalized_arguments(
+                                &json!({"type": "integer"}),
+                                value.clone().into(),
+                            )
+                            .expect("numeric schema bound")
+                        } else {
+                            value.clone()
+                        };
+                        assert_eq!(shipped[key], expected, "{name}.{field}.{key}");
+                    }
+                }
+            } else {
+                assert_eq!(shipped, expected, "{name}.{field}");
+            }
+        }
+    }
+    assert!(oneiron::task_verb::sdk::input_schema("tasks.missing").is_none());
+    assert!(oneiron::task_verb::sdk::mcp_arguments_schema("tasks.missing").is_none());
+}
+
+#[test]
+fn agent_verb_schema_publishes_nested_types_and_wire_defaults() {
+    let surface = McpRegisteredSurface::register(McpSurfaceMode::ToolFirst).expect("surface");
+    let speak = surface
+        .resolve("rooms.speak")
+        .expect("speak")
+        .schema()
+        .input_schema;
+    let spec = &speak["properties"]["arguments"]["properties"]["spec"];
+    assert_eq!(spec["properties"]["messages"]["type"], "array");
+    let message = &spec["properties"]["messages"]["items"];
+    let authors: Vec<Value> = message["properties"]["author"]["oneOf"]
+        .as_array()
+        .expect("documented author variants")
+        .iter()
+        .flat_map(|variant| variant["enum"].as_array().expect("variant value").clone())
+        .collect();
+    assert_eq!(
+        authors,
+        [json!("user"), json!("companion"), json!("system")]
+    );
+    assert_eq!(message["properties"]["is_visible"]["type"], "boolean");
+    assert!(
+        spec["required"]
+            .as_array()
+            .expect("required")
+            .contains(&json!("occurred_at"))
+    );
+    let wait = oneiron::task_verb::sdk::mcp_arguments_schema("tasks.wait").expect("wait");
+    assert_eq!(
+        wait["properties"]["spec"]["properties"]["handle"]["properties"]["group_ref"]["type"],
+        "string"
+    );
+    assert_eq!(
+        wait["properties"]["spec"]["properties"]["step_key"]["type"],
+        "string"
+    );
+    let room = oneiron::task_verb::sdk::input_schema("rooms.messages").expect("room");
+    assert_eq!(room["required"], json!(["room_ref"]));
+    assert_eq!(room["properties"]["limit"]["default"], Value::Null);
+    let keyed = oneiron::task_verb::sdk::input_schema("key_value_search").expect("keyed");
+    assert_eq!(keyed["properties"]["limit"]["default"], 100);
+    assert_eq!(keyed["properties"]["offset"]["default"], 0);
+    assert_eq!(keyed["additionalProperties"], false);
+    let empty = oneiron::task_verb::sdk::mcp_arguments_schema("rooms.list").expect("empty");
+    assert_eq!(empty["properties"], json!({}));
+    assert_eq!(empty["required"], json!([]));
+}
+
+#[test]
+fn agent_verb_board_schema_uses_the_engine_subscription_vocabulary() {
+    let schema = oneiron::task_verb::sdk::mcp_arguments_schema("board.subscribe").expect("schema");
+    let scopes = &schema["properties"]["scopes"];
+    let values =
+        serde_json::to_value(oneiron::context_board::SubscriptionScope::ALL).expect("scopes");
+    assert_eq!(scopes["items"]["enum"], values);
+    let input = json!({"scopes": ["my_tasks", "counts"]});
+    let decoded: oneiron::task_verb::sdk::BoardSubscriptionRequest =
+        serde_json::from_value(input.clone()).expect("typed subscription");
+    assert_eq!(decoded.scopes.len(), 2);
+    assert!(oneiron::task_verb::sdk::validate_input("board.subscribe", &input).is_ok());
+    assert!(
+        oneiron::task_verb::sdk::validate_input("board.subscribe", &json!({"scopes": ["unknown"]}))
+            .is_err()
+    );
 }

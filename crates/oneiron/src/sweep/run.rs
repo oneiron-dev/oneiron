@@ -99,7 +99,7 @@ thread_local! {
 
 /// Executes one manual sweep pass (phase 1; scheduling is M6).
 pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
-    let now = crate::unix_seconds_now();
+    let now = vault.store.clock.now_recorded_at();
     let mut run = HardEraseSweepRun::default();
 
     // ── 1. Inventory the h: obligation rows ─────────────────────────────

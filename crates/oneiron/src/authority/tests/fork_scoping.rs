@@ -81,7 +81,7 @@ fn mixed_scope_fork_resolves_each_vault_independently() {
             Some(vault_a),
             1,
             vec![[0xd1; 32]],
-            AuthorityOp::SetCeiling {
+            AuthorityOp::RetiredCeiling {
                 authority_key: forked_key.clone(),
                 actor_class: "agent".to_owned(),
                 ceiling: 1,
@@ -369,6 +369,7 @@ fn empty_scope_genesis_shaped_fork_quarantines_signer_universally() {
                         AuthorityTier::Software,
                     ),
                     genesis_nonce: [nonce; 32],
+                    recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
                     tier_floor: AuthorityTier::Software,
                     pending_widen_delay_secs: 86_400,
                 },
@@ -500,7 +501,7 @@ fn recovery_fork_winner_requires_quorum_without_forked_signer() {
         &second,
     );
     let recovery_with_forked_quorum = cosign_ed(
-        recovery_reboot_entry_at(vault_id, &enroll_third, &owner, 158, 3, 4),
+        re_root_entry_at(vault_id, &enroll_third, &owner, 158, 3, 4),
         &owner,
         &second,
     );
@@ -601,7 +602,7 @@ fn recovery_fork_winner_requires_quorum_without_forked_signer() {
     }
 
     let recovery_with_independent_quorum = cosign_ed_two(
-        recovery_reboot_entry_at(vault_id, &enroll_third, &owner, 159, 3, 5),
+        re_root_entry_at(vault_id, &enroll_third, &owner, 159, 3, 5),
         &owner,
         &second,
         &third,
@@ -728,7 +729,7 @@ fn missing_parent_fork_preserves_one_owner_prefork_consent() {
             Some(vault_id),
             2,
             vec![[0xc1; 32]],
-            AuthorityOp::SetCeiling {
+            AuthorityOp::RetiredCeiling {
                 authority_key: owner_key.clone(),
                 actor_class: "agent".to_owned(),
                 ceiling: 1,
@@ -877,7 +878,7 @@ fn missing_parent_cosigner_fork_fails_closed_for_unprovable_cosigns() {
             Some(vault_id),
             1,
             vec![[0xe1; 32]],
-            AuthorityOp::SetCeiling {
+            AuthorityOp::RetiredCeiling {
                 authority_key: cosigner_key.clone(),
                 actor_class: "agent".to_owned(),
                 ceiling: 1,

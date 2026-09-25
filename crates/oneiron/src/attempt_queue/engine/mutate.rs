@@ -41,6 +41,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.retry_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -49,8 +50,9 @@ impl AttemptQueue<'_> {
     pub(crate) fn retry_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        input: RetryAttempt,
+        mut input: RetryAttempt,
     ) -> Result<RetryOutcome> {
+        input.now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("retry", "missing"));
         };
@@ -63,7 +65,7 @@ impl AttemptQueue<'_> {
         validate_optional_failure_reason(input.last_error.as_deref())?;
 
         let next = AttemptRecord {
-            id: AttemptId::now(),
+            id: AttemptId::from_bytes(&self.store.clock.ulid()?)?,
             kind: source.kind.clone(),
             payload: source.payload.clone(),
             state: AttemptState::Scheduled,
@@ -103,6 +105,14 @@ impl AttemptQueue<'_> {
             // A retry is a NEW attempt: it has produced nothing yet, and the
             // finalized source keeps sole ownership of the artifact its own
             // try left behind.
+            placement: source.placement.as_ref().map(|placement| {
+                crate::attempt_queue::AttemptPlacement {
+                    worker: placement.worker.clone(),
+                    // Keep the new try below its predecessor, not beside it. A later
+                    // explicit redirect can still select another effective parent.
+                    parent: Some(source.id),
+                }
+            }),
             result_ref: None,
         };
 
@@ -119,6 +129,15 @@ impl AttemptQueue<'_> {
         );
         source.updated_at = input.now;
 
+        if self
+            .store
+            .attempt_records
+            .get(wtxn, next.id.as_bytes())?
+            .is_some()
+        {
+            return Err(Error::InvariantViolation("attempt id collision"));
+        }
+        crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         let encoded_source = encode_record(&source)?;
         self.store
             .attempt_records
@@ -164,6 +183,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.intervene_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -181,6 +201,9 @@ impl AttemptQueue<'_> {
         let mut record = decode_record(&raw_record, input.id)?;
 
         let effect = match input.kind {
+            AttemptInterventionKind::Redirect => {
+                return Err(invalid_transition("redirect", "missing placement"));
+            }
             AttemptInterventionKind::Interrupt => match record.state {
                 AttemptState::Queued
                 | AttemptState::Leased
@@ -309,10 +332,22 @@ impl AttemptQueue<'_> {
         id: AttemptId,
         entry: ManifestEntry,
     ) -> Result<AttemptRecord> {
-        validate_manifest_entry(&entry)?;
+        let mut txn = self.store.env.write_txn()?;
+        let record = self.append_manifest_entry_in_txn(&mut txn, id, entry)?;
+        txn.commit()?;
+        self.store.notify_attempt_observers();
+        Ok(record)
+    }
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, id.as_bytes())? else {
+    /// Joins a load or dispatch transaction, so returned pack data and its receipt cannot diverge.
+    pub(crate) fn append_manifest_entry_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        entry: ManifestEntry,
+    ) -> Result<AttemptRecord> {
+        validate_manifest_entry(&entry)?;
+        let Some(raw_record) = self.store.attempt_records.get(txn, id.as_bytes())? else {
             return Err(invalid_transition("append_manifest_entry", "missing"));
         };
         let mut record = decode_record(&raw_record, id)?;
@@ -331,9 +366,7 @@ impl AttemptQueue<'_> {
         let encoded = encode_record(&record)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-        wtxn.commit()?;
-
+            .put(txn, record.id.as_bytes(), &encoded)?;
         Ok(record)
     }
 
@@ -492,6 +525,7 @@ impl AttemptQueue<'_> {
                 }
             }
             wtxn.commit()?;
+            self.store.notify_attempt_observers();
         }
 
         self.store.diagnostics.attempt_queue.record(&report);

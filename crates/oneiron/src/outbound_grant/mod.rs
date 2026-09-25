@@ -55,3 +55,5 @@ use crate::outbound_consent::{DataClass, ScopedMcpGrantRef};
 use rmpv::Value;
 #[cfg(test)]
 use std::io::Cursor;
+
+pub(crate) use self::index::rebuild_checkpoint_grant_index;

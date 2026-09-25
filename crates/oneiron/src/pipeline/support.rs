@@ -1,6 +1,6 @@
+use crate::ports::EntityStoreRead;
 use heed::RoTxn;
 
-use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -15,21 +15,22 @@ pub(super) fn read_entity_metadata(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<EntityMetadata>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let visibility = crate::ports::TombstoneStoreRead::port_deletion_state(store, rtxn, id)?;
+    if visibility.deleted || visibility.stale {
         return Ok(None);
-    };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+    }
+
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
 
-    let (occurred_start, occurred_end) =
-        normalize_range(header.occurred_start, header.occurred_end);
+    let (occurred_start, occurred_end) = normalize_range(raw.occurred.start, raw.occurred.end);
 
     Ok(Some(EntityMetadata {
-        entity_type: header.entity_type,
+        entity_type: raw.entity_type,
         occurred_start,
         occurred_end,
-        learned_at: header.learned_at,
+        learned_at: raw.learned_at,
     }))
 }
 

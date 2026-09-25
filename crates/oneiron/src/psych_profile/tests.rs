@@ -155,6 +155,8 @@ fn psych_mirror_selection_context_entity_adapter_reads_projected_fields() -> Res
     fields.insert("sal".to_owned(), serde_json::json!(0.7));
     fields.insert("txt".to_owned(), serde_json::json!("distinct context text"));
     let context_entity = ContextEntity {
+        source_revision_ref: None,
+        critical: false,
         id: entity(0x21),
         short_id: "ctx".to_owned(),
         content_hash: 7,
@@ -177,6 +179,8 @@ fn psych_mirror_selection_context_entity_adapter_reads_projected_fields() -> Res
     invalid_salience_fields.insert("sal".to_owned(), serde_json::json!(1.7));
     invalid_salience_fields.insert("txt".to_owned(), serde_json::json!("distinct context text"));
     let invalid_salience_entity = ContextEntity {
+        source_revision_ref: None,
+        critical: false,
         id: entity(0x22),
         short_id: "ctx2".to_owned(),
         content_hash: 8,

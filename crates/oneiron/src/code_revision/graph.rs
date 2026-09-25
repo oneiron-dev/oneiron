@@ -1,19 +1,20 @@
 //! child_of lifecycle edges and the entity guards a revision write must clear.
 
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use std::collections::{HashSet, VecDeque};
 
 use heed::{RoTxn, RwTxn};
 
-use crate::affect::Vad;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, child_of_prefix};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::code_artifact::decode_code_artifact_body;
-use crate::edge::{EdgeKind, encode_edge_value, parse_strict_edge_record};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
 };
-use crate::ppr;
+
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::store::Store;
 
@@ -30,24 +31,9 @@ pub(super) fn put_lifecycle_edge(
     created_at: u64,
     graph_changed: &mut bool,
 ) -> Result<()> {
-    let weight = kind.default_weight().unwrap_or(1.0);
-    let value = encode_edge_value(kind, weight, created_at, Vad::NEUTRAL, None)?;
-    let key_out = Store::encode_edge_key(src, kind, tgt);
-    let key_in = Store::encode_edge_key(tgt, kind, src);
-    let changed = store
-        .edges_out
-        .get(wtxn, &key_out)?
-        .is_none_or(|existing| existing != value.as_slice())
-        || store
-            .edges_in
-            .get(wtxn, &key_in)?
-            .is_none_or(|existing| existing != value.as_slice());
-    store.edges_out.put(wtxn, &key_out, &value)?;
-    store.edges_in.put(wtxn, &key_in, &value)?;
-    if changed {
-        ppr::invalidate_ppr_for_edge(store, wtxn, src, tgt)?;
-        *graph_changed = true;
-    }
+    *graph_changed |= crate::ports::EdgeStoreMaintenance::port_revision_link(
+        store, wtxn, src, kind, tgt, created_at,
+    )?;
     Ok(())
 }
 
@@ -98,11 +84,16 @@ fn would_create_child_of_cycle(
 }
 
 fn child_of_parents(store: &Store, txn: &RwTxn<'_>, child: &EntityId) -> Result<Vec<EntityId>> {
-    let prefix = child_of_prefix(child);
     let mut parents = Vec::new();
-    for entry in store.edges_out.prefix_iter(txn, &prefix)? {
-        let (key, value) = entry?;
-        let edge = parse_strict_edge_record(&key, &value)?;
+    for entry in store.port_edges(
+        txn,
+        child,
+        crate::ports::EdgeDirection::Out,
+        Some(EdgeKind::ChildOf),
+        None,
+    )? {
+        let edge_row = entry?;
+        let edge = edge_row;
         if edge.kind != EdgeKind::ChildOf {
             return Err(Error::CorruptedIndex("edge record"));
         }
@@ -145,7 +136,10 @@ pub(super) fn code_artifact_body_bytes(
     rtxn: &RoTxn<'_>,
     revision_id: &EntityId,
 ) -> Result<Vec<u8>> {
-    let Some(raw) = store.entities.get(rtxn, revision_id.as_bytes())? else {
+    let Some(raw) = store
+        .port_entity_record(rtxn, revision_id)?
+        .map(|row| row.encode())
+    else {
         return Err(Error::EntityNotFound);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -214,11 +208,11 @@ pub(super) fn require_entity_type(
     expected_type: u8,
     context: &'static str,
 ) -> Result<()> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Err(Error::EntityNotFound);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != expected_type {
+
+    if raw.entity_type != expected_type {
         return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             context,
         )));

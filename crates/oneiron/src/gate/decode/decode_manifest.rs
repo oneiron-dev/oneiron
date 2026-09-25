@@ -40,6 +40,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) actor_ceilings: Vec<ActorCeiling>,
     pub(in crate::gate) delegated_grants: Vec<DelegationGrantRecord>,
     pub(in crate::gate) source_trust: SourceTrustCeiling,
+    pub(in crate::gate) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(in crate::gate) scoped_grants: Vec<PolicyScopedGrant>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
@@ -55,6 +56,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
+    pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -82,6 +84,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_ACTOR_CEILINGS_KEY
                 | POLICY_DELEGATED_GRANTS_KEY
                 | POLICY_SOURCE_TRUST_KEY
+                | "single_valued_predicates"
                 | POLICY_SCOPED_GRANTS_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_ENABLED_KEY
@@ -97,6 +100,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
+                | "diagnostic_bounds"
         ) {
             return None;
         }
@@ -127,6 +131,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => {
             parse_source_trust(value).unwrap_or_else(SourceTrustCeiling::malformed)
         }
+    };
+    let single_valued_predicates = match single_map_value(&entries, "single_valued_predicates") {
+        MapValue::Missing => std::collections::BTreeSet::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_single_valued_predicates(value)?,
     };
     let scoped_grants = match single_map_value(&entries, POLICY_SCOPED_GRANTS_KEY) {
         MapValue::Missing => Vec::new(),
@@ -213,6 +222,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
+    let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => {
+            Some(crate::self_heal::tripwires::TripwireBounds::decode(value)?)
+        }
+    };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -229,6 +245,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         delegated_grants,
         source_trust,
         scoped_grants,
+        single_valued_predicates,
         owner_policy_rows,
         owner_policy_rows_dropped,
         owner_policy_enabled,
@@ -241,6 +258,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         comm_opt_out_posture,
         auto_checker,
         budget_policy,
+        diagnostic_bounds,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
@@ -271,4 +289,19 @@ pub(super) fn nonblank_bounded_string(value: &Value, max_len: usize) -> Option<S
         return None;
     }
     Some(value.to_owned())
+}
+
+fn parse_single_valued_predicates(value: &Value) -> Option<std::collections::BTreeSet<String>> {
+    let Value::Array(values) = value else {
+        return None;
+    };
+    let mut predicates = std::collections::BTreeSet::new();
+    for value in values {
+        let predicate = value.as_str()?;
+        crate::claim::validate_predicate(predicate, false).ok()?;
+        if !predicates.insert(predicate.to_owned()) {
+            return None;
+        }
+    }
+    Some(predicates)
 }

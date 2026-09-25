@@ -8,7 +8,14 @@ use rmpv::Value;
 fn overlapping_declarations_serialize_queue_claims_but_disjoint_tasks_run() -> crate::Result<()> {
     for kind_scoped in [false, true] {
         let dir = tempfile::tempdir()?;
-        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let clock = crate::ports::ManualClock::new(1);
+        let vault = Vault::open(
+            dir.path(),
+            VaultConfig {
+                store_clock: clock.bundle(),
+                ..VaultConfig::default()
+            },
+        )?;
         let holder = EntityId::now();
         vault.put_entity(
             &holder,
@@ -51,6 +58,7 @@ fn overlapping_declarations_serialize_queue_claims_but_disjoint_tasks_run() -> c
         )?;
         let queue = AttemptQueue::new(&vault);
         let claim = |now| {
+            clock.set(now);
             let input = ClaimAttempt {
                 lease_owner: "symbol-worker".to_owned(),
                 now,

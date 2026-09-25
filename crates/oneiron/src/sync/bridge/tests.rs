@@ -2,13 +2,12 @@ use super::*;
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-    ENTITY_TYPE_COMPANION_REGISTER, encode_companion_record_body,
+    CompanionProvenance, CompanionRecord, CompanionScope, encode_companion_record_body,
 };
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::error::SyncError;
-use crate::registry::ENTITY_TYPE_TASK;
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TASK};
 use crate::sync::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since, import_doc,
     map_contains_binary, map_insert_bytes,
@@ -127,7 +126,7 @@ fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8
 
 fn companion_record(
     persona_ref: EntityId,
-    export_classification: CompanionExportClassification,
+    sensitivity: crate::federation::Sensitivity,
 ) -> CompanionRecord {
     CompanionRecord::persona(
         CompanionScope::neutral(),
@@ -140,7 +139,7 @@ fn companion_record(
             ClaimApprovalStatus::Approved,
             Value::from("private provenance"),
         ),
-        export_classification,
+        sensitivity,
     )
 }
 
@@ -180,6 +179,7 @@ fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
         op: crate::authority::AuthorityOp::Genesis {
             device: authority_test_device(key.clone()),
             genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: crate::authority::AuthorityTier::Software,
             pending_widen_delay_secs: 86_400,
         },
@@ -246,7 +246,7 @@ fn authority_log_entity_blob(
 
 #[cfg(feature = "sync")]
 #[test]
-fn over_quota_peer_rejected() -> Result<()> {
+fn authority_peer_burst_is_observed_and_never_rejected() -> Result<()> {
     let vault = test_vault();
     quota::set_maintenance_ingest_quota_config(
         &vault,
@@ -255,64 +255,38 @@ fn over_quota_peer_rejected() -> Result<()> {
             quota_window_secs: 3_600,
         },
     )?;
+    vault.set_authority_observation_policy(crate::authority::AuthorityObservationPolicy {
+        ingest_check_threshold: 2,
+        ..Default::default()
+    })?;
     let owner = authority_test_key(31);
     let genesis = authority_genesis_fixture(31);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
     vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
-
-    let first = authority_enroll_fixture(vault_id, &genesis, &owner, 32, 1);
-    let second = authority_enroll_fixture(vault_id, &genesis, &owner, 33, 2);
-    let first_blob = authority_log_entity_blob(&first, 2)?;
-    let second_blob = authority_log_entity_blob(&second, 3)?;
     let doc = LoroDoc::new();
     let tombstones = doc.get_map("tombstones");
-
-    vault.with_write_txn(|wtxn| {
-        let wrote = materialize_entity_blob_in_txn(
-            &vault,
-            wtxn,
-            &tombstones,
-            "2026-03",
-            &crate::authority::authority_log_entity_id(&first)?.to_hex(),
-            &first_blob,
-            crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-        )?;
-        assert!(
-            wrote,
-            "first authority replay-door write should materialize"
-        );
-        Ok(())
-    })?;
-
-    let second_id = crate::authority::authority_log_entity_id(&second)?;
-    let err = vault
-        .with_write_txn(|wtxn| {
-            materialize_entity_blob_in_txn(
+    for n in 1..=5 {
+        let entry = authority_enroll_fixture(vault_id, &genesis, &owner, 32 + n as u8, n);
+        let blob = authority_log_entity_blob(&entry, n + 1)?;
+        let id = crate::authority::authority_log_entity_id(&entry)?;
+        vault.with_write_txn(|wtxn| {
+            assert!(materialize_entity_blob_in_txn(
                 &vault,
                 wtxn,
                 &tombstones,
                 "2026-03",
-                &second_id.to_hex(),
-                &second_blob,
-                crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-            )
-            .map(|_| ())
-        })
-        .expect_err("same authority signer must be capped by production replay-door quota");
-
-    assert!(matches!(
-        err,
-        Error::Sync(SyncError::MaintenanceIngestQuotaExceeded {
-            accepted_count: 1,
-            max_ops_per_peer_window: 1,
-            quota_window_secs: 3_600,
-            ..
-        })
-    ));
-    assert!(
-        vault.get_raw(&second_id)?.is_none(),
-        "over-quota authority replay-door blob must not be stored"
-    );
+                &id.to_hex(),
+                &blob,
+                crate::sync::lease::DEFAULT_LEASE_VAULT_ID
+            )?);
+            Ok(())
+        })?;
+        assert!(vault.get_raw(&id)?.is_some());
+    }
+    let checks = vault.authority_ingest_checks()?;
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].count, 3);
+    assert!(quota::maintenance_ingest_quota_snapshots(&vault)?.is_empty());
     Ok(())
 }
 
@@ -466,6 +440,7 @@ fn authority_hardware_genesis_fixture(seed: u8) -> crate::authority::AuthorityLo
                 roles: crate::authority::ROLE_OWNER | crate::authority::ROLE_ADMIN,
             },
             genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: crate::authority::AuthorityTier::Software,
             pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
@@ -1737,14 +1712,15 @@ fn companion_register_api_observer_b_suppresses_local_only_records() {
     let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
 
     let id = EntityId::from_bytes_unchecked([0x62; 16]);
+    let persona = EntityId::from_bytes_unchecked([0x6A; 16]);
     let learned_at = 1_772_400_000u64;
-    let record = companion_record(id, CompanionExportClassification::LocalOnly);
+    let record = companion_record(persona, crate::federation::Sensitivity::Restricted);
     let body = encode_companion_record_body(&record.created_at(learned_at).unwrap()).unwrap();
     map_insert_bytes(
         &doc.get_map("entities"),
         &id.to_hex(),
         &entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             TimeRange {
                 start: learned_at,
                 end: learned_at,
@@ -1771,9 +1747,12 @@ fn companion_register_api_observer_b_scrubs_local_only_rows_and_edges_from_crdt(
 
     let local_id = EntityId::from_bytes_unchecked([0x43; 16]);
     let portable_id = EntityId::from_bytes_unchecked([0x44; 16]);
+    let local_persona = EntityId::from_bytes_unchecked([0x4A; 16]);
+    let portable_persona = EntityId::from_bytes_unchecked([0x4B; 16]);
     let learned_at = 1_772_400_001u64;
-    let local_record = companion_record(local_id, CompanionExportClassification::LocalOnly);
-    let portable_record = companion_record(portable_id, CompanionExportClassification::Portable);
+    let local_record = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
+    let portable_record =
+        companion_record(portable_persona, crate::federation::Sensitivity::Public);
     let local_body =
         encode_companion_record_body(&local_record.created_at(learned_at).unwrap()).unwrap();
     let portable_body =
@@ -1786,7 +1765,7 @@ fn companion_register_api_observer_b_scrubs_local_only_rows_and_edges_from_crdt(
         &entities,
         &portable_id.to_hex(),
         &entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             TimeRange {
                 start: learned_at,
                 end: learned_at,
@@ -1808,7 +1787,7 @@ fn companion_register_api_observer_b_scrubs_local_only_rows_and_edges_from_crdt(
         &entities,
         &local_id.to_hex(),
         &entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             TimeRange {
                 start: learned_at,
                 end: learned_at,
@@ -1844,8 +1823,9 @@ fn companion_register_api_observer_b_rejects_edges_touching_existing_local_only_
 
     let local_id = EntityId::from_bytes_unchecked([0x45; 16]);
     let task_id = EntityId::from_bytes_unchecked([0x46; 16]);
+    let local_persona = EntityId::from_bytes_unchecked([0x4C; 16]);
     let learned_at = 1_772_400_002u64;
-    let local_record = companion_record(local_id, CompanionExportClassification::LocalOnly);
+    let local_record = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
     vault
         .create_companion_record(&local_id, &local_record, learned_at)
         .unwrap();

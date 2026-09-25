@@ -86,7 +86,7 @@ fn hex_nibble(byte: u8) -> Option<u8> {
 /// Path canonicalization is strict and fail-closed: relative, `/`-joined,
 /// no empty / `.` / `..` segments, no backslashes, colons (kills `C:/…`
 /// drive-absolute paths), or NULs, at most [`SKILL_TREE_PATH_MAX_BYTES`]
-/// bytes, no duplicates — duplicate detection ASCII-case-folds (`Foo` vs
+/// bytes, no file/directory collisions or duplicates — detection ASCII-case-folds (`Foo` vs
 /// `foo` alias on default Windows/macOS filesystems; full Unicode folding
 /// is out of scope). An empty tree has no identity.
 pub fn canonical_skill_tree_hash<'a, I>(files: I) -> Result<SkillContentHash>
@@ -113,6 +113,17 @@ where
         if !folded.insert(path.to_ascii_lowercase()) {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "duplicate skill tree path",
+            )));
+        }
+    }
+
+    for path in &folded {
+        if path
+            .match_indices('/')
+            .any(|(index, _)| folded.contains(&path[..index]))
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "skill tree path is both a file and a directory",
             )));
         }
     }

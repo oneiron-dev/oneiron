@@ -262,9 +262,10 @@ fn verification_precedes_even_a_failing_booking_read() {
         )
         .unwrap();
     let broken = book(&vault, unknown_page, NOW + 3_600);
-    let body =
-        rmp_serde::to_vec_named(&serde_json::json!({ "name": "intro", "booking_context": false }))
-            .unwrap();
+    let body = rmp_serde::to_vec_named(
+        &serde_json::json!({ "name": "intro", "booking_context": false, "origin": "native" }),
+    )
+    .unwrap();
     vault
         .put_entity(
             &broken.calendar.event_ref,
@@ -364,6 +365,7 @@ fn existing_authority_root(
                 roles: ROLE_OWNER | ROLE_ADMIN,
             },
             genesis_nonce: [seed.wrapping_add(10); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },

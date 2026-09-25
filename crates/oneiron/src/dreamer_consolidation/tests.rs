@@ -23,6 +23,8 @@ use crate::{
 
 use super::*;
 
+mod contradictions;
+mod persistent_conflicts;
 mod person_extraction;
 mod prior_heads;
 mod scope_enforcement;
@@ -38,7 +40,39 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
 }
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(VaultConfig::device())
+    let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    grant_fixture_reads(&vault).expect("explicit consolidation read grant");
+    (dir, vault)
+}
+
+fn grant_fixture_reads(vault: &Vault) -> Result<()> {
+    let actor = vault.dreamer_authority()?;
+    let bytes = crate::gate::default_policy_manifest();
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut bytes.as_slice()).expect("default policy map")
+    else {
+        unreachable!()
+    };
+    entries.push((
+        "scoped_grants".into(),
+        Value::Array(vec![Value::Map(vec![
+            ("actor_ref".into(), actor.entity_ref().to_hex().into()),
+            ("actor_class".into(), "agent".into()),
+            ("effector".into(), "core:read".into()),
+            (
+                "scope".into(),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::read_preset(),
+                )?,
+            ),
+            ("receipt_required".into(), false.into()),
+        ])]),
+    ));
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &super::support::encode_value(&Value::Map(entries))?,
+    )
 }
 
 fn occurred(at: u64) -> TimeRange {
@@ -1819,70 +1853,111 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
 
 #[test]
 fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let store = DreamerRunnerStore::new(&vault);
-    let (admitted, turns, _) = admitted_attempt_fixture(
-        &vault,
-        &store,
-        0x2B,
-        &[("user", "i live in Tokyo"), ("user", "i live in Osaka")],
-    )?;
-    let subject = EntityId::from_bytes([0x39; 16]).expect("subject");
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    for fatal_merge in [false, true] {
+        let (_dir, vault) = open_vault();
+        let store = DreamerRunnerStore::new(&vault);
+        let (admitted, turns, _) = admitted_attempt_fixture(
+            &vault,
+            &store,
+            0x2B,
+            &[("user", "i live in Tokyo"), ("user", "i live in Osaka")],
+        )?;
+        let subject = EntityId::from_bytes([0x39; 16]).expect("subject");
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
 
-    let backend = ScriptedBackend::new(vec![
-        Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
-        Ok(text_response("{\"resolution\": \"escalate\"}".to_owned())),
-    ]);
-    let guard = crate::BudgetGuard::with_reserve_units(
-        "wake",
-        10_000,
-        100,
-        BudgetExhaustionPolicy::Suspend,
-    );
-    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
-    let mut sink = CapturingSink::default();
-    let mut executor = ConsolidationExecutor {
-        backend: &backend,
-        guard: &guard,
-        strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: vault.dreamer_authority()?,
-        model: crate::ModelId::new("test/model@r1").expect("model"),
-        sink: &mut sink,
-        scope: None,
-    };
-    let mut ctx = WakeAttemptContext {
-        vault: &vault,
-        deadline: &deadline,
-        budget_id: "wake",
-        now_ms: 21_000,
-    };
-    block_on_ready(executor.execute(&admitted, &mut ctx))?;
+        let backend = ScriptedBackend::new(vec![
+            Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
+            if fatal_merge {
+                Err(crate::FatalLlmError::Auth.into())
+            } else {
+                Ok(text_response(r#"{"resolution":"escalate"}"#.to_owned()))
+            },
+        ]);
+        let guard = crate::BudgetGuard::with_reserve_units(
+            "wake",
+            10_000,
+            100,
+            BudgetExhaustionPolicy::Suspend,
+        );
+        let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+        let mut sink = CapturingSink::default();
+        let mut executor = ConsolidationExecutor {
+            backend: &backend,
+            guard: &guard,
+            strategy: DreamerClaimAuthoringStrategy::SinglePass,
+            actor: vault.dreamer_authority()?,
+            model: crate::ModelId::new("test/model@r1").expect("model"),
+            sink: &mut sink,
+            scope: None,
+        };
+        let mut ctx = WakeAttemptContext {
+            vault: &vault,
+            deadline: &deadline,
+            budget_id: "wake",
+            now_ms: 21_000,
+        };
+        let outcome = block_on_ready(executor.execute(&admitted, &mut ctx))?;
+        let expected_spend = if fatal_merge { 50 } else { 100 };
+        assert!(
+            matches!(outcome, DreamerAttemptExecution::Completed { completed_units } if completed_units == expected_spend)
+        );
+        assert_eq!(guard.read().used_units, expected_spend);
+        assert_eq!(guard.read().reserved_units, 0);
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
 
-    // Contradictions never land silently: nothing sinks, the gap row exists
-    // (a re-upsert of the same identity refreshes rather than creates).
-    assert!(sink.accepted.is_empty());
-    let probe = ReflectionGap {
-        kind: ReflectionGapKind::ContradictionLeftStanding,
-        subject,
-        evidence_turn_refs: turns,
-        first_seen: 0,
-        last_seen: 0,
-        escalations: 0,
-        decayed: false,
-    };
-    let (partition, _, _) = decode_partition_payload(&admitted.status.payload.input)?;
-    let resources = super::resources::BranchResources::open(
-        &vault,
-        vault.dreamer_authority()?,
-        partition,
-        &probe.evidence_turn_refs,
-        admitted.status.attempt.id,
-        None,
-    )?;
-    let delta = resources.upsert_gaps(resources.scope(), vec![probe], 22_000)?;
-    assert_eq!(delta.refreshed, 1, "escalation created the gap row");
-    assert_eq!(delta.created, 0);
+        // The fenced marker writer persists the open question directly. The
+        // ordinary belief sink must not receive any conflicting candidate.
+        assert!(sink.accepted.is_empty());
+        let claims = vault
+            .claims_for_subject(&subject)?
+            .into_iter()
+            .map(|id| {
+                vault
+                    .get_claim(&id)
+                    .map(|body| (id, body.expect("stored claim")))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        assert!(
+            claims
+                .iter()
+                .all(|(_, body)| body.predicate != "profile.name")
+        );
+        let markers = claims
+            .iter()
+            .filter(|(_, body)| body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN)
+            .collect::<Vec<_>>();
+        let [(marker_id, marker)] = markers.as_slice() else {
+            panic!("exactly one durable open question");
+        };
+        assert_eq!(marker.approval, crate::ClaimApprovalStatus::Proposed);
+        assert!(
+            vault
+                .edges_out(marker_id)?
+                .iter()
+                .all(|edge| edge.kind != EdgeKind::Supersedes)
+        );
+        let probe = ReflectionGap {
+            kind: ReflectionGapKind::ContradictionLeftStanding,
+            subject,
+            evidence_turn_refs: turns,
+            first_seen: 0,
+            last_seen: 0,
+            escalations: 0,
+            decayed: false,
+        };
+        let (partition, _, _) = decode_partition_payload(&admitted.status.payload.input)?;
+        let resources = super::resources::BranchResources::open(
+            &vault,
+            vault.dreamer_authority()?,
+            partition,
+            &probe.evidence_turn_refs,
+            admitted.status.attempt.id,
+            None,
+        )?;
+        let delta = resources.upsert_gaps(resources.scope(), vec![probe], 22_000)?;
+        assert_eq!(delta.refreshed, 1, "escalation created the gap row");
+        assert_eq!(delta.created, 0);
+    }
     Ok(())
 }
 
@@ -2412,6 +2487,207 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
     );
     Ok(())
 }
+
+/// Restored by the C08 stack integration: C04 removed this helper when it
+/// inlined a before-filter into `no_fabricated_belief_writes`, but C08's new
+/// tests call the shared seam. Kept verbatim so both sides compile.
+#[cfg(test)]
+pub(crate) fn claim_predicates_in_store(vault: &Vault) -> Result<Vec<String>> {
+    let claim_ids: Vec<EntityId> = {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut ids = Vec::new();
+        for row in vault.store.entities.iter(&rtxn)? {
+            let (key, raw) = row?;
+            let Some(header) = EntityMetadataHeader::parse(&raw) else {
+                continue;
+            };
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let Ok(id_bytes) = <[u8; 16]>::try_from(key.as_ref()) else {
+                continue;
+            };
+            if let Ok(id) = EntityId::from_bytes(id_bytes) {
+                ids.push(id);
+            }
+        }
+        ids
+    };
+    let mut predicates = Vec::new();
+    for id in claim_ids {
+        if let Some(body) = vault.get_claim(&id)? {
+            predicates.push(body.predicate);
+        }
+    }
+    Ok(predicates)
+}
+
+#[test]
+fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let scope = DreamerConsolidationScope::Micro;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+    let conversation = seed_session(&vault, 0x27, 1);
+    let _turn = seed_turn(&vault, &conversation, "user", "my name is Oleksii", 10);
+
+    let watermark = read_watermark(&vault, scope)?;
+    let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
+    enqueue_partition_attempts(&vault, scope, &turns, &watermark, "run-1", 20)?;
+
+    let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+        admitted,
+    )) = store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+        scope,
+        local_node_id: node_id,
+        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+        admission: AdmitDreamerAttempt {
+            lease_owner: "consolidation-test".to_owned(),
+            now: 21,
+            budget_id: "wake".to_owned(),
+            budget_total_units: 10_000,
+            reserve_units: 100,
+            started_milestone: None,
+        },
+    })?
+    else {
+        panic!("expected admitted consolidation attempt");
+    };
+
+    let backend = ScriptedBackend::new(vec![Err(crate::FatalLlmError::Auth.into())]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink: &mut sink,
+        scope: None,
+    };
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+    };
+    let seeded = claim_predicates_in_store(&vault)?;
+    let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
+    assert!(matches!(
+        execution,
+        DreamerAttemptExecution::Completed { completed_units: 0 }
+    ));
+
+    // The sink received the decoded candidates…
+    assert!(sink.accepted.is_empty());
+    assert_eq!(guard.read().reserved_units, 0);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+
+    // …and the module wrote ZERO belief claims itself: the only claims it
+    // added to the store are the step layer's dreamer.step runtime records.
+    let mut predicates = claim_predicates_in_store(&vault)?;
+    for predicate in &seeded {
+        let index = predicates
+            .iter()
+            .position(|stored| stored == predicate)
+            .expect("seeded claim survives the attempt");
+        predicates.swap_remove(index);
+    }
+    assert!(
+        predicates
+            .iter()
+            .all(|predicate| predicate == "dreamer.step"),
+        "unexpected claim predicates: {predicates:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn injected_ner_shadow_reports_mentions_without_landing_claims_or_turn_changes() -> Result<()> {
+    use crate::llm::tagger::*;
+    struct Ner(EntityId);
+    impl OneironerTagger for Ner {
+        fn model(&self) -> crate::ModelId {
+            crate::ModelId::new("test/ner-checkpoint@1").expect("model")
+        }
+        fn tag(&self, text: &str) -> Result<RetrievalTags> {
+            assert_eq!(text, "Ada works here");
+            Ok(RetrievalTags {
+                mentions: vec![MentionTag {
+                    start: 0,
+                    end: 3,
+                    entity: self.0,
+                    weight: 1.0,
+                }],
+                ppr_seeds: vec![PprSeed {
+                    entity: self.0,
+                    weight: 1.0,
+                }],
+                affect: [0.0; 3],
+                coreference: vec![],
+            })
+        }
+    }
+    let (_dir, vault) = open_vault();
+    let conversation = seed_session(&vault, 0x27, 1);
+    let turn = seed_turn(&vault, &conversation, "user", "Ada works here", 10);
+    let before = vault.get_raw(&turn)?;
+    let claims = claim_predicates_in_store(&vault)?;
+    let report = shadow_tag_turn(&vault, turn, &Ner(conversation), &[conversation])?;
+    assert_eq!(report.common, vec![conversation]);
+    assert!(report.tag_only.is_empty());
+    assert_eq!(report.tags.mentions.len(), 1);
+    let no_live = shadow_tag_turn(&vault, turn, &Ner(conversation), &[])?;
+    assert_eq!(no_live.tag_only, vec![conversation]);
+    assert!(no_live.common.is_empty());
+    let different = shadow_tag_turn(&vault, turn, &Ner(conversation), &[turn])?;
+    assert_eq!(different.tag_only, vec![conversation]);
+    assert_eq!(different.live_only, vec![turn]);
+    let roundtrip: RetrievalTags =
+        serde_json::from_slice(&serde_json::to_vec(&report.tags).expect("encode")).expect("decode");
+    assert_eq!(roundtrip, report.tags);
+    assert_eq!(vault.get_raw(&turn)?, before);
+    assert_eq!(claim_predicates_in_store(&vault)?, claims);
+    Ok(())
+}
+
+#[test]
+fn nickname_relationships_form_distinct_buckets() {
+    let subject = EntityId::from_bytes([1; 16]).unwrap();
+    let candidates: Vec<_> = [2, 3]
+        .into_iter()
+        .map(|seed| PromotionCandidate {
+            claim_id: EntityId::now(),
+            candidate: ClaimCandidate::new(
+                "profile.nickname",
+                ClaimSubject::Entity(subject),
+                Value::from("Ada"),
+                1.0,
+            )
+            .with_relationship(EntityId::from_bytes([seed; 16]).unwrap()),
+            evidence_turn_refs: vec![],
+            provenance_chain: vec![],
+            supersedes: None,
+            evidence_meet: ClaimSource::Generated,
+            occurred: occurred(1),
+            learned_at: 1,
+        })
+        .collect();
+    let buckets = plan_candidate_buckets(&candidates).unwrap();
+    assert_eq!(buckets.len(), 2);
+    assert_ne!(buckets[0].key.bucket_hash(), buckets[1].key.bucket_hash());
+    assert_eq!(buckets[0].candidate_indexes.len(), 1);
+    assert_eq!(buckets[1].candidate_indexes.len(), 1);
+}
+
 #[test]
 fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
     use super::conflict::deterministic_claim_id;
@@ -2451,6 +2727,7 @@ fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
             None,
             None,
             rel,
+            None,
         )
     };
     assert_ne!(id(Some(rel_a)), id(Some(rel_b)));

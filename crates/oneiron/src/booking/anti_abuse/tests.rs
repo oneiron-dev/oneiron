@@ -59,7 +59,7 @@ fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventType
             flex_windows: Vec::new(),
         },
     };
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         BOOKING_EVENT_TYPE_PREDICATE,
         ClaimSubject::Entity(page),
         encode_event_type_claim_value(&value).expect("config value"),
@@ -67,6 +67,9 @@ fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventType
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     );
+    // Every page's configuration rewrites one claim id, whose facet is set at
+    // its birth.
+    body.scope_facet = vault.default_facet().expect("default facet");
     vault
         .put_claim(&id(0x57), &body, TimeRange { start: 1, end: 1 }, 1)
         .expect("live config");

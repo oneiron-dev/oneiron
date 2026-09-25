@@ -97,6 +97,50 @@ pub(crate) async fn run_context_pack(
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
+    let scoped_read = if let Some(room) = req.conversation_id.as_deref() {
+        let room = super::super::parse_entity_id_param(room, "conversation_id")?;
+        let members = server
+            .vault
+            .members(room)
+            .map_err(|e| core_engine_error("room audience failed", e))?;
+        scoped_read.for_audience(&members)
+    } else if let Some(set) = interlocutors.as_ref().filter(|set| set.has_non_owner()) {
+        // Contact records are not PERSON identities. Only a unique explicit
+        // person link may resolve one; unresolved participants fail closed.
+        let mut audience = Vec::new();
+        let mut unresolved = false;
+        if let Some(actor) = auth.principal_ref() {
+            audience.push(super::super::parse_entity_id_param(actor, "principal_ref")?);
+        }
+        for party in set.non_owner() {
+            let Some(contact) = party
+                .contact_ref()
+                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+            else {
+                unresolved = true;
+                break;
+            };
+            let people = server
+                .vault
+                .targets(
+                    &contact,
+                    oneiron::EdgeKind::About,
+                    Some(oneiron::registry::ENTITY_TYPE_PERSON),
+                )
+                .map_err(|e| core_engine_error("audience person resolution failed", e))?;
+            if people.len() != 1 {
+                unresolved = true;
+                break;
+            }
+            audience.push(people[0]);
+        }
+        if unresolved {
+            audience.clear();
+        }
+        scoped_read.for_audience(&audience)
+    } else {
+        scoped_read
+    };
     let candidate_limit = scoped_read
         .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
         .map_err(|error| {
@@ -144,8 +188,9 @@ pub(crate) async fn run_context_pack(
         builder = builder.disclosure_context(ctx.clone());
     }
 
+    let track_plain_pack = memories.is_none();
     let (mut response, memories, cursor) = run_context_pack_builder(
-        &server.vault,
+        server,
         &scoped_read,
         builder,
         projection,
@@ -158,6 +203,18 @@ pub(crate) async fn run_context_pack(
         disclosure,
     )
     .await?;
+    if track_plain_pack {
+        let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
+        if let Some(mut observed) =
+            super::super::session_read_set(server, caller, req.session_id.as_deref()).await?
+        {
+            let mut staged = observed.clone();
+            response
+                .observe_rows(&scoped_read, &mut staged)
+                .map_err(|error| core_engine_error("context-pack observations failed", error))?;
+            *observed = staged;
+        }
+    }
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
     Ok((response, memories, cursor))
 }
@@ -464,7 +521,7 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) 
     pack.stats.entities_hydrated = pack.results.len();
     pack.stats.neighbors_hydrated = pack.neighbors.len();
 
-    if pack.results.is_empty() && pack.neighbors.is_empty() {
+    if pack.results.is_empty() && pack.neighbors.is_empty() && pack.l2_base.is_none() {
         if let Some(empty) = pack.empty.as_mut() {
             empty.total_in_scope = 0;
         } else {

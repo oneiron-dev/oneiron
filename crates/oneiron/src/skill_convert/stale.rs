@@ -1,10 +1,10 @@
 //! The stale fold: the reverse source index, the staleness note, and the deletion-time
 //! sweep that stales every skill citing an erased source.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
@@ -97,8 +97,8 @@ pub fn rebuild_skill_source_index(vault: &Vault) -> Result<()> {
         dead.push(entry?.0.to_vec());
     }
     let mut live: Vec<(EntityId, EntityId)> = Vec::new();
-    for entry in store.type_index.prefix_iter(&wtxn, &[ENTITY_TYPE_SKILL])? {
-        let skill = crate::vault::entity_id_from_type_index_key(&entry?.0)?;
+    for entry in store.port_entity_ids_by_type(&wtxn, ENTITY_TYPE_SKILL, None)? {
+        let skill = entry?;
         let Some(record) = read_live_skill_record_in_txn(store, &wtxn, &skill)? else {
             continue;
         };
@@ -174,6 +174,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         deleted: &EntityId,
     ) -> Result<Vec<EntityId>> {
+        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         let dependents = dependent_skills_in_txn(&self.store, &*wtxn, deleted)?;
         let mut staled = Vec::with_capacity(dependents.len());
         for skill in dependents {
@@ -220,7 +221,7 @@ impl Vault {
                         wtxn,
                         &skill,
                         occurred,
-                        crate::unix_seconds_now(),
+                        mutation_recorded_at,
                         data,
                         false,
                     )?;
@@ -303,21 +304,21 @@ fn read_live_skill_record_in_txn(
     txn: &heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<(SkillRecord, TimeRange)>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_SKILL {
+
+    if raw.entity_type != ENTITY_TYPE_SKILL {
         return Ok(None);
     }
-    let Ok(record) = crate::skill::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..]) else {
+    let Ok(record) = crate::skill::decode_skill_record(&raw.body) else {
         return Ok(None);
     };
     Ok(Some((
         record,
         TimeRange {
-            start: header.occurred_start,
-            end: header.occurred_end,
+            start: raw.occurred.start,
+            end: raw.occurred.end,
         },
     )))
 }

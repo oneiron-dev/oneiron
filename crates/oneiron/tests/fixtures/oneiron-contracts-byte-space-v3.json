@@ -1,12 +1,12 @@
 {
   "note": "VENDORED CANON SNAPSHOT — do not hand-edit. Generated from oneiron-docs site/src/data/oneiron-contracts.ts at the recorded commit. payloadBlake3 is BLAKE3 over the compact (no-whitespace, authored key order) JSON serialization of `payload`.",
   "docsRepo": "oneiron-docs",
-  "docsCommit": "7d106b9de6b3ffdba4cc1a504e22139f88791e6b",
+  "docsCommit": "24fc8f5114e6e0e0145e75396dbf2da0b3377b48",
   "docsPath": "site/src/data/oneiron-contracts.ts",
-  "payloadBlake3": "90434b411252b398a7a777b5361dbe7af211bcc69081b47147a1d528014a178d",
+  "payloadBlake3": "8bc607b4c9e63cfaead9b0a9036578bb758673c5319b84a469e434b7bbda6b44",
   "payload": {
     "contractVersion": "1.0.0",
-    "storageAbiVersion": 17,
+    "storageAbiVersion": 20,
     "typeByteZones": [
       {
         "range": "0",
@@ -65,654 +65,942 @@
         "owner": "Sentinel"
       }
     ],
+    "typeByteFamilies": [
+      {
+        "zone": "core",
+        "family": "conversation",
+        "range": "1–9",
+        "free": 4,
+        "kinds": [
+          "TURN",
+          "SESSION",
+          "MESSAGE",
+          "CONVERSATION",
+          "SUMMARY"
+        ]
+      },
+      {
+        "zone": "core",
+        "family": "people",
+        "range": "10–19",
+        "free": 6,
+        "kinds": [
+          "PERSON",
+          "RELATIONSHIP",
+          "ORG",
+          "FACET"
+        ]
+      },
+      {
+        "zone": "core",
+        "family": "world",
+        "range": "20–29",
+        "free": 7,
+        "kinds": [
+          "EVENT",
+          "PLACE",
+          "WORLD"
+        ]
+      },
+      {
+        "zone": "core",
+        "family": "content",
+        "range": "30–39",
+        "free": 8,
+        "kinds": [
+          "ASSET",
+          "ASSET_TEXT"
+        ]
+      },
+      {
+        "zone": "core",
+        "family": "agents and surfacing",
+        "range": "40–49",
+        "free": 7,
+        "kinds": [
+          "SKILL",
+          "AGENT_DEF",
+          "NOTIFICATION"
+        ]
+      },
+      {
+        "zone": "core",
+        "family": "overflow",
+        "range": "50–63",
+        "free": 14,
+        "kinds": []
+      },
+      {
+        "zone": "system",
+        "family": "authority, policy, custody",
+        "range": "64–71",
+        "free": 3,
+        "kinds": [
+          "AUTHORITY_LOG",
+          "POLICY_MANIFEST",
+          "FEDERATION_GRANT",
+          "ACCESS_GRANT",
+          "SECRET_CUSTODY"
+        ]
+      },
+      {
+        "zone": "system",
+        "family": "audit and observability",
+        "range": "72–79",
+        "free": 4,
+        "kinds": [
+          "REDACTION_AUDIT",
+          "DIAGNOSTIC",
+          "IDENTITY_TOPOLOGY_EVENT",
+          "SUSPICIOUS_WAKE"
+        ]
+      },
+      {
+        "zone": "system",
+        "family": "outbound communication and consent",
+        "range": "80–89",
+        "free": 4,
+        "kinds": [
+          "CONNECTOR_KEY",
+          "CHANNEL_IDENTITY",
+          "COUNTERPARTY_CONTACT",
+          "OUTBOUND_GRANT",
+          "COMM_RECORD",
+          "PERSONA_SNAPSHOT_EXPORT"
+        ]
+      },
+      {
+        "zone": "system",
+        "family": "registries and derived",
+        "range": "90–99",
+        "free": 5,
+        "kinds": [
+          "MODEL",
+          "CLAIM_CLASS_DESCRIPTOR",
+          "SKILL_HUB",
+          "SKILL_CONTENT_ANCHOR",
+          "PSYCH_PROFILE"
+        ]
+      },
+      {
+        "zone": "pack",
+        "family": "productivity",
+        "range": "100–104",
+        "free": 2,
+        "kinds": [
+          "TASK_LIST",
+          "TASK",
+          "MACHINE"
+        ]
+      },
+      {
+        "zone": "pack",
+        "family": "code",
+        "range": "105–109",
+        "free": 3,
+        "kinds": [
+          "CODE_ARTIFACT",
+          "CODE_SYMBOL"
+        ]
+      },
+      {
+        "zone": "pack",
+        "family": "documents",
+        "range": "110–114",
+        "free": 3,
+        "kinds": [
+          "BLOB_ARTIFACT",
+          "NOTE"
+        ]
+      },
+      {
+        "zone": "pack",
+        "family": "companion",
+        "range": "115–119",
+        "free": 4,
+        "kinds": [
+          "COMPANION_REGISTER"
+        ]
+      },
+      {
+        "zone": "pack",
+        "family": "overflow",
+        "range": "120–125",
+        "free": 6,
+        "kinds": []
+      }
+    ],
     "entityKinds": [
       {
         "id": "CLAIM",
         "classification": "semantic",
         "typeByte": 0,
         "shortIdPrefix": "cl",
-        "typeByteRange": "0"
+        "typeByteRange": "0",
+        "family": "semantic"
       },
       {
         "id": "TURN",
         "classification": "core",
         "typeByte": 1,
         "shortIdPrefix": "tn",
-        "typeByteRange": "1–63"
+        "typeByteRange": "1–9",
+        "family": "conversation"
       },
       {
         "id": "SESSION",
         "classification": "core",
         "typeByte": 2,
         "shortIdPrefix": "ss",
-        "typeByteRange": "1–63"
+        "typeByteRange": "1–9",
+        "family": "conversation"
       },
       {
         "id": "MESSAGE",
         "classification": "core",
         "typeByte": 3,
         "shortIdPrefix": "ms",
-        "typeByteRange": "1–63"
+        "typeByteRange": "1–9",
+        "family": "conversation"
       },
       {
         "id": "PERSON",
         "classification": "core",
-        "typeByte": 4,
+        "typeByte": 10,
         "shortIdPrefix": "pr",
-        "typeByteRange": "1–63"
+        "typeByteRange": "10–19",
+        "family": "people"
       },
       {
         "id": "RELATIONSHIP",
         "classification": "core",
-        "typeByte": 5,
+        "typeByte": 11,
         "shortIdPrefix": "rl",
-        "typeByteRange": "1–63"
+        "typeByteRange": "10–19",
+        "family": "people"
       },
       {
         "id": "EVENT",
         "classification": "core",
-        "typeByte": 6,
+        "typeByte": 20,
         "shortIdPrefix": "ev",
-        "typeByteRange": "1–63"
+        "typeByteRange": "20–29",
+        "family": "world"
       },
       {
         "id": "SKILL",
         "classification": "core",
-        "typeByte": 7,
+        "typeByte": 40,
         "shortIdPrefix": "sk",
-        "typeByteRange": "1–63"
+        "typeByteRange": "40–49",
+        "family": "agents and surfacing"
       },
       {
         "id": "SUMMARY",
         "classification": "core",
-        "typeByte": 8,
+        "typeByte": 5,
         "shortIdPrefix": "sm",
-        "typeByteRange": "1–63"
+        "typeByteRange": "1–9",
+        "family": "conversation"
       },
       {
         "id": "PLACE",
         "classification": "core",
-        "typeByte": 9,
+        "typeByte": 21,
         "shortIdPrefix": "pl",
-        "typeByteRange": "1–63"
+        "typeByteRange": "20–29",
+        "family": "world"
       },
       {
         "id": "ASSET_TEXT",
         "classification": "core",
-        "typeByte": 10,
+        "typeByte": 31,
         "shortIdPrefix": "tx",
-        "typeByteRange": "1–63"
+        "typeByteRange": "30–39",
+        "family": "content"
       },
       {
         "id": "CONVERSATION",
         "classification": "core",
-        "typeByte": 11,
+        "typeByte": 4,
         "shortIdPrefix": "cv",
-        "typeByteRange": "1–63"
+        "typeByteRange": "1–9",
+        "family": "conversation"
       },
       {
         "id": "ORG",
         "classification": "core",
         "typeByte": 12,
         "shortIdPrefix": "og",
-        "typeByteRange": "1–63"
+        "typeByteRange": "10–19",
+        "family": "people"
       },
       {
         "id": "FACET",
         "classification": "core",
         "typeByte": 13,
         "shortIdPrefix": "fc",
-        "typeByteRange": "1–63"
+        "typeByteRange": "10–19",
+        "family": "people"
       },
       {
         "id": "WORLD",
         "classification": "core",
-        "typeByte": 14,
+        "typeByte": 22,
         "shortIdPrefix": "wd",
-        "typeByteRange": "1–63"
+        "typeByteRange": "20–29",
+        "family": "world"
       },
       {
         "id": "ASSET",
         "classification": "core",
-        "typeByte": 15,
+        "typeByte": 30,
         "shortIdPrefix": "as",
-        "typeByteRange": "1–63"
+        "typeByteRange": "30–39",
+        "family": "content"
       },
       {
         "id": "NOTIFICATION",
         "classification": "core",
-        "typeByte": 16,
+        "typeByte": 42,
         "shortIdPrefix": "nt",
-        "typeByteRange": "1–63"
+        "typeByteRange": "40–49",
+        "family": "agents and surfacing"
       },
       {
         "id": "AGENT_DEF",
         "classification": "core",
-        "typeByte": 17,
+        "typeByte": 41,
         "shortIdPrefix": "ag",
-        "typeByteRange": "1–63"
-      },
-      {
-        "id": "REDACTION_AUDIT",
-        "classification": "maintenance",
-        "typeByte": 64,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "MODEL",
-        "classification": "maintenance",
-        "typeByte": 65,
-        "shortIdPrefix": "mo",
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "AUTHORITY_LOG",
-        "classification": "maintenance",
-        "typeByte": 66,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "POLICY_MANIFEST",
-        "classification": "maintenance",
-        "typeByte": 67,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "FEDERATION_GRANT",
-        "classification": "maintenance",
-        "typeByte": 68,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "DIAGNOSTIC",
-        "classification": "maintenance",
-        "typeByte": 69,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "CONNECTOR_KEY",
-        "classification": "maintenance",
-        "typeByte": 70,
-        "shortIdPrefix": "ck",
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "PSYCH_PROFILE",
-        "classification": "system",
-        "typeByte": 71,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "SUSPICIOUS_WAKE",
-        "classification": "maintenance",
-        "typeByte": 72,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "ACCESS_GRANT",
-        "classification": "system",
-        "typeByte": 73,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "CLAIM_CLASS_DESCRIPTOR",
-        "classification": "system",
-        "typeByte": 74,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "SKILL_HUB",
-        "classification": "system",
-        "typeByte": 75,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "IDENTITY_TOPOLOGY_EVENT",
-        "classification": "maintenance",
-        "typeByte": 76,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "SECRET_CUSTODY",
-        "classification": "maintenance",
-        "typeByte": 77,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "COMPANION_REGISTER",
-        "classification": "pack",
-        "typeByte": 78,
-        "shortIdPrefix": "cr",
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "CHANNEL_IDENTITY",
-        "classification": "maintenance",
-        "typeByte": 79,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "COUNTERPARTY_CONTACT",
-        "classification": "maintenance",
-        "typeByte": 80,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "OUTBOUND_GRANT",
-        "classification": "maintenance",
-        "typeByte": 81,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "PERSONA_SNAPSHOT_EXPORT",
-        "classification": "maintenance",
-        "typeByte": 82,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "COMM_RECORD",
-        "classification": "maintenance",
-        "typeByte": 83,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "SKILL_CONTENT_ANCHOR",
-        "classification": "maintenance",
-        "typeByte": 84,
-        "shortIdPrefix": null,
-        "typeByteRange": "64–99"
-      },
-      {
-        "id": "TASK_LIST",
-        "classification": "pack",
-        "typeByte": 100,
-        "shortIdPrefix": "tl",
-        "typeByteRange": "100–125"
-      },
-      {
-        "id": "TASK",
-        "classification": "pack",
-        "typeByte": 101,
-        "shortIdPrefix": "tk",
-        "typeByteRange": "100–125"
-      },
-      {
-        "id": "MACHINE",
-        "classification": "pack",
-        "typeByte": 102,
-        "shortIdPrefix": "mc",
-        "typeByteRange": "100–125"
-      },
-      {
-        "id": "CODE_ARTIFACT",
-        "classification": "pack",
-        "typeByte": 103,
-        "shortIdPrefix": "cd",
-        "typeByteRange": "100–125"
-      },
-      {
-        "id": "CODE_SYMBOL",
-        "classification": "pack",
-        "typeByte": 104,
-        "shortIdPrefix": "cs",
-        "typeByteRange": "100–125"
-      },
-      {
-        "id": "BLOB_ARTIFACT",
-        "classification": "pack",
-        "typeByte": 105,
-        "shortIdPrefix": "ba",
-        "typeByteRange": "100–125"
-      },
-      {
-        "id": "NOTE",
-        "classification": "pack",
-        "typeByte": 106,
-        "shortIdPrefix": "no",
-        "typeByteRange": "100–125"
-      },
-      {
-        "id": "ARC_INSTANCE",
-        "classification": "pack",
-        "typeByte": null,
-        "shortIdPrefix": null,
-        "typeByteRange": "100–125"
-      },
-      {
-        "id": "ARC_THREAD",
-        "classification": "pack",
-        "typeByte": null,
-        "shortIdPrefix": null,
-        "typeByteRange": "100–125"
-      },
-      {
-        "id": "LIFE_EVENT",
-        "classification": "pack",
-        "typeByte": null,
-        "shortIdPrefix": null,
-        "typeByteRange": "100–125"
+        "typeByteRange": "40–49",
+        "family": "agents and surfacing"
       },
       {
         "id": "RITUAL",
         "classification": "pack",
         "typeByte": null,
         "shortIdPrefix": null,
-        "typeByteRange": "100–125"
+        "typeByteRange": "115–119",
+        "family": "companion"
       },
       {
         "id": "RITUAL_ENGAGEMENT",
         "classification": "pack",
         "typeByte": null,
         "shortIdPrefix": null,
-        "typeByteRange": "100–125"
+        "typeByteRange": "115–119",
+        "family": "companion"
+      },
+      {
+        "id": "LIFE_EVENT",
+        "classification": "pack",
+        "typeByte": null,
+        "shortIdPrefix": null,
+        "typeByteRange": "115–119",
+        "family": "companion"
+      },
+      {
+        "id": "ARC_THREAD",
+        "classification": "pack",
+        "typeByte": null,
+        "shortIdPrefix": null,
+        "typeByteRange": "115–119",
+        "family": "companion"
+      },
+      {
+        "id": "ARC_INSTANCE",
+        "classification": "pack",
+        "typeByte": null,
+        "shortIdPrefix": null,
+        "typeByteRange": "115–119",
+        "family": "companion"
+      },
+      {
+        "id": "NOTE",
+        "classification": "pack",
+        "typeByte": 111,
+        "shortIdPrefix": "no",
+        "typeByteRange": "110–114",
+        "family": "documents"
+      },
+      {
+        "id": "TASK_LIST",
+        "classification": "pack",
+        "typeByte": 100,
+        "shortIdPrefix": "tl",
+        "typeByteRange": "100–104",
+        "family": "productivity"
+      },
+      {
+        "id": "TASK",
+        "classification": "pack",
+        "typeByte": 101,
+        "shortIdPrefix": "tk",
+        "typeByteRange": "100–104",
+        "family": "productivity"
+      },
+      {
+        "id": "MACHINE",
+        "classification": "pack",
+        "typeByte": 102,
+        "shortIdPrefix": "mc",
+        "typeByteRange": "100–104",
+        "family": "productivity"
+      },
+      {
+        "id": "CODE_ARTIFACT",
+        "classification": "pack",
+        "typeByte": 105,
+        "shortIdPrefix": "cd",
+        "typeByteRange": "105–109",
+        "family": "code"
+      },
+      {
+        "id": "CODE_SYMBOL",
+        "classification": "pack",
+        "typeByte": 106,
+        "shortIdPrefix": "cs",
+        "typeByteRange": "105–109",
+        "family": "code"
+      },
+      {
+        "id": "BLOB_ARTIFACT",
+        "classification": "pack",
+        "typeByte": 110,
+        "shortIdPrefix": "ba",
+        "typeByteRange": "110–114",
+        "family": "documents"
+      },
+      {
+        "id": "COMPANION_REGISTER",
+        "classification": "pack",
+        "typeByte": 115,
+        "shortIdPrefix": "cr",
+        "typeByteRange": "115–119",
+        "family": "companion"
+      },
+      {
+        "id": "PSYCH_PROFILE",
+        "classification": "system",
+        "typeByte": 94,
+        "shortIdPrefix": null,
+        "typeByteRange": "90–99",
+        "family": "registries and derived"
+      },
+      {
+        "id": "ACCESS_GRANT",
+        "classification": "system",
+        "typeByte": 67,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–71",
+        "family": "authority, policy, custody"
+      },
+      {
+        "id": "CLAIM_CLASS_DESCRIPTOR",
+        "classification": "system",
+        "typeByte": 91,
+        "shortIdPrefix": null,
+        "typeByteRange": "90–99",
+        "family": "registries and derived"
+      },
+      {
+        "id": "SKILL_HUB",
+        "classification": "system",
+        "typeByte": 92,
+        "shortIdPrefix": null,
+        "typeByteRange": "90–99",
+        "family": "registries and derived"
+      },
+      {
+        "id": "REDACTION_AUDIT",
+        "classification": "maintenance",
+        "typeByte": 72,
+        "shortIdPrefix": null,
+        "typeByteRange": "72–79",
+        "family": "audit and observability"
+      },
+      {
+        "id": "MODEL",
+        "classification": "maintenance",
+        "typeByte": 90,
+        "shortIdPrefix": "mo",
+        "typeByteRange": "90–99",
+        "family": "registries and derived"
+      },
+      {
+        "id": "AUTHORITY_LOG",
+        "classification": "maintenance",
+        "typeByte": 64,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–71",
+        "family": "authority, policy, custody"
+      },
+      {
+        "id": "POLICY_MANIFEST",
+        "classification": "maintenance",
+        "typeByte": 65,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–71",
+        "family": "authority, policy, custody"
+      },
+      {
+        "id": "FEDERATION_GRANT",
+        "classification": "maintenance",
+        "typeByte": 66,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–71",
+        "family": "authority, policy, custody"
+      },
+      {
+        "id": "DIAGNOSTIC",
+        "classification": "maintenance",
+        "typeByte": 73,
+        "shortIdPrefix": null,
+        "typeByteRange": "72–79",
+        "family": "audit and observability"
+      },
+      {
+        "id": "CONNECTOR_KEY",
+        "classification": "maintenance",
+        "typeByte": 80,
+        "shortIdPrefix": "ck",
+        "typeByteRange": "80–89",
+        "family": "outbound communication and consent"
+      },
+      {
+        "id": "SUSPICIOUS_WAKE",
+        "classification": "maintenance",
+        "typeByte": 75,
+        "shortIdPrefix": null,
+        "typeByteRange": "72–79",
+        "family": "audit and observability"
+      },
+      {
+        "id": "IDENTITY_TOPOLOGY_EVENT",
+        "classification": "maintenance",
+        "typeByte": 74,
+        "shortIdPrefix": null,
+        "typeByteRange": "72–79",
+        "family": "audit and observability"
+      },
+      {
+        "id": "SECRET_CUSTODY",
+        "classification": "maintenance",
+        "typeByte": 68,
+        "shortIdPrefix": null,
+        "typeByteRange": "64–71",
+        "family": "authority, policy, custody"
+      },
+      {
+        "id": "CHANNEL_IDENTITY",
+        "classification": "maintenance",
+        "typeByte": 81,
+        "shortIdPrefix": null,
+        "typeByteRange": "80–89",
+        "family": "outbound communication and consent"
+      },
+      {
+        "id": "COUNTERPARTY_CONTACT",
+        "classification": "maintenance",
+        "typeByte": 82,
+        "shortIdPrefix": null,
+        "typeByteRange": "80–89",
+        "family": "outbound communication and consent"
+      },
+      {
+        "id": "OUTBOUND_GRANT",
+        "classification": "maintenance",
+        "typeByte": 83,
+        "shortIdPrefix": null,
+        "typeByteRange": "80–89",
+        "family": "outbound communication and consent"
+      },
+      {
+        "id": "PERSONA_SNAPSHOT_EXPORT",
+        "classification": "maintenance",
+        "typeByte": 85,
+        "shortIdPrefix": null,
+        "typeByteRange": "80–89",
+        "family": "outbound communication and consent"
+      },
+      {
+        "id": "COMM_RECORD",
+        "classification": "maintenance",
+        "typeByte": 84,
+        "shortIdPrefix": null,
+        "typeByteRange": "80–89",
+        "family": "outbound communication and consent"
+      },
+      {
+        "id": "SKILL_CONTENT_ANCHOR",
+        "classification": "maintenance",
+        "typeByte": 93,
+        "shortIdPrefix": null,
+        "typeByteRange": "90–99",
+        "family": "registries and derived"
       }
     ],
     "systemBandAllocation": [
       {
         "byte": 64,
-        "kind": "REDACTION_AUDIT",
+        "kind": "AUTHORITY_LOG",
         "state": "assigned"
       },
       {
         "byte": 65,
-        "kind": "MODEL",
+        "kind": "POLICY_MANIFEST",
         "state": "assigned"
       },
       {
         "byte": 66,
-        "kind": "AUTHORITY_LOG",
-        "state": "reserved/write-rejected (registration in flight)"
+        "kind": "FEDERATION_GRANT",
+        "state": "assigned"
       },
       {
         "byte": 67,
-        "kind": "POLICY_MANIFEST",
+        "kind": "ACCESS_GRANT",
         "state": "assigned"
       },
       {
         "byte": 68,
-        "kind": "FEDERATION_GRANT",
-        "state": "assigned"
-      },
-      {
-        "byte": 69,
-        "kind": "DIAGNOSTIC",
-        "state": "ratified/registration-in-flight"
-      },
-      {
-        "byte": 70,
-        "kind": "CONNECTOR_KEY",
-        "state": "ratified/engine-adoption-pending"
-      },
-      {
-        "byte": 71,
-        "kind": "PSYCH_PROFILE",
-        "state": "assigned"
-      },
-      {
-        "byte": 72,
-        "kind": "SUSPICIOUS_WAKE",
-        "state": "ratified/registration-in-flight"
-      },
-      {
-        "byte": 73,
-        "kind": "ACCESS_GRANT",
-        "state": "assigned — engine-reality-wins"
-      },
-      {
-        "byte": 74,
-        "kind": "CLAIM_CLASS_DESCRIPTOR",
-        "state": "reserved/engine-pending — canon-first"
-      },
-      {
-        "byte": 75,
-        "kind": "SKILL_HUB",
-        "state": "reserved/engine-pending — canon-first"
-      },
-      {
-        "byte": 76,
-        "kind": "IDENTITY_TOPOLOGY_EVENT",
-        "state": "ratified/engine-adoption-in-flight"
-      },
-      {
-        "byte": 77,
         "kind": "SECRET_CUSTODY",
         "state": "assigned"
       },
       {
-        "byte": 78,
-        "kind": "COMPANION_REGISTER",
+        "byte": 72,
+        "kind": "REDACTION_AUDIT",
         "state": "assigned"
       },
       {
-        "byte": 79,
-        "kind": "CHANNEL_IDENTITY",
+        "byte": 73,
+        "kind": "DIAGNOSTIC",
         "state": "assigned"
+      },
+      {
+        "byte": 74,
+        "kind": "IDENTITY_TOPOLOGY_EVENT",
+        "state": "assigned"
+      },
+      {
+        "byte": 75,
+        "kind": "SUSPICIOUS_WAKE",
+        "state": "reserved — canon row, no engine substrate, write-rejected"
       },
       {
         "byte": 80,
-        "kind": "COUNTERPARTY_CONTACT",
+        "kind": "CONNECTOR_KEY",
         "state": "assigned"
       },
       {
         "byte": 81,
-        "kind": "OUTBOUND_GRANT",
+        "kind": "CHANNEL_IDENTITY",
         "state": "assigned"
       },
       {
         "byte": 82,
-        "kind": "PERSONA_SNAPSHOT_EXPORT",
+        "kind": "COUNTERPARTY_CONTACT",
         "state": "assigned"
       },
       {
         "byte": 83,
-        "kind": "COMM_RECORD",
+        "kind": "OUTBOUND_GRANT",
         "state": "assigned"
       },
       {
         "byte": 84,
+        "kind": "COMM_RECORD",
+        "state": "assigned"
+      },
+      {
+        "byte": 85,
+        "kind": "PERSONA_SNAPSHOT_EXPORT",
+        "state": "assigned"
+      },
+      {
+        "byte": 90,
+        "kind": "MODEL",
+        "state": "assigned"
+      },
+      {
+        "byte": 91,
+        "kind": "CLAIM_CLASS_DESCRIPTOR",
+        "state": "reserved — canon row, no engine substrate, write-rejected"
+      },
+      {
+        "byte": 92,
+        "kind": "SKILL_HUB",
+        "state": "reserved — canon row, no engine substrate, write-rejected"
+      },
+      {
+        "byte": 93,
         "kind": "SKILL_CONTENT_ANCHOR",
+        "state": "assigned"
+      },
+      {
+        "byte": 94,
+        "kind": "PSYCH_PROFILE",
         "state": "assigned"
       }
     ],
-    "byteMigrationV3": [
+    "byteMigrationV31": [
       {
-        "kind": "REDACTION_AUDIT",
-        "oldByte": 120,
-        "newByte": 64,
-        "half": "engine",
-        "state": "assigned"
+        "kind": "CONVERSATION",
+        "v3Byte": 11,
+        "v31Byte": 4,
+        "zone": "core",
+        "family": "conversation"
       },
       {
-        "kind": "MODEL",
-        "oldByte": 121,
-        "newByte": 65,
-        "half": "engine",
-        "state": "assigned"
+        "kind": "SUMMARY",
+        "v3Byte": 8,
+        "v31Byte": 5,
+        "zone": "core",
+        "family": "conversation"
+      },
+      {
+        "kind": "PERSON",
+        "v3Byte": 4,
+        "v31Byte": 10,
+        "zone": "core",
+        "family": "people"
+      },
+      {
+        "kind": "RELATIONSHIP",
+        "v3Byte": 5,
+        "v31Byte": 11,
+        "zone": "core",
+        "family": "people"
+      },
+      {
+        "kind": "EVENT",
+        "v3Byte": 6,
+        "v31Byte": 20,
+        "zone": "core",
+        "family": "world"
+      },
+      {
+        "kind": "PLACE",
+        "v3Byte": 9,
+        "v31Byte": 21,
+        "zone": "core",
+        "family": "world"
+      },
+      {
+        "kind": "WORLD",
+        "v3Byte": 14,
+        "v31Byte": 22,
+        "zone": "core",
+        "family": "world"
+      },
+      {
+        "kind": "ASSET",
+        "v3Byte": 15,
+        "v31Byte": 30,
+        "zone": "core",
+        "family": "content"
+      },
+      {
+        "kind": "ASSET_TEXT",
+        "v3Byte": 10,
+        "v31Byte": 31,
+        "zone": "core",
+        "family": "content"
+      },
+      {
+        "kind": "SKILL",
+        "v3Byte": 7,
+        "v31Byte": 40,
+        "zone": "core",
+        "family": "agents and surfacing"
+      },
+      {
+        "kind": "AGENT_DEF",
+        "v3Byte": 17,
+        "v31Byte": 41,
+        "zone": "core",
+        "family": "agents and surfacing"
+      },
+      {
+        "kind": "NOTIFICATION",
+        "v3Byte": 16,
+        "v31Byte": 42,
+        "zone": "core",
+        "family": "agents and surfacing"
       },
       {
         "kind": "AUTHORITY_LOG",
-        "oldByte": 122,
-        "newByte": 66,
-        "half": "engine",
-        "state": "reserved/write-rejected (registration in flight)"
+        "v3Byte": 66,
+        "v31Byte": 64,
+        "zone": "system",
+        "family": "authority, policy, custody"
       },
       {
         "kind": "POLICY_MANIFEST",
-        "oldByte": 123,
-        "newByte": 67,
-        "half": "engine",
-        "state": "assigned"
+        "v3Byte": 67,
+        "v31Byte": 65,
+        "zone": "system",
+        "family": "authority, policy, custody"
       },
       {
         "kind": "FEDERATION_GRANT",
-        "oldByte": 124,
-        "newByte": 68,
-        "half": "engine",
-        "state": "assigned"
-      },
-      {
-        "kind": "DIAGNOSTIC",
-        "oldByte": 126,
-        "newByte": 69,
-        "half": "engine",
-        "state": "ratified/registration-in-flight"
-      },
-      {
-        "kind": "CONNECTOR_KEY",
-        "oldByte": 128,
-        "newByte": 70,
-        "half": "engine",
-        "state": "ratified/engine-adoption-pending"
-      },
-      {
-        "kind": "PSYCH_PROFILE",
-        "oldByte": 129,
-        "newByte": 71,
-        "half": "engine",
-        "state": "assigned"
-      },
-      {
-        "kind": "SUSPICIOUS_WAKE",
-        "oldByte": 130,
-        "newByte": 72,
-        "half": "engine",
-        "state": "ratified/registration-in-flight"
+        "v3Byte": 68,
+        "v31Byte": 66,
+        "zone": "system",
+        "family": "authority, policy, custody"
       },
       {
         "kind": "ACCESS_GRANT",
-        "oldByte": null,
-        "newByte": 73,
-        "half": "engine",
-        "state": "assigned — engine-reality-wins"
+        "v3Byte": 73,
+        "v31Byte": 67,
+        "zone": "system",
+        "family": "authority, policy, custody"
       },
       {
-        "kind": "CLAIM_CLASS_DESCRIPTOR",
-        "oldByte": null,
-        "newByte": 74,
-        "half": "engine",
-        "state": "reserved/engine-pending — canon-first"
+        "kind": "SECRET_CUSTODY",
+        "v3Byte": 77,
+        "v31Byte": 68,
+        "zone": "system",
+        "family": "authority, policy, custody"
       },
       {
-        "kind": "SKILL_HUB",
-        "oldByte": null,
-        "newByte": 75,
-        "half": "engine",
-        "state": "reserved/engine-pending — canon-first"
+        "kind": "REDACTION_AUDIT",
+        "v3Byte": 64,
+        "v31Byte": 72,
+        "zone": "system",
+        "family": "audit and observability"
       },
       {
-        "kind": "COMPANION_REGISTER",
-        "oldByte": 64,
-        "newByte": 78,
-        "half": "engine",
-        "state": "assigned"
+        "kind": "DIAGNOSTIC",
+        "v3Byte": 69,
+        "v31Byte": 73,
+        "zone": "system",
+        "family": "audit and observability"
+      },
+      {
+        "kind": "IDENTITY_TOPOLOGY_EVENT",
+        "v3Byte": 76,
+        "v31Byte": 74,
+        "zone": "system",
+        "family": "audit and observability"
+      },
+      {
+        "kind": "SUSPICIOUS_WAKE",
+        "v3Byte": 72,
+        "v31Byte": 75,
+        "zone": "system",
+        "family": "audit and observability"
+      },
+      {
+        "kind": "CONNECTOR_KEY",
+        "v3Byte": 70,
+        "v31Byte": 80,
+        "zone": "system",
+        "family": "outbound communication and consent"
       },
       {
         "kind": "CHANNEL_IDENTITY",
-        "oldByte": 131,
-        "newByte": 79,
-        "half": "pack",
-        "state": "assigned"
+        "v3Byte": 79,
+        "v31Byte": 81,
+        "zone": "system",
+        "family": "outbound communication and consent"
       },
       {
         "kind": "COUNTERPARTY_CONTACT",
-        "oldByte": 132,
-        "newByte": 80,
-        "half": "pack",
-        "state": "assigned"
+        "v3Byte": 80,
+        "v31Byte": 82,
+        "zone": "system",
+        "family": "outbound communication and consent"
       },
       {
         "kind": "OUTBOUND_GRANT",
-        "oldByte": 133,
-        "newByte": 81,
-        "half": "pack",
-        "state": "assigned"
-      },
-      {
-        "kind": "PERSONA_SNAPSHOT_EXPORT",
-        "oldByte": 134,
-        "newByte": 82,
-        "half": "pack",
-        "state": "assigned"
+        "v3Byte": 81,
+        "v31Byte": 83,
+        "zone": "system",
+        "family": "outbound communication and consent"
       },
       {
         "kind": "COMM_RECORD",
-        "oldByte": 136,
-        "newByte": 83,
-        "half": "pack",
-        "state": "assigned"
+        "v3Byte": 83,
+        "v31Byte": 84,
+        "zone": "system",
+        "family": "outbound communication and consent"
+      },
+      {
+        "kind": "PERSONA_SNAPSHOT_EXPORT",
+        "v3Byte": 82,
+        "v31Byte": 85,
+        "zone": "system",
+        "family": "outbound communication and consent"
+      },
+      {
+        "kind": "MODEL",
+        "v3Byte": 65,
+        "v31Byte": 90,
+        "zone": "system",
+        "family": "registries and derived"
+      },
+      {
+        "kind": "CLAIM_CLASS_DESCRIPTOR",
+        "v3Byte": 74,
+        "v31Byte": 91,
+        "zone": "system",
+        "family": "registries and derived"
+      },
+      {
+        "kind": "SKILL_HUB",
+        "v3Byte": 75,
+        "v31Byte": 92,
+        "zone": "system",
+        "family": "registries and derived"
       },
       {
         "kind": "SKILL_CONTENT_ANCHOR",
-        "oldByte": 138,
-        "newByte": 84,
-        "half": "pack",
-        "state": "assigned"
+        "v3Byte": 84,
+        "v31Byte": 93,
+        "zone": "system",
+        "family": "registries and derived"
       },
       {
-        "kind": "TASK_LIST",
-        "oldByte": 80,
-        "newByte": 100,
-        "half": "engine",
-        "state": "assigned"
-      },
-      {
-        "kind": "TASK",
-        "oldByte": 81,
-        "newByte": 101,
-        "half": "engine",
-        "state": "assigned"
-      },
-      {
-        "kind": "MACHINE",
-        "oldByte": 82,
-        "newByte": 102,
-        "half": "engine",
-        "state": "assigned"
+        "kind": "PSYCH_PROFILE",
+        "v3Byte": 71,
+        "v31Byte": 94,
+        "zone": "system",
+        "family": "registries and derived"
       },
       {
         "kind": "CODE_ARTIFACT",
-        "oldByte": 83,
-        "newByte": 103,
-        "half": "engine",
-        "state": "assigned"
+        "v3Byte": 103,
+        "v31Byte": 105,
+        "zone": "pack",
+        "family": "code"
       },
       {
         "kind": "CODE_SYMBOL",
-        "oldByte": 84,
-        "newByte": 104,
-        "half": "engine",
-        "state": "assigned"
+        "v3Byte": 104,
+        "v31Byte": 106,
+        "zone": "pack",
+        "family": "code"
       },
       {
         "kind": "BLOB_ARTIFACT",
-        "oldByte": 85,
-        "newByte": 105,
-        "half": "engine",
-        "state": "assigned"
+        "v3Byte": 105,
+        "v31Byte": 110,
+        "zone": "pack",
+        "family": "documents"
       },
       {
         "kind": "NOTE",
-        "oldByte": 86,
-        "newByte": 106,
-        "half": "engine",
-        "state": "assigned"
+        "v3Byte": 106,
+        "v31Byte": 111,
+        "zone": "pack",
+        "family": "documents"
+      },
+      {
+        "kind": "COMPANION_REGISTER",
+        "v3Byte": 78,
+        "v31Byte": 115,
+        "zone": "pack",
+        "family": "companion"
       }
     ]
   }

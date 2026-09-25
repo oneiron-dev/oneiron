@@ -11,6 +11,8 @@
 
 mod codec;
 mod execute;
+mod schema;
+pub use schema::validate_json_schema;
 mod peer_wait;
 mod step_claim;
 mod step_only;
@@ -23,7 +25,7 @@ mod types;
 // one level deeper `super` is this module, so it re-exports them unchanged.
 use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
-pub use self::execute::call_as_step;
+pub use self::execute::{call_as_step, call_as_step_with_fallbacks};
 pub use self::peer_wait::{
     PeerResultWaitBinding, reconcile_peer_result_signals, register_peer_result_wait,
     send_peer_result_signal,
@@ -74,7 +76,7 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::llm::{
     BudgetGuard, CallClass, CallPurpose, LlmBackend, LlmError, LlmRequest, LlmResponse,
-    PinnedConfigViolation, PinnedModelConfig, canonical_json_bytes,
+    canonical_json_bytes,
 };
 #[cfg(test)]
 use crate::temporal::TimeRange;
@@ -82,3 +84,5 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 #[cfg(test)]
 use rmpv::Value;
+
+pub(crate) use peer_wait::resume_peer_result_steps;

@@ -1,0 +1,104 @@
+{
+  "baseline_receipt": {
+    "binary_blake3": "a455c0908e1c91b6c1b3fb9fb1bcfe811a44f5ffbc2bd3d0de717ead3dcdabd7",
+    "dirty": null,
+    "held_sockets": 20000,
+    "hold_observed_ms": 2094427.2260409999,
+    "host": {
+      "arch": "aarch64",
+      "compiled_opt_level": "3",
+      "compiled_profile": "release",
+      "cpu": "Apple M4 Max",
+      "debug_assertions": false,
+      "fd_limit": "65536",
+      "hostname": "Oletybook.local",
+      "kernel": "27.0.0",
+      "logical_cpus": 16,
+      "os": "macos"
+    },
+    "metrics": {
+      "ppr_full": {
+        "completed": 100,
+        "elapsed_seconds": 7.440715703999998,
+        "p99_ms": 234.766541,
+        "throughput_per_second": 13.439567372026021
+      },
+      "ppr_prepare": {
+        "completed": 100,
+        "elapsed_seconds": 5.972001252000004,
+        "p99_ms": 212.333625,
+        "throughput_per_second": 16.744805598711206
+      },
+      "ppr_resume": {
+        "completed": 100,
+        "elapsed_seconds": 7.605676208,
+        "p99_ms": 135.657834,
+        "throughput_per_second": 13.148074841105569
+      },
+      "recall_0": {
+        "completed": 20000,
+        "elapsed_seconds": 905.15044375,
+        "p99_ms": 8187.406167000001,
+        "throughput_per_second": 22.09577439650899
+      },
+      "socket_open": {
+        "completed": 20000,
+        "elapsed_seconds": 1.068068208,
+        "p99_ms": 14.832125,
+        "throughput_per_second": 18725.39585973708
+      },
+      "socket_probe_after": {
+        "completed": 20000,
+        "elapsed_seconds": 0.169982791,
+        "p99_ms": 1.1802080000000001,
+        "throughput_per_second": 117658.96937178777
+      },
+      "socket_probe_before": {
+        "completed": 20000,
+        "elapsed_seconds": 0.172596083,
+        "p99_ms": 0.6675,
+        "throughput_per_second": 115877.48489054643
+      },
+      "write_0": {
+        "completed": 20000,
+        "elapsed_seconds": 1188.0260085,
+        "p99_ms": 8898.897041,
+        "throughput_per_second": 16.834648279503554
+      }
+    },
+    "optimization": {
+      "equivalent_pairs": 100,
+      "incremental_speedup": 0.9783108694758147,
+      "preparation_included_speedup": 0.5480109338228452,
+      "preparation_seconds": 5.972001252000004,
+      "result_blake3": "2882f49e69cd68aaf010b547fd99533cf00312fe08beda9a3cf8246ae6329430",
+      "route": "full-depth10-vs-depth5-resume-to10-v1"
+    },
+    "plan": {
+      "agents": 20000,
+      "concurrency": 64,
+      "hold_ms": 1000,
+      "host_label": "macbook",
+      "listeners": 4,
+      "map_size": 4294967296,
+      "ppr_nodes": 1024,
+      "ppr_samples": 100,
+      "profile": "fleet20k-v1",
+      "rounds": 1,
+      "runtime_threads": 4,
+      "scratch": "/Volumes/Cinema/w7-build/wt/W7-C10/target/fleet-scratch",
+      "storage_label": "Cinema-worktree",
+      "timeout_secs": 120
+    },
+    "revision": null,
+    "schema": "oneiron-fleet-v1",
+    "started_unix_ms": 1789800713599,
+    "status": "complete",
+    "verified_recalls": 20000,
+    "verified_writes": 20000
+  },
+  "baseline_sha256": "45af320a686a465cc380acced0910624e335a33614eff2278221d5bb5f84072d",
+  "p99_increase": 0.2,
+  "schema": "oneiron-fleet-floor-v1",
+  "throughput_loss": 0.15
+}

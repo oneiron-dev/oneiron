@@ -9,7 +9,7 @@ fn scored(id: [u8; 16], score: f32) -> ScoredEntity {
 
 fn blend_input(
     id: [u8; 16],
-    recency: f32,
+    recency: f64,
     salience: f32,
     confidence: f32,
     gravity: f32,

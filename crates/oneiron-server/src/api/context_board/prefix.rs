@@ -8,6 +8,7 @@ use oneiron::HydrationBudget;
 use oneiron::NotificationItem;
 use oneiron::SessionContext;
 use oneiron::UnprocessedItem;
+use oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use oneiron::registry::ENTITY_TYPE_NOTIFICATION;
 use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use serde_json::Value;
@@ -45,7 +46,10 @@ pub(crate) async fn session_prefix(server: &SyncServer) -> Result<SessionContext
     } else {
         server
             .vault
-            .latest_learned_at_excluding_entity_types(&[ENTITY_TYPE_POLICY_MANIFEST])
+            .latest_learned_at_excluding_entity_types(&[
+                ENTITY_TYPE_POLICY_MANIFEST,
+                ENTITY_TYPE_AUTHORITY_LOG,
+            ])
             .inspect_err(|e| {
                 tracing::error!(error = %e, "session prefix activity summary failed");
             })

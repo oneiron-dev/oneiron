@@ -1,6 +1,7 @@
 //! Read-side corruption and stranding regressions; no production fixture doors.
 
 use super::*;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimSource, encode_claim_body};
 use crate::identity_topology::{
     IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,

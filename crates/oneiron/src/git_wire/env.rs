@@ -22,6 +22,7 @@ pub struct GitWireProcessEnv {
     pub(super) tmpdir: PathBuf,
     pub(super) timeout: Duration,
     pub(super) max_output_bytes: usize,
+    pub(super) hub_root: Option<PathBuf>,
 }
 
 /// The process baseline, resolved once. Pinning the executable at first use is
@@ -47,6 +48,7 @@ impl GitWireProcessEnv {
             tmpdir: std::env::temp_dir(),
             timeout: GIT_WIRE_DEFAULT_TIMEOUT,
             max_output_bytes: GIT_WIRE_DEFAULT_MAX_OUTPUT_BYTES,
+            hub_root: None,
         })
     }
 

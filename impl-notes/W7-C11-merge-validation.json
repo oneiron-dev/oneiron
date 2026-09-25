@@ -1,0 +1,218 @@
+{
+  "ticket": "W7-C11",
+  "purpose": "Scoped validation of merge resolution, not the full workspace gate",
+  "parents": {
+    "branch": "77f9a42afa4d1c6f33e6d3cd6467a508d4b0c418",
+    "originMain": "60c5b875b9e2f0ce84b27d888b308f96ff366af1"
+  },
+  "sourceSha256": {
+    "crates/oneiron-server/src/api/mcp_gateway/facade_verbs.rs": "120fd805fceb52730e664e6f12c9dffb7cdbb0e60ee4a429a0519a235a94eb71",
+    "crates/oneiron/src/batch/put_apply/apply.rs": "14f9f00a5e02e129004ad0a2f43dafd84cc0a59d9e89214136296e19de4907e2",
+    "crates/oneiron/src/batch/put_apply/mod.rs": "2dfb64158ce98641d79ee967a49fb6d8f2fc546821d9fb8d31b147daa405c535",
+    "crates/oneiron/src/batch/put_apply/put_staging.rs": "7aa4a9429db06fdec524cb3a6126e9263fb8b5ba045caeb3fac73e7f1bb9550e",
+    "crates/oneiron/src/claim/scoped_read.rs": "b5d8d2261927a0781c2d8ccb8393ad8bef29072feee372040bc7c992b15efd05",
+    "crates/oneiron/src/context_pack/hydration.rs": "1faf6357a5fa8e8b3307b8f2b4593d72653d873475caa962d33baa611a3cfcc2",
+    "crates/oneiron/src/dreamer_consolidation/conflict.rs": "c47dc08b452494ecc3639400ec469c949729ca03bb4d5fc62ff68ad7757e7b47",
+    "crates/oneiron/src/dreamer_consolidation/executor.rs": "f944234525156693310050579b82faa06165b8a2046f53d99f356c3fb8773b99",
+    "crates/oneiron/src/dreamer_consolidation/executor/extraction.rs": "79c521b61ab7c7f3a5907546d8c556a9c00d116476bfe2fcd39a57423007bf3c",
+    "crates/oneiron/src/dreamer_consolidation/open_conflict.rs": "e90d940a73a1bae33433cf3384b379cb68e3f255606fe14cac48d0922e148d9b",
+    "crates/oneiron/src/dreamer_consolidation/persistence.rs": "2acc72283e3627a1a1e2fc2d0a99f21ef78c61394aa39a678f3ecf7017995f65",
+    "crates/oneiron/src/dreamer_consolidation/resources.rs": "925c6ea2c3bceabff2ae8c99bb2b0b1f5f0d0d031d796307cecd803301d4e9d6",
+    "crates/oneiron/src/dreamer_consolidation/resources/prior.rs": "a6b3a183e4525e189c6422c69693a540416192738d244846767469dbb16b49df",
+    "crates/oneiron/src/dreamer_consolidation/resources/write.rs": "eb89dc599c5c5d389b838259120a4eda928212c4420a5adb41534d11a61837d4",
+    "crates/oneiron/src/dreamer_consolidation/routing.rs": "55d084ec8c97620add2e2774235d3a5b0e74dca2c174ef13617c500ce0115724",
+    "crates/oneiron/src/dreamer_consolidation/tests.rs": "cafad8aa58c7c0434fa13211d08ae96d8e8615928752e97e8ca48509ad3e99a3",
+    "crates/oneiron/src/dreamer_consolidation/tests/persistent_conflicts.rs": "88407b4e3379d69b9c874eefb6497564f85cc217a7f994e96793155dcb982874",
+    "crates/oneiron/src/dreamer_consolidation/tests/prior_heads.rs": "1b234fb0275ecde823ecbc2d56954d796b2386b377a6375abf695faea77dfae1",
+    "crates/oneiron/src/dreamer_consolidation/tests/scope_enforcement.rs": "6f4e7b1777875200bd26472c9c02210a1dd1870ca3f3398b29ef0f5d7f637f1f",
+    "crates/oneiron/src/dreamer_wake/driver.rs": "48ac2f28a1cf2f6f9789ad0e7d6bf0c85094516f04ef71f104bcc8da43b757d6",
+    "crates/oneiron/src/memory/reads.rs": "86b3338bd9b82807ab0276dec97e04178f6538f64a78e66506f0b81eba14317f",
+    "crates/oneiron/src/memory/structural/affiliated.rs": "3764ee7dc8a51a50a378d5ac6e50b6ffe1baa52ace247c810d29cd3e157029af",
+    "crates/oneiron/src/memory/tests/takes_notes.rs": "05aaac7352df56930625c47e24600558a9b71d4deff38cf886685916408ec8a9",
+    "crates/oneiron/src/note.rs": "d83214af754acccfab948fd93d4de9c3cd5615886b02c01da433eb9c139ffac6",
+    "crates/oneiron/src/note/document_tests.rs": "02ddebd56632c8ac0412e7ef575539db5fe505753401b59f00caf16c81d6cb52",
+    "crates/oneiron/src/note/kinds.rs": "32b8eb6f11862267860d662263ee168f0f0915f703d92c26db3b71f87fae1960",
+    "crates/oneiron/src/note/tests.rs": "f3092fd92bafcb34d550914e4867893030ad60ef5d36486701d8a3bf6baa9e83",
+    "crates/oneiron/src/note/verbs.rs": "bf534b4820c8095a583922591cd2e76fbcc58034b5f5bba0c76785c8adae39b2",
+    "crates/oneiron/src/ports/lmdb_index.rs": "a69d79d4f79de85c4c08f20c29d8beae01f0c0ece464c96b72d998615f154eae",
+    "crates/oneiron/src/secret_lease/tests.rs": "6adeb77d7fb21e98a42dc4d57590aeba1170014b35588e750b35005bdac9a3bb",
+    "crates/oneiron/src/secret_snapshot/tests.rs": "97fec0f728dc8536fc44d5c2fbcea03d0f93810a3451836a4782b4a6989d544c",
+    "crates/oneiron/src/skill_optimize/job.rs": "e2bbdc67c314d9ac55b55e1c9445dda57b12589a04f5bc79c1a649b3703501f0",
+    "crates/oneiron/src/vault/entities.rs": "91e16340656ab0c43ba1025d01221f4552f210d1835969c3aeb470b70b0ad1bd"
+  },
+  "runs": [
+    {
+      "jobId": "W7-C11-merge-validation-v3-3aded1c1399e",
+      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v3-3aded1c1399e.terminal.json",
+      "terminalSha256": "746e7f9752570daf9b3ac044f3a66a7d0a9375d4b71476b8b0158098dbda5c0b",
+      "logPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v3-3aded1c1399e.log",
+      "logSha256": "68dd34f1a3daa900c6e848f53e2c44eec0a5e64d03ea7a2983da0b3f7d951771",
+      "exitCode": 100,
+      "summaries": [
+        "Summary [  20.145s] 1545 tests run: 606 passed, 939 failed, 7284 skipped"
+      ],
+      "hosts": [
+        "olety@100.124.216.116"
+      ],
+      "specPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v3-3aded1c1399e.spec.json"
+    },
+    {
+      "jobId": "W7-C11-merge-validation-v5-ecaa816709c7",
+      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v5-ecaa816709c7.terminal.json",
+      "terminalSha256": "cff7aab091a36ce4e432aca92443e3f13c9fb727ed2520f953488e0e216da0b8",
+      "logPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v5-ecaa816709c7.log",
+      "logSha256": "c057da4dfee03dca1f1eafbbdfbb1150358a5fa23a4dc01c1353915a9beb237b",
+      "exitCode": 100,
+      "summaries": [
+        "Summary [  26.153s] 939 tests run: 936 passed, 3 failed, 7915 skipped"
+      ],
+      "hosts": [
+        "arch"
+      ],
+      "specPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v5-ecaa816709c7.spec.json"
+    },
+    {
+      "jobId": "W7-C11-merge-validation-v7-f8049f6ae7a3",
+      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v7-f8049f6ae7a3.terminal.json",
+      "terminalSha256": "d22467674b586a2665b42e9490895f7e69c980f013a10382bc60fe5d961da128",
+      "logPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v7-f8049f6ae7a3.log",
+      "logSha256": "6135a5d1a8b65329414ac55f02ff1eff6951408d42c450203f9f8145ce1a24b3",
+      "exitCode": 101,
+      "summaries": [
+        "Summary [   0.817s] 101 tests run: 101 passed, 7849 skipped"
+      ],
+      "hosts": [
+        "arch"
+      ],
+      "specPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v7-f8049f6ae7a3.spec.json"
+    },
+    {
+      "jobId": "W7-C11-merge-validation-v9-0afcdd43c5ef",
+      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v9-0afcdd43c5ef.terminal.json",
+      "terminalSha256": "fdd087c1bd56878d697b2def6cd60f42853f1b22c28e7ef5499466b0c8916d1e",
+      "logPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v9-0afcdd43c5ef.log",
+      "logSha256": "a5f72602f2df832533e6d4ed11070bad8c5990e9f05fcaa6a21cddfff25adcbb",
+      "exitCode": 0,
+      "summaries": [
+        "Summary [   0.362s] 1 test run: 1 passed, 7949 skipped",
+        "Summary [   3.929s] 617 tests run: 617 passed, 6618 skipped"
+      ],
+      "hosts": [
+        "arch"
+      ],
+      "specPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v9-0afcdd43c5ef.spec.json"
+    }
+  ],
+  "finalChecks": [
+    {
+      "command": [
+        "cargo",
+        "--config",
+        ".w7/merge-env.toml",
+        "clippy",
+        "-p",
+        "oneiron",
+        "-p",
+        "oneiron-server",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "--config",
+        ".w7/merge-env.toml",
+        "nextest",
+        "run",
+        "-p",
+        "oneiron",
+        "--all-features",
+        "--profile",
+        "full",
+        "--test-threads",
+        "4",
+        "--no-fail-fast",
+        "-E",
+        "test(claim::projection_index::)"
+      ],
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "--config",
+        ".w7/merge-env.toml",
+        "nextest",
+        "run",
+        "-p",
+        "oneiron",
+        "--no-default-features",
+        "--profile",
+        "full",
+        "--test-threads",
+        "4",
+        "--no-fail-fast",
+        "-E",
+        "test(note::) | test(takes_notes::) | test(dreamer_consolidation::) | test(ports::) | test(secret_lease::) | test(secret_snapshot::) | test(skill_optimize::) | test(gate::) | test(conversation_dag::) | test(calendar::) | test(claim::projection_index::) | test(sync::note)"
+      ],
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "--config",
+        ".w7/merge-env.toml",
+        "clippy",
+        "-p",
+        "oneiron",
+        "--all-targets",
+        "--no-default-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "--config",
+        ".w7/merge-env.toml",
+        "clippy",
+        "-p",
+        "oneiron-server",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exitCode": 0
+    }
+  ],
+  "reuse": [
+    "v3: 606 passing tests retained; 939 failed Mac POSIX semaphore exhaustion, not product failures.",
+    "v5: exact 939 rerun through native dispatcher on Arch: 936 passed, three product/fixture regressions repaired.",
+    "v7: all 101 NOTE/diary/Dreamer regressions passed after fixes.",
+    "v9: final claim-index move test, 617 scoped featureless tests, and all three Clippy lanes passed.",
+    "v8 formatting passed; subsequent test-only Vec-length assertion became iterator count without changing layout/behavior."
+  ],
+  "hostRouting": {
+    "dispatcher": "installed factory cargo wrapper",
+    "exception": "Existing owner-approved C11-HR-01 / W7_CARGO_EXCLUDE_MACBOOK=1",
+    "macProbe": "sem_open of a unique owned name returned errno 28 before any semaphore was created; no shared resources removed",
+    "mini": "below 30 GiB reserve; native dispatcher selected Arch",
+    "target": "per-ticket default target",
+    "cargoJobsMax": 3,
+    "testThreads": 4,
+    "temporaryDirectory": ".w7/merge-tmp via ignored .w7/merge-env.toml"
+  },
+  "staticChecks": {
+    "codemap": "CODEMAP-OK: 2666 files mapped, 17 artifacts current",
+    "gitDiffCheck": 0
+  },
+  "publication": "No push; local merge commit only"
+}

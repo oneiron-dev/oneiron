@@ -23,7 +23,7 @@ impl crate::Vault {
     /// using the internal maintenance write path.
     pub fn put_psych_profile(&self, id: &EntityId, profile: &PsychProfile) -> Result<()> {
         let data = encode_psych_profile_body(profile)?;
-        let learned_at = crate::unix_seconds_now();
+        let learned_at = self.store.clock.now_recorded_at();
         let mut wtxn = self.store.env.write_txn()?;
         apply_ops(
             &self.store,

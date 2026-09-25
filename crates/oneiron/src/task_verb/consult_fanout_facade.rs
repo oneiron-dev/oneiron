@@ -1,128 +1,27 @@
-use rmpv::Value;
-
 use crate::entity_id::EntityId;
-use crate::gate::PolicyApprovalCeiling;
-use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, OutboundDraftInput,
-    facade_provenance, verify_actor_binding,
-};
+use crate::memory::{Memory, MemoryError, MemoryResult, OutboundDraftInput, verify_actor_binding};
 use crate::registry::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
-use crate::unix_seconds_now;
 
 use super::consts::{CONSULT_SETTLE_PAGE, TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED};
-use super::consult_payload::{ConsultPayload, ConsultRecovery};
-use super::consult_result::{
-    ConsultDigestRoute, ConsultExpiryReport, ConsultFanOutReceipt, ConsultFanOutSpec,
-};
-use super::create_spec::{TaskCreateRateLimit, TaskCreateSpec};
-use super::create_validation::{
-    consult_body_in_txn, consult_refusal, require_resolved_entity, validate_task_create,
-};
+use super::consult_payload::ConsultRecovery;
+use super::consult_result::{ConsultDigestRoute, ConsultExpiryReport};
+use super::create_validation::{consult_body_in_txn, require_resolved_entity};
 use super::follow_up::{
     consult_expiry_artifact_value, set_task_follow_up_marker_in_txn, task_follow_up_dedupe_key,
     task_follow_up_marker,
 };
-use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
-use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl, TasksVerb};
+use super::verb_kind::TaskKind;
 use super::wire_decode::task_verb_body;
 use super::wire_encode::{canonical_bytes, encode_task_verb_body};
 
 impl Memory<'_> {
-    /// Fans one question out to N distinct peer actors as N independent consult
-    /// TASKs sharing one correlation ref. Each task has its own assignee,
-    /// deadline, terminal state, and result. There is no consult budget: a
-    /// missing budget never blocks consult creation.
-    pub fn fan_out_consults(
-        &self,
-        input: &ConsultFanOutSpec,
-    ) -> MemoryResult<ConsultFanOutReceipt> {
-        let verb = task_verb_contract(TasksVerb::Create);
-        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let now = input.now.unwrap_or_else(unix_seconds_now);
-        let provenance = facade_provenance(verb);
-        if input.assignees.is_empty() {
-            return Err(MemoryError::bad_request(
-                "a fan-out addresses at least one peer actor",
-            ));
-        }
-        // Deterministic assignee order, and duplicates REFUSED rather than
-        // collapsed: asking one peer twice under one correlation is a caller
-        // bug whose silent de-duplication would return fewer tasks than asked.
-        let mut assignees = input.assignees.clone();
-        assignees.sort_unstable();
-        if assignees.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(MemoryError::bad_request(
-                "fan-out assignees must be distinct peer actors",
-            ));
-        }
-        let correlation_ref = EntityId::now();
-        let validated = assignees
-            .iter()
-            .map(|actor_ref| {
-                validate_task_create(
-                    self.vault(),
-                    &TaskCreateSpec::new(Value::Nil, input.label.clone(), None, Some(now))
-                        .with_kind(TaskKind::Consult)
-                        .with_consult(ConsultPayload::question(
-                            input.question_ref,
-                            input.context_refs.clone(),
-                            correlation_ref,
-                        ))
-                        .with_assignee(TaskAssignee::Peer {
-                            actor_ref: *actor_ref,
-                        })
-                        .with_ttl(TaskTtl::at(input.deadline_at)),
-                    now,
-                )
-            })
-            .collect::<MemoryResult<Vec<_>>>()?;
-
-        let rate_now = unix_seconds_now();
-        let task_refs = self.with_verified_actor_write_txn(|wtxn| {
-            let ceiling =
-                task_actor_ceiling(self.vault(), &*wtxn, self.actor(), self.actor_class())?;
-            if ceiling != PolicyApprovalCeiling::Auto {
-                return Err(consult_refusal(
-                    MEMORY_CODE_FORBIDDEN,
-                    "fan-out requires an auto-ceiling actor",
-                    "Create the consults individually so each surfaces its own proposal.",
-                ));
-            }
-            let mut task_refs = Vec::with_capacity(validated.len());
-            for entry in &validated {
-                // Count every mint; OF-520 never refuses a task for rate.
-                record_task_create(
-                    self.vault(),
-                    wtxn,
-                    self.actor(),
-                    rate_now,
-                    TaskCreateRateLimit::default(),
-                )?;
-                task_refs.push(self.mint_task_in_txn(
-                    wtxn,
-                    entry,
-                    input.label.clone(),
-                    self.actor(),
-                    &provenance,
-                    now,
-                )?);
-            }
-            Ok(task_refs)
-        })?;
-
-        Ok(ConsultFanOutReceipt {
-            correlation_ref,
-            task_refs,
-        })
-    }
-
     /// Reconciles consults whose absolute deadline has passed: local
     /// compare-and-set to terminal `Expired` with a durable expiry artifact,
     /// then ONE ARCH-0046 digest per task through the existing outbound facade.
     ///
-    /// Engine-owned; it never enters `TASKS_VERBS`. It walks TASK ids through
+    /// Engine-owned; it never enters the task catalog. It walks TASK ids through
     /// the bounded `entities_by_type_page` primitive rather than adding another
     /// unpaged TASK scan, and it re-drives an already-expired task whose digest
     /// marker is absent — closing the crash window between terminalization and
@@ -251,6 +150,7 @@ impl Memory<'_> {
                 .map_err(MemoryError::from)
             })?;
         }
+        crate::llm::reconcile_peer_result_signals(self.vault(), now)?;
         Ok(report)
     }
 
@@ -275,7 +175,7 @@ impl Memory<'_> {
             if body.terminal().is_some() || body.settled_ladder_disposition().is_some() {
                 return Ok(None);
             }
-            let result_ref = EntityId::now();
+            let result_ref = self.vault().store.clock.entity_id()?;
             let artifact = canonical_bytes(&consult_expiry_artifact_value(
                 task_ref,
                 body.ttl.map_or(now, |ttl| ttl.deadline_at),

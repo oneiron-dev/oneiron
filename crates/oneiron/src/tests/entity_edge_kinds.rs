@@ -32,8 +32,8 @@ fn edge_kind_u8_round_trip_accepts_pinned_range() {
         assert_eq!(kind, expected);
         assert_eq!(kind as u8, disc);
     }
-    // The frontier: 27 and up stay unallocated (ONE-1541 took 25/26).
-    assert!(EdgeKind::try_from_u8(27).is_none());
+    // Conversation DAG kinds own bytes 27–30.
+    assert!(EdgeKind::try_from_u8(31).is_none());
 }
 
 /// ONE-1541 done-means: appending `fulfills`/`discharged_by` must leave every
@@ -146,7 +146,7 @@ fn blocked_by_matches_structural_non_traversed_contract_row() -> Result<()> {
 #[test]
 fn edge_value_layout_round_trips_all_contract_edge_kinds() -> Result<()> {
     for (i, (kind, layout)) in CONTRACT_EDGE_VALUE_LAYOUTS.iter().copied().enumerate() {
-        let weight = 0.25 + (i as f32 * 0.03125);
+        let weight = 0.25 + (i as f32 * 0.02);
         let created_at = 1_772_000_000 + i as u64;
         let vad = contract_vad(i);
         let encode_vad = match layout {
@@ -342,56 +342,56 @@ fn all_entity_type_prefixes() {
         ),
         (
             "PERSON",
-            4,
+            10,
             Some("pr"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "RELATIONSHIP",
-            5,
+            11,
             Some("rl"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "EVENT",
-            6,
+            20,
             Some("ev"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "SKILL",
-            7,
+            40,
             Some("sk"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "SUMMARY",
-            8,
+            5,
             Some("sm"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "PLACE",
-            9,
+            21,
             Some("pl"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "ASSET_TEXT",
-            10,
+            31,
             Some("tx"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "CONVERSATION",
-            11,
+            4,
             Some("cv"),
             EntityClassification::Core,
             TypeByteZone::Core,
@@ -412,38 +412,45 @@ fn all_entity_type_prefixes() {
         ),
         (
             "WORLD",
-            14,
+            22,
             Some("wd"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "ASSET",
-            15,
+            30,
             Some("as"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "NOTIFICATION",
-            16,
+            42,
             Some("nt"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
             "AGENT_DEF",
-            17,
+            41,
             Some("ag"),
             EntityClassification::Core,
             TypeByteZone::Core,
         ),
         (
+            "WORKFLOW",
+            18,
+            Some("wf"),
+            EntityClassification::Core,
+            TypeByteZone::Core,
+        ),
+        (
             "COMPANION_REGISTER",
-            78,
+            115,
             Some("cr"),
             EntityClassification::Pack,
-            TypeByteZone::System,
+            TypeByteZone::CompiledProduct,
         ),
         // Maintenance-classified engine kind inside the system zone:
         // classification == Maintenance (the door gate) while publicly
@@ -479,21 +486,21 @@ fn all_entity_type_prefixes() {
         ),
         (
             "CODE_ARTIFACT",
-            103,
+            105,
             Some("cd"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
         (
             "CODE_SYMBOL",
-            104,
+            106,
             Some("cs"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
         (
             "BLOB_ARTIFACT",
-            105,
+            110,
             Some("ba"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
@@ -503,21 +510,21 @@ fn all_entity_type_prefixes() {
         // byte because the re-key is done.
         (
             "NOTE",
-            106,
+            111,
             Some("no"),
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
         (
             "SECRET_CUSTODY",
-            77,
+            68,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "REDACTION_AUDIT",
-            64,
+            72,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
@@ -527,42 +534,42 @@ fn all_entity_type_prefixes() {
         // reuse rejected (kind = shape, DEC-0005 §7).
         (
             "MODEL",
-            65,
+            90,
             Some("mo"),
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "AUTHORITY_LOG",
-            66,
+            64,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "POLICY_MANIFEST",
-            67,
+            65,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "FEDERATION_GRANT",
-            68,
+            66,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "DIAGNOSTIC",
-            69,
+            73,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),
         (
             "ACCESS_GRANT",
-            73,
+            67,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
@@ -612,6 +619,13 @@ fn all_entity_type_prefixes() {
         (
             "COMM_RECORD",
             crate::registry::ENTITY_TYPE_COMM_RECORD,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteZone::System,
+        ),
+        (
+            "SKILL_HUB",
+            92,
             None,
             EntityClassification::Maintenance,
             TypeByteZone::System,
@@ -712,7 +726,10 @@ fn edge_kinds_child_of_and_assigned_to() -> Result<()> {
     vault.put_edge(&child, EdgeKind::AssignedTo, &machine, 0.8)?;
 
     let out = vault.edges_out(&child)?;
-    assert_eq!(out.len(), 2);
+    assert_eq!(out.len(), 3);
+    assert!(out.iter().any(
+        |e| e.kind == EdgeKind::HasFacet && e.target == crate::claim::substrate_facet_id(child)
+    ));
     assert!(
         out.iter()
             .any(|e| e.kind == EdgeKind::ChildOf && e.target == parent)
@@ -736,7 +753,7 @@ fn edge_kinds_child_of_and_assigned_to() -> Result<()> {
 /// fails this test.
 #[test]
 fn default_weight_matches_contract_ppr_weight_literals() {
-    let expected: [(EdgeKind, Option<f32>); 21] = [
+    let expected: [(EdgeKind, Option<f32>); 31] = [
         (EdgeKind::AuthoredBy, Some(0.9)),
         (EdgeKind::ScopedTo, Some(0.7)),
         (EdgeKind::PartOf, Some(0.8)),
@@ -758,6 +775,16 @@ fn default_weight_matches_contract_ppr_weight_literals() {
         (EdgeKind::InWorld, Some(0.7)),
         (EdgeKind::SetIn, Some(0.7)),
         (EdgeKind::BlockedBy, None),
+        (EdgeKind::SameAs, None),
+        (EdgeKind::MergedInto, Some(0.3)),
+        (EdgeKind::SplitInto, Some(0.3)),
+        (EdgeKind::Blocks, Some(1.0)),
+        (EdgeKind::Fulfills, None),
+        (EdgeKind::DischargedBy, None),
+        (EdgeKind::Parent, None),
+        (EdgeKind::SpawnedBy, None),
+        (EdgeKind::AddressedTo, None),
+        (EdgeKind::RepliesTo, None),
     ];
     for (kind, weight) in expected {
         assert_eq!(
@@ -848,4 +875,72 @@ fn assert_no_entity_state_catches_leaked_forward_short_id_row() {
     wtxn.commit().unwrap();
 
     assert_no_entity_state(&vault, &id).unwrap();
+}
+
+#[test]
+fn conversation_edges_are_structural_door_only_and_non_traversed() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    for (byte, kind) in [
+        (27, EdgeKind::Parent),
+        (28, EdgeKind::SpawnedBy),
+        (29, EdgeKind::AddressedTo),
+        (30, EdgeKind::RepliesTo),
+    ] {
+        assert_eq!(EdgeKind::try_from_u8(byte), Some(kind));
+        assert_eq!(kind as u8, byte);
+        assert_eq!(kind.default_weight(), None);
+        assert_eq!(ppr::lambda_for_kind(kind), None);
+        let encoded = encode_edge_value(kind, 1.0, 7, Vad::NEUTRAL, None)?;
+        assert_eq!(encoded.len(), 12);
+        assert_eq!(
+            decode_edge_value_for_kind(kind, &encoded)?.layout,
+            EdgeValueLayout::Structural
+        );
+        assert!(matches!(
+            encode_edge_value(
+                kind,
+                1.0,
+                7,
+                Vad {
+                    valence: 0.5,
+                    arousal: 0.0,
+                    dominance: 0.0
+                },
+                None
+            ),
+            Err(Error::InvariantViolation(_))
+        ));
+        assert!(matches!(
+            encode_edge_value(
+                kind,
+                1.0,
+                7,
+                Vad::NEUTRAL,
+                Some(EdgeProvenanceFlags {
+                    confirmation_status: EdgeConfirmationStatus::Confirmed,
+                    actor_class: EdgeActorClass::Human
+                })
+            ),
+            Err(Error::InvariantViolation(_))
+        ));
+        assert_eq!(
+            vault
+                .put_edge(&EntityId::now(), kind, &EntityId::now(), 1.0)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ReservedEdgeKind
+        );
+        assert!(matches!(
+            edge::validate_public_edge_kind(kind),
+            Err(Error::Registry(
+                crate::error::RegistryError::ReservedEdgeKind("conversation_dag")
+            ))
+        ));
+    }
+    for (byte, kind) in PINNED_EDGE_KIND_DISCRIMINANTS {
+        assert_eq!(EdgeKind::try_from_u8(byte), Some(kind));
+    }
+    assert_eq!(EdgeKind::try_from_u8(21), Some(EdgeKind::MergedInto));
+    assert_eq!(EdgeKind::try_from_u8(22), Some(EdgeKind::SplitInto));
+    Ok(())
 }

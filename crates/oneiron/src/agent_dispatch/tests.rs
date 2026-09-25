@@ -104,7 +104,10 @@ fn put_policy_manifest_with_generated_actor(
     generated_actor: Option<EntityId>,
 ) -> Result<()> {
     let mut entries = vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("agent-dispatch-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (
@@ -224,7 +227,7 @@ fn custom_dispatch_executes_seeded_row_data() -> Result<()> {
     assert_eq!(status.input.definition, edited);
     assert_eq!(status.input.definition.desc, "user edited scout");
 
-    let actor = agent_dispatch_actor(&status.input);
+    let actor = agent_dispatch_actor(&status.input).expect("agent actor");
     assert_eq!(actor.entity_ref(), scout_id);
     assert_eq!(actor.actor_class(), EdgeActorClass::Agent);
     Ok(())
@@ -484,7 +487,10 @@ fn snapshot_survives_definition_update() -> Result<()> {
 // recoverable and re-admission replays the frozen snapshot.
 #[test]
 fn dispatch_survives_checkpoint_resume() -> Result<()> {
-    let (dir, vault) = open_vault();
+    let clock = crate::ports::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let (dir, vault) = crate::test_util::open_test_vault_with(config.clone());
     // Loaded manifest (the B1 masking-AC callout): grant the system ceiling
     // and this Dreamer writer's Generated source so milestones land Approved.
     let dreamer_actor = test_id(0x2A);
@@ -534,7 +540,12 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
             ),
             (
                 Value::from("agentActor"),
-                Value::from(agent_dispatch_actor(&dispatch_input).entity_ref().to_hex()),
+                Value::from(
+                    agent_dispatch_actor(&dispatch_input)
+                        .expect("agent actor")
+                        .entity_ref()
+                        .to_hex(),
+                ),
             ),
         ]))?,
         crate::claim::ClaimApprovalStatus::Approved,
@@ -546,7 +557,10 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
         let DreamerAdmissionOutcome::Admitted(admitted) =
             runner.admit_next(AdmitDreamerAttempt {
                 lease_owner: "agent-worker".to_owned(),
-                now: 20,
+                now: {
+                    clock.set(20);
+                    20
+                },
                 budget_id: "wake".to_owned(),
                 budget_total_units: 10,
                 reserve_units: 2,
@@ -617,7 +631,7 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
 
     // Drop and REOPEN the vault: milestone index and queue row are durable.
     drop(vault);
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("reopen vault");
+    let vault = Vault::open(dir.path(), config).expect("reopen vault");
     let runner = DreamerRunnerStore::new(&vault);
     let milestone = runner
         .latest_durable_milestone(attempt_id)?
@@ -628,7 +642,10 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     // Lease expiry → cleanup → the attempt is claimable again with the same
     // frozen snapshot.
     let report = AttemptQueue::new(&vault).cleanup_leases(CleanupAttemptLeases {
-        now: 100,
+        now: {
+            clock.set(100);
+            100
+        },
         lease_timeout_secs: 10,
     })?;
     assert_eq!(report.stale_requeued, 1);
@@ -642,7 +659,10 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     );
     let DreamerAdmissionOutcome::Admitted(second) = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "second-worker".to_owned(),
-        now: 110,
+        now: {
+            clock.set(110);
+            110
+        },
         budget_id: "wake".to_owned(),
         budget_total_units: 10,
         reserve_units: 2,
@@ -689,7 +709,7 @@ fn dispatched_agent_runs_under_clamped_ceiling() -> Result<()> {
     else {
         panic!("expected fresh dispatch");
     };
-    let actor = agent_dispatch_actor(&status.input);
+    let actor = agent_dispatch_actor(&status.input).expect("agent actor");
     assert_eq!(actor.entity_ref(), fork_id);
 
     let subject = test_id(0x49);
@@ -1336,7 +1356,12 @@ fn legacy_system_dispatch_payload_recovers() -> Result<()> {
         // The embedded snapshot decodes unchanged, never preset-derived.
         assert_eq!(decoded.definition, definition);
         // The actor identity is the pinned row id, as before.
-        assert_eq!(agent_dispatch_actor(&decoded).entity_ref(), pinned_id);
+        assert_eq!(
+            agent_dispatch_actor(&decoded)
+                .expect("agent actor")
+                .entity_ref(),
+            pinned_id
+        );
     }
 
     // The durable status + kill paths recover through that one arm: enqueue a
@@ -1451,8 +1476,14 @@ fn dispatch_for_task_carries_the_backlink_and_nothing_else_changes() -> Result<(
     })?;
 
     let (AgentDispatchOutcome::Dispatched(backlinked) | AgentDispatchOutcome::Existing(backlinked)) =
-        backlinked;
-    let (AgentDispatchOutcome::Dispatched(plain) | AgentDispatchOutcome::Existing(plain)) = plain;
+        backlinked
+    else {
+        panic!("task dispatch cannot propose widening")
+    };
+    let (AgentDispatchOutcome::Dispatched(plain) | AgentDispatchOutcome::Existing(plain)) = plain
+    else {
+        panic!("plain dispatch cannot propose widening")
+    };
 
     assert_eq!(
         backlinked.attempt.task_ref.as_deref(),
@@ -1560,7 +1591,11 @@ fn spawn_child(
 /// The ceiling of the row a dispatch actually NAMED, read back live from
 /// storage — never the frozen payload snapshot, which carries no authority.
 fn dispatched_row_ceiling(vault: &Vault, status: &AgentDispatchStatus) -> AgentCeiling {
-    let AgentDispatchTarget::Custom(id) = status.input.target;
+    let id = status
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     vault
         .get_agent_definition(&id)
         .expect("read the dispatched row")
@@ -1722,7 +1757,11 @@ fn parented_dispatch_clamps_the_child_to_the_live_parent_ceiling() -> Result<()>
         dispatched_row_ceiling(&vault, &clamped),
         AgentCeiling::Proposed
     );
-    let AgentDispatchTarget::Custom(fork_id) = clamped.input.target;
+    let fork_id = clamped
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     let fork = vault.get_agent_definition(&fork_id)?.expect("fork exists");
     assert_eq!(fork.forked_from, Some(auto_child));
     assert_eq!(fork.logical_id, None);
@@ -1823,7 +1862,11 @@ fn fork_registration_is_idempotent_and_never_falls_back_to_the_wider_row() -> Re
     let first = spawn_child(&dispatcher, child_id, parent.attempt.id, 2)?;
     let second = spawn_child(&dispatcher, child_id, parent.attempt.id, 3)?;
     assert_eq!(first.input.target, second.input.target);
-    let AgentDispatchTarget::Custom(fork_id) = first.input.target;
+    let fork_id = first
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     assert_eq!(
         vault
             .entities_by_type(crate::registry::ENTITY_TYPE_AGENT_DEF)?
@@ -2218,12 +2261,20 @@ fn updating_the_source_row_mints_a_distinct_fork_without_a_foreign_collision() -
 
     // Wider request under a Proposed parent mints the attenuated fork.
     let first = spawn(2);
-    let AgentDispatchTarget::Custom(first_fork) = first.input.target;
+    let first_fork = first
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     assert!(first_fork != child_id, "attenuation names the fork row");
 
     // Retry of the SAME revision: idempotent fork reuse, not an error.
     let retry = spawn(3);
-    let AgentDispatchTarget::Custom(retry_fork) = retry.input.target;
+    let retry_fork = retry
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     assert_eq!(retry_fork, first_fork, "same revision reuses its fork");
 
     // A legitimate in-place source update mints a NEW fork; the stale
@@ -2235,7 +2286,11 @@ fn updating_the_source_row_mints_a_distinct_fork_without_a_foreign_collision() -
     updated.version = "1.0.1".to_owned();
     vault.update_agent_definition(&child_id, &updated, t(4), 4)?;
     let after = spawn(5);
-    let AgentDispatchTarget::Custom(updated_fork) = after.input.target;
+    let updated_fork = after
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("agent target");
     assert!(
         updated_fork != child_id && updated_fork != first_fork,
         "an updated source mints a distinct fork"
@@ -2274,6 +2329,7 @@ fn spawn_context_descriptor_is_normalized_into_the_persisted_payload() -> Result
     assert_eq!(
         encode_agent_dispatch_input(&parent.input)?,
         encode_agent_dispatch_input(&AgentDispatchInput {
+            healer_case: None,
             context_spec: Some(canonical.clone()),
             ..parent.input.clone()
         })?,
@@ -2464,6 +2520,7 @@ fn schema_v1_rows_decode_absent_spawn_fields() -> Result<()> {
 
     // With the spawn fields present the round trip is exact.
     let rich = AgentDispatchInput {
+        healer_case: None,
         target: AgentDispatchTarget::Custom(target_id),
         definition,
         context_spec: Some(ContextSpec::excluded()),
@@ -2540,8 +2597,8 @@ fn spawn_context_can_only_narrow_and_rides_the_payload_unresolved() -> Result<()
             },
             AgentSpawnContext::default().with_context_spec(widening),
         )
-        .expect_err("a widening descriptor is refused");
-    assert_eq!(refused.kind(), ErrorKind::InvalidAgentDispatchInput);
+        .expect("a widening descriptor parks a proposal");
+    assert!(matches!(refused, AgentDispatchOutcome::ProposedWiden(_)));
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
     Ok(())
 }
@@ -2585,7 +2642,39 @@ fn failing_case(vault: &Vault) -> Result<(EntityId, AttemptId, HealerCase)> {
     })?)
     .attempt
     .id;
-    Ok((agent, failing, healer_case_fixture(failing, agent)))
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) =
+        AttemptQueue::new(vault).claim(crate::attempt_queue::ClaimAttempt {
+            lease_owner: "healer-fixture-worker".to_owned(),
+            now: 11,
+        })?
+    else {
+        panic!("claim failing attempt");
+    };
+    assert_eq!(leased.id, failing);
+    let fixture = healer_case_fixture(failing, agent);
+    let outcome = crate::failure_ladder::FailureLadder::new(vault).handle_attempt_failure(
+        crate::failure_ladder::HandleAttemptFailure {
+            attempt_id: failing,
+            lease_owner: "healer-fixture-worker".to_owned(),
+            attempt_count: leased.attempt_count,
+            evidence: crate::failure_ladder::TypedFailureEvidence {
+                evidence_ref: Some(fixture.evidence_ref.clone()),
+                verdict: crate::failure_ladder::TypedFailureVerdict::NonRetryable,
+                tier: Some(crate::failure_ladder::DetectorTier::T3Judge),
+                stable_reason: "healer.fixture.failure".to_owned(),
+            },
+            blocked_reports: Vec::new(),
+            pre_fail_checkpoint_ref: test_id(0x51),
+            qa_thread_ref: test_id(0x52),
+            retry_at: 15,
+            now: 12,
+        },
+        crate::failure_ladder::FailureScopePolicy::auto(fixture.scope),
+    )?;
+    let crate::failure_ladder::FailureLadderOutcome::Healer(outcome) = outcome else {
+        panic!("genuine ladder case");
+    };
+    Ok((agent, failing, outcome.case))
 }
 
 fn heal(slot: HealerSlot, case: HealerCase, now: u64) -> DispatchHealer {
@@ -2624,29 +2713,22 @@ fn configured_healer_is_child_of_failing_attempt() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (_agent, failing, case) = failing_case(&vault)?;
     let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
-    let queue = AttemptQueue::new(&vault);
-    let before = queue.list()?;
-
-    // CONTINGENT: with the seam absent the arm refuses, so the only honest
-    // assertion is that NO row was minted under the failing attempt at all.
-    let error = AgentDispatcher::new(&vault)
-        .dispatch_healer_slot(heal(
+    let HealerSlotOutcome::Dispatched(status) =
+        AgentDispatcher::new(&vault).dispatch_healer_slot(heal(
             HealerSlot::AgentDef {
                 agent_def_ref: healer.to_hex(),
             },
-            case,
+            case.clone(),
             20,
-        ))
-        .expect_err("the configured arm is deferred with the reference-context seam");
-    assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
-
-    assert_eq!(queue.list()?, before);
-    for row in queue.list()? {
-        let parent = decode_dreamer_attempt_payload(&row.payload)
-            .ok()
-            .and_then(|payload| payload.parent_attempt);
-        assert_ne!(parent, Some(failing), "no healer child was enqueued");
-    }
+        ))?
+    else {
+        panic!("healer dispatched");
+    };
+    let payload = decode_dreamer_attempt_payload(&status.attempt.payload)?;
+    assert_eq!(payload.parent_attempt, Some(failing));
+    assert_eq!(status.input.healer_case, Some(case));
+    assert_eq!(status.input.depth_remaining, Some(1));
+    assert_eq!(status.input.definition.ceiling, AgentCeiling::Proposed);
     Ok(())
 }
 
@@ -2655,49 +2737,26 @@ fn configured_healer_dedupe_is_case_scoped() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (_agent, failing, case) = failing_case(&vault)?;
     let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
-
-    // The dedupe a configured spawn would use is the deterministic case key,
-    // re-derivable from the failing attempt and distinct from the card key.
+    let slot = HealerSlot::AgentDef {
+        agent_def_ref: healer.to_hex(),
+    };
+    let dispatcher = AgentDispatcher::new(&vault);
+    let HealerSlotOutcome::Dispatched(first) =
+        dispatcher.dispatch_healer_slot(heal(slot.clone(), case.clone(), 20))?
+    else {
+        panic!("first dispatch");
+    };
+    let HealerSlotOutcome::Existing(second) =
+        dispatcher.dispatch_healer_slot(heal(slot, case, 21))?
+    else {
+        panic!("deduped dispatch");
+    };
+    assert_eq!(first.attempt.id, second.attempt.id);
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), 2);
     assert_eq!(
-        case.case_ref,
-        crate::failure_ladder::failure_case_ref(failing)
+        AttemptQueue::new(&vault).get(failing)?.unwrap().state,
+        AttemptState::Failed
     );
-    assert_ne!(
-        case.case_ref,
-        crate::failure_ladder::failure_card_ref(failing)
-    );
-
-    let queue = AttemptQueue::new(&vault);
-    let before = queue.list()?;
-    assert_eq!(before.len(), 1);
-    assert_eq!(before[0].id, failing);
-    let payload_before = decode_dreamer_attempt_payload(&before[0].payload)?;
-
-    AgentDispatcher::new(&vault)
-        .dispatch_healer_slot(heal(
-            HealerSlot::AgentDef {
-                agent_def_ref: healer.to_hex(),
-            },
-            case.clone(),
-            20,
-        ))
-        .expect_err("the configured arm is deferred with the reference-context seam");
-
-    // Refusal must neither enqueue a healer nor alter the failing attempt's
-    // routing or typed execution input to carry case material.
-    let after = queue.list()?;
-    assert_eq!(after.len(), before.len());
-    let row = queue.get(failing)?.expect("failing row remains queued");
-    assert_eq!(row.state, AttemptState::Queued);
-    assert_eq!(row.dedupe_key, before[0].dedupe_key);
-    assert_eq!(row.run_id, before[0].run_id);
-    assert_ne!(row.dedupe_key.as_deref(), Some(case.case_ref.as_str()));
-    assert_ne!(row.run_id.as_deref(), Some(case.case_ref.as_str()));
-    let payload_after = decode_dreamer_attempt_payload(&row.payload)?;
-    assert_eq!(payload_after.attempt_type, payload_before.attempt_type);
-    assert_eq!(payload_after.parent_attempt, payload_before.parent_attempt);
-    assert_eq!(payload_after.input, payload_before.input);
-    decode_agent_dispatch_input(&payload_after.input)?;
     Ok(())
 }
 
@@ -2706,53 +2765,48 @@ fn healer_context_is_reference_only() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (_agent, _failing, case) = failing_case(&vault)?;
     let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
-
-    // Every carried value is a lowercase-hex ref or a typed scalar. There is no
-    // inline prompt, transcript, repair patch, or operator note to smuggle.
-    for value in [
-        &case.case_ref,
-        &case.evidence_ref,
-        &case.pre_fail_checkpoint_ref,
-        &case.qa_thread_ref,
-        &case.scope.agent_ref,
-    ] {
-        assert_eq!(value.len(), 32, "{value} is not a 16-byte hex ref");
-        assert!(
-            value
-                .chars()
-                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
-            "{value} is not lowercase hex"
-        );
-    }
-
-    // CONTINGENT: and none of it reaches a queue row, because the arm refuses.
-    let payloads_before: Vec<Vec<u8>> = AttemptQueue::new(&vault)
-        .list()?
-        .into_iter()
-        .map(|row| row.payload)
-        .collect();
-    AgentDispatcher::new(&vault)
-        .dispatch_healer_slot(heal(
+    let HealerSlotOutcome::Dispatched(status) =
+        AgentDispatcher::new(&vault).dispatch_healer_slot(heal(
             HealerSlot::AgentDef {
                 agent_def_ref: healer.to_hex(),
             },
-            case,
+            case.clone(),
             20,
-        ))
-        .expect_err("the configured arm is deferred with the reference-context seam");
-    let payloads_after: Vec<Vec<u8>> = AttemptQueue::new(&vault)
-        .list()?
-        .into_iter()
-        .map(|row| row.payload)
-        .collect();
-    assert_eq!(payloads_before, payloads_after);
+        ))?
+    else {
+        panic!("dispatch");
+    };
+    let mut input = status.input;
+    let scope = crate::llm::Scope {
+        project: Some(healer),
+        readable: std::collections::BTreeSet::from([crate::llm::ScopeResource::Bucket {
+            key: "diagnostics:healer".into(),
+        }]),
+        ..Default::default()
+    };
+    input.scope = Some(scope.clone());
+    let encoded = encode_agent_dispatch_input(&input)?;
+    let decoded = decode_agent_dispatch_input(&encoded)?;
+    assert_eq!(decoded.scope, Some(scope));
+    assert_eq!(decoded.healer_case, Some(case));
+    assert!(decoded.context_spec.is_none());
+    assert!(decoded.context_from.is_empty());
     Ok(())
 }
 
 #[test]
 fn healer_spawn_cannot_force_cancel_attempt() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let (_agent, failing, case) = failing_case(&vault)?;
+    let (agent, failing, case) = failing_case(&vault)?;
+    let running = dispatched(AgentDispatcher::new(&vault).dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-live".to_owned()),
+        now: 14,
+    })?)
+    .attempt
+    .id;
     let queue = AttemptQueue::new(&vault);
     let crate::attempt_queue::ClaimOutcome::Claimed(claimed) =
         queue.claim(crate::attempt_queue::ClaimAttempt {
@@ -2762,14 +2816,18 @@ fn healer_spawn_cannot_force_cancel_attempt() -> Result<()> {
     else {
         panic!("expected a claim");
     };
-    assert_eq!(claimed.id, failing);
+    assert_eq!(claimed.id, running);
 
     AgentDispatcher::new(&vault).dispatch_healer_slot(heal(HealerSlot::Reserved, case, 20))?;
 
-    // The still-running failing attempt keeps its lease and its whole
-    // graceful-cancel lifecycle: a healer asking it to land must go through
+    // The separate live attempt keeps its lease and its whole graceful-cancel
+    // lifecycle: a healer asking it to land must go through
     // ONE-1896's public soft request API, separately.
-    let row = queue.get(failing)?.expect("failing row");
+    assert_eq!(
+        queue.get(failing)?.expect("failed parent").state,
+        AttemptState::Failed
+    );
+    let row = queue.get(running)?.expect("running row");
     assert_eq!(row.state, AttemptState::Leased);
     assert_eq!(row.cancellation(), None);
     assert!(row.cancel_receipts().is_empty());
@@ -2804,16 +2862,151 @@ fn configured_healer_above_propose_only_is_rejected() -> Result<()> {
     // A propose-only healer clears the ceiling gate and stops only at the
     // deferred reference-context seam.
     let propose_healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
-    let error = dispatcher
-        .dispatch_healer_slot(heal(
+    let outcome = dispatcher.dispatch_healer_slot(heal(
+        HealerSlot::AgentDef {
+            agent_def_ref: propose_healer.to_hex(),
+        },
+        case,
+        20,
+    ))?;
+    assert!(matches!(outcome, HealerSlotOutcome::Dispatched(_)));
+    Ok(())
+}
+
+#[test]
+fn healer_activity_emits_three_signed_per_vault_receipts() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_, _, case) = failing_case(&vault)?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+    AgentDispatcher::new(&vault).dispatch_healer_slot(heal(
+        HealerSlot::AgentDef {
+            agent_def_ref: healer.to_hex(),
+        },
+        case.clone(),
+        20,
+    ))?;
+    vault.record_healer_review(&case.case_ref, 25, true)?;
+    let receipts = vault.emit_healer_oversight(30)?;
+    assert_eq!(receipts.len(), 3);
+    for receipt in &receipts {
+        assert!(receipt.verify(&receipts[0].signer));
+        assert_eq!(receipt.counts.proposed, 1);
+        assert_eq!(receipt.counts.reviewed, 1);
+        assert_eq!(receipt.counts.escalated, 1);
+        assert_eq!(receipt.counts.review_latency_secs, 5);
+        let mut tampered = receipt.clone();
+        tampered.counts.reviewed += 1;
+        assert!(!tampered.verify(&receipts[0].signer));
+    }
+    Ok(())
+}
+
+#[test]
+fn fabricated_healer_case_requires_a_ladder_minted_failure() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_row(
+        &vault,
+        0x37,
+        "oneiron.agent.failure-auth",
+        AgentCeiling::Proposed,
+    )?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+    let failing = dispatched(AgentDispatcher::new(&vault).dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-heal".to_owned()),
+        now: 10,
+    })?)
+    .attempt
+    .id;
+    let case = healer_case_fixture(failing, agent);
+    let queue = AttemptQueue::new(&vault);
+    let refuse = || -> Result<()> {
+        let before = queue.list()?;
+        for slot in [
+            HealerSlot::Reserved,
             HealerSlot::AgentDef {
-                agent_def_ref: propose_healer.to_hex(),
+                agent_def_ref: healer.to_hex(),
             },
-            case,
-            20,
-        ))
-        .expect_err("the configured arm is deferred with the reference-context seam");
-    assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+        ] {
+            let error = AgentDispatcher::new(&vault)
+                .dispatch_healer_slot(heal(slot, case.clone(), 20))
+                .expect_err("unminted case");
+            assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+        }
+        assert_eq!(queue.list()?, before);
+        Ok(())
+    };
+    refuse()?; // Merely queued.
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) =
+        queue.claim(crate::attempt_queue::ClaimAttempt {
+            lease_owner: "failure-auth".to_owned(),
+            now: 11,
+        })?
+    else {
+        panic!("claim");
+    };
+    assert_eq!(leased.id, failing);
+    refuse()?; // A valid lease is not a failure or a case mint.
+    queue.fail(crate::attempt_queue::FailAttempt {
+        id: failing,
+        lease_owner: "failure-auth".to_owned(),
+        attempt_count: leased.attempt_count,
+        reason: "direct failure without ladder evidence".to_owned(),
+        now: 12,
+    })?;
+    refuse()?; // Even a Failed row alone cannot authenticate the DTO.
+    for receipt in vault.emit_healer_oversight(30)? {
+        assert_eq!(receipt.counts.proposed, 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn healer_admission_binds_scope_and_evidence_at_both_public_dispatch_doors() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_, failing, case) = failing_case(&vault)?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+    let mut wrong_scope = case.clone();
+    wrong_scope.scope.agent_ref = test_id(0x71).to_hex();
+    let mut wrong_evidence = case;
+    wrong_evidence.evidence_ref = test_id(0x72).to_hex();
+    let queue = AttemptQueue::new(&vault);
+    let before = queue.list()?;
+    for forged in [wrong_scope, wrong_evidence] {
+        let error = AgentDispatcher::new(&vault)
+            .dispatch_healer_slot(heal(
+                HealerSlot::AgentDef {
+                    agent_def_ref: healer.to_hex(),
+                },
+                forged.clone(),
+                20,
+            ))
+            .expect_err("changed minted case");
+        assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+        let error = AgentDispatcher::new(&vault)
+            .dispatch_with_context(
+                DispatchAgent {
+                    target: AgentDispatchTarget::Custom(healer),
+                    parent_attempt: Some(failing),
+                    dedupe_key: None,
+                    run_id: Some("run-heal".to_owned()),
+                    now: 20,
+                },
+                AgentSpawnContext {
+                    healer_case: Some(forged),
+                    depth_remaining: Some(1),
+                    ..Default::default()
+                },
+            )
+            .expect_err("raw spawn context cannot bypass case authentication");
+        assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+    }
+    assert_eq!(queue.list()?, before);
+    for receipt in vault.emit_healer_oversight(30)? {
+        assert_eq!(receipt.counts.proposed, 0);
+    }
     Ok(())
 }
 
@@ -2897,3 +3090,5 @@ fn child_dispatch_inherits_scope_and_refuses_widening_before_enqueue() -> Result
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
     Ok(())
 }
+
+mod widen;

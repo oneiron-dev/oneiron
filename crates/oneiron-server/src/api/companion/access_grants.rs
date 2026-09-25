@@ -52,7 +52,7 @@ pub(crate) struct CompanionAccessGrantScopePayload {
     "created_at": 1700000000
 }))]
 pub(crate) struct CompanionCreateAccessGrantRequest {
-    /// Optional grant entity id. Defaults to a new UUIDv7 entity id.
+    /// Optional grant entity id. Defaults to a new opaque ULID entity id.
     #[schema(example = "33333333333333333333333333333333")]
     id: Option<String>,
     /// Principal receiving access.
@@ -63,6 +63,8 @@ pub(crate) struct CompanionCreateAccessGrantRequest {
     /// Creation timestamp in Unix seconds. Defaults to server time.
     #[schema(example = 1700000000)]
     created_at: Option<u64>,
+    /// Optional expiry in Unix seconds; expired grants authorize no reads.
+    expires_at: Option<u64>,
 }
 
 /// Request body for revoking a companion AccessGrant.
@@ -97,6 +99,8 @@ pub(crate) struct CompanionAccessGrantResponse {
     /// Revocation timestamp when status is `revoked`.
     #[schema(example = 1700000300)]
     revoked_at: Option<u64>,
+    /// Expiry in Unix seconds, when bounded.
+    expires_at: Option<u64>,
 }
 
 /// Create a scoped companion AccessGrant.
@@ -124,12 +128,13 @@ pub(crate) async fn create_companion_access_grant(
     require_companion_access_grant_write_for_principal(&auth, &principal_ref)?;
     let (person_ref, persona_ref) = companion_scope_entity_refs(&req.scope)?;
     let created_at = req.created_at.unwrap_or_else(unix_seconds_now);
-    let grant = oneiron::AccessGrant::companion_profile_read(
+    let mut grant = oneiron::AccessGrant::companion_profile_read(
         principal_ref,
         person_ref,
         persona_ref,
         created_at,
     );
+    grant.expires_at = req.expires_at;
 
     server
         .vault
@@ -176,6 +181,13 @@ pub(crate) async fn revoke_companion_access_grant(
         })?
         .ok_or_else(|| ApiError::not_found("access_grant", None))?;
     require_companion_access_grant_write_for_principal(&auth, &existing.principal_ref)?;
+    if existing.scope.companion_profile_refs().is_none() {
+        return Err(ApiError::bad_request(
+            "grant is not companion_profile scoped",
+            Some("grant_id"),
+        )
+        .into());
+    }
 
     let grant = server
         .vault
@@ -215,9 +227,13 @@ pub(crate) fn companion_access_grant_response(
         principal_ref: grant.principal_ref.to_hex(),
         scope: companion_scope_response(&person_ref, &persona_ref),
         capability: grant.capability.as_str().to_owned(),
-        status: grant.status.as_str().to_owned(),
+        status: grant
+            .effective_status_at(unix_seconds_now())
+            .as_str()
+            .to_owned(),
         created_at: grant.created_at,
         revoked_at: grant.revoked_at,
+        expires_at: grant.expires_at,
     }
 }
 

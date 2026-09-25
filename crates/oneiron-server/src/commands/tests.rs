@@ -1,5 +1,4 @@
 use super::*;
-use crate::auth::mint_core_token_v2;
 
 #[test]
 fn empty_cors_origin_list_stays_restrictive() {
@@ -165,7 +164,16 @@ fn init_creates_vault_and_doctor_reports() {
         dict_search_paths: Some(Vec::new()),
     };
 
-    init(args.clone()).unwrap();
+    init(crate::cli::InitArgs {
+        path: args.path.clone(),
+        config: Some(dir.path().join("oneiron.toml")),
+        embedder: Some(crate::config::EmbedderProvider::None),
+        dimensions: Some(args.dimensions),
+        map_size: args.map_size,
+        dict_search_paths: args.dict_search_paths.clone(),
+        ..Default::default()
+    })
+    .unwrap();
     assert!(vault_path.join("data.mdb").is_file());
 
     let vault = open_vault_for_command(&args).unwrap();
@@ -184,7 +192,16 @@ fn doctor_opens_existing_vault() {
         dict_search_paths: Some(Vec::new()),
     };
 
-    init(args.clone()).unwrap();
+    init(crate::cli::InitArgs {
+        path: args.path.clone(),
+        config: Some(dir.path().join("oneiron.toml")),
+        embedder: Some(crate::config::EmbedderProvider::None),
+        dimensions: Some(args.dimensions),
+        map_size: args.map_size,
+        dict_search_paths: args.dict_search_paths.clone(),
+        ..Default::default()
+    })
+    .unwrap();
     doctor(args).unwrap();
 }
 
@@ -319,111 +336,47 @@ fn auto_discovers_candidate_with_cjk_dict_marker() {
     assert_eq!(resolution.warning, None);
 }
 
-/// The CLI mint surface must produce exactly the pinned wire format, so a
-/// token minted by ops verifies against a server running the same secret.
+/// The CLI's 64-hex door writes signed withdrawal authority, not a legacy
+/// tombstone. Revoking the named parent also kills its logged descendants.
 #[test]
-fn token_mint_claims_reproduce_the_golden_vectors() {
-    const VECTOR_SECRET: &str = "correct horse battery staple";
-
-    let owner = build_token_claims(None, None, None);
-    assert_eq!(owner, "");
-    assert_eq!(
-        mint_core_token_v2(VECTOR_SECRET, &owner),
-        "v2..326ad3492c855a6d722398f75f006241ce8808250d79f38ffd4af64470118743"
-    );
-
-    let scoped = build_token_claims(Some(&["core:read".to_owned()]), None, None);
-    assert_eq!(scoped, "scope=core:read");
-    assert_eq!(
-        mint_core_token_v2(VECTOR_SECRET, &scoped),
-        "v2.scope=core:read.1f166e678c06858ee6dca47da42e5bf257db95cadc993fa1f5db90f52370eda4"
-    );
-
-    let bound = build_token_claims(
-        Some(&["companion:profile:read".to_owned()]),
-        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-        None,
-    );
-    assert_eq!(
-        bound,
-        "scope=companion:profile:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    );
-    assert_eq!(
-        mint_core_token_v2(VECTOR_SECRET, &bound),
-        "v2.scope=companion:profile:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.547000c78580b12473a643b569d46d4078fa9df6eab25a69cac5d72a80afc102"
-    );
-}
-
-/// F3 — the secret is the MAC key for every minted token and BLAKE3 is fast,
-/// so a recipient can test guesses offline against the claims/MAC pair they
-/// were handed. The mint door warns on the same threshold `serve` does: an
-/// operator who only ever mints never sees the startup warning.
-#[test]
-fn mint_path_warns_on_a_weak_secret_and_stays_quiet_otherwise() {
-    let short = "x".repeat(MIN_RECOMMENDED_AUTH_SECRET_BYTES - 1);
-    let warning = prepare_token_mint(&short, None, None, None)
-        .expect("mint succeeds")
-        .warning
-        .expect("the mint path must carry the warning, not just compute it");
-    assert!(warning.contains("MAC key for every minted bearer token"));
-    assert!(warning.contains(&MIN_RECOMMENDED_AUTH_SECRET_BYTES.to_string()));
-    assert!(
-        !warning.contains(&short),
-        "the warning must never quote the secret"
-    );
-
-    // Same threshold as the serve door, so an operator who only ever mints
-    // gets the same nudge. The boundary is a floor: exactly-at-length is fine.
-    for secret in [
-        "x".repeat(MIN_RECOMMENDED_AUTH_SECRET_BYTES),
-        "x".repeat(64),
-    ] {
-        assert!(
-            prepare_token_mint(&secret, Some(&["core:read".to_owned()]), None, None)
-                .expect("mint succeeds")
-                .warning
-                .is_none(),
-            "an adequate secret must stay quiet"
-        );
-    }
-
-    // A warning is a nudge, not a wall: the token is still minted and valid.
-    let weak = prepare_token_mint(&short, None, None, None).expect("mint succeeds");
-    assert!(weak.token.starts_with("v2."));
-    assert!(weak.token.contains(&format!("jti={}", weak.jti)));
-}
-
-/// F2 — the explicit revocation act, end to end through the CLI's storage.
-/// Idempotent, and the row it writes is exactly the one the verify path reads.
-#[test]
-fn token_revoke_records_the_id_the_verify_path_consults() {
-    use crate::auth::RevokedTokenJtis;
-
+fn token_revoke_with_slip_id_revokes_subtree_and_preserves_sibling() {
     let dir = tempfile::tempdir().unwrap();
-    let mut vault_config = oneiron::VaultConfig::server();
-    vault_config.dimensions = 32;
-    vault_config.map_size = 64 * 1024 * 1024;
-    let vault = oneiron::Vault::open(dir.path().join("vault"), vault_config).unwrap();
-
-    let (_token, jti) = mint_identified_core_token_v2("secret", "scope=core:read");
-    let sibling = mint_identified_core_token_v2("secret", "scope=core:read").1;
-
-    assert!(!vault.is_revoked(&jti).unwrap(), "nothing starts revoked");
-
-    assert!(
-        revoke_token_jti(&vault, &jti).unwrap(),
-        "first call revokes"
-    );
-    assert!(
-        !revoke_token_jti(&vault, &jti).unwrap(),
-        "revoking twice is idempotent and reports no change"
-    );
-
-    assert!(vault.is_revoked(&jti).unwrap());
-    assert!(
-        !vault.is_revoked(&sibling).unwrap(),
-        "revocation names one identity, not a claims class"
-    );
+    let path = dir.path().join("vault");
+    let mut cfg = oneiron::VaultConfig::server();
+    cfg.dimensions = 32;
+    cfg.map_size = 64 * 1024 * 1024;
+    let vault = oneiron::Vault::open(&path, cfg.clone()).unwrap();
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"cli-revoke").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    for (id, parent) in [
+        ([71; 32], root.claims.slip_id),
+        ([72; 32], root.claims.slip_id),
+        ([73; 32], [71; 32]),
+    ] {
+        let mut claims = root.claims.clone();
+        claims.slip_id = id;
+        claims.parent_id = Some(parent);
+        vault.mint_capability_slip(&issuer, claims).unwrap();
+        assert!(vault.capability_slip_id_is_live(&id).unwrap());
+    }
+    drop(vault);
+    let id: String = [71u8; 32].iter().map(|b| format!("{b:02x}")).collect();
+    token_revoke(TokenRevokeArgs {
+        jti: id,
+        serve: ServeArgs {
+            vault_path: Some(path.clone()),
+            dimensions: Some(32),
+            map_size: Some(64 * 1024 * 1024),
+            dict_search_paths: Some(Vec::new()),
+            auth_secret: Some("cli-revoke".into()),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let vault = oneiron::Vault::open(path, cfg).unwrap();
+    assert!(!vault.capability_slip_id_is_live(&[71; 32]).unwrap());
+    assert!(!vault.capability_slip_id_is_live(&[73; 32]).unwrap());
+    assert!(vault.capability_slip_id_is_live(&[72; 32]).unwrap());
 }
 
 /// A typo'd id would write a row no token can ever present, which would look
@@ -503,39 +456,6 @@ fn identified_mint_attaches_a_fresh_id_to_every_token() {
     }
 }
 
-/// Reject-before-mint: claims the server would 401 never leave the CLI.
-#[test]
-fn token_mint_rejects_claims_the_server_would_refuse() {
-    let multi = build_token_claims(
-        Some(&["core:read".to_owned(), "core:write".to_owned()]),
-        None,
-        None,
-    );
-    assert_eq!(multi, "scope=core:read,core:write");
-    assert!(validate_bearer_claims(&multi).is_ok());
-
-    for claims in [
-        build_token_claims(Some(&["core:admin".to_owned()]), None, None),
-        build_token_claims(Some(&["core:read".to_owned()]), Some("not-an-entity"), None),
-    ] {
-        assert!(
-            validate_bearer_claims(&claims).is_err(),
-            "{claims:?} must be refused before minting"
-        );
-    }
-
-    // The refusal is on the mint path itself, not merely available to it.
-    for (scope, principal_ref) in [
-        (vec!["core:admin".to_owned()], None),
-        (vec!["core:read".to_owned()], Some("not-an-entity")),
-    ] {
-        assert!(
-            prepare_token_mint("secret", Some(&scope), principal_ref, None).is_err(),
-            "{scope:?}/{principal_ref:?} must never be minted"
-        );
-    }
-}
-
 #[test]
 fn loopback_host_detection_distinguishes_public_bind_addresses() {
     for host in ["localhost", "127.0.0.1", "::1"] {
@@ -586,14 +506,16 @@ use crate::cli::ApiCommand;
 #[cfg(unix)]
 const PLACEHOLDER_SECRET: &str = "placeholder-secret-not-a-credential";
 
-/// Stage an executable stand-in for `curl` under a temporary directory.
+/// Stage a stand-in for `curl` without executing a freshly written inode.
 #[cfg(unix)]
 fn write_fake_curl(dir: &std::path::Path, script: &str) -> std::path::PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
     let path = dir.join("fake-curl");
-    std::fs::write(&path, script).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(path.with_extension("sh"), script).unwrap();
+    // A concurrent fork can briefly inherit the script writer despite CLOEXEC.
+    // Execute an immutable launcher and read the per-test script as data instead.
+    let launcher = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/commands/tests/curl-launcher.sh");
+    std::os::unix::fs::symlink(launcher, &path).unwrap();
     path
 }
 
@@ -1052,6 +974,11 @@ fn api_failure_keeps_the_body_and_exits_non_zero() {
     let body = b"{\"code\":\"UNAUTHORIZED\",\"message\":\"request is not authorized\"}";
     std::fs::write(dir.path().join("response.bin"), body).unwrap();
     let program = write_fake_curl(dir.path(), &fake_curl_script(dir.path(), 22));
+    // Pin the raced descriptor lifetime without depending on sibling scheduling.
+    let script_writer = std::fs::OpenOptions::new()
+        .write(true)
+        .open(program.with_extension("sh"))
+        .unwrap();
 
     let request = api::request_for_command("http://127.0.0.1:3000", ApiCommand::Discover).unwrap();
     let output = api::run_curl_output(
@@ -1062,6 +989,7 @@ fn api_failure_keeps_the_body_and_exits_non_zero() {
         std::process::Stdio::piped(),
     )
     .unwrap();
+    drop(script_writer);
 
     assert_eq!(
         output.stdout,

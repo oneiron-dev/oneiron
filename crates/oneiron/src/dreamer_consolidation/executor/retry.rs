@@ -31,6 +31,7 @@ pub(super) fn refreshed_input(
     );
     let parent = read
         .get(&partition.conversation_ref)?
+        .value
         .ok_or(crate::Error::EntityNotFound)?;
     let parent = decode_turn_body(&parent);
     let original: BTreeSet<EntityId> = original.into_iter().collect();
@@ -40,7 +41,11 @@ pub(super) fn refreshed_input(
         crate::EdgeKind::ChildOf,
         Some(crate::registry::ENTITY_TYPE_TURN),
     )? {
-        let Some((_, learned_at, bytes)) = read.get_entity_parts(&id)? else {
+        let crate::claim::ScopedReadResult {
+            value,
+            receipt: _receipt,
+        } = read.get_entity_parts_with_receipt(&id, None)?;
+        let Some((_, learned_at, bytes)) = value else {
             continue;
         };
         let facts = decode_turn_body(&bytes);

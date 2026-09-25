@@ -30,10 +30,12 @@
 //! a claim or moves an edge; resolution happens at read time, at the
 //! caller's discretion.
 
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
-use crate::edge::{EdgeKind, parse_strict_edge_record_key};
+use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::identity_topology::{
@@ -42,7 +44,7 @@ use crate::identity_topology::{
     shell_edge_sources_for_store_in_txn, zero_head_split_shells_for_store_in_txn,
 };
 use crate::store::Store;
-use crate::vault::{MAX_EDGE_QUERY_RESULTS, Vault, edge_kind_prefix};
+use crate::vault::{MAX_EDGE_QUERY_RESULTS, Vault};
 
 /// `vault_meta` key prefix of the redirect projection. The full key is this
 /// prefix followed by the 16-byte shell id; the value is a
@@ -362,13 +364,20 @@ fn direct_inbound_shells_in_txn(
     shells: &mut BTreeSet<EntityId>,
 ) -> Result<()> {
     for kind in SHELL_EDGE_KINDS {
-        let prefix = edge_kind_prefix(head, kind);
-        for (scanned, entry) in store.edges_in.prefix_iter(rtxn, &prefix)?.enumerate() {
+        for (scanned, entry) in store
+            .port_edges(
+                rtxn,
+                head,
+                crate::ports::EdgeDirection::In,
+                Some(kind),
+                None,
+            )?
+            .enumerate()
+        {
             if scanned >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("identity redirect inbound shells"));
             }
-            let (key, _) = entry?;
-            shells.insert(parse_strict_edge_record_key(&key)?.2);
+            shells.insert(entry?.target);
         }
     }
     for witness in [table_inbound, ledger_inbound] {
@@ -451,9 +460,12 @@ fn readable_payload_bytes_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<usize> {
-    Ok(store.entities.get(rtxn, id.as_bytes())?.map_or(0, |raw| {
-        raw.len().saturating_sub(ENTITY_METADATA_HEADER_LEN)
-    }))
+    Ok(store
+        .port_entity_record(rtxn, id)?
+        .map(|row| row.encode())
+        .map_or(0, |raw| {
+            raw.len().saturating_sub(ENTITY_METADATA_HEADER_LEN)
+        }))
 }
 
 impl Vault {
@@ -483,17 +495,12 @@ impl Vault {
     pub fn count_dangling_redirect_payloads(&self) -> Result<usize> {
         let rtxn = self.store.env.read_txn()?;
         let mut erased = BTreeSet::new();
-        for row in self
-            .store
-            .sync_state
-            .prefix_iter(&rtxn, crate::deletion::LOCAL_HARD_DELETE_PREFIX)?
-        {
-            let (key, _) = row?;
-            if let Some(hex) = key.strip_prefix(crate::deletion::LOCAL_HARD_DELETE_PREFIX)
-                && let Ok(id) = EntityId::from_hex(hex)
-            {
-                erased.insert(id);
-            }
+        for row in crate::ports::TombstoneStoreRead::port_tombstone_records(
+            &self.store,
+            &rtxn,
+            crate::ports::DeletionFamily::HardDelete,
+        )? {
+            erased.insert(row?.0);
         }
         if erased.is_empty() {
             return Ok(0);

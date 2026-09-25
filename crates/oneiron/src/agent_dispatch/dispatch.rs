@@ -72,6 +72,9 @@ impl<'a> AgentDispatcher<'a> {
         input: DispatchAgent,
         spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchOutcome> {
+        if matches!(input.target, AgentDispatchTarget::Workflow(_)) {
+            return self.dispatch_workflow(input, spawn);
+        }
         // Normalize the descriptor exactly ONCE here, before it is resolved,
         // compared, or persisted: the stored `AgentDispatchInput.context_spec`
         // is then canonical, so declared-narrowing and dedupe comparisons
@@ -86,11 +89,14 @@ impl<'a> AgentDispatcher<'a> {
         if let Some(parent_attempt) = input.parent_attempt {
             self.child_depth_remaining(parent_attempt)?;
         }
+        let target_definition = self.dispatchable_definition(&input.target)?;
+        if let Some(outcome) = self.propose_context_widen(&input, &spawn)? {
+            return Ok(outcome);
+        }
         // Resolution runs outside the write transaction on purpose: it is a
         // pure read of live state, and the vault's read seams open their own
         // snapshots. The resolved projection is deliberately NOT persisted —
         // the executor re-resolves it, so a resumed agent reads fresh state.
-        let target_definition = self.dispatchable_definition(&input.target)?;
         self.resolve_dispatch_context(
             input.parent_attempt,
             spawn.context_spec.as_ref(),
@@ -102,6 +108,7 @@ impl<'a> AgentDispatcher<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.dispatch_in_txn(&mut wtxn, None, input, spawn)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -125,6 +132,96 @@ impl<'a> AgentDispatcher<'a> {
         input: DispatchAgent,
         spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchOutcome> {
+        let requested_parent = input.parent_attempt;
+        let dispatch_input = self.prepare_dispatch_in_txn(wtxn, input.clone(), spawn)?;
+        let encoded = encode_agent_dispatch_input(&dispatch_input)?;
+        let outcome = self.runner.enqueue_with_task_ref_in_txn(
+            wtxn,
+            EnqueueDreamerAttempt {
+                attempt_type: AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+                input: encoded,
+                parent_attempt: requested_parent,
+                dedupe_key: input
+                    .dedupe_key
+                    .map(|key| format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}")),
+                run_id: input.run_id,
+                now: input.now,
+            },
+            task_ref.map(|task_ref| task_ref.to_hex()),
+        )?;
+
+        Ok(match outcome {
+            EnqueueDreamerAttemptOutcome::Enqueued(status) => {
+                if let Some(case) = &dispatch_input.healer_case {
+                    crate::failure_ladder::oversight::proposed_in_txn(
+                        self.vault,
+                        wtxn,
+                        &case.case_ref,
+                        input.now,
+                    )?;
+                }
+                let mut status = agent_dispatch_status(status)?;
+                let index: Vec<_> = status
+                    .input
+                    .definition
+                    .skills
+                    .iter()
+                    .map(|skill| (&skill.skill_id, &skill.min_version))
+                    .collect();
+                let bytes = serde_json::to_vec(&index)
+                    .map_err(|_| Error::InvariantViolation("skill index encode"))?;
+                let agent = status.input.target.agent_definition_ref()?;
+                status.attempt = AttemptQueue::new(self.vault).append_manifest_entry_in_txn(
+                    wtxn,
+                    status.attempt.id,
+                    crate::attempt_queue::ManifestEntry::new(
+                        crate::attempt_queue::ManifestKind::SkillIndex,
+                        agent.to_hex(),
+                        blake3::hash(&bytes).to_hex().as_str(),
+                        input.now,
+                    ),
+                )?;
+                AgentDispatchOutcome::Dispatched(status)
+            }
+            EnqueueDreamerAttemptOutcome::Existing(status) => {
+                let status = agent_dispatch_status(status)?;
+                if status.input.target != dispatch_input.target {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "existing dedupe row targets a different agent",
+                    )));
+                }
+                let existing_parent =
+                    decode_dreamer_attempt_payload(&status.attempt.payload)?.parent_attempt;
+                if existing_parent != requested_parent {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "existing dedupe row belongs to a different parent",
+                    )));
+                }
+                // The dedupe key names the INTENT, so the persisted row must
+                // carry the SAME effective spawn input; a different one is a
+                // typed error, never a silent reuse.
+                if status.input.healer_case != dispatch_input.healer_case
+                    || status.input.context_spec != dispatch_input.context_spec
+                    || status.input.context_from != dispatch_input.context_from
+                    || status.input.depth_remaining != dispatch_input.depth_remaining
+                    || status.input.scope != dispatch_input.scope
+                {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "existing dedupe row carries a different spawn context",
+                    )));
+                }
+                AgentDispatchOutcome::Existing(status)
+            }
+        })
+    }
+
+    /// Freezes one real agent after structural and live-authority checks.
+    pub(super) fn prepare_dispatch_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: DispatchAgent,
+        spawn: AgentSpawnContext,
+    ) -> Result<AgentDispatchInput> {
         let requested_parent = input.parent_attempt;
 
         // 1. STRUCTURAL BOUND FIRST. Zero rejects here, before any fork
@@ -164,14 +261,30 @@ impl<'a> AgentDispatcher<'a> {
                 )
             }
         };
-        let requested_definition = self.dispatchable_definition(&input.target)?;
+        let requested_definition = self.dispatchable_definition_in_txn(wtxn, &input.target)?;
+        if let Some(case) = &spawn.healer_case {
+            super::healer_context::validate(case)?;
+            crate::failure_ladder::require_healer_case_in_txn(
+                self.vault,
+                wtxn,
+                case,
+                input.run_id.as_deref(),
+            )?;
+            if input.parent_attempt != Some(case.failing_attempt_id)
+                || requested_definition.ceiling != crate::agent_def::AgentCeiling::Proposed
+            {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "healer context requires its failing parent and propose-only ceiling",
+                )));
+            }
+        }
 
         // 2. AUTHORITY BOUND. Both sides read the LIVE stored rows; the frozen
         //    payload ceiling stays non-authoritative on every path.
         let (target, definition) = match requested_parent {
             None => (input.target, requested_definition),
             Some(parent_attempt) => {
-                let AgentDispatchTarget::Custom(requested_ref) = input.target;
+                let requested_ref = input.target.agent_definition_ref()?;
                 let (attenuated, definition) = self.attenuate_child_target(
                     wtxn,
                     parent_attempt,
@@ -187,62 +300,14 @@ impl<'a> AgentDispatcher<'a> {
         // 3. The descriptor rides the payload UNRESOLVED. It was validated
         //    against live parent state in `dispatch_with_context`; the executor
         //    resolves it again at read time, which is what keeps it fresh.
-        let dispatch_input = AgentDispatchInput {
+        Ok(AgentDispatchInput {
+            healer_case: spawn.healer_case,
             target,
             definition,
             context_spec: spawn.context_spec,
             context_from: spawn.context_from,
             depth_remaining,
             scope,
-        };
-        let encoded = encode_agent_dispatch_input(&dispatch_input)?;
-        let outcome = self.runner.enqueue_with_task_ref_in_txn(
-            wtxn,
-            EnqueueDreamerAttempt {
-                attempt_type: AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
-                input: encoded,
-                parent_attempt: requested_parent,
-                dedupe_key: input
-                    .dedupe_key
-                    .map(|key| format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}")),
-                run_id: input.run_id,
-                now: input.now,
-            },
-            task_ref.map(|task_ref| task_ref.to_hex()),
-        )?;
-
-        Ok(match outcome {
-            EnqueueDreamerAttemptOutcome::Enqueued(status) => {
-                AgentDispatchOutcome::Dispatched(agent_dispatch_status(status)?)
-            }
-            EnqueueDreamerAttemptOutcome::Existing(status) => {
-                let status = agent_dispatch_status(status)?;
-                if status.input.target != dispatch_input.target {
-                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                        "existing dedupe row targets a different agent",
-                    )));
-                }
-                let existing_parent =
-                    decode_dreamer_attempt_payload(&status.attempt.payload)?.parent_attempt;
-                if existing_parent != requested_parent {
-                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                        "existing dedupe row belongs to a different parent",
-                    )));
-                }
-                // The dedupe key names the INTENT, so the persisted row must
-                // carry the SAME effective spawn input; a different one is a
-                // typed error, never a silent reuse.
-                if status.input.context_spec != dispatch_input.context_spec
-                    || status.input.context_from != dispatch_input.context_from
-                    || status.input.depth_remaining != dispatch_input.depth_remaining
-                    || status.input.scope != dispatch_input.scope
-                {
-                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                        "existing dedupe row carries a different spawn context",
-                    )));
-                }
-                AgentDispatchOutcome::Existing(status)
-            }
         })
     }
 
@@ -253,10 +318,33 @@ impl<'a> AgentDispatcher<'a> {
         &self,
         target: &AgentDispatchTarget,
     ) -> Result<AgentDefinition> {
-        let AgentDispatchTarget::Custom(id) = target;
-        let definition = self.vault.get_agent_definition(id)?.ok_or(Error::Artifact(
-            ArtifactError::AgentDefinitionNotFound { id: *id },
-        ))?;
+        let txn = self.vault.store.env.read_txn()?;
+        self.dispatchable_definition_in_txn(&txn, target)
+    }
+
+    pub(super) fn dispatchable_definition_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        target: &AgentDispatchTarget,
+    ) -> Result<AgentDefinition> {
+        let id = &target.agent_definition_ref()?;
+        let definition = match crate::vault::live_entity_row_in_txn(&self.vault.store, txn, id)? {
+            crate::vault::LiveEntityRow::Live { entity_type, body }
+                if entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF =>
+            {
+                crate::agent_def::decode_agent_definition(&body)?
+            }
+            crate::vault::LiveEntityRow::Absent | crate::vault::LiveEntityRow::DeletedShell => {
+                return Err(Error::Artifact(ArtifactError::AgentDefinitionNotFound {
+                    id: *id,
+                }));
+            }
+            _ => {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                    "entity is not a type-17 AGENT_DEF",
+                )));
+            }
+        };
         if definition.lifecycle_status != ClaimLifecycleStatus::Active {
             return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
                 "agent definition is not active",
@@ -306,9 +394,11 @@ impl<'a> AgentDispatcher<'a> {
         &self,
         parent_attempt: AttemptId,
     ) -> Result<Option<AgentDispatchInput>> {
-        Ok(AttemptQueue::new(self.vault)
-            .get(parent_attempt)?
-            .and_then(|record| record_dispatch_input(&record)))
+        let row = AttemptQueue::new(self.vault).get(parent_attempt)?;
+        if let Some(row) = &row {
+            super::workflow_record::reject_wrapper_parent(row)?;
+        }
+        Ok(row.and_then(|record| record_dispatch_input(&record)))
     }
 
     pub(super) fn parent_dispatch_input_in_txn(
@@ -316,9 +406,11 @@ impl<'a> AgentDispatcher<'a> {
         wtxn: &heed::RwTxn<'_>,
         parent_attempt: AttemptId,
     ) -> Result<Option<AgentDispatchInput>> {
-        Ok(AttemptQueue::new(self.vault)
-            .get_in_write_txn(wtxn, parent_attempt)?
-            .and_then(|record| record_dispatch_input(&record)))
+        let row = AttemptQueue::new(self.vault).get_in_write_txn(wtxn, parent_attempt)?;
+        if let Some(row) = &row {
+            super::workflow_record::reject_wrapper_parent(row)?;
+        }
+        Ok(row.and_then(|record| record_dispatch_input(&record)))
     }
 
     /// Dispatches the always-available generic base without a caller-supplied

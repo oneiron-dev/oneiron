@@ -7,11 +7,26 @@
 
 mod codec;
 mod coreference;
+pub mod derivation;
+#[cfg(feature = "sync")]
+pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 mod grant;
+pub(crate) mod grant_scope;
+mod ruling_integrity;
+mod rulings;
+pub(crate) use ruling_integrity::{
+    guard_ruling_overwrite, reject_ruling_delete, validate_ruling_claim,
+};
+mod shared_creation;
+pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
+pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
 mod guest;
 mod pact_scope;
 mod peer_authority;
+pub mod record_scope;
 mod relationships;
+pub(crate) mod scope_codec;
+mod selector_kind;
 mod stale;
 
 pub use self::coreference::{
@@ -58,7 +73,9 @@ pub(crate) use self::pact_scope::{
     decode_federation_direction_scope_value, decode_federation_pact_scope_value,
     federation_direction_scope_value, federation_pact_scope_value,
 };
-pub(crate) use self::peer_authority::admitted_peer_consent_roots_in_txn;
+pub(crate) use self::peer_authority::{
+    admitted_peer_consent_roots_for_store_in_txn, admitted_peer_consent_roots_in_txn,
+};
 pub(crate) use self::stale::stale_stamped_worlds;
 
 // These two are test-only doors (federation, pipeline, and context-pack
@@ -69,6 +86,8 @@ pub(crate) use self::stale::federation_stale_key;
 #[cfg(test)]
 use self::stale::register_foreign_world_for_pact;
 
+#[cfg(test)]
+mod shared_creation_tests;
 #[cfg(test)]
 mod tests;
 
@@ -106,3 +125,9 @@ use rmpv::Value;
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 use std::io::Cursor;
+
+mod scope;
+pub use scope::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+
+mod org_admin;
+pub use org_admin::{OrgAdminError, OrgAdminPolicy, OrgAdminPower};

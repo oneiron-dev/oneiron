@@ -362,6 +362,29 @@ fn pipeline_reports_pending_vector_state_for_retrieved_claim() -> Result<()> {
         .token
         .clone();
 
+    let owner = crate::federation::derivation::DerivationOwner([7; 32]);
+    vault.bind_derivation_owner(owner)?;
+    let resealed = vault
+        .query()
+        .search_text("pendingvectorneedle", 10)
+        .run_with_pending_vectors()?;
+    assert_eq!(resealed.pending_vector_ids, vec![claim]);
+    let sealed_token = resealed.pending_vectors[0].token.clone();
+    assert_ne!(sealed_token, token);
+    // Work dispatched before the owner binding cannot complete under that owner.
+    vault
+        .batch()
+        .vector_for_pending_embedding(&claim, &[1.0, 0.0, 0.0, 0.0], &token)
+        .commit()?;
+    assert!(vault.get_vector(&claim)?.is_none());
+    vault.bind_derivation_owner(owner)?;
+    let repeated = vault
+        .query()
+        .search_text("pendingvectorneedle", 10)
+        .run_with_pending_vectors()?;
+    assert_eq!(repeated.pending_vectors[0].token, sealed_token);
+    let token = sealed_token;
+
     vault
         .batch()
         .vector_for_pending_embedding(&claim, &[1.0, 0.0, 0.0, 0.0], &token)
@@ -614,26 +637,28 @@ fn world_scope_filter_visibility_matrix() -> Result<()> {
         "W-scoped claim must NOT surface in Base"
     );
 
-    // World(W): the W-scoped claim plus base claims.
+    // World(W): only the W-scoped claim. Base is an explicit member, never
+    // implicit in a named world.
     let in_w = ids(&vault
         .query()
         .search_vector(&FACET_QUERY, 10)
         .world(WorldScope::World(world_w))
         .run()?);
     assert!(
-        in_w.contains(&claim_base) && in_w.contains(&claim_w),
-        "World(W) must surface the W claim + base claim, got {in_w:?}"
+        !in_w.contains(&claim_base) && in_w.contains(&claim_w),
+        "World(W) must surface the W claim only, got {in_w:?}"
     );
 
-    // World(V): base claim only — the W claim belongs to another world.
+    // World(V): neither claim — the W claim belongs to another world and base
+    // is not implicit in a named scope.
     let in_v = ids(&vault
         .query()
         .search_vector(&FACET_QUERY, 10)
         .world(WorldScope::World(world_v))
         .run()?);
     assert!(
-        in_v.contains(&claim_base),
-        "base claim must surface in World(V)"
+        !in_v.contains(&claim_base),
+        "base claim must NOT surface in World(V)"
     );
     assert!(
         !in_v.contains(&claim_w),
@@ -704,7 +729,13 @@ fn non_claim_entities_are_never_status_gated() -> Result<()> {
     let opaque = entity_id(41);
     vault
         .batch()
-        .put(&opaque, 4, TimeRange { start: 1, end: 1 }, 1, b"payload")
+        .put(
+            &opaque,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"payload",
+        )
         .text(&opaque, &[("body", "opaqueneedle")])
         .commit()?;
 
@@ -765,6 +796,8 @@ fn claim_status_gate_fails_closed_on_undecodable_bodies() -> Result<()> {
                 rmpv::Value::Binary(vec![0x7C; 16]),
             ),
             (rmpv::Value::from("life"), rmpv::Value::from("active")),
+            (rmpv::Value::from("world"), rmpv::Value::from("base")),
+            (rmpv::Value::from("rel"), rmpv::Value::from("all")),
         ]),
     )
     .expect("msgpack encode");
@@ -839,7 +872,13 @@ fn dead_claim_never_seeds_ppr_expansion() -> Result<()> {
         ClaimLifecycleStatus::Active,
         false,
     )?;
-    vault.put_entity(&x, 4, TimeRange { start: 1, end: 1 }, 1, b"payload")?;
+    vault.put_entity(
+        &x,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"payload",
+    )?;
     vault.put_edge(&r, EdgeKind::Supports, &x, 0.9)?;
 
     // Control: while active, the claim seeds the expansion and pulls in

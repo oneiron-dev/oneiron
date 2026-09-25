@@ -86,6 +86,8 @@ impl OffRecordSessionRegistry {
         session_ref: &str,
         backend: OffRecordBackendClass,
         budget_bytes: usize,
+        mode: OffRecordMode,
+        clock: &crate::ports::StoreClock,
     ) -> Result<Arc<OffRecordSessionEntry>> {
         let mut sessions = self.sessions()?;
         if sessions.contains_key(session_ref) {
@@ -98,17 +100,24 @@ impl OffRecordSessionRegistry {
         let record = OffRecordSessionRecord {
             version: OFF_RECORD_SESSION_RECORD_VERSION,
             session_ref: session_ref.to_owned(),
-            mode: OffRecordMode::OffRecord,
+            mode,
             backend,
-            entered_at: crate::unix_seconds_now(),
+            entered_at: clock.now_recorded_at(),
             promoted_turns: Vec::new(),
             closing: false,
         };
+        let overlay = SessionOverlay::new(budget_bytes);
+        if mode == OffRecordMode::Anonymous {
+            // An anonymous read view can use the composed-read substrate but
+            // must never acquire a writer, even through a lower-level door.
+            overlay.seal_writes()?;
+        }
         let entry = Arc::new(OffRecordSessionEntry {
-            overlay: SessionOverlay::new(budget_bytes),
+            overlay,
             state: Mutex::new(OffRecordSessionEntryState {
                 record: record.clone(),
-                receipt_log: Some(SessionLocalReceiptLog::off_record(session_ref)),
+                receipt_log: (mode != OffRecordMode::Anonymous)
+                    .then(|| SessionLocalReceiptLog::off_record(session_ref)),
                 post_flip_emit_log: None,
                 overlay_closed: false,
                 gone: false,
@@ -116,7 +125,7 @@ impl OffRecordSessionRegistry {
                 // room. Allocating it lazily made "one shell per live
                 // session" a property of whoever touched it first; allocating
                 // it here makes it a property of entry.
-                overlay_shell: EntityId::now(),
+                overlay_shell: clock.entity_id()?,
                 overlay_shell_staged: false,
                 continuation_shell: None,
             }),

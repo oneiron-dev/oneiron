@@ -80,20 +80,36 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
     let retracted_tgt = EntityId::now();
     let actor = EntityId::now();
 
-    for (id, body) in [
+    // TURN(1), not PERSON(4): PERSON writes mint a substrate FACET plus a
+    // `HasFacet` edge, which would add a sixth edge and extra mirrored rows.
+    // This seam pins edge-kind shipping, not identity side effects.
+    let entities = [
         (&seed, b"seed".as_slice()),
         (&mentions_tgt, b"mentions-target"),
         (&child_tgt, b"child-target"),
         (&assigned_tgt, b"assigned-target"),
         (&blocked_by_tgt, b"blocked-by-target"),
         (&retracted_tgt, b"retracted-target"),
-    ] {
+    ];
+    for (id, body) in entities {
         vault_a
-            .put_entity(id, 4, occurred, learned_at, body)
+            .put_entity(
+                id,
+                oneiron::registry::ENTITY_TYPE_TURN,
+                occurred,
+                learned_at,
+                body,
+            )
             .unwrap();
     }
     vault_a
-        .put_entity(&actor, 4, occurred, out_of_window_learned_at, b"actor")
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            occurred,
+            out_of_window_learned_at,
+            b"actor",
+        )
         .unwrap();
 
     vault_a
@@ -288,6 +304,19 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
         "retracted hot flags must survive sync byte-for-byte"
     );
 
+    // The shipping assertions above use untouched peer bytes. For the read
+    // assertion below, locally attest every known fixture body, including the
+    // negative controls. Missing scope stamps must not make kind gating vacuous.
+    for (id, body) in entities {
+        vault_b
+            .put_entity(id, 1, occurred, learned_at, body)
+            .unwrap();
+    }
+    let issuer =
+        oneiron::authority::HostSlipIssuer::from_secret(b"sync edge read fixture").unwrap();
+    let proof = vault_b.verified_host_root_slip(&issuer).unwrap();
+    let read_key = oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof).unwrap();
+
     // 3. Context-pack walk from the same seed on the synced vault: the kind
     //    gating lives at READ time (context_pack walk), not in sync.
     vault_b
@@ -295,12 +324,17 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
         .text(&seed, &[("body", "seam7walkseed")])
         .commit()
         .unwrap();
-    let pack = vault_b
+    let mut pack = vault_b
         .context_pack()
         .search_text("seam7walkseed", 10)
         .edge_hop(1)
         .max_neighbors(10)
         .run()
+        .unwrap();
+
+    vault_b
+        .scoped_read(read_key)
+        .filter_context_pack(&mut pack)
         .unwrap();
 
     let result_ids: HashSet<EntityId> = pack.results.iter().map(|e| e.id).collect();

@@ -11,6 +11,10 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "packages/oneiron/**"
+      - "packages/oneiron-ai-sdk/**"
+      - "packages/oneiron-langgraph/**"
+      - "docs/agent-sdk/**"
+      - "llms.txt"
       - "crates/oneiron-py/**"
       - "crates/oneiron-remote/**"
       - "crates/oneiron-napi/**"
@@ -18,7 +22,10 @@ on:
       - "crates/oneiron/**"
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
+      - "scripts/tests/test_wire_key_value.py"
       - "scripts/tests/test_wire_workflow.py"
+      - "scripts/code-sandbox/**"
+      - "scripts/tests/test_sandbox_wit.*"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -27,6 +34,10 @@ on:
     branches: [main]
     paths:
       - "packages/oneiron/**"
+      - "packages/oneiron-ai-sdk/**"
+      - "packages/oneiron-langgraph/**"
+      - "docs/agent-sdk/**"
+      - "llms.txt"
       - "crates/oneiron-py/**"
       - "crates/oneiron-remote/**"
       - "crates/oneiron-napi/**"
@@ -34,7 +45,10 @@ on:
       - "crates/oneiron/**"
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
+      - "scripts/tests/test_wire_key_value.py"
       - "scripts/tests/test_wire_workflow.py"
+      - "scripts/code-sandbox/**"
+      - "scripts/tests/test_sandbox_wit.*"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -132,9 +146,22 @@ jobs:
       - name: Install Python build and metadata tooling
         run: python -m pip install --disable-pip-version-check maturin==1.9.4 twine==6.1.0
 
+      - name: Memory Wire agent mirror and adapter
+        run: |
+          python packages/oneiron/scripts/agent-docs.py --check
+          node packages/oneiron/scripts/check-readme-snippets.mjs
+          bun test --cwd packages/oneiron-ai-sdk adapter.test.js
+          python scripts/code-sandbox/generate.py --check
+          node scripts/tests/test_sandbox_wit.mjs
+
       - name: Build the SDK crates (dev profile)
         run: |
           cargo build --locked -p oneiron-remote -p oneiron-napi -p oneiron-py
+
+      - name: Canonical guest SDK adaptation
+        run: |
+          python3 scripts/code-sandbox/generate.py --check
+          node scripts/tests/test_sandbox_wit.mjs
 
       - name: Shared backend contract tests
         run: cargo test --locked -p oneiron-remote
@@ -142,8 +169,8 @@ jobs:
       - name: Build the npm package
         working-directory: packages/oneiron
         run: |
-          # This retained package has no lockfile. Do not request a frozen one.
-          bun install
+          # Use the pinned native build/typecheck dependencies.
+          bun install --frozen-lockfile
           bun run check:snippets
           bun run check:sdk-major
           bun run build
@@ -194,6 +221,7 @@ jobs:
         run: |
           "$WIRE_PYTHON_ENV/bin/python" -m pip install --disable-pip-version-check pytest==8.4.2
           cp packages/oneiron/scripts/wire-parity.mjs "$WIRE_NODE_PROJECT/"
+          cp packages/oneiron/scripts/wire-key-value-parity.mjs "$WIRE_NODE_PROJECT/"
 
       - name: Structural assertions on both measured quickstart outputs
         run: >-
@@ -206,6 +234,8 @@ jobs:
           ONEIRON_WIRE_EXEC: >-
             "$WIRE_PYTHON_ENV/bin/python" -m pytest -q
             scripts/tests/test_wire_quickstart.py::test_remote_sdk_parity
+            scripts/tests/test_wire_quickstart.py::test_installed_remote_quickstarts
+            scripts/tests/test_wire_key_value.py::test_remote_key_value_parity
         run: bash scripts/wire-test-server.sh
 
       # Remote tests above are explicit node IDs, not filters that can select
@@ -214,8 +244,19 @@ jobs:
         working-directory: packages/oneiron
         run: bun test
 
+      - name: AI SDK agent with native Memory Wire
+        working-directory: packages/oneiron-ai-sdk
+        run: |
+          bun install --frozen-lockfile
+          bun run test:native
+
       - name: Python package tests
         run: '"$WIRE_PYTHON_ENV/bin/python" -m pytest crates/oneiron-py/tests -q'
+
+      - name: LangGraph BaseStore adapter against real abstract API
+        run: |
+          "$WIRE_PYTHON_ENV/bin/python" -m pip install --disable-pip-version-check "./packages/oneiron-langgraph[test]"
+          "$WIRE_PYTHON_ENV/bin/python" -m pytest packages/oneiron-langgraph/tests -q
 
       - name: npm pack dry run
         working-directory: packages/oneiron

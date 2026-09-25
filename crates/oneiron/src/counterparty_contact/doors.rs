@@ -21,9 +21,9 @@ use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, ap
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
 use crate::temporal::TimeRange;
-use crate::vault::entity_id_from_type_index_key;
 
 impl Vault {
     /// Creates a per-(identity, counterparty) contact record.
@@ -40,7 +40,7 @@ impl Vault {
         // encode-first shape did.
         encode_counterparty_contact_body(record)?;
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some()
+        if self.store.port_entity_record(&wtxn, id)?.is_some()
             || self.counterparty_contact_assignment_conflict_in_txn(&wtxn, id, record)?
         {
             return Err(Error::Record(RecordError::CounterpartyContactAlreadyExists));
@@ -148,8 +148,8 @@ impl Vault {
     ) -> Result<CounterpartyContactRecord> {
         let raw = self
             .store
-            .entities
-            .get(wtxn, id.as_bytes())?
+            .port_entity_record(wtxn, id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -193,7 +193,7 @@ impl Vault {
             if existing.is_some_and(|(_, live_body)| live_body.value == body.value) {
                 continue;
             }
-            let new_id = EntityId::now();
+            let new_id = self.store.clock.entity_id()?;
             self.put_counterparty_contact_claim_in_txn(wtxn, &new_id, &body, now)?;
             if let Some((old_id, _)) = existing {
                 supersede_family_owned_claim_in_txn(self, wtxn, &new_id, old_id, now)?;
@@ -285,7 +285,11 @@ impl Vault {
         id: &EntityId,
     ) -> Result<Option<CounterpartyContactRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(&rtxn, id)?
+            .map(|row| row.encode())
+        else {
             return Ok(None);
         };
         let header =
@@ -303,23 +307,30 @@ impl Vault {
         counterparty: &str,
     ) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
         let rtxn = self.store.env.read_txn()?;
+        self.find_counterparty_contact_in_txn(&rtxn, identity_ref, counterparty)
+    }
+
+    pub(crate) fn find_counterparty_contact_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        identity_ref: &EntityId,
+        counterparty: &str,
+    ) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
         let index_key = counterparty_contact_index_key(identity_ref, counterparty)?;
-        if let Some(raw_id) = self.store.vault_meta.get(&rtxn, &index_key)? {
+        if let Some(raw_id) = self.store.vault_meta.get(rtxn, &index_key)? {
             let id = decode_counterparty_contact_index_value(&raw_id)?;
-            let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            let Some(raw) = self.store.port_entity_record(rtxn, &id)? else {
                 return Err(Error::CorruptedIndex(
                     "counterparty contact lookup index entity row",
                 ));
             };
-            let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex(
-                "counterparty contact lookup index entity header",
-            ))?;
-            if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
+
+            if raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
                 return Err(Error::CorruptedIndex(
                     "counterparty contact lookup index entity type",
                 ));
             }
-            let record = decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let record = decode_counterparty_contact_body(&raw.body)?;
             if !record.matches_counterparty(identity_ref, counterparty) {
                 return Err(Error::CorruptedIndex(
                     "counterparty contact lookup index assignment",
@@ -328,22 +339,19 @@ impl Vault {
             return Ok(Some((id, record)));
         }
 
-        for entry in self
-            .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_COUNTERPARTY_CONTACT])?
+        for entry in
+            self.store
+                .port_entity_ids_by_type(rtxn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)?
         {
-            let (key, _) = entry?;
-            let id = entity_id_from_type_index_key(&key)?;
-            let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            let id = entry?;
+            let Some(raw) = self.store.port_entity_record(rtxn, &id)? else {
                 return Err(Error::CorruptedIndex("counterparty contact entity row"));
             };
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("counterparty contact entity header"))?;
-            if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
+
+            if raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
                 return Err(Error::CorruptedIndex("counterparty contact entity type"));
             }
-            let record = decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let record = decode_counterparty_contact_body(&raw.body)?;
             if record.matches_counterparty(identity_ref, counterparty) {
                 return Ok(Some((id, record)));
             }
@@ -358,22 +366,19 @@ impl Vault {
     ) -> Result<Vec<(EntityId, CounterpartyContactRecord)>> {
         let rtxn = self.store.env.read_txn()?;
         let mut records = Vec::new();
-        for entry in self
-            .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_COUNTERPARTY_CONTACT])?
+        for entry in
+            self.store
+                .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)?
         {
-            let (key, _) = entry?;
-            let id = entity_id_from_type_index_key(&key)?;
-            let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            let id = entry?;
+            let Some(raw) = self.store.port_entity_record(&rtxn, &id)? else {
                 return Err(Error::CorruptedIndex("counterparty contact entity row"));
             };
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("counterparty contact entity header"))?;
-            if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
+
+            if raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
                 return Err(Error::CorruptedIndex("counterparty contact entity type"));
             }
-            let record = decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let record = decode_counterparty_contact_body(&raw.body)?;
             if record.identity_ref.as_bytes() == identity_ref.as_bytes() {
                 records.push((id, record));
             }
@@ -395,25 +400,22 @@ impl Vault {
             }
         }
 
-        for entry in self
-            .store
-            .type_index
-            .prefix_iter(txn, &[ENTITY_TYPE_COUNTERPARTY_CONTACT])?
+        for entry in
+            self.store
+                .port_entity_ids_by_type(txn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)?
         {
-            let (key, _) = entry?;
-            let existing_id = entity_id_from_type_index_key(&key)?;
+            let existing_id = entry?;
             if existing_id == *id {
                 continue;
             }
-            let Some(raw) = self.store.entities.get(txn, existing_id.as_bytes())? else {
+            let Some(raw) = self.store.port_entity_record(txn, &existing_id)? else {
                 return Err(Error::CorruptedIndex("counterparty contact entity row"));
             };
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("counterparty contact entity header"))?;
-            if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
+
+            if raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
                 return Err(Error::CorruptedIndex("counterparty contact entity type"));
             }
-            let stored = decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let stored = decode_counterparty_contact_body(&raw.body)?;
             if stored.matches_counterparty(&record.identity_ref, &record.counterparty) {
                 return Ok(true);
             }
@@ -437,7 +439,11 @@ impl Vault {
             }
         }
 
-        let old_index_key = if let Some(raw) = self.store.entities.get(&*wtxn, id.as_bytes())? {
+        let old_index_key = if let Some(raw) = self
+            .store
+            .port_entity_record(&*wtxn, id)?
+            .map(|row| row.encode())
+        {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {

@@ -45,6 +45,7 @@ pub(crate) struct RedactionAuditReceipt {
 
 #[derive(Debug, Clone)]
 pub(crate) struct RedactionReceiptInput {
+    pub actor_principal: Option<EntityId>,
     pub request_id: String,
     pub scope: RedactionScope,
     pub reason: DeleteReason,
@@ -665,9 +666,30 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         receipt_id: &EntityId,
-        input: RedactionReceiptInput,
+        mut input: RedactionReceiptInput,
         sweep_extras: HardEraseSweepExtras,
     ) -> Result<Vec<u8>> {
+        let mut ids = std::collections::BTreeSet::new();
+        for hex in &input.scope.entity_ids {
+            let holder = EntityId::from_hex(hex)?;
+            ids.insert(holder);
+            ids.extend(crate::skill_hub::source_carriers_for_holder_in_txn(
+                &self.store,
+                wtxn,
+                &holder,
+            )?);
+            ids.extend(crate::agent_def::birth_carriers_for_erased_entity_in_txn(
+                &self.store,
+                wtxn,
+                &holder,
+            )?);
+            ids.extend(crate::receipt::receipt_archives_for_holder(
+                &self.store,
+                wtxn,
+                &holder,
+            )?);
+        }
+        input.scope.entity_ids = ids.iter().map(EntityId::to_hex).collect();
         let sweep_key = if let Some(queued_at) = input.sweep_queued_at {
             self.enqueue_hard_erase_sweep_in_txn(
                 wtxn,
@@ -685,6 +707,20 @@ impl Vault {
         // is the single in-txn hook.
         let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
         let hard_purge_complete_at = input.hard_purge_complete_at;
+        for entity in &input.scope.entity_ids {
+            crate::ports::audit_mutation_in_txn(
+                &self.store,
+                wtxn,
+                crate::ports::MutationAudit {
+                    entity: EntityId::from_hex(entity)?,
+                    op: crate::ports::ChangeOp::Forget,
+                    actor_principal: input.actor_principal,
+                    occurred_at: input.requested_at,
+                    input: input.request_id.as_bytes(),
+                    reason: Some(input.reason.as_str()),
+                },
+            )?;
+        }
         let body = encode_redaction_audit_receipt(input, receipt_id, &identity)?;
         self.put_redaction_audit_receipt_in_txn(wtxn, receipt_id, hard_purge_complete_at, &body)?;
         Ok(sweep_key)

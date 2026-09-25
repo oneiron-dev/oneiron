@@ -106,12 +106,12 @@ impl crate::Vault {
             takes_included: compile.takes_included,
             granted_by: consent.granted_by.trim().to_owned(),
             granted_at_secs: consent.granted_at_secs,
-            exported_at_secs: crate::unix_seconds_now(),
+            exported_at_secs: self.store.clock.now_recorded_at(),
             included_row_ids: included_row_ids.clone(),
             struck_row_ids: struck_row_ids.clone(),
             artifact_fingerprint,
         };
-        let export_id = EntityId::now();
+        let export_id = self.store.clock.entity_id()?;
         self.put_persona_snapshot_export(&export_id, &record)?;
 
         Ok(PersonaSnapshotArtifact {

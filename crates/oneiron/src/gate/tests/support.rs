@@ -372,7 +372,10 @@ pub(super) fn scoped_grants_entry() -> (Value, Value) {
             (Value::from(GRANT_EFFECTOR_KEY), Value::from("channel_send")),
             (
                 Value::from(GRANT_SCOPE_KEY),
-                Value::Map(vec![(Value::from("audience"), Value::from("cold"))]),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::effect_preset(),
+                )
+                .unwrap(),
             ),
             (
                 Value::from(GRANT_RECEIPT_REQUIRED_KEY),
@@ -388,11 +391,26 @@ pub(super) fn external_effect_scoped_grant_entry(
     scope: Value,
     budget: Option<Value>,
 ) -> (Value, Value) {
+    let (authority, selectors) = if matches!(&scope,Value::Map(entries) if entries.iter().any(|(key,_)|key.as_str()==Some("worlds")))
+    {
+        (scope, None)
+    } else {
+        (
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::effect_preset(),
+            )
+            .unwrap(),
+            Some(scope),
+        )
+    };
     let mut row = vec![
         (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
         (Value::from(GRANT_EFFECTOR_KEY), Value::from(effector)),
-        (Value::from(GRANT_SCOPE_KEY), scope),
+        (Value::from(GRANT_SCOPE_KEY), authority),
     ];
+    if let Some(selectors) = selectors {
+        row.push((Value::from("selectors"), selectors));
+    }
     if let Some(budget) = budget {
         row.push((Value::from(GRANT_BUDGET_KEY), budget));
     }
@@ -508,6 +526,18 @@ pub(super) fn public_stamped(mut body: ClaimBody) -> ClaimBody {
 }
 
 pub(super) fn core_read_scoped_grant_entry(actor_ref: &str, scope: Value) -> (Value, Value) {
+    let (authority, selectors) = if matches!(&scope,Value::Map(entries) if entries.iter().any(|(key,_)|key.as_str()==Some("worlds")))
+    {
+        (scope, Value::Nil)
+    } else {
+        (
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .unwrap(),
+            scope,
+        )
+    };
     (
         Value::from(POLICY_SCOPED_GRANTS_KEY),
         Value::Array(vec![Value::Map(vec![
@@ -516,7 +546,8 @@ pub(super) fn core_read_scoped_grant_entry(actor_ref: &str, scope: Value) -> (Va
                 Value::from(GRANT_EFFECTOR_KEY),
                 Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
             ),
-            (Value::from(GRANT_SCOPE_KEY), scope),
+            (Value::from(GRANT_SCOPE_KEY), authority),
+            (Value::from("selectors"), selectors),
             (
                 Value::from(GRANT_RECEIPT_REQUIRED_KEY),
                 Value::Boolean(false),
@@ -529,6 +560,18 @@ pub(super) fn receipt_required_core_read_scoped_grant_entry(
     actor_ref: &str,
     scope: Value,
 ) -> (Value, Value) {
+    let (authority, selectors) = if matches!(&scope,Value::Map(entries) if entries.iter().any(|(key,_)|key.as_str()==Some("worlds")))
+    {
+        (scope, Value::Nil)
+    } else {
+        (
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .unwrap(),
+            scope,
+        )
+    };
     (
         Value::from(POLICY_SCOPED_GRANTS_KEY),
         Value::Array(vec![Value::Map(vec![
@@ -537,7 +580,8 @@ pub(super) fn receipt_required_core_read_scoped_grant_entry(
                 Value::from(GRANT_EFFECTOR_KEY),
                 Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
             ),
-            (Value::from(GRANT_SCOPE_KEY), scope),
+            (Value::from(GRANT_SCOPE_KEY), authority),
+            (Value::from("selectors"), selectors),
         ])]),
     )
 }
@@ -546,6 +590,18 @@ pub(super) fn budgeted_core_read_scoped_grant_entry(
     actor_ref: &str,
     scope: Value,
 ) -> (Value, Value) {
+    let (authority, selectors) = if matches!(&scope,Value::Map(entries) if entries.iter().any(|(key,_)|key.as_str()==Some("worlds")))
+    {
+        (scope, Value::Nil)
+    } else {
+        (
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .unwrap(),
+            scope,
+        )
+    };
     (
         Value::from(POLICY_SCOPED_GRANTS_KEY),
         Value::Array(vec![Value::Map(vec![
@@ -554,7 +610,8 @@ pub(super) fn budgeted_core_read_scoped_grant_entry(
                 Value::from(GRANT_EFFECTOR_KEY),
                 Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
             ),
-            (Value::from(GRANT_SCOPE_KEY), scope),
+            (Value::from(GRANT_SCOPE_KEY), authority),
+            (Value::from("selectors"), selectors),
             (
                 Value::from(GRANT_RECEIPT_REQUIRED_KEY),
                 Value::Boolean(false),
@@ -575,6 +632,51 @@ pub(super) fn core_read_world_grant_manifest(actor_ref: &str, world: EntityId) -
             Value::from(world.to_hex()),
         )]),
     )])
+}
+
+pub(super) fn core_read_grant_map(actor_ref: &str, scope: Value) -> Value {
+    let (authority, selectors) = if matches!(&scope,Value::Map(entries) if entries.iter().any(|(key,_)|key.as_str()==Some("worlds")))
+    {
+        (scope, Value::Nil)
+    } else {
+        (
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .unwrap(),
+            scope,
+        )
+    };
+    Value::Map(vec![
+        (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+        (
+            Value::from(GRANT_EFFECTOR_KEY),
+            Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
+        ),
+        (Value::from(GRANT_SCOPE_KEY), authority),
+        (Value::from("selectors"), selectors),
+        (
+            Value::from(GRANT_RECEIPT_REQUIRED_KEY),
+            Value::Boolean(false),
+        ),
+    ])
+}
+
+pub(super) fn core_read_grants_manifest(grants: Vec<Value>) -> Vec<u8> {
+    encode_policy_manifest(vec![(
+        Value::from(POLICY_SCOPED_GRANTS_KEY),
+        Value::Array(grants),
+    )])
+}
+
+pub(super) fn nonclaim_entity_types_grant_map(actor_ref: &str, types: &[u8]) -> Value {
+    core_read_grant_map(
+        actor_ref,
+        Value::Map(vec![(
+            Value::from("entity_types"),
+            Value::Array(types.iter().copied().map(Value::from).collect()),
+        )]),
+    )
 }
 
 pub(super) fn put_claim_body(vault: &crate::Vault, id: &EntityId, body: &ClaimBody) -> Result<()> {
@@ -793,6 +895,7 @@ pub(super) fn gate_evaluator_input(
         },
         external_effect: None,
         agent_definition_ceiling: None,
+        foreign_agent_ceiling: None,
         consent: None,
     }
 }
@@ -886,7 +989,7 @@ pub(super) fn assert_gate_rejected(
 ) {
     let typed = err
         .gate_denial()
-        .expect("GateWriteRejected must expose typed denial taxonomy");
+        .unwrap_or_else(|| panic!("GateWriteRejected must expose typed denial taxonomy: {err:?}"));
     assert_eq!(typed.outcome().as_str(), outcome);
     let typed_reason_codes = typed
         .reason_codes()

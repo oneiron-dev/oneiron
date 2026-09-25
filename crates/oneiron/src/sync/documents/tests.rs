@@ -76,7 +76,11 @@ fn admission_and_behind_shallow_peer_get_state_never_delta_and_future_edits_conv
     doc.edit_text(0, 0, "secret past").unwrap();
     doc.edit_text(0, 11, "visible").unwrap();
     let admission = doc
-        .export(b"selector-a", &VersionVector::default().encode())
+        .export(
+            b"selector-a",
+            &VersionVector::default().encode(),
+            crate::FederationGrantScope::vault(7),
+        )
         .unwrap();
     let frame = decode_document(&admission[1..]).unwrap();
     assert_eq!(frame.kind, document_sub_tags::STATE);
@@ -98,7 +102,13 @@ fn admission_and_behind_shallow_peer_get_state_never_delta_and_future_edits_conv
     let status = peer.import(&raw).unwrap();
     assert!(status.pending.is_some());
     assert_ne!(peer.get_text("body").to_string(), doc.text().unwrap());
-    let response = doc.export(b"selector-a", &behind).unwrap();
+    let response = doc
+        .export(
+            b"selector-a",
+            &behind,
+            crate::FederationGrantScope::vault(7),
+        )
+        .unwrap();
     let frame = decode_document(&response[1..]).unwrap();
     assert_eq!(frame.kind, document_sub_tags::STATE);
     let peer = LoroDoc::new();
@@ -106,7 +116,9 @@ fn admission_and_behind_shallow_peer_get_state_never_delta_and_future_edits_conv
     assert_eq!(peer.get_text("body").to_string(), doc.text().unwrap());
     let vv = peer.oplog_vv().encode();
     doc.edit_text(20, 0, " next").unwrap();
-    let delta = doc.export(b"selector-a", &vv).unwrap();
+    let delta = doc
+        .export(b"selector-a", &vv, crate::FederationGrantScope::vault(7))
+        .unwrap();
     let frame = decode_document(&delta[1..]).unwrap();
     assert_eq!(frame.kind, document_sub_tags::UPDATE);
     storage::import_complete(&peer, frame.payload).unwrap();
@@ -156,4 +168,380 @@ fn document_sweep_defers_live_editor_then_erases_snapshot_updates_and_journal() 
     let doc = manager.documents().open(id).unwrap();
     assert_eq!(doc.text().unwrap(), "");
     assert!(doc.pending_frames().unwrap().is_empty());
+}
+
+fn document_grant(vault: &Vault, id: EntityId, grant: crate::federation::FederationGrant) {
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &crate::federation::encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+}
+
+fn turn_band() -> crate::federation::SelectorRange {
+    crate::federation::selector_range_of(crate::registry::ENTITY_TYPE_TURN).unwrap()
+}
+
+fn peer_update(text: &str) -> Vec<u8> {
+    let doc = LoroDoc::new();
+    doc.get_text("body").insert(0, text).unwrap();
+    doc.commit();
+    doc.export(ExportMode::all_updates()).unwrap()
+}
+
+fn assert_document_denied(error: Error) {
+    assert!(matches!(
+        error,
+        Error::Sync(crate::error::SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::DocumentAdmissionDenied,
+        })
+    ));
+}
+
+#[test]
+fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
+    use crate::federation::{FederationGrant, FederationGrantPreset, FederationGrantRole};
+    use crate::sync::{SyncSelector, SyncSelectorWorld};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let id = EntityId::now();
+    seed(&vault, id);
+    let facet = EntityId::now();
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .unwrap();
+    vault
+        .put_edge(&id, crate::EdgeKind::FacetOf, &facet, 1.0)
+        .unwrap();
+    let grant_id = EntityId::now();
+    let member = EntityId::now();
+    let scope = crate::FederationGrantScope::vault(7);
+    let grant = FederationGrant::new(
+        scope,
+        member,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    document_grant(&vault, grant_id, grant.clone());
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![turn_band()],
+    );
+    let registry = DocumentRegistry::new(vault.clone());
+    let doc = registry.open(id).unwrap();
+    let update = peer_update("accepted");
+    doc.import_from_peer(document_sub_tags::UPDATE, &update, scope, &selector)
+        .unwrap();
+    let before = doc.version_vector().unwrap();
+    let next = peer_update("forbidden");
+    let mut readonly = grant.clone();
+    readonly.role = FederationGrantRole::Viewer;
+    document_grant(&vault, grant_id, readonly.clone());
+    assert_document_denied(
+        doc.import_from_peer(document_sub_tags::UPDATE, &next, scope, &selector)
+            .unwrap_err(),
+    );
+    assert_eq!(doc.version_vector().unwrap(), before);
+    document_grant(&vault, grant_id, grant);
+    // Stage the downgrade INSIDE the import's committing writer. A nested
+    // readonly authorization snapshot would still see Member and wrongly pass.
+    let raw = vault.get_raw(&grant_id).unwrap().unwrap();
+    let mut downgraded = raw[..crate::batch::ENTITY_METADATA_HEADER_LEN].to_vec();
+    downgraded.extend(crate::federation::encode_federation_grant_body(&readonly).unwrap());
+    assert_document_denied(
+        doc.import_admitted(document_sub_tags::UPDATE, &next, |txn| {
+            vault
+                .store
+                .entities
+                .put(txn, grant_id.as_bytes(), &downgraded)?;
+            crate::sync::selector::admit_document_write_in_txn(&vault, txn, id, scope, &selector)
+        })
+        .unwrap_err(),
+    );
+    assert_eq!(vault.get_raw(&grant_id).unwrap().unwrap(), raw);
+    assert_eq!(doc.version_vector().unwrap(), before);
+    let mut wrong_member = selector.clone();
+    wrong_member.member_ref = EntityId::now();
+    let error = doc
+        .import_from_peer(document_sub_tags::UPDATE, &next, scope, &wrong_member)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::Sync(crate::error::SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::Selector {
+                reason: crate::error::SyncSelectorValidation::MemberNotGranted
+            },
+        })
+    ));
+    let error = doc
+        .import_from_peer(
+            document_sub_tags::UPDATE,
+            &next,
+            crate::FederationGrantScope::vault(8),
+            &selector,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::Sync(crate::error::SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::Selector {
+                reason: crate::error::SyncSelectorValidation::GrantScopeMismatch
+            },
+        })
+    ));
+    let mut narrowed = selector.clone();
+    narrowed.bands =
+        crate::sync::RequestedAxis::Named(vec![crate::federation::SelectorRange::Maintenance]);
+    assert_document_denied(
+        doc.import_from_peer(document_sub_tags::UPDATE, &next, scope, &narrowed)
+            .unwrap_err(),
+    );
+    assert_document_denied(
+        doc.import_from_peer(document_sub_tags::STATE, &next, scope, &selector)
+            .unwrap_err(),
+    );
+    vault.delete_entity(&grant_id).unwrap();
+    let error = doc
+        .import_from_peer(document_sub_tags::UPDATE, &next, scope, &selector)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::Sync(crate::error::SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::Selector {
+                reason: crate::error::SyncSelectorValidation::GrantNotFound
+            },
+        })
+    ));
+    assert_eq!(doc.text().unwrap(), "accepted");
+    assert_eq!(doc.version_vector().unwrap(), before);
+    // Trusted embedding/authority import remains a separate, privileged door.
+    doc.import(document_sub_tags::UPDATE, &next).unwrap();
+    assert!(doc.text().unwrap().contains("forbidden"));
+}
+
+#[test]
+fn peer_import_live_facet_scope_cannot_be_preserved_by_an_old_subscription() {
+    use crate::federation::{FederationGrant, FederationGrantPreset, FederationGrantRole};
+    use crate::sync::{SyncSelector, SyncSelectorWorld};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let id = EntityId::now();
+    let neighbor = EntityId::now();
+    seed(&vault, id);
+    seed(&vault, neighbor);
+    let facet = EntityId::now();
+    let other = EntityId::now();
+    for f in [facet, other] {
+        vault
+            .put_entity(
+                &f,
+                crate::registry::ENTITY_TYPE_FACET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"facet",
+            )
+            .unwrap();
+    }
+    vault
+        .put_edge(&neighbor, crate::EdgeKind::FacetOf, &facet, 1.0)
+        .unwrap();
+    vault
+        .put_edge(&neighbor, crate::EdgeKind::Mentions, &id, 1.0)
+        .unwrap();
+    let member = EntityId::now();
+    let grant_id = EntityId::now();
+    let scope = crate::FederationGrantScope::vault(7);
+    document_grant(
+        &vault,
+        grant_id,
+        FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        ),
+    );
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![turn_band()],
+    );
+    let registry = DocumentRegistry::new(vault.clone());
+    let doc = registry.open(id).unwrap();
+    doc.import_from_peer(
+        document_sub_tags::UPDATE,
+        &peer_update("one hop"),
+        scope,
+        &selector,
+    )
+    .unwrap();
+    let before = doc.version_vector().unwrap();
+    // A candidate's unselected stamp beats a neighboring seed, just as on export.
+    vault
+        .put_edge(&id, crate::EdgeKind::FacetOf, &other, 1.0)
+        .unwrap();
+    assert_document_denied(
+        doc.import_from_peer(
+            document_sub_tags::UPDATE,
+            &peer_update("hidden"),
+            scope,
+            &selector,
+        )
+        .unwrap_err(),
+    );
+    vault
+        .delete_edge(&id, crate::EdgeKind::FacetOf, &other)
+        .unwrap();
+    // Removing the sole seed cannot leave the remembered admission live.
+    vault
+        .delete_edge(&neighbor, crate::EdgeKind::FacetOf, &facet)
+        .unwrap();
+    assert_document_denied(
+        doc.import_from_peer(
+            document_sub_tags::UPDATE,
+            &peer_update("no seed"),
+            scope,
+            &selector,
+        )
+        .unwrap_err(),
+    );
+    assert_eq!(doc.text().unwrap(), "one hop");
+    assert_eq!(doc.version_vector().unwrap(), before);
+}
+
+#[test]
+fn a_selector_peer_receives_a_state_only_copy_of_the_note_head_document() {
+    use crate::federation::{FederationGrant, FederationGrantPreset, FederationGrantRole};
+    use crate::note::{NoteProgramEdit, NoteProgramEditOutcome, NoteVerdict};
+    use crate::sync::{SyncSelector, SyncSelectorWorld, WindowManager, bridge::Materializer};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let actor = crate::WriteActor::new(owner, crate::EdgeActorClass::Human);
+    let note = vault.create_note("research", "origin", actor).unwrap();
+    let NoteProgramEditOutcome::RewriteFork { fork } = vault
+        .edit_note(
+            note,
+            &NoteProgramEdit::Rewrite {
+                text: "switched head".into(),
+            },
+            actor,
+        )
+        .unwrap()
+    else {
+        panic!("rewrite fork");
+    };
+    let bundle = vault
+        .open_note_proposal(&[fork], "Switch the head", actor)
+        .unwrap();
+    vault
+        .review_note_proposal(bundle.id, NoteVerdict::Switch, actor)
+        .unwrap();
+    for text in [" one", " two"] {
+        let doc = vault.note_program_document(note).unwrap().unwrap();
+        let anchor = doc.anchor(doc.text().chars().count()).unwrap();
+        vault
+            .edit_note(
+                note,
+                &NoteProgramEdit::InsertAfter {
+                    anchor,
+                    text: text.into(),
+                },
+                actor,
+            )
+            .unwrap();
+    }
+    let member = EntityId::now();
+    let grant_id = EntityId::now();
+    document_grant(
+        &vault,
+        grant_id,
+        FederationGrant::new(
+            crate::FederationGrantScope::vault(7),
+            member,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        ),
+    );
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let manager = Arc::new(WindowManager::new(
+        vault.clone(),
+        Arc::new(Materializer::new()),
+        "head",
+    ));
+    let reply = manager
+        .export_document(
+            note,
+            crate::FederationGrantScope::vault(7),
+            &selector,
+            &loro::VersionVector::new().encode(),
+        )
+        .unwrap();
+    let frame = decode_document(&reply[1..]).unwrap();
+    let shallow = LoroDoc::new();
+    shallow
+        .import(&frame.payload[crate::entity_id::ENTITY_ID_LEN + 8..])
+        .unwrap();
+
+    assert!(
+        shallow.is_shallow()
+            && shallow.get_text("body").to_string() == vault.note_text(note).unwrap()
+    );
+}
+
+#[test]
+fn an_own_device_never_receives_the_document_of_a_note_in_a_device_only_world() {
+    use crate::sync::{WindowManager, bridge::Materializer};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let note = vault
+        .create_note(
+            "research",
+            "kept here",
+            crate::WriteActor::new(owner, crate::EdgeActorClass::Human),
+        )
+        .unwrap();
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    vault
+        .put_edge(&note, crate::EdgeKind::InWorld, &world, 1.0)
+        .unwrap();
+    vault.set_world_device_only(world, true).unwrap();
+    let manager = Arc::new(WindowManager::new(
+        vault,
+        Arc::new(Materializer::new()),
+        "device-only",
+    ));
+
+    assert_document_denied(
+        manager
+            .export_owner_document(note, &loro::VersionVector::new().encode())
+            .unwrap_err(),
+    );
 }

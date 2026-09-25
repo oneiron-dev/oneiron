@@ -66,9 +66,7 @@ use crate::channel_identity_autonomy::{
     ChannelIdentityAutonomyRequest, ChannelIdentityAutonomyRung,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-};
+use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -85,7 +83,7 @@ use crate::subject_model::actor_subject_anchor;
 #[cfg(test)]
 use crate::subject_model::{PersonSubstrate, person_substrate};
 use crate::temporal::TimeRange;
-use crate::vault::entity_id_from_type_index_key;
+
 use crate::write_envelope::WriteActor;
 
 mod codec;
@@ -122,4 +120,4 @@ pub(crate) use project::{
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
-pub use rooms::{ROOMS_VERBS, RoomClaimOutcome, RoomClaimReceipt, RoomTurn};
+pub use rooms::{RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomTurn};

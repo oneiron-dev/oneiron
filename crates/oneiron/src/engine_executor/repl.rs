@@ -626,12 +626,12 @@ impl EngineNativeExecutor<'_> {
                         })),
                     },
                 },
-                tier: TierPrecedence {
-                    per_call: None,
-                    vault_policy: None,
-                    purpose_default: None,
-                    global_default: config.global_tier.clone(),
-                },
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Other {
+                        name: ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+                    },
+                    config.global_tier.clone(),
+                ),
                 response_format: ResponseFormat::Text,
                 locality: config.model_locality,
             },

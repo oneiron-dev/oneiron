@@ -1,4 +1,5 @@
 use super::*;
+use crate::ports::EntityStoreRead;
 use crate::store::Store;
 
 // ---------------------------------------------------------------------------
@@ -17,8 +18,8 @@ pub(super) fn require_channel_identity(
 ) -> Result<()> {
     let raw = vault
         .store
-        .entities
-        .get(wtxn, id.as_bytes())?
+        .port_entity_record(wtxn, &id)?
+        .map(|row| row.encode())
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(|| corrupt("entity header"))?;
     if header.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
@@ -49,7 +50,7 @@ pub(super) fn put_passport_claim(
     body.source = Some(ClaimSource::Observed);
     vault.put_claim_in_txn(
         wtxn,
-        &EntityId::now(),
+        &vault.store.clock.entity_id()?,
         &body,
         TimeRange {
             start: passport.observed_at,
@@ -79,7 +80,7 @@ pub(super) fn put_alias_claim(
     body.source = Some(ClaimSource::Observed);
     vault.put_claim_in_txn(
         wtxn,
-        &EntityId::now(),
+        &vault.store.clock.entity_id()?,
         &body,
         TimeRange {
             start: observed_at,
@@ -106,7 +107,7 @@ pub(crate) fn validate_thread_claim_in_txn(
     body: &ClaimBody,
     replicated: bool,
 ) -> Result<()> {
-    if let Some(raw) = store.entities.get(rtxn, id.as_bytes())?
+    if let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode())
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
         && let Ok(prior) =
@@ -142,7 +143,10 @@ pub(super) fn validate_thread_claim_owner_in_txn(
     let ClaimSubject::Entity(subject) = body.subject else {
         unreachable!("validated subject")
     };
-    let Some(raw) = store.entities.get(rtxn, subject.as_bytes())? else {
+    let Some(raw) = store
+        .port_entity_record(rtxn, &subject)?
+        .map(|row| row.encode())
+    else {
         return if replicated {
             Ok(())
         } else {

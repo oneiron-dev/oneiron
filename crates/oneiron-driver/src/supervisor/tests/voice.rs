@@ -116,6 +116,54 @@ fn seven_units() -> LlmResponse {
     }
 }
 
+#[test]
+fn branch_read_fixture_grants_only_the_named_actor_and_class() {
+    let (_dir, vault, factory, _calls) = fixture();
+    let conversation = seed_actor(&vault, 0x72, oneiron::registry::ENTITY_TYPE_SESSION);
+    let actor = factory.actor;
+    let reader = |class: &str| {
+        oneiron::claim::ScopedReadActorKey::with_actor_class(actor.entity_ref().to_hex(), class)
+            .unwrap()
+    };
+    assert!(
+        vault
+            .scoped_read(reader("agent"))
+            .get(&conversation)
+            .unwrap()
+            .is_none()
+    );
+    let wrong = WriteActor::new(actor.entity_ref(), oneiron::EdgeActorClass::System);
+    assert!(vault.install_read_permit_for_test(wrong).is_err());
+    vault.install_read_permit_for_test(actor).unwrap();
+    assert!(
+        vault
+            .scoped_read(reader("agent"))
+            .get(&conversation)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        vault
+            .scoped_read(reader("human"))
+            .get(&conversation)
+            .unwrap()
+            .is_none()
+    );
+    let other =
+        oneiron::claim::ScopedReadActorKey::with_actor_class("other-reader", "agent").unwrap();
+    assert!(
+        vault
+            .scoped_read(other)
+            .get(&conversation)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        vault.install_read_permit_for_test(actor).is_err(),
+        "customized policy is never overwritten"
+    );
+}
+
 #[tokio::test]
 async fn factory_backend_and_executor_share_the_voice_pass_meter() {
     let (_dir, vault, factory, mut calls) = fixture();
@@ -140,6 +188,9 @@ async fn factory_backend_and_executor_share_the_voice_pass_meter() {
 
     // Drive the REAL factory executor to its backend await. The host
     // can release its lease only if this is the very same pass meter.
+    vault
+        .install_read_permit_for_test(vault.dreamer_authority().unwrap())
+        .expect("explicit read grant for the queued branch actor");
     let conversation = seed_actor(&vault, 0x72, oneiron::registry::ENTITY_TYPE_SESSION);
     let input = rmpv::Value::Map(vec![
         (
@@ -472,6 +523,9 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
             inner: factory.with_voice(config),
             guard: Arc::clone(&observed),
         };
+        vault
+            .install_read_permit_for_test(vault.dreamer_authority().unwrap())
+            .expect("explicit read grant for the queued branch actor");
         let conversation = seed_actor(&vault, 0x72, oneiron::registry::ENTITY_TYPE_SESSION);
         enqueue_input(
             &vault,
@@ -501,11 +555,17 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
         let mut read = BufReader::new(read);
         let tick = Tick::Hint(crate::tick::HintSignal::default());
         let (outcome, ()) = tokio::time::timeout(Duration::from_secs(10), async {
-            tokio::join!(run_pass_supervised(
+            let pass = run_pass_supervised(
                 &vault, &pass_config, "served:p0", &clock, &mut factory, &mut listener, &tick,
-            ), async {
+            );
+            tokio::pin!(pass);
+            let executor_call = tokio::select! {
+                _ = &mut pass => panic!("pass ended before backend admission"),
+                call = calls.recv() => call.expect("consolidation backend call"),
+            };
+            tokio::join!(pass, async {
                 // Hold the real consolidation executor in its existing backend.
-                let mut executor_call = Some(calls.recv().await.unwrap());
+                let mut executor_call = Some(executor_call);
                 let guard = observed.lock().unwrap().as_ref().unwrap().clone();
                 assert_eq!(guard.read().reserved_units, 100);
                 write.write_all(b"{\"op\":\"open\",\"utterance_id\":\"u\"}\n").await.unwrap();
@@ -531,7 +591,7 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
                     shutdown.trigger();
                 } else {
                     executor_call.take().unwrap().reply
-                        .send(Err(FatalLlmError::InvalidRequest.into())).unwrap();
+                        .send(Err(BudgetDenied::AdmissionDenied.into())).unwrap();
                 }
                 line.clear();
                 assert_eq!(read.read_line(&mut line).await.unwrap(), 0, "serve must close");
@@ -540,7 +600,7 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
                 if let Some(call) = executor_call {
                     // ManagedShutdown cancels voice while wake remains cooperative.
                     assert_eq!(guard.read().reserved_units, 100);
-                    call.reply.send(Err(FatalLlmError::InvalidRequest.into())).unwrap();
+                    call.reply.send(Err(BudgetDenied::AdmissionDenied.into())).unwrap();
                 }
             })
         }).await.expect("bounded test-only pass and stream");

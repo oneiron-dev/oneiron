@@ -232,41 +232,6 @@ impl CompanionLifecycleEvent {
     }
 }
 
-/// Export policy carried by a companion record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum CompanionExportClassification {
-    /// Kept local to this vault unless a later policy explicitly rewrites it.
-    LocalOnly,
-    /// Safe for user-directed portable export.
-    Portable,
-    /// Scoped to shared-vault replication/export surfaces.
-    SharedVault,
-}
-
-impl CompanionExportClassification {
-    /// Returns the pinned on-disk string for this export classification.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::LocalOnly => "local_only",
-            Self::Portable => "portable",
-            Self::SharedVault => "shared_vault",
-        }
-    }
-
-    /// Parses a pinned on-disk export classification string.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "local_only" => Some(Self::LocalOnly),
-            "portable" => Some(Self::Portable),
-            "shared_vault" => Some(Self::SharedVault),
-            _ => None,
-        }
-    }
-}
-
 /// Companion expression mode for persona/relationship state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
@@ -367,7 +332,8 @@ impl CompanionProvenance {
     }
 }
 
-/// First-class companion relationship/persona record.
+/// Transient persona/relationship projection over PERSON + FACET rows.
+/// This is not a separate identity record or authority principal.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct CompanionRecord {
@@ -384,7 +350,7 @@ pub struct CompanionRecord {
     /// Auditable lifecycle transitions applied to this record.
     pub lifecycle_events: Vec<CompanionLifecycleEvent>,
     /// Export classification.
-    pub export_classification: CompanionExportClassification,
+    pub sensitivity: crate::federation::Sensitivity,
 }
 
 impl CompanionRecord {
@@ -395,7 +361,7 @@ impl CompanionRecord {
         persona_ref: EntityId,
         value: Value,
         provenance: CompanionProvenance,
-        export_classification: CompanionExportClassification,
+        sensitivity: crate::federation::Sensitivity,
     ) -> Self {
         Self::new(
             scope,
@@ -403,7 +369,7 @@ impl CompanionRecord {
             value,
             provenance,
             ClaimLifecycleStatus::Active,
-            export_classification,
+            sensitivity,
         )
     }
 
@@ -415,7 +381,7 @@ impl CompanionRecord {
         target_ref: EntityId,
         value: Value,
         provenance: CompanionProvenance,
-        export_classification: CompanionExportClassification,
+        sensitivity: crate::federation::Sensitivity,
     ) -> Self {
         Self::new(
             scope,
@@ -423,7 +389,7 @@ impl CompanionRecord {
             value,
             provenance,
             ClaimLifecycleStatus::Active,
-            export_classification,
+            sensitivity,
         )
     }
 
@@ -435,7 +401,7 @@ impl CompanionRecord {
         value: Value,
         provenance: CompanionProvenance,
         lifecycle: ClaimLifecycleStatus,
-        export_classification: CompanionExportClassification,
+        sensitivity: crate::federation::Sensitivity,
     ) -> Self {
         Self {
             scope,
@@ -444,7 +410,7 @@ impl CompanionRecord {
             provenance,
             lifecycle,
             lifecycle_events: Vec::new(),
-            export_classification,
+            sensitivity,
         }
     }
 

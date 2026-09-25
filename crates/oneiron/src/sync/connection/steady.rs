@@ -25,6 +25,13 @@ impl SyncConnection {
         shutdown_rx: &mut tokio::sync::oneshot::Receiver<()>,
     ) -> LoopExit {
         let (mut write, mut read) = ws_stream.split();
+        // Live, bounded and lossy. Partials never enter the durable offline queue.
+        let mut presence_rx = self
+            .manager
+            .vault()
+            .message_streams
+            .presence
+            .subscribe_frames();
 
         // Debounce state: buffer local edits and flush after 50ms of quiet
         let debounce_ms = self.config.client_config.sync_debounce_ms as u64;
@@ -80,11 +87,32 @@ impl SyncConnection {
                     }
                 }
 
+                partial = presence_rx.recv() => {
+                    match partial {
+                        Ok(frame) => {
+                            if let Err(error) = write.send(Message::Binary(frame.into())).await {
+                                flush_to_queue(&self.queue, &mut debounce_buffer);
+                                return LoopExit::Disconnected(format!("Presence send failed: {error}"));
+                            }
+                        }
+                        // A slow socket skips obsolete partials; the durable final
+                        // and the next full-text partial repair the user view.
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return LoopExit::Shutdown,
+                    }
+                }
+
                 frame = client.document_updates.recv() => {
                     match frame {
                         Ok(frame) => {
                             let id = match transport::decode_document(&frame[1..]) {
-                                Ok(doc) => doc.entity,
+                                Ok(doc) => {
+                                    if client.vault.get_entity_type(&doc.entity).ok().flatten() == Some(crate::registry::ENTITY_TYPE_NOTE) {
+                                        if !matches!(doc.kind, transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::REQUEST) { continue; }
+                                        if !client.note_session_bound { continue; }
+                                    }
+                                    doc.entity
+                                },
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
                             match client.vault.sync_state_get(&format!("ds:e:{}", id.to_hex())) {
@@ -172,6 +200,15 @@ impl SyncConnection {
                 // Loro's Rust EphemeralStore has no internal timer.
                 _ = ephemeral_housekeeping.tick() => {
                     client.remove_outdated_ephemeral();
+                    if let Err(error) = client.replay_deferred_federation_update() {
+                        return LoopExit::Disconnected(format!("federation replay: {error}"));
+                    }
+                    match self.manager.vault().pump_message_streams() {
+                        Ok(report) => for (_, error) in report.refused {
+                            let _ = event_tx.send(SyncEvent::Error(format!("Stream idle finalize refused: {error}")));
+                        },
+                        Err(error) => { let _ = event_tx.send(SyncEvent::Error(format!("Stream idle pump failed: {error}"))); }
+                    }
                 }
 
                 // Shutdown signal

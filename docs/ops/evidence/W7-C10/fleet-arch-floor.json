@@ -1,0 +1,104 @@
+{
+  "baseline_receipt": {
+    "binary_blake3": "67f07c30805cff9c98ed4885003b6fb264108c2ec1c6279cef93f98882573be6",
+    "dirty": true,
+    "held_sockets": 20000,
+    "hold_observed_ms": 1602788.991132,
+    "host": {
+      "arch": "x86_64",
+      "compiled_opt_level": "3",
+      "compiled_profile": "release",
+      "cpu": "model name\t: AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+      "debug_assertions": false,
+      "fd_limit": "65536",
+      "hostname": "arch",
+      "kernel": "7.0.11-arch1-1",
+      "logical_cpus": 16,
+      "os": "linux"
+    },
+    "metrics": {
+      "ppr_full": {
+        "completed": 100,
+        "elapsed_seconds": 5.232928463999999,
+        "p99_ms": 533.45358,
+        "throughput_per_second": 19.109758653868735
+      },
+      "ppr_prepare": {
+        "completed": 100,
+        "elapsed_seconds": 6.759195529999998,
+        "p99_ms": 464.903091,
+        "throughput_per_second": 14.794660038485384
+      },
+      "ppr_resume": {
+        "completed": 100,
+        "elapsed_seconds": 4.7247132920000015,
+        "p99_ms": 366.05449400000003,
+        "throughput_per_second": 21.165305452358858
+      },
+      "recall_0": {
+        "completed": 20000,
+        "elapsed_seconds": 1121.106984816,
+        "p99_ms": 22543.895516,
+        "throughput_per_second": 17.839510654090226
+      },
+      "socket_open": {
+        "completed": 20000,
+        "elapsed_seconds": 2.284735752,
+        "p99_ms": 12.373531,
+        "throughput_per_second": 8753.747553734607
+      },
+      "socket_probe_after": {
+        "completed": 20000,
+        "elapsed_seconds": 1.011367286,
+        "p99_ms": 4.722923000000001,
+        "throughput_per_second": 19775.209537477564
+      },
+      "socket_probe_before": {
+        "completed": 20000,
+        "elapsed_seconds": 0.450205582,
+        "p99_ms": 1.760703,
+        "throughput_per_second": 44424.14932118723
+      },
+      "write_0": {
+        "completed": 20000,
+        "elapsed_seconds": 479.435269698,
+        "p99_ms": 9310.10274,
+        "throughput_per_second": 41.715746137321425
+      }
+    },
+    "optimization": {
+      "equivalent_pairs": 100,
+      "incremental_speedup": 1.1075652935090303,
+      "preparation_included_speedup": 0.455674852971242,
+      "preparation_seconds": 6.759195529999998,
+      "result_blake3": "2882f49e69cd68aaf010b547fd99533cf00312fe08beda9a3cf8246ae6329430",
+      "route": "full-depth10-vs-depth5-resume-to10-v1"
+    },
+    "plan": {
+      "agents": 20000,
+      "concurrency": 64,
+      "hold_ms": 1000,
+      "host_label": "arch",
+      "listeners": 4,
+      "map_size": 4294967296,
+      "ppr_nodes": 1024,
+      "ppr_samples": 100,
+      "profile": "fleet20k-v1",
+      "rounds": 1,
+      "runtime_threads": 4,
+      "scratch": "/home/lexi/w7-build/wt/W7-C10/target/fleet-scratch",
+      "storage_label": "worktree-filesystem",
+      "timeout_secs": 600
+    },
+    "revision": "1d590fc523784820c3051960949148559eef3645",
+    "schema": "oneiron-fleet-v1",
+    "started_unix_ms": 1789803305565,
+    "status": "complete",
+    "verified_recalls": 20000,
+    "verified_writes": 20000
+  },
+  "baseline_sha256": "a1a29951dd61d3c1026862abee097bf53ff4f23b4a94c71150016c756d58cfc2",
+  "p99_increase": 0.2,
+  "schema": "oneiron-fleet-floor-v1",
+  "throughput_loss": 0.15
+}

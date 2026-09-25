@@ -105,8 +105,10 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
             // ANY-value, entity-canonical presence — a non-binary tombstone
             // gates too, and a case-shifted hex alias still names the id.
-            if tombstone_map_contains_id(tombstones_map, &src)
-                || tombstone_map_contains_id(tombstones_map, &tgt)
+            if (tombstone_map_contains_id(tombstones_map, &src)
+                && crate::recovery::retained_soft_shell(ctx.doc, &src).is_none())
+                || (tombstone_map_contains_id(tombstones_map, &tgt)
+                    && crate::recovery::retained_soft_shell(ctx.doc, &tgt).is_none())
             {
                 return;
             }
@@ -116,6 +118,24 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // separate read check followed by `batch().commit()` would let
             // an intervening undo revoke the mandate before the edge write.
             let result = vault.with_write_txn(|wtxn| {
+                if vault.local_hard_delete_marker_exists_in_txn(wtxn, &src)?
+                    || vault.local_hard_delete_marker_exists_in_txn(wtxn, &tgt)?
+                {
+                    return Ok(EdgeRematOutcome::Deferred);
+                }
+                for endpoint in [&src, &tgt] {
+                    if vault.get_entity_type_in_txn(wtxn, endpoint)?
+                        == Some(crate::registry::ENTITY_TYPE_NOTE)
+                        && quarantine::unproven_remat_marker_exists_in_txn(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            endpoint,
+                        )?
+                    {
+                        return Ok(EdgeRematOutcome::Deferred);
+                    }
+                }
                 if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
                     let mandated_at = vault
                         .identity_topology_mandated_shell_edge_in_txn(&*wtxn, &src, kind, &tgt)?;

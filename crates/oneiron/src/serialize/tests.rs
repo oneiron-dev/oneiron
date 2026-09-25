@@ -22,7 +22,7 @@ use super::pack_preparation::*;
 use super::token_budget::*;
 use super::toon_format::*;
 use super::types::*;
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
+use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_EVENT,
@@ -61,9 +61,13 @@ fn sample_pack() -> ContextPack {
     );
 
     ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![
             ContextEntity {
+                source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([1; 16]),
                 short_id: "cl88".to_owned(),
                 content_hash: 0xf2,
@@ -74,6 +78,8 @@ fn sample_pack() -> ContextPack {
                 vector: None,
             },
             ContextEntity {
+                source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([2; 16]),
                 short_id: "tn17".to_owned(),
                 content_hash: 0xa1,
@@ -85,10 +91,12 @@ fn sample_pack() -> ContextPack {
             },
         ],
         neighbors: vec![ContextEntity {
+            source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([3; 16]),
             short_id: "pr05".to_owned(),
             content_hash: 0xb3,
-            entity_type: 4,
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
             score: 0.0,
             fields: Some(HashMap::from([(
                 "name".to_owned(),
@@ -98,6 +106,8 @@ fn sample_pack() -> ContextPack {
             vector: None,
         }],
         stats: PackStats {
+            critical_over_budget: false,
+            critical_count: 0,
             candidates_considered: 45,
             signals_used: vec![Signal::Vector, Signal::Text, Signal::Temporal],
             query_time_us: 2_100,
@@ -141,6 +151,7 @@ fn savings_config(format: PackFormat, profile: FieldProfile) -> SerializeConfig 
 
 fn prepared_entity_for_test(id_len: usize, fields: Vec<(String, Value)>) -> PreparedEntity {
     PreparedEntity {
+        critical: false,
         entity_type: 0,
         score: 0.0,
         source: PreparedEntitySource::Result,
@@ -185,6 +196,8 @@ fn claim_entity(seed: u8, predicate: &str, value: &str, score: f32) -> ContextEn
 
 fn claim_entity_with_value(seed: u8, predicate: &str, value: Value, score: f32) -> ContextEntity {
     ContextEntity {
+        source_revision_ref: None,
+        critical: false,
         id: EntityId::from_bytes_unchecked([seed; 16]),
         short_id: format!("cl{seed:02}"),
         content_hash: seed,
@@ -201,6 +214,8 @@ fn claim_entity_with_value(seed: u8, predicate: &str, value: Value, score: f32) 
 
 fn pack_with_results(results: Vec<ContextEntity>) -> ContextPack {
     ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results,
         neighbors: Vec::new(),
@@ -211,10 +226,14 @@ fn pack_with_results(results: Vec<ContextEntity>) -> ContextPack {
 
 fn token_savings_regression_pack() -> ContextPack {
     let mut pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: Vec::new(),
         neighbors: Vec::new(),
         stats: PackStats {
+            critical_over_budget: false,
+            critical_count: 0,
             candidates_considered: 28,
             signals_used: vec![Signal::Vector, Signal::Text, Signal::Temporal],
             query_time_us: 3_800,
@@ -233,6 +252,8 @@ fn token_savings_regression_pack() -> ContextPack {
 
     for i in 0..10_u8 {
         pack.results.push(ContextEntity {
+                source_revision_ref: None,
+            critical: false,
                 id: EntityId::from_bytes_unchecked([20 + i; 16]),
                 short_id: format!("cl{i:02}"),
                 content_hash: 0x40 + i,
@@ -298,6 +319,8 @@ fn token_savings_regression_pack() -> ContextPack {
 
     for i in 0..15_u8 {
         pack.results.push(ContextEntity {
+                source_revision_ref: None,
+            critical: false,
                 id: EntityId::from_bytes_unchecked([0x90 + i; 16]),
                 short_id: format!("tn{i:02}"),
                 content_hash: 0x70 + i,
@@ -332,10 +355,12 @@ fn token_savings_regression_pack() -> ContextPack {
 
     for i in 0..3_u8 {
         pack.results.push(ContextEntity {
+                source_revision_ref: None,
+            critical: false,
                 id: EntityId::from_bytes_unchecked([100 + i; 16]),
                 short_id: format!("sm{i:02}"),
                 content_hash: 0xa0 + i,
-                entity_type: 8,
+                entity_type: crate::registry::ENTITY_TYPE_SUMMARY,
                 score: 0.65 - f32::from(i) * 0.03,
                 fields: Some(HashMap::from([
                     (
@@ -402,6 +427,7 @@ fn toon_native_encoder_serializes_nested_and_tabular_sections() {
         (
             GroupKey::Kind(ENTITY_TYPE_CLAIM),
             vec![PreparedEntity {
+                critical: false,
                 entity_type: ENTITY_TYPE_CLAIM,
                 score: 0.0,
                 source: PreparedEntitySource::Result,
@@ -424,6 +450,7 @@ fn toon_native_encoder_serializes_nested_and_tabular_sections() {
             GroupKey::Kind(ENTITY_TYPE_TURN),
             vec![
                 PreparedEntity {
+                    critical: false,
                     entity_type: ENTITY_TYPE_TURN,
                     score: 0.0,
                     source: PreparedEntitySource::Result,
@@ -435,6 +462,7 @@ fn toon_native_encoder_serializes_nested_and_tabular_sections() {
                     ],
                 },
                 PreparedEntity {
+                    critical: false,
                     entity_type: ENTITY_TYPE_TURN,
                     score: 0.0,
                     source: PreparedEntitySource::Result,
@@ -449,7 +477,7 @@ fn toon_native_encoder_serializes_nested_and_tabular_sections() {
         ),
     ];
 
-    let text = encode_toon_section(&groups);
+    let text = encode_toon_section(&groups, &mut super::handles::Handles::default());
 
     assert_eq!(
         text,
@@ -462,6 +490,7 @@ fn toon_native_encoder_uses_list_form_for_arrays_of_empty_objects() {
     let groups = vec![(
         GroupKey::Kind(ENTITY_TYPE_EVENT),
         vec![PreparedEntity {
+            critical: false,
             entity_type: ENTITY_TYPE_EVENT,
             score: 0.0,
             source: PreparedEntitySource::Result,
@@ -474,7 +503,7 @@ fn toon_native_encoder_uses_list_form_for_arrays_of_empty_objects() {
         }],
     )];
 
-    let text = encode_toon_section(&groups);
+    let text = encode_toon_section(&groups, &mut super::handles::Handles::default());
 
     assert_eq!(
         text,
@@ -487,6 +516,7 @@ fn toon_native_encoder_replaces_values_beyond_max_depth_with_null() {
     let groups = vec![(
         GroupKey::Kind(ENTITY_TYPE_EVENT),
         vec![PreparedEntity {
+            critical: false,
             entity_type: ENTITY_TYPE_EVENT,
             score: 0.0,
             source: PreparedEntitySource::Result,
@@ -496,7 +526,7 @@ fn toon_native_encoder_replaces_values_beyond_max_depth_with_null() {
         }],
     )];
 
-    let text = encode_toon_section(&groups);
+    let text = encode_toon_section(&groups, &mut super::handles::Handles::default());
 
     assert!(
         text.contains("child: null"),
@@ -682,6 +712,8 @@ fn serialized_pack_stats_stamp_tokenizer_and_row_tokens() {
 #[test]
 fn split_mode_uses_shared_budget_pool() {
     let mut pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: Vec::new(),
         neighbors: Vec::new(),
@@ -691,6 +723,8 @@ fn split_mode_uses_shared_budget_pool() {
 
     for i in 0..6_u8 {
         pack.results.push(ContextEntity {
+            source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([10 + i; 16]),
             short_id: format!("r{i}"),
             content_hash: i,
@@ -704,10 +738,12 @@ fn split_mode_uses_shared_budget_pool() {
             vector: None,
         });
         pack.neighbors.push(ContextEntity {
+            source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([30 + i; 16]),
             short_id: format!("n{i}"),
             content_hash: i,
-            entity_type: 4,
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
             score: 0.0,
             fields: Some(HashMap::from([(
                 "name".to_owned(),
@@ -804,8 +840,12 @@ fn field_profile_changes_output() {
 #[test]
 fn max_field_chars_truncates_nested_json_strings() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
+            source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "js01".to_owned(),
             content_hash: 0x42,
@@ -893,8 +933,12 @@ fn serialization_token_savings_regressions() {
 #[test]
 fn short_id_serialization_uses_at_most_two_tokens_per_reference() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
+            source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "cl42".to_owned(),
             content_hash: 0x2a,
@@ -1088,6 +1132,7 @@ fn max_item_tokens_strips_claim_metadata_without_truncating_short_value() {
 #[test]
 fn max_item_tokens_trims_multiple_non_claim_strings_until_under_cap() {
     let mut entity = PreparedEntity {
+        critical: false,
         entity_type: ENTITY_TYPE_TURN,
         score: 1.0,
         source: PreparedEntitySource::Result,
@@ -1117,6 +1162,7 @@ fn max_item_tokens_trims_multiple_non_claim_strings_until_under_cap() {
 #[test]
 fn max_item_tokens_replaces_non_claim_without_safe_strings_with_minimal_row() {
     let mut entity = PreparedEntity {
+        critical: false,
         entity_type: ENTITY_TYPE_EVENT,
         score: 1.0,
         source: PreparedEntitySource::Result,
@@ -1196,43 +1242,30 @@ fn item_and_token_budget_reasons_are_discriminated() {
 }
 
 #[test]
-fn critical_predicate_claims_bypass_item_cap_when_serialized_budget_is_disabled() {
-    let critical_value = "c".repeat(1200);
-    let pack = pack_with_results(vec![claim_entity(
-        1,
-        "preference.food",
-        &critical_value,
-        1.0,
-    )]);
-
+fn critical_claims_do_not_bypass_item_cap_with_unlimited_pack_budget() {
+    let mut row = claim_entity(1, "boundary.topic", &"c".repeat(1200), 1.0);
+    row.critical = true;
+    let pack = pack_with_results(vec![row]);
     let mut cfg = config(PackFormat::Toon);
     cfg.max_field_chars = 0;
     cfg.max_item_tokens = 8;
     cfg.budget = 0;
-
-    let (bytes, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
-    let output = String::from_utf8(bytes).expect("TOON output");
-
-    assert_eq!(telemetry.result_ids, vec![[1; 16]]);
-    assert!(output.contains("preference.food"));
-    assert!(output.contains(&critical_value));
-    assert_eq!(telemetry.stats.items_truncated.count, 0);
-    assert_eq!(telemetry.stats.items_dropped.count, 0);
+    let (_, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
+    assert!(telemetry.result_ids.is_empty());
+    assert!(telemetry.stats.critical_over_budget);
+    assert_eq!(telemetry.stats.critical_count, 1);
 }
 
 #[test]
 fn hard_serialized_budget_can_drop_critical_predicate_claims() {
     let critical_value = "c".repeat(1200);
-    let pack = pack_with_results(vec![claim_entity(
-        1,
-        "preference.food",
-        &critical_value,
-        1.0,
-    )]);
+    let mut row = claim_entity(1, "preference.food", &critical_value, 1.0);
+    row.critical = true;
+    let pack = pack_with_results(vec![row]);
 
     let mut cfg = config(PackFormat::Toon);
     cfg.max_field_chars = 0;
-    cfg.max_item_tokens = 8;
+    cfg.max_item_tokens = 0;
     cfg.budget = 8;
 
     let prepared = prepare_pack(&pack, &cfg, false);
@@ -1296,6 +1329,8 @@ fn token_budget_zero_disables_budget_enforcement() {
     let mut pack = sample_pack();
     for i in 0..12_u8 {
         pack.results.push(ContextEntity {
+            source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([50 + i; 16]),
             short_id: format!("cl{i}"),
             content_hash: i,
@@ -1322,7 +1357,7 @@ fn token_budget_zero_disables_budget_enforcement() {
 }
 
 #[test]
-fn json_budget_below_mandatory_envelope_emits_minimal_over_budget_payload() {
+fn json_budget_below_full_envelope_emits_budgeted_empty_object() {
     let pack = pack_with_results(vec![claim_entity(1, "note.tiny", "tiny budget row", 1.0)]);
 
     let mut cfg = config(PackFormat::Json);
@@ -1333,9 +1368,8 @@ fn json_budget_below_mandatory_envelope_emits_minimal_over_budget_payload() {
     let text = String::from_utf8(bytes).expect("utf8");
     let parsed: Value = serde_json::from_str(&text).expect("json parse");
 
-    assert_eq!(parsed["results"], serde_json::json!({}));
-    assert_eq!(parsed["neighbors"], serde_json::json!({}));
-    assert!(telemetry.stats.tokens.total_tokens > cfg.budget);
+    assert_eq!(parsed, serde_json::json!({}));
+    assert!(telemetry.stats.tokens.total_tokens <= cfg.budget);
     assert_eq!(telemetry.stats.items_dropped.count, 1);
     assert_eq!(
         telemetry.stats.items_dropped.reason.as_str(),
@@ -1347,8 +1381,12 @@ fn json_budget_below_mandatory_envelope_emits_minimal_over_budget_payload() {
 fn max_field_chars_zero_disables_and_one_emits_ellipsis() {
     let overlong = "overlong claim value".to_owned();
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
+            source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "cl42".to_owned(),
             content_hash: 0x42,
@@ -1437,9 +1475,13 @@ fn plaintext_escapes_pipes() {
 #[test]
 fn unknown_entity_types_share_single_other_group() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![
             ContextEntity {
+                source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([18; 16]),
                 short_id: "u18".to_owned(),
                 content_hash: 0x18,
@@ -1453,10 +1495,12 @@ fn unknown_entity_types_share_single_other_group() {
                 vector: None,
             },
             ContextEntity {
+                source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([20; 16]),
                 short_id: "u20".to_owned(),
                 content_hash: 0x20,
-                entity_type: 20,
+                entity_type: 19,
                 score: 0.8,
                 fields: Some(HashMap::from([(
                     "name".to_owned(),
@@ -1478,8 +1522,8 @@ fn unknown_entity_types_share_single_other_group() {
         .and_then(Value::as_array)
         .expect("other group");
     assert_eq!(other.len(), 2);
-    assert_eq!(other[0]["name"], "eighteen");
-    assert_eq!(other[1]["name"], "twenty");
+    assert_eq!(other[0]["name"], "eighteen (u18)");
+    assert_eq!(other[1]["name"], "twenty (u20)");
 }
 
 #[test]
@@ -1495,8 +1539,12 @@ fn yaml_stats_are_emitted_as_comments() {
 #[test]
 fn yaml_quotes_unsafe_field_keys() {
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
+            source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([0x92; 16]),
             short_id: "mc01".to_owned(),
             content_hash: 0x01,
@@ -1522,8 +1570,12 @@ fn yaml_quotes_unsafe_field_keys() {
 #[test]
 fn yaml_quotes_scalar_control_characters() {
     let pack = ContextPack {
+            capabilities: Vec::new(),
+        l2_base: None,
             retrieval_quality: Default::default(),
             results: vec![ContextEntity {
+                source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([0x93; 16]),
                 short_id: "mc02".to_owned(),
                 content_hash: 0x02,
@@ -1622,6 +1674,8 @@ fn surplus_budget_redistributes_to_hungry_types() {
     pack.neighbors.clear();
 
     pack.results.push(ContextEntity {
+        source_revision_ref: None,
+        critical: false,
         id: EntityId::from_bytes_unchecked([99; 16]),
         short_id: "tn01".to_owned(),
         content_hash: 0x01,
@@ -1637,6 +1691,8 @@ fn surplus_budget_redistributes_to_hungry_types() {
 
     for i in 0..40_u8 {
         pack.results.push(ContextEntity {
+            source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([50 + i; 16]),
             short_id: format!("cl{i}"),
             content_hash: i,
@@ -1701,6 +1757,8 @@ fn surplus_budget_redistributes_to_hungry_types() {
 
 fn empty_stats() -> PackStats {
     PackStats {
+        critical_over_budget: false,
+        critical_count: 0,
         candidates_considered: 0,
         signals_used: vec![],
         query_time_us: 0,
@@ -1716,6 +1774,8 @@ fn empty_stats() -> PackStats {
 
 fn empty_pack_with_reason(reason: EmptyReason) -> ContextPack {
     ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![],
         neighbors: vec![],
@@ -1844,7 +1904,7 @@ fn productivity_field_profiles() {
         let parsed: Value =
             serde_json::from_slice(&serialize_pack(pack, &cfg_json)).expect("json parse");
         let first = &parsed["task_lists"][0];
-        assert_eq!(first["name"], "Sprint 42");
+        assert_eq!(first["name"], "Sprint 42 (tl01)");
         assert_eq!(first["goal"], "Ship the MVP");
         assert_eq!(first["status"], "active");
 
@@ -1933,6 +1993,8 @@ fn productivity_field_profiles() {
 
     for case in cases {
         let entity = ContextEntity {
+            source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([case.entity_type; 16]),
             short_id: case.short_id.to_owned(),
             content_hash: case.content_hash,
@@ -1943,6 +2005,8 @@ fn productivity_field_profiles() {
             vector: None,
         };
         let pack = ContextPack {
+            capabilities: Vec::new(),
+            l2_base: None,
             retrieval_quality: Default::default(),
             results: vec![entity],
             neighbors: vec![],
@@ -2044,7 +2108,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
             }),
         ),
         ("lifecycle".to_owned(), Value::String("active".to_owned())),
-        ("export".to_owned(), Value::String("portable".to_owned())),
+        ("sensitivity".to_owned(), Value::String("public".to_owned())),
         (
             "lifecycle_events".to_owned(),
             serde_json::json!([{ "kind": "created", "at": 123_u64 }]),
@@ -2084,7 +2148,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
             }),
         ),
         ("lifecycle".to_owned(), Value::String("active".to_owned())),
-        ("export".to_owned(), Value::String("portable".to_owned())),
+        ("sensitivity".to_owned(), Value::String("public".to_owned())),
         (
             "provenance".to_owned(),
             serde_json::json!({
@@ -2096,23 +2160,29 @@ fn companion_register_records_serialize_as_first_class_export_group() {
         ),
     ]);
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![
             ContextEntity {
+                source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([0x64; 16]),
                 short_id: "cr01".to_owned(),
                 content_hash: 0xa1,
-                entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+                entity_type: ENTITY_TYPE_FACET,
                 score: 0.9,
                 fields: Some(persona_fields),
                 edges: None,
                 vector: None,
             },
             ContextEntity {
+                source_revision_ref: None,
+                critical: false,
                 id: EntityId::from_bytes_unchecked([0x65; 16]),
                 short_id: "cr02".to_owned(),
                 content_hash: 0xa2,
-                entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+                entity_type: ENTITY_TYPE_FACET,
                 score: 0.8,
                 fields: Some(relationship_fields),
                 edges: None,
@@ -2138,7 +2208,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
     let parsed: Value =
         serde_json::from_slice(&serialize_pack(&pack, &cfg_json)).expect("json parse");
     assert!(parsed.get("other").is_none());
-    let records = parsed["companion_records"]
+    let records = parsed["facets"]
         .as_array()
         .expect("companion records group");
     assert_eq!(records.len(), 2);
@@ -2161,32 +2231,32 @@ fn companion_register_records_serialize_as_first_class_export_group() {
     assert!(records[0].get("schema_version").is_none());
     assert!(records[0].get("value").is_none());
     assert_eq!(
-        fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Standard),
-        &["kind", "scope", "subject", "lifecycle", "export"]
+        fields_for_profile(ENTITY_TYPE_FACET, FieldProfile::Standard),
+        &["kind", "scope", "subject", "lifecycle", "sensitivity"]
     );
 
     let cfg_full = config(PackFormat::Json, FieldProfile::Full);
     let full: Value =
         serde_json::from_slice(&serialize_pack(&pack, &cfg_full)).expect("json parse");
     assert_eq!(
-        full["companion_records"][0]["schema_version"],
+        full["facets"][0]["schema_version"],
         serde_json::json!(crate::companion::COMPANION_RECORD_SCHEMA_VERSION)
     );
-    assert!(full["companion_records"][0].get("provenance").is_some());
+    assert!(full["facets"][0].get("provenance").is_some());
     assert_eq!(
-        full["companion_records"][0]["lifecycle_events"],
+        full["facets"][0]["lifecycle_events"],
         serde_json::json!([{ "kind": "created", "at": 123_u64 }])
     );
-    assert!(full["companion_records"][0].get("value").is_none());
+    assert!(full["facets"][0].get("value").is_none());
     assert_eq!(
-        fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Full),
+        fields_for_profile(ENTITY_TYPE_FACET, FieldProfile::Full),
         &[
             "schema_version",
             "kind",
             "scope",
             "subject",
             "lifecycle",
-            "export",
+            "sensitivity",
             "lifecycle_events",
             "provenance"
         ]
@@ -2194,17 +2264,18 @@ fn companion_register_records_serialize_as_first_class_export_group() {
 
     let cfg_plain = config(PackFormat::Plaintext, FieldProfile::Standard);
     let text = String::from_utf8(serialize_pack(&pack, &cfg_plain)).expect("utf8");
-    assert!(text.contains("COMPANION_RECORDS"));
+    assert!(text.contains("FACETS"));
     assert!(text.contains("relationship"));
 }
 
 #[test]
 fn companion_register_records_budget_with_fixed_state_allocation() {
-    assert!(GROUP_ORDER.contains(&ENTITY_TYPE_COMPANION_REGISTER));
+    assert!(GROUP_ORDER.contains(&ENTITY_TYPE_FACET));
 
     let source_id = [0x64; 16];
     let groups = group_entities(vec![PreparedEntity {
-        entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+        critical: false,
+        entity_type: ENTITY_TYPE_FACET,
         score: 0.9,
         source: PreparedEntitySource::Result,
         source_id,
@@ -2231,19 +2302,14 @@ fn companion_register_records_budget_with_fixed_state_allocation() {
     };
 
     assert_eq!(
-        type_fraction(
-            GroupKey::Kind(ENTITY_TYPE_COMPANION_REGISTER),
-            &zero_other_allocation
-        ),
+        type_fraction(GroupKey::Kind(ENTITY_TYPE_FACET), &zero_other_allocation),
         zero_other_allocation.claims
     );
 
     let (budgeted, used) = budget_groups(&groups, &zero_other_allocation, needed);
     let records = budgeted
         .iter()
-        .find_map(|(key, rows)| {
-            (*key == GroupKey::Kind(ENTITY_TYPE_COMPANION_REGISTER)).then_some(rows)
-        })
+        .find_map(|(key, rows)| (*key == GroupKey::Kind(ENTITY_TYPE_FACET)).then_some(rows))
         .expect("companion register group should keep state allocation budget");
 
     assert_eq!(used, needed);
@@ -2264,8 +2330,12 @@ fn federation_grant_member_ref_hex_projection_is_preserved() {
         ("preset".to_owned(), Value::String("admin".to_owned())),
     ]);
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![ContextEntity {
+            source_revision_ref: None,
+            critical: false,
             id: EntityId::from_bytes_unchecked([ENTITY_TYPE_FEDERATION_GRANT; 16]),
             short_id: String::new(),
             content_hash: 0,
@@ -2312,6 +2382,8 @@ fn test_due_date_timestamp_rendering() {
     fields.insert("dueDate".to_owned(), Value::Number(Number::from(due)));
 
     let entity = ContextEntity {
+        source_revision_ref: None,
+        critical: false,
         id: EntityId::from_bytes_unchecked([0x91; 16]),
         short_id: "tk02".to_owned(),
         content_hash: 0xcc,
@@ -2323,6 +2395,8 @@ fn test_due_date_timestamp_rendering() {
     };
 
     let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![entity],
         neighbors: vec![],
@@ -2446,13 +2520,13 @@ fn test_group_labels_sparse_ids() {
         crate::outbound_grant::OUTBOUND_GRANT_FIELDS_MINIMAL
     );
 
-    let companion = group_labels(GroupKey::Kind(ENTITY_TYPE_COMPANION_REGISTER));
-    assert_eq!(companion.key, "companion_records");
-    assert_eq!(companion.name, "COMPANION_RECORDS");
-    assert_eq!(companion.title, "Companion Records");
+    let companion = group_labels(GroupKey::Kind(ENTITY_TYPE_FACET));
+    assert_eq!(companion.key, "facets");
+    assert_eq!(companion.name, "FACETS");
+    assert_eq!(companion.title, "Facets");
     assert_eq!(
-        fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Minimal),
-        &["kind", "scope", "subject"]
+        fields_for_profile(ENTITY_TYPE_FACET, FieldProfile::Minimal),
+        &["kind", "label", "scope", "subject", "sensitivity"]
     );
 
     let psych_profile = group_labels(GroupKey::Kind(ENTITY_TYPE_PSYCH_PROFILE));
@@ -2503,6 +2577,8 @@ fn note_group_is_separate_from_claims_with_pinned_profile_fields() {
 
     let author = EntityId::from_bytes_unchecked([0x7a; 16]);
     let note_row = ContextEntity {
+        source_revision_ref: None,
+        critical: false,
         id: EntityId::from_bytes_unchecked([0x9e; 16]),
         short_id: "no01".to_owned(),
         content_hash: 0x11,
@@ -2511,7 +2587,12 @@ fn note_group_is_separate_from_claims_with_pinned_profile_fields() {
         fields: Some(HashMap::from([
             (
                 "kind".to_owned(),
-                Value::String(crate::note::NoteKind::OpinionTake.as_str().to_owned()),
+                Value::String(
+                    crate::note::NoteKind::parse("opinion/take")
+                        .expect("shipped kind")
+                        .as_str()
+                        .into_owned(),
+                ),
             ),
             ("author_ref".to_owned(), Value::String(author.to_hex())),
             (
@@ -2563,6 +2644,7 @@ fn note_group_is_separate_from_claims_with_pinned_profile_fields() {
 /// is the predicate itself.
 fn commitment_budget_row(seed: u8, predicate: &str) -> PreparedEntity {
     PreparedEntity {
+        critical: false,
         entity_type: ENTITY_TYPE_CLAIM,
         score: 1.0,
         source: PreparedEntitySource::Result,
@@ -2577,70 +2659,329 @@ fn commitment_budget_row(seed: u8, predicate: &str) -> PreparedEntity {
     }
 }
 
-/// CMT-2 (ONE-1539): the serializer's critical-claim set names CMT-1's ONE
-/// commitment predicate, EXACTLY.
-///
-/// Two things are being pinned at once. `commitment.record` is critical, so a
-/// per-item cap cannot quietly trim the obligation the owner is being shown.
-/// And the guard is an exact match rather than a `commitment.` prefix: the
-/// split-fact sibling probed below does not exist in this engine, and a prefix
-/// guard would silently adopt whatever a later ticket mints into the family —
-/// including the shape the ratified design rejected.
-///
-/// The absent sibling's name is COMPOSED at runtime rather than written as a
-/// literal. A tree oracle greps this directory for that predicate name and must
-/// stay zero-hit; a test asserting the name's absence must not be the one thing
-/// that puts it back into the tree.
+/// Criticality changes priority, not the item budget contract.
 #[test]
-fn commitment_record_is_critical_and_promise_is_absent() {
-    let absent_sibling = format!("commitment.{}", "promise");
-    assert_eq!(
-        crate::commitment::PREDICATE_COMMITMENT_RECORD,
-        "commitment.record"
+fn critical_claims_obey_item_budget() {
+    let mut critical = commitment_budget_row(0x2c, "boundary.topic");
+    critical.critical = true;
+    let mut stats = empty_stats();
+    assert!(apply_item_budget(&mut critical, 32, &mut stats));
+    assert!(
+        super::token_budget::estimate_entity_tokens_with_depth_limit(
+            &critical,
+            DEFAULT_CONTEXT_PACK_TOKENIZER,
+            None
+        ) <= 32
     );
-    assert!(is_critical_claim_predicate(
-        crate::commitment::PREDICATE_COMMITMENT_RECORD
-    ));
-    for absent in [
-        absent_sibling.as_str(),
-        "commitment.",
-        "commitment.record.draft",
-        "commitment",
+    assert_eq!(stats.items_truncated.count, 1);
+}
+
+#[test]
+fn provider_read_formats_have_wire_envelopes_and_null_secrets_before_truncation() {
+    for (format, source, field) in [
+        (PackFormat::OpenaiCompat, "openai-compat", "messages"),
+        (
+            PackFormat::AnthropicMessages,
+            "anthropic-messages",
+            "messages",
+        ),
+        (PackFormat::Gemini, "gemini-api", "contents"),
     ] {
+        let mut pack = sample_pack();
+        pack.results[1].fields.as_mut().unwrap().insert(
+            "txt".into(),
+            serde_json::json!("ghp_0123456789abcdefghijklmnopqrstuvwxyz"),
+        );
+        let fields = pack.results[1].fields.as_mut().unwrap();
+        for key in [
+            "apiKey",
+            "accessToken",
+            "refreshToken",
+            "privateKey",
+            "ssh_key",
+            "API-KEY",
+            "bearerToken",
+            "authToken",
+            "apiToken",
+            "passphrase",
+        ] {
+            fields.insert(key.into(), serde_json::json!("must-not-export"));
+        }
+        fields.insert(
+            "nested".into(),
+            serde_json::json!([
+                {"private_key": "must-not-export"},
+                {"note": "-----BEGIN RSA PRIVATE KEY-----\nbody\n-----END RSA PRIVATE KEY-----"}
+            ]),
+        );
+        let wire = serialize_pack(&pack, &config(format));
+        let text = String::from_utf8(wire).unwrap();
+        assert!(!text.contains("ghp_"));
+        assert!(!text.contains("must-not-export"));
+        assert!(!text.contains("BEGIN RSA PRIVATE KEY"));
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["secrets_nulled"], serde_json::json!(true));
+        assert!(value[field].as_array().is_some_and(|v| !v.is_empty()));
+        for message in value[field].as_array().unwrap() {
+            assert!(message["role"].as_str().is_some());
+            match format {
+                PackFormat::OpenaiCompat => assert!(message["content"].is_string()),
+                PackFormat::AnthropicMessages => {
+                    for block in message["content"].as_array().unwrap() {
+                        assert_eq!(block["type"], "text");
+                        assert!(block["text"].is_string());
+                    }
+                }
+                PackFormat::Gemini => {
+                    for part in message["parts"].as_array().unwrap() {
+                        assert!(part["text"].is_string());
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        let normalized = crate::ingest::INGEST_SOURCE_REGISTRY
+            .normalize(source, &text)
+            .unwrap();
+        assert!(!normalized.records.is_empty());
+        let mut small = config(format);
+        small.max_field_chars = 10;
         assert!(
-            !is_critical_claim_predicate(absent),
-            "{absent:?} must not be critical: the guard is exact, never a prefix"
+            !String::from_utf8(serialize_pack(&pack, &small))
+                .unwrap()
+                .contains("ghp_")
         );
     }
+}
 
-    // The record survives a cap that trims every ordinary row of the same shape.
-    let mut record = commitment_budget_row(0x2c, "commitment.record");
-    let before = record.fields.clone();
-    let mut record_stats = empty_stats();
-    assert!(is_critical_predicate_claim(&record));
-    assert!(apply_item_budget(&mut record, 32, &mut record_stats));
-    assert_eq!(
-        record.fields, before,
-        "a commitment.record claim is critical context, not budget slack"
+#[test]
+fn first_mention_aliases_names_and_free_text_at_token_boundaries() {
+    let mut pack = sample_pack();
+    let person = &mut pack.neighbors[0];
+    person.short_id = "pr12".into();
+    let id = person.id.to_hex();
+    person.fields = Some(HashMap::from([
+        ("name".into(), Value::String("山田太郎".into())),
+        ("display_name".into(), Value::String("山田太郎".into())),
+        (
+            "identity_key".into(),
+            Value::String("person:internal:yamada".into()),
+        ),
+    ]));
+    pack.results[0].fields.as_mut().unwrap().insert(
+        "val".into(),
+        Value::String(format!(
+            "{id}, person:internal:yamada, {id}; x{id} {id}_suffix 山{id}"
+        )),
     );
-    assert_eq!(record_stats.items_truncated.count, 0);
-    assert_eq!(record_stats.items_dropped.count, 0);
+    for format in [
+        PackFormat::Toon,
+        PackFormat::Markdown,
+        PackFormat::Json,
+        PackFormat::Yaml,
+        PackFormat::Plaintext,
+    ] {
+        let rendered = String::from_utf8(serialize_pack(&pack, &config(format))).unwrap();
+        assert_eq!(
+            rendered.matches("山田太郎 (pr12)").count(),
+            1,
+            "{format:?}: {rendered}"
+        );
+        assert!(
+            rendered.contains("pr12, pr12") && !rendered.contains("person:internal:yamada"),
+            "{format:?}: {rendered}"
+        );
+        assert!(rendered.contains(&format!("x{id} {id}_suffix 山{id}")));
+        assert!(!rendered.contains("identity_key"));
+        assert!(rendered.contains("pr12:b3"), "citation gate remains intact");
+    }
+}
 
-    // A row carrying the absent sibling predicate is budgeted like any other
-    // claim, which is what "it is not a critical predicate" looks like from the
-    // outside.
-    let mut promise = commitment_budget_row(0x2d, &absent_sibling);
-    let mut promise_stats = empty_stats();
-    assert!(!is_critical_predicate_claim(&promise));
-    assert!(apply_item_budget(&mut promise, 32, &mut promise_stats));
-    assert_eq!(promise_stats.items_truncated.count, 1);
-    assert!(!promise.fields.iter().any(|(key, _)| key == "src"));
-    assert!(!promise.fields.iter().any(|(key, _)| key == "scope"));
-    assert_eq!(
-        promise
-            .fields
-            .iter()
-            .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten()),
-        Some(absent_sibling.as_str())
+#[test]
+fn handle_rendering_does_not_restore_truncated_display_name() {
+    let mut pack = sample_pack();
+    pack.results.clear();
+    pack.neighbors[0].short_id = "pr12".into();
+    pack.neighbors[0].fields.as_mut().unwrap().insert(
+        "name".into(),
+        Value::String(format!("{}private-tail", "Alice ".repeat(200))),
     );
+    let mut cfg = config(PackFormat::Json);
+    cfg.max_field_chars = 12;
+    cfg.budget = 0;
+    let rendered = String::from_utf8(serialize_pack(&pack, &cfg)).unwrap();
+    assert!(rendered.contains("pr12"));
+    assert!(!rendered.contains("private-tail"));
+}
+
+#[test]
+fn nested_identity_key_is_user_content_in_every_pack_format() {
+    let mut pack = sample_pack();
+    let fields = pack.results[0].fields.as_mut().unwrap();
+    fields.insert(
+        "identity_key".into(),
+        Value::String("engine-only-lookup".into()),
+    );
+    fields.insert(
+        "val".into(),
+        serde_json::json!({
+            "identity_key": "first-preserved-value",
+            "nested": [{"identity_key": "second-preserved-value"}]
+        }),
+    );
+    for format in [
+        PackFormat::Toon,
+        PackFormat::Markdown,
+        PackFormat::Json,
+        PackFormat::Yaml,
+        PackFormat::Plaintext,
+    ] {
+        let rendered = String::from_utf8(serialize_pack(&pack, &config(format))).unwrap();
+        assert!(rendered.contains("identity_key"), "{format:?}: {rendered}");
+        assert!(
+            rendered.contains("first-preserved-value"),
+            "{format:?}: {rendered}"
+        );
+        assert!(
+            rendered.contains("second-preserved-value"),
+            "{format:?}: {rendered}"
+        );
+        assert!(
+            !rendered.contains("engine-only-lookup"),
+            "{format:?}: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn credentials_are_null_in_every_format_without_an_opt_out() {
+    let secret = format!("ghp_{}", "a".repeat(36));
+    let mut pack = sample_pack();
+    let fields = pack.results[0].fields.as_mut().unwrap();
+    fields.insert(
+        "val".into(),
+        serde_json::json!({
+            "api_key": "opaque-key",
+            "nested": [{"accessToken": "opaque-token", "password": "opaque-password"}],
+            "content": secret,
+            "ordinary": "retained"
+        }),
+    );
+    for format in [
+        PackFormat::Json,
+        PackFormat::Yaml,
+        PackFormat::Toon,
+        PackFormat::Markdown,
+        PackFormat::Plaintext,
+    ] {
+        let mut cfg = savings_config(format, FieldProfile::Full);
+        cfg.max_field_chars = 0;
+        let output = String::from_utf8(serialize_pack(&pack, &cfg)).unwrap();
+        for forbidden in ["opaque-key", "opaque-token", "opaque-password", &secret] {
+            assert!(
+                !output.contains(forbidden),
+                "{format:?} leaked a credential"
+            );
+        }
+        assert!(output.contains("retained"));
+        assert!(output.contains("null"));
+    }
+    let output: Value = serde_json::from_slice(&serialize_pack(
+        &pack,
+        &savings_config(PackFormat::Json, FieldProfile::Full),
+    ))
+    .unwrap();
+    assert!(output["claims"][0]["val"]["api_key"].is_null());
+    assert!(output["claims"][0]["val"]["nested"][0]["accessToken"].is_null());
+}
+
+#[test]
+fn whole_vault_provenance_references_are_preserved_only_in_the_typed_value() {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::provenance::{EdgeProvenanceClaimBody, SupersessionStatus};
+    let mut provenance =
+        EdgeProvenanceClaimBody::new(EntityId::now(), 0.75, SupersessionStatus::Proposed);
+    provenance.actor_class = Some(crate::edge::EdgeActorClass::Human);
+    provenance.substrate_ref = Some(EntityId::now());
+    provenance.source_revision_ref = Some([128; 16]);
+    provenance.body_snapshot_ref = Some([129; 16]);
+    let mut claim = ClaimBody::new(
+        crate::provenance::PREDICATE_EDGE_PROVENANCE,
+        ClaimSubject::Edge {
+            source: EntityId::now(),
+            kind: crate::edge::EdgeKind::DerivedFrom,
+            target: EntityId::now(),
+        },
+        crate::provenance::encode_edge_provenance_value(&provenance),
+        0.75,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    claim.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("substrate_ref"),
+        rmpv::Value::Binary(vec![128; 16]),
+    )]));
+    let bytes = crate::claim::encode_claim_body(&claim).unwrap();
+    let exported = super::ExportBody::from_bytes(&bytes, crate::registry::ENTITY_TYPE_CLAIM);
+    exported
+        .validate(crate::registry::ENTITY_TYPE_CLAIM)
+        .unwrap();
+    let imported = crate::claim::decode_claim_body(&exported.to_bytes().unwrap(), true).unwrap();
+    assert_eq!(imported.value, claim.value);
+    assert_eq!(
+        imported.scope,
+        Some(rmpv::Value::Map(vec![(
+            rmpv::Value::from("substrate_ref"),
+            rmpv::Value::Nil
+        )]))
+    );
+    claim.predicate = "preference.example".into();
+    let exported = super::ExportBody::from_bytes(
+        &crate::claim::encode_claim_body(&claim).unwrap(),
+        crate::registry::ENTITY_TYPE_CLAIM,
+    );
+    let imported = crate::claim::decode_claim_body(&exported.to_bytes().unwrap(), false).unwrap();
+    assert!(crate::provenance::decode_edge_provenance_body(&imported.value).is_err());
+}
+
+#[test]
+fn handle_aliases_with_shared_prefixes_leave_unrelated_tokens_intact() {
+    let mut pack = sample_pack();
+    pack.results.truncate(1);
+    let unrelated = serde_json::json!({"name": "person:Ann", "text": "Ann and Anna know person:Anna, person:Ann, and person:Annalise."});
+    pack.results[0]
+        .fields
+        .as_mut()
+        .unwrap()
+        .insert("val".into(), unrelated);
+    let mut person = pack.neighbors[0].clone();
+    person.short_id = "pr12".into();
+    person.fields = Some(HashMap::from([
+        ("name".into(), Value::String("Ann".into())),
+        ("identity_key".into(), Value::String("person:Ann".into())),
+    ]));
+    let mut other = person.clone();
+    other.id = EntityId::from_bytes_unchecked([0x77; 16]);
+    other.short_id = "pr13".into();
+    other.fields = Some(HashMap::from([
+        ("name".into(), Value::String("Anna".into())),
+        ("identity_key".into(), Value::String("person:Anna".into())),
+    ]));
+    pack.neighbors = vec![person, other];
+    let bytes = serialize_pack(&pack, &config(PackFormat::Json));
+    let decoded: Value = serde_json::from_slice(&bytes).unwrap();
+    let round_trip: Value = serde_json::from_slice(&serde_json::to_vec(&decoded).unwrap()).unwrap();
+    assert_eq!(round_trip, decoded);
+    assert_eq!(
+        decoded["claims"][0]["val"],
+        serde_json::json!({"name": "Ann (pr12)", "text": "Ann and Anna know Anna (pr13), pr12, and person:Annalise."})
+    );
+    let mut found: Vec<_> = decoded["persons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["name"].as_str().unwrap())
+        .collect();
+    found.sort();
+    assert_eq!(found, ["pr12", "pr13"]);
 }

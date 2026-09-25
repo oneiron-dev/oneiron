@@ -41,14 +41,18 @@ pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 mod admission;
 pub(crate) use admission::validate_diagnostic_event_admission;
 mod consent_detector;
+pub mod tripwires;
 pub use consent_detector::ConsentDeniedDetector;
 
 mod detector_runner;
 mod diagnostic_codec;
 mod event;
 mod invariant_canonical;
-mod untrusted_text;
+pub mod scheduled;
+pub(crate) mod untrusted_text;
 
+pub mod healer_host;
+mod receipt_serde;
 mod repair;
 
 pub(crate) use repair::validate_repair_proposal;
@@ -76,11 +80,15 @@ use self::diagnostic_codec::{validate_ref, validate_token};
 use self::event::{MAX_EVENTS_PER_RUN, MAX_EVIDENCE_REFS, invalid_diagnostic};
 
 #[cfg(test)]
+mod healer_host_tests;
+#[cfg(test)]
 mod production_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod text_tests;
+#[cfg(test)]
+mod tripwire_tests;
 
 // The flat self_heal.rs module used to provide these names to the test modules
 // through `use super::*`: every self-heal-internal item the tests name bare,

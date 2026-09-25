@@ -75,14 +75,10 @@ use self::validate::*;
 #[cfg(test)]
 use super::frame::{BoardFrameError, BudgetPolicyRef, SectionPolicy, ShedRank};
 #[cfg(test)]
-use crate::board_verb::BOARD_VERBS;
-#[cfg(test)]
 use crate::claim::ClaimApprovalStatus;
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::skill::{SkillLifecycle, SkillRecord};
-#[cfg(test)]
-use crate::task_verb::TASKS_VERBS;
 #[cfg(test)]
 use rmpv::Value;

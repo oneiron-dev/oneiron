@@ -1,5 +1,6 @@
 //! Mode/tier classification and disclosure-claim structural validation.
 
+use crate::ports::EntityStoreRead;
 use heed::RoTxn;
 use serde::Serialize;
 
@@ -163,7 +164,7 @@ pub(super) fn read_stored_claim_body(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<ClaimBody>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
         return Ok(None);
     };
     Ok(raw

@@ -51,6 +51,16 @@ pub(super) fn decode_op(value: &Value) -> Result<AuthorityOp> {
         .as_str()
         .ok_or_else(invalid_authority)?;
     match kind {
+        OP_KIND_SLIP_MINT => super::slip_wire::decode_slip_mint(entries),
+        OP_KIND_SLIP_REVOKE | OP_KIND_SLIP_CONSUME => {
+            validate_keys(entries, &[OP_KEY_KIND, SLIP_KEY_SLIP_ID])?;
+            let slip_id = decode_hash(required(entries, SLIP_KEY_SLIP_ID)?)?;
+            Ok(if kind == OP_KIND_SLIP_REVOKE {
+                AuthorityOp::SlipRevoke { slip_id }
+            } else {
+                AuthorityOp::SlipConsume { slip_id }
+            })
+        }
         OP_KIND_GENESIS => {
             let pending_widen_delay = optional(entries, "pending_widen_delay_secs");
             if pending_widen_delay.is_some() {
@@ -60,6 +70,7 @@ pub(super) fn decode_op(value: &Value) -> Result<AuthorityOp> {
                         OP_KEY_KIND,
                         "device",
                         "genesis_nonce",
+                        "recovery_secret_step",
                         "tier_floor",
                         "pending_widen_delay_secs",
                     ],
@@ -67,10 +78,26 @@ pub(super) fn decode_op(value: &Value) -> Result<AuthorityOp> {
             } else {
                 validate_keys(
                     entries,
-                    &[OP_KEY_KIND, "device", "genesis_nonce", "tier_floor"],
+                    &[
+                        OP_KEY_KIND,
+                        "device",
+                        "genesis_nonce",
+                        "recovery_secret_step",
+                        "tier_floor",
+                    ],
                 )?;
             }
+            let recovery = map_entries(required(entries, "recovery_secret_step")?)?;
+            validate_keys(recovery, &["commitment", "outcome"])?;
+            let commitment = decode_hash(required(recovery, "commitment")?)?;
+            let recovery = match required(recovery, "outcome")?.as_str() {
+                Some("saved") => GenesisRecoveryStep::Saved(commitment),
+                Some("dismissed") => GenesisRecoveryStep::Dismissed(commitment),
+                _ => return Err(invalid_authority()),
+            };
+            recovery.validate()?;
             Ok(AuthorityOp::Genesis {
+                recovery,
                 device: decode_device(required(entries, "device")?)?,
                 genesis_nonce: decode_hash(required(entries, "genesis_nonce")?)?,
                 tier_floor: decode_tier(required(entries, "tier_floor")?)?,
@@ -92,7 +119,7 @@ pub(super) fn decode_op(value: &Value) -> Result<AuthorityOp> {
                 revoked_key: decode_key(required(entries, "revoked_key")?)?,
             })
         }
-        OP_KIND_SET_CEILING => {
+        OP_KIND_RETIRED_CEILING => {
             validate_keys(
                 entries,
                 &[OP_KEY_KIND, "authority_key", "actor_class", "ceiling"],
@@ -101,7 +128,7 @@ pub(super) fn decode_op(value: &Value) -> Result<AuthorityOp> {
                 .as_u64()
                 .ok_or_else(invalid_authority)?;
             let ceiling = u8::try_from(ceiling_u64).map_err(|_| invalid_authority())?;
-            Ok(AuthorityOp::SetCeiling {
+            Ok(AuthorityOp::RetiredCeiling {
                 authority_key: decode_key(required(entries, "authority_key")?)?,
                 actor_class: required(entries, "actor_class")?
                     .as_str()
@@ -123,15 +150,10 @@ pub(super) fn decode_op(value: &Value) -> Result<AuthorityOp> {
                 tier_floor: decode_tier(required(entries, "tier_floor")?)?,
             })
         }
-        OP_KIND_RECOVERY_REBOOT => {
-            validate_keys(
-                entries,
-                &[OP_KEY_KIND, "new_genesis_nonce", "new_device", "tier_floor"],
-            )?;
-            Ok(AuthorityOp::RecoveryReboot {
-                new_genesis_nonce: decode_hash(required(entries, "new_genesis_nonce")?)?,
+        OP_KIND_RE_ROOT => {
+            validate_keys(entries, &[OP_KEY_KIND, "new_device"])?;
+            Ok(AuthorityOp::ReRoot {
                 new_device: decode_device(required(entries, "new_device")?)?,
-                tier_floor: decode_tier(required(entries, "tier_floor")?)?,
             })
         }
         OP_KIND_CRITICAL_WRITE_CONFIRM => {
@@ -387,7 +409,7 @@ fn decode_device(value: &Value) -> Result<DeviceAuthority> {
     })
 }
 
-fn decode_key(value: &Value) -> Result<AuthorityKey> {
+pub(super) fn decode_key(value: &Value) -> Result<AuthorityKey> {
     let entries = map_entries(value)?;
     validate_keys(entries, &[KEY_SUITE, KEY_PUBLIC_KEY])?;
     let suite = required(entries, KEY_SUITE)?
@@ -424,7 +446,7 @@ fn decode_signature(value: &Value) -> Result<AuthoritySignature> {
     })
 }
 
-fn decode_signature_array(value: &Value) -> Result<Vec<AuthoritySignature>> {
+pub(super) fn decode_signature_array(value: &Value) -> Result<Vec<AuthoritySignature>> {
     let Value::Array(values) = value else {
         return Err(invalid_authority());
     };
@@ -443,14 +465,14 @@ fn decode_attestation(value: &Value) -> Result<AuthorityAttestation> {
     })
 }
 
-fn decode_tier(value: &Value) -> Result<AuthorityTier> {
+pub(super) fn decode_tier(value: &Value) -> Result<AuthorityTier> {
     value
         .as_str()
         .and_then(AuthorityTier::parse)
         .ok_or_else(invalid_authority)
 }
 
-fn decode_optional_hash(value: &Value) -> Result<Option<[u8; 32]>> {
+pub(super) fn decode_optional_hash(value: &Value) -> Result<Option<[u8; 32]>> {
     if matches!(value, Value::Nil) {
         Ok(None)
     } else {
@@ -458,14 +480,14 @@ fn decode_optional_hash(value: &Value) -> Result<Option<[u8; 32]>> {
     }
 }
 
-fn decode_hash_array(value: &Value) -> Result<Vec<[u8; 32]>> {
+pub(super) fn decode_hash_array(value: &Value) -> Result<Vec<[u8; 32]>> {
     let Value::Array(values) = value else {
         return Err(invalid_authority());
     };
     values.iter().map(decode_hash).collect()
 }
 
-fn decode_hash(value: &Value) -> Result<[u8; 32]> {
+pub(super) fn decode_hash(value: &Value) -> Result<[u8; 32]> {
     bytes(value)?.try_into().map_err(|_| invalid_authority())
 }
 
@@ -473,14 +495,14 @@ fn decode_16(value: &Value) -> Result<[u8; 16]> {
     bytes(value)?.try_into().map_err(|_| invalid_authority())
 }
 
-fn map_entries(value: &Value) -> Result<&[(Value, Value)]> {
+pub(super) fn map_entries(value: &Value) -> Result<&[(Value, Value)]> {
     let Value::Map(entries) = value else {
         return Err(invalid_authority());
     };
     Ok(entries)
 }
 
-fn validate_keys(entries: &[(Value, Value)], expected: &[&str]) -> Result<()> {
+pub(super) fn validate_keys(entries: &[(Value, Value)], expected: &[&str]) -> Result<()> {
     let mut seen = vec![false; expected.len()];
     for (key, _) in entries {
         let key = key.as_str().ok_or_else(invalid_authority)?;
@@ -499,7 +521,7 @@ fn validate_keys(entries: &[(Value, Value)], expected: &[&str]) -> Result<()> {
     }
 }
 
-fn required<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
+pub(super) fn required<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
     entries
         .iter()
         .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))

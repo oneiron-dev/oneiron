@@ -1,10 +1,10 @@
 //! Sidecar row access, the one deletion routine, enrollment laws, and match/clustering/invite-elimination admission.
 
+use crate::ports::EntityStoreRead;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use heed::{RoTxn, RwTxn};
 
-use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_RELATIONSHIP};
@@ -124,11 +124,15 @@ pub(super) struct VoiceDeletionTally {
     pub(super) sample_rows: usize,
     pub(super) vector_rows: usize,
     pub(super) active_pointer: bool,
+    owner_ref_rows: usize,
 }
 
 impl VoiceDeletionTally {
     pub(super) const fn is_empty(self) -> bool {
-        self.print_rows == 0 && self.sample_rows == 0 && !self.active_pointer
+        self.print_rows == 0
+            && self.sample_rows == 0
+            && self.owner_ref_rows == 0
+            && !self.active_pointer
     }
 }
 
@@ -148,7 +152,10 @@ pub(super) fn delete_voice_biometrics_in_txn(
 
     let mut sample_keys: BTreeSet<Vec<u8>> = BTreeSet::new();
     let mut print_keys: Vec<Vec<u8>> = Vec::new();
-    let mut tally = VoiceDeletionTally::default();
+    let mut tally = VoiceDeletionTally {
+        owner_ref_rows: super::ref_bank::delete_owner_refs(store, wtxn, subject)?,
+        ..VoiceDeletionTally::default()
+    };
 
     for (key, value) in rows {
         if key == pointer_key {
@@ -182,11 +189,11 @@ pub(super) fn delete_voice_biometrics_in_txn(
 }
 
 fn entity_type_in_txn(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    Ok(Some(header.entity_type))
+
+    Ok(Some(raw.entity_type))
 }
 
 /// Law 9: a retention link must name an EXISTING RELATIONSHIP entity.

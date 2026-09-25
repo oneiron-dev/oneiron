@@ -158,6 +158,7 @@ impl<'a> BatchBuilder<'a> {
         data: &[u8],
     ) -> Self {
         if self.validation_error.is_none()
+            && crate::registry::zone_of(entity_type) != crate::registry::TypeByteZone::PackHandle
             && let Err(e) = self.vault.store.validate_entity_type(entity_type)
         {
             self.validation_error = Some(e);

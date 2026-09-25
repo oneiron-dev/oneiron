@@ -3,7 +3,6 @@
 use super::source::BoundSource;
 use super::subscriptions::LiveQuerySource;
 use super::*;
-use crate::auth::{mint_core_token_v2, revoke_token_jti};
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
 use oneiron::memory::{
@@ -53,14 +52,10 @@ pub(super) fn server() -> (tempfile::TempDir, Arc<SyncServer>) {
 
 pub(super) fn token(class: &str) -> String {
     let actor = if class == "system" { MACHINE } else { ACTOR };
-    mint_core_token_v2(
-        SECRET,
-        &format!("scope=core:read;principal_ref={actor};actor_class={class};jti={JTI}"),
-    )
+    format!("scope=core:read;principal_ref={actor};actor_class={class};jti={JTI}-{class}")
 }
-
 fn auth(server: &SyncServer, class: &str) -> CoreAuth {
-    CoreAuth::from_bind_token(&token(class), &server.config, server.vault().as_ref()).unwrap()
+    crate::test_credentials::authenticate(server, &token(class))
 }
 
 pub(super) fn witness(server: &SyncServer, text: &str) -> WitnessReceipt {
@@ -96,6 +91,7 @@ pub(super) fn claim(server: &SyncServer) -> oneiron::memory::CommitReceipt {
             confidence: 1.0,
             source: "imported".to_owned(),
             world_ref: None,
+            relationship_ref: None,
             scope: None,
             valid_from: None,
             valid_to: None,
@@ -154,9 +150,8 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
             json!([])
         );
     }
-    let classless = mint_core_token_v2(SECRET, &format!("scope=core:read;principal_ref={ACTOR}"));
-    let auth =
-        CoreAuth::from_bind_token(&classless, &server.config, server.vault().as_ref()).unwrap();
+    let classless = format!("scope=core:read;principal_ref={ACTOR}");
+    let auth = crate::test_credentials::authenticate(&server, &classless);
     let reply = rpc(&server, &auth, "hydrate", json!({"refs":[]}));
     assert_error(&reply, "FORBIDDEN");
     assert_eq!(
@@ -188,9 +183,16 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
         reply["error"]["message"],
         "facade routes bind writes to an authenticated principal"
     );
-    for class in ["Human", "owner", ""] {
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let template = server.vault().ensure_host_root_slip(&issuer).unwrap();
+    for (index, class) in ["Human", "owner", ""].iter().enumerate() {
+        let mut claims = template.claims.clone();
+        claims.slip_id = [100 + index as u8; 32];
+        claims.actor_class = Some((*class).into());
         assert!(
-            CoreAuth::from_bind_token(&token(class), &server.config, server.vault().as_ref())
+            server
+                .vault()
+                .mint_capability_slip(&issuer, claims)
                 .is_err()
         );
     }
@@ -224,7 +226,7 @@ async fn all_eight_production_rpc_reads_return_the_engine_dtos() {
     memory
         .recall(
             "solar",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -270,7 +272,7 @@ async fn all_eight_production_rpc_reads_return_the_engine_dtos() {
                 memory
                     .recall(
                         "solar",
-                        Effort::Standard,
+                        Effort::Medium,
                         &RecallScope::default(),
                         10,
                         None,
@@ -341,19 +343,18 @@ async fn http_recall_and_receipts_defaults_limits_and_error_order_are_preserved(
             json!(["Send a JSON body matching this verb's documented input."])
         );
     }
-    let classless = mint_core_token_v2(SECRET, &format!("scope=core:read;principal_ref={ACTOR}"));
-    let classless =
-        CoreAuth::from_bind_token(&classless, &server.config, server.vault().as_ref()).unwrap();
+    let classless = crate::test_credentials::authenticate(
+        &server,
+        &format!("scope=core:read;principal_ref={ACTOR}"),
+    );
     assert_error(
         &rpc(&server, &classless, "recall", json!({})),
         "BAD_REQUEST",
     );
-    let write_only = mint_core_token_v2(
-        SECRET,
+    let write_only = crate::test_credentials::authenticate(
+        &server,
         &format!("scope=core:write;principal_ref={ACTOR};actor_class=human"),
     );
-    let write_only =
-        CoreAuth::from_bind_token(&write_only, &server.config, server.vault().as_ref()).unwrap();
     assert_error(&rpc(&server, &write_only, "recall", json!({})), "FORBIDDEN");
 }
 
@@ -368,11 +369,11 @@ async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
     let cases = [
         (
             "recall",
-            json!({"query":"solar","effort":"deep"}),
+            json!({"query":"solar","effort":"high"}),
             memory
                 .recall(
                     "solar",
-                    Effort::Deep,
+                    Effort::High,
                     &RecallScope::default(),
                     10,
                     None,
@@ -439,7 +440,7 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
     let expected = memory
         .recall(
             "solar",
-            Effort::Minimal,
+            Effort::Light,
             &RecallScope::default(),
             100,
             None,
@@ -460,7 +461,7 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
     let expected_error = memory
         .recall(
             "solar",
-            Effort::Minimal,
+            Effort::Light,
             &RecallScope {
                 world_ref: None,
                 facet: missing_facet.facet.clone(),
@@ -477,7 +478,7 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
     assert_eq!(body["code"], expected_error.code);
     assert_eq!(body["message"], expected_error.message);
     assert_eq!(body["suggestions"], json!(expected_error.suggestions));
-    revoke_token_jti(server.vault(), JTI).unwrap();
+    crate::test_credentials::revoke(&server, &token("human"));
     for channel in [Channel::View, Channel::Receipts, Channel::PendingConsent] {
         let Err(error) = source.derive(&ScopedView::default(), channel) else {
             panic!("revoked derive must fail")
@@ -494,17 +495,29 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
 async fn receipt_limit_is_applied_after_actor_scoping() {
     let (_dir, server) = server();
     claim(&server);
+    let other = EntityId::from_hex("55555555555555555555555555555555").unwrap();
     server
         .vault()
-        .memory(EntityId::from_hex(MACHINE).unwrap(), EdgeActorClass::System)
+        .put_entity(
+            &other,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::temporal::TimeRange { start: AT, end: AT },
+            AT,
+            b"fixture actor",
+        )
+        .unwrap();
+    server
+        .vault()
+        .memory(other, EdgeActorClass::Human)
         .claim_upsert(&ClaimInput {
             id: None,
             predicate: "profile.name".to_owned(),
-            subject_ref: MACHINE.to_owned(),
+            subject_ref: other.to_hex(),
             value: json!("Newer unrelated actor"),
             confidence: 1.0,
             source: "imported".to_owned(),
             world_ref: None,
+            relationship_ref: None,
             scope: None,
             valid_from: None,
             valid_to: None,
@@ -574,6 +587,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
                     confidence: 1.0,
                     source: "user_stated".into(),
                     world_ref: (n % 3 == 2).then(|| other_world.into()),
+                    relationship_ref: None,
                     scope: None,
                     valid_from: None,
                     valid_to: None,
@@ -611,6 +625,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
                 confidence: 1.0,
                 source: "user_stated".into(),
                 world_ref: None,
+                relationship_ref: None,
                 scope: None,
                 valid_from: None,
                 valid_to: None,
@@ -626,13 +641,14 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
             .text(&id, &[("body", text)])
             .commit()
             .unwrap();
-        expected.push(receipt.claim_short_id);
+        let revision = server.vault().indexed_revision(&id).unwrap().unwrap();
+        expected.push(format!("{}@{}", receipt.claim_short_id, revision.to_hex()));
     }
     // All 1,005 unrelated hits outrank both matches in the old pre-filter top-k.
     let old = memory
         .recall(
             "viewneedle",
-            Effort::Minimal,
+            Effort::Light,
             &RecallScope::default(),
             1000,
             None,
@@ -675,4 +691,112 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
         );
         assert!(rows.iter().all(|row| row["world"].is_null()));
     }
+}
+
+#[tokio::test]
+async fn disjoint_entity_document_subscriptions_only_push_the_changed_view() {
+    use oneiron::sync::bridge::LiveQueryTee;
+    let (_dir, server) = server();
+    let window_key = oneiron::sync::WindowKey::from_timestamp(AT);
+    let window = server.get_or_create_window(&window_key).await.unwrap();
+    let auth = auth(&server, "human");
+    let source = Arc::new(BoundSource::new(
+        Arc::downgrade(&server),
+        auth,
+        "entity-read-set".into(),
+    ));
+    let queries = Arc::new(subscriptions::LiveQueries::new(1, source.clone()));
+    let tee: Arc<dyn LiveQueryTee> = queries.clone();
+    server
+        .reassert_manager
+        .materializer()
+        .attach_live_query_tee(&tee);
+    let author = EntityId::from_hex(ACTOR).unwrap();
+    let a = EntityId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+    let b = EntityId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+    let put = |id: EntityId, subject: &str, predicate: &str, value: &str| {
+        server
+            .vault()
+            .memory(author, EdgeActorClass::Human)
+            .claim_upsert(&ClaimInput {
+                id: Some(id.to_hex()),
+                predicate: predicate.into(),
+                subject_ref: subject.into(),
+                value: json!(value),
+                confidence: 1.0,
+                source: "user_stated".into(),
+                world_ref: None,
+                scope: None,
+                valid_from: None,
+                valid_to: None,
+                occurred_at: Some(AT),
+                learned_at: Some(AT),
+                salience: None,
+                relationship_ref: None,
+            })
+            .unwrap();
+        server
+            .vault()
+            .batch()
+            .text(&id, &[("body", &format!("readsetneedle {value}"))])
+            .commit()
+            .unwrap();
+        oneiron::sync::window::reverse_rematerialize(server.vault(), &window, &window_key).unwrap();
+    };
+    let view = |predicate: &str| ScopedView {
+        query: Some("readsetneedle".into()),
+        filter: Some(json!({"kind":"CLAIM", "predicate":predicate})),
+        ..Default::default()
+    };
+    put(a, ACTOR, "profile.alpha", "first");
+    put(b, ACTOR, "profile.beta", "second");
+    for (id, predicate, entity) in [(1, "profile.alpha", a), (2, "profile.beta", b)] {
+        let derived = source.derive(&view(predicate), Channel::View).unwrap();
+        assert!(
+            derived
+                .dependencies
+                .contains(&format!("e:{}", entity.to_hex()))
+        );
+        assert!(
+            derived
+                .dependencies
+                .iter()
+                .all(|dependency| !dependency.starts_with("w:"))
+        );
+        let frames = queries
+            .open(id, view(predicate), Channel::View, None, None)
+            .unwrap();
+        assert!(
+            !frames[0]
+                .result
+                .as_ref()
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        queries.ack(id, &frames[0].cursor).unwrap();
+    }
+    queries.refresh().unwrap();
+    let a_next = EntityId::from_hex("cccccccccccccccccccccccccccccccc").unwrap();
+    // Another subject: a second value for one subject and predicate is a
+    // Proposed supersession, which no view surfaces until it is confirmed.
+    put(a_next, MACHINE, "profile.alpha", "new first");
+    queries.refresh().unwrap();
+    assert_eq!(queries.pending(1).unwrap().len(), 1);
+    assert!(queries.pending(2).unwrap().is_empty());
+    // A third, initially empty view learns a new member without a window wildcard.
+    let frames = queries
+        .open(3, view("profile.gamma"), Channel::View, None, None)
+        .unwrap();
+    queries.ack(3, &frames[0].cursor).unwrap();
+    put(
+        EntityId::from_hex("dddddddddddddddddddddddddddddddd").unwrap(),
+        ACTOR,
+        "profile.gamma",
+        "third",
+    );
+    queries.refresh().unwrap();
+    assert_eq!(queries.pending(3).unwrap().len(), 1);
+    assert!(queries.pending(2).unwrap().is_empty());
 }

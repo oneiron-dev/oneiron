@@ -149,24 +149,33 @@ fn attempt_queue_decode_fails_closed_on_lease_owner_state_mismatch() -> Result<(
 
 #[test]
 fn attempt_queue_cleanup_recovers_stale_leases_through_claim() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(attempt) =
-        queue.enqueue(enqueue("claim_extraction", Some("turn:stale"), 10))?
+        queue.enqueue(enqueue("claim_extraction", Some("turn:stale"), {
+            clock.set(10);
+            10
+        }))?
     else {
         panic!("expected enqueue");
     };
     let ClaimOutcome::Claimed(first_attempt) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
-        now: 20,
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("expected first claim");
     };
 
     let report = queue.cleanup_leases(CleanupAttemptLeases {
-        now: 40,
+        now: {
+            clock.set(40);
+            40
+        },
         lease_timeout_secs: 10,
     })?;
     assert_eq!(report.pending, 1);
@@ -189,14 +198,20 @@ fn attempt_queue_cleanup_recovers_stale_leases_through_claim() -> Result<()> {
             id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: first_attempt.attempt_count,
-            now: 41,
+            now: {
+                clock.set(41);
+                41
+            },
         })
         .unwrap_err();
     assert_invalid_transition(stale_complete, "complete", "queued");
 
     let ClaimOutcome::Claimed(second_attempt) = queue.claim(ClaimAttempt {
         lease_owner: "worker-b".to_owned(),
-        now: 42,
+        now: {
+            clock.set(42);
+            42
+        },
     })?
     else {
         panic!("expected reclaim through claim");
@@ -313,17 +328,23 @@ fn attempt_queue_cleanup_does_not_duplicate_completed_attempts() -> Result<()> {
 
 #[test]
 fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(backoff_attempt) =
-        queue.enqueue(enqueue("backoff", Some("turn:backoff"), 10))?
+        queue.enqueue(enqueue("backoff", Some("turn:backoff"), {
+            clock.set(10);
+            10
+        }))?
     else {
         panic!("expected enqueue");
     };
     let ClaimOutcome::Claimed(backoff_claim) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
-        now: 11,
+        now: {
+            clock.set(11);
+            11
+        },
     })?
     else {
         panic!("expected claim");
@@ -336,7 +357,10 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         attempt_count: backoff_claim.attempt_count,
         backoff_until: 80,
         last_error: Some("provider said secret text".to_owned()),
-        now: 12,
+        now: {
+            clock.set(12);
+            12
+        },
     })?;
     let InterveneOutcome {
         effect: AttemptInterventionEffect::Paused,
@@ -346,20 +370,29 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         kind: AttemptInterventionKind::Pause,
         actor: "cleanup-test".to_owned(),
         note: None,
-        now: 13,
+        now: {
+            clock.set(13);
+            13
+        },
     })?
     else {
         panic!("expected pause");
     };
 
     let EnqueueOutcome::Enqueued(stale_attempt) =
-        queue.enqueue(enqueue("stale", Some("turn:stale"), 13))?
+        queue.enqueue(enqueue("stale", Some("turn:stale"), {
+            clock.set(13);
+            13
+        }))?
     else {
         panic!("expected enqueue");
     };
     let ClaimOutcome::Claimed(stale_claim) = queue.claim(ClaimAttempt {
         lease_owner: "worker-stale".to_owned(),
-        now: 20,
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("expected stale claim");
@@ -367,13 +400,19 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
     assert_eq!(stale_claim.id, stale_attempt.id);
 
     let EnqueueOutcome::Enqueued(live_attempt) =
-        queue.enqueue(enqueue("live", Some("turn:live"), 21))?
+        queue.enqueue(enqueue("live", Some("turn:live"), {
+            clock.set(21);
+            21
+        }))?
     else {
         panic!("expected enqueue");
     };
     let ClaimOutcome::Claimed(live_claim) = queue.claim(ClaimAttempt {
         lease_owner: "worker-live".to_owned(),
-        now: 30,
+        now: {
+            clock.set(30);
+            30
+        },
     })?
     else {
         panic!("expected live claim");
@@ -381,13 +420,19 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
     assert_eq!(live_claim.id, live_attempt.id);
 
     let EnqueueOutcome::Enqueued(done_attempt) =
-        queue.enqueue(enqueue("done", Some("turn:done"), 31))?
+        queue.enqueue(enqueue("done", Some("turn:done"), {
+            clock.set(31);
+            31
+        }))?
     else {
         panic!("expected enqueue");
     };
     let ClaimOutcome::Claimed(done_claim) = queue.claim(ClaimAttempt {
         lease_owner: "worker-done".to_owned(),
-        now: 32,
+        now: {
+            clock.set(32);
+            32
+        },
     })?
     else {
         panic!("expected done claim");
@@ -397,20 +442,29 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         id: done_attempt.id,
         lease_owner: "worker-done".to_owned(),
         attempt_count: done_claim.attempt_count,
-        now: 33,
+        now: {
+            clock.set(33);
+            33
+        },
     })?
     else {
         panic!("expected complete");
     };
 
     let EnqueueOutcome::Enqueued(failed_attempt) =
-        queue.enqueue(enqueue("failed", Some("turn:failed"), 34))?
+        queue.enqueue(enqueue("failed", Some("turn:failed"), {
+            clock.set(34);
+            34
+        }))?
     else {
         panic!("expected enqueue");
     };
     let ClaimOutcome::Claimed(failed_claim) = queue.claim(ClaimAttempt {
         lease_owner: "worker-failed".to_owned(),
-        now: 35,
+        now: {
+            clock.set(35);
+            35
+        },
     })?
     else {
         panic!("expected failed claim");
@@ -421,20 +475,29 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         lease_owner: "worker-failed".to_owned(),
         attempt_count: failed_claim.attempt_count,
         reason: "fatal".to_owned(),
-        now: 36,
+        now: {
+            clock.set(36);
+            36
+        },
     })?
     else {
         panic!("expected fail");
     };
 
     let EnqueueOutcome::Enqueued(queued_attempt) =
-        queue.enqueue(enqueue("queued", Some("turn:queued"), 37))?
+        queue.enqueue(enqueue("queued", Some("turn:queued"), {
+            clock.set(37);
+            37
+        }))?
     else {
         panic!("expected enqueue");
     };
 
     let report = queue.cleanup_leases(CleanupAttemptLeases {
-        now: 39,
+        now: {
+            clock.set(39);
+            39
+        },
         lease_timeout_secs: 10,
     })?;
     assert_eq!(report.pending, 3);
@@ -488,19 +551,25 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
 
 #[test]
 fn attempt_queue_cleanup_metrics_have_stable_privacy_preserving_labels() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
     let (_untouched_dir, untouched_vault) = open_queue();
     let before = vault.diagnostics().attempt_queue_cleanup_snapshot();
 
     let EnqueueOutcome::Enqueued(attempt) =
-        queue.enqueue(enqueue("claim_extraction", Some("turn:metrics"), 10))?
+        queue.enqueue(enqueue("claim_extraction", Some("turn:metrics"), {
+            clock.set(10);
+            10
+        }))?
     else {
         panic!("expected enqueue");
     };
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-secret-owner".to_owned(),
-        now: 20,
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("expected claim");
@@ -508,7 +577,10 @@ fn attempt_queue_cleanup_metrics_have_stable_privacy_preserving_labels() -> Resu
     assert_eq!(claimed.id, attempt.id);
 
     queue.cleanup_leases(CleanupAttemptLeases {
-        now: 40,
+        now: {
+            clock.set(40);
+            40
+        },
         lease_timeout_secs: 10,
     })?;
 

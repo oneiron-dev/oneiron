@@ -504,8 +504,20 @@ fn full_delete_deindexes_everything() -> Result<()> {
     vault
         .batch()
         .put(&id, 1, occurred, learned_at, b"delete-me")
-        .put(&out_target, 4, test_time_range(1, 1), 2, b"target")
-        .put(&in_source, 4, test_time_range(3, 3), 4, b"source")
+        .put(
+            &out_target,
+            crate::registry::ENTITY_TYPE_PERSON,
+            test_time_range(1, 1),
+            2,
+            b"target",
+        )
+        .put(
+            &in_source,
+            crate::registry::ENTITY_TYPE_PERSON,
+            test_time_range(3, 3),
+            4,
+            b"source",
+        )
         .vector(&id, &[0.1, 0.2, 0.3, 0.4])
         .edge(&id, EdgeKind::Supports, &out_target, 0.9)
         .edge(&in_source, EdgeKind::Mentions, &id, 0.7)
@@ -526,7 +538,13 @@ fn full_delete_deindexes_everything() -> Result<()> {
     assert!(vault.edges_out(&id)?.is_empty());
     assert!(vault.edges_in(&id)?.is_empty());
     assert!(vault.edges_in(&out_target)?.is_empty());
-    assert!(vault.edges_out(&in_source)?.is_empty());
+    let source_edges = vault.edges_out(&in_source)?;
+    assert_eq!(source_edges.len(), 1);
+    assert_eq!(source_edges[0].kind, EdgeKind::HasFacet);
+    assert_eq!(
+        source_edges[0].target,
+        crate::claim::substrate_facet_id(in_source)
+    );
 
     let start_key = Store::encode_temporal_key(occurred.start, &id);
     let end_key = Store::encode_temporal_key(occurred.end, &id);

@@ -1,0 +1,58 @@
+name: Android embedded
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: ['crates/oneiron/**', 'crates/oneiron-android/**', 'crates/heed/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', '.github/workflows/android-embedded.yml']
+  workflow_dispatch:
+env:
+  CARGO_TERM_COLOR: always
+concurrency:
+  group: android-embedded-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  android:
+    runs-on: [self-hosted, macos, arm64]
+    timeout-minutes: 45
+    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Enforce runner cache budget
+        run: scripts/ci/cap-target-cache.sh
+      - name: Android aarch64 toolchain
+        run: |
+          sdkmanager 'ndk;27.2.12479018' 'platforms;android-35' 'build-tools;35.0.0'
+          rustup target add aarch64-linux-android
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Build the shared core with NDK (aarch64 includes NEON)
+        run: |
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android26-clang"
+          export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android26-clang"
+          export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
+          cargo build --locked -p oneiron-android --target aarch64-linux-android --release
+          mkdir -p crates/oneiron-android/kotlin/src/main/jniLibs/arm64-v8a
+          cp "${CARGO_TARGET_DIR:-target}/aarch64-linux-android/release/liboneiron_android.so" crates/oneiron-android/kotlin/src/main/jniLibs/arm64-v8a/
+      - name: Kotlin JNI vault round trip on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: arm64-v8a
+          target: google_apis
+          disable-animations: true
+          script: gradle -p crates/oneiron-android/kotlin connectedCheck
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-embedded-test-results
+          path: crates/oneiron-android/kotlin/build/reports/androidTests

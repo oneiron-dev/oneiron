@@ -4,9 +4,9 @@ use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::outbound::capability::normalize_key;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::store::Store;
-use crate::vault::entity_id_from_type_index_key;
 
 /// Resolves the OF-347 channel identity a connector key sends through.
 ///
@@ -38,13 +38,9 @@ pub(in crate::outbound) fn resolve_channel_identity_ref_for_connector(
 
     let channel_class = normalize_channel_class(connector_key);
     let mut resolved = None;
-    for entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
-    {
-        let (key, _) = entry?;
-        let id = entity_id_from_type_index_key(&key)?;
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
+        let id = entry?;
+        let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
             return Err(Error::CorruptedIndex("channel identity entity row"));
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {

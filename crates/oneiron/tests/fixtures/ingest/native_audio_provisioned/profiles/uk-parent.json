@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "packages": {
+    "mlx-audio": "0.4.7",
+    "mlx-lm": "0.31.3",
+    "mlx": "0.32.2",
+    "torch": "2.14.0",
+    "numpy": "2.5.3",
+    "silero-vad": "6.2.1",
+    "onnxruntime": "1.30.0",
+    "transformers": "5.17.0"
+  },
+  "asr": null,
+  "alignment": {
+    "backend": "process",
+    "interpreter": "/Volumes/Cinema/w7-build/audio-runtime-20260919/venv/uk-timing/bin/python",
+    "python_version": "3.13.5",
+    "script": "/Volumes/Cinema/w7-build/wt/W7-C02/scripts/meeting-audio-worker.py",
+    "code_sha256": {
+      "meeting-audio-worker.py": "8de86b391dee7d5267ed27bcc6106771fd6de22f544b8d188ff30a6216ba2851",
+      "meeting-audio-native.py": "b9661ba32cb2a52e1c3db59902bf1dde6a20f403a9c6363ce2d0029c72571133",
+      "meeting_audio_runtime.py": "446f9c57b257fb221aacd30900d6cb22a5355b1f61d4d53030abf9714be65e47",
+      "meeting_audio_process.py": "707ef32d057dbb478889c070119659db4113c80524df684c5bc3af63880f9abb",
+      "meeting_audio_ctc.py": "d9a89905d461db38b995c7dac166453452d680cf6ae06be0f106933cbcd295ba"
+    },
+    "profile": "/Volumes/Cinema/w7-build/audio-runtime-20260919/tmp/c02-native-profiles/uk-timing.json",
+    "profile_sha256": "fc56078fabe09e0eae53be5ea0f62db6f72bab12f7f022f61d55eb5832c06cff",
+    "timeout_seconds": 600
+  },
+  "diarization": null,
+  "cleanup": null,
+  "moss": null,
+  "uk_alignment": null
+}

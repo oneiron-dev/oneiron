@@ -1,5 +1,7 @@
 //! Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans.
 
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
 
 use super::{
@@ -21,10 +23,7 @@ use crate::error::{ClaimError, Error, Result};
 use crate::provenance::EdgeRef;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
-use crate::vault::{
-    CLAIM_OF_DEFAULT_WEIGHT, MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT, edge_kind_prefix,
-    parse_edge_record,
-};
+use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT};
 struct StoredClaimVadState {
     id: EntityId,
     header: EntityMetadataHeader,
@@ -153,6 +152,34 @@ impl Vault {
             wtxn.commit()?;
             return Err(Error::InvalidClaimBody(message));
         }
+        let result = self.consolidate_claim_vad_staged(&mut wtxn, claim_id, claim_body, now)?;
+        wtxn.commit()?;
+        Ok(result)
+    }
+
+    /// Stages the canonical consolidation in an enclosing atomic operation.
+    /// Unlike the standalone maintenance door, a decline leaves all rollback
+    /// decisions to that operation and never commits a partial clear.
+    pub(crate) fn consolidate_claim_vad_in_write_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claim_id: &EntityId,
+        now: u64,
+    ) -> Result<ClaimVadConsolidation> {
+        let body = self.claim_body_for_claim_vad_in_txn(wtxn, claim_id)?;
+        if !claim_consolidatable(&body) {
+            return Err(Error::InvalidClaimBody("claim is not consolidatable"));
+        }
+        self.consolidate_claim_vad_staged(wtxn, claim_id, body, now)
+    }
+
+    fn consolidate_claim_vad_staged(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claim_id: &EntityId,
+        claim_body: ClaimBody,
+        now: u64,
+    ) -> Result<ClaimVadConsolidation> {
         if claim_body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE {
             return Err(Error::InvalidClaimBody(
                 "claim VAD state claims cannot be consolidated",
@@ -166,7 +193,7 @@ impl Vault {
 
         let mut evidence_turns = Vec::new();
         for candidate in collect_claim_turn_evidence_refs(&claim_body) {
-            if let Some(annotation) = self.turn_vad_annotation_in_txn(&wtxn, &candidate)? {
+            if let Some(annotation) = self.turn_vad_annotation_in_txn(wtxn, &candidate)? {
                 evidence_turns.push(ClaimVadTurnEvidence {
                     turn_id: candidate,
                     annotation,
@@ -175,8 +202,8 @@ impl Vault {
         }
 
         let (semantic_edges, structural_edges_skipped) =
-            self.claim_vad_incident_edges_in_txn(&wtxn, claim_id)?;
-        let active_states = self.active_claim_vad_states_in_txn(&wtxn, claim_id)?;
+            self.claim_vad_incident_edges_in_txn(wtxn, claim_id)?;
+        let active_states = self.active_claim_vad_states_in_txn(wtxn, claim_id)?;
         let mut ops = Vec::new();
 
         let (vad, reappraisal) = if let Some(vad) = mean_vad(&evidence_turns) {
@@ -203,7 +230,7 @@ impl Vault {
                     superseded_claim_ids: Vec::new(),
                 }
             } else {
-                let state_claim_id = EntityId::now();
+                let state_claim_id = self.store.clock.entity_id()?;
                 let mut body = ClaimBody::new(
                     CLAIM_VAD_REAPPRAISAL_PREDICATE,
                     ClaimSubject::Entity(*claim_id),
@@ -279,7 +306,7 @@ impl Vault {
                 &self.store,
                 &self.config,
                 &self.analyzer,
-                &mut wtxn,
+                wtxn,
                 ops,
                 self.text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
@@ -287,7 +314,6 @@ impl Vault {
                 true,
             )?;
         }
-        wtxn.commit()?;
 
         Ok(ClaimVadConsolidation {
             claim_id: *claim_id,
@@ -382,8 +408,8 @@ impl Vault {
     ) -> Result<ClaimBody> {
         let raw = self
             .store
-            .entities
-            .get(txn, claim_id.as_bytes())?
+            .port_entity_record(txn, claim_id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -393,12 +419,16 @@ impl Vault {
         crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
     }
 
-    fn turn_vad_annotation_in_txn(
+    pub(super) fn turn_vad_annotation_in_txn(
         &self,
         txn: &heed::RwTxn<'_>,
         turn_id: &EntityId,
     ) -> Result<Option<VadAnnotation>> {
-        let Some(raw) = self.store.entities.get(txn, turn_id.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(txn, turn_id)?
+            .map(|row| row.encode())
+        else {
             return Ok(None);
         };
         let header =
@@ -408,7 +438,11 @@ impl Vault {
         }
 
         let claim_id = vad_annotation_claim_id(ENTITY_TYPE_TURN, turn_id)?;
-        if let Some(raw) = self.store.entities.get(txn, claim_id.as_bytes())? {
+        if let Some(raw) = self
+            .store
+            .port_entity_record(txn, &claim_id)?
+            .map(|row| row.encode())
+        {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_CLAIM {
@@ -449,15 +483,14 @@ impl Vault {
 
         for (scanned, entry) in self
             .store
-            .edges_out
-            .prefix_iter(txn, claim_id.as_bytes())?
+            .port_edges(txn, claim_id, crate::ports::EdgeDirection::Out, None, None)?
             .enumerate()
         {
             if scanned >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("claim_vad_incident_edges"));
             }
-            let (key, value) = entry?;
-            let info = parse_edge_record(&key, &value)?;
+            let edge_row = entry?;
+            let info = edge_row;
             Self::record_claim_vad_edge(
                 EdgeRef::new(*claim_id, info.kind, info.target),
                 &mut seen,
@@ -468,15 +501,14 @@ impl Vault {
 
         for (scanned, entry) in self
             .store
-            .edges_in
-            .prefix_iter(txn, claim_id.as_bytes())?
+            .port_edges(txn, claim_id, crate::ports::EdgeDirection::In, None, None)?
             .enumerate()
         {
             if scanned >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("claim_vad_incident_edges"));
             }
-            let (key, value) = entry?;
-            let info = parse_edge_record(&key, &value)?;
+            let edge_row = entry?;
+            let info = edge_row;
             Self::record_claim_vad_edge(
                 EdgeRef::new(info.target, info.kind, *claim_id),
                 &mut seen,
@@ -509,15 +541,28 @@ impl Vault {
         txn: &heed::RwTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<Vec<StoredClaimVadState>> {
-        let prefix = edge_kind_prefix(claim_id, EdgeKind::ClaimOf);
         let mut states = Vec::new();
-        for (scanned, entry) in self.store.edges_in.prefix_iter(txn, &prefix)?.enumerate() {
+        for (scanned, entry) in self
+            .store
+            .port_edges(
+                txn,
+                claim_id,
+                crate::ports::EdgeDirection::In,
+                Some(EdgeKind::ClaimOf),
+                None,
+            )?
+            .enumerate()
+        {
             if scanned >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("claim_vad_states"));
             }
-            let (key, value) = entry?;
-            let state_id = parse_edge_record(&key, &value)?.target;
-            let Some(raw) = self.store.entities.get(txn, state_id.as_bytes())? else {
+            let edge_row = entry?;
+            let state_id = edge_row.target;
+            let Some(raw) = self
+                .store
+                .port_entity_record(txn, &state_id)?
+                .map(|row| row.encode())
+            else {
                 continue;
             };
             let header =
@@ -547,17 +592,30 @@ impl Vault {
         expected_type: u8,
         annotation: VadAnnotation,
     ) -> Result<VadAnnotation> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let result = self.annotate_entity_vad_in_txn(&mut wtxn, id, expected_type, annotation)?;
+        wtxn.commit()?;
+        Ok(result)
+    }
+
+    /// Transaction-composable form of the ordinary turn/message annotation door.
+    pub(crate) fn annotate_entity_vad_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        expected_type: u8,
+        annotation: VadAnnotation,
+    ) -> Result<VadAnnotation> {
         annotation.vad.validate()?;
         let claim_id = vad_annotation_claim_id(expected_type, id)?;
         let claim_body = vad_annotation_claim_body(id, &annotation);
         let data = encode_claim_body(&claim_body)?;
         validate_claim_body_bytes(&data, false)?;
 
-        let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .entities
-            .get(&wtxn, id.as_bytes())?
+            .port_entity_record(wtxn, id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -565,12 +623,12 @@ impl Vault {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
 
-        self.guard_vad_annotation_claim_slot(&wtxn, &claim_id, id)?;
+        self.guard_vad_annotation_claim_slot(wtxn, &claim_id, id)?;
         apply_ops(
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut wtxn,
+            wtxn,
             vec![
                 BatchOp::Put {
                     id: claim_id,
@@ -599,8 +657,7 @@ impl Vault {
             true,
         )?;
         let key = vad_annotation_meta_key(expected_type, id);
-        self.store.vault_meta.delete(&mut wtxn, &key)?;
-        wtxn.commit()?;
+        self.store.vault_meta.delete(wtxn, &key)?;
         Ok(annotation)
     }
 
@@ -610,7 +667,11 @@ impl Vault {
         claim_id: &EntityId,
         annotated_id: &EntityId,
     ) -> Result<()> {
-        let Some(raw) = self.store.entities.get(rtxn, claim_id.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(rtxn, claim_id)?
+            .map(|row| row.encode())
+        else {
             return Ok(());
         };
         let header =
@@ -639,7 +700,11 @@ impl Vault {
         expected_type: u8,
     ) -> Result<Option<VadAnnotation>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(&rtxn, id)?
+            .map(|row| row.encode())
+        else {
             return Ok(None);
         };
         let header =
@@ -648,7 +713,11 @@ impl Vault {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         let claim_id = vad_annotation_claim_id(expected_type, id)?;
-        if let Some(raw) = self.store.entities.get(&rtxn, claim_id.as_bytes())? {
+        if let Some(raw) = self
+            .store
+            .port_entity_record(&rtxn, &claim_id)?
+            .map(|row| row.encode())
+        {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_CLAIM {

@@ -29,6 +29,34 @@ fn deep_map_bytes(doc: &LoroDoc, map: &str, key: &str) -> Option<Vec<u8>> {
     Some(value.to_vec())
 }
 
+pub(super) fn seed_historical_lease(
+    server: &SyncServer,
+    vault_id: u64,
+    client: u64,
+    pubkey: [u8; 32],
+    status: LeaseStatus,
+) {
+    let record = LeaseRecord {
+        vault_id,
+        status,
+        pubkey,
+        granted_at: 1,
+        renewed_at: 2,
+        expires_at: u64::MAX,
+    };
+    server
+        .root_doc
+        .get_map(ROOT_LEASES_MAP)
+        .insert(
+            &lease::lease_registry_key(vault_id, client),
+            lease::encode_lease_record(&record).as_slice(),
+        )
+        .unwrap();
+    server.root_doc.commit();
+    oneiron::sync::server_state::persist_root_snapshot(&server.vault, &server.root_doc).unwrap();
+    lease::mirror_leases_from_root(&server.vault, &server.root_doc).unwrap();
+}
+
 fn deep_map_has_map(doc: &LoroDoc, map: &str, key: &str) -> bool {
     let deep = doc.get_deep_value();
     let Some(root) = deep.as_map() else {
@@ -384,233 +412,55 @@ async fn corrupt_window_snapshot_fails_closed() {
 /// REJECTED with the binding untouched (first-binding-wins); revocation
 /// is terminal; an invalid proof of possession never touches state.
 #[tokio::test]
-async fn lease_lifecycle_register_renew_conflict_revoke() {
+async fn retired_device_enrollment_refuses_fresh_and_residual_keys_without_mutation() {
     use ed25519_dalek::{Signer, SigningKey};
-
     let (_dir, vault) = test_vault();
     let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
-
-    let key = SigningKey::from_bytes(&[7u8; 32]);
-    let pubkey = key.verifying_key().to_bytes();
-    let client_id = 0x0123_4567_89ab_cdefu64;
-    let registry_key = lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_id);
-    let pop = |signer: &SigningKey, cid: u64, pk: &[u8; 32]| {
-        signer
-            .sign(&lease::lease_pop_transcript(cid, pk))
-            .to_bytes()
-    };
-
-    // ── Register: granted, record layout literals on BOTH surfaces.
-    let decision = server
-        .register_lease(client_id, &pubkey, &pop(&key, client_id, &pubkey))
-        .await
-        .unwrap();
-    assert!(decision.granted);
-    assert!(decision.root_update.is_some(), "registry change broadcasts");
-    let map_record = deep_map_bytes(&server.root_doc, "leases", &registry_key).unwrap();
-    let ls_row = vault
-        .sync_state_get("ls:0000000000000000:0123456789abcdef")
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        map_record, ls_row,
-        "OD-3: map value ≡ ls: row, byte-identical"
-    );
-    assert_eq!(ls_row.len(), 66, "OD-4 record length");
-    assert_eq!(ls_row[0], 0x02, "version byte");
-    assert_eq!(ls_row[1], 0x01, "status active");
-    assert_eq!(&ls_row[2..34], &pubkey);
-    let granted_at = u64::from_le_bytes(ls_row[34..42].try_into().unwrap());
-    let renewed_at = u64::from_le_bytes(ls_row[42..50].try_into().unwrap());
-    let expires_at = u64::from_le_bytes(ls_row[50..58].try_into().unwrap());
-    let vault_id = u64::from_be_bytes(ls_row[58..66].try_into().unwrap());
-    assert_eq!(vault_id, SERVER_LEASE_VAULT_ID, "vault_id u64 BE");
-    assert_eq!(granted_at, renewed_at);
-    assert_eq!(
-        LEASE_DURATION_SECS, 7_776_000,
-        "90-day lease literal (OD-4)"
-    );
-    assert_eq!(
-        expires_at,
-        renewed_at + LEASE_DURATION_SECS,
-        "90-day lease literal (OD-4)"
-    );
-    assert_eq!(decision.expires_at, expires_at);
-
-    // ── Renew: simulate an old, EXPIRED binding (server is sole
-    // writer, so the test rewrites the registry record directly), then
-    // re-request with the SAME key: flips back to active, renewed_at
-    // and expires_at refresh, granted_at is preserved.
-    let stale = lease::LeaseRecord {
-        vault_id: SERVER_LEASE_VAULT_ID,
-        status: lease::LeaseStatus::Expired,
-        pubkey,
-        granted_at: 1_000,
-        renewed_at: 2_000,
-        expires_at: 3_000,
-    };
-    server
-        .root_doc
-        .get_map(ROOT_LEASES_MAP)
-        .delete(&registry_key)
-        .unwrap();
-    server
-        .root_doc
-        .get_map(ROOT_LEASES_MAP)
-        .insert(
-            lease::client_id_hex(client_id).as_str(),
-            lease::encode_lease_record(&stale).as_slice(),
-        )
-        .unwrap();
-    server.root_doc.commit();
-    let decision = server
-        .register_lease(client_id, &pubkey, &pop(&key, client_id, &pubkey))
-        .await
-        .unwrap();
-    assert!(
-        decision.granted,
-        "expired + same key = renewal, not rejection"
-    );
-    let renewed_row = vault
-        .sync_state_get("ls:0000000000000000:0123456789abcdef")
-        .unwrap()
-        .unwrap();
-    assert!(
-        deep_map_bytes(&server.root_doc, "leases", &lease::client_id_hex(client_id)).is_none(),
-        "renewal migrates legacy client-only root keys to scoped registry keys"
-    );
-    assert!(
-        deep_map_bytes(&server.root_doc, "leases", &registry_key).is_some(),
-        "renewal keeps the active binding under the scoped registry key"
-    );
-    assert_eq!(renewed_row[1], 0x01, "expired flips back to active");
-    assert_eq!(
-        u64::from_le_bytes(renewed_row[34..42].try_into().unwrap()),
-        1_000,
-        "granted_at preserved across renewal"
-    );
-    let renewed_at2 = u64::from_le_bytes(renewed_row[42..50].try_into().unwrap());
-    assert!(renewed_at2 > 2_000, "renewed_at refreshed");
-    assert_eq!(
-        u64::from_le_bytes(renewed_row[50..58].try_into().unwrap()),
-        renewed_at2 + 7_776_000
-    );
-
-    // ── Conflict: same client id, DIFFERENT key → rejected, binding
-    // bytes untouched (first-binding-wins).
-    let intruder = SigningKey::from_bytes(&[9u8; 32]);
-    let intruder_pk = intruder.verifying_key().to_bytes();
-    let decision = server
-        .register_lease(
-            client_id,
-            &intruder_pk,
-            &pop(&intruder, client_id, &intruder_pk),
-        )
-        .await
-        .unwrap();
-    assert!(!decision.granted);
-    assert_eq!(
-        decision.expires_at, 0,
-        "rejected ack carries expires_at = 0"
-    );
-    assert_eq!(
-        vault
-            .sync_state_get("ls:0000000000000000:0123456789abcdef")
-            .unwrap()
-            .unwrap(),
-        renewed_row,
-        "a binding conflict must not modify the existing binding"
-    );
-
-    // ── Invalid PoP (valid key, signature over the WRONG client id):
-    // rejected, no state change.
-    let other_client = client_id + 1;
-    let decision = server
-        .register_lease(other_client, &pubkey, &pop(&key, client_id, &pubkey))
-        .await
-        .unwrap();
-    assert!(
-        !decision.granted,
-        "PoP transcript binds the claimed client id"
-    );
-    assert!(
-        vault
-            .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, other_client))
-            .unwrap()
-            .is_none(),
-        "an invalid PoP never reaches the registry"
-    );
-
-    // ── Revoke: terminal (OD-8). Status flips on both surfaces and a
-    // later re-request with the ORIGINAL key is rejected.
-    let update = server.revoke_lease(client_id).await.unwrap();
-    assert!(update.is_some(), "revocation broadcasts a registry change");
-    let revoked_row = vault
-        .sync_state_get("ls:0000000000000000:0123456789abcdef")
-        .unwrap()
-        .unwrap();
-    assert_eq!(revoked_row[1], 0x03, "status revoked");
-    let decision = server
-        .register_lease(client_id, &pubkey, &pop(&key, client_id, &pubkey))
-        .await
-        .unwrap();
-    assert!(!decision.granted, "revoked is terminal — no re-activation");
-    // Unknown binding: revoke is a no-op (no phantom records).
-    assert!(server.revoke_lease(0xffff).await.unwrap().is_none());
+    let signer = SigningKey::from_bytes(&[7; 32]);
+    let pubkey = signer.verifying_key().to_bytes();
+    for (client, status) in [
+        (1, None),
+        (2, Some(LeaseStatus::Active)),
+        (3, Some(LeaseStatus::Expired)),
+        (4, Some(LeaseStatus::Revoked)),
+    ] {
+        if let Some(status) = status {
+            seed_historical_lease(&server, 0, client, pubkey, status);
+        }
+        let row = vault.sync_state_get(&lease::lease_key(0, client)).unwrap();
+        let proof = signer
+            .sign(&lease::lease_pop_transcript(client, &pubkey))
+            .to_bytes();
+        let decision = server
+            .register_lease(client, &pubkey, &proof)
+            .await
+            .unwrap();
+        assert!(!decision.granted);
+        assert_eq!(decision.expires_at, 0);
+        assert!(decision.root_update.is_none());
+        assert_eq!(
+            vault.sync_state_get(&lease::lease_key(0, client)).unwrap(),
+            row
+        );
+    }
+    assert!(vault.authority_fold().unwrap().vault_id.is_none());
 }
 
 #[tokio::test]
-async fn tenant_isolation_replay_cache_fixtures_keep_grants_separate() {
+async fn historical_lease_revocation_remains_tenant_local_but_neither_tenant_can_renew() {
     use ed25519_dalek::{Signer, SigningKey};
-
     let (_dir, vault) = test_vault();
     let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
-    let tenant_a = 0x0a0b_0c0d_0e0f_1011u64;
-    let tenant_b = 0x1110_0f0e_0d0c_0b0au64;
-    let client_id = 0x0123_4567_89ab_cdefu64;
-    let key = SigningKey::from_bytes(&[42u8; 32]);
-    let pubkey = key.verifying_key().to_bytes();
-    let pop = key
-        .sign(&lease::lease_pop_transcript(client_id, &pubkey))
-        .to_bytes();
-
-    let grant_a = server
-        .register_lease_for_vault(tenant_a, client_id, &pubkey, &pop)
-        .await
-        .unwrap();
-    let grant_b = server
-        .register_lease_for_vault(tenant_b, client_id, &pubkey, &pop)
-        .await
-        .unwrap();
-
-    assert!(grant_a.granted);
-    assert!(grant_b.granted);
-    assert!(
-        deep_map_bytes(&server.root_doc, "leases", &lease::client_id_hex(client_id)).is_none(),
-        "new hosted writes must not use the legacy subscriber-only root key"
-    );
-    for tenant in [tenant_a, tenant_b] {
-        let registry_key = lease::lease_registry_key(tenant, client_id);
-        let mirror_key = lease::lease_key(tenant, client_id);
-        let map_record = deep_map_bytes(&server.root_doc, "leases", &registry_key)
-            .expect("scoped root lease entry");
-        let mirror_record = vault
-            .sync_state_get(&mirror_key)
-            .unwrap()
-            .expect("scoped ls mirror row");
-        assert_eq!(
-            map_record, mirror_record,
-            "root grant cache and replay-door mirror stay byte-identical per tenant"
-        );
-        assert_eq!(
-            lease::decode_lease_record(&mirror_record).unwrap().vault_id,
-            tenant
-        );
+    let signer = SigningKey::from_bytes(&[42; 32]);
+    let key = signer.verifying_key().to_bytes();
+    let client = 17;
+    for tenant in [10, 20] {
+        seed_historical_lease(&server, tenant, client, key, LeaseStatus::Active);
     }
-
+    let before = vault.sync_state_get(&lease::lease_key(20, client)).unwrap();
     assert!(
         server
-            .revoke_lease_for_vault(tenant_a, client_id)
+            .revoke_lease_for_vault(10, client)
             .await
             .unwrap()
             .is_some()
@@ -618,7 +468,7 @@ async fn tenant_isolation_replay_cache_fixtures_keep_grants_separate() {
     assert_eq!(
         lease::decode_lease_record(
             &vault
-                .sync_state_get(&lease::lease_key(tenant_a, client_id))
+                .sync_state_get(&lease::lease_key(10, client))
                 .unwrap()
                 .unwrap()
         )
@@ -627,34 +477,21 @@ async fn tenant_isolation_replay_cache_fixtures_keep_grants_separate() {
         LeaseStatus::Revoked
     );
     assert_eq!(
-        lease::decode_lease_record(
-            &vault
-                .sync_state_get(&lease::lease_key(tenant_b, client_id))
+        vault.sync_state_get(&lease::lease_key(20, client)).unwrap(),
+        before
+    );
+    let proof = signer
+        .sign(&lease::lease_pop_transcript(client, &key))
+        .to_bytes();
+    for tenant in [10, 20] {
+        assert!(
+            !server
+                .register_lease_for_vault(tenant, client, &key, &proof)
+                .await
                 .unwrap()
-                .unwrap()
-        )
-        .unwrap()
-        .status,
-        LeaseStatus::Active,
-        "tenant A revoke must not mutate tenant B's grant cache row"
-    );
-
-    let tenant_b_renewal = server
-        .register_lease_for_vault(tenant_b, client_id, &pubkey, &pop)
-        .await
-        .unwrap();
-    assert!(
-        tenant_b_renewal.granted,
-        "same subscriber and pubkey revoked in tenant A must still renew in tenant B"
-    );
-    let tenant_a_retry = server
-        .register_lease_for_vault(tenant_a, client_id, &pubkey, &pop)
-        .await
-        .unwrap();
-    assert!(
-        !tenant_a_retry.granted,
-        "tenant A's own revoked row remains terminal"
-    );
+                .granted
+        );
+    }
 }
 
 #[tokio::test]
@@ -904,283 +741,69 @@ async fn ra_drain_tick_clears_only_fully_reasserted_windows() {
         .await;
 }
 
-/// ONE-1140 RULING A (OD-8 amended, pubkey-bound; delete-safety adjacent,
-/// cap-exempt): `register_lease` refuses a FRESH active lease for a
-/// pubkey that ANY `ls:` row has revoked. A revoked pubkey is terminal
-/// across ALL client_ids, so a device rotating client_id while reusing
-/// its key cannot recover (recovery requires a fresh KEYPAIR). The
-/// None-arm guard writes NO row and grants nothing. A wrong impl that
-/// grants any absent client_id would write `ls:{vault}:{B}` active and FAIL here.
+/// Historical withdrawal still commits or rolls back its durable root and mirror together.
 #[tokio::test]
-async fn register_lease_refuses_active_lease_for_already_revoked_pubkey() {
-    use ed25519_dalek::{Signer, SigningKey};
-
+async fn historical_lease_revoke_root_and_mirror_roll_back_together_on_failure() {
     let (_dir, vault) = test_vault();
     let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
-
-    let key = SigningKey::from_bytes(&[23u8; 32]);
-    let pubkey = key.verifying_key().to_bytes();
-    let pop = |signer: &SigningKey, cid: u64, pk: &[u8; 32]| {
-        signer
-            .sign(&lease::lease_pop_transcript(cid, pk))
-            .to_bytes()
-    };
-
-    // Client A binds pubkey P, then the owner revokes it.
-    let client_a = 0x0a0a_0a0a_0a0a_0a0au64;
-    assert!(
-        server
-            .register_lease(client_a, &pubkey, &pop(&key, client_a, &pubkey))
-            .await
-            .unwrap()
-            .granted
-    );
-    assert!(server.revoke_lease(client_a).await.unwrap().is_some());
-    assert_eq!(
-        vault
-            .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_a))
-            .unwrap()
-            .unwrap()[1],
-        0x03,
-        "client A's binding is revoked"
-    );
-
-    // A FRESH client B presents the SAME (revoked) pubkey with a valid
-    // proof of possession.
-    let client_b = 0x0b0b_0b0b_0b0b_0b0bu64;
-    assert_ne!(client_a, client_b);
-    let decision = server
-        .register_lease(client_b, &pubkey, &pop(&key, client_b, &pubkey))
-        .await
+    let client = 42;
+    seed_historical_lease(&server, 0, client, [42; 32], LeaseStatus::Active);
+    let root_before = vault.sync_state_get("d:root").unwrap().unwrap();
+    let row_before = vault
+        .sync_state_get(&lease::lease_key(0, client))
+        .unwrap()
         .unwrap();
-    assert!(
-        !decision.granted,
-        "a revoked pubkey can never obtain a fresh active lease under any client_id"
+    oneiron::sync::lease::test_hooks::arm_mirror_failure();
+    assert!(matches!(
+        server.revoke_lease(client).await,
+        Err(oneiron::Error::CorruptedIndex(_))
+    ));
+    assert_eq!(
+        vault.sync_state_get("d:root").unwrap().unwrap(),
+        root_before
     );
     assert_eq!(
-        decision.expires_at, 0,
-        "rejected ack carries expires_at = 0"
-    );
-    assert!(
         vault
-            .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_b))
+            .sync_state_get(&lease::lease_key(0, client))
             .unwrap()
-            .is_none(),
-        "no ls: row is written for the refused fresh client_id"
+            .unwrap(),
+        row_before
     );
-    assert!(
+    assert_eq!(
         deep_map_bytes(
             &server.root_doc,
             "leases",
-            &lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_b)
+            &lease::lease_registry_key(0, client)
         )
-        .is_none(),
-        "no leases-map entry exists for the refused fresh client_id"
+        .unwrap(),
+        row_before
     );
-}
-
-/// OD-8 pubkey floor also applies to RENEWAL: if client B is active with
-/// pubkey P but a sibling client A has already revoked P, B cannot
-/// refresh the lease. A wrong impl that guards only the None/fresh arm
-/// grants the renewal and mutates B's `renewed_at`/`expires_at`.
-#[tokio::test]
-async fn renew_lease_refuses_when_sibling_revoked_same_pubkey() {
-    use ed25519_dalek::{Signer, SigningKey};
-
-    let (_dir, vault) = test_vault();
-    let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
-
-    let key = SigningKey::from_bytes(&[31u8; 32]);
-    let pubkey = key.verifying_key().to_bytes();
-    let pop = |cid: u64| {
-        key.sign(&lease::lease_pop_transcript(cid, &pubkey))
-            .to_bytes()
-    };
-    let client_a = 0x0c0c_0c0c_0c0c_0c0cu64;
-    let client_b = 0x0d0d_0d0d_0d0d_0d0du64;
-
-    assert!(
-        server
-            .register_lease(client_a, &pubkey, &pop(client_a))
-            .await
-            .unwrap()
-            .granted
-    );
-    assert!(
-        server
-            .register_lease(client_b, &pubkey, &pop(client_b))
-            .await
-            .unwrap()
-            .granted
-    );
-    assert!(server.revoke_lease(client_a).await.unwrap().is_some());
-    let b_row_before = vault
-        .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_b))
-        .unwrap()
-        .unwrap();
+    drop(server);
+    let rebooted = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
     assert_eq!(
-        lease::decode_lease_record(&b_row_before).unwrap().status,
-        LeaseStatus::Active,
-        "client B starts active before the sibling floor is applied"
+        deep_map_bytes(
+            &rebooted.root_doc,
+            "leases",
+            &lease::lease_registry_key(0, client)
+        )
+        .unwrap(),
+        row_before
     );
-
-    let decision = server
-        .register_lease(client_b, &pubkey, &pop(client_b))
-        .await
-        .unwrap();
-    assert!(
-        !decision.granted,
-        "renewal must refuse when any sibling revoked the same pubkey"
-    );
-    assert_eq!(decision.expires_at, 0);
-    assert!(
-        decision.root_update.is_none(),
-        "a refused renewal with no expiry flips broadcasts no registry delta"
-    );
-    assert_eq!(
-        vault
-            .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_b))
-            .unwrap()
-            .unwrap(),
-        b_row_before,
-        "the refused renewal must not refresh B's lease row"
-    );
+    assert!(rebooted.revoke_lease(client).await.unwrap().is_some());
     assert_eq!(
         lease::decode_lease_record(
             &vault
-                .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_a))
+                .sync_state_get(&lease::lease_key(0, client))
                 .unwrap()
                 .unwrap()
         )
         .unwrap()
         .status,
-        LeaseStatus::Revoked,
-        "the sibling revocation evidence remains terminal"
+        LeaseStatus::Revoked
     );
 }
 
-/// ONE-1140 R3 (delete-safety adjacent, cap-exempt): the `d:root`
-/// snapshot persist and the `ls:` mirror must commit or roll back
-/// together in ONE write txn. If the mirror fails mid-txn, the `d:root`
-/// put rolls back — never a new `d:root` over a stale/missing `ls:`
-/// mirror, which would let a revoked lease appear active at a replay
-/// door reading `ls:`. A two-txn impl commits `d:root` BEFORE the mirror
-/// failure → reopen shows the new `d:root` while `ls:` stays stale →
-/// revoked-appears-active → fails the "d:root UNCHANGED" assertion.
-#[tokio::test]
-async fn lease_root_and_mirror_atomic_on_mirror_failure() {
-    use ed25519_dalek::{Signer, SigningKey};
-
-    let (_dir, vault) = test_vault();
-    let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
-
-    let key = SigningKey::from_bytes(&[42u8; 32]);
-    let pubkey = key.verifying_key().to_bytes();
-    let pop = |signer: &SigningKey, cid: u64, pk: &[u8; 32]| {
-        signer
-            .sign(&lease::lease_pop_transcript(cid, pk))
-            .to_bytes()
-    };
-
-    // ── Bind client A, then revoke it (both surfaces successfully
-    //    committed). ls:A now classifies Revoked.
-    let client_a = 0x00aa_00aa_00aa_00aau64;
-    assert!(
-        server
-            .register_lease(client_a, &pubkey, &pop(&key, client_a, &pubkey))
-            .await
-            .unwrap()
-            .granted
-    );
-    assert!(server.revoke_lease(client_a).await.unwrap().is_some());
-    let ls_a_revoked = vault
-        .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_a))
-        .unwrap()
-        .unwrap();
-    assert_eq!(ls_a_revoked[1], 0x03, "client A is revoked on ls:");
-
-    // Durable d:root baseline AFTER the revoke (no client B yet).
-    let d_root_before = vault.sync_state_get("d:root").unwrap().unwrap();
-
-    // ── Arm a one-shot mirror failure, then attempt to register a FRESH
-    //    client B with a distinct key (changes d:root AND would re-mirror
-    //    ls:). The combined txn must roll back the d:root put.
-    let key_b = SigningKey::from_bytes(&[43u8; 32]);
-    let pubkey_b = key_b.verifying_key().to_bytes();
-    let client_b = 0x00bb_00bb_00bb_00bbu64;
-    oneiron::sync::lease::test_hooks::arm_mirror_failure();
-    let err = server
-        .register_lease(client_b, &pubkey_b, &pop(&key_b, client_b, &pubkey_b))
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(err, oneiron::Error::CorruptedIndex(_)),
-        "the injected mirror failure must propagate, got {err:?}"
-    );
-
-    // ── Inspect durable sync_state: the combined txn rolled back, so the
-    //    committed `d:root` is the post-revoke baseline (no client B) and
-    //    the door still classifies client A's lease Revoked (ls: intact).
-    //    `sync_state_get` opens a fresh LMDB read txn, so it reflects the
-    //    last COMMITTED state — exactly what a server restart would reload.
-    //    A two-txn impl would have committed the new `d:root` (with B) in
-    //    its own txn BEFORE the mirror failure → `d:root` would differ
-    //    from `d_root_before` → fails the "UNCHANGED" assertion.
-    assert_eq!(
-        vault.sync_state_get("d:root").unwrap().unwrap(),
-        d_root_before,
-        "a mirror failure must roll back the d:root put (single txn)"
-    );
-    assert!(
-        vault
-            .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_b))
-            .unwrap()
-            .is_none(),
-        "no ls: row for the rolled-back fresh client_id"
-    );
-    assert!(
-        deep_map_bytes(
-            &server.root_doc,
-            "leases",
-            &lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_b)
-        )
-        .is_none(),
-        "the live in-memory root_doc must roll back client B after mirror failure"
-    );
-    let ls_a_after = vault
-        .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_a))
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        lease::decode_lease_record(&ls_a_after).unwrap().status,
-        LeaseStatus::Revoked,
-        "the door still classifies the prior lease Revoked"
-    );
-
-    // Restart fidelity: a fresh SyncServer over the same Arc<Vault> boots
-    // from the durable `d:root` — meta.windows is intact and no phantom
-    // client B leaked into the reloaded root doc (the rollback held).
-    drop(server);
-    let rebooted = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
-    assert!(
-        deep_map_bytes(
-            &rebooted.root_doc,
-            "leases",
-            &lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_b)
-        )
-        .is_none(),
-        "the rolled-back client B must not reappear after a server reboot"
-    );
-}
-
-/// ONE-1140 R4 (fail-closed-hard): the server is the SOLE registry
-/// writer and always stores BINARY lease records, so any non-binary
-/// entry in the `leases` map is local corruption that could hide a
-/// revoked-pubkey row from the registration floor. `register_lease` must
-/// refuse the WHOLE registration with `CorruptedIndex(_)` BEFORE any
-/// expiry flip / registration decision — never best-effort skip the entry.
-/// A filter-and-skip impl would return granted and write an `ls:`/active
-/// row → fails here.
+/// Retired enrollment never writes, even when the old registry is corrupt.
 #[tokio::test]
 async fn register_refuses_on_non_binary_lease_entry() {
     use ed25519_dalek::{Signer, SigningKey};
@@ -1206,11 +829,12 @@ async fn register_refuses_on_non_binary_lease_entry() {
         .sign(&lease::lease_pop_transcript(client_id, &pubkey))
         .to_bytes();
 
-    let err = server
+    let refused = server
         .register_lease(client_id, &pubkey, &pop)
         .await
-        .unwrap_err();
-    assert!(matches!(err, oneiron::Error::CorruptedIndex(_)));
+        .unwrap();
+    assert!(!refused.granted);
+    assert!(refused.root_update.is_none());
 
     // Fail-closed-hard: NO ls:/active row for the attempted registration,
     // and no existing lease altered (no row was written at all).

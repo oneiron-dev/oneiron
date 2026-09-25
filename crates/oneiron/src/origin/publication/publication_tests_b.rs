@@ -211,8 +211,8 @@ mod tests {
             vault
                 .origin_keep_owner_count(&repo_id, &next)
                 .expect("owner count"),
-            1,
-            "T2 already removed the publication owner atomically",
+            2,
+            "T2 replaced the publication owner with a durable change owner",
         );
 
         let report = vault
@@ -227,8 +227,8 @@ mod tests {
             vault
                 .origin_keep_owner_count(&repo_id, &next)
                 .expect("owner count"),
-            1,
-            "the census dropped the publication owner after the live-ref proof"
+            2,
+            "the census retains snapshot and change owners after the live-ref proof"
         );
         let keep = origin_keep_ref_name(&next).expect("keep name");
         assert_eq!(
@@ -248,6 +248,24 @@ mod tests {
                 LEARNED_AT + 2,
             )
             .expect("unpin snapshot");
+        assert_eq!(
+            wire.read_ref(&repo, &keep).expect("change root"),
+            Some(next.clone())
+        );
+        let change = vault
+            .origin_change_for_commit(repo_id, &next)
+            .expect("change index")
+            .expect("change");
+        vault
+            .unpin_origin_object(
+                &wire,
+                &repo,
+                OriginKeepRefKind::Change,
+                &change.change_id.to_hex(),
+                &next,
+                LEARNED_AT + 2,
+            )
+            .expect("explicitly retire change reachability");
         assert_eq!(
             wire.read_ref(&repo, &keep).expect("read keep ref"),
             None,

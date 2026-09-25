@@ -1,0 +1,7 @@
+{"stage": "setup", "status": "complete", "unix_time": 1789838374.51355, "e1_e3_qualified": false, "mode": "ukrainian", "profile_sha256": "0641b9279c1f8e837fa43f27fe17bf2228803deb704a46325a145eebc6538eb5", "model_execution": false}
+{"stage": "synthetic-input", "status": "started", "unix_time": 1789838374.5143008, "e1_e3_qualified": false, "voice": "Lesya", "language": "uk_UA", "human_voice": false}
+{"stage": "synthetic-input", "status": "complete", "unix_time": 1789838375.0480452, "e1_e3_qualified": false, "bytes": 228896, "sha256": "f81a518a688171a15f09d759cc39708974f9da118ca9516c21d8593a4f58d938", "voice": "Lesya", "language": "uk_UA"}
+{"stage": "decode", "status": "started", "unix_time": 1789838375.0482528, "e1_e3_qualified": false, "input_sha256": "f81a518a688171a15f09d759cc39708974f9da118ca9516c21d8593a4f58d938"}
+{"stage": "decode", "status": "complete", "unix_time": 1789838375.143466, "e1_e3_qualified": false, "pcm_sha256": "13b6ccff034ea5683f9e66891c0d3ab4ad8556bd71cfcabc36736dfe626b3842", "samples": 81561}
+{"stage": "native-model", "status": "started", "unix_time": 1789838375.143532, "e1_e3_qualified": false, "mode": "ukrainian", "fixture": "public-synthetic-no-timing-or-speaker-truth"}
+{"stage": "native-model", "status": "complete", "unix_time": 1789838387.315095, "e1_e3_qualified": false, "output_sha256": "69f5435e8459bb842c1010f0a204e420daad591a584ce3230090b1a1e2419785", "native_execution_completed": true}

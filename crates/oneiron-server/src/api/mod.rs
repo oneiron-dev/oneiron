@@ -85,12 +85,17 @@ mod client_metadata;
 mod companion;
 mod consumer_usage;
 mod context_pack;
+mod conversation_dag;
+mod conversation_members;
 mod conversations;
 mod core;
 mod discover;
 mod entity;
 mod error_map;
 mod esign;
+mod org_admin;
+mod pairing;
+mod sessions;
 // ONE-1441 [WIRE-P1]: the bounded HTTP projection of the engine memory
 // surface, nested at `/v1/core/facade`. Its own file because it is its own
 // contract — one route per public verb, engine DTOs verbatim, and a facade
@@ -103,6 +108,7 @@ mod facade;
 mod git_http;
 mod git_lfs;
 mod lease;
+mod llm;
 mod mcp_gateway;
 mod memory;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
@@ -132,6 +138,7 @@ pub(crate) use self::companion::*;
 pub(crate) use self::consumer_usage::*;
 pub(crate) use self::context_board::*;
 pub(crate) use self::context_pack::*;
+pub(crate) use self::conversation_dag::*;
 pub(crate) use self::conversations::*;
 pub(crate) use self::core::*;
 pub(crate) use self::discover::*;
@@ -167,22 +174,57 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
 
 /// Builds the HTTP API routes.
 pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
+    crate::wire_telemetry::start_window_receipts(&server);
     let idempotency = IdempotencyLayerState::new(server.clone());
     let legacy_mutation_routes = Router::new()
         // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
         // device's lease binding (terminal)
         .route("/api/lease/revoke", post(lease_revoke))
+        .route("/api/lease/register", post(lease_register))
+        .route("/api/lease/rotate", post(lease_rotate))
         .route_layer(middleware::from_fn_with_state(
             idempotency.clone(),
             idempotency_middleware,
         ));
     let core_mutation_routes = Router::new()
+        .route("/org-admin/{org}/policy", post(org_admin::configure))
         .route("/batch", post(core_batch))
+        .route("/propose", post(core_propose))
         .route("/memory/verbs/{verb}", post(core_memory_verb))
         .route("/conversations", post(create_core_conversation))
         .route(
+            "/conversations/{conversation_id}/members",
+            post(conversation_members::write_member),
+        )
+        .route(
+            "/conversations/{conversation_id}/records",
+            post(append_core_record),
+        )
+        .route(
+            "/conversations/{conversation_id}/records/{record}/thread",
+            post(reply_in_thread),
+        )
+        .route("/sessions/{id}", axum::routing::patch(sessions::mode))
+        .route("/sessions/{id}/presence", post(sessions::presence))
+        .route(
             "/conversations/{conversation_id}/turns",
             post(create_core_conversation_turn),
+        )
+        .route(
+            "/conversations/{conversation_id}/head",
+            post(move_core_head),
+        )
+        .route(
+            "/conversations/{conversation_id}/migrate-dag",
+            post(migrate_core_dag),
+        )
+        .route(
+            "/turns/{turn_id}/sub-sessions",
+            post(spawn_core_sub_session),
+        )
+        .route(
+            "/conversations/{conversation_id}/summaries",
+            post(mint_core_scope_summary),
         )
         .route("/turns/annotate", post(annotate_turn_vad))
         .route("/surface-events", post(submit_core_surface_event))
@@ -191,6 +233,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let core_routes = Router::new()
+        .route("/org-admin/{org}/powers", get(org_admin::powers))
         .route("/query", post(core_query))
         .route("/context-pack", post(core_context_pack))
         .route("/context-board", post(context_board_hydrate))
@@ -214,9 +257,35 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         )
         .route("/conversations", get(list_core_conversations))
         .route(
+            "/conversations/{conversation_id}/members",
+            get(conversation_members::read_members),
+        )
+        .route(
+            "/conversations/{conversation_id}/records",
+            get(get_core_dag),
+        )
+        .route(
+            "/conversations/{conversation_id}/records/{record}/thread",
+            get(get_thread),
+        )
+        .route(
+            "/conversations/{conversation_id}/canonical",
+            get(get_canonical),
+        )
+        .route(
             "/conversations/{conversation_id}/turns",
             get(list_core_conversation_turns),
         )
+        .route(
+            "/conversations/{conversation_id}/scope",
+            post(resolve_core_scope),
+        )
+        .route("/turns/{turn_id}/sub-sessions", get(list_core_sub_sessions))
+        .route(
+            "/summaries/{summary_id}/covers",
+            get(get_core_summary_covers),
+        )
+        .route("/claims/{claim_id}/drill", get(drill_core_header))
         .route("/turns/{turn_id}", get(get_core_turn))
         .route("/turns/annotate", get(read_turn_vad_annotation))
         .route(
@@ -270,6 +339,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/openapi.json", get(openapi_json))
         .route("/api/skills/oneiron.skills.md", get(skills_pack))
         .route("/api/health", get(health))
+        .route("/.well-known/oneiron", get(pairing::descriptor))
+        .route("/v1/core/pairing/links", post(pairing::create_link))
+        .route("/v1/core/pairing/redeem", post(pairing::redeem))
+        .route("/v1/core/slips/revoke", post(pairing::revoke))
         .route("/a/{artifact}", get(serve_artifact_root))
         .route("/a/{artifact}/", get(serve_artifact_root))
         .route("/a/{artifact}/{*path}", get(serve_artifact_path))
@@ -280,18 +353,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Each endpoint's registered surface is its WHOLE callable surface: no
         // retired `oneiron.*` plain-verb name resolves on either route.
         //
-        // ONE-1704 B1/B8 — the HOST-FREE release contract, and it is FINAL for
-        // this prerelease rather than a wiring step someone still has to take.
-        // These routes bind no `execute_code` host, this crate ships no
-        // production `JsCodeModeRuntime`, LLM backend, or budget lease, and
-        // nothing here constructs one. `execute_code` is therefore registered
-        // on NEITHER endpoint, is advertised nowhere, and a direct call is
-        // refused at the shared name-resolution chokepoint with the stable
-        // `execute_code_unavailable` code before any run is created. No example
-        // binding is illustrated here, because illustrating one would describe
-        // a production seam this release does not have. A production host, its
-        // runtime/provider wiring, and the engine settlement door belong to the
-        // named follow-on feature ticket, not to these route entries.
+        // Registration reflects this server's verified host binding. A bound
+        // QuickJS provider enables durable execute_code on both endpoints;
+        // without one, admission returns code_host_unbound before any run.
         .route("/mcp", post(mcp_gateway))
         .route("/mcp/tool-first", post(mcp_tool_first_gateway))
         .route("/api/core/discover", get(discover))
@@ -312,8 +376,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // ONE-1908: git smart-HTTP. Stock clients clone, fetch, and push here;
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())
-        .route("/oauth/client/native.json", get(client_metadata::native))
-        .route("/oauth/client/web.json", get(client_metadata::web))
+        .nest("/v1/llm", self::llm::routes())
         .nest("/v1/core", core_routes)
         // ONE-1441: the facade projection is its own nest, not an arm inside
         // `core_routes`. Nesting expands each row into a concrete
@@ -322,19 +385,32 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // limit stays a property of this nest alone.
         .nest("/v1/core/facade", self::facade::facade_routes())
         .nest("/v1/companion", companion_routes)
-        .route("/v1/consumer/usage", get(get_consumer_usage))
-        .route(
-            "/v1/consumer/usage/details",
-            get(get_consumer_usage_details),
-        )
-        .route("/v1/consumer/top-up", post(top_up_consumer))
         .route("/v1/usage/events", post(record_usage_event))
         .route(
-            "/v1/usage/tenants/{tenant_id}/rollup",
+            "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",
             get(get_usage_rollup),
         )
         .merge(legacy_mutation_routes)
-        .with_state(server)
+        .layer(axum::middleware::from_fn_with_state(
+            server.clone(),
+            hosted_vault_binding,
+        ))
+        // Config-only CIMD documents must be public before OAuth/lease bootstrap.
+        .route("/oauth/client/native.json", get(client_metadata::native))
+        .route("/oauth/client/web.json", get(client_metadata::web))
+        .layer(middleware::from_fn_with_state(
+            server.clone(),
+            crate::wire_telemetry::observe_http,
+        ))
+        // Published anonymous booking capabilities are not tenant-device access.
+        // Their closed router validates a live owner publication and scoped tokens;
+        // keep it outside the tenant lease layer, never a generic path exemption.
+        .merge(self::booking::public_booking_router())
+        .with_state(server.clone())
+        .layer(middleware::from_fn_with_state(
+            server,
+            crate::auth::admit_http_binding,
+        ))
 }
 
 /// Health check endpoint.
@@ -357,7 +433,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
                 "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
                 "rate_limit": {
                     "api_enforced": false,
-                    "websocket_enforced": true,
+                    "websocket_enforced": false,
                     "max_messages_per_sec": 64,
                     "max_windows_per_connection": 8,
                     "max_frame_size_bytes": 1048576,
@@ -378,7 +454,7 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
     Json(HealthResponse {
         status: "ok",
         service: "oneiron-server",
-        capabilities: feature_flags(),
+        capabilities: feature_flags(&server),
         formats: supported_formats(),
         rate_limit: rate_limit_status(&server.config),
         runtime: runtime_health_status_for_config(&server.config),
@@ -437,3 +513,20 @@ fn require_entity_type(
 
 #[cfg(test)]
 mod tests;
+
+async fn hosted_vault_binding(
+    axum::extract::State(server): axum::extract::State<Arc<SyncServer>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    // Bootstrap is owner-authenticated and never returns vault data.
+    if !matches!(
+        request.uri().path(),
+        "/api/lease/register" | "/api/lease/rotate" | "/api/lease/revoke" | "/api/health"
+    ) && let Err(error) = server.require_vault_binding(request.headers())
+    {
+        return error.into_response();
+    }
+    next.run(request).await
+}

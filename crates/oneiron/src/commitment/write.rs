@@ -1,5 +1,6 @@
 //! Vault commitment write verbs over the gated claim path.
 
+use crate::ports::EntityStoreRead;
 use std::sync::atomic::Ordering;
 
 use crate::batch::{ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops_with_gate_mode};
@@ -113,8 +114,8 @@ impl Vault {
         }
         let raw = self
             .store
-            .entities
-            .get(&wtxn, id.as_bytes())?
+            .port_entity_record(&wtxn, id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(raw.as_ref())
             .ok_or(Error::CorruptedIndex("entity header"))?;
@@ -152,7 +153,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+        if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::InvalidClaimBody(
                 "commitment claim id already exists",
             ));

@@ -8,22 +8,18 @@
 
 use std::collections::HashSet;
 
-use rmpv::Value;
-
 use super::*;
 use crate::Vault;
 use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
-use crate::edge::{EdgeKind, validate_edge_weight};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::edge::EdgeKind;
+use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, ClaimError, Error, RegistryError, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, ShortIdStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
-use crate::vault::{
-    MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT, edge_kind_prefix, parse_edge_record,
-    require_key_len,
-};
+use crate::vault::{MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT};
 
 /// Bound on the supersession-chain walk behind the write-verb validity guard
 /// (ONE-1936). Cycles are caught by the walk's visited set; this caps the WORK
@@ -47,7 +43,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<(ClaimBody, EntityMetadataHeader)> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
             return Err(Error::EntityNotFound);
         };
         let header =
@@ -73,7 +69,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<(ClaimBody, EntityMetadataHeader)> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
             return Err(Error::EntityNotFound);
         };
         let header =
@@ -245,9 +241,8 @@ impl Vault {
         id: &EntityId,
     ) -> Result<ClaimLifecycleStatus> {
         let raw = self
-            .store
-            .entities
-            .get(rtxn, id.as_bytes())?
+            .port_entity_record(rtxn, id)?
+            .map(|row| row.encode())
             .ok_or(Error::CorruptedIndex("supersession chain node"))?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -267,28 +262,21 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Vec<EntityId>> {
-        let prefix = edge_kind_prefix(id, EdgeKind::Supersedes);
         let mut successors = Vec::new();
-        for entry in self.store.edges_in.prefix_iter(rtxn, &prefix)? {
+        for entry in self.port_edges(
+            rtxn,
+            id,
+            EdgeDirection::In,
+            Some(EdgeKind::Supersedes),
+            None,
+        )? {
             if successors.len() >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("supersedes successors"));
             }
-            let (key, _) = entry?;
-            require_key_len(
-                &key,
-                ENTITY_ID_LEN + 1 + ENTITY_ID_LEN,
-                "supersedes edge key",
-            )?;
-            let successor = EntityId::from_bytes(
-                key[ENTITY_ID_LEN + 1..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("supersedes edge key"))?;
+            let successor = entry?.target;
             let raw = self
-                .store
-                .entities
-                .get(rtxn, successor.as_bytes())?
+                .port_entity_record(rtxn, &successor)?
+                .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("supersedes edge without entity"))?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -312,12 +300,9 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<String> {
-        let raw = self
-            .store
-            .short_ids_reverse
-            .get(rtxn, id.as_bytes())?
+        let (short_id, content_hash) = self
+            .port_short_id_reference(rtxn, id)?
             .ok_or(Error::CorruptedIndex("claim short id reverse row"))?;
-        let (short_id, content_hash) = crate::batch::parse_short_id_value(&raw)?;
         Ok(format!("{short_id}:{content_hash:02x}"))
     }
 
@@ -327,7 +312,7 @@ impl Vault {
     /// gets its own diagnostic, and non-code user/legacy truth uses the
     /// general claim-body error. Missing old `src` is protected as legacy
     /// user truth for this guard.
-    pub(super) fn require_source_trust_supersession_rights(
+    pub(crate) fn require_source_trust_supersession_rights(
         new_body: &ClaimBody,
         old_body: &ClaimBody,
     ) -> Result<()> {
@@ -514,134 +499,6 @@ impl Vault {
             true,
         )?;
         Ok(())
-    }
-
-    /// Demotes the active claim `claim_id` one rung — decay, weaken, or mark
-    /// stale — in ONE write transaction, and returns the rung it now carries.
-    /// Rungs only ever move forward: a decay after a weaken or a stale rung
-    /// rejects with [`Error::InvalidClaimBody`].
-    pub fn apply_claim_demotion(
-        &self,
-        claim_id: &EntityId,
-        action: ClaimDemotionAction,
-        now: u64,
-    ) -> Result<ClaimDemotionRung> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let (mut body, header) = self.claim_for_lifecycle_in(&wtxn, claim_id)?;
-        Self::require_active_claim(&body)?;
-        let rung = claim_demotion_rung(&body)?;
-        let (next, edge_update) = match action {
-            ClaimDemotionAction::Decay {
-                new_claim_of_weight,
-            } => {
-                validate_edge_weight(new_claim_of_weight)?;
-                if matches!(
-                    rung,
-                    Some(ClaimDemotionRung::Weakened | ClaimDemotionRung::Stale)
-                ) {
-                    return Err(Error::InvalidClaimBody("decay is out of order"));
-                }
-                let ClaimSubject::Entity(subject) = body.subject else {
-                    return Err(Error::InvalidClaimBody("decay requires entity subject"));
-                };
-                let prefix = edge_kind_prefix(claim_id, EdgeKind::ClaimOf);
-                let mut found = None;
-                for entry in self.store.edges_out.prefix_iter(&wtxn, &prefix)? {
-                    let (key, value) = entry?;
-                    let edge = parse_edge_record(&key, &value)?;
-                    if edge.target == subject {
-                        if found.is_some() {
-                            return Err(Error::InvalidClaimBody("duplicate ClaimOf edge"));
-                        }
-                        found = Some(edge.weight);
-                    }
-                }
-                let current = found.ok_or(Error::InvalidClaimBody("ClaimOf edge missing"))?;
-                if new_claim_of_weight > current {
-                    return Err(Error::InvalidEdgeWeight {
-                        value: new_claim_of_weight,
-                    });
-                }
-                (
-                    ClaimDemotionRung::Decayed,
-                    Some((subject, new_claim_of_weight)),
-                )
-            }
-            ClaimDemotionAction::Weaken { new_confidence } => {
-                if !matches!(
-                    rung,
-                    Some(ClaimDemotionRung::Decayed | ClaimDemotionRung::Weakened)
-                ) {
-                    return Err(Error::InvalidClaimBody("weaken requires decayed rung"));
-                }
-                if !new_confidence.is_finite() || !(0.0..=1.0).contains(&new_confidence) {
-                    return Err(Error::InvalidClaimBody(
-                        "confidence must be finite in [0, 1]",
-                    ));
-                }
-                if new_confidence > body.confidence {
-                    return Err(Error::InvalidClaimBody("confidence increase"));
-                }
-                body.confidence = new_confidence;
-                (ClaimDemotionRung::Weakened, None)
-            }
-            ClaimDemotionAction::MarkStale => {
-                if rung != Some(ClaimDemotionRung::Weakened) {
-                    return Err(Error::InvalidClaimBody("stale requires weakened rung"));
-                }
-                body.stale = true;
-                (ClaimDemotionRung::Stale, None)
-            }
-        };
-        let scope = match body.scope.take() {
-            None => vec![(
-                Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
-                Value::from(match next {
-                    ClaimDemotionRung::Decayed => "decayed",
-                    ClaimDemotionRung::Weakened => "weakened",
-                    ClaimDemotionRung::Stale => "stale",
-                }),
-            )],
-            Some(Value::Map(mut entries)) => {
-                entries.retain(|(k, _)| k.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
-                entries.push((
-                    Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
-                    Value::from(match next {
-                        ClaimDemotionRung::Decayed => "decayed",
-                        ClaimDemotionRung::Weakened => "weakened",
-                        ClaimDemotionRung::Stale => "stale",
-                    }),
-                ));
-                entries
-            }
-            Some(_) => return Err(Error::InvalidClaimBody("scope must be a map")),
-        };
-        body.scope = Some(Value::Map(scope));
-        let data = encode_claim_body(&body)?;
-        let mut ops = vec![BatchOp::Put {
-            id: *claim_id,
-            entity_type: ENTITY_TYPE_CLAIM,
-            occurred: TimeRange {
-                start: header.occurred_start,
-                end: now,
-            },
-            learned_at: header.learned_at,
-            data,
-            allow_maintenance: false,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        }];
-        if let Some((subject, weight)) = edge_update {
-            ops.push(BatchOp::SetEdgeWeight {
-                src: *claim_id,
-                kind: EdgeKind::ClaimOf,
-                tgt: subject,
-                weight,
-            });
-        }
-        crate::batch::ClaimMaterialization::apply_demotion(self, &mut wtxn, ops)?;
-        wtxn.commit()?;
-        Ok(next)
     }
 
     /// Retracts the active claim `id` — a deliberate withdrawal (ARCH-0003

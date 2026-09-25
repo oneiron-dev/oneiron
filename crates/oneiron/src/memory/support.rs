@@ -8,7 +8,7 @@ use super::*;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::parse_short_id_value;
+
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::companion::companion_value_to_json;
 use crate::edge::EdgeActorClass;
@@ -97,7 +97,7 @@ pub(crate) fn verify_actor_binding(
     verify_actor_entity_type(actor, actor_class, entity_type)
 }
 
-pub(super) fn verify_actor_binding_in_txn(
+pub(crate) fn verify_actor_binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
@@ -139,7 +139,7 @@ pub(super) fn verify_actor_binding_in_txn(
 /// An UNCOMPUTABLE fold is a third state, and it is the one this gate must not
 /// paper over. When an AUTHORITY_LOG row has lost its first-seen sidecar after
 /// the one-shot migration ran, the readonly fold cannot decide whether a
-/// delayable widen elapsed — and a `RotateKey` or `RecoveryReboot` left
+/// delayable widen elapsed — and a `RotateKey` or `ReRoot` left
 /// un-applied keeps the key it RETIRES live and owner-bound. So the fold
 /// refuses instead of guessing, and the refusal surfaces here as INVALID_STATE
 /// (the vault's authority is broken, not the caller's request), suspending
@@ -154,7 +154,7 @@ pub(super) fn verify_actor_binding_in_txn(
 /// widens pending, and refuses while any of them is load-bearing. Unlike the
 /// lost-sidecar case this clears itself: one write-path fold records the
 /// observation and the delay runs from there.
-pub(super) fn verify_owner_actor_binding_in_txn(
+pub(crate) fn verify_owner_actor_binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
@@ -326,7 +326,9 @@ pub(super) fn decode_body_json(bytes: &[u8]) -> Option<serde_json::Value> {
     if !cursor.is_empty() {
         return None;
     }
-    Some(companion_value_to_json(&value))
+    let mut value = companion_value_to_json(&value);
+    crate::batch::export::redact_credentials(&mut value);
+    Some(value)
 }
 
 pub(crate) fn facade_provenance(verb: &str) -> Value {
@@ -351,11 +353,14 @@ pub(super) fn requested_approval(
     }
 }
 
-pub(super) fn id_from_optional_hex(id: Option<&str>) -> MemoryResult<EntityId> {
+pub(super) fn id_from_optional_hex(
+    vault: &crate::Vault,
+    id: Option<&str>,
+) -> MemoryResult<EntityId> {
     match id {
         Some(hex) => EntityId::from_hex(hex)
             .map_err(|_| MemoryError::bad_request(format!("invalid entity id {hex:?}"))),
-        None => Ok(EntityId::now()),
+        None => Ok(vault.store.clock.entity_id()?),
     }
 }
 
@@ -423,6 +428,32 @@ impl Memory<'_> {
     #[must_use]
     pub fn actor_class(&self) -> EdgeActorClass {
         self.actor_class
+    }
+
+    /// The owner check: a human actor whose owner binding verifies.
+    pub fn verify_owner(&self) -> MemoryResult<()> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| MemoryError::from(crate::Error::from(error)))?;
+        self.verify_owner_in_txn(&txn)
+    }
+
+    pub(crate) fn verify_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+        if self.actor_class != EdgeActorClass::Human {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!(
+                    "actor class {} is not the vault owner",
+                    self.actor_class.gate_actor_class()
+                ),
+                &["Bind a human-class owner actor key."],
+            ));
+        }
+        verify_owner_actor_binding_in_txn(self.vault, txn, self.actor)
     }
 
     pub(crate) fn with_verified_actor_write_txn<T>(
@@ -496,16 +527,10 @@ impl Memory<'_> {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> MemoryResult<Option<String>> {
-        let Some(raw) = self
-            .vault
-            .store
-            .short_ids_reverse
-            .get(rtxn, id.as_bytes())?
-        else {
-            return Ok(None);
-        };
-        let (short_id, content_hash) = parse_short_id_value(&raw)?;
-        Ok(Some(format!("{short_id}:{content_hash:02x}")))
+        Ok(
+            crate::ports::ShortIdStoreRead::port_short_id_reference(&self.vault.store, rtxn, id)?
+                .map(|(name, hash)| format!("{name}:{hash:02x}")),
+        )
     }
 
     pub(super) fn short_ref_or_hex(&self, id: &EntityId) -> MemoryResult<String> {

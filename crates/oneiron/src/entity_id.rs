@@ -1,19 +1,76 @@
 //! `EntityId` + world-id newtypes + id parsing/hex.
 
 use crate::registry::short_id_prefix;
-use uuid::Uuid;
+use rand_core::RngCore;
 
 pub(crate) const ENTITY_ID_LEN: usize = 16;
 
-/// A time-ordered entity identifier backed by UUIDv7 bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EntityId([u8; ENTITY_ID_LEN]);
+// Entity ids cross vault and worker boundaries. A single mint sequence is required
+// by newest-id projections; thread-local counters invert causal cross-thread order.
+static LAST_ULID: std::sync::Mutex<u128> = std::sync::Mutex::new(0);
+
+/// An opaque time-ordered ULID. Existing 16-byte UUIDv7 rows remain valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, schemars::JsonSchema)]
+pub struct EntityId(#[schemars(with = "String")] [u8; ENTITY_ID_LEN]);
 
 impl EntityId {
-    /// Creates a new identifier using the current UUIDv7 timestamp.
+    /// Creates an opaque ULID: 48-bit Unix milliseconds and 80 random bits.
     #[must_use]
     pub fn now() -> Self {
-        Self(Uuid::now_v7().into_bytes())
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("entity ids require a clock after the Unix epoch")
+            .as_millis() as u64;
+        let mut bytes = [0; 16];
+        bytes[..6].copy_from_slice(&millis.to_be_bytes()[2..]);
+        rand_core::OsRng.fill_bytes(&mut bytes[6..]);
+        let random = u128::from_be_bytes(bytes);
+        let mut prior = LAST_ULID
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let next = if (random >> 80) <= (*prior >> 80) {
+            prior.checked_add(1).expect("ULID exhausted")
+        } else {
+            random
+        };
+        *prior = next;
+        Self(next.to_be_bytes())
+    }
+
+    /// Canonical 26-character Crockford representation. Identity is not encoded
+    /// in this string; names and aliases remain lookup hints in stored rows.
+    pub fn to_ulid(&self) -> String {
+        const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+        let mut number = u128::from_be_bytes(self.0);
+        let mut text = [b'0'; 26];
+        for character in text.iter_mut().rev() {
+            *character = ALPHABET[(number & 31) as usize];
+            number >>= 5;
+        }
+        String::from_utf8(text.to_vec()).expect("Crockford alphabet is ASCII")
+    }
+
+    /// Parses Crockford ULID text, rejecting overflow and reserved ids.
+    pub fn from_ulid(text: &str) -> crate::error::Result<Self> {
+        if text.len() != 26 {
+            return Err(crate::error::Error::InvalidKey);
+        }
+        let mut number = 0u128;
+        for byte in text.bytes() {
+            let digit = match byte.to_ascii_uppercase() {
+                b'I' | b'L' => 1,
+                b'O' => 0,
+                byte => b"0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+                    .iter()
+                    .position(|&c| c == byte)
+                    .ok_or(crate::error::Error::InvalidKey)? as u128,
+            };
+            number = number
+                .checked_mul(32)
+                .and_then(|n| n.checked_add(digit))
+                .ok_or(crate::error::Error::InvalidKey)?;
+        }
+        Self::from_bytes(number.to_be_bytes())
     }
 
     /// Creates an identifier from raw bytes, rejecting reserved sentinel IDs.
@@ -63,6 +120,25 @@ impl EntityId {
             bytes[i] = (hi << 4) | lo;
         }
         Self::from_bytes(bytes)
+    }
+}
+
+// Entity references have one wire spelling. Deserialization always re-enters
+// the sentinel-rejecting public constructor.
+impl serde::Serialize for EntityId {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+impl<'de> serde::Deserialize<'de> for EntityId {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::from_hex(&value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -295,6 +371,19 @@ mod tests {
     };
 
     #[test]
+    fn ulid_text_roundtrips_and_orders_by_time_without_rejecting_legacy_ids() {
+        let fresh = EntityId::now();
+        assert_eq!(EntityId::from_ulid(&fresh.to_ulid()).unwrap(), fresh);
+        let early = EntityId::from_ulid("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap();
+        let later = EntityId::from_ulid("01ARZ3NDEM0000000000000000").unwrap();
+        assert!(early < later);
+        assert!(early.to_ulid() < later.to_ulid());
+        assert!(EntityId::from_ulid("81ARZ3NDEKTSV4RRFFQ69G5FAV").is_err());
+        let legacy = uuid::Uuid::now_v7().into_bytes();
+        assert_eq!(EntityId::from_bytes(legacy).unwrap().as_bytes(), &legacy);
+    }
+
+    #[test]
     fn presentation_grammar_accepts_every_live_prefix_shape() {
         for (raw, prefix, digits) in [
             ("sm3", "sm", "3"),
@@ -378,6 +467,28 @@ mod tests {
     }
 
     #[test]
+    fn entity_id_mint_order_survives_cross_thread_handoffs() {
+        let (request, requests) = std::sync::mpsc::channel();
+        let (response, responses) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            for () in requests {
+                response.send(EntityId::now()).unwrap();
+            }
+        });
+        let mut prior = EntityId::now();
+        for _ in 0..1024 {
+            request.send(()).unwrap();
+            let remote = responses.recv().unwrap();
+            assert!(remote > prior);
+            let local = EntityId::now();
+            assert!(local > remote);
+            prior = local;
+        }
+        drop(request);
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn entity_id_hex_round_trip() {
         let id = EntityId::now();
         let hex = id.to_hex();
@@ -416,3 +527,6 @@ mod tests {
         assert!(ForeignWorldId::from_entity_id(local).is_err());
     }
 }
+
+/// Explicit opt-in hex codec for domain records; EntityId has no implicit wire ABI.
+pub(crate) mod serde_hex;

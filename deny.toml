@@ -2,14 +2,19 @@
 all-features = true
 
 [advisories]
-# ONE-335's 19 temporary maintenance-risk acceptances are NOT permanent ID ignores.
-# Run python3 scripts/advisory-policy/check.py: it validates exact package/version,
-# current RustSec classification, expiry and review state before temporary ignores.
-# Plain cargo deny remains stricter. See scripts/advisory-policy/README.md.
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 ignore = [
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error 1.0.4 is unmaintained (informational advisory, no safe upgrade); transitive via glib-macros@0.18.5, gtk3-macros@0.18.2; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
+    { id = "RUSTSEC-2025-0081", reason = "unic-char-property 0.9.0 is unmaintained (informational advisory, no safe upgrade); transitive via unic-ucd-ident@0.9.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
+    { id = "RUSTSEC-2025-0075", reason = "unic-char-range 0.9.0 is unmaintained (informational advisory, no safe upgrade); transitive via unic-char-property@0.9.0, unic-ucd-ident@0.9.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
+    { id = "RUSTSEC-2025-0080", reason = "unic-common 0.9.0 is unmaintained (informational advisory, no safe upgrade); transitive via unic-ucd-version@0.9.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
+    { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident 0.9.0 is unmaintained (informational advisory, no safe upgrade); transitive via urlpattern@0.3.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
+    { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version 0.9.0 is unmaintained (informational advisory, no safe upgrade); transitive via unic-ucd-ident@0.9.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
+    { id = "RUSTSEC-2026-0247", reason = "bitmaps 2.1.0 is unmaintained (informational advisory, no safe upgrade); transitive via im@15.1.0, sized-chunks@0.6.5; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
+    { id = "RUSTSEC-2026-0248", reason = "im 15.1.0 is unmaintained (informational advisory, no safe upgrade); transitive via loro-internal 1.16.2; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
+    { id = "RUSTSEC-2026-0251", reason = "sized-chunks 0.6.5 is unmaintained (informational advisory, no safe upgrade); transitive via im@15.1.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
     { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill is unmaintained (informational advisory, no patched release); transitive via postcard -> heapless -> atomic-polyfill; https://rustsec.org/advisories/RUSTSEC-2023-0089; https://linear.app/oneiron/issue/ONE-335" },
     { id = "RUSTSEC-2025-0141", reason = "bincode 1.x is unmaintained (informational advisory, no patched release); transitive via heed -> heed-types -> bincode; https://rustsec.org/advisories/RUSTSEC-2025-0141; https://linear.app/oneiron/issue/ONE-335" },
     { id = "RUSTSEC-2026-0215", reason = "smallstr unmaintained (all versions, no safe upgrade); transitive DEV-only via yrs 0.25 (oneiron dev-deps, sync test harness); unmaintained != vulnerability; remove when yrs migrates off smallstr; see ONE-1923" },
@@ -23,6 +28,7 @@ allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "MIT",
+    "MIT-0",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",

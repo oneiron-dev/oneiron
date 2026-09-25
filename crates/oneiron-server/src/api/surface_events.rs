@@ -598,6 +598,7 @@ pub(crate) async fn get_core_surface_event(
     Path(correlation_id): Path<String>,
 ) -> Result<Json<SurfaceEventStatusResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
 
     let status = server
         .vault

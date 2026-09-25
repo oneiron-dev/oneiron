@@ -14,6 +14,12 @@ use super::ErrorKind;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RecordError {
+    /// A courtesy request requires a disconnected or dissolved pact.
+    #[error("cooperative deletion request requires a disconnected or dissolved pact")]
+    CooperativeDeletionRequiresTerminalPact,
+    /// Malformed or unauthenticated courtesy request.
+    #[error("invalid cooperative deletion request")]
+    InvalidCooperativeDeletionRequest,
     /// A project or its derived home-room payload failed write admission.
     #[error("invalid project body: {0}")]
     InvalidProjectBody(&'static str),
@@ -22,7 +28,23 @@ pub enum RecordError {
     /// A well-formed project reference has not materialized yet.
     #[error("project dependency is not materialized")]
     ProjectDependencyPending,
+    #[error("message stream recovery refused: {0}")]
+    MessageStreamRecoveryFailed(String),
+    #[error("invalid conversation body: {0}")]
+    InvalidConversationBody(&'static str),
+    #[error("invalid conversation operation: {0}")]
+    ConversationState(&'static str),
+    #[error("conversation actor is not authorized")]
+    ConversationDenied,
 
+    #[error("DAG parent is outside the conversation")]
+    DagParentOutsideConversation,
+    #[error("cannot advance HEAD off the current trunk")]
+    HeadAdvanceOffTrunk,
+    #[error("invalid conversation DAG: {0}")]
+    InvalidConversationDag(&'static str),
+    #[error("invalid scope summary: {0}")]
+    InvalidScopeSummary(&'static str),
     /// AccessGrant creation attempted to reuse an existing entity id.
     #[error("access grant already exists")]
     AccessGrantAlreadyExists,
@@ -170,6 +192,15 @@ pub enum RecordError {
         id.to_hex()
     )]
     AuthorityLogStoreKeyMismatch { id: EntityId },
+    #[error("MESSAGE stream already active: {}", message.to_hex())]
+    StreamAlreadyActive { message: EntityId },
+    #[error("MESSAGE stream handle is not active: {}", message.to_hex())]
+    StreamNotActive { message: EntityId },
+    #[error("MESSAGE stream {resource} limit: {limit}")]
+    StreamLimit {
+        resource: &'static str,
+        limit: usize,
+    },
 }
 
 impl RecordError {
@@ -177,9 +208,24 @@ impl RecordError {
     #[must_use]
     pub(crate) fn kind(&self) -> ErrorKind {
         match self {
+            Self::CooperativeDeletionRequiresTerminalPact => {
+                ErrorKind::CooperativeDeletionRequiresTerminalPact
+            }
+            Self::InvalidCooperativeDeletionRequest => ErrorKind::InvalidCooperativeDeletionRequest,
             Self::InvalidProjectBody(_) => ErrorKind::InvalidProjectBody,
             Self::InvalidProjectRoomBody(_) => ErrorKind::InvalidProjectRoomBody,
             Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,
+            Self::InvalidConversationBody(_) => ErrorKind::InvalidConversationBody,
+            Self::ConversationState(_) => ErrorKind::ConversationState,
+            Self::ConversationDenied => ErrorKind::ConversationDenied,
+            Self::MessageStreamRecoveryFailed(_) => ErrorKind::MessageStreamRecoveryFailed,
+            Self::DagParentOutsideConversation => ErrorKind::DagParentOutsideConversation,
+            Self::HeadAdvanceOffTrunk => ErrorKind::HeadAdvanceOffTrunk,
+            Self::InvalidConversationDag(_) => ErrorKind::InvalidConversationDag,
+            Self::InvalidScopeSummary(_) => ErrorKind::InvalidScopeSummary,
+            Self::StreamAlreadyActive { .. } => ErrorKind::StreamAlreadyActive,
+            Self::StreamNotActive { .. } => ErrorKind::StreamNotActive,
+            Self::StreamLimit { .. } => ErrorKind::StreamLimit,
             Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
             Self::OutboundGrantAlreadyExists => ErrorKind::OutboundGrantAlreadyExists,
             Self::ConnectorKeyAlreadyExists => ErrorKind::ConnectorKeyAlreadyExists,

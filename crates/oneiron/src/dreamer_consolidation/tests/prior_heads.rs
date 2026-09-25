@@ -20,7 +20,10 @@ fn policy(vault: &Vault, reader: EntityId, auto: bool) -> Result<()> {
         ("warned".into(), true.into()),
     ]);
     let manifest = Value::Map(vec![
-        ("schema_version".into(), "1.1".into()),
+        (
+            "schema_version".into(),
+            crate::gate::POLICY_SCHEMA_VERSION.into(),
+        ),
         ("pack_id".into(), "prior-head-test".into()),
         ("pack_version".into(), "v1".into()),
         (
@@ -76,6 +79,12 @@ fn policy(vault: &Vault, reader: EntityId, auto: bool) -> Result<()> {
             Value::Array(vec![Value::Map(vec![
                 ("actor_ref".into(), reader.to_hex().into()),
                 ("effector".into(), "core:read".into()),
+                (
+                    "scope".into(),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::read_preset(),
+                    )?,
+                ),
                 ("receipt_required".into(), false.into()),
             ])]),
         ),
@@ -329,7 +338,9 @@ fn different_value_consults_one_prior_and_outage_leaves_original_and_open_confli
         assert!(user_text.contains("Oleksii"));
         assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&before));
         if outage {
-            assert!(matches!(result, DreamerAttemptExecution::Park { .. }));
+            // The fatal judge uses the durable escalation fallback. It completes
+            // without replacing the original or losing the open question.
+            assert!(matches!(result, DreamerAttemptExecution::Completed { .. }));
             assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
             let markers = vault
                 .claims_for_subject(&fx.subject)?
@@ -447,6 +458,67 @@ fn missing_head_rights_revoked_actor_and_write_time_source_drift_refuse() -> Res
                 .sources(&fx.head, EdgeKind::Supports, None)?
                 .is_empty()
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn multiple_pinned_priors_remain_context_without_arbitrary_supersession() -> Result<()> {
+    for resolution in ["merge", "escalate"] {
+        let (_dir, vault) = open_vault();
+        let mut fx = fixture(&vault)?;
+        let second = EntityId::now();
+        let mut body = vault.get_claim(&fx.head)?.unwrap();
+        body.value = "Alexander".into();
+        vault.put_claim(&second, &body, occurred(2), 2)?;
+        let pin = document_version(second, &vault.get(&second)?.unwrap());
+        fx.scope.readable.insert(pin.clone());
+        fx.scope.writable.insert(pin);
+        let originals = [vault.get_raw(&fx.head)?, vault.get_raw(&second)?];
+        let backend = ScriptedBackend::new(vec![
+            Ok(extract(&fx, "Alex")),
+            Ok(text_response(
+                serde_json::json!({"resolution": resolution, "value": "Alex"}).to_string(),
+            )),
+        ]);
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        assert!(matches!(
+            execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
+            DreamerAttemptExecution::Completed { .. }
+        ));
+        assert_eq!(
+            [vault.get_raw(&fx.head)?, vault.get_raw(&second)?],
+            originals
+        );
+        if resolution == "merge" {
+            assert_eq!(sink.outcome.landed.len(), 1, "{:?}", sink.outcome.rejected);
+            assert_eq!(
+                vault.get_claim(&sink.outcome.landed[0])?.unwrap().value,
+                Value::from("Alex")
+            );
+        } else {
+            let markers: Vec<_> = vault
+                .claims_for_subject(&fx.subject)?
+                .into_iter()
+                .filter_map(|id| vault.get_claim(&id).transpose())
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .filter(|body| body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN)
+                .collect();
+            assert_eq!(markers.len(), 1);
+            let ids = markers[0]
+                .value
+                .as_map()
+                .unwrap()
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("prior_heads"))
+                .unwrap()
+                .1
+                .as_array()
+                .unwrap();
+            assert!(ids.contains(&Value::Binary(fx.head.as_bytes().to_vec())));
+            assert!(ids.contains(&Value::Binary(second.as_bytes().to_vec())));
+        }
     }
     Ok(())
 }

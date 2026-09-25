@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "oneiron"
-description = "Memory for agents: witness a turn, claim a fact, recall it, read the receipts."
+description = "Memory Wire: the Oneiron developer profile. Witness, recall, and receipts over one actor-bound facade."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }

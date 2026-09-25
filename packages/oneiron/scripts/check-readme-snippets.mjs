@@ -50,7 +50,7 @@ for (const match of readme.matchAll(SNIPPET)) {
 // A README that lost its markers would otherwise pass this check by having
 // nothing to compare, which is the one failure mode a snippet checker must not
 // have.
-const REQUIRED = ["quickstart/node.mjs", "quickstart/python.py"]
+const REQUIRED = ["quickstart/node.mjs", "quickstart/python.py", "quickstart/node-connect.mjs", "quickstart/python-connect.py"]
 for (const required of REQUIRED) {
   if (!readme.includes(`<!-- snippet:${required} -->`)) {
     failures.push(`${required}: the README is missing this snippet marker entirely`)

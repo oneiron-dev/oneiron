@@ -116,6 +116,7 @@ fn extraction_run(dataset: &Of360GoldDataset, run_id: &str) -> Of360ExtractionRu
         .iter()
         .take(1)
         .map(|case| Of360CaseExtractionOutput {
+            qa_answers: Vec::new(),
             case_id: case.case_id.clone(),
             extracted_claims: case
                 .gold_memory_points
@@ -1290,6 +1291,7 @@ fn gold_diagnostic_campaign_report(scores: &[Of360ExtractionScore]) -> CampaignC
             .cases
             .iter()
             .map(|case| Of360CaseExtractionOutput {
+                qa_answers: Vec::new(),
                 case_id: case.case_id.clone(),
                 extracted_claims: case
                     .gold_memory_points
@@ -1489,6 +1491,7 @@ fn merge_campaign_arm_report_rejects_invalid_struct_literal_split() {
     // A hand-built literal: the type has no private field to hide behind,
     // so the refusal has to come from validation.
     let forged = CampaignSplitReport {
+        authoring_strategy: base.authoring_strategy,
         arm: base.arm,
         split: base.split,
         dataset: base.dataset,
@@ -2261,4 +2264,195 @@ fn held_out_anchor_must_match_external_gold() {
         .expect_err("the comparison builder refuses a foreign anchor");
         assert!(matches!(err, CampaignError::HeldOutAnchorMismatch));
     }
+}
+
+#[test]
+fn sealed_beam_promotion_is_one_shot_and_never_enters_campaign_reward() -> Result<()> {
+    use super::beam_promotion::{
+        AuthoringStrategyPin, SealedRefereeMeasurement, default_strategy, measure_once,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(dir.path(), VaultConfig::device())?;
+    let report = compare(&held_out_fixture(
+        SplitFixture::passed(0.20, 0.60),
+        SplitFixture::passed(0.90, 0.80),
+        0.05,
+    ));
+    let pin = report.tournament.held_out.authoring_strategy.clone();
+    let mut relabelled = test_config();
+    relabelled.budget.as_mut().unwrap().budget_id = "different-budget".into();
+    relabelled.splits.search.revision = "different-search-revision".into();
+    assert_eq!(
+        AuthoringStrategyPin::from_campaign(&relabelled).unwrap(),
+        pin
+    );
+    let mut zero_threshold = test_config();
+    zero_threshold.tournament.uncertainty_tau = 0.0;
+    let zero_pin = AuthoringStrategyPin::from_campaign(&zero_threshold).unwrap();
+    zero_threshold.tournament.uncertainty_tau = -0.0;
+    assert_eq!(
+        AuthoringStrategyPin::from_campaign(&zero_threshold).unwrap(),
+        zero_pin
+    );
+    for foreign in [
+        AuthoringStrategyPin {
+            strategy_id: "unrelated".into(),
+            ..pin.clone()
+        },
+        AuthoringStrategyPin {
+            revision: "unrelated".into(),
+            ..pin.clone()
+        },
+        AuthoringStrategyPin {
+            config_sha256: "a".repeat(64),
+            ..pin.clone()
+        },
+    ] {
+        assert!(
+            measure_once(&vault, &report, foreign, || panic!(
+                "mismatched strategy must not call the referee"
+            ))
+            .is_err()
+        );
+    }
+    assert_eq!(default_strategy(&vault)?, None);
+    for invalid in [
+        "",
+        "product@garbage",
+        "referee@sha256:short",
+        "@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ] {
+        assert!(SealedRefereeMeasurement::from_referee_scores(0.6, 0.5, invalid).is_err());
+    }
+    let failed = measure_once(&vault, &report, pin.clone(), || {
+        SealedRefereeMeasurement::from_referee_scores(
+            0.4,
+            0.5,
+            &format!("fixture/referee@sha256:{}", "a".repeat(64)),
+        )
+    })?;
+    assert!(!failed.became_default);
+    assert_eq!(default_strategy(&vault)?, None);
+    let mut reordered = test_config();
+    reordered.arms.swap(0, 1);
+    let reordered_pin = AuthoringStrategyPin::from_campaign(&reordered).unwrap();
+    assert_eq!(reordered_pin, pin);
+    let reordered_report = compare_campaign(
+        AttemptId::now(),
+        &reordered,
+        report.single_pass.clone(),
+        report.tournament.clone(),
+        report.decision.clone(),
+    )
+    .unwrap();
+    assert!(
+        measure_once(&vault, &reordered_report, reordered_pin, || panic!(
+            "order-only change must not call the referee again"
+        ))
+        .is_err()
+    );
+    assert!(
+        measure_once(&vault, &report, pin.clone(), || panic!(
+            "second measurement must never execute"
+        ))
+        .is_err()
+    );
+    // A genuinely different evaluated configuration earns a different shot.
+    let mut config = test_config();
+    config.tournament.fanout_m = 3;
+    let baseline = arm_report(
+        &config,
+        CampaignExecutableArm::SinglePass,
+        SplitFixture::passed(0.20, 0.60),
+        SplitFixture::passed(0.20, 0.60),
+    );
+    let contender = arm_report(
+        &config,
+        CampaignExecutableArm::Tournament,
+        SplitFixture::passed(0.90, 0.80),
+        SplitFixture::passed(0.90, 0.80),
+    );
+    let decision =
+        build_campaign_held_out_decision(&baseline, &contender, 0.05, held_out_anchor(&config))
+            .unwrap();
+    let winning_report =
+        compare_campaign(AttemptId::now(), &config, baseline, contender, decision).unwrap();
+    let winner = winning_report
+        .tournament
+        .held_out
+        .authoring_strategy
+        .clone();
+    assert_ne!(winner, pin);
+    let receipt = measure_once(&vault, &winning_report, winner.clone(), || {
+        SealedRefereeMeasurement::from_referee_scores(
+            0.6,
+            0.5,
+            &format!("fixture/referee@sha256:{}", "a".repeat(64)),
+        )
+    })?;
+    assert!(receipt.became_default);
+    let claim = crate::dreamer_runner::DreamerTournamentClaim {
+        predicate: "pattern.fixture".into(),
+        sample_count: 10,
+        incumbent_confidence: 0.1,
+        evidence_state: crate::dreamer_runner::DreamerClaimEvidenceState::Uncontested,
+    };
+    let load = |config: &CampaignConfig| {
+        crate::dreamer_wake::DreamerWakeDriver::new(
+            &vault,
+            "fixture",
+            crate::dreamer_wake::WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0)),
+        )
+        .with_tournament_candidate(config, claim.clone())
+    };
+    assert!(load(&config).is_ok());
+    for axis in 0..4 {
+        let mut changed = config.clone();
+        match axis {
+            0 => changed.tournament.uncertainty_tau = 0.9,
+            1 => changed.tournament.fanout_m += 1,
+            2 => changed.tournament.max_rounds_k += 1,
+            _ => changed.budget.as_mut().unwrap().reserve_units_per_step += 1,
+        }
+        assert!(matches!(
+            load(&changed),
+            Err(crate::Error::InvalidConfig(_))
+        ));
+    }
+
+    assert_eq!(default_strategy(&vault)?, Some(winner.clone()));
+    drop(vault);
+    let vault = crate::Vault::open(dir.path(), VaultConfig::device())?;
+    assert_eq!(default_strategy(&vault)?, Some(winner));
+    let mut reward = serde_json::to_value(&report).unwrap();
+    reward["sealed_referee_score"] = serde_json::json!(0.99);
+    assert!(serde_json::from_value::<CampaignComparisonReport>(reward).is_err());
+    Ok(())
+}
+
+#[test]
+fn promotion_reports_reject_mixed_or_relabelled_configuration_pins() {
+    let fixture = held_out_fixture(
+        SplitFixture::passed(0.20, 0.60),
+        SplitFixture::passed(0.90, 0.80),
+        0.05,
+    );
+    let mut config = fixture.config.clone();
+    config.tournament.fanout_m = 3;
+    assert!(
+        compare_campaign(
+            AttemptId::now(),
+            &config,
+            fixture.single_pass.clone(),
+            fixture.tournament.clone(),
+            fixture.decision.clone()
+        )
+        .is_err()
+    );
+    let mut report = compare(&fixture);
+    report.tournament.held_out.authoring_strategy.config_sha256 = "f".repeat(64);
+    assert!(report.validate().is_err());
+    assert!(
+        merge_campaign_arm_report(report.tournament.search, report.tournament.held_out).is_err()
+    );
 }

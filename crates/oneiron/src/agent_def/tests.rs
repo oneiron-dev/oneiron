@@ -529,7 +529,7 @@ fn optional_key_decode_matrix() -> Result<()> {
 // AC-2 test 8: registry/spec facts plus type-byte immutability.
 #[test]
 fn registry_row_and_type_byte_immutability() -> Result<()> {
-    assert_eq!(ENTITY_TYPE_AGENT_DEF, 17);
+    assert_eq!(ENTITY_TYPE_AGENT_DEF, 41);
     let entry = entity_type_registry_entry(ENTITY_TYPE_AGENT_DEF).expect("AGENT_DEF registry row");
     assert_eq!(entry.kind, "AGENT_DEF");
     assert_eq!(entry.classification, EntityClassification::Core);

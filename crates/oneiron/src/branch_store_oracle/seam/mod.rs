@@ -7,7 +7,7 @@ mod substrate;
 #[cfg(feature = "sync")]
 pub(super) use self::binding::promote_then_crash_post_commit;
 pub(super) use self::binding::{
-    apply_through_a_route_captured_before_a_flip, attempt_row_counts,
+    apply_through_a_route_captured_before_a_flip, attempt_row_counts, authorize_scoped_reader,
     base_batch_referencing_overlay_id, base_scoped_read_visible_claim_count, bind_session,
     binding_mismatch_directions, crash_and_reopen, job_rows_referencing, open_with_abi_pair,
     replay_put_racing_a_committed_change, search_through_a_route_captured_before_a_flip,

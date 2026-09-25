@@ -3,7 +3,10 @@ use super::*;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_NOTE,
+    ENTITY_TYPE_TURN,
+};
 use crate::store::Store;
 
 /// Reads an entity's registry type byte. `None` means no entity row exists —
@@ -24,14 +27,14 @@ pub(crate) fn stored_entity_type(
 }
 
 /// ONE-1645 write-time type table for `FacetOf` (u8 17) edges: a facet stamp
-/// may only run `CLAIM | TURN | EVENT → FACET`. Anything else — including an
+/// may only run `CLAIM | TURN | EVENT | NOTE | ASSET → FACET`. Anything else — including an
 /// endpoint with no entity row, whose type is unknowable — is a typed
 /// [`RegistryError::InvalidFacetOfEdge`](crate::error::RegistryError::InvalidFacetOfEdge) that aborts the batch atomically. This
 /// mirrors the fail-closed-on-missing shape [`RegistryError::InvalidFacet`](crate::error::RegistryError::InvalidFacet) already
 /// uses on the read side: a stamp's endpoints must be established facts
 /// before the stamp.
 ///
-/// TWO SEMANTICS ride one edge kind, and the table admits both:
+/// THREE SEMANTICS ride one edge kind, and the table admits all three:
 ///
 /// * `CLAIM | TURN → FACET` — DISCLOSURE-SCOPING. These are the stamps
 ///   [`crate::pipeline`]'s facet filter reads: `claim_facet_scope`
@@ -44,6 +47,9 @@ pub(crate) fn stored_entity_type(
 ///   carries a pinned λ of 0.05 ([`crate::ppr::lambda_for_kind`]) — rejecting
 ///   it would make a ratified traversal contract unwritable — but "world-model"
 ///   is not "disclosure-inert". See the two-door reading below.
+/// * `NOTE | ASSET → FACET` — the BIRTH STAMP. Every NOTE and ASSET carries
+///   exactly one, written with the record by the put path: the active mask,
+///   else the vault default. It is the record's facet on the FEDERATION door.
 ///
 /// TWO DISCLOSURE DOORS read `FacetOf`, and a source type may be effective on
 /// one while inert on the other. Neither door is the whole exposure surface:
@@ -57,15 +63,15 @@ pub(crate) fn stored_entity_type(
 ///   runs [`facet_of_endpoint_types_on_table`] as a read mirror), and
 ///   `entity_selector_decision` withholds an entity of ANY type whose scope is
 ///   malformed or touches an unselected facet from a facet-limited peer.
-///   CLAIM-, TURN-, AND EVENT-sourced stamps are all disclosure-EFFECTIVE here:
-///   an EVENT stamped to an unselected facet is withheld from that peer. A row
-///   OFF the table on either end carries no scope on this door — the shape is
-///   unwritable, so a copy that slipped past a write door is not honored on
-///   read.
+///   CLAIM-, TURN-, EVENT-, NOTE- AND ASSET-sourced stamps are all
+///   disclosure-EFFECTIVE here: an EVENT stamped to an unselected facet is
+///   withheld from that peer. A row OFF the table on either end carries no
+///   scope on this door — the shape is unwritable, so a copy that slipped past
+///   a write door is not honored on read.
 ///
 /// The teeth are unchanged by the widening: a missing endpoint still fails
 /// closed, the target must still be a FACET, and every source type outside
-/// {CLAIM, TURN, EVENT} is still rejected.
+/// {CLAIM, TURN, EVENT, NOTE, ASSET} is still rejected.
 ///
 /// Ordering: ops apply in order inside one write txn, so an entity put and
 /// the edge that stamps it commit together in a single batch. An edge that
@@ -74,14 +80,16 @@ pub(crate) fn stored_entity_type(
 /// Seam (ONE-1646): the exposure-consent gate — rejecting a private→public
 /// restamp without a consent-ledger row, and gating `FacetOf` deletes on
 /// exposure state — lands at THIS call site once facet exposure state exists.
-/// That gate keys on ALL admitted source types (`CLAIM | TURN | EVENT`): each
-/// is disclosure-effective on at least one of the two doors above, so none may
-/// bypass exposure gating. The gate table is derived from CURRENT door
+/// That gate keys on ALL admitted source types
+/// (`CLAIM | TURN | EVENT | NOTE | ASSET`): each is disclosure-effective on at
+/// least one of the two doors above, so none may bypass exposure gating. The
+/// gate table is derived from CURRENT door
 /// behavior — `crate::sync::selector::tests` pins the federation half — and it
 /// stays derivable BY CONSTRUCTION now that the selector mirrors this very
 /// pair predicate: widening or narrowing the table here moves both doors and
-/// the gate table together. This function is the hook; it deliberately
-/// validates types only.
+/// the gate table together. This function is the hook: it validates types,
+/// and it refuses a restamp of a NOTE or ASSET, whose one stamp is set at
+/// birth ([`RegistryError::FacetStampImmutable`]).
 pub(crate) fn validate_facet_of_edge(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -97,6 +105,12 @@ pub(crate) fn validate_facet_of_edge(
     if let (Some(src_type), Some(tgt_type)) = (src_type, tgt_type)
         && facet_of_endpoint_types_on_table(src_type, tgt_type)
     {
+        if matches!(src_type, ENTITY_TYPE_NOTE | ENTITY_TYPE_ASSET)
+            && crate::federation::record_scope::birth_facet(store, rtxn, src)?
+                .is_some_and(|stamp| stamp != tgt)
+        {
+            return Err(Error::Registry(RegistryError::FacetStampImmutable { src }));
+        }
         return Ok(());
     }
     Err(Error::Registry(RegistryError::InvalidFacetOfEdge {
@@ -154,7 +168,11 @@ pub(crate) const fn facet_of_endpoint_types_on_table(src_type: u8, tgt_type: u8)
 const fn facet_of_source_type_admitted(src_type: u8) -> bool {
     matches!(
         src_type,
-        ENTITY_TYPE_CLAIM | ENTITY_TYPE_TURN | ENTITY_TYPE_EVENT
+        ENTITY_TYPE_CLAIM
+            | ENTITY_TYPE_TURN
+            | ENTITY_TYPE_EVENT
+            | ENTITY_TYPE_NOTE
+            | ENTITY_TYPE_ASSET
     )
 }
 

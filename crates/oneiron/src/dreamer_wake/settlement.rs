@@ -13,7 +13,7 @@ use crate::dreamer_runner::{
 };
 #[cfg(feature = "sync")]
 use crate::dreamer_runner::{DreamerAttemptProgressState, DreamerAttemptProgressUpdate};
-use crate::entity_id::EntityId;
+
 use crate::error::Result;
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
@@ -26,20 +26,23 @@ impl DreamerWakeDriver<'_> {
         &self,
         kind: DreamerMilestoneKind,
         now: u64,
-    ) -> Option<DreamerMilestoneClaim> {
+    ) -> Result<Option<DreamerMilestoneClaim>> {
         self.milestones
             .as_ref()
-            .map(|author| DreamerMilestoneClaim {
-                claim_id: EntityId::now(),
-                subject: author.subject,
-                kind,
-                envelope: author.envelope.clone(),
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
-                },
-                learned_at: now,
+            .map(|author| {
+                Ok(DreamerMilestoneClaim {
+                    claim_id: self.vault.store.clock.entity_id()?,
+                    subject: author.subject,
+                    kind,
+                    envelope: author.envelope.clone(),
+                    occurred: TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    learned_at: now,
+                })
             })
+            .transpose()
     }
 
     /// Writes a durable milestone claim for `attempt_id` through the gate,
@@ -54,7 +57,7 @@ impl DreamerWakeDriver<'_> {
         let Some(author) = &self.milestones else {
             return Ok(());
         };
-        let claim_id = EntityId::now();
+        let claim_id = self.vault.store.clock.entity_id()?;
         let value = Value::Map(vec![
             (
                 Value::from("schema_version"),

@@ -71,6 +71,12 @@ pub enum ArtifactError {
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
     InvalidSkillBody(&'static str),
+    /// A hub Git read of a SKILL package failed or exceeded its budget. Same
+    /// kind as [`Self::InvalidSkillBody`]; the text names the git operation
+    /// and the cause (exit code and stderr head, timeout, truncated output or
+    /// oversize stdout). Nothing was written.
+    #[error("invalid SKILL body: {0}")]
+    SkillHubGitRead(String),
     /// The world the ONE-1449 skill-edit gate was ruling over moved before the
     /// ruling could commit: the reserved evidence changed under the scorer, or
     /// a terminal reason read before the write door no longer held inside it.
@@ -123,6 +129,10 @@ pub enum ArtifactError {
         path.display()
     )]
     RecoveryArtifactQuarantineExhausted { path: PathBuf },
+    /// Recovery cannot admit all pending repair work within its bounded overlay.
+    /// The caller retains the entire obligation and may retry with more capacity.
+    #[error("recovery overlay limit: required {required}, limit {limit}")]
+    OverlayLimit { required: usize, limit: usize },
     /// An AttemptQueue input or persisted record failed structural validation.
     #[error("invalid attempt queue record: {0}")]
     InvalidAttemptQueueRecord(&'static str),
@@ -157,7 +167,7 @@ impl ArtifactError {
             Self::EditProposalAlreadySettled { .. } => ErrorKind::EditProposalAlreadySettled,
             Self::EditProposalStale => ErrorKind::EditProposalStale,
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
-            Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
+            Self::InvalidSkillBody(_) | Self::SkillHubGitRead(_) => ErrorKind::InvalidSkillBody,
             Self::SkillEditGateRetry(_) => ErrorKind::SkillEditGateRetry,
             Self::SkillContentAnchorTypeMismatch { .. } => {
                 ErrorKind::SkillContentAnchorTypeMismatch
@@ -172,6 +182,7 @@ impl ArtifactError {
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
                 ErrorKind::RecoveryArtifactQuarantineExhausted
             }
+            Self::OverlayLimit { .. } => ErrorKind::OverlayLimit,
             Self::InvalidAttemptQueueRecord(_) => ErrorKind::InvalidAttemptQueueRecord,
             Self::InvalidAttemptQueueTransition { .. } => ErrorKind::InvalidAttemptQueueTransition,
             Self::DeltaCaptureUnavailable(_) => ErrorKind::DeltaCaptureUnavailable,

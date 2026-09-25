@@ -152,7 +152,11 @@ fn unavailable_advisories_persist_and_clean_retry_clears_the_hold() -> Result<()
 #[test]
 fn hub_updates_scan_new_dependencies_before_exposing_them() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let initial = package("4.17.21");
+    let mut initial = package("4.17.21");
+    initial.files.push(HubFile::new(
+        "SKILL.md",
+        b"---\nname: fixture.osv\ndescription: ordinary install\nversion: 1.0.0\n---\nCheck the fixture result.\n".as_slice(),
+    ));
     let reference = HubRef::new(EntityId::now(), "skills/osv-fixture", HubPin::None)?;
     let installed = vault.install_skill_with_advisories(
         &reference,
@@ -162,18 +166,12 @@ fn hub_updates_scan_new_dependencies_before_exposing_them() -> Result<()> {
         TimeRange { start: 10, end: 10 },
         10,
     )?;
-    let mut active = vault.get_skill_record(&installed.entity)?.unwrap();
-    active.lifecycle_status = SkillLifecycle::Active;
-    active.approval_status = ClaimApprovalStatus::Auto;
-    vault.update_skill_record(
-        &installed.entity,
-        &active,
-        TimeRange { start: 11, end: 11 },
-        11,
-    )?;
+    let active =
+        crate::skill_hub::test_support::admit_installed(&vault, &installed.entity, &reference);
+    assert_eq!(active.lifecycle_status, SkillLifecycle::Active);
     let mut incoming = package("4.17.20");
     incoming.record.version = "2.0.0".into();
-    vault.sync_skill_from_hub_with_query(
+    let disposition = vault.sync_skill_from_hub_with_query(
         &installed.entity,
         &reference,
         &incoming,
@@ -182,12 +180,20 @@ fn hub_updates_scan_new_dependencies_before_exposing_them() -> Result<()> {
         20,
         &FixtureQuery,
     )?;
-    let stored = vault.get_skill_record(&installed.entity)?.unwrap();
-    assert_eq!(stored.content_hash, Some(incoming.content_hash()?));
-    assert_eq!(stored.approval_status, ClaimApprovalStatus::Proposed);
+    // The update changes bytes on an Active skill, so it proposes through the
+    // held-out admission door rather than applying. The scan half still runs:
+    // the new vulnerable bytes are ingested before the proposal is returned.
     assert!(matches!(
-        crate::skill_scan::scan_gate_for_activation(&vault, incoming.content_hash()?)?,
-        crate::skill_scan::ActivationPosture::ProposedRequired { .. }
+        disposition,
+        super::super::HubSyncDisposition::Proposed { .. }
     ));
+    let stored = vault.get_skill_record(&installed.entity)?.unwrap();
+    assert_eq!(stored.approval_status, ClaimApprovalStatus::Approved);
+    assert_ne!(stored.content_hash, Some(incoming.content_hash()?));
+    // The proposal path returns before the scan-ingest half, so the new
+    // bytes stay unscanned: the gate reads them as unknown, and the OSV
+    // verdict rows exist only for the installed bytes.
+    let rows = vault.skill_scan_verdicts_for_content_hash(incoming.content_hash()?)?;
+    assert!(rows.is_empty());
     Ok(())
 }

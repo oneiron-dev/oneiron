@@ -49,6 +49,7 @@ pub(crate) struct McpGatewayError {
     pub(super) kind: &'static str,
     pub(super) message: String,
     pub(super) field: Option<String>,
+    pub(super) vault_read: Option<Box<oneiron::code_run::vault_read::VaultReadError>>,
     /// Set only by the stale-write-verb-target refusal (ONE-1936); surfaces as
     /// `error.data.successor_short_id` so a client reads a FIELD instead of
     /// parsing the message.
@@ -70,6 +71,7 @@ impl McpGatewayError {
             kind,
             message: message.into(),
             field: None,
+            vault_read: None,
             successor_short_id: None,
             effective_scope: None,
         }
@@ -252,14 +254,14 @@ pub(crate) async fn handle_mcp_request(
             let _actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
             Ok(json!({
                 "surfaceMode": mode.as_str(),
-                "tools": crate::mcp::registered_surface(mode).listing(),
+                "tools": server.mcp_surface(mode).listing(),
             }))
         }
         "tools/call" => {
             let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
             let called: Result<Value, McpGatewayError> = async {
                 let params: McpToolCallParams = mcp_params(request.params, "params")?;
-                let args = mcp_validated_call_args(mode, params, raw_arguments)?;
+                let args = mcp_validated_call_args(server, mode, params, raw_arguments)?;
                 ensure_mcp_actor_matches(&args, &actor)?;
                 mcp_admit_scoped_call(server, &args, &actor)?;
                 execute_mcp_tool(server, args, &actor).await

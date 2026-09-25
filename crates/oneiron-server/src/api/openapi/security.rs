@@ -39,14 +39,14 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
             json!({
                 "type": "http",
                 "scheme": "bearer",
-                "description": "Bearer credential for protected routes: the configured trust-root secret (owner-grade) or a minted `v2.<claims>.<mac>` scoped token. The protected legacy `/api/*` routes (all except the public `/api/health`), `/v1/consumer/*`, and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names."
+                "description": "Bearer credential for protected routes: the configured trust-root secret (owner-grade) or a minted `v2.<claims>.<mac>` scoped token. The protected legacy `/api/*` routes (all except the public `/api/health`), and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names."
             }),
         );
 
     // One scheme covers every protected route: all of them are presented as
     // `Authorization: Bearer`. The grade required is per-route, not per-plane:
     // the legacy `/api/*` routes listed below demand an owner-grade
-    // credential, and so do the `/v1/consumer/*` and `/v1/usage/*` routes,
+    // credential, and so do the `/v1/usage/*` routes,
     // which authenticate through the same `check_api_auth`. Scoped tokens
     // reach `/v1/core/*` and the companion control-plane routes, which read a
     // `CoreAuth` and enforce the scopes it names.
@@ -64,12 +64,11 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/api/search/text", "get"),
         ("/api/entity/{id}", "get"),
         ("/api/edges/{id}", "get"),
-        ("/v1/consumer/usage", "get"),
-        ("/v1/consumer/usage/details", "get"),
-        ("/v1/consumer/top-up", "post"),
         ("/v1/usage/events", "post"),
-        ("/v1/usage/tenants/{tenant_id}/rollup", "get"),
+        ("/v1/usage/owners/{owner}/vaults/{vault_id}/rollup", "get"),
         ("/api/lease/revoke", "post"),
+        ("/api/lease/register", "post"),
+        ("/api/lease/rotate", "post"),
         ("/v1/companion/memory/reason", "post"),
         ("/v1/core/query", "post"),
         ("/v1/core/context-pack", "post"),
@@ -86,6 +85,28 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
             "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
             "get",
         ),
+        ("/v1/core/conversations/{conversation_id}/records", "post"),
+        ("/v1/core/conversations/{conversation_id}/records", "get"),
+        ("/v1/core/conversations/{conversation_id}/canonical", "get"),
+        (
+            "/v1/core/conversations/{conversation_id}/records/{record}/thread",
+            "get",
+        ),
+        (
+            "/v1/core/conversations/{conversation_id}/records/{record}/thread",
+            "post",
+        ),
+        ("/v1/core/conversations/{conversation_id}/head", "post"),
+        ("/v1/core/conversations/{conversation_id}/scope", "post"),
+        (
+            "/v1/core/conversations/{conversation_id}/migrate-dag",
+            "post",
+        ),
+        ("/v1/core/turns/{turn_id}/sub-sessions", "post"),
+        ("/v1/core/turns/{turn_id}/sub-sessions", "get"),
+        ("/v1/core/conversations/{conversation_id}/summaries", "post"),
+        ("/v1/core/summaries/{summary_id}/covers", "get"),
+        ("/v1/core/claims/{claim_id}/drill", "get"),
         ("/v1/core/conversations", "get"),
         ("/v1/core/conversations", "post"),
         ("/v1/core/conversations/{conversation_id}/turns", "get"),

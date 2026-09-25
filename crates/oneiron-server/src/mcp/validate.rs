@@ -247,6 +247,7 @@ impl McpEditToolArgs {
                 "valid_to",
                 "salience",
                 "world",
+                "relationship",
                 "scope",
             ],
         )?;
@@ -256,6 +257,7 @@ impl McpEditToolArgs {
         self.validate_required_value(tool, "value")?;
         self.validate_required_confidence(tool)?;
         validate_optional_entity_ref(tool, "world", self.world.as_deref())?;
+        validate_optional_entity_ref(tool, "relationship", self.relationship.as_deref())?;
         self.validate_optional_salience(tool)
     }
 
@@ -424,7 +426,7 @@ impl McpEditToolArgs {
         Ok(())
     }
 
-    fn present_edit_fields(&self) -> [(&'static str, bool); 29] {
+    fn present_edit_fields(&self) -> [(&'static str, bool); 30] {
         [
             ("subject", self.subject.is_some()),
             ("predicate", self.predicate.is_some()),
@@ -435,6 +437,7 @@ impl McpEditToolArgs {
             ("valid_to", self.valid_to.is_some()),
             ("salience", self.salience.is_some()),
             ("world", self.world.is_some()),
+            ("relationship", self.relationship.is_some()),
             ("scope", self.scope.is_some()),
             ("old_claim_id", self.old_claim_id.is_some()),
             ("claim_id", self.claim_id.is_some()),

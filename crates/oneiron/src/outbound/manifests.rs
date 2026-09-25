@@ -27,6 +27,9 @@ fn line_push_quota() -> Value {
 
 pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
     vec![
+        feedback_manifest("feedback_cloud"),
+        feedback_manifest("feedback_collector"),
+        feedback_manifest("feedback_github"),
         manifest(
             "esign", "signing", "Native signing request organ.",
             ["send_for_signature", "remind", "void"].into_iter().map(|kind| verb(
@@ -432,7 +435,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 verb(
                     "send",
                     "send_email",
-                    json!({"to": ["addr@example.com"], "subject": "string", "body": "text/html|string", "headers": "optional object"}),
+                    json!({"to": ["addr@example.com"], "subject": "string", "body": "text/html|string", "headers": "optional object", "posting": {"default": "named_participant", "post_as_owner_supported": true, "policy_risk": true, "permission": "verified sender plus exact owner space grant"}}),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
@@ -553,4 +556,24 @@ fn verb(
             note,
         },
     }
+}
+
+fn feedback_manifest(channel: &'static str) -> OutboundCapabilityManifest {
+    manifest(
+        channel,
+        "feedback",
+        "Approved bundle delivery; exact destination and bytes are consent-bound.",
+        vec![verb(
+            "send",
+            "POST",
+            json!({"bundle":"approved MessagePack bytes","target":"exact HTTPS endpoint"}),
+            OutboundInterruptionClass::Ambient,
+            OutboundDeliverySemanticsKind::FireAndForget,
+            None,
+            OutboundRetryClass::NonIdempotentInterrupt,
+            OutboundPermissionState::Conditional,
+            false,
+            "Requires one approval for one bundle and one destination; never a standing grant.",
+        )],
+    )
 }

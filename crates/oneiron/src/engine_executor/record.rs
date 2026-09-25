@@ -245,6 +245,7 @@ fn executor_config_hash(storage: &ExecutorStorage<'_>, config: &EngineExecutorCo
             match target {
                 RouteTarget::Overlay => CONFIG_ROUTE_OVERLAY_TAG,
                 RouteTarget::Base => CONFIG_ROUTE_BASE_TAG,
+                RouteTarget::Discard => b"discard",
             },
         );
     }
@@ -312,10 +313,14 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.ask_human" => Ok(SelfEffect::AskHuman),
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
+        "agents.spawn" => Ok(SelfEffect::AgentsSpawn),
+        "tasks.ask" => Ok(SelfEffect::TasksAsk),
+        "tasks.wait" => Ok(SelfEffect::TasksWait),
         "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),
         "self.speak" => Ok(SelfEffect::Speak),
         "self.think" => Ok(SelfEffect::Think),
         "self.express" => Ok(SelfEffect::Express),
+        "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
         _ => Err(Error::CorruptedIndex("executor replay durable wait effect").into()),
     }
 }

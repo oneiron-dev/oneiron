@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+mod qa;
 mod types;
+pub use qa::{Of360GoldQa, Of360QaAnswer};
 
 pub use types::{
     Of360Ar3MetricTier, Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ConversationTurn,
@@ -17,7 +19,7 @@ const OF360_METRIC_DEFINITIONS_JSON: &str = include_str!("data/of360_metric_defi
 pub const OF360_AR3_METRIC_TIER_INTERFACE_VERSION: u32 = 1;
 pub const OF360_SCHEMA_VERSION: u32 = 1;
 pub const OF360_METRIC_DEFINITION_SET_ID: &str = "of360-halumem-extraction-quality.v1";
-pub const OF360_METRIC_DEFINITION_SET_REVISION: &str = "2026-07-07.one-1524";
+pub const OF360_METRIC_DEFINITION_SET_REVISION: &str = "2026-09-19.one-2190";
 pub const OF360_GOLD_DATASET_ID: &str = "of360-halumem-gold-subset.v1";
 pub const OF360_GOLD_DATASET_REVISION: &str = "seed-subset.2026-07-07";
 
@@ -142,6 +144,7 @@ fn evaluate_with_metric_definitions(
             *output
         } else {
             empty_output = Of360CaseExtractionOutput {
+                qa_answers: Vec::new(),
                 case_id: case.case_id.clone(),
                 extracted_claims: Vec::new(),
             };
@@ -241,6 +244,9 @@ fn evaluate_case(
         }
     }
 
+    let qa = qa::score_qa(case, &output.qa_answers)?;
+    accumulator.qa_correct = qa.numerator;
+    accumulator.qa_questions = qa.denominator;
     let mut omitted_gold_memory_ids = Vec::new();
     let mut partial_gold_memory_ids = Vec::new();
     for memory in &case.gold_memory_points {
@@ -248,9 +254,14 @@ fn evaluate_case(
             .get(memory.memory_id.as_str())
             .copied()
             .unwrap_or(0.0);
+        if memory.is_update {
+            accumulator.update_points += 1.0;
+            accumulator.update_score_sum += score;
+        }
         accumulator.halumem_score_sum += score;
         accumulator.weighted_halumem_score_sum += score * memory.weight;
         if score == 0.0 {
+            accumulator.omitted_points += 1.0;
             omitted_gold_memory_ids.push(memory.memory_id.clone());
         } else if score < 1.0 {
             partial_gold_memory_ids.push(memory.memory_id.clone());
@@ -277,15 +288,30 @@ fn validate_metric_definitions(metric_definitions: &Of360MetricDefinitionSet) ->
     Ok(())
 }
 
-fn validate_dataset(dataset: &Of360GoldDataset) -> Of360Result<()> {
+pub fn validate_dataset(dataset: &Of360GoldDataset) -> Of360Result<()> {
     if dataset.schema_version != OF360_SCHEMA_VERSION {
         return Err(Of360EvalError::UnsupportedGoldDatasetSchemaVersion {
             actual: dataset.schema_version,
         });
     }
 
+    if !dataset.owner_corpus_missing
+        && (dataset.completeness != Of360DatasetCompleteness::FullOwnerCorpus
+            || dataset.target_full_memory_points < 500
+            || dataset
+                .cases
+                .iter()
+                .map(|case| case.gold_memory_points.len())
+                .sum::<usize>()
+                < dataset.target_full_memory_points)
+    {
+        return Err(Of360EvalError::InvalidCorpus {
+            reason: "full corpus declaration requires its complete target population",
+        });
+    }
     let mut seen_cases = HashSet::new();
     for case in &dataset.cases {
+        qa::score_qa(case, &[])?;
         if !seen_cases.insert(case.case_id.clone()) {
             return Err(Of360EvalError::DuplicateGoldCase {
                 dataset_id: dataset.dataset_id.clone(),
@@ -412,6 +438,11 @@ impl<'a> DatasetIndex<'a> {
 
 #[derive(Debug, Clone, Default)]
 struct MetricAccumulator {
+    update_points: f64,
+    update_score_sum: f64,
+    qa_correct: f64,
+    qa_questions: f64,
+    omitted_points: f64,
     gold_points: f64,
     weighted_gold_points: f64,
     halumem_score_sum: f64,
@@ -428,6 +459,11 @@ struct MetricAccumulator {
 impl MetricAccumulator {
     fn from_case_report(report: &Of360CaseEvalReport) -> Self {
         Self {
+            update_points: report.metrics.updating_accuracy.denominator,
+            update_score_sum: report.metrics.updating_accuracy.numerator,
+            qa_correct: report.metrics.qa_accuracy.numerator,
+            qa_questions: report.metrics.qa_accuracy.denominator,
+            omitted_points: report.metrics.omission_rate.numerator,
             gold_points: report.metrics.halumem_recall.denominator,
             weighted_gold_points: report.metrics.halumem_weighted_recall.denominator,
             halumem_score_sum: report.metrics.halumem_recall.numerator,
@@ -443,6 +479,11 @@ impl MetricAccumulator {
     }
 
     fn merge(&mut self, other: &Self) {
+        self.update_points += other.update_points;
+        self.update_score_sum += other.update_score_sum;
+        self.qa_correct += other.qa_correct;
+        self.qa_questions += other.qa_questions;
+        self.omitted_points += other.omitted_points;
         self.gold_points += other.gold_points;
         self.weighted_gold_points += other.weighted_gold_points;
         self.halumem_score_sum += other.halumem_score_sum;
@@ -460,6 +501,9 @@ impl MetricAccumulator {
         let recall = Of360RateMetric::new(self.halumem_score_sum, self.gold_points);
         let precision = Of360RateMetric::new(self.matched_extracted_claims, self.extracted_claims);
         Of360ParsedMetrics {
+            updating_accuracy: Of360RateMetric::new(self.update_score_sum, self.update_points),
+            qa_accuracy: Of360RateMetric::new(self.qa_correct, self.qa_questions),
+            omission_rate: Of360RateMetric::new(self.omitted_points, self.gold_points),
             halumem_recall: recall,
             halumem_weighted_recall: Of360RateMetric::new(
                 self.weighted_halumem_score_sum,

@@ -2,6 +2,7 @@
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::memory::booking_publication::publication_write_key;
+use crate::ports::EntityStoreRead;
 use crate::store::Store;
 
 /// `incoming_claim` is the structurally validated write-door body, or `None`
@@ -14,7 +15,7 @@ pub(crate) fn guard_publication_put(
 ) -> Result<()> {
     let new_publication =
         incoming_claim.is_some_and(|body| body.predicate == BOOKING_PUBLIC_PAGE_PREDICATE);
-    let old_publication = match store.entities.get(txn, id.as_bytes())? {
+    let old_publication = match store.port_entity_record(txn, &id)?.map(|row| row.encode()) {
         Some(raw) => {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

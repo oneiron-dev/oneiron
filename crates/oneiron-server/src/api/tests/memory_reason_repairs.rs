@@ -101,18 +101,28 @@ fn raw_search_request(uri: &str) -> Request<Body> {
         .expect("request")
 }
 
+/// Owner-grade variant for `/api/*` reads on authenticated servers.
+fn raw_search_request_auth(uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .header(AUTHORIZATION, owner_bearer())
+        .body(Body::empty())
+        .expect("request")
+}
+
 #[tokio::test]
 async fn memory_reason_text_query_text_never_retargets_the_probe() {
     let backend = Arc::new(StubReasonBackend::answering("from evidence"));
-    let (_dir, server) = memory_reason_server(Some(backend));
-    for depth in ["minimal", "standard", "deep"] {
+    let (_dir, server) = memory_reason_server_auth(Some(backend));
+    for depth in ["light", "medium", "high"] {
         let uri = format!("/api/search/text?query=launch&depth={depth}&view=standard");
-        let (status, original) = route_json(server.clone(), raw_search_request(&uri)).await;
+        let (status, original) =
+            route_json_auth(server.clone(), raw_search_request_auth(&uri)).await;
         assert_eq!(status, StatusCode::OK, "{original:?}");
         assert!(!original["items"].as_array().unwrap().is_empty());
-        let (status, overridden) = route_json(
+        let (status, overridden) = route_json_auth(
             server.clone(),
-            raw_search_request(&format!("{uri}&queryText=unindexedbudget")),
+            raw_search_request_auth(&format!("{uri}&queryText=unindexedbudget")),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{overridden:?}");
@@ -167,7 +177,7 @@ async fn memory_reason_text_query_text_never_retargets_the_probe() {
 async fn memory_reason_standard_vector_query_text_is_not_a_lexical_probe() {
     let (_dir, server) = memory_reason_server(None);
     let probe = vec!["0.1"; oneiron::VaultConfig::device().dimensions].join(",");
-    let uri = format!("/api/search/vector?query={probe}&depth=standard&view=standard");
+    let uri = format!("/api/search/vector?query={probe}&depth=medium&view=standard");
     let (status, original) = route_json(server.clone(), raw_search_request(&uri)).await;
     assert_eq!(status, StatusCode::OK, "{original:?}");
     assert!(original["items"].as_array().unwrap().is_empty());
@@ -184,14 +194,14 @@ async fn memory_reason_standard_vector_query_text_is_not_a_lexical_probe() {
 async fn memory_reason_deep_usage_accumulates_and_one_lease_reaches_all_stages() {
     let guard = repair_guard(34, 17);
     let backend = Arc::new(RecordingReasonBackend::new(None));
-    let (_dir, server) = memory_reason_server_with_guard(Some(backend.clone()), guard.clone());
+    let (_dir, server) = memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
     for expected_used in [17, 34] {
-        let (status, body) = route_json(
+        let (status, body) = route_json_auth(
             server.clone(),
             json_request(
                 "POST",
                 "/v1/companion/memory/reason",
-                json!({ "query": "launch", "depth": "deep", "tokenBudget": 17 }),
+                json!({ "query": "launch", "depth": "max", "tokenBudget": 17 }),
             ),
         )
         .await;
@@ -200,12 +210,12 @@ async fn memory_reason_deep_usage_accumulates_and_one_lease_reaches_all_stages()
         assert_eq!(guard.read().used_units, expected_used);
         assert_eq!(guard.read().reserved_units, 0);
     }
-    let (status, body) = route_json(
+    let (status, body) = route_json_auth(
         server,
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({ "query": "launch", "depth": "deep" }),
+            json!({ "query": "launch", "depth": "max" }),
         ),
     )
     .await;
@@ -232,19 +242,20 @@ async fn memory_reason_backend_errors_release_each_admitted_reservation() {
     ] {
         let guard = repair_guard(100, 17);
         let backend = Arc::new(RecordingReasonBackend::new(Some(stage)));
-        let (_dir, server) = memory_reason_server_with_guard(Some(backend.clone()), guard.clone());
+        let (_dir, server) =
+            memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
         let per_read_usage = match stage {
             FailingStage::Decompose => 0,
             FailingStage::Rerank => 3,
             FailingStage::Compose => 8,
         };
         for count in 1..=3 {
-            let (status, body) = route_json(
+            let (status, body) = route_json_auth(
                 server.clone(),
                 json_request(
                     "POST",
                     "/v1/companion/memory/reason",
-                    json!({ "query": "launch", "depth": "deep" }),
+                    json!({ "query": "launch", "depth": "max" }),
                 ),
             )
             .await;
@@ -267,28 +278,29 @@ async fn memory_reason_backend_errors_release_each_admitted_reservation() {
 async fn memory_reason_raw_search_errors_and_zero_pages_release_reservations() {
     let guard = repair_guard(17, 17);
     let backend = Arc::new(RecordingReasonBackend::new(None));
-    let (_dir, server) = memory_reason_server_with_guard(Some(backend.clone()), guard.clone());
+    let (_dir, server) = memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
     for _ in 0..3 {
         for (uri, expected) in [
             (
-                "/api/search/vector?query=0.1,0.2&depth=deep&queryText=launch",
+                "/api/search/vector?query=0.1,0.2&depth=max&queryText=launch",
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
             (
-                "/api/search/text?query=launch&depth=deep&limit=0&countMode=none",
+                "/api/search/text?query=launch&depth=max&limit=0&countMode=none",
                 StatusCode::OK,
             ),
         ] {
-            let (status, body) = route_json(server.clone(), raw_search_request(uri)).await;
+            let (status, body) =
+                route_json_auth(server.clone(), raw_search_request_auth(uri)).await;
             assert_eq!(status, expected, "{uri}: {body:?}");
             assert_eq!(guard.read().reserved_units, 0);
         }
     }
     assert!(backend.leases.lock().unwrap().is_empty());
     // A real deep read still fits after errors and empty pages.
-    let (status, body) = route_json(
+    let (status, body) = route_json_auth(
         server,
-        raw_search_request("/api/search/text?query=launch&depth=deep&view=standard"),
+        raw_search_request_auth("/api/search/text?query=launch&depth=max&view=standard"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
@@ -299,7 +311,7 @@ async fn memory_reason_raw_search_errors_and_zero_pages_release_reservations() {
 #[tokio::test]
 async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
     let backend = Arc::new(RecordingReasonBackend::new(None));
-    let (_dir, server) = memory_reason_server(Some(backend.clone()));
+    let (_dir, server) = memory_reason_server_auth(Some(backend.clone()));
     let inside = seeded_test_entity_id(0x0207_0001);
     // Scoped search gives these TURNs neutral pipeline scores of 1.0, not
     // raw BM25 scores. Make the outside row win the ascending-ID tie-break
@@ -326,7 +338,8 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         .commit()
         .unwrap();
     let short_id = oneiron::retrieval_depth::short_ref_or_hex(&server.vault, &inside).unwrap();
-    let scoped = scoped_read_for_legacy_api(&server.vault).unwrap();
+    let pinned_ref = server.vault.pinned_short_ref(&inside).unwrap();
+    let scoped = scoped_read_for_legacy_api(&server).unwrap();
     let unscoped = scoped.search_text("launch", 2, None).unwrap();
     assert_eq!(
         unscoped
@@ -339,8 +352,8 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         scoped.search_text("launch", 1, None).unwrap()[0].id,
         outside
     );
-    for depth in ["minimal", "standard", "deep"] {
-        let (status, body) = route_json(
+    for depth in ["light", "medium", "high"] {
+        let (status, body) = route_json_auth(
             server.clone(),
             json_request(
                 "POST",
@@ -355,11 +368,56 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         assert_eq!(status, StatusCode::OK, "{body:?}");
         assert_eq!(
             body["sources"],
-            json!([short_id.clone()]),
+            json!([pinned_ref.clone()]),
             "{depth}: {body:?}"
         );
     }
     assert_eq!(*backend.candidates.lock().unwrap(), vec![inside]);
+    let changed =
+        rmp_serde::to_vec_named(&json!({"txt": "changed", "spkr": "user", "at": 701_u64})).unwrap();
+    server
+        .vault
+        .batch()
+        .put(
+            &inside,
+            ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: 701,
+                end: 701,
+            },
+            701,
+            &changed,
+        )
+        .commit()
+        .unwrap();
+    // A non-claim record stamp binds only the current body, so row authority
+    // withholds the edited TURN's pinned revision instead of serving it.
+    for path in ["/v1/core/hydrate", "/v1/core/batch/shortId/hydrate"] {
+        let batch = path.contains("/batch/");
+        let payload = if batch {
+            json!({"refs": [pinned_ref.clone()]})
+        } else {
+            json!({"ref": pinned_ref.clone()})
+        };
+        let (status, body) =
+            route_json_auth(server.clone(), json_request("POST", path, payload)).await;
+        if batch {
+            assert_eq!(status, StatusCode::OK, "{path}: {body:?}");
+            assert_eq!(
+                body["results"][0]["result"],
+                Value::Null,
+                "{path}: {body:?}"
+            );
+        } else {
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body:?}");
+        }
+        assert_eq!(body["narrowing"]["suppressed_count"], 1, "{path}: {body:?}");
+        assert_eq!(
+            body["narrowing"]["narrowed_axes"],
+            json!(["row_authority"]),
+            "{path}: {body:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -378,13 +436,14 @@ async fn memory_reason_budget_refusals_settle_actual_usage_and_stop_later_calls(
     ] {
         let guard = repair_guard(100, 17);
         let backend = Arc::new(RecordingReasonBackend::new(None));
-        let (_dir, server) = memory_reason_server_with_guard(Some(backend.clone()), guard.clone());
-        let (status, body) = route_json(
+        let (_dir, server) =
+            memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
+        let (status, body) = route_json_auth(
             server,
             json_request(
                 "POST",
                 "/v1/companion/memory/reason",
-                json!({ "query": "launch", "depth": "deep", "tokenBudget": budget }),
+                json!({ "query": "launch", "depth": "max", "tokenBudget": budget }),
             ),
         )
         .await;
@@ -402,9 +461,9 @@ async fn memory_reason_budget_refusals_settle_actual_usage_and_stop_later_calls(
 async fn memory_reason_small_budget_does_not_call_a_host_at_model_free_tiers() {
     let guard = repair_guard(100, 17);
     let backend = Arc::new(RecordingReasonBackend::new(Some(FailingStage::Decompose)));
-    let (_dir, server) = memory_reason_server_with_guard(Some(backend.clone()), guard.clone());
-    for depth in ["minimal", "standard"] {
-        let (status, body) = route_json(
+    let (_dir, server) = memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
+    for depth in ["light", "medium"] {
+        let (status, body) = route_json_auth(
             server.clone(),
             json_request(
                 "POST",

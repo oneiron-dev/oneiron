@@ -106,16 +106,42 @@ fn structural_edge_value(weight: f32, created_at: u64) -> Vec<u8> {
 /// independently of the engine's own encoder): valid except the predicate,
 /// which violates the D17 ≥2-dot-joined-segments grammar.
 fn claim_body_with_bad_predicate() -> Vec<u8> {
+    // Scope keys (worldId, scopeFacetId, scopeRelationshipId, scopeProjectId,
+    // scopeVersion) are required since the v2 CLAIM codec; without them the
+    // body fails as `InvalidClaimBody` before the predicate grammar is
+    // reached. The predicate alone stays invalid here.
+    let subject = EntityId::now();
     let body = rmpv::Value::Map(vec![
         (rmpv::Value::from("pred"), rmpv::Value::from("nodots")),
         (rmpv::Value::from("val"), rmpv::Value::from("v")),
         (rmpv::Value::from("conf"), rmpv::Value::F32(0.5)),
         (
             rmpv::Value::from("subj"),
-            rmpv::Value::Binary(EntityId::now().as_bytes().to_vec()),
+            rmpv::Value::Binary(subject.as_bytes().to_vec()),
         ),
         (rmpv::Value::from("appr"), rmpv::Value::from("auto")),
         (rmpv::Value::from("life"), rmpv::Value::from("active")),
+        (
+            rmpv::Value::from("worldId"),
+            rmpv::Value::Binary(oneiron::claim::base_world_id().as_bytes().to_vec()),
+        ),
+        (
+            rmpv::Value::from("scopeRelationshipId"),
+            rmpv::Value::from("all"),
+        ),
+        (
+            rmpv::Value::from("scopeFacetId"),
+            rmpv::Value::Binary(
+                oneiron::claim::substrate_facet_id(subject)
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        ),
+        (
+            rmpv::Value::from("scopeProjectId"),
+            rmpv::Value::Binary(oneiron::claim::default_project_id().as_bytes().to_vec()),
+        ),
+        (rmpv::Value::from("scopeVersion"), rmpv::Value::from(2u64)),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &body).unwrap();
@@ -200,6 +226,31 @@ fn edge_provenance_claim_body_with(
     if let Some(stale) = stale {
         entries.push((rmpv::Value::from("stale"), rmpv::Value::Boolean(stale)));
     }
+    // Required v2 scope stamp: base world, substrate of the EdgeRef source
+    // ([0x11…]), `all` relationships, default project. Without it the body
+    // fails as `InvalidClaimBody` before the ONE-1159 provenance door runs.
+    let edge_source = EntityId::from_bytes([0x11; 16]).unwrap();
+    entries.push((
+        rmpv::Value::from("worldId"),
+        rmpv::Value::Binary(oneiron::claim::base_world_id().as_bytes().to_vec()),
+    ));
+    entries.push((
+        rmpv::Value::from("scopeRelationshipId"),
+        rmpv::Value::from("all"),
+    ));
+    entries.push((
+        rmpv::Value::from("scopeFacetId"),
+        rmpv::Value::Binary(
+            oneiron::claim::substrate_facet_id(edge_source)
+                .as_bytes()
+                .to_vec(),
+        ),
+    ));
+    entries.push((
+        rmpv::Value::from("scopeProjectId"),
+        rmpv::Value::Binary(oneiron::claim::default_project_id().as_bytes().to_vec()),
+    ));
+    entries.push((rmpv::Value::from("scopeVersion"), rmpv::Value::from(2u64)));
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &rmpv::Value::Map(entries)).unwrap();
     out
@@ -284,6 +335,17 @@ fn each_gate_rejection_class_produces_exactly_one_quarantine_record() {
             name: "entity_unknown_type_byte",
             container: QuarantineContainer::Entities,
             expected_reason: "InvalidEntityType",
+            setup: |_vault, doc| {
+                let id = EntityId::now();
+                let blob = entity_blob(99, valid_time_range(), LEARNED_AT, b"x");
+                insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
+                (id.to_hex(), blob)
+            },
+        },
+        GateCase {
+            name: "entity_pack_handle_malformed_envelope",
+            container: QuarantineContainer::Entities,
+            expected_reason: "InvalidPackByteMap",
             setup: |_vault, doc| {
                 let id = EntityId::now();
                 let blob = entity_blob(200, valid_time_range(), LEARNED_AT, b"x");
@@ -855,7 +917,7 @@ fn poisoned_entity_op_does_not_abort_the_batch() {
     insert_bytes(
         &entities,
         &bad_id.to_hex(),
-        &entity_blob(200, valid_time_range(), LEARNED_AT, b"bad"),
+        &entity_blob(99, valid_time_range(), LEARNED_AT, b"bad"),
     );
     insert_bytes(
         &entities,

@@ -113,7 +113,7 @@ pub(crate) fn companion_register_record_payload(
             value: oneiron::companion_value_to_json(&record.provenance.value),
         },
         lifecycle: Some(record.lifecycle.as_str().to_owned()),
-        export_classification: record.export_classification.as_str().to_owned(),
+        sensitivity: record.sensitivity.as_str().to_owned(),
     }
 }
 
@@ -208,16 +208,13 @@ pub(crate) fn companion_register_lifecycle_from_wire(
 
 pub(crate) fn companion_register_export_from_wire(
     value: &str,
-) -> Result<oneiron::CompanionExportClassification, ApiError> {
-    match value {
-        "local_only" => Ok(oneiron::CompanionExportClassification::LocalOnly),
-        "portable" => Ok(oneiron::CompanionExportClassification::Portable),
-        "shared_vault" => Ok(oneiron::CompanionExportClassification::SharedVault),
-        _ => Err(ApiError::bad_request(
-            "export must be local_only, portable, or shared_vault",
-            Some("record.export"),
-        )),
-    }
+) -> Result<oneiron::federation::Sensitivity, ApiError> {
+    oneiron::federation::Sensitivity::parse(value).ok_or_else(|| {
+        ApiError::bad_request(
+            "sensitivity must be public, private, sensitive, or restricted",
+            Some("record.sensitivity"),
+        )
+    })
 }
 
 pub(crate) fn companion_register_actor_class(

@@ -2,7 +2,7 @@
 
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus};
 use crate::gate::ResolvedRetrievalFilter;
-use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::registry::{ENTITY_TYPE_CLAIM, EntityClassification, entity_type_registry_entry};
 use crate::store::Store;
 
 use super::filters::claim_status_gate_allows;
@@ -10,6 +10,7 @@ use super::types::{ClaimStatusGateCache, EntityMetadataCache, ScoredEntity};
 
 pub(crate) fn claim_allowed(filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
     !filter.deny_all
+        && crate::claim::claim_generic_readable(body)
         && matches!(
             body.approval,
             ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
@@ -24,29 +25,46 @@ pub(crate) fn claim_allowed(filter: &ResolvedRetrievalFilter, body: &ClaimBody) 
         && (filter.min_salience..=1.0).contains(&body.salience.unwrap_or(0.0))
 }
 
-pub(super) fn type_allowed(filter: &ResolvedRetrievalFilter, store: &Store, kind: u8) -> bool {
+/// Entity-type authority and the default kind scope. When the filter names
+/// no types, maintenance records (audit, policy, federation and authority
+/// carriers, ARCH-0002) stay out of retrieval: they are not context
+/// entities. A caller that names a maintenance kind, in the filter or in
+/// its own kind filter (`named`), still reaches it.
+pub(super) fn type_allowed(
+    filter: &ResolvedRetrievalFilter,
+    named: Option<&[u8]>,
+    store: &Store,
+    kind: u8,
+) -> bool {
     !filter.deny_all
         && store.validate_entity_type(kind).is_ok()
-        && filter
-            .entity_types
-            .as_ref()
-            .is_none_or(|types| types.contains(&kind))
+        && match filter.entity_types.as_ref() {
+            Some(types) => types.contains(&kind),
+            None => !is_maintenance(kind) || named.is_some_and(|named| named.contains(&kind)),
+        }
+}
+
+fn is_maintenance(kind: u8) -> bool {
+    entity_type_registry_entry(kind)
+        .is_some_and(|entry| entry.classification == EntityClassification::Maintenance)
 }
 
 pub(super) fn apply_types(
     scores: &mut Vec<ScoredEntity>,
     filter: &ResolvedRetrievalFilter,
+    named: Option<&[u8]>,
     store: &Store,
     txn: &heed::RoTxn<'_>,
     metadata: &mut EntityMetadataCache,
 ) -> crate::Result<()> {
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.iter().copied() {
-        if metadata
-            .get(store, txn, &scored.id)?
-            .is_some_and(|meta| type_allowed(filter, store, meta.entity_type))
-        {
-            kept.push(scored);
+        if let Some(meta) = metadata.get(store, txn, &scored.id)? {
+            if type_allowed(filter, named, store, meta.entity_type) {
+                kept.push(scored);
+            } else {
+                metadata.read_suppressed.insert(scored.id);
+            }
         }
     }
     *scores = kept;
@@ -55,6 +73,7 @@ pub(super) fn apply_types(
 
 pub(super) fn candidate_allowed(
     filter: &ResolvedRetrievalFilter,
+    named: Option<&[u8]>,
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &crate::EntityId,
@@ -64,7 +83,8 @@ pub(super) fn candidate_allowed(
     let Some(meta) = metadata.get(store, txn, id)? else {
         return Ok(false);
     };
-    if !type_allowed(filter, store, meta.entity_type) {
+    if !type_allowed(filter, named, store, meta.entity_type) {
+        metadata.read_suppressed.insert(*id);
         return Ok(false);
     }
     if meta.entity_type != ENTITY_TYPE_CLAIM {
@@ -73,16 +93,21 @@ pub(super) fn candidate_allowed(
     if !claim_status_gate_allows(store, txn, id, metadata, gate)? {
         return Ok(false);
     }
-    Ok(gate
+    let allowed = gate
         .decisions
         .get(id)
         .and_then(Option::as_ref)
-        .is_some_and(|body| claim_allowed(filter, body)))
+        .is_some_and(|body| claim_allowed(filter, body));
+    if !allowed {
+        metadata.read_suppressed.insert(*id);
+    }
+    Ok(allowed)
 }
 
 pub(super) fn apply(
     scores: &mut Vec<ScoredEntity>,
     filter: &ResolvedRetrievalFilter,
+    named: Option<&[u8]>,
     store: &Store,
     txn: &heed::RoTxn<'_>,
     metadata: &mut EntityMetadataCache,
@@ -90,7 +115,7 @@ pub(super) fn apply(
 ) -> crate::Result<()> {
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.iter().copied() {
-        if candidate_allowed(filter, store, txn, &scored.id, metadata, gate)? {
+        if candidate_allowed(filter, named, store, txn, &scored.id, metadata, gate)? {
             kept.push(scored);
         }
     }

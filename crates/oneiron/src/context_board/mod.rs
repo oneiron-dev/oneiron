@@ -1,12 +1,35 @@
 //! Typed Context Board render projections.
 //!
-//! Sections present: MEMORIES, TASKS, AGENTS, plugin, stream. SKILLS (§8, 2026-08-28) has no producer here yet.
+//! WORLDS, MEMORIES, TASKS, AGENTS, SKILLS, session read-set riders and stream projections.
 
 mod agents;
+mod agents_fanout;
+pub(crate) use agents_fanout::fanout_agent_rows;
+mod capabilities;
+mod observations;
+#[cfg(test)]
+mod observations_tests;
+mod read_set;
+mod room;
+mod room_verbs;
+mod worlds;
+pub use capabilities::{CapabilityHit, SkillsSection};
+pub use read_set::{ChangedLine, ServedLifecycle, SessionReadSet};
+pub use room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
+pub use worlds::{WorldPresence, WorldsSection};
 mod frame;
+mod history;
 mod hydration;
+pub(crate) use history::validate_board_claim;
+pub use history::{
+    BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, ReconstructedBoard,
+};
 mod memories;
+mod memories_frame;
 mod memories_projection;
+mod memory_pins;
+pub use memories::MemoryTier;
+pub use memories_frame::assemble_memories_sections;
 mod plugin;
 mod stream;
 
@@ -22,6 +45,8 @@ pub use stream::{
     WakeDeliveryOutcome, WakeDeliveryReportError, WakeDispatch, WakeDispatchObservations,
     WakeReportDisposition,
 };
+#[cfg(test)]
+mod surfaces_tests;
 mod tasks;
 
 pub use agents::{
@@ -32,8 +57,8 @@ pub use frame::{
     BoardFrameError, BoardLegend, BoardRender, BoardRenderMetadata, BoardSection, BudgetPolicyRef,
     CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES, PLUGIN_SECTION_BUDGET_POLICY_REF,
     SHED_ORDER, SectionPolicy, SectionView, ShedOutcome, ShedRank, ShedSection,
-    assemble_task_agent_sections, render_board_block, resolve_board_budget,
-    section_policy_for_budget_ref, shed,
+    TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES, assemble_task_agent_sections,
+    render_board_block, resolve_board_budget, section_policy_for_budget_ref, shed,
 };
 pub use hydration::{
     AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem,
@@ -103,6 +128,7 @@ mod test_support {
             run_id: None,
             parent_id: None,
             worker_kind: worker_kind.to_owned(),
+            worker: None,
             agent_id: agent_id.map(str::to_owned),
             status,
             result_ref: None,

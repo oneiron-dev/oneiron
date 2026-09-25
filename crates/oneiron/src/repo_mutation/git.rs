@@ -40,6 +40,17 @@ pub(super) fn resolve_mutable_repo_root(repo_ref: &RepoRef) -> Result<PathBuf> {
     Ok(PathBuf::from(root).canonicalize()?)
 }
 
+/// The same canonical, commit-independent identity used by document ingress.
+pub(crate) fn canonical_mutation_scope(repo_root: &Path) -> Result<String> {
+    let repo_ref = RepoRef::LocalFolder {
+        path: path_arg(repo_root)?,
+        commit: String::new(),
+    };
+    let root = resolve_mutable_repo_root(&repo_ref)?;
+    let canonical = canonical_repo_ref_for_root(&repo_ref, &root)?;
+    Ok(super::oplog::repo_mutation_repo_key(&canonical))
+}
+
 pub(super) fn canonical_repo_ref_for_root(repo_ref: &RepoRef, repo_root: &Path) -> Result<RepoRef> {
     let RepoRef::LocalFolder { commit, .. } = repo_ref else {
         return Err(Error::Code(CodeError::InvalidRepoMutationRecord(

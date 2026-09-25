@@ -43,11 +43,6 @@ impl RetrievalRunId {
     }
 
     #[must_use]
-    #[allow(
-        dead_code,
-        reason = "no P4a path reconstructs a run id from raw bytes; on the ONE-1728 seg-4 \
-                  post-merge delete-list unless ONE-1730's promote replay claims it"
-    )]
     pub(crate) fn from_bytes(bytes: [u8; 16]) -> Self {
         Self { bytes }
     }
@@ -345,6 +340,10 @@ pub struct RetrievalRunRecord {
     pub action: RetrievalAction,
     pub started_at: u64,
     pub elapsed_us: u64,
+    #[serde(default)]
+    pub state: super::state::RetrievalState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<super::state::RetrievalTurn>,
     pub signals: Vec<RetrievalSignal>,
     pub result_ids: Vec<[u8; 16]>,
     pub score_breakdown: Vec<RetrievalScoreBreakdown>,
@@ -402,6 +401,8 @@ impl RetrievalRunRecord {
             elapsed_us,
             signals,
             result_ids,
+            state: super::state::RetrievalState::one_shot(&score_breakdown),
+            turn: None,
             score_breakdown,
             total_in_scope,
             claims_suppressed,
@@ -411,6 +412,24 @@ impl RetrievalRunRecord {
             degradation: Vec::new(),
             confidence_adjustment: None,
         }
+    }
+
+    /// Replay re-feeds this exact stored state, without recomputing features
+    /// against today's graph or outcome rows.
+    pub fn replay_state(&self) -> &super::state::RetrievalState {
+        &self.state
+    }
+
+    pub(crate) fn with_context(
+        mut self,
+        state: Option<super::state::RetrievalState>,
+        turn: Option<super::state::RetrievalTurn>,
+    ) -> Self {
+        if let Some(state) = state {
+            self.state = state;
+        }
+        self.turn = turn;
+        self
     }
 
     pub(crate) fn with_quality(mut self, report: &RetrievalQualityReport) -> Self {

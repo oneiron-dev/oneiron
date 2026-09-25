@@ -121,7 +121,14 @@ fn resolve_memory_sections(
         // Inherit: a `Default` child sees exactly what its parent saw, which is
         // both the widest legal request and the no-context-rot answer.
         MemoryProjection::Default => match parent {
-            Some(parent) => Ok(parent.memory_sections.clone()),
+            Some(parent) if matches!(world_scope, None | Some(WorldScope::All)) => {
+                Ok(parent.memory_sections.clone())
+            }
+            Some(parent) => Ok(intersect_with_parent(
+                scan_memory_sections(vault, None, parent.memory_sections.len(), world_scope)?,
+                Some(&parent.memory_sections),
+                parent.memory_sections.len(),
+            )),
             None => {
                 scan_memory_sections(vault, None, CONTEXT_SPEC_DEFAULT_MEMORY_LIMIT, world_scope)
             }
@@ -202,11 +209,15 @@ fn scan_memory_sections(
         if !crate::claim::claim_surfaceable(&claim) {
             continue;
         }
-        let in_world = match world_scope.unwrap_or(WorldScope::All) {
+        let in_world = match world_scope.as_ref().unwrap_or(&WorldScope::All) {
             WorldScope::All => true,
             WorldScope::Base => claim.world.is_none(),
-            WorldScope::World(world) => claim.world.is_none() || claim.world == Some(world),
-            WorldScope::WorldSet(_) => true, // not used by AgentScope mapping
+            WorldScope::World(world) => claim.world.is_none() || claim.world == Some(*world),
+            WorldScope::WorldSet(worlds) => worlds.admits(claim.world),
+            WorldScope::CodebaseSet(key) => {
+                let txn = vault.store.env.read_txn()?;
+                crate::codebase::codebase_candidate_matches_scope_key(&vault.store, &txn, &id, key)?
+            }
             // Also outside the AgentScope mapping (ONE-1420): the per-turn
             // ActiveSet selection lives on the retrieval builder, and this
             // projection has none to enforce — so it admits nothing rather

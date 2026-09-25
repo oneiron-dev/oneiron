@@ -364,10 +364,32 @@ fn remote_hard_tombstone_on_provenance_claim_restamps_subject_edge() {
     let a = EntityId::now();
     let b = EntityId::now();
     vault_b
-        .put_entity(&person, 4, time_range(1), 1, b"person")
+        .put_entity(
+            &person,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(1),
+            1,
+            b"person",
+        )
         .unwrap();
-    vault_b.put_entity(&a, 4, time_range(1), 1, b"a").unwrap();
-    vault_b.put_entity(&b, 4, time_range(1), 1, b"b").unwrap();
+    vault_b
+        .put_entity(
+            &a,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(1),
+            1,
+            b"a",
+        )
+        .unwrap();
+    vault_b
+        .put_entity(
+            &b,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            time_range(1),
+            1,
+            b"b",
+        )
+        .unwrap();
     vault_b.put_edge(&a, EdgeKind::Mentions, &b, 0.875).unwrap();
     let subject = EdgeRef::new(a, EdgeKind::Mentions, b);
 

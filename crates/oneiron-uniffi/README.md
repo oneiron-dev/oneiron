@@ -15,12 +15,9 @@
   scaffolding for the WIRE head contract. There is **no `.udl` file** and
   **no `build.rs`**; proc-macro metadata plus the version-locked local
   bindgen binary are the only generation path.
-- A pinned 27-verb ledger (`PINNED_HEAD_CONTRACT_VERBS`) maintained
-  independently of the proc-macro declarations, so coverage and naming
-  drift are mechanically checked instead of reviewed by eye.
 - A standalone Swift package (`swift/`) whose never-run compile consumer
   references the complete generated interface: both constructors, actor
-  rebinding, every pinned verb, every DTO's full memberwise initializer,
+  rebinding, every facade verb, every DTO's full memberwise initializer,
   and the three-field error shape.
 - A crate-local `uniffi-bindgen` binary (behind the `bindgen-cli` feature)
   so the generator can never drift from the compiled library.
@@ -48,8 +45,7 @@ one release line. Crates resolve `0.29` to the newest `0.29.x` patch.
 
 Latest stable verified at authoring: **`uniffi 0.32.0`** (crates.io,
 2026-08-10). Staying on the pinned `0.29` line is deliberate; any move to a
-newer major-minor line is a contract amendment that re-verifies the ledger
-tests, the generated Swift surface, and the compile stub together — it is
+newer major-minor line is a contract amendment that re-verifies the generated Swift surface and the compile stub together — it is
 not ambient dependency drift.
 
 ## Head contract
@@ -67,7 +63,7 @@ dropped or flattened into `message`. `recall` returns the versioned
 `MemoryPack`; `HEAD_MEMORY_PACK_SCHEMA_VERSION` is sourced from
 `oneiron::MEMORY_PACK_VERSION` so the declared schema can never go stale.
 
-The 27 pinned verbs, in canonical SDK spelling:
+The declared verbs, in canonical SDK spelling:
 
 `witness`, `recall`, `receipts`, `commit`, `claimUpsert`, `remember`,
 `claimRetract`, `forget`, `claimList`, `claimHistory`, `safeDelete`,
@@ -77,7 +73,7 @@ The 27 pinned verbs, in canonical SDK spelling:
 `readBlobVersion`, `enqueueConsolidation`, `dreamerJobStatus`,
 `seedClaims`, `scheduleOutbound`.
 
-`dreamerJobStatus` keeps the ledger spelling; the runtime arm maps it to
+`dreamerJobStatus` uses the SDK spelling; the runtime arm maps it to
 the core attempt-status accessor, as the direct-link binding already does.
 `scheduleOutbound` schedules only — it never becomes a send transport.
 Blob content crosses as bytes (`Data` in Swift); `appendBlobVersion` takes
@@ -112,10 +108,11 @@ CI runs all of the above plus a `.udl` census and a forbidden-path diff in
 
 The first runtime consumer — an app binding that needs the generated Swift
 or Kotlin surface against a live vault — replaces the definition-only
-bodies with actor-scoped core facade calls. It preserves the pinned verbs,
+bodies with actor-scoped core facade calls. It preserves the declared verbs,
 DTOs, error shape, and the coverage tests exactly; any desired surface
-change is a head-contract amendment that moves the pinned list, the macro
-invocation, the Rust-name drift guard, and the Swift compile probe
-together. Populating live `pack_version` values and the live Swift throw
+change is a head-contract amendment that moves the manifest row in
+`scripts/sdk/agent-verbs.json`, the generated facade file
+(`src/facade_generated.rs`) with its macro invocation, the Rust-name drift
+guard, and the Swift compile probe together. Populating live `pack_version` values and the live Swift throw
 path are first-consumer scope, explicitly not claimed by this compile-only
 lane.

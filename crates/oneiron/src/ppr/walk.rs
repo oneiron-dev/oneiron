@@ -1,6 +1,6 @@
 //! PPR walk math: frontier rounds, visibility gating, and edge gates.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use heed::RoTxn;
 
@@ -44,6 +44,7 @@ struct PprRoundContext<'a, 'txn, D: ManifestDbs> {
     /// every landed caller shares. `Some` only on the compute-only scoped
     /// entry, which never reads or writes the shared cache.
     visibility: Option<&'a dyn PprNodeVisibility>,
+    push_threshold: f32,
 }
 #[derive(Debug, Clone)]
 pub(super) struct PprFrontierEntry {
@@ -57,6 +58,9 @@ pub(super) struct PprCacheState {
     pub(super) scores: Vec<ScoredEntity>,
     pub(super) frontier: Vec<PprFrontierEntry>,
     pub(super) dependencies: Vec<EntityId>,
+    /// Unpushed mass below the row-owned threshold, keyed by node and hop count.
+    pub(super) residual: Vec<PprFrontierEntry>,
+    pub(super) push_threshold: f32,
 }
 pub(super) enum CachedPprRow {
     Scores(Vec<ScoredEntity>),
@@ -149,12 +153,14 @@ pub(super) fn ppr_compute_state_weighted(
             scores: Vec::new(),
             frontier: Vec::new(),
             dependencies: Vec::new(),
+            residual: Vec::new(),
+            push_threshold: SCORE_EPSILON,
         });
     }
 
     let seed_weights = seed_weights(store, txn, seeds, weighting, visibility)?;
-    let mut scores = HashMap::<EntityId, f32>::new();
-    let mut frontier = HashMap::<(EntityId, u32), f32>::new();
+    let mut scores = BTreeMap::<EntityId, f32>::new();
+    let mut frontier = BTreeMap::<(EntityId, u32), f32>::new();
     let mut dependencies = HashSet::<EntityId>::new();
 
     for (seed, weight) in seeds.iter().zip(&seed_weights) {
@@ -171,6 +177,7 @@ pub(super) fn ppr_compute_state_weighted(
         teleport_alpha: alphas.teleport_alpha,
         ppr_vad_alpha: alphas.ppr_vad_alpha,
         visibility,
+        push_threshold: SCORE_EPSILON,
     };
     run_ppr_rounds(
         round_context,
@@ -180,7 +187,13 @@ pub(super) fn ppr_compute_state_weighted(
         &mut dependencies,
     )?;
 
-    Ok(cache_state_from_maps(depth, scores, frontier, dependencies))
+    Ok(cache_state_from_maps(
+        depth,
+        scores,
+        frontier,
+        dependencies,
+        SCORE_EPSILON,
+    ))
 }
 pub(super) fn ppr_resume_state_weighted(
     store: &impl ManifestDbs,
@@ -194,6 +207,11 @@ pub(super) fn ppr_resume_state_weighted(
     let seed_weights = seed_weights(store, txn, seeds, weighting, None)?;
     let mut scores = scores_to_map(resume.scores);
     let mut frontier = frontier_to_map(resume.frontier);
+    for entry in resume.residual {
+        *frontier
+            .entry((entry.id, entry.structural_hops))
+            .or_default() += entry.score;
+    }
     let mut dependencies: HashSet<EntityId> = resume.dependencies.into_iter().collect();
     for seed in seeds {
         dependencies.insert(*seed);
@@ -212,6 +230,7 @@ pub(super) fn ppr_resume_state_weighted(
         // Resume replays a SHARED cached state, which only the unscoped walk
         // ever writes; the scoped entry never reads or resumes that cache.
         visibility: None,
+        push_threshold: resume.push_threshold,
     };
     run_ppr_rounds(
         round_context,
@@ -226,14 +245,15 @@ pub(super) fn ppr_resume_state_weighted(
         scores,
         frontier,
         dependencies,
+        resume.push_threshold,
     ))
 }
 pub(super) const SCORE_EPSILON: f32 = 1e-10;
 fn run_ppr_rounds(
     context: PprRoundContext<'_, '_, impl ManifestDbs>,
     rounds: u32,
-    scores: &mut HashMap<EntityId, f32>,
-    frontier: &mut HashMap<(EntityId, u32), f32>,
+    scores: &mut BTreeMap<EntityId, f32>,
+    frontier: &mut BTreeMap<(EntityId, u32), f32>,
     dependencies: &mut HashSet<EntityId>,
 ) -> Result<()> {
     let edge_dbs = [context.store.edges_out(), context.store.edges_in()];
@@ -244,11 +264,15 @@ fn run_ppr_rounds(
             break;
         }
 
-        let total: f32 = frontier.values().copied().sum();
-        let mut next = HashMap::<(EntityId, u32), f32>::new();
+        let total: f32 = frontier
+            .values()
+            .copied()
+            .filter(|mass| *mass > context.push_threshold)
+            .sum();
+        let mut next = BTreeMap::<(EntityId, u32), f32>::new();
 
         for (&(node, hops), &score) in frontier.iter() {
-            if score < SCORE_EPSILON {
+            if score <= context.push_threshold {
                 continue;
             }
             dependencies.insert(node);
@@ -258,7 +282,7 @@ fn run_ppr_rounds(
             // reverse scan over `edges_in` by the symmetric s_in(u, τ), so
             // each database scan gates and groups its rows independently.
             for db in edge_dbs {
-                let mut groups = HashMap::<EdgeKind, Vec<GatedEdge>>::new();
+                let mut groups = BTreeMap::<u8, Vec<GatedEdge>>::new();
                 for entry in db.prefix_iter(context.txn, node.as_bytes())? {
                     let (key, value) = entry?;
                     if let Some(edge) = gate_edge(context.store, context.txn, &key, &value, hops)? {
@@ -272,7 +296,7 @@ fn run_ppr_rounds(
                         // nodes, so gating the neighbour keeps BOTH endpoints
                         // of every traversed edge readable.
                         if visible_neighbor(&context, &edge)? {
-                            groups.entry(edge.kind).or_default().push(edge);
+                            groups.entry(edge.kind as u8).or_default().push(edge);
                         }
                     }
                 }
@@ -317,6 +341,12 @@ fn run_ppr_rounds(
             *scores.entry(node).or_default() += score;
         }
 
+        // Deferred mass is retained, not dropped or counted twice in scores.
+        for (&key, &mass) in frontier.iter() {
+            if mass <= context.push_threshold {
+                *next.entry(key).or_default() += mass;
+            }
+        }
         *frontier = next;
     }
 
@@ -339,9 +369,10 @@ fn visible_neighbor(
 }
 fn cache_state_from_maps(
     completed_depth: u32,
-    scores: HashMap<EntityId, f32>,
-    frontier: HashMap<(EntityId, u32), f32>,
-    dependencies: HashSet<EntityId>,
+    scores: BTreeMap<EntityId, f32>,
+    frontier: BTreeMap<(EntityId, u32), f32>,
+    mut dependencies: HashSet<EntityId>,
+    push_threshold: f32,
 ) -> PprCacheState {
     let mut ranked: Vec<ScoredEntity> = scores
         .into_iter()
@@ -358,6 +389,10 @@ fn cache_state_from_maps(
         })
         .collect();
     sort_frontier(&mut frontier);
+    dependencies.extend(frontier.iter().map(|entry| entry.id));
+    let (frontier, residual) = frontier
+        .into_iter()
+        .partition(|entry| entry.score > push_threshold);
 
     let mut dependencies: Vec<EntityId> = dependencies.into_iter().collect();
     dependencies.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
@@ -366,19 +401,21 @@ fn cache_state_from_maps(
     PprCacheState {
         completed_depth,
         scores: ranked,
+        residual,
+        push_threshold,
         frontier,
         dependencies,
     }
 }
-fn scores_to_map(scores: Vec<ScoredEntity>) -> HashMap<EntityId, f32> {
-    let mut out = HashMap::with_capacity(scores.len());
+fn scores_to_map(scores: Vec<ScoredEntity>) -> BTreeMap<EntityId, f32> {
+    let mut out = BTreeMap::new();
     for scored in scores {
         *out.entry(scored.id).or_default() += scored.score;
     }
     out
 }
-fn frontier_to_map(frontier: Vec<PprFrontierEntry>) -> HashMap<(EntityId, u32), f32> {
-    let mut out = HashMap::with_capacity(frontier.len());
+fn frontier_to_map(frontier: Vec<PprFrontierEntry>) -> BTreeMap<(EntityId, u32), f32> {
+    let mut out = BTreeMap::new();
     for entry in frontier {
         *out.entry((entry.id, entry.structural_hops)).or_default() += entry.score;
     }

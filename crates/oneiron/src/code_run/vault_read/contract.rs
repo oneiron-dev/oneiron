@@ -50,6 +50,22 @@ macro_rules! vault_read_contract {
             /// Every method, in contract-declaration order.
             pub const ALL: [Self; Self::COUNT] = [$(Self::$variant,)+];
 
+            /// The tool-first name, generated from the same SDK method row.
+            pub const fn tool_name(self) -> &'static str {
+                match self { $(Self::$variant => concat!("memory.", stringify!($method)),)+ }
+            }
+
+            /// The native request schema. Inline definitions keep it valid when
+            /// nested inside an endpoint envelope with its own schema resource.
+            pub fn request_schema(self) -> serde_json::Value {
+                match self { $(Self::$variant => request_schema::<$request>(),)+ }
+            }
+
+            /// The engine's execution contract, including typed runtime refusal.
+            pub const fn description(self) -> &'static str {
+                match self { $(Self::$variant => $doc,)+ }
+            }
+
             /// The one stable wire operation this method maps onto.
             #[must_use]
             pub const fn wire_op(self) -> VaultReadWireOp {
@@ -96,6 +112,11 @@ macro_rules! vault_read_contract {
                 }
             }
         }
+
+        /// Engine-owned memory tool rows. No gateway-owned name census exists.
+        pub const MEMORY_VERBS: [&str; VaultReadMethod::COUNT] = [
+            $(concat!("memory.", stringify!($method)),)+
+        ];
 
         /// Generated method → wire-op → availability table.
         pub const VAULT_READ_METHOD_MAP: [VaultReadMethodMapping; VaultReadMethod::COUNT] = [
@@ -304,4 +325,15 @@ pub enum VaultReadAdapterKind {
     WireTransport,
     /// Cloud placeholder exposing the identical Rust surface.
     Cloud,
+}
+
+pub(crate) fn request_schema<T: schemars::JsonSchema>() -> serde_json::Value {
+    let mut settings = schemars::r#gen::SchemaSettings::default();
+    settings.inline_subschemas = true;
+    let mut schema = settings.into_generator().into_root_schema_for::<T>();
+    schema.meta_schema = None;
+    match serde_json::to_value(schema) {
+        Ok(value) => value,
+        Err(_) => serde_json::Value::Bool(false),
+    }
 }

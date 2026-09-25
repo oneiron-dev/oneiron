@@ -1,11 +1,12 @@
-use std::collections::{HashMap, HashSet};
+use crate::ports::EntityStoreRead;
+use std::collections::HashSet;
 
 use heed::RoTxn;
 
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::fusion;
-use crate::overlay_db::OverlayDb;
+
+use crate::ports::{EntityTime, TimeAxis, TimelineQuery};
 use crate::store::Store;
 use crate::temporal::TemporalAnchorMode;
 
@@ -16,9 +17,8 @@ use super::support::{
 };
 use super::types::{
     ADAPTIVE_ROUNDS, ALPHA_BASE, ALPHA_RANGE, ALPHA_TAU_SECS, ClaimStatusGateCache, EntityMetadata,
-    EntityMetadataCache, LONG_INTERVAL_VALUE_LEN, MAX_TEMPORAL_SEEK_BUFFER, PER_SCAN_CAP_FACTOR,
-    PipelineFilterConfig, RECENCY_DECAY_TAU_SECS, ScoredEntity, TEMPORAL_FLOOR, TEMPORAL_KEY_LEN,
-    TemporalSearchConfig,
+    EntityMetadataCache, MAX_TEMPORAL_SEEK_BUFFER, PER_SCAN_CAP_FACTOR, PipelineFilterConfig,
+    RECENCY_DECAY_TAU_SECS, ScoredEntity, TEMPORAL_FLOOR, TemporalSearchConfig,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -57,57 +57,12 @@ struct TemporalIndexRow {
     id: EntityId,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct PhoneticAccumulator {
-    score: f32,
-    matches: usize,
-}
-
 pub(super) fn execute_phonetic(
     store: &Store,
     rtxn: &RoTxn<'_>,
     codes: &[String],
 ) -> Result<Vec<ScoredEntity>> {
-    let mut unique = codes.to_vec();
-    unique.sort();
-    unique.dedup();
-
-    let mut accumulators = HashMap::<EntityId, PhoneticAccumulator>::new();
-
-    for code in unique {
-        let Some(posting) = store.phonetic_index.get(rtxn, code.as_bytes())? else {
-            continue;
-        };
-
-        if !posting.len().is_multiple_of(ENTITY_ID_LEN) {
-            return Err(Error::CorruptedIndex("phonetic posting"));
-        }
-
-        let (chunks, rem) = posting.as_chunks::<ENTITY_ID_LEN>();
-        debug_assert!(rem.is_empty());
-        for bytes in chunks {
-            let id = EntityId::from_bytes(*bytes)
-                .map_err(|_| Error::CorruptedIndex("phonetic posting"))?;
-            let entry = accumulators.entry(id).or_default();
-            entry.score += 1.0;
-            entry.matches += 1;
-        }
-    }
-
-    let mut out: Vec<ScoredEntity> = accumulators
-        .into_iter()
-        .map(|(id, accumulator)| {
-            let boosted = if accumulator.matches >= 2 {
-                accumulator.score * 1.2
-            } else {
-                accumulator.score
-            };
-            ScoredEntity { id, score: boosted }
-        })
-        .collect();
-
-    fusion::sort_scored_entities_desc(&mut out);
-    Ok(out)
+    crate::ports::RetrievalIndexRead::port_retrieval_phonetic_search(store, rtxn, codes)
 }
 
 pub(super) fn execute_temporal(
@@ -244,16 +199,15 @@ pub(super) fn collect_temporal_candidates(
             collect_occurred_candidates(store, rtxn, occurred_collection, out)?;
         }
         TemporalAnchorMode::Learned => {
-            collect_index_candidates(&store.temporal_learned, rtxn, learned_collection, out)?;
+            collect_index_candidates(store, TimeAxis::Learned, rtxn, learned_collection, out)?;
         }
         TemporalAnchorMode::Auto | TemporalAnchorMode::Both => {
             collect_occurred_candidates(store, rtxn, occurred_collection, out)?;
-            collect_index_candidates(&store.temporal_learned, rtxn, learned_collection, out)?;
+            collect_index_candidates(store, TimeAxis::Learned, rtxn, learned_collection, out)?;
         }
     }
 
     if config.anchor_mode != TemporalAnchorMode::Learned {
-        let long_interval_lower = temporal_key_bound(occurred_window_end, 0xFF);
         // Keep the top `per_scan_cap` spanners by the same exact temporal score
         // used later in `execute_temporal()`. Since `per_scan_cap` is 4x the
         // final result limit, anything outside this top-k cannot enter the
@@ -262,18 +216,10 @@ pub(super) fn collect_temporal_candidates(
         let trim_threshold = per_scan_cap
             .saturating_mul(2)
             .min(std::cmp::max(MAX_TEMPORAL_SEEK_BUFFER, per_scan_cap));
-        for entry in store.temporal_long_intervals.range(
-            rtxn,
-            &(
-                std::ops::Bound::Excluded(&long_interval_lower[..]),
-                std::ops::Bound::Unbounded,
-            ),
-        )? {
-            let (key, value) = entry?;
-            let (id, occurred_start, _) = decode_long_interval_row(&key, &value)?;
-            if occurred_start >= occurred_window_start {
-                continue;
-            }
+        for entry in
+            store.port_entity_long_spanning(rtxn, occurred_window_start, occurred_window_end)?
+        {
+            let (id, _) = entry?;
             let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
                 continue;
             };
@@ -373,13 +319,14 @@ fn collect_occurred_candidates(
     collection: TemporalIndexCollectionContext,
     out: &mut HashSet<EntityId>,
 ) -> Result<()> {
-    collect_index_candidates(&store.temporal_occurred_start, rtxn, collection, out)?;
-    collect_index_candidates(&store.temporal_occurred_end, rtxn, collection, out)?;
+    collect_index_candidates(store, TimeAxis::OccurredStart, rtxn, collection, out)?;
+    collect_index_candidates(store, TimeAxis::OccurredEnd, rtxn, collection, out)?;
     Ok(())
 }
 
 pub(super) fn collect_index_candidates(
-    db: &OverlayDb,
+    store: &Store,
+    axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext,
     out: &mut HashSet<EntityId>,
@@ -394,19 +341,17 @@ pub(super) fn collect_index_candidates(
         return Ok(());
     }
 
-    let window_start_key = temporal_key_bound(window_start, 0x00);
-    let window_end_key = temporal_key_bound(window_end, 0xFF);
-    let anchor_key = temporal_key_bound(anchor_mid, 0x00);
-
     let mut rows =
         Vec::<TemporalIndexRow>::with_capacity(cap.saturating_mul(2).min(MAX_TEMPORAL_SEEK_BUFFER));
 
-    let mut forward = db.range(
+    let mut forward = store.port_entity_timeline(
         rtxn,
-        &(
-            std::ops::Bound::Included(&anchor_key[..]),
-            std::ops::Bound::Included(&window_end_key[..]),
-        ),
+        TimelineQuery {
+            axis,
+            start: std::ops::Bound::Included(anchor_mid),
+            end: std::ops::Bound::Included(window_end),
+            ..Default::default()
+        },
     )?;
     while rows.len() < cap {
         let Some(row) = next_temporal_index_row(&mut forward)? else {
@@ -415,15 +360,18 @@ pub(super) fn collect_index_candidates(
         rows.push(row);
     }
 
-    let mut backward = db.rev_range(
+    let mut backward = store.port_entity_timeline(
         rtxn,
-        &(
-            std::ops::Bound::Included(&window_start_key[..]),
-            std::ops::Bound::Excluded(&anchor_key[..]),
-        ),
+        TimelineQuery {
+            axis,
+            start: std::ops::Bound::Included(window_start),
+            end: std::ops::Bound::Excluded(anchor_mid),
+            reverse: true,
+            ..Default::default()
+        },
     )?;
     let mut backward_rows = collect_temporal_index_rows(&mut backward, cap)?;
-    normalize_backward_boundary_bucket(db, rtxn, &mut backward_rows)?;
+    normalize_backward_boundary_bucket(store, axis, rtxn, &mut backward_rows)?;
     rows.extend(backward_rows);
 
     rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
@@ -434,39 +382,23 @@ pub(super) fn collect_index_candidates(
     Ok(())
 }
 
-fn next_temporal_index_row<'a, I>(iter: &mut I) -> Result<Option<TemporalIndexRow>>
+fn next_temporal_index_row<I>(iter: &mut I) -> Result<Option<TemporalIndexRow>>
 where
-    I: Iterator<Item = Result<(std::borrow::Cow<'a, [u8]>, std::borrow::Cow<'a, [u8]>)>>,
+    I: Iterator<Item = Result<EntityTime>>,
 {
     let Some(entry) = iter.next() else {
         return Ok(None);
     };
-    let (key, _) = entry?;
-    decode_temporal_index_row(&key).map(Some)
+    let row = entry?;
+    Ok(Some(TemporalIndexRow {
+        timestamp: row.timestamp,
+        id: row.id,
+    }))
 }
 
-fn decode_temporal_index_row(key: &[u8]) -> Result<TemporalIndexRow> {
-    if key.len() != TEMPORAL_KEY_LEN {
-        return Err(Error::CorruptedIndex("temporal index"));
-    }
-
-    let timestamp = u64::from_be_bytes(
-        key[..8]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("temporal index"))?,
-    );
-    let id = EntityId::from_bytes(
-        key[8..TEMPORAL_KEY_LEN]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("temporal index"))?,
-    )
-    .map_err(|_| Error::CorruptedIndex("temporal index"))?;
-    Ok(TemporalIndexRow { timestamp, id })
-}
-
-fn collect_temporal_index_rows<'a, I>(iter: &mut I, cap: usize) -> Result<Vec<TemporalIndexRow>>
+fn collect_temporal_index_rows<I>(iter: &mut I, cap: usize) -> Result<Vec<TemporalIndexRow>>
 where
-    I: Iterator<Item = Result<(std::borrow::Cow<'a, [u8]>, std::borrow::Cow<'a, [u8]>)>>,
+    I: Iterator<Item = Result<EntityTime>>,
 {
     let mut rows = Vec::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER));
 
@@ -481,7 +413,8 @@ where
 }
 
 fn normalize_backward_boundary_bucket(
-    db: &OverlayDb,
+    store: &Store,
+    axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     rows: &mut Vec<TemporalIndexRow>,
 ) -> Result<()> {
@@ -500,15 +433,15 @@ fn normalize_backward_boundary_bucket(
 
     let original_boundary_rows = rows.split_off(rows.len().saturating_sub(boundary_count));
 
-    let boundary_start_key = temporal_key_bound(boundary_timestamp, 0x00);
-    let boundary_end_key = temporal_key_bound(boundary_timestamp, 0xFF);
     let mut boundary_rows = Vec::with_capacity(boundary_count);
-    let mut boundary_iter = db.range(
+    let mut boundary_iter = store.port_entity_timeline(
         rtxn,
-        &(
-            std::ops::Bound::Included(&boundary_start_key[..]),
-            std::ops::Bound::Included(&boundary_end_key[..]),
-        ),
+        TimelineQuery {
+            axis,
+            start: std::ops::Bound::Included(boundary_timestamp),
+            end: std::ops::Bound::Included(boundary_timestamp),
+            ..Default::default()
+        },
     )?;
     while boundary_rows.len() < boundary_count {
         let Some(row) = next_temporal_index_row(&mut boundary_iter)? else {
@@ -537,36 +470,6 @@ fn compare_temporal_index_rows(
         .cmp(&anchor_mid.abs_diff(right.timestamp))
         .then_with(|| left.timestamp.cmp(&right.timestamp))
         .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
-}
-
-fn temporal_key_bound(ts: u64, fill: u8) -> [u8; TEMPORAL_KEY_LEN] {
-    let mut key = [fill; TEMPORAL_KEY_LEN];
-    key[..8].copy_from_slice(&ts.to_be_bytes());
-    key
-}
-
-fn decode_long_interval_row(key: &[u8], value: &[u8]) -> Result<(EntityId, u64, u64)> {
-    if key.len() != TEMPORAL_KEY_LEN || value.len() != LONG_INTERVAL_VALUE_LEN {
-        return Err(Error::CorruptedIndex("temporal long interval"));
-    }
-
-    let occurred_end = u64::from_be_bytes(
-        key[..8]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("temporal long interval"))?,
-    );
-    let id = EntityId::from_bytes(
-        key[8..TEMPORAL_KEY_LEN]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("temporal long interval"))?,
-    )
-    .map_err(|_| Error::CorruptedIndex("temporal long interval"))?;
-    let occurred_start = u64::from_be_bytes(
-        value
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("temporal long interval"))?,
-    );
-    Ok((id, occurred_start, occurred_end))
 }
 
 pub(super) fn scoped_text_channel_limit(
@@ -604,7 +507,7 @@ pub(super) fn scoped_entity_channel_limit(
     if !scope_widening_active || requested == 0 {
         return Ok(requested);
     }
-    let entity_count = usize::try_from(store.entities.len(rtxn)?)
+    let entity_count = usize::try_from(store.port_entity_count(rtxn)?)
         .map_err(|_| Error::IndexOverflow("entity count"))?;
     Ok(requested.max(entity_count))
 }

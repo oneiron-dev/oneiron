@@ -563,6 +563,9 @@ impl IntoResponse for ApiError {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct ApiErrorEnvelope {
     error: ApiErrorEnvelopeBody,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<crate::api::read_receipt::ReadReceiptSchema>)]
+    narrowing: Option<oneiron::claim::ScopedReadReceipt>,
 }
 
 /// Typed error payload nested under the transport envelope's error field.
@@ -579,6 +582,7 @@ pub struct ApiErrorEnvelopeBody {
 impl ApiErrorEnvelope {
     pub fn new(error: ApiError) -> Self {
         Self {
+            narrowing: None,
             error: ApiErrorEnvelopeBody {
                 code: error.code,
                 message: error.message,
@@ -592,18 +596,27 @@ impl ApiErrorEnvelope {
 
 /// Response wrapper that serializes [`ApiError`] through [`ApiErrorEnvelope`].
 #[derive(Clone, Debug)]
-pub struct EnvelopedApiError(ApiError);
+pub struct EnvelopedApiError(ApiError, Option<Box<oneiron::claim::ScopedReadReceipt>>);
 
 impl From<ApiError> for EnvelopedApiError {
     fn from(error: ApiError) -> Self {
-        Self(error)
+        Self(error, None)
+    }
+}
+
+impl EnvelopedApiError {
+    pub(crate) fn with_read_receipt(mut self, receipt: oneiron::claim::ScopedReadReceipt) -> Self {
+        self.1 = Some(Box::new(receipt));
+        self
     }
 }
 
 impl IntoResponse for EnvelopedApiError {
     fn into_response(self) -> Response {
         let status = self.0.status();
-        (status, Json(ApiErrorEnvelope::new(self.0))).into_response()
+        let mut envelope = ApiErrorEnvelope::new(self.0);
+        envelope.narrowing = self.1.map(|receipt| *receipt);
+        (status, Json(envelope)).into_response()
     }
 }
 

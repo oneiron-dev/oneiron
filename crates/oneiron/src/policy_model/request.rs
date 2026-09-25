@@ -219,6 +219,9 @@ pub struct PolicyModelConfig {
     /// knows no product routes, so a host that wants the offer supplies both
     /// its label and its target.
     pub owner_setting_change_offer: Option<GateSystemNoticeAction>,
+    /// Host-supplied explanation shown identically to the user and model on a human hold.
+    /// Empty or oversized text falls back to the engine's generic explanation.
+    pub owner_hold_notice: Option<String>,
     pub generation: PolicyGenerationParams,
     /// How much of the OWNER plane's content reaches the model. Read by the
     /// owner-plane pass and stamped on the owner-plane receipt; the hosted

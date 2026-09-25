@@ -23,7 +23,7 @@ use crate::ingest::{
 };
 use crate::provenance::validate_actor_class;
 use crate::temporal::TimeRange;
-use crate::{Vault, WriteActor, unix_seconds_now};
+use crate::{Vault, WriteActor};
 
 mod source_binding;
 
@@ -343,7 +343,7 @@ fn admit_facts(
             // Matching identities retain their value and lifecycle, including retraction.
             continue;
         }
-        let learned_at = unix_seconds_now();
+        let learned_at = vault.store.clock.now_recorded_at();
         let occurred = TimeRange {
             start: learned_at,
             end: learned_at,
@@ -407,7 +407,7 @@ fn resolve_employment(
             actor,
             evidence,
             weight,
-            learned_at: unix_seconds_now(),
+            learned_at: vault.store.clock.now_recorded_at(),
         })?;
     Ok(if created {
         Disposition::Created

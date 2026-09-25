@@ -52,6 +52,12 @@ pub struct ServeArgs {
     #[arg(long = "vault-name")]
     pub vault_name: Option<String>,
 
+    /// Non-secret account or organization id (32 bytes in hexadecimal), supplied
+    /// by the trusted supervisor. Required in managed mode. Never derived from
+    /// the vault name, per-vault key, or a tenant request.
+    #[arg(long = "derivation-owner")]
+    pub derivation_owner: Option<String>,
+
     /// Vault data directory. Managed mode's spelling of `--vault-path`, which
     /// stays available as the alias; unmanaged serve keeps using either.
     #[arg(long = "data-dir")]
@@ -173,14 +179,6 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_windows_per_connection: Option<usize>,
 
-    /// Maximum distinct valid windows one federated selector connection may touch.
-    #[arg(long)]
-    pub max_federation_windows_per_connection: Option<usize>,
-
-    /// Seconds to pause a federated selector connection after quota overflow.
-    #[arg(long)]
-    pub federation_flood_pause_secs: Option<u64>,
-
     /// Maximum inbound protocol messages per connection per second.
     #[arg(long)]
     pub max_messages_per_sec: Option<u32>,
@@ -249,15 +247,22 @@ pub struct ServeArgs {
     #[arg(long)]
     pub runtime_summarizer_model: Option<String>,
 
-    /// Deployment privacy posture: `hosted` (an operator hosts and CAN read
-    /// this vault) or `self_host_local` (owner-operated, owner-held key).
-    /// Defaults to `self_host_local`; hosting is opt-in.
+    /// Deployment privacy posture: `managed` (an operator hosts and CAN read
+    /// this vault), `relay` (blind relay, no host keys), or `self-host`
+    /// (owner-operated, owner-held key). Defaults to `self-host`; managed
+    /// hosting is opt-in.
     #[arg(long, value_parser = parse_privacy_posture)]
     pub privacy_posture: Option<HostingPrivacyPosture>,
+    /// Failure-signal participation for self-hosted deployments (default off).
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub failure_signal_export: Option<bool>,
+    /// Separate, explicit training consent (default off in every tier).
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub failure_signal_training: Option<bool>,
 
     /// Opaque host-managed KMS/HSM key reference (ARN / URI / key id), never
-    /// key material. Required by `--privacy-posture hosted` and rejected by
-    /// `self_host_local`.
+    /// key material. Required by `--privacy-posture managed` and rejected by
+    /// `relay` and `self-host`.
     #[arg(long)]
     pub hosted_kms_key_ref: Option<String>,
 }
@@ -301,14 +306,6 @@ impl fmt::Debug for ServeArgs {
             .field(
                 "max_windows_per_connection",
                 &self.max_windows_per_connection,
-            )
-            .field(
-                "max_federation_windows_per_connection",
-                &self.max_federation_windows_per_connection,
-            )
-            .field(
-                "federation_flood_pause_secs",
-                &self.federation_flood_pause_secs,
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
@@ -363,9 +360,9 @@ fn parse_runtime_provider_kind(value: &str) -> Result<RuntimeProviderKind, Strin
     value.parse()
 }
 
-/// Clap value parser for `--privacy-posture`. Accepts only the two exact wire
-/// values, so an unrecognized posture fails closed instead of resolving to a
-/// default.
+/// Clap value parser for `--privacy-posture`. Accepts only the three exact wire
+/// values (`managed`, `relay`, `self-host`), so an unrecognized posture fails
+/// closed instead of resolving to a default.
 fn parse_privacy_posture(value: &str) -> Result<HostingPrivacyPosture, String> {
     value.parse()
 }

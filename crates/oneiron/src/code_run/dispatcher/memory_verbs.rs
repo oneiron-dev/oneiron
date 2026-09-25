@@ -39,6 +39,16 @@ impl HostSelfDispatcher<'_> {
     /// The match is exhaustive so a new effect cannot default into either
     /// answer — it has to be ruled on here.
     pub(super) fn enforce_off_record_effect_policy(&self, effect: SelfEffect) -> Result<()> {
+        // Anonymous permits only effects with no transcript or mandatory
+        // audit. Do not execute destructive/outbound/approval effects while
+        // silently dropping the evidence their ordinary doors require.
+        if !matches!(effect, SelfEffect::MemorySearch | SelfEffect::Context)
+            && let ExecutorStorage::Session(binding) = &self.storage
+        {
+            binding
+                .route
+                .require_recording(binding.session.session_ref())?;
+        }
         if !self.storage.off_record_policy_active()? {
             return Ok(());
         }
@@ -49,6 +59,10 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
             | SelfEffect::MemoryWriteFixture
+            | SelfEffect::ReportBlocked
+            | SelfEffect::AgentsSpawn
+            | SelfEffect::TasksAsk
+            | SelfEffect::TasksWait
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
@@ -99,6 +113,7 @@ impl HostSelfDispatcher<'_> {
             None => *call.candidate,
         };
         let envelope = self.write_envelope(SelfEffect::MemoryWriteFixture, admission.as_ref())?;
+        let predicate = candidate.predicate().to_owned();
         match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
                 .batch()
@@ -109,7 +124,9 @@ impl HostSelfDispatcher<'_> {
                     call.occurred,
                     call.learned_at,
                 )
-                .commit()?,
+                .commit_with_target_guard(|txn| {
+                    vault.validate_code_run_claim_target_in_txn(txn, &call.id, Some(&predicate))
+                })?,
             ExecutorStorage::Session(binding) => {
                 binding.session.executor_batch_claim_candidate(
                     &binding.route,
@@ -140,7 +157,12 @@ impl HostSelfDispatcher<'_> {
             None => *call.candidate,
         };
         let envelope = self.write_envelope(SelfEffect::MemoryPutClaim, admission.as_ref())?;
-        let gate_body = candidate.clone().into_claim_body(&envelope);
+        // The write gate reads no facet; the stored body takes the vault
+        // default when the write applies.
+        let gate_body = candidate.clone().into_claim_body(
+            &envelope,
+            crate::claim::substrate_facet_id(envelope.actor().entity_ref()),
+        );
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
         match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
@@ -330,6 +352,7 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         // the refusal side with the rest of the structural kinds.
         | EdgeKind::Fulfills
         | EdgeKind::DischargedBy
+        | EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::AddressedTo | EdgeKind::RepliesTo
         // ONE-1414: `same_as` is structural and its writes belong to the
         // federation coreference door (`put_coreference_link`), which writes
         // the link and its status Claim in ONE transaction under an actor

@@ -3,6 +3,7 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::context_board::TASK_LABEL_MAX_BYTES;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::human_task::HumanTaskError;
@@ -159,6 +160,20 @@ pub(super) struct ValidatedTaskCreate {
     pub(super) spec: Value,
 }
 
+/// Refuses a TASK label the board cannot render: a present label must carry a
+/// non-whitespace character and fit [`TASK_LABEL_MAX_BYTES`].
+pub fn check_task_label(label: &str) -> MemoryResult<()> {
+    if label.trim().is_empty() {
+        return Err(MemoryError::bad_request("task label must not be blank"));
+    }
+    if label.len() > TASK_LABEL_MAX_BYTES {
+        return Err(MemoryError::bad_request(format!(
+            "task label must be at most {TASK_LABEL_MAX_BYTES} bytes"
+        )));
+    }
+    Ok(())
+}
+
 /// Settles `(kind, consult, assignee, ttl)` into one legal shape.
 ///
 /// Two branches: a peer-addressed consult with a typed payload, a future
@@ -171,6 +186,19 @@ pub(super) fn validate_task_create(
     spec: &TaskCreateSpec,
     now: u64,
 ) -> MemoryResult<ValidatedTaskCreate> {
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    validate_task_create_in(vault, &txn, spec, now)
+}
+
+pub(super) fn validate_task_create_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    spec: &TaskCreateSpec,
+    now: u64,
+) -> MemoryResult<ValidatedTaskCreate> {
+    if let Some(label) = spec.label.as_deref() {
+        check_task_label(label)?;
+    }
     match (
         spec.kind.unwrap_or(TaskKind::Standard),
         &spec.consult,
@@ -180,7 +208,12 @@ pub(super) fn validate_task_create(
         (
             TaskKind::Consult,
             Some(payload),
-            Some(assignee @ TaskAssignee::Peer { .. }),
+            Some(
+                assignee @ (TaskAssignee::Peer { .. }
+                | TaskAssignee::Child { .. }
+                | TaskAssignee::Human { .. }
+                | TaskAssignee::Dreamer),
+            ),
             Some(ttl),
         ) if spec.spec == Value::Nil => {
             if ttl.deadline_at <= now {
@@ -189,11 +222,11 @@ pub(super) fn validate_task_create(
                 ));
             }
             payload.validate()?;
-            assignee.validate(vault)?;
+            assignee.validate_in(vault, txn)?;
             for payload_ref in
                 std::iter::once(payload.question_ref).chain(payload.context_refs.iter().copied())
             {
-                require_resolved_payload_ref(vault, payload_ref)?;
+                require_resolved_payload_ref_in(vault, txn, payload_ref)?;
             }
             Ok(ValidatedTaskCreate {
                 kind: TaskKind::Consult,
@@ -217,7 +250,7 @@ pub(super) fn validate_task_create(
                 // inside the create transaction, so a known-but-unreachable
                 // person rolls the whole create back instead of leaving a human
                 // task nothing is tracking.
-                assignee.validate(vault)?;
+                assignee.validate_in(vault, txn)?;
             }
             Ok(ValidatedTaskCreate {
                 kind: TaskKind::Standard,
@@ -238,7 +271,18 @@ pub(super) fn require_resolved_payload_ref(
     vault: &Vault,
     payload_ref: ConsultPayloadRef,
 ) -> MemoryResult<()> {
-    if vault.get_entity_type(&payload_ref.entity_ref())? == Some(payload_ref.entity_type()) {
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    require_resolved_payload_ref_in(vault, &txn, payload_ref)
+}
+
+fn require_resolved_payload_ref_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    payload_ref: ConsultPayloadRef,
+) -> MemoryResult<()> {
+    if vault.get_entity_type_in_txn(txn, &payload_ref.entity_ref())?
+        == Some(payload_ref.entity_type())
+    {
         Ok(())
     } else {
         Err(MemoryError::bad_request(
@@ -357,9 +401,9 @@ pub(crate) fn task_human_assignee(vault: &Vault, task_ref: EntityId) -> Result<O
             None
             | Some(
                 TaskAssignee::Dreamer
-                | TaskAssignee::AnswerHolders
                 | TaskAssignee::AgentDef { .. }
-                | TaskAssignee::Peer { .. },
+                | TaskAssignee::Peer { .. }
+                | TaskAssignee::Child { .. },
             ) => None,
         }),
     )
@@ -369,6 +413,9 @@ pub(crate) fn task_human_assignee(vault: &Vault, task_ref: EntityId) -> Result<O
 /// it as its no-early-resume guard: a queued or working delegation has nothing
 /// to resume on.
 pub(crate) fn task_is_terminal(vault: &Vault, task_ref: EntityId) -> Result<bool> {
+    if let Some(terminal) = super::ask_record::ask_is_terminal(vault, task_ref)? {
+        return Ok(terminal);
+    }
     Ok(task_verb_body(vault, task_ref)?
         .and_then(|body| body.state)
         .is_some_and(|state| state.terminal().is_some()))

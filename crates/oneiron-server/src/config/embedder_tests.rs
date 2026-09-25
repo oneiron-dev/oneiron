@@ -105,9 +105,12 @@ fn a_third_party_locality_in_the_file_is_refused_by_name() {
 /// and says why rather than listing alternatives.
 #[test]
 fn a_third_party_locality_in_the_environment_is_refused_with_the_reason() {
-    let env = EnvConfig::from_pairs([("ONEIRON_EMBEDDER_LOCALITY", "third-party")]);
-    let error = env.expect_err("third-party is refused").to_string();
-    assert!(error.contains("egress predicate"), "{error}");
+    let env = EnvConfig::from_pairs([
+        ("ONEIRON_DIMENSIONS", "1024"),
+        ("ONEIRON_EMBEDDER_LOCALITY", "third-party"),
+    ])
+    .expect("locality parses");
+    assert!(resolve_serve_config_with_sources(&ServeArgs::default(), env, None).is_err());
 }
 
 /// bf16 has no CPU matmul path worth running, so the pairing is refused while it
@@ -206,4 +209,23 @@ fn an_unknown_key_inside_the_section_fails_closed() {
     let chain = format!("{error:#}");
     assert!(chain.contains("parse config file"), "{chain}");
     assert!(chain.contains("not_a_key"), "{chain}");
+}
+
+#[test]
+fn remote_third_party_requires_host_egress_at_startup() {
+    let body = r#"dimensions = 1024
+[embedder]
+provider = "local"
+[embedder.remote]
+endpoint = "https://embed.example/v1"
+model_key = "harrier"
+locality = "third-party"
+"#;
+    assert!(resolve(body).is_err());
+    let allowed = format!("{body}\n[embedder.remote.egress]\nallow_all = false\n");
+    let config = resolve(&allowed).unwrap();
+    assert_eq!(
+        config.embedder.unwrap().remote.unwrap().locality,
+        EmbedderLocality::ThirdParty
+    );
 }

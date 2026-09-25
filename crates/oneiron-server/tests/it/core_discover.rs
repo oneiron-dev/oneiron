@@ -29,7 +29,7 @@ fn test_vault_config() -> VaultConfig {
 
 fn large_test_vault_config() -> VaultConfig {
     let mut config = test_vault_config();
-    config.map_size = 256 * 1024 * 1024;
+    config.map_size = VaultConfig::device().map_size;
     config
 }
 
@@ -196,13 +196,15 @@ async fn context_board_counts_by_type_and_reports_latest_activity() {
     let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("context board should deserialize");
 
+    // The seeded open births the owner PERSON first, so it is counted beside
+    // the PERSON this test writes.
     assert_eq!(
         bundle
             .session
             .counts
             .get(&ENTITY_TYPE_PERSON.to_string())
             .copied(),
-        Some(1)
+        Some(2)
     );
     assert_eq!(
         bundle
@@ -502,10 +504,15 @@ async fn discover_requires_auth_and_returns_bootstrap_contract() {
         (oneiron::registry::ENTITY_TYPE_SKILL, 4),
         (oneiron::registry::ENTITY_TYPE_CLAIM, 8),
         (oneiron::registry::ENTITY_TYPE_SKILL_CONTENT_ANCHOR, 4),
+        (oneiron::registry::ENTITY_TYPE_ASSET, 4),
         (oneiron::registry::ENTITY_TYPE_CONVERSATION, 1),
         (vault.project_type_byte().unwrap(), 1),
+        // The seeded open births the owner PERSON, and that put mints the
+        // owner's substrate FACET.
+        (ENTITY_TYPE_PERSON, 1),
+        (oneiron::registry::ENTITY_TYPE_FACET, 1),
     ];
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+    let (addr, handle) = spawn_server(Arc::clone(&vault), config_with_secret("secret")).await;
 
     let missing = http_get(addr, "/api/core/discover", None).await;
     assert_http_status(&missing, 401);
@@ -615,7 +622,19 @@ async fn discover_requires_auth_and_returns_bootstrap_contract() {
     assert!(body["bound"]["vault"].is_null());
     assert!(body["bound"]["persona"].is_null());
     assert!(body["bound"]["conversation"].is_null());
-    assert!(body["personas"].as_array().unwrap().is_empty());
+    // The seeded open births the owner PERSON first, so a fresh vault's one
+    // persona is its owner. The id is read after the response, so this cannot
+    // be the call that births it.
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let personas = body["personas"].as_array().unwrap();
+    assert_eq!(personas.len(), 1);
+    assert_eq!(personas[0]["id"].as_str(), Some(owner.to_hex().as_str()));
+    assert_eq!(
+        vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_FACET)
+            .unwrap(),
+        vec![oneiron::claim::substrate_facet_id(owner)]
+    );
     let conversations = body["conversations"].as_array().unwrap();
     assert_eq!(conversations.len(), 1);
     assert_eq!(
@@ -776,7 +795,7 @@ async fn discover_reports_seeded_counts_namespaces_and_health_capabilities() {
             ENTITY_TYPE_CONVERSATION,
             time_range(4, 4),
             40,
-            b"conversation",
+            b"\x80",
         )
         .unwrap();
 
@@ -793,7 +812,7 @@ async fn discover_reports_seeded_counts_namespaces_and_health_capabilities() {
         .put_claim(&claim, &claim_body, time_range(5, 5), 50)
         .unwrap();
 
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+    let (addr, handle) = spawn_server(Arc::clone(&vault), config_with_secret("secret")).await;
 
     let response = http_get(addr, "/api/core/discover", Some("secret")).await;
     assert_http_status(&response, 200);
@@ -801,19 +820,28 @@ async fn discover_reports_seeded_counts_namespaces_and_health_capabilities() {
 
     assert_eq!(body["counts"]["0"].as_u64(), Some(initial_claims + 1));
     assert_eq!(body["counts"]["1"].as_u64(), Some(2));
-    assert_eq!(body["counts"]["4"].as_u64(), Some(1));
     assert_eq!(
-        body["counts"]["11"].as_u64(),
+        body["counts"]["4"].as_u64(),
         Some(initial_conversations + 1)
     );
+    // The seeded open births the owner PERSON first, so it is counted and
+    // listed beside the persona this test writes.
+    assert_eq!(body["counts"]["10"].as_u64(), Some(2));
     assert_eq!(body["last_activity"].as_u64(), Some(50));
     assert_eq!(
         str_array_set(&body["predicate_namespaces"]),
         BTreeSet::from(["profile", "skill"])
     );
+    let owner = vault.ensure_embedded_owner_actor().unwrap().to_hex();
+    let persona_hex = persona.to_hex();
     assert_eq!(
-        body["personas"][0]["id"].as_str(),
-        Some(persona.to_hex().as_str())
+        body["personas"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_str().unwrap())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([owner.as_str(), persona_hex.as_str()])
     );
     assert!(
         body["conversations"]

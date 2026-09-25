@@ -572,6 +572,7 @@ fn suspend_cap_uses_engine_clock() -> Result<()> {
     assert_eq!((tally.admitted, tally.refused), (1, 1));
     let suspended = vault.get_connector_key(&id)?.expect("stored key");
     assert_eq!(suspended.status, ConnectorKeyStatus::Suspended);
+
     assert_eq!(suspended.status_changed_at, Some(FROZEN));
 
     // Resume keeps usage (the hard cap is the window, not the status), so
@@ -742,7 +743,7 @@ fn charter_block_slots_round_trip_for_gov10() -> Result<()> {
 
 #[test]
 fn connector_key_registry_entry_is_pinned() -> Result<()> {
-    assert_eq!(ENTITY_TYPE_CONNECTOR_KEY, 70);
+    assert_eq!(ENTITY_TYPE_CONNECTOR_KEY, 80);
     let entry = entity_type_registry_entry(ENTITY_TYPE_CONNECTOR_KEY).expect("registered");
     assert_eq!(entry.kind, "CONNECTOR_KEY");
     assert_eq!(entry.type_byte, ENTITY_TYPE_CONNECTOR_KEY);
@@ -753,7 +754,7 @@ fn connector_key_registry_entry_is_pinned() -> Result<()> {
     assert!(matches!(
         validate_public_entity_type(ENTITY_TYPE_CONNECTOR_KEY),
         Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
-            70
+            80
         )))
     ));
     Ok(())
@@ -1157,8 +1158,27 @@ fn lifecycle_transitions_are_enforced() -> Result<()> {
         ConnectorKeyRecord::active("line", None, Vec::new(), 1_000),
     )?;
 
+    let old_pin = vault.pin_entity_revision(&id)?;
+    let old_raw = vault.get_raw_with_mode(&id, crate::vault::entity_revision::ReadMode::Live)?;
     let suspended = vault.suspend_connector_key(&id, "owner", 1_010)?;
     assert_eq!(suspended.status, ConnectorKeyStatus::Suspended);
+    let new_pin = vault.pin_entity_revision(&id)?;
+    assert_ne!(old_pin, new_pin);
+    assert_eq!(vault.pin_entity_revision(&id)?, new_pin);
+    assert_eq!(
+        vault.get_raw_with_mode(
+            &id,
+            crate::vault::entity_revision::ReadMode::Pinned(old_pin)
+        )?,
+        old_raw
+    );
+    assert_eq!(
+        vault.get_raw_with_mode(
+            &id,
+            crate::vault::entity_revision::ReadMode::Pinned(new_pin)
+        )?,
+        vault.get_raw_with_mode(&id, crate::vault::entity_revision::ReadMode::Live)?
+    );
     assert_eq!(suspended.suspended_reason.as_deref(), Some("owner"));
     assert!(matches!(suspended.status_changed_at, Some(at) if (1_010..1_011).contains(&at)));
     // Suspend requires Active.

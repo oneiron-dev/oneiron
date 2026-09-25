@@ -119,7 +119,7 @@ impl Vault {
 
     /// Resolves a stale pending ask by emitting a `let_go` receipt and removing it from the tray.
     pub fn let_go_pending_ask(&self, claim_id: &EntityId) -> Result<Option<ReceiptRecord>> {
-        self.let_go_pending_ask_at(claim_id, crate::unix_seconds_now())
+        self.let_go_pending_ask_at(claim_id, self.store.clock.now_recorded_at())
     }
 
     /// Testable variant of [`Vault::let_go_pending_ask`] with an explicit event time.
@@ -301,7 +301,12 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     if query.includes_kind(ReceiptKind::IdentityLifecycle)
         || query.includes_kind(ReceiptKind::ProposalOutcome)
     {
-        records.extend(identity_topology_receipts(vault, &rtxn, query)?);
+        records.extend(identity_topology_receipts(
+            vault,
+            &rtxn,
+            query,
+            MAX_RECEIPT_QUERY_SCAN,
+        )?);
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
@@ -436,7 +441,15 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         let page_len = decisions.len();
         before = decisions.last().map(|decision| decision.decision_id);
         for decision in decisions {
-            let receipt = gate_decision_receipt(&decision);
+            let mut receipt = gate_decision_receipt(&decision);
+            if let Some(predicate) = decision
+                .receipt_reasons
+                .iter()
+                .find_map(|token| crate::self_heal::tripwires::normal_baseline_predicate(token))
+            {
+                receipt.fields.insert("predicate".into(), predicate.into());
+                receipt.fields.insert("criticality".into(), "normal".into());
+            }
             if query.matches(&receipt) {
                 if query.job_ref.is_none() {
                     // Decision ids define ledger traversal, but connector-key

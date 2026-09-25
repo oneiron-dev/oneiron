@@ -19,18 +19,23 @@ impl ConsolidationExecutor<'_> {
             envelope: CallEnvelope {
                 scope: scope.clone(),
                 purpose: CallPurpose::Extraction,
-                class: CallClass::BestEffort,
-                tier: TierPrecedence {
-                    per_call: None,
-                    vault_policy: None,
-                    purpose_default: None,
-                    global_default: ModelTierRef("consolidation".to_owned()),
+                class: CallClass::Durable {
+                    fallback: crate::llm::DeterministicFallback {
+                        name: "json_rules_v1".into(),
+                        config: Some(
+                            serde_json::json!({"version":1,"rows":[{"failure":"fatal","value":{"candidates":[],"people":[],"fallback":"model_unavailable"}}]}),
+                        ),
+                    },
                 },
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Extraction,
+                    ModelTierRef("consolidation".into()),
+                ),
                 response_format: ResponseFormat::Json {
                     schema: super::super::extracted_people::extraction_response_schema(),
                 },
                 locality: ModelLocality::OwnServer,
-            },
+            }.with_purpose_defaults(),
             messages: vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
@@ -108,15 +113,6 @@ impl ConsolidationExecutor<'_> {
                     "extraction relationship crossed branch scope",
                 ));
             }
-            let claim_id = deterministic_claim_id(
-                attempt_id,
-                subject,
-                predicate,
-                &value,
-                partition.world_ref,
-                partition.facet_ref,
-                rel,
-            );
             let evidence_turn_refs: Vec<EntityId> = item
                 .get("evidence_turn_refs")
                 .and_then(|value| value.as_array())
@@ -135,12 +131,30 @@ impl ConsolidationExecutor<'_> {
             if let Some(world) = partition.world_ref {
                 candidate = candidate.with_world(world);
             }
+            let mut fields = Vec::new();
             if let Some(facet) = partition.facet_ref {
-                candidate = candidate.with_scope(Value::Map(vec![(
+                fields.push((
                     Value::from(TURN_BODY_FACET_REF_KEY),
                     Value::Binary(facet.as_bytes().to_vec()),
-                )]));
+                ));
             }
+            if let Some(topic) = item.get("topic_key").filter(|value| !value.is_null()) {
+                fields.push((Value::from("topic_key"), json_to_rmpv(topic)));
+            }
+            if !fields.is_empty() {
+                candidate = candidate.with_scope(Value::Map(fields));
+            }
+            let facts = candidate_facts(&candidate)?;
+            let claim_id = deterministic_claim_id(
+                attempt_id,
+                subject,
+                predicate,
+                &facts.value,
+                partition.world_ref,
+                partition.facet_ref,
+                rel,
+                facts.topic.as_deref(),
+            );
             candidates.push(PromotionCandidate {
                 claim_id,
                 candidate,

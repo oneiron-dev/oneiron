@@ -164,6 +164,21 @@ impl BudgetGuard {
         self.settle_usage(lease, llm_usage_units(usage))
     }
 
+    /// Charges this lease's reserved estimate when a started call has no terminal usage.
+    /// Idempotent with normal settlement; unmetered local continuation stays uncharged.
+    pub fn settle_reserved(&self, lease: &BudgetLease) -> Result<BudgetSettlement, BudgetDenied> {
+        let units = {
+            let state = self.lock_state();
+            state.check_lease_provenance(lease)?;
+            state
+                .leases
+                .get(lease.id())
+                .ok_or(BudgetDenied::LeaseInvalid)?
+                .reserve_units
+        };
+        self.settle_usage(lease, units)
+    }
+
     pub fn abort(&self, lease: &BudgetLease) -> Result<BudgetSettlement, BudgetDenied> {
         let mut state = self.lock_state();
         state.check_lease_provenance(lease)?;

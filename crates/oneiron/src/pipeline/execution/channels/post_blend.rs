@@ -60,11 +60,19 @@ impl PipelineBuilder<'_> {
         authority::apply(
             scores,
             inputs.authority_filter,
+            self.type_filter.as_deref(),
             &self.vault.store,
             rtxn,
             metadata_cache,
             claim_gate,
         )?;
+        if self.made_by != crate::provenance::made_by::MadeByPredicate::All {
+            scores.retain(|scored| match claim_gate.decisions.get(&scored.id) {
+                Some(Some(body)) => self.made_by.matches(body.made_by_class()),
+                Some(None) => false,
+                None => false,
+            });
+        }
         if before_filters > 0 && scores.is_empty() {
             empty_reason = Some(EmptyReason::FilterMatchedNone);
         }
@@ -147,7 +155,7 @@ impl PipelineBuilder<'_> {
             scores,
             &self.vault.store,
             rtxn,
-            self.world_scope,
+            &self.world_scope,
             inputs.filter_config.world_active_set,
         )?;
         if before_world > 0 && scores.is_empty() {

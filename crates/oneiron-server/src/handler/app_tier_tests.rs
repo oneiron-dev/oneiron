@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
 use super::*;
-use crate::auth::{mint_core_token_v2, revoke_token_jti};
+use crate::auth::mint_core_token_v2;
 use crate::config::SyncServerConfig;
 use serde_json::json;
 
@@ -12,6 +12,15 @@ const JTI: &str = "02020202020202020202020202020202";
 fn server() -> (tempfile::TempDir, SyncServer) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    vault
+        .put_entity(
+            &oneiron::EntityId::from_hex(PRINCIPAL).unwrap(),
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"app principal",
+        )
+        .unwrap();
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -24,20 +33,21 @@ fn server() -> (tempfile::TempDir, SyncServer) {
 }
 
 fn state(version: u8) -> ConnState {
-    ConnState::new(1000, version, FederationQuotaConfig::new(10, 1))
+    ConnState::new(version)
 }
 
 fn token() -> String {
-    mint_core_token_v2(
-        SECRET,
-        &format!("scope=core:read;principal_ref={PRINCIPAL};jti={JTI}"),
-    )
+    format!("scope=core:read;principal_ref={PRINCIPAL};jti={JTI}")
 }
-
-fn bind(token: &str) -> Vec<u8> {
+fn bind(server: &SyncServer, token: &str) -> Vec<u8> {
+    let params = if token.starts_with("scope=") {
+        crate::test_credentials::bind_payload(server, token)
+    } else {
+        json!({"token":token})
+    };
     crate::livequery::test_wire::request(
         protocol::TAG_RPC,
-        json!({"requestId": 7, "method": "auth.bind", "params": {"token": token}}),
+        json!({"requestId":7,"method":"auth.bind","params":params}),
     )[1..]
         .to_vec()
 }
@@ -63,9 +73,23 @@ async fn app_version_and_bind_gates_precede_payload_decoding() {
 #[tokio::test]
 async fn bind_is_once_only_and_does_not_change_sync_mode() {
     let (_dir, server) = server();
+    server
+        .wire_telemetry
+        .set_thresholds(&crate::wire_telemetry::WireThresholds {
+            window_secs: u64::MAX,
+            ..Default::default()
+        })
+        .unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state(protocol::APP_TIER_PROTOCOL_VERSION_VERSION);
-    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(&token()), &tx).unwrap();
+    handle_app_message(
+        &server,
+        &mut state,
+        protocol::TAG_RPC,
+        &bind(&server, &token()),
+        &tx,
+    )
+    .unwrap();
     assert_eq!(
         state.bound_auth.as_ref().unwrap().principal_ref(),
         Some(PRINCIPAL)
@@ -79,14 +103,39 @@ async fn bind_is_once_only_and_does_not_change_sync_mode() {
     assert!(value["result"].is_null());
     assert!(rx.try_recv().is_err());
     assert!(matches!(
-        handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(&token()), &tx),
+        handle_app_message(
+            &server,
+            &mut state,
+            protocol::TAG_RPC,
+            &bind(&server, &token()),
+            &tx
+        ),
         Err(ProtocolError::RpcNoPrincipal)
     ));
+    let window = server.wire_telemetry.snapshot().unwrap().unwrap();
+    assert_eq!(
+        window.by_verb,
+        std::collections::BTreeMap::from([("auth.bind".to_owned(), 2)])
+    );
+    assert_eq!(
+        window.by_actor,
+        std::collections::BTreeMap::from([
+            (PRINCIPAL.to_owned(), 1),
+            ("unauthenticated".to_owned(), 1),
+        ])
+    );
 }
 
 #[tokio::test]
 async fn every_invalid_bind_fails_closed() {
     let (_dir, server) = server();
+    server
+        .wire_telemetry
+        .set_thresholds(&crate::wire_telemetry::WireThresholds {
+            window_secs: u64::MAX,
+            ..Default::default()
+        })
+        .unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let malformed_mac = format!("v2.scope=core:read;principal_ref={PRINCIPAL}.bad");
     let unknown = mint_core_token_v2(
@@ -104,19 +153,54 @@ async fn every_invalid_bind_fails_closed() {
         let mut state = state(protocol::APP_TIER_PROTOCOL_VERSION_VERSION);
         assert!(
             matches!(
-                handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(invalid), &tx),
+                handle_app_message(
+                    &server,
+                    &mut state,
+                    protocol::TAG_RPC,
+                    &bind(&server, invalid),
+                    &tx
+                ),
                 Err(ProtocolError::RpcNoPrincipal)
             ),
             "{invalid}"
         );
         assert!(state.bound_auth.is_none());
     }
-    revoke_token_jti(server.vault(), JTI).unwrap();
+    crate::test_credentials::revoke(&server, &token());
     let mut state = state(protocol::APP_TIER_PROTOCOL_VERSION_VERSION);
     assert!(matches!(
-        handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(&token()), &tx),
+        handle_app_message(
+            &server,
+            &mut state,
+            protocol::TAG_RPC,
+            &bind(&server, &token()),
+            &tx
+        ),
         Err(ProtocolError::RpcNoPrincipal)
     ));
+    let missing_token = crate::livequery::test_wire::request(
+        protocol::TAG_RPC,
+        json!({"requestId": 8, "method": "auth.bind", "params": {}}),
+    );
+    assert!(matches!(
+        handle_app_message(
+            &server,
+            &mut state,
+            protocol::TAG_RPC,
+            &missing_token[1..],
+            &tx
+        ),
+        Err(ProtocolError::RpcNoPrincipal)
+    ));
+    let window = server.wire_telemetry.snapshot().unwrap().unwrap();
+    assert_eq!(
+        window.by_verb,
+        std::collections::BTreeMap::from([("auth.bind".to_owned(), 7)])
+    );
+    assert_eq!(
+        window.by_actor,
+        std::collections::BTreeMap::from([("unauthenticated".to_owned(), 7)])
+    );
 }
 
 #[tokio::test]
@@ -124,8 +208,15 @@ async fn bound_revocation_stops_app_requests_but_does_not_rebind_sync() {
     let (_dir, server) = server();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state(protocol::APP_TIER_PROTOCOL_VERSION_VERSION);
-    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(&token()), &tx).unwrap();
-    revoke_token_jti(server.vault(), JTI).unwrap();
+    handle_app_message(
+        &server,
+        &mut state,
+        protocol::TAG_RPC,
+        &bind(&server, &token()),
+        &tx,
+    )
+    .unwrap();
+    crate::test_credentials::revoke(&server, &token());
     let read = crate::livequery::test_wire::request(
         protocol::TAG_RPC,
         json!({"requestId":8,"method":"hydrate","params":{"refs":[]}}),
@@ -143,7 +234,14 @@ async fn missing_actor_class_is_forbidden_and_not_a_human_fallback() {
     let (_dir, server) = server();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state(protocol::APP_TIER_PROTOCOL_VERSION_VERSION);
-    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(&token()), &tx).unwrap();
+    handle_app_message(
+        &server,
+        &mut state,
+        protocol::TAG_RPC,
+        &bind(&server, &token()),
+        &tx,
+    )
+    .unwrap();
     rx.try_recv().unwrap();
     let read = crate::livequery::test_wire::request(
         protocol::TAG_RPC,
@@ -162,13 +260,17 @@ async fn missing_actor_class_is_forbidden_and_not_a_human_fallback() {
 async fn verified_class_reaches_production_rpc_and_scope_refusal_stays_typed() {
     let (_dir, server) = server();
     for scope in ["core:read", "core:write"] {
-        let slip = mint_core_token_v2(
-            SECRET,
-            &format!("scope={scope};principal_ref={PRINCIPAL};actor_class=agent"),
-        );
+        let slip = format!("scope={scope};principal_ref={PRINCIPAL};actor_class=agent");
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut state = state(protocol::APP_TIER_PROTOCOL_VERSION_VERSION);
-        handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(&slip), &tx).unwrap();
+        handle_app_message(
+            &server,
+            &mut state,
+            protocol::TAG_RPC,
+            &bind(&server, &slip),
+            &tx,
+        )
+        .unwrap();
         assert_eq!(
             state.bound_auth.as_ref().unwrap().actor_class(),
             Some("agent")
@@ -197,7 +299,7 @@ async fn verified_class_reaches_production_rpc_and_scope_refusal_stays_typed() {
 }
 
 #[test]
-fn legacy_hello_and_selector_semantics_survive_single_bump() {
+fn legacy_hello_and_authenticated_selector_modes_remain_distinct() {
     use oneiron::sync::transport::TAG_PROTOCOL_HELLO;
     for version in [
         protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
@@ -209,7 +311,13 @@ fn legacy_hello_and_selector_semantics_survive_single_bump() {
             Ok(version)
         );
     }
-    let mut selector = state(protocol::LEGACY_SELECTOR_PROTOCOL_VERSION);
+    let mut retired_selector = state(protocol::LEGACY_SELECTOR_PROTOCOL_VERSION);
+    assert!(
+        retired_selector
+            .bind_window_sync_mode(WindowSyncMode::Selector)
+            .is_err()
+    );
+    let mut selector = state(protocol::PROTOCOL_VERSION);
     selector
         .bind_window_sync_mode(WindowSyncMode::Selector)
         .unwrap();

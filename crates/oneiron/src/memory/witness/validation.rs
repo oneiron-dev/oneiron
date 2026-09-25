@@ -2,12 +2,13 @@
 
 use super::super::*;
 use super::decode_witness_turn_speaker;
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 
 use std::collections::HashSet;
 
 use rmpv::Value;
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError};
@@ -24,11 +25,15 @@ pub(crate) fn sole_edge_target(
     kind: EdgeKind,
     label: &'static str,
 ) -> MemoryResult<Option<EntityId>> {
-    let prefix = crate::vault::edge_kind_prefix(source, kind);
     let mut target = None;
-    for row in dbs.edges_out().prefix_iter(txn, &prefix)? {
-        let (key, _) = row?;
-        let (_, _, candidate) = crate::edge::parse_strict_edge_record_key(&key)?;
+    for row in dbs.port_edges(
+        txn,
+        source,
+        crate::ports::EdgeDirection::Out,
+        Some(kind),
+        None,
+    )? {
+        let candidate = row?.target;
         if target.replace(candidate).is_some() {
             return Err(MemoryError::bad_request(format!(
                 "an existing witnessed {label} has more than one {kind:?} parent"
@@ -48,16 +53,16 @@ pub(super) fn validate_existing_witness_turn(
     conversation_id: &EntityId,
     incoming_speaker: Option<&str>,
 ) -> MemoryResult<bool> {
-    let Some(raw) = dbs.entities().get(txn, turn_id.as_bytes())? else {
+    let Some(raw) = dbs.port_entity_record(txn, turn_id)? else {
         return Ok(false);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_TURN {
+
+    if raw.entity_type != ENTITY_TYPE_TURN {
         return Err(MemoryError::bad_request(
             "the witnessed turn ref resolves to a non-TURN entity",
         ));
     }
-    let stored_speaker = decode_witness_turn_speaker(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    let stored_speaker = decode_witness_turn_speaker(&raw.body)?;
     if incoming_speaker.is_some_and(|incoming| incoming != stored_speaker) {
         return Err(MemoryError::bad_request(
             "the witnessed turn already belongs to another speaker",
@@ -89,16 +94,16 @@ pub(super) fn validate_existing_witness_message(
     author: WitnessAuthor,
     actor: &EntityId,
 ) -> MemoryResult<bool> {
-    let Some(raw) = dbs.entities().get(txn, message_id.as_bytes())? else {
+    let Some(raw) = dbs.port_entity_record(txn, message_id)? else {
         return Ok(false);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_MESSAGE {
+
+    if raw.entity_type != ENTITY_TYPE_MESSAGE {
         return Err(MemoryError::bad_request(
             "the witnessed message id resolves to a non-MESSAGE entity",
         ));
     }
-    if &raw[ENTITY_METADATA_HEADER_LEN..] != body {
+    if raw.body != body {
         return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
             "an existing MESSAGE id is bound to its original canonical body",
         ))
@@ -154,11 +159,15 @@ pub(super) fn validate_existing_witness_message_orders(
         occupied[word] |= 1_u64 << (message.order % 64);
     }
 
-    let prefix = crate::vault::edge_kind_prefix(turn_id, EdgeKind::PartOf);
-    for row in dbs.edges_in().prefix_iter(txn, &prefix)? {
-        let (key, value) = row?;
-        let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
-        if edge.source != *turn_id || edge.kind != EdgeKind::PartOf {
+    for row in dbs.port_edges(
+        txn,
+        turn_id,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::PartOf),
+        None,
+    )? {
+        let edge = row?;
+        if edge.kind != EdgeKind::PartOf {
             return Err(Error::CorruptedIndex("witness turn message edge").into());
         }
         let message_id = edge.target;
@@ -168,15 +177,12 @@ pub(super) fn validate_existing_witness_message_orders(
             continue;
         }
         let raw = dbs
-            .entities()
-            .get(txn, message_id.as_bytes())?
+            .port_entity_record(txn, &message_id)?
             .ok_or(Error::CorruptedIndex("witness message edge target"))?;
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("witness message header"))?;
-        if header.entity_type != ENTITY_TYPE_MESSAGE {
+        if raw.entity_type != ENTITY_TYPE_MESSAGE {
             return Err(Error::CorruptedIndex("witness turn message type").into());
         }
-        let order = canonical_witness_message_order(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let order = canonical_witness_message_order(&raw.body)?;
         let word = (order / 64) as usize;
         let mask = 1_u64 << (order % 64);
         if occupied[word] & mask != 0 {
@@ -196,6 +202,16 @@ pub(super) fn validate_existing_witness_message_orders(
 /// checks. Validation is repeated at this storage boundary so a malformed
 /// persisted sibling cannot be treated as an ordinary occupied slot.
 fn canonical_witness_message_order(body: &[u8]) -> MemoryResult<u32> {
+    // MESSAGE text-plane rows retain immutable axes with a document pointer.
+    // Reconstruct an empty canonical content slot solely to validate the order
+    // envelope; this is not a writer or text resolver and grants no authority.
+    let canonical;
+    let body = if let Some(bytes) = message_pointer_order_envelope(body)? {
+        canonical = bytes;
+        canonical.as_slice()
+    } else {
+        body
+    };
     validate_canonical_witness_message_body(body)?;
     let mut cursor = body;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
@@ -263,4 +279,64 @@ pub(in crate::memory) fn distinct_message_orders(messages: &[WitnessMessage]) ->
         seen[word] |= mask;
     }
     Ok(())
+}
+
+/// Pointer-aware metadata validation for sibling-order scans (no document load).
+fn message_pointer_order_envelope(body: &[u8]) -> MemoryResult<Option<Vec<u8>>> {
+    let mut input = body;
+    let value =
+        rmpv::decode::read_value(&mut input).map_err(|_| Error::CorruptedIndex("message body"))?;
+    let Value::Map(fields) = value else {
+        return Ok(None);
+    };
+    if !fields
+        .iter()
+        .any(|(key, _)| key.as_str() == Some("entity_doc_ref"))
+    {
+        return Ok(None);
+    }
+    let fail = || {
+        Error::Record(RecordError::InvalidWitnessMessageBody(
+            "invalid MESSAGE document pointer",
+        ))
+    };
+    if !input.is_empty() {
+        return Err(fail().into());
+    }
+    let mut keys = HashSet::new();
+    for (key, value) in &fields {
+        let key = key.as_str().ok_or_else(fail)?;
+        if !matches!(
+            key,
+            "author" | "type" | "metadata" | "is_visible" | "order" | "entity_doc_ref"
+        ) || !keys.insert(key)
+        {
+            return Err(fail().into());
+        }
+        if key == "entity_doc_ref" {
+            EntityId::from_hex(value.as_str().ok_or_else(fail)?).map_err(|_| fail())?;
+        }
+    }
+    let mut canonical = Vec::new();
+    for name in [
+        "author",
+        "type",
+        "content",
+        "metadata",
+        "is_visible",
+        "order",
+    ] {
+        if name == "content" {
+            canonical.push((Value::from(name), Value::from("")));
+            continue;
+        }
+        if let Some((key, value)) = fields.iter().find(|(key, _)| key.as_str() == Some(name)) {
+            canonical.push((key.clone(), value.clone()));
+        } else if name != "metadata" {
+            return Err(fail().into());
+        }
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(canonical)).map_err(|_| fail())?;
+    Ok(Some(bytes))
 }

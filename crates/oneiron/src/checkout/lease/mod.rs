@@ -10,7 +10,7 @@ pub(super) use self::codec::{
 };
 #[cfg(test)]
 pub(super) use self::codec::{decode_tombstone, encode_act};
-pub(crate) use self::codec::{lease_key, settlement_key};
+pub(crate) use self::codec::{lease_key, load_act_in_txn, settlement_key};
 pub use self::lifecycle::CheckoutLeaseService;
 pub use self::types::{
     CHECKOUT_LEASE_KEY_PREFIX, CHECKOUT_LEASE_SCHEMA_VERSION, CHECKOUT_RESULT_ID_DOMAIN,

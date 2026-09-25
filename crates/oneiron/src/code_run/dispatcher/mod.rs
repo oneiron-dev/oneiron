@@ -1,3 +1,4 @@
+mod coordination;
 mod emission;
 mod envelope;
 mod human_speech;
@@ -32,6 +33,7 @@ pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
 /// [`SelfCall`] values carry only operation arguments, so guest-authored code
 /// cannot spoof actor, source, or approval fields through this skeleton.
 pub struct HostSelfDispatcher<'a> {
+    pub(super) agent_parent: Option<crate::attempt_queue::AttemptId>,
     pub(super) storage: ExecutorStorage<'a>,
     pub(super) actor: WriteActor,
     pub(super) run_ref: String,
@@ -137,6 +139,7 @@ impl<'a> HostSelfDispatcher<'a> {
         }
 
         Ok(Self {
+            agent_parent: None,
             storage,
             actor,
             run_ref,
@@ -229,6 +232,9 @@ impl<'a> HostSelfDispatcher<'a> {
             self.enforce_off_record_effect_policy(call.effect())?;
         }
         match call {
+            SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),
+            SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
+            SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
@@ -249,6 +255,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::Speak(call) => self.dispatch_speech(SelfEffect::Speak, call, run_id),
             SelfCall::Think(call) => self.dispatch_speech(SelfEffect::Think, call, run_id),
             SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call, run_id),
+            SelfCall::ReportBlocked(call) => self.dispatch_report_blocked(call, run_id),
         }
     }
 }

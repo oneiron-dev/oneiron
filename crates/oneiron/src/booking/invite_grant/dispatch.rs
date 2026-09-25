@@ -23,6 +23,7 @@ use crate::outbound::{
 };
 use crate::outbound_grant::StandingOutboundGrantStatus;
 use crate::outbound_intent_ledger::{IntentId, intent_ledger_records};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -320,8 +321,8 @@ fn booking_occurrence(vault: &Vault, booking_ref: &EntityId) -> Result<TimeRange
         .map_err(|error| engine_failure("read transaction", error))?;
     let raw = vault
         .store
-        .entities
-        .get(&rtxn, booking_ref.as_bytes())
+        .port_entity_record(&rtxn, booking_ref)
+        .map(|row| row.map(|row| row.encode()))
         .map_err(|error| engine_failure("booking event read", error))?
         .ok_or_else(|| refused("this booking's EVENT no longer exists"))?;
     let header = EntityMetadataHeader::parse(&raw)

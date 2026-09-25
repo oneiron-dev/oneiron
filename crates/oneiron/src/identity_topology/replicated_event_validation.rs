@@ -5,6 +5,7 @@
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, is_structural_kind};
 use crate::vault::Vault;
 
@@ -26,7 +27,11 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<StoredIdentityOpEvent>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self
+            .store
+            .port_entity_record(rtxn, id)?
+            .map(|row| row.encode())
+        else {
             return Ok(None);
         };
         let header =
@@ -55,13 +60,11 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
     ) -> Result<Vec<IdentityTopologyEvent>> {
         let mut events = Vec::new();
-        for entry in self
-            .store
-            .type_index
-            .prefix_iter(rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+        for entry in
+            self.store
+                .port_entity_ids_by_type(rtxn, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, None)?
         {
-            let (key, _) = entry?;
-            let event_id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let event_id = entry?;
             let record = self
                 .identity_topology_event_in_txn(rtxn, &event_id)?
                 .ok_or(Error::CorruptedIndex("identity topology event index"))?;

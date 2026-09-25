@@ -1033,7 +1033,8 @@ fn local_repo_ingest_is_idempotent_and_mounts_files() -> Result<()> {
     assert_eq!(second.snapshot.fork_hash, first.snapshot.fork_hash);
     assert_eq!(second.snapshot.scope_key, first.snapshot.scope_key);
     assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_CODE_ARTIFACT)?, 1);
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 2);
+    // Two fixture blobs plus the four seeded bootstrap source carriers.
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 6);
     assert_eq!(
         vault.codebase_snapshots_by_fork_hash(&first.snapshot.fork_hash)?,
         vec![first.code_artifact_id]
@@ -1216,7 +1217,8 @@ fn local_repo_ingest_does_not_persist_blobs_for_declared_secret_paths() -> Resul
         vault.get_entity_type(&retained_asset)?,
         Some(ENTITY_TYPE_ASSET)
     );
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 2);
+    // Two fixture blobs plus the four seeded bootstrap source carriers.
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 6);
 
     // No symbols may be derived from the excluded source either.
     assert!(
@@ -1287,7 +1289,8 @@ fn local_repo_ingest_quarantines_detector_hit_without_persisting_its_blob() -> R
         None,
         "quarantined blob must not persist as an ASSET body"
     );
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 2);
+    // Two fixture blobs plus the four seeded bootstrap source carriers.
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 6);
     assert!(
         vault
             .code_symbol_definitions(&result.code_artifact_id, "LEAKED_TOKEN")?
@@ -1430,7 +1433,7 @@ fn codebase_scope_key_clamps_world_set_retrieval() -> Result<()> {
     let scoped = vault
         .query()
         .search_text("scopeneedle", 10)
-        .world(WorldScope::WorldSet(ingest.snapshot.scope_key))
+        .world(WorldScope::CodebaseSet(ingest.snapshot.scope_key))
         .run()?;
     assert_eq!(scoped.len(), 2);
     assert!(scoped.iter().any(|hit| hit.id == ingest.code_artifact_id));

@@ -344,14 +344,6 @@ pub(crate) fn archive_tombstone_key(id: &EntityId) -> String {
     format!("{ARCHIVE_TOMBSTONE_PREFIX}{}", id.to_hex())
 }
 
-/// Recovers the entity id from an `ac:` marker key.
-///
-/// `None` for any key that is not a well-formed marker key — a corrupt row
-/// must not be reported as an archived entity id.
-pub(crate) fn entity_id_from_archive_tombstone_key(key: &str) -> Option<EntityId> {
-    EntityId::from_hex(key.strip_prefix(ARCHIVE_TOMBSTONE_PREFIX)?).ok()
-}
-
 /// Formats the ARCH-0023b `YYYY-MM` window label for a unix-seconds
 /// timestamp, clamping timestamps at or beyond year 10000 to the last
 /// representable window `"9999-12"` (a larger year would produce a key the

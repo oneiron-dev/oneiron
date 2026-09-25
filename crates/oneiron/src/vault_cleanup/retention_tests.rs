@@ -166,10 +166,16 @@ fn completed_attempt_retention_is_reversible_and_never_changes_queue_bytes() -> 
         AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
     };
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let old = 1_000;
+    let clock = crate::ports::ManualClock::new(old);
+    let vault = Vault::open(
+        dir.path(),
+        VaultConfig {
+            store_clock: clock.bundle(),
+            ..VaultConfig::default()
+        },
+    )?;
     let queue = AttemptQueue::new(&vault);
-    let now = crate::unix_seconds_now();
-    let old = now - 91 * 86_400;
     queue.enqueue(EnqueueAttempt {
         kind: "test.retained".into(),
         payload: vec![1, 2, 3],
@@ -191,6 +197,7 @@ fn completed_attempt_retention_is_reversible_and_never_changes_queue_bytes() -> 
         now: old,
     })?;
     let before = queue.get(record.id)?;
+    clock.set(old + 91 * 86_400);
     for days in [None, Some(0)] {
         vault.set_task_retention_days(days)?;
         assert!(scan_cleanup_candidates(&vault)?.is_empty());
