@@ -43,10 +43,13 @@ concurrency:
 
 # Runners (2026-09-08, HYG-06b): every job runs on our own machines, not a
 # cloud pool. The MacBook and the Mac mini carry the
-# `self-hosted,macos,arm64` labels; the Arch box carries
-# `self-hosted,linux,x64` and is the Wave host, so only the main-push and
-# dispatch lanes touch it. A runner runs ONE job at a time, so the cheap
-# checks share a single job (one checkout, one slot).
+# `self-hosted,macos,arm64` labels; the Arch box, and during a wave a rented
+# box, carry `self-hosted,linux,x64`. Since 2026-09-25 (owner: own machines
+# before a paid CI service) PR CI uses the Linux boxes as well: `changes`,
+# `checks` and `mutation-audit` take any runner, and the required `Test`
+# context is the Linux reference run. The macOS recipe runs on main pushes
+# and dispatch as `Test (macOS)`. A runner runs ONE job at a time, so the
+# cheap checks share a single job (one checkout, one slot).
 #
 # Caches are the host's, not the workflow's: each runner's `.env` exports a
 # persistent CARGO_TARGET_DIR (~/ci/target), CARGO_INCREMENTAL=0 and a PATH
@@ -61,9 +64,9 @@ concurrency:
 #
 # Gate layout: `changes` detects rust-relevant diffs and gates STEPS, never
 # jobs. `checks` (code-map pin, fmt, clippy workspace + featureless + server,
-# strict rustdoc, tool tests, typos, cargo-deny policy) and `test` (the macOS recipe) both run
-# on every non-draft PR, on every push to main and on dispatch, so the two required
-# contexts always report. Inside each, the cargo steps run only when the diff
+# strict rustdoc, tool tests, typos, cargo-deny policy) and `test-linux` (named `Test`, the
+# Linux reference recipe) both run on every non-draft PR, on every push to main and on
+# dispatch, so the two required contexts always report. Inside each, the cargo steps run only when the diff
 # is rust-relevant — always on dispatch and on tags, and fail-open if the
 # detector broke (deny is the dispatch-era gate, ONE-335). A docs-only run is
 # therefore a checkout, a toolchain print and the always-on policy steps, and
@@ -86,7 +89,7 @@ concurrency:
 jobs:
   changes:
     name: Detect changed paths
-    runs-on: [self-hosted, macos, arm64]
+    runs-on: [self-hosted]
     timeout-minutes: 10
     if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     # paths-filter reads PR changed-files via the REST API — grant it
@@ -124,7 +127,7 @@ jobs:
 
   checks:
     name: Checks
-    runs-on: [self-hosted, macos, arm64]
+    runs-on: [self-hosted]
     timeout-minutes: 60
     needs: changes
     # The former fmt / clippy / typos / cargo-deny jobs, folded into one so a
@@ -228,7 +231,7 @@ jobs:
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
   test:
-    name: Test
+    name: Test (macOS)
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 90
     needs: changes
@@ -249,7 +252,6 @@ jobs:
       && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
       && (
         github.event_name == 'workflow_dispatch'
-        || github.event_name == 'pull_request'
         || (github.event_name == 'push' && (
           startsWith(github.ref, 'refs/tags/')
           || needs.changes.outputs.rust == 'true'
@@ -336,7 +338,7 @@ jobs:
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
   test-linux:
-    name: Test (Linux reference)
+    name: Test
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 90
     needs: changes
@@ -345,15 +347,18 @@ jobs:
     # the record of truth for what the macOS job cannot run. oneiron-napi is
     # excluded here: on Linux its test binary needs symbols from a Node host.
     # The macOS recipe above retains it via that crate's dynamic-lookup link flags.
-    # Main pushes and dispatch only:
-    # the Arch box is the Wave host, and a per-PR lane there would queue
-    # every PR behind wave builds. Same push gate as `test` (rust diff,
-    # fail-open, tags), same pause guard inside always().
+    # Since 2026-09-25 this is also the required `Test` on every non-draft PR:
+    # the Linux boxes (Arch, a rented wave box) carry the PR load, and the
+    # macOS recipe runs on main pushes. Same push gate as before (rust diff,
+    # fail-open, tags), same pause/draft guard inside always(); on a PR the
+    # cargo steps gate themselves on a rust-relevant diff so a docs-only PR
+    # still reports the context.
     if: >-
       always()
-      && vars.CI_PAUSED != 'true'
+      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
       && (
         github.event_name == 'workflow_dispatch'
+        || github.event_name == 'pull_request'
         || (github.event_name == 'push' && (
           startsWith(github.ref, 'refs/tags/')
           || needs.changes.outputs.rust == 'true'
@@ -378,6 +383,7 @@ jobs:
       # nextest is part of the host contract; if a host lacks it, install the
       # pinned copy under ~/ci/tools once and reuse it on every later run.
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: |
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/ci/tools/bin:$PATH"
@@ -386,10 +392,13 @@ jobs:
           fi
           cargo nextest --version
       - name: Workspace tests (nextest, full tier, bench included)
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast
       - name: Featureless oneiron library tests
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo test -p oneiron --lib --no-default-features
       - name: Doctests
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
   package:
@@ -444,7 +453,7 @@ jobs:
     name: Mutation audit
     permissions:
       contents: read
-    runs-on: [self-hosted, macos, arm64]
+    runs-on: [self-hosted]
     timeout-minutes: 180
     needs: changes
     if: >-
