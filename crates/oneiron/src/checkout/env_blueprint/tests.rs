@@ -28,10 +28,12 @@ const AWS_FIXTURE: &str = "AKIA0123456789ABCDEF";
 const ENV_BLUEPRINT_GITHUB_OWNER_REPO_HASH_HEX: &str =
     "ae6a7f7868dfbc8a494afd5826c80da8758f13595f2a57003d1bd0f96ef52de9";
 
-fn vault_fixture() -> (Vault, TempDir) {
+fn vault_fixture() -> (TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
-    (vault, dir)
+    // Drop the vault before tempfile removes its LMDB files. A live root whose
+    // files disappear can briefly leave a reusable identity in the open registry.
+    (dir, vault)
 }
 
 fn github_repo(commit: &str) -> RepoRef {
@@ -242,7 +244,7 @@ fn env_blueprint_identity_is_commit_stripped_and_domain_separated() {
 
 #[test]
 fn env_blueprint_round_trips_through_rmp_serde_and_the_vault() {
-    let (vault, _dir) = vault_fixture();
+    let (_dir, vault) = vault_fixture();
     let store = VaultEnvBlueprintStore::new(&vault);
     let repo = github_repo(COMMIT_A);
     let authored = full_blueprint(&repo);
@@ -308,7 +310,7 @@ fn env_blueprint_round_trips_through_rmp_serde_and_the_vault() {
 
 #[test]
 fn env_blueprint_row_spans_commits_but_not_repositories() {
-    let (vault, _dir) = vault_fixture();
+    let (_dir, vault) = vault_fixture();
     let store = VaultEnvBlueprintStore::new(&vault);
     let repo_a = github_repo(COMMIT_A);
     store.put(&full_blueprint(&repo_a)).unwrap();
@@ -370,7 +372,7 @@ fn env_blueprint_decode_rejects_empty_version_and_corrupt_rows() {
 
 #[test]
 fn env_blueprint_get_rejects_a_row_planted_under_a_foreign_key() {
-    let (vault, _dir) = vault_fixture();
+    let (_dir, vault) = vault_fixture();
     let store = VaultEnvBlueprintStore::new(&vault);
     let planted = github_repo(COMMIT_A);
     let requested = other_repo(COMMIT_A);
@@ -385,7 +387,7 @@ fn env_blueprint_get_rejects_a_row_planted_under_a_foreign_key() {
 
 #[test]
 fn hand_forged_knowledge_inputs_fail_containment_after_decode() {
-    let (vault, _dir) = vault_fixture();
+    let (_dir, vault) = vault_fixture();
     let store = VaultEnvBlueprintStore::new(&vault);
     let repo = github_repo(COMMIT_A);
 
@@ -802,7 +804,7 @@ fn resolve_checkout_environment_projects_a_stored_blueprint() {
 
 #[test]
 fn secret_ref_names_round_trip_without_secret_bytes() {
-    let (vault, _dir) = vault_fixture();
+    let (_dir, vault) = vault_fixture();
     let store = VaultEnvBlueprintStore::new(&vault);
     let repo = github_repo(COMMIT_A);
     store.put(&full_blueprint(&repo)).unwrap();
