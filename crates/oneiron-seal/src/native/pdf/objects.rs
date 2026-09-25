@@ -240,28 +240,30 @@ pub(super) fn build_objects(
             let (sig_body, br_rel, lt_rel) = sig_dict_body(false, Some(date_str), capacity);
             let sig_num = next_obj(&mut next)?;
             let field_num = next_obj(&mut next)?;
-            let widget_num = next_obj(&mut next)?;
+            // Use one terminal field/widget object. Poppler 22.02 through 25.02 treat
+            // a separate widget with /Parent as a child field and look for
+            // /V on that widget, incorrectly reporting the parent unsigned.
+            // A combined field is valid PDF and keeps /V, /FT and the widget
+            // together for both AcroForm and page-annotation readers.
             let mut field = Vec::new();
             field.extend_from_slice(b"<< /FT /Sig /T ");
             write_literal_string(field_name, &mut field);
             field.extend_from_slice(
-                format!(" /V {sig_num} 0 R /Kids [{widget_num} 0 R] >>").as_bytes(),
-            );
-            let widget = format!(
-                "<< /Type /Annot /Subtype /Widget /Rect [0 0 0 0] /F 4 \
-                 /P {} {} R /Parent {field_num} 0 R >>",
-                state.first_page.0, state.first_page.1
+                format!(
+                    " /V {sig_num} 0 R /Type /Annot /Subtype /Widget \
+                     /Rect [0 0 0 0] /F 4 /P {} {} R >>",
+                    state.first_page.0, state.first_page.1
+                )
+                .as_bytes(),
             );
             objs.push((sig_num, 0, sig_body));
             objs.push((field_num, 0, field));
-            objs.push((widget_num, 0, widget.into_bytes()));
             sig_info = Some((sig_num, br_rel, lt_rel));
-            // The widget must hang off the page's /Annots, not only carry a
-            // /P back-reference: viewers and validators discover annotations
-            // through the page.
+            // The same terminal field/widget must be reachable from the
+            // page /Annots as well as the AcroForm /Fields array.
             let mut page = state.first_page_dict.clone();
             let mut annots = state.first_page_annots.clone();
-            annots.push(Object::Reference((widget_num, 0)));
+            annots.push(Object::Reference((field_num, 0)));
             page.set(b"Annots", Object::Array(annots));
             let mut page_body = Vec::new();
             write_object(&Object::Dictionary(page), &mut page_body)?;

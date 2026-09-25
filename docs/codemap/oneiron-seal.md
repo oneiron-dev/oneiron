@@ -49,5 +49,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary for the vector suites |
 | `tests/it/seal_vectors.rs` | test | m | — | — | Seal-path vectors: B-B/B-T/B-LT/B-LTA assembly, degradation warnings, evidence digests, and backend seam… |
 | `tests/it/verify_vectors.rs` | test | s | — | — | Verify-path vectors: mutation matrix, prepared-input rejection codes, and structural failure classification… |
-| `tests/oracle.rs` | test | s | — | — | CI differential oracle (§9, amendment A6) |
+| `tests/oracle.rs` | test | m | — | — | CI differential oracle (§9, amendment A6) |
 | `tests/support/mod.rs` | test | m | 39 crate-vis | — | Shared test support: ephemeral identities, fixture backend/fetcher/clock, and a functional fixture TSA |

@@ -210,6 +210,43 @@ fn signature_revision_appends_widget_to_page_annots() {
 }
 
 #[test]
+fn signature_field_is_the_page_widget_with_value_on_the_same_object() {
+    let p = prepared(&classic_pdf());
+    let draft = sign_revision(&p, 1024);
+    let doc = Document::load_mem(&draft.bytes).expect("reparse");
+    let catalog = doc.catalog().expect("catalog");
+    let (_, af) = doc
+        .dereference(catalog.get(b"AcroForm").expect("acroform"))
+        .expect("resolve acroform");
+    let fields = af
+        .as_dict()
+        .expect("acroform dict")
+        .get(b"Fields")
+        .and_then(Object::as_array)
+        .expect("fields");
+    assert_eq!(fields.len(), 1);
+    let field_ref = fields[0].as_reference().expect("indirect field");
+    let field = doc
+        .get_object(field_ref)
+        .and_then(Object::as_dict)
+        .expect("field");
+    assert!(field.get(b"FT").is_ok_and(|ft| name_is(ft, b"Sig")));
+    assert!(field.get(b"Subtype").is_ok_and(|s| name_is(s, b"Widget")));
+    assert!(field.get(b"V").is_ok_and(|v| v.as_reference().is_ok()));
+    assert!(!field.has(b"Kids"));
+    assert!(!field.has(b"Parent"));
+    let page = doc
+        .get_object(p.state.first_page)
+        .and_then(Object::as_dict)
+        .expect("page");
+    let annots = page
+        .get(b"Annots")
+        .and_then(Object::as_array)
+        .expect("annotations");
+    assert!(annots.iter().any(|a| *a == Object::Reference(field_ref)));
+}
+
+#[test]
 fn max_obj_respects_trailer_size_beyond_referenced_objects() {
     let bytes = classic_pdf();
     let mut doc = Document::load_mem(&bytes).expect("load");
