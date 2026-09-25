@@ -31121,7 +31121,7 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "fn": 29
+      "fn": 30
      }
     },
     {
@@ -40704,7 +40704,7 @@
      "purpose": "JSON schemas for endpoint tools: setup, execute-code, paging, and verbs",
      "surface": {
       "const": 5,
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
