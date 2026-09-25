@@ -53,7 +53,7 @@ pub(super) async fn upload(
     now: u64,
 ) -> Result<LfsPutOutcome, ApiError> {
     let (sender, receiver) = mpsc::channel(2);
-    let worker = tokio::task::spawn_blocking(move || {
+    let mut worker = tokio::task::spawn_blocking(move || {
         vault.put_lfs_object_stream_with_cap(
             oid,
             size,
