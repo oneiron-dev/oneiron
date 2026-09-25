@@ -294,8 +294,11 @@ pub(crate) async fn execute_mcp_tool(
     // Board/task lists are explicitly filtered row by row. Legacy adapters
     // and task detail/write facades have no recursive proof projection, so
     // they require an unrestricted record scope instead of dropping caveats.
+    // A filtered read that names one task reads that task's card, which is
+    // task detail too.
     let filtered_read = matches!(&args, McpValidatedToolArgs::Setup(_))
-        || matches!(&args, McpValidatedToolArgs::Verb(verb) if verb.tool.filtered_read());
+        || matches!(&args, McpValidatedToolArgs::Verb(verb)
+            if verb.tool.filtered_read() && verb.payload.arguments.task_ref.is_none());
     if !filtered_read {
         auth.require_unrestricted_record_scope().map_err(|_| {
             McpGatewayError::new(

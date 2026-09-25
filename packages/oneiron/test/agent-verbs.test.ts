@@ -35,3 +35,12 @@ test("generated task and room projections keep the caller step and settlement da
   expect(calls[2]).toEqual(["tasksAnswer", { handle: receipt.handle, word }])
   expect(calls[3]).toEqual(["roomsClaim", { room_ref: "room", turn_ref: "turn" }])
 })
+
+test("retired task names are not projected", () => {
+  // ARCH-0067's 2026-09-22 amendment renamed the four task rows, with no alias.
+  const tasks = agentVerbs(() => undefined).tasks
+  for (const retired of ["check", "expand", "ack", "cancel"]) {
+    expect(Object.keys(tasks)).not.toContain(retired)
+  }
+  expect(Object.keys(tasks)).toContain("update")
+})

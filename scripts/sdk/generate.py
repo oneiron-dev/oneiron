@@ -30,6 +30,7 @@ ARGUMENTS = {
     'limit': {'rust': 'usize', 'napi': 'Option<f64>', 'native_ts': 'number | undefined', 'py': 'int', 'stub': 'int', 'native_py': 'Option<usize>',
         'napi_convert': 'let {name} = {name}.map(limit_to_engine).transpose().map_err(facade_error)?.unwrap_or({default});', 'py_convert': 'let {name} = {name}.unwrap_or({default});', 'field': 'Some({name})'},
     'format': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'PackFormat | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
+    'ref': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'str | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
     'json': {'napi': 'String', 'native_ts': 'string', 'py': 'dict[str, Any]', 'native_py': '&str', 'json': True},
 }
 RESULTS = {
@@ -38,6 +39,11 @@ RESULTS = {
     'MemoryPack': ('NapiMemoryPack', 'memory_pack_from_engine', 'boundary_error'),
     'MemoryReceipt': ('NapiGateReceipt', 'gate_receipt_from_engine', 'boundary_error'),
 }
+
+def native_binding(row):
+    'The binding the native layer types, or None when it is the generic agent-verb door.'
+    binding = row.get('binding')
+    return None if binding and binding.get('native') == 'agent_verb' else binding
 
 def js_method(name):
     parts = name.replace('.', '_').split('_')
@@ -88,7 +94,7 @@ def napi_result(value, expression='output'):
 
 def native_boundary(row, language):
     method = row['name'].replace('.', '_')
-    binding = row.get('binding')
+    binding = native_binding(row)
     args = binding['args'] if binding else [{'name': 'input', 'kind': 'json'}]
     typed = binding is not None and binding.get('wire') != 'json'
     names = {a['name']: a['name'] + ('_json' if ARGUMENTS[a['kind']].get('json') and (language == 'py' or not typed) else '') for a in args}
@@ -138,15 +144,19 @@ def ts_facade(row):
     output = boundary_type(row['output'], 'ts')
     declaration = []
     for a in args:
-        name = a['name']; kind = a['kind']
+        name = js_method(a['name']); kind = a['kind']
+        optional = kind != 'json' and ARGUMENTS[kind]['native_ts'].endswith(' | undefined') and 'default' not in a
         typ = boundary_type(row['input'], 'ts') if kind == 'json' else ARGUMENTS[kind]['native_ts'].replace(' | undefined', '')
-        declaration.append(name + ': ' + typ + (' = ' + json.dumps(a['default']) if 'default' in a else ''))
+        declaration.append(name + ('?' if optional else '') + ': ' + typ + (' = ' + json.dumps(a['default']) if 'default' in a else ''))
     if binding.get('options'):
         declaration = [declaration[0], 'opts: ' + binding['options'] + ' = {}']
         arguments = [args[0]['name']] + ['opts.' + a['name'] + (' ?? ' + json.dumps(a['default']) if 'default' in a else '') for a in args[1:]]
     else:
-        arguments = [a['name'] for a in args]
-    if binding.get('wire') == 'json':
+        arguments = [js_method(a['name']) for a in args]
+    if binding.get('native') == 'agent_verb':
+        request = '{' + ', '.join(a['name'] + ': ' + js_method(a['name']) for a in args) + '}'
+        body = f'this.#client.{method}({request}) as {output}'
+    elif binding.get('wire') == 'json':
         fields = binding.get('input_fields', {}); request = args[0]['name']; setup = ''
         if fields:
             defaults = binding.get('input_defaults', {})
@@ -173,13 +183,15 @@ def python_facade(row, stub=False):
         value = 'json.dumps(' + name + (', allow_nan=False' if binding.get('wire') == 'json' else '') + ')' if info.get('json') else name
         if info.get('json') and default == 'None': value += ' if ' + name + ' is not None else None'
         values.append(value)
+    if binding.get('native') == 'agent_verb':
+        values = ['json.dumps({' + ', '.join(json.dumps(a['name']) + ': ' + a['name'] for a in args) + '})']
     output = boundary_type(row['output'], 'py_stub' if stub else 'py')
     signature = f'    def {row["name"]}(' + ', '.join(declaration) + f') -> {output}:'
     if stub: return signature + ' ...\n'
     return signature + '\n        """' + binding['docs']['py'] + '"""\n        return json.loads(_translate(lambda: self._client.' + row['name'] + '(' + ', '.join(values) + ')))\n'
 
 def ts_native_signature(row):
-    binding = row.get('binding'); method = js_method(row['name'])
+    binding = native_binding(row); method = js_method(row['name'])
     if not binding: return f'{method}(input: unknown): unknown'
     output = 'string' if binding.get('wire') == 'json' else boundary_type(row['output'], 'ts')
     args = ', '.join(a['name'] + ('Json' if binding.get('wire') == 'json' else '') + ': ' + ARGUMENTS[a['kind']]['native_ts'] for a in binding['args'])
@@ -287,14 +299,14 @@ def outputs():
     for r in facade_rows:
         method=r['name'].replace('.','_')
         if r['name'] == 'recall': server += SERVER_RECALL_DOC
-        # `readable` names the credential read check: a caller-named ref is
+        # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
-        readable = r.get('admission', {}).get('readable')
         guard, result = '', f'oneiron::task_verb::sdk::invoke(&server.vault.memory(actor,class), "{r["name"]}", value)?'
-        if readable == 'rows':
-            result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&server.vault.memory(actor,class), facade_input(value)?)?)?'
-        elif readable:
-            guard = f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
+        for readable in r.get('admission', {}).get('readable', []):
+            if readable == 'rows':
+                result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&server.vault.memory(actor,class), facade_input(value)?)?)?'
+            else:
+                guard += f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
         server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
         auth.require(CoreScope::{r["scope"]})?;
         {'auth.require_unrestricted_record_scope()?;' if r.get('admission', {}).get('unrestricted_record_scope') else ''}
@@ -366,6 +378,8 @@ export interface TaskAskSettlement {group_ref: string; reference: string; revisi
 export interface TaskAskResult {coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
 export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Settled: TaskAskResult};
 export type TaskAskWait = { Pending: {trap_ref: string} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
+export type TaskDescription = {kind: "tasks_section"; rows: unknown[]; overflow: {known_omitted_rows: number; source_exhausted: boolean} | null} | {kind: "task_card"; lines: string[]};
+export interface TaskCancelReceipt {approval: "auto" | "proposed" | "approved" | "rejected"; effected: boolean; proposal_ref: string | null; gate_decision_ref: string | null; status: "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned" | null; cancel_requested: boolean; forced: boolean}
 export function agentVerbs(invoke: AgentInvoke) {
   return {
 '''
@@ -380,7 +394,6 @@ export function agentVerbs(invoke: AgentInvoke) {
             elif verb=='answer':decl='handle: TaskAskHandle, word: TaskAskWord';value='{handle, word}';result='TaskAskAnswer'
             elif verb=='outcomes':decl='handle: TaskAskHandle';value='handle';result='CalibrationPair[]'
             elif verb=='list':decl='';value='{}';result='unknown[]'
-            elif verb=='check':decl='';value='{}';result='{rows: unknown[]; overflow: unknown | null}'
             elif verb=='messages':decl='roomRef: string, after?: string, limit?: number';value='{room_ref: roomRef, after, limit}';result='{rows: unknown[]; next_after: string | null}'
             elif verb=='claim':decl='roomRef: string, turnRef: string';value='{room_ref: roomRef, turn_ref: turnRef}';result='unknown'
             else: decl='turn: Record<string, unknown>';value='turn';result='unknown'
@@ -397,7 +410,7 @@ export function agentVerbs(invoke: AgentInvoke) {
             if verb=='wait':params='handle, step_key="sdk.wait"';value='{"handle": handle, "step_key": step_key}'
             elif verb=='answer':params='handle, word';value='{"handle": handle, "word": word}'
             elif verb=='outcomes':params='handle';value='handle'
-            elif verb in ['list', 'check']:params='';value='{}'
+            elif verb=='list':params='';value='{}'
             elif verb=='messages':params='room_ref, after=None, limit=None';value='{"room_ref": room_ref, "after": after, "limit": limit}'
             elif verb=='claim':params='room_ref, turn_ref';value='{"room_ref": room_ref, "turn_ref": turn_ref}'
             else:params='spec';value='spec'
@@ -439,7 +452,7 @@ export function agentVerbs(invoke: AgentInvoke) {
             elif verb=='messages':args='room_ref: str, after: str | None = None, limit: int | None = None'
             elif verb=='claim':args='room_ref: str, turn_ref: str'
             elif verb=='outcomes':args='handle: dict[str, Any]'
-            elif verb in ['list', 'check']:args=''
+            elif verb=='list':args=''
             else:args='spec: dict[str, Any]'
             python_stub += f'    def {verb}(self'+(', '+args if args else '')+') -> Any: ...\n'
     uniffi = HEADER + 'export_facade! {\n'

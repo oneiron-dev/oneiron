@@ -265,10 +265,11 @@ fn mcp_board_state_rows(sections: &[oneiron::context_board::BoardSection]) -> Ve
 
 /// The board sections the primary keyframe renders over.
 ///
-/// TASKS comes from the engine's own gated `tasks.check` facade, NARROWED to
-/// this credential's world/facet ceiling before it ever reaches the renderer,
-/// so a board a narrow connector reads is never the actor-wide board. The
-/// pinned VERBS section restates the generated grammar as board state.
+/// TASKS comes from the section arm of the engine's own gated `describe`
+/// facade, NARROWED to this credential's world/facet ceiling before it ever
+/// reaches the renderer, so a board a narrow connector reads is never the
+/// actor-wide board. The pinned VERBS section restates the generated grammar
+/// as board state.
 fn mcp_board_sections(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
@@ -276,7 +277,15 @@ fn mcp_board_sections(
     let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
     let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
     let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
-    let tasks = facade.tasks_check().map_err(mcp_facade_error)?;
+    let oneiron::task_verb::TaskDescription::Section(tasks) =
+        facade.describe(None).map_err(mcp_facade_error)?
+    else {
+        return Err(McpGatewayError::new(
+            -32603,
+            "engine_error",
+            "describe without a task returned a card, not the TASKS section",
+        ));
+    };
     let (tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, tasks)?;
     // The engine's own footer states the render WINDOW's truncation and
     // whether its scan was exhausted. That is a different fact from the scope

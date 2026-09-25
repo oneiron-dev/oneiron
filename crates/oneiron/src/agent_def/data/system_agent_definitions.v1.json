@@ -191,9 +191,8 @@
           "system": "sys.team_lead",
           "presetVersion": "1",
           "verbAllowances": [
-            "tasks.check",
+            "describe",
             "tasks.create",
-            "tasks.expand",
             "agents.spawn",
             "ask",
             "run_tree.query"
