@@ -3969,6 +3969,113 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
 }
 
 #[test]
+fn board_frame_epoch_schema_refuses_null_like_its_decoder() {
+    for name in ["board.expand", "board.refresh"] {
+        let tool = registered_surface(McpSurfaceMode::ToolFirst)
+            .resolve(name)
+            .expect("board tool is registered");
+        let schema = tool.schema().input_schema;
+        let epoch_schema = &schema["properties"]["arguments"]["properties"]["frame_epoch"];
+        assert_eq!(epoch_schema["type"], "integer", "{name}");
+        let mut args = endpoint_envelope("read_board");
+        args["arguments"] = if name == "board.expand" {
+            json!({ "key": "TASKS", "frame_epoch": null })
+        } else {
+            json!({ "frame_epoch": null })
+        };
+        assert!(
+            !draft2020_12_accepts(&schema, &args),
+            "{name} advertises no null"
+        );
+        assert!(
+            validate_mcp_endpoint_tool_args(tool, args.clone()).is_err(),
+            "{name} refuses null"
+        );
+        args["arguments"]["frame_epoch"] = json!(0);
+        assert!(
+            draft2020_12_accepts(&schema, &args),
+            "{name} advertises zero"
+        );
+        assert!(
+            validate_mcp_endpoint_tool_args(tool, args).is_ok(),
+            "{name} decodes zero"
+        );
+    }
+}
+
+#[test]
+fn nullable_integer_spec_field_accepts_an_integral_float() {
+    let tool = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("tasks.ask")
+        .expect("tasks.ask is registered");
+    let args = endpoint_census_args(tool);
+    let raw = raw_args_with_number(&args, "/arguments/spec/until", "1.0e9");
+    let McpValidatedToolArgs::Verb(decoded) =
+        validate_mcp_endpoint_tool_args(tool, McpToolArguments::from_raw_json(raw))
+            .expect("nullable integral float is admitted")
+    else {
+        panic!("tasks.ask decodes to a verb payload");
+    };
+    let spec: oneiron::task_verb::TaskAskSpec =
+        serde_json::from_value(decoded.payload.arguments.spec.expect("spec"))
+            .expect("typed ask spec");
+    assert_eq!(spec.until, Some(1_000_000_000));
+
+    let mut parsed = args;
+    parsed["arguments"]["spec"]["until"] = json!(1.0e9);
+    let McpValidatedToolArgs::Verb(decoded) =
+        validate_mcp_endpoint_tool_args(tool, parsed).expect("parsed integral float is admitted")
+    else {
+        panic!("tasks.ask decodes to a verb payload");
+    };
+    let spec: oneiron::task_verb::TaskAskSpec =
+        serde_json::from_value(decoded.payload.arguments.spec.expect("spec"))
+            .expect("typed ask spec");
+    assert_eq!(spec.until, Some(1_000_000_000));
+}
+
+#[test]
+fn advertised_turn_ref_default_validates_against_its_own_schema() {
+    let tool = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("rooms.messages")
+        .expect("rooms.messages is listed");
+    let schema = tool.schema().input_schema;
+    let turn_ref = &schema["properties"]["arguments"]["properties"]["turn_ref"];
+    assert_eq!(turn_ref["default"], Value::Null);
+    assert!(
+        turn_ref["type"]
+            .as_array()
+            .expect("nullable type")
+            .contains(&json!("null"))
+    );
+    assert_eq!(turn_ref["pattern"], super::tool_catalog::ENTITY_ID_PATTERN);
+    let mut args = endpoint_census_args(tool);
+    args["arguments"]["turn_ref"] = Value::Null;
+    assert!(validate_mcp_endpoint_tool_args(tool, args).is_ok());
+}
+
+#[test]
+fn envelope_constraints_survive_a_non_object_typed_schema() {
+    let merged = super::endpoint_schema::merge_verb_argument_schema(
+        Value::Bool(true),
+        json!({ "type": "string", "pattern": super::tool_catalog::ENTITY_ID_PATTERN }),
+    );
+    assert_eq!(merged["allOf"][0], true);
+    assert_eq!(
+        merged["allOf"][1]["pattern"],
+        super::tool_catalog::ENTITY_ID_PATTERN
+    );
+}
+
+#[test]
+fn a_dollar_row_with_no_schema_is_not_advertised() {
+    assert!(
+        oneiron::task_verb::sdk::mcp_arguments_schema_from_input("tasks.ask", &Value::Bool(false))
+            .is_none()
+    );
+}
+
+#[test]
 fn room_history_cursor_is_optional_and_validated() {
     let tool = registered_surface(McpSurfaceMode::ToolFirst)
         .resolve("rooms.messages")
