@@ -640,6 +640,10 @@ impl RuledAskFixture {
         let mut class = self.policy(false);
         class.required_sources = [self.question].into();
         spec.class = Some(class);
+        spec.need = TaskAskNeed {
+            count: 3,
+            of: TaskAskElectorate::Any,
+        };
         spec.decide = Some(TaskAskDecide::AtLeast {
             count: 2,
             of: TaskAskElectorate::Any,
