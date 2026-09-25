@@ -418,10 +418,7 @@ pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Res
         || fold.authority_forks.iter().any(|fork| {
             fork.signer == issuer.public_key() && fork.status == AuthorityForkStatus::Quarantined
         })
-        || !fold
-            .roster
-            .get(&issuer.public_key())
-            .is_some_and(|d| !d.revoked && d.roles & ROLE_OWNER != 0)
+        || !roster_has_live_owner(&fold.roster, &issuer.public_key())
     {
         return Err(invalid_authority());
     }

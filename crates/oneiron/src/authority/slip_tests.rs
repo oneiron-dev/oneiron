@@ -21,6 +21,20 @@ fn verify(
     let proof = issuer.binding_proof(slip, b"request-1").unwrap();
     vault.verify_capability_slip(issuer, slip, b"request-1", &proof)
 }
+fn rooted_log(vault: &Vault, root: &CapabilitySlip) -> (AuthorityLogEntry, AuthorityLogEntry) {
+    let mint_hash = vault.authority_fold().unwrap().slips.mints[&root.claims.slip_id].entry_hash;
+    let mint = vault
+        .get_authority_log_entry(&authority_log_entity_id_from_hash(&mint_hash).unwrap())
+        .unwrap()
+        .unwrap();
+    let genesis = vault
+        .get_authority_log_entry(
+            &authority_log_entity_id_from_hash(&mint.parent_hashes[0]).unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+    (genesis, mint)
+}
 #[test]
 fn bootstrap_commits_genesis_and_slip_mint_and_reuses_one_root() {
     let (dir, vault, issuer, root) = fixture();
@@ -385,6 +399,127 @@ fn a_later_signer_fork_quarantines_even_the_pre_fork_root_slip() {
     assert!(verify(&vault, &issuer, &root).is_err());
     assert!(vault.ensure_host_root_slip(&issuer).is_err());
 }
+#[test]
+fn a_slip_mint_signed_by_an_agent_device_folds_invalid_even_with_an_owner_cosigner() {
+    let (_dir, vault, issuer, root) = fixture();
+    let (genesis, root_mint) = rooted_log(&vault, &root);
+    let parent = authority_entry_hash(&root_mint).unwrap();
+    let agent = SigningKey::from_bytes(&[61; 32]);
+    let agent_key = AuthorityKey::Ed25519(agent.verifying_key().to_bytes());
+    let enroll = issuer
+        .sign_entry(
+            Some(root.claims.vault_id),
+            2,
+            vec![parent],
+            AuthorityOp::EnrollDevice {
+                device: DeviceAuthority {
+                    key: agent_key.clone(),
+                    transport_key_binding: agent.verifying_key().to_bytes(),
+                    attestation: AuthorityAttestation {
+                        kind: "software".into(),
+                        evidence: Vec::new(),
+                    },
+                    tier: AuthorityTier::Software,
+                    roles: ROLE_AGENT,
+                },
+            },
+            root.claims.issued_at,
+        )
+        .unwrap();
+    let enrolled_hash = authority_entry_hash(&enroll).unwrap();
+    let enrolled = super::super::fold_engine::fold_authority_log_without_seen_time_delay(&[
+        genesis.clone(),
+        root_mint.clone(),
+        enroll.clone(),
+    ]);
+    assert!(enrolled.valid_entries.contains(&enrolled_hash));
+    assert_eq!(enrolled.roster[&agent_key].roles, ROLE_AGENT);
+
+    let mut claims = root.claims.clone();
+    claims.slip_id = [62; 32];
+    let mut mint = issuer
+        .sign_entry(
+            Some(root.claims.vault_id),
+            0,
+            vec![enrolled_hash],
+            AuthorityOp::SlipMint(SlipMintAction { claims }),
+            root.claims.issued_at,
+        )
+        .unwrap();
+    mint.signer.public_key = agent_key;
+    mint.cosigns.push(AuthoritySignature {
+        suite: AuthoritySignatureSuite::Ed25519,
+        public_key: issuer.public_key(),
+        signature: vec![0; 64],
+    });
+    let transcript = authority_transcript(&mint).unwrap();
+    mint.signer.signature = agent.sign(&transcript).to_bytes().to_vec();
+    let owner = SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/host-authority-signing/v2",
+        SECRET,
+    ));
+    assert_eq!(
+        issuer.public_key(),
+        AuthorityKey::Ed25519(owner.verifying_key().to_bytes())
+    );
+    mint.cosigns[0].signature = owner.sign(&transcript).to_bytes().to_vec();
+    super::super::crypto::verify_entry_signatures(&mint).unwrap();
+    let hash = authority_entry_hash(&mint).unwrap();
+    let fold = super::super::fold_engine::fold_authority_log_without_seen_time_delay(&[
+        genesis, root_mint, enroll, mint,
+    ]);
+    assert!(fold.valid_entries.contains(&enrolled_hash));
+    assert!(!fold.valid_entries.contains(&hash));
+}
+
+#[test]
+fn a_slip_revoke_signed_by_a_revoked_owner_device_folds_invalid() {
+    let (_dir, vault, issuer, root) = fixture();
+    let (genesis, mint) = rooted_log(&vault, &root);
+    let mint_hash = authority_entry_hash(&mint).unwrap();
+    let successor = HostSlipIssuer::from_secret(b"replacement owner device").unwrap();
+    let rotation = issuer
+        .sign_entry(
+            Some(root.claims.vault_id),
+            2,
+            vec![mint_hash],
+            AuthorityOp::RotateKey {
+                old_key: issuer.public_key(),
+                new_device: DeviceAuthority {
+                    key: successor.public_key(),
+                    transport_key_binding: successor.binding_key(),
+                    attestation: AuthorityAttestation {
+                        kind: "software".into(),
+                        evidence: Vec::new(),
+                    },
+                    tier: AuthorityTier::Software,
+                    roles: ROLE_OWNER | ROLE_ADMIN,
+                },
+            },
+            root.claims.issued_at,
+        )
+        .unwrap();
+    let rotation_hash = authority_entry_hash(&rotation).unwrap();
+    let revoked = issuer
+        .sign_entry(
+            Some(root.claims.vault_id),
+            3,
+            vec![rotation_hash],
+            AuthorityOp::SlipRevoke {
+                slip_id: root.claims.slip_id,
+            },
+            root.claims.issued_at,
+        )
+        .unwrap();
+    let hash = authority_entry_hash(&revoked).unwrap();
+    let fold = super::super::fold_engine::fold_authority_log_without_seen_time_delay(&[
+        genesis, mint, rotation, revoked,
+    ]);
+    assert!(fold.valid_entries.contains(&rotation_hash));
+    assert!(fold.roster[&issuer.public_key()].revoked);
+    assert!(!fold.valid_entries.contains(&hash));
+}
+
 #[test]
 fn pending_device_enrollment_cannot_delay_a_slip_withdrawal() {
     let (_dir, vault, issuer, root) = fixture();
