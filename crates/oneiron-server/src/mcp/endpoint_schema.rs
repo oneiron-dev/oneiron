@@ -171,6 +171,9 @@ pub(super) fn merge_verb_argument_schema(input: Value, constraints: Value) -> Va
         }
         typed.extend(envelope);
         Value::Object(typed)
+    } else if constraints == json!({}) {
+        // An empty envelope adds no constraints; keep the original schema.
+        input
     } else {
         json!({ "allOf": [input, constraints] })
     }
