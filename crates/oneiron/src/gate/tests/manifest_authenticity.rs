@@ -10,7 +10,8 @@ fn replicated_actor_denial(actor: crate::EntityId) -> Value {
 
 #[test]
 fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> Result<()> {
-    let (_dir, vault) = temp_vault();
+    let _dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::default())?;
     let actor = test_id(0xB1);
     let other = test_id(0xB2);
     let body = public_stamped(source_trust_claim(ClaimSource::ToolOutput));
@@ -57,7 +58,8 @@ fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> 
 #[test]
 fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_order() -> Result<()> {
     for reversed in [false, true] {
-        let (_dir, vault) = temp_vault();
+        let _dir = tempfile::tempdir()?;
+        let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::default())?;
         let actor = test_id(0xB4);
         let projector = crate::commitment_schedule::commitment_projection_actor().entity_ref();
         let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
