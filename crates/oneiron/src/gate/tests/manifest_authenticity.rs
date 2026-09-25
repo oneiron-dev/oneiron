@@ -1,5 +1,123 @@
 use super::*;
 
+fn replicated_actor_denial(actor: crate::EntityId) -> Value {
+    Value::Map(vec![
+        (Value::from("actor_ref"), Value::from(actor.to_hex())),
+        (Value::from("max_auto_sensitivity"), Value::from(0_u64)),
+        (Value::from("auto"), Value::Boolean(false)),
+    ])
+}
+
+#[test]
+fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let actor = test_id(0xA1);
+    let other = test_id(0xA2);
+    let body = public_stamped(source_trust_claim(ClaimSource::ToolOutput));
+    for id in [actor, other] {
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&id.to_hex()),
+            &resolve(&vault)?,
+            None,
+        )?;
+    }
+    let denial = encode_policy_manifest(vec![(
+        Value::from(POLICY_SOURCE_TRUST_KEY),
+        Value::Map(vec![(
+            Value::from("tool_output"),
+            replicated_actor_denial(actor),
+        )]),
+    )]);
+    vault
+        .batch()
+        .put_replicated(
+            &test_id(0xA3),
+            ENTITY_TYPE_POLICY_MANIFEST,
+            test_time(1),
+            1,
+            &denial,
+        )
+        .commit()?;
+    let policy = resolve(&vault)?;
+    assert!(
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&actor.to_hex()),
+            &policy,
+            None
+        )
+        .is_err()
+    );
+    crate::gate::resolution::check_claim_source_trust(&body, Some(&other.to_hex()), &policy, None)?;
+    crate::gate::resolution::check_claim_source_trust(&body, None, &policy, None)?;
+    Ok(())
+}
+
+#[test]
+fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_order() -> Result<()> {
+    for reversed in [false, true] {
+        let (_dir, vault) = temp_vault();
+        let actor = test_id(0xA4);
+        let projector = crate::commitment_schedule::commitment_projection_actor().entity_ref();
+        let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
+            unreachable!("source trust fixture is a map")
+        };
+        let Value::Map(ref mut row) = sources[0].1 else {
+            unreachable!("source trust row fixture is a map")
+        };
+        row.push((Value::from("actor_ref"), Value::from(actor.to_hex())));
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0xA5),
+            &encode_policy_manifest(vec![(key, Value::Map(sources))]),
+        )?;
+        let body = public_stamped(source_trust_claim(ClaimSource::Generated));
+        for id in [actor, projector] {
+            crate::gate::resolution::check_claim_source_trust(
+                &body,
+                Some(&id.to_hex()),
+                &resolve(&vault)?,
+                None,
+            )?;
+        }
+        let mut rows = vec![
+            (Value::from("generated"), replicated_actor_denial(actor)),
+            (Value::from("generated"), replicated_actor_denial(projector)),
+        ];
+        if reversed {
+            rows.reverse();
+        }
+        let denial = encode_policy_manifest(vec![(
+            Value::from(POLICY_SOURCE_TRUST_KEY),
+            Value::Map(rows),
+        )]);
+        vault
+            .batch()
+            .put_replicated(
+                &test_id(0xA6),
+                ENTITY_TYPE_POLICY_MANIFEST,
+                test_time(1),
+                1,
+                &denial,
+            )
+            .commit()?;
+        let policy = resolve(&vault)?;
+        for id in [actor, projector] {
+            assert!(
+                crate::gate::resolution::check_claim_source_trust(
+                    &body,
+                    Some(&id.to_hex()),
+                    &policy,
+                    None
+                )
+                .is_err()
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn trusted_disjoint_generated_actor_bindings_preserve_each_permit() -> Result<()> {
     let _dir = tempfile::tempdir()?;
