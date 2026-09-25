@@ -68,7 +68,9 @@ def requirement_matches(version: str, requirement: str) -> bool:
                 upper = (major + 1, 0, 0) if target[2] == 1 else (major, minor + 1, 0)
             elif major:
                 upper = (major + 1, 0, 0)
-            elif target[2] == 1 or minor:
+            elif target[2] == 1:
+                upper = (1, 0, 0)  # ^0 and bare 0 include all 0.x releases.
+            elif minor:
                 upper = (0, minor + 1, 0)
             elif target[2] == 2:
                 upper = (0, 1, 0)
