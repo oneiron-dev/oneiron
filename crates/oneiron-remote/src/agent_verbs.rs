@@ -42,41 +42,39 @@ impl OneironClient {
             }
         }
     }
-    pub fn tasks_ack(
+    /// Cancels one task under the ladder's `auto` default. The receipt says
+    /// what stopped and what became a proposal instead.
+    pub fn cancel(
         &self,
-        input: &oneiron::task_verb::sdk::TaskRequest,
-    ) -> Result<oneiron::task_verb::TaskAckReceipt, MemoryError> {
-        let value = serde_json::to_value(input).map_err(|_| {
-            crate::error::bad_request(
-                "SDK input encoding failed",
-                &["Send the documented typed SDK input."],
-            )
-        })?;
-        self.typed_agent_verb("tasks.ack", value)
-    }
-    pub fn tasks_cancel(
-        &self,
-        input: &oneiron::task_verb::sdk::TaskRequest,
+        task_ref: &str,
     ) -> Result<oneiron::task_verb::TaskCancelReceipt, MemoryError> {
-        let value = serde_json::to_value(input).map_err(|_| {
+        let input = oneiron::task_verb::sdk::TaskRequest {
+            task_ref: task_ref.to_owned(),
+        };
+        let value = serde_json::to_value(&input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
                 &["Send the documented typed SDK input."],
             )
         })?;
-        self.typed_agent_verb("tasks.cancel", value)
+        self.typed_agent_verb("cancel", value)
     }
-    pub fn tasks_check(
+    /// Describes one task's card, or the whole TASKS section when no task is
+    /// named.
+    pub fn describe(
         &self,
-        input: &oneiron::task_verb::sdk::EmptyRequest,
-    ) -> Result<oneiron::context_board::TasksSection, MemoryError> {
-        let value = serde_json::to_value(input).map_err(|_| {
+        task_ref: Option<&str>,
+    ) -> Result<oneiron::task_verb::TaskDescription, MemoryError> {
+        let input = oneiron::task_verb::sdk::DescribeRequest {
+            task_ref: task_ref.map(str::to_owned),
+        };
+        let value = serde_json::to_value(&input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
                 &["Send the documented typed SDK input."],
             )
         })?;
-        self.typed_agent_verb("tasks.check", value)
+        self.typed_agent_verb("describe", value)
     }
     pub fn tasks_create(
         &self,
@@ -90,17 +88,17 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("tasks.create", value)
     }
-    pub fn tasks_expand(
+    pub fn tasks_update(
         &self,
         input: &oneiron::task_verb::sdk::TaskRequest,
-    ) -> Result<Vec<String>, MemoryError> {
+    ) -> Result<oneiron::task_verb::TaskUpdateReceipt, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
                 &["Send the documented typed SDK input."],
             )
         })?;
-        self.typed_agent_verb("tasks.expand", value)
+        self.typed_agent_verb("tasks.update", value)
     }
     /// Witnesses one conversational turn.
     ///

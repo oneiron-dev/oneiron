@@ -95,7 +95,7 @@ impl LandingTrigger {
 ///
 /// The queue does not authenticate actors; the calling adapter RESOLVES
 /// standing from its own authority evidence (a spawner link, a task owner
-/// record, the runtime's own clock) exactly as `tasks.cancel` resolves
+/// record, the runtime's own clock) exactly as `cancel` resolves
 /// ownership, and passes the resolved verdict here. Fail closed: an adapter
 /// that cannot establish standing passes [`Self::None`] and the attempt is
 /// left untouched.
@@ -168,7 +168,7 @@ impl ForceCancelGrounds {
 /// declared themselves the authority and chosen the actor the terminal receipt
 /// names. The hard rung is therefore reachable only from a path that has
 /// ALREADY verified the owner against durable ownership provenance
-/// (`Self::owner`, used by the verified `tasks.cancel.force` door) or from a
+/// (`Self::owner`, used by the verified `Memory::cancel_force` door) or from a
 /// runtime ground the runtime itself establishes (lease expiry, criticality).
 ///
 /// Public callers keep the whole soft rung — request, reject, land — and the

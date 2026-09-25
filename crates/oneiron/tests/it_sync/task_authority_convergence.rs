@@ -23,7 +23,7 @@
 //!
 //! Window choice: the two fail-closed cases write only through the window doc
 //! and stay in the harness's fixed [`WINDOW`]. The two verb-driven cases
-//! cannot — `tasks.cancel` and `tasks.ack` stamp their facts with the wall
+//! cannot — `cancel` and `tasks.update` stamp their facts with the wall
 //! clock at the instant they run, so the live window is the only one that can
 //! carry them, and those tests open it on both nodes.
 
@@ -203,7 +203,7 @@ fn enqueue_realization(node: &TestNode, task_ref: EntityId, now: u64) {
 }
 
 /// Fails the realizing attempt `tasks.create` minted on this node, the way a
-/// real run dies. `tasks.ack` acknowledges only a genuinely FAILED row, so this
+/// real run dies. `tasks.update` acknowledges only a genuinely FAILED row, so this
 /// is what gives the owner something to acknowledge.
 fn fail_realization(node: &TestNode, task_ref: EntityId, now: u64) {
     let queue = AttemptQueue::new(&node.vault);
@@ -282,7 +282,7 @@ impl TaskPair {
                         origin_action_id: "cancel".to_owned(),
                         origin_receipt_ref: None,
                         scope: GrantMintIntentScope::VerbClass {
-                            verb_class: oneiron::task_verb::sdk::AgentVerb::TasksCancel
+                            verb_class: oneiron::task_verb::sdk::AgentVerb::Cancel
                                 .as_str()
                                 .to_owned(),
                         },
@@ -337,7 +337,7 @@ impl TaskPair {
             .a
             .vault
             .memory(self.owner, EdgeActorClass::Agent)
-            .tasks_ack(self.task_ref)
+            .tasks_update(self.task_ref)
             .expect("acknowledge the failed row");
         assert!(ack.acked, "a genuinely failed row acknowledges");
     }
@@ -350,7 +350,7 @@ impl TaskPair {
             .b
             .vault
             .memory(self.owner, EdgeActorClass::Agent)
-            .tasks_cancel(TaskCancelTarget::Task(self.task_ref))
+            .cancel(TaskCancelTarget::Task(self.task_ref))
             .expect("the owner cancels on the peer");
         assert!(
             cancel.effected,
@@ -449,7 +449,7 @@ fn cancel_wins_in_order(arrival: AckArrival) {
             pair.cancel_on_peer();
             // Node A acknowledges without having seen the cancellation — the
             // only way this order can arise, because a Cancelled fact that HAS
-            // arrived takes the row off the very surface `tasks.ack` reads.
+            // arrived takes the row off the very surface `tasks.update` reads.
             pair.ack_on_origin();
         }
     }
@@ -472,11 +472,14 @@ fn cancel_wins_in_order(arrival: AckArrival) {
         // the active surface on BOTH peers — including node B, which never
         // acknowledged anything and whose own realization is cancelled rather
         // than failed, so only the Cancelled fact can be taking it off.
-        let section = node
+        let oneiron::task_verb::TaskDescription::Section(section) = node
             .vault
             .memory(pair.owner, EdgeActorClass::Agent)
-            .tasks_check()
-            .expect("render the board");
+            .describe(None)
+            .expect("render the board")
+        else {
+            panic!("describe without a task returns the TASKS section");
+        };
         assert!(
             !section.rows.iter().any(|row| row.id == task_hex),
             "{}: a cancelled task must not render actively under {arrival:?}",

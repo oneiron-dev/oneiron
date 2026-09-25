@@ -39,6 +39,14 @@ pub struct RoomClaimRequest {
 pub struct TaskRequest {
     pub task_ref: String,
 }
+/// `describe`'s one input: the task to describe, or none for the whole
+/// TASKS section.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DescribeRequest {
+    #[serde(default)]
+    pub task_ref: Option<String>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskCreateRequest {
@@ -132,4 +140,27 @@ fn a_typed_argument_shape_error_names_its_field() {
     .expect_err("a string cannot stand in for a namespace sequence");
     assert_eq!(error.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
     assert!(error.message.contains("namespace_prefix"), "{error:?}");
+}
+
+/// ARCH-0067's 2026-09-22 amendment renamed the four task rows, with no alias.
+#[cfg(test)]
+#[test]
+fn retired_task_verb_names_are_unknown() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).expect("open vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
+    let memory = vault.memory(owner, crate::EdgeActorClass::Human);
+    for name in ["tasks.check", "tasks.expand", "tasks.ack", "tasks.cancel"] {
+        assert!(AgentVerb::from_name(name).is_none(), "{name}");
+        let refusal = invoke(&memory, name, serde_json::json!({})).expect_err(name);
+        assert_eq!(
+            refusal.code,
+            crate::memory::MEMORY_CODE_BAD_REQUEST,
+            "{name}"
+        );
+        assert_eq!(refusal.message, "unknown SDK agent verb", "{name}");
+    }
+    for name in ["describe", "tasks.update", "cancel"] {
+        assert!(AgentVerb::from_name(name).is_some(), "{name}");
+    }
 }

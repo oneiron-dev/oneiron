@@ -863,9 +863,9 @@
       }
     },
     {
-      "name": "tasks_check_valid_no_arguments",
+      "name": "describe_section_valid_no_arguments",
       "mode": "tool_first",
-      "tool": "tasks.check",
+      "tool": "describe",
       "valid": true,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -888,9 +888,9 @@
       }
     },
     {
-      "name": "tasks_check_valid_page_cursor",
+      "name": "describe_section_valid_page_cursor",
       "mode": "tool_first",
-      "tool": "tasks.check",
+      "tool": "describe",
       "valid": true,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -914,9 +914,9 @@
       }
     },
     {
-      "name": "tasks_check_invalid_blank_page_cursor",
+      "name": "describe_section_invalid_blank_page_cursor",
       "mode": "tool_first",
-      "tool": "tasks.check",
+      "tool": "describe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -940,9 +940,9 @@
       }
     },
     {
-      "name": "tasks_check_invalid_zero_page_limit",
+      "name": "describe_section_invalid_zero_page_limit",
       "mode": "tool_first",
-      "tool": "tasks.check",
+      "tool": "describe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -965,9 +965,9 @@
       }
     },
     {
-      "name": "tasks_check_invalid_foreign_field",
+      "name": "describe_section_invalid_foreign_field",
       "mode": "tool_first",
-      "tool": "tasks.check",
+      "tool": "describe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -990,9 +990,9 @@
       }
     },
     {
-      "name": "tasks_expand_valid_task_ref",
+      "name": "describe_card_valid_task_ref",
       "mode": "tool_first",
-      "tool": "tasks.expand",
+      "tool": "describe",
       "valid": true,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -1015,9 +1015,9 @@
       }
     },
     {
-      "name": "tasks_expand_valid_page_cursor",
+      "name": "describe_card_valid_page_cursor",
       "mode": "tool_first",
-      "tool": "tasks.expand",
+      "tool": "describe",
       "valid": true,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -1044,9 +1044,9 @@
       }
     },
     {
-      "name": "tasks_expand_invalid_blank_page_cursor",
+      "name": "describe_card_invalid_blank_page_cursor",
       "mode": "tool_first",
-      "tool": "tasks.expand",
+      "tool": "describe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -1072,9 +1072,9 @@
       }
     },
     {
-      "name": "tasks_expand_invalid_task_ref_shape",
+      "name": "describe_card_invalid_task_ref_shape",
       "mode": "tool_first",
-      "tool": "tasks.expand",
+      "tool": "describe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -1097,31 +1097,9 @@
       }
     },
     {
-      "name": "tasks_expand_invalid_missing_arguments",
+      "name": "tasks_update_valid_task_ref",
       "mode": "tool_first",
-      "tool": "tasks.expand",
-      "valid": false,
-      "args": {
-        "schema_version": "mcp_tool_args.v1",
-        "actor": {
-          "actor_ref": "11111111111111111111111111111111",
-          "actor_class": "agent",
-          "gate_actor_class": "agent",
-          "gate_actor_ref": "11111111111111111111111111111111",
-          "scope": {
-            "world_ref": "22222222222222222222222222222222"
-          }
-        },
-        "consent": {
-          "policy_ref": "policy:foreign-mcp",
-          "purpose": "read_tasks"
-        }
-      }
-    },
-    {
-      "name": "tasks_ack_valid_task_ref",
-      "mode": "tool_first",
-      "tool": "tasks.ack",
+      "tool": "tasks.update",
       "valid": true,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -1144,9 +1122,9 @@
       }
     },
     {
-      "name": "tasks_ack_invalid_wrong_family_field",
+      "name": "tasks_update_invalid_wrong_family_field",
       "mode": "tool_first",
-      "tool": "tasks.ack",
+      "tool": "tasks.update",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -1172,9 +1150,9 @@
       }
     },
     {
-      "name": "tasks_cancel_valid_task_ref",
+      "name": "cancel_valid_task_ref",
       "mode": "tool_first",
-      "tool": "tasks.cancel",
+      "tool": "cancel",
       "valid": true,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -1197,9 +1175,9 @@
       }
     },
     {
-      "name": "tasks_cancel_invalid_missing_task_ref",
+      "name": "cancel_invalid_missing_task_ref",
       "mode": "tool_first",
-      "tool": "tasks.cancel",
+      "tool": "cancel",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",

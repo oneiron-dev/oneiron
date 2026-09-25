@@ -1,5 +1,6 @@
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimApprovalStatus;
+use crate::context_board::TasksSection;
 use crate::entity_id::EntityId;
 use crate::gate::PolicyApprovalCeiling;
 use crate::run_tree::RunTreeStatus;
@@ -131,14 +132,14 @@ impl TaskCancelMode {
 /// Default ladder vocabulary for own-task and own-spawn cancellation.
 pub const DEFAULT_TASK_CANCEL_MODE: TaskCancelMode = TaskCancelMode::Auto;
 
-/// A TASK entity or agent-dispatch spawn addressed by `tasks.cancel`.
+/// A TASK entity or agent-dispatch spawn addressed by `cancel`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskCancelTarget {
     Task(EntityId),
     Spawn(AttemptId),
 }
 
-/// Result of one `tasks.cancel` invocation.
+/// Result of one `cancel` invocation.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TaskCancelReceipt {
     pub approval: ClaimApprovalStatus,
@@ -157,9 +158,21 @@ pub struct TaskCancelReceipt {
     pub forced: bool,
 }
 
-/// Result of persisting one render-tier task acknowledgement.
+/// Result of one `tasks.update`: today it records the acknowledgement of a
+/// failed task, and leaves any other task as it was.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct TaskAckReceipt {
+pub struct TaskUpdateReceipt {
     pub task_ref: EntityId,
     pub acked: bool,
+}
+
+/// What `describe` returns: the TASKS section when no task is named, or the
+/// named task's card.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind")]
+pub enum TaskDescription {
+    #[serde(rename = "tasks_section")]
+    Section(TasksSection),
+    #[serde(rename = "task_card")]
+    Card { lines: Vec<String> },
 }

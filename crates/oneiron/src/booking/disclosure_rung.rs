@@ -250,6 +250,7 @@ pub fn project_at_rung(
 /// [`project_at_rung`], so the surface ceiling applies on top of the grant.
 pub fn project_calendar_grant(
     grant: &AccessGrant,
+    now: u64,
     reader_ref: &EntityId,
     calendar_ref: &EntityId,
     events: &[EventRow],
@@ -257,7 +258,7 @@ pub fn project_calendar_grant(
     slot_mask: Option<&SlotMask>,
 ) -> Result<RungProjection, BookingError> {
     let granted = grant
-        .calendar_disclosure_rung(reader_ref, calendar_ref)
+        .calendar_disclosure_rung(reader_ref, calendar_ref, now)
         .unwrap_or(DisclosureRung::Nothing);
     project_at_rung(events, granted, surface, slot_mask)
 }
@@ -689,6 +690,7 @@ mod tests {
 
         let projection = project_calendar_grant(
             &grant,
+            1_700,
             &reader,
             &calendar,
             &events,
@@ -721,6 +723,7 @@ mod tests {
         let project = |grant: &AccessGrant, reader: &EntityId, calendar: &EntityId| {
             project_calendar_grant(
                 grant,
+                1_700,
                 reader,
                 calendar,
                 &events,

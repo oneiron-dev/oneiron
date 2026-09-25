@@ -95,7 +95,7 @@
      "purpose": "AccessGrant record and scope, capability, and status enums",
      "surface": {
       "enum": 3,
-      "fn": 19,
+      "fn": 18,
       "struct": 2
      }
     },
@@ -21988,7 +21988,7 @@
      "purpose": "Bounded streaming ingress: validate before publishing, then commit small chunk transactions",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -27411,7 +27411,7 @@
      "path": "src/share/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -28800,7 +28800,7 @@
      "path": "src/store/handle.rs",
      "purpose": "The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "struct": 4
      }
     },
@@ -31029,7 +31029,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 2,
-      "fn": 6
+      "fn": 5
      }
     },
     {
@@ -31058,22 +31058,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "TaskAckReceipt",
       "TaskCancelMode",
       "TaskCancelReceipt",
       "TaskCancelTarget",
       "TaskCreateReceipt",
+      "TaskDescription",
       "TaskResultInput",
       "TaskRouteLane",
       "TaskRouteOutcome",
-      "TaskStartedReceipt"
+      "TaskStartedReceipt",
+      "TaskUpdateReceipt"
      ],
      "path": "src/task_verb/route_receipts.rs",
      "purpose": "—",
      "surface": {
       "const": 2,
       "crate-vis": 1,
-      "enum": 4,
+      "enum": 5,
       "fn": 3,
       "struct": 5
      }
@@ -31095,6 +31096,7 @@
       "BoardExpandRequest",
       "BoardRefreshRequest",
       "BoardSubscriptionRequest",
+      "DescribeRequest",
       "EmptyRequest",
       "RecallRequest",
       "ReceiptsRequest",
@@ -31109,7 +31111,7 @@
      "path": "src/task_verb/sdk.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
-      "struct": 13
+      "struct": 14
      }
     },
     {
@@ -31119,7 +31121,7 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "fn": 30
+      "fn": 29
      }
     },
     {
@@ -31270,7 +31272,7 @@
      "path": "src/task_verb/tests/support.rs",
      "purpose": "Shared fixtures and helpers for the task_verb tests",
      "surface": {
-      "crate-vis": 59
+      "crate-vis": 60
      }
     },
     {
@@ -37163,7 +37165,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 22
+      "fn": 21
      }
     },
     {
@@ -37447,7 +37449,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 23
+      "fn": 22
      }
     },
     {

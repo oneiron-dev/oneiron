@@ -323,7 +323,7 @@ async fn board_host_mcp_get_loaded_and_changed_only_ride_existing_frames() {
         query["result"]["structuredContent"]["output"]["response"]["items"][0]["id"],
         old.to_hex()
     );
-    let no_push = board_mcp_call(&server, "board-main", actor, "tasks.check", json!({})).await;
+    let no_push = board_mcp_call(&server, "board-main", actor, "describe", json!({})).await;
     assert!(no_push["result"].get("carrier").is_none());
     let setup = board_mcp_call(&server, "board-main", actor, "setup_oneiron", json!({})).await;
     let keyframe = setup["result"]["structuredContent"]["board"]["keyframe"]
@@ -347,7 +347,7 @@ async fn board_host_mcp_get_loaded_and_changed_only_ride_existing_frames() {
         FrameKind::Keyframe("<memory surface=\"board\">\nlegend: fixture\n</memory>".into()),
     )
     .await;
-    let keyframe = board_mcp_call(&server, "board-main", actor, "tasks.check", json!({})).await;
+    let keyframe = board_mcp_call(&server, "board-main", actor, "describe", json!({})).await;
     assert_eq!(
         keyframe["result"]["carrier"]["frame"]["kind"]["kind"],
         "keyframe"
@@ -361,7 +361,7 @@ async fn board_host_mcp_get_loaded_and_changed_only_ride_existing_frames() {
         }]),
     )
     .await;
-    let carried = board_mcp_call(&server, "board-main", actor, "tasks.check", json!({})).await;
+    let carried = board_mcp_call(&server, "board-main", actor, "describe", json!({})).await;
     let rows = carried["result"]["carrier"]["frame"]["kind"]["payload"]
         .as_array()
         .unwrap();
@@ -371,7 +371,7 @@ async fn board_host_mcp_get_loaded_and_changed_only_ride_existing_frames() {
         rows.iter()
             .any(|row| row["key"] == "task" && row["line"] == "task ready")
     );
-    let exhausted = board_mcp_call(&server, "board-main", actor, "tasks.check", json!({})).await;
+    let exhausted = board_mcp_call(&server, "board-main", actor, "describe", json!({})).await;
     assert!(exhausted["result"].get("carrier").is_none());
     let refreshed = board_mcp_call(&server, "board-main", actor, "board.refresh", json!({})).await;
     assert!(
@@ -437,7 +437,7 @@ async fn board_host_capabilities_are_turn_local_and_shed_before_carried_memory()
         .unwrap();
     // Prime the stream's epoch without retaining a frame.
     enqueue_board_frame(&server, "board-caps", FrameKind::Keyframe("fixture".into())).await;
-    board_mcp_call(&server, "board-caps", actor, "tasks.check", json!({})).await;
+    board_mcp_call(&server, "board-caps", actor, "describe", json!({})).await;
     let pack_args = json!({"request":{"query":"boardcapsneedle", "limit":1}});
     enqueue_board_frame(
         &server,
@@ -513,7 +513,7 @@ async fn board_host_capabilities_are_turn_local_and_shed_before_carried_memory()
         }]),
     )
     .await;
-    let later = board_mcp_call(&server, "board-caps", actor, "tasks.check", json!({})).await;
+    let later = board_mcp_call(&server, "board-caps", actor, "describe", json!({})).await;
     let rows = later["result"]["carrier"]["frame"]["kind"]["payload"]
         .as_array()
         .unwrap();
@@ -546,7 +546,7 @@ async fn board_host_narrow_connector_never_delivers_a_rider() {
             MCP_TOOL_FIRST_PATH,
             "board-narrow",
             "narrow-rider",
-            "tasks.check",
+            "describe",
             mcp_scoped_envelope(actor, "read_board", &scope),
         ),
     )

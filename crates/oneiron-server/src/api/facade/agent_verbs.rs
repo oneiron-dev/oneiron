@@ -2,11 +2,10 @@
 use super::*;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
-        .route("/tasks.ack", post(tasks_ack))
-        .route("/tasks.cancel", post(tasks_cancel))
-        .route("/tasks.check", post(tasks_check))
+        .route("/cancel", post(cancel))
+        .route("/describe", post(describe))
         .route("/tasks.create", post(tasks_create))
-        .route("/tasks.expand", post(tasks_expand))
+        .route("/tasks.update", post(tasks_update))
         .route("/witness", post(witness))
         .route("/claim_upsert", post(claim_upsert))
         .route("/recall", post(recall))
@@ -25,7 +24,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/rooms.claim", post(rooms_claim))
         .route("/rooms.speak", post(rooms_speak))
 }
-async fn tasks_ack(
+async fn cancel(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
@@ -37,27 +36,11 @@ async fn tasks_ack(
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
-        "tasks.ack",
+        "cancel",
         value,
     )?))
 }
-async fn tasks_cancel(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<serde_json::Value>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, FacadeApiError> {
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
-    let value = facade_json(payload)?;
-    let (actor, class) = facade_actor(&auth)?;
-    facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
-    Ok(Json(oneiron::task_verb::sdk::invoke(
-        &server.vault.memory(actor, class),
-        "tasks.cancel",
-        value,
-    )?))
-}
-async fn tasks_check(
+async fn describe(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
@@ -65,12 +48,13 @@ async fn tasks_check(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
-    oneiron::task_verb::sdk::validate_input("tasks.check", &value)?;
+    oneiron::task_verb::sdk::validate_input("describe", &value)?;
     let (actor, class) = facade_actor(&auth)?;
+    facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(facade_readable_task_rows(
         &server.vault,
         &auth,
-        oneiron::task_verb::sdk::tasks_check(
+        oneiron::task_verb::sdk::describe(
             &server.vault.memory(actor, class),
             facade_input(value)?,
         )?,
@@ -91,19 +75,19 @@ async fn tasks_create(
         value,
     )?))
 }
-async fn tasks_expand(
+async fn tasks_update(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
-    auth.require(CoreScope::Read)?;
+    auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
-        "tasks.expand",
+        "tasks.update",
         value,
     )?))
 }
@@ -256,7 +240,6 @@ async fn tasks_ask(
     auth.require(CoreScope::Write)?;
 
     let value = facade_json(payload)?;
-
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -272,7 +255,6 @@ async fn tasks_wait(
     auth.require(CoreScope::Write)?;
 
     let value = facade_json(payload)?;
-
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -288,7 +270,6 @@ async fn tasks_answer(
     auth.require(CoreScope::Write)?;
 
     let value = facade_json(payload)?;
-
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -304,7 +285,6 @@ async fn tasks_outcomes(
     auth.require(CoreScope::Read)?;
 
     let value = facade_json(payload)?;
-
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -320,7 +300,6 @@ async fn rooms_list(
     auth.require(CoreScope::Read)?;
 
     let value = facade_json(payload)?;
-
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -336,7 +315,6 @@ async fn rooms_messages(
     auth.require(CoreScope::Read)?;
 
     let value = facade_json(payload)?;
-
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -352,7 +330,6 @@ async fn rooms_claim(
     auth.require(CoreScope::Write)?;
 
     let value = facade_json(payload)?;
-
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -368,7 +345,6 @@ async fn rooms_speak(
     auth.require(CoreScope::Write)?;
 
     let value = facade_json(payload)?;
-
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
