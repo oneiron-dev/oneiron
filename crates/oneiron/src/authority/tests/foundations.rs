@@ -28,15 +28,23 @@ fn two_open_vaults_observe_on_independent_authority_clocks() {
     let ahead = open_vault_at(ahead_dir.path(), future);
     let behind_dir = tempfile::tempdir().unwrap();
     let behind = open_vault_at(behind_dir.path(), seeded);
-    assert_eq!(authority_observation_secs(&ahead.store, 0, future), future);
+    // A reading is the open anchor plus the real time since open, so a loaded
+    // host reports a second or two past the anchor. Bound that drift instead
+    // of pinning the exact second: the shared-clock mutation is ten days off.
+    let drift = 60;
+    let ahead_first = authority_observation_secs(&ahead.store, 0, future);
+    assert!(
+        (future..=future + drift).contains(&ahead_first),
+        "the first vault reads from its own anchor, got {ahead_first}"
+    );
 
     // The second vault opened after the first, so ITS first observation is its
     // own candidate — not the neighbour's anchor.
-    assert_eq!(
-        authority_observation_secs(&behind.store, 0, seeded),
-        seeded,
+    let behind_first = authority_observation_secs(&behind.store, 0, seeded);
+    assert!(
+        (seeded..=seeded + drift).contains(&behind_first),
         "a vault's first observation is its own candidate, whatever another \
-         vault has observed"
+         vault has observed; got {behind_first}"
     );
 
     // Neither reading moved the other. The first is still parked in the future
