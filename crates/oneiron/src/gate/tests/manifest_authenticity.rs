@@ -11,8 +11,8 @@ fn replicated_actor_denial(actor: crate::EntityId) -> Value {
 #[test]
 fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> Result<()> {
     let (_dir, vault) = temp_vault();
-    let actor = test_id(0xA1);
-    let other = test_id(0xA2);
+    let actor = test_id(0xB1);
+    let other = test_id(0xB2);
     let body = public_stamped(source_trust_claim(ClaimSource::ToolOutput));
     for id in [actor, other] {
         crate::gate::resolution::check_claim_source_trust(
@@ -32,7 +32,7 @@ fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> 
     vault
         .batch()
         .put_replicated(
-            &test_id(0xA3),
+            &test_id(0xB3),
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             1,
@@ -58,7 +58,7 @@ fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> 
 fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_order() -> Result<()> {
     for reversed in [false, true] {
         let (_dir, vault) = temp_vault();
-        let actor = test_id(0xA4);
+        let actor = test_id(0xB4);
         let projector = crate::commitment_schedule::commitment_projection_actor().entity_ref();
         let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
             unreachable!("source trust fixture is a map")
@@ -69,7 +69,7 @@ fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_ord
         row.push((Value::from("actor_ref"), Value::from(actor.to_hex())));
         put_policy_manifest_bytes(
             &vault,
-            test_id(0xA5),
+            test_id(0xB5),
             &encode_policy_manifest(vec![(key, Value::Map(sources))]),
         )?;
         let body = public_stamped(source_trust_claim(ClaimSource::Generated));
@@ -95,7 +95,7 @@ fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_ord
         vault
             .batch()
             .put_replicated(
-                &test_id(0xA6),
+                &test_id(0xB6),
                 ENTITY_TYPE_POLICY_MANIFEST,
                 test_time(1),
                 1,
