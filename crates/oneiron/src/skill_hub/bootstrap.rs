@@ -172,9 +172,9 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         let id = vault
             .import_skill_from_hub_in_txn(&mut wtxn, &hub_ref, &package, seed_id, occurred, 0)?;
         if id != seed_id {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "bootstrap content resolves outside the embedded set",
-            )));
+            // An earlier import owns these bytes. Keep its lifecycle and content;
+            // the remaining embedded skills still need their first-open pass.
+            continue;
         }
         let mut record = vault.read_skill_record_in_txn(&wtxn, &id)?;
         // Local seed admission, not a remote package's approval stamp. The
