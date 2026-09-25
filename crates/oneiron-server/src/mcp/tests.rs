@@ -4094,6 +4094,69 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
     assert!(oneiron::task_verb::sdk::mcp_arguments_schema("tasks.missing").is_none());
 }
 
+/// The task verbs ARCH-0067's 2026-09-22 amendment renamed: a payload built
+/// from the advertised `tools/list` schema is one the decoder accepts and
+/// dispatches, and one field more is refused by both.
+#[test]
+fn renamed_task_verbs_schema_and_decoder_accept_the_same_payloads() {
+    let surface = registered_surface(McpSurfaceMode::ToolFirst);
+    let listing = surface
+        .listing()
+        .as_array()
+        .expect("tools/list is an array");
+    for (name, arguments) in [
+        ("describe", json!({})),
+        ("describe", json!({ "task_ref": ACTOR_ID })),
+        ("tasks.update", json!({ "task_ref": ACTOR_ID })),
+        ("cancel", json!({ "task_ref": ACTOR_ID })),
+    ] {
+        let schema = &listing
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is listed"))["inputSchema"];
+        let mut payload = endpoint_envelope("read_tasks");
+        payload["arguments"] = arguments.clone();
+        for required in schema["required"].as_array().expect("required names") {
+            let required = required.as_str().expect("a required name is a string");
+            assert!(payload.get(required).is_some(), "{name} sends {required}");
+        }
+        let advertised = &schema["properties"]["arguments"]["properties"];
+        for field in arguments.as_object().expect("arguments object").keys() {
+            assert!(advertised.get(field).is_some(), "{name} advertises {field}");
+        }
+        assert!(
+            draft2020_12_accepts(schema, &payload),
+            "{name}: the schema accepts {payload}"
+        );
+        let tool = surface.resolve(name).expect("the tool is registered");
+        let McpValidatedToolArgs::Verb(verb) =
+            validate_mcp_endpoint_tool_args(tool, payload.clone())
+                .unwrap_or_else(|error| panic!("{name}: the decoder accepts: {error}"))
+        else {
+            panic!("{name} dispatches to its generated verb");
+        };
+        assert_eq!(verb.tool.name, name);
+        assert_eq!(
+            verb.payload.arguments.task_ref.as_deref(),
+            arguments.get("task_ref").and_then(Value::as_str),
+        );
+
+        // One field more: another verb's argument, and one no verb has.
+        for extra in ["key", "unlisted"] {
+            let mut widened = payload.clone();
+            widened["arguments"][extra] = json!("TASKS");
+            assert!(
+                !draft2020_12_accepts(schema, &widened),
+                "{name}: the schema refuses {extra}"
+            );
+            assert!(
+                validate_mcp_endpoint_tool_args(tool, widened).is_err(),
+                "{name}: the decoder refuses {extra}"
+            );
+        }
+    }
+}
+
 #[test]
 fn agent_verb_schema_publishes_nested_types_and_wire_defaults() {
     let surface = McpRegisteredSurface::register(McpSurfaceMode::ToolFirst).expect("surface");

@@ -690,6 +690,37 @@ async fn post_task_verb(
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
+/// ARCH-0067's 2026-09-22 amendment renamed the four task rows. The old
+/// routes are gone, while the same credential still reaches the new ones.
+#[tokio::test]
+async fn retired_task_routes_are_not_found() {
+    let (_dir, server, recipe, _, _) = task_outside_read_floor();
+    let status = |verb: &'static str| {
+        let server = Arc::clone(&server);
+        let recipe = recipe.clone();
+        async move {
+            crate::build_app(Arc::clone(&server))
+                .oneshot(crate::test_credentials::bind_request(
+                    &server,
+                    Request::builder()
+                        .method("POST")
+                        .uri(format!("/v1/core/facade/{verb}"))
+                        .header("Authorization", recipe)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                ))
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    for verb in ["tasks.check", "tasks.expand", "tasks.ack", "tasks.cancel"] {
+        assert_eq!(status(verb).await, StatusCode::NOT_FOUND, "{verb}");
+    }
+    assert_eq!(status("describe").await, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn http_describe_omits_a_task_outside_the_callers_read_floor() {
     let (_dir, server, recipe, _, task) = task_outside_read_floor();

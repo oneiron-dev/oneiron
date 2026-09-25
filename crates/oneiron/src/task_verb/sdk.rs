@@ -129,3 +129,26 @@ fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
     assert!(!AgentVerb::Recall.is_mcp());
     assert!(AgentVerb::from_name("not.a.verb").is_none());
 }
+
+/// ARCH-0067's 2026-09-22 amendment renamed the four task rows, with no alias.
+#[cfg(test)]
+#[test]
+fn retired_task_verb_names_are_unknown() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).expect("open vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
+    let memory = vault.memory(owner, crate::EdgeActorClass::Human);
+    for name in ["tasks.check", "tasks.expand", "tasks.ack", "tasks.cancel"] {
+        assert!(AgentVerb::from_name(name).is_none(), "{name}");
+        let refusal = invoke(&memory, name, serde_json::json!({})).expect_err(name);
+        assert_eq!(
+            refusal.code,
+            crate::memory::MEMORY_CODE_BAD_REQUEST,
+            "{name}"
+        );
+        assert_eq!(refusal.message, "unknown SDK agent verb", "{name}");
+    }
+    for name in ["describe", "tasks.update", "cancel"] {
+        assert!(AgentVerb::from_name(name).is_some(), "{name}");
+    }
+}
