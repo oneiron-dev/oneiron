@@ -20808,6 +20808,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/recall/authority.rs",
+     "purpose": "Actor-bound recall authority: store-truth identity, owner lane and scoped floor",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/recall/items.rs",
      "purpose": "Builds typed recall items from the exact selected entity revision",
      "surface": {
@@ -34345,7 +34355,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34872,7 +34882,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2061,
+   "source_files": 2062,
    "test_files": 703
   },
   "oneiron-android": {

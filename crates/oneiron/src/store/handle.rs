@@ -504,13 +504,23 @@ pub(super) fn seed_default_policy_manifest_in_txn(
 impl Store {
     /// Upload staging is anchored to the root held by this environment.
     pub(crate) fn lfs_staging_file(&self) -> Result<std::fs::File> {
-        let root = self
-            .owner
-            .env
-            ._bound_root_dir
-            .as_ref()
-            .ok_or(Error::InvariantViolation("vault root descriptor missing"))?;
-        super::root_directory::lfs_staging_file(root)
+        #[cfg(unix)]
+        {
+            let root = self
+                .owner
+                .env
+                ._bound_root_dir
+                .as_ref()
+                .ok_or(Error::InvariantViolation("vault root descriptor missing"))?;
+            super::root_directory::lfs_staging_file(root)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = self;
+            Err(Error::InvalidConfig(
+                "lfs staging requires a descriptor-bound vault root".to_owned(),
+            ))
+        }
     }
 
     /// Captures one segment-aware snapshot and applies it to every database

@@ -1174,8 +1174,31 @@ fn actor_bound_recall_requires_its_read_grant_on_both_paths() {
             "ungranted actor received the message"
         );
     }
+    let grant_id = EntityId::from_bytes([0x6b; 16]).unwrap();
+    let grant = vault.get_access_grant(&grant_id).unwrap().unwrap();
+    vault
+        .revoke_access_grant(&grant_id, crate::unix_seconds_now())
+        .unwrap();
     vault
         .install_read_permit_for_test(crate::WriteActor::new(scoped, EdgeActorClass::Human))
+        .unwrap();
+    for scope in [
+        RecallScope::default(),
+        RecallScope {
+            facet: Some(facet.to_hex()),
+            ..Default::default()
+        },
+    ] {
+        let pack = facade
+            .recall("window seat", Effort::Light, &scope, 20, None, None)
+            .unwrap();
+        assert!(
+            pack.items.iter().all(|item| item.kind != "MESSAGE"),
+            "policy permit alone admitted a message: {scope:?}"
+        );
+    }
+    vault
+        .create_access_grant(&EntityId::from_bytes([0x76; 16]).unwrap(), &grant)
         .unwrap();
     for scope in [
         RecallScope::default(),
@@ -1192,6 +1215,130 @@ fn actor_bound_recall_requires_its_read_grant_on_both_paths() {
             "granted actor lost the message: {scope:?}"
         );
     }
+}
+
+#[test]
+fn scoped_recall_never_renders_an_unreadable_edge_neighbor() {
+    let (_dir, vault) = open_vault();
+    let writer = put_person(&vault, 0x72);
+    let scoped = put_person(&vault, 0x73);
+    let facade = facade_for(&vault, writer);
+    let anchor = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".into(),
+            body: serde_json::json!({"name": "anchorforprivateedge"}),
+            text_fields: Some(vec![TextIndexField {
+                field: "name".into(),
+                value: "anchorforprivateedge".into(),
+            }]),
+            edges: None,
+            occurred_at: 1,
+            learned_at: None,
+        })
+        .unwrap();
+    let mut message = witness_message(0, WitnessAuthor::User, "private edge neighbor payload");
+    message.metadata = Some(serde_json::json!({
+        "rel": EntityId::from_bytes([0x74; 16]).unwrap().to_hex()
+    }));
+    let hidden = facade
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x75; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![message],
+            occurred_at: crate::unix_seconds_now(),
+        })
+        .unwrap();
+    let hidden = EntityId::from_hex(
+        &facade
+            .get_entity(&hidden.message_short_ids[0])
+            .unwrap()
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
+    vault
+        .batch()
+        .edge(
+            &EntityId::from_hex(&anchor.id_hex).unwrap(),
+            crate::EdgeKind::Mentions,
+            &hidden,
+            1.0,
+        )
+        .commit()
+        .unwrap();
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"private edge recall").unwrap();
+    vault.ensure_host_root_slip(&issuer).unwrap();
+    vault
+        .install_read_permit_for_test(crate::WriteActor::new(scoped, EdgeActorClass::Human))
+        .unwrap();
+    let pack = facade_for(&vault, scoped)
+        .recall(
+            "anchorforprivateedge",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            Some("json"),
+            None,
+        )
+        .unwrap();
+    assert!(
+        pack.items
+            .iter()
+            .any(|item| item.value_text.contains("anchorforprivateedge"))
+    );
+    assert!(
+        pack.items
+            .iter()
+            .all(|item| !item.value_text.contains("private edge neighbor payload"))
+    );
+    assert!(
+        !pack
+            .rendered
+            .as_deref()
+            .unwrap_or_default()
+            .contains("private edge neighbor payload")
+    );
+}
+
+#[test]
+fn scoped_recall_rechecks_a_grant_revoked_during_retrieval() {
+    use std::sync::Arc;
+
+    let (_dir, vault, _owner, scoped) = recall_after_control_writes_fixture(true);
+    let vault = Arc::new(vault);
+    let writer = Arc::clone(&vault);
+    *vault.test_hooks().after_retrieval_text.lock().unwrap() = Some(Box::new(move || {
+        let writer = Arc::clone(&writer);
+        std::thread::spawn(move || {
+            writer
+                .revoke_access_grant(
+                    &EntityId::from_bytes([0x6b; 16]).unwrap(),
+                    crate::unix_seconds_now(),
+                )
+                .unwrap();
+        })
+        .join()
+        .unwrap();
+    }));
+    let pack = facade_for(&vault, scoped)
+        .recall(
+            "window seat",
+            Effort::Light,
+            &RecallScope::default(),
+            20,
+            Some("json"),
+            None,
+        )
+        .unwrap();
+    assert!(pack.items.iter().all(|item| item.kind != "MESSAGE"));
+    assert!(
+        !pack
+            .rendered
+            .as_deref()
+            .unwrap_or_default()
+            .contains("window seat control recall")
+    );
 }
 
 #[test]

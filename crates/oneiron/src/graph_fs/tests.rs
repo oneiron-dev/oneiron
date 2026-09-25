@@ -674,3 +674,73 @@ fn grep_pushdown_preserves_narrowing_receipts_on_full_and_capped_pages() -> Resu
     assert_eq!(empty.search_receipt().unwrap().suppressed_count, 0);
     Ok(())
 }
+
+#[test]
+fn graph_fs_listings_expire_grants_without_other_writes() -> Result<()> {
+    use crate::access_grant::{
+        AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+    };
+    use crate::claim::ScopedReadActorKey;
+
+    let clock = crate::ports::ManualClock::new(1_000);
+    let config = VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    };
+    let (_dir, vault) = open_test_vault_with(config);
+    let principal = test_id(0x81);
+    let space = test_id(0x82);
+    let message = test_id(0x83);
+    put_policy_manifest(
+        &vault,
+        test_id(0x84),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
+    vault.create_access_grant(
+        &test_id(0x85),
+        &AccessGrant {
+            authority_scope: crate::federation::scope_codec::read_preset(),
+            principal_ref: principal,
+            scope: AccessGrantScope::Messages { space_ref: space },
+            capability: AccessGrantCapability::MessagesRead,
+            status: AccessGrantStatus::Active,
+            created_at: 1_000,
+            revoked_at: None,
+            expires_at: Some(2_000),
+        },
+    )?;
+    let author = test_id(0x86);
+    put_entity(&vault, author, ENTITY_TYPE_PERSON)?;
+    vault
+        .memory(author, crate::EdgeActorClass::Human)
+        .witness(&crate::memory::WitnessTurn {
+            conversation_ref: test_id(0x87).to_hex(),
+            turn_ref: None,
+            occurred_at: 1_000,
+            messages: vec![crate::memory::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: crate::memory::WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "expiring message".into(),
+                metadata: Some(serde_json::json!({"rel": space.to_hex()})),
+                is_visible: true,
+                order: 0,
+            }],
+        })
+        .expect("witness message");
+    let reader = vault.scoped_read(
+        ScopedReadActorKey::new("reader")
+            .unwrap()
+            .require_access_grants(Some(principal)),
+    );
+    let fs = reader.graph_fs(GraphFsOptions::default().with_page_byte_cap(65_536));
+    let contains = |bytes: &[u8]| {
+        bytes
+            .windows(message.to_hex().len())
+            .any(|window| window == message.to_hex().as_bytes())
+    };
+    assert!(contains(&fs.readdir_bytes("/entities", None)?));
+    clock.set(2_100);
+    assert!(!contains(&fs.readdir_bytes("/entities", None)?));
+    Ok(())
+}
