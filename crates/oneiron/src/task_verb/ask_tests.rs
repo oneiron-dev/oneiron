@@ -685,6 +685,65 @@ fn consult_result_with_an_option_settles_its_member_task() -> Result<()> {
 }
 
 #[test]
+fn consult_result_replay_requires_the_stored_ask_option() -> Result<()> {
+    let (fixture, handle, peer, task) = peer_option_ask()?;
+    let memory = fixture.vault.memory(peer, EdgeActorClass::Agent);
+    let input = ConsultResultInput {
+        kind: ConsultResultKind::Answer {
+            result_ref: fixture.question.entity_ref(),
+            option: Some(TaskAskOptionId::new("yes")?),
+            evidence_refs: vec![fixture.question],
+        },
+        completed_at: 1_001,
+    };
+    let first = memory.land_consult_result(task, &input)?;
+    assert!(!first.idempotent_replay);
+    let replay = memory.land_consult_result(task, &input)?;
+    assert!(replay.idempotent_replay);
+    assert_eq!(replay.terminal, first.terminal);
+
+    let original_evidence = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask_evidence(handle)?;
+    for option in [Some("no"), None, Some("unknown")] {
+        let mut changed = input.clone();
+        if let ConsultResultKind::Answer {
+            option: selected, ..
+        } = &mut changed.kind
+        {
+            *selected = option.map(TaskAskOptionId::new).transpose()?;
+        }
+        let error = memory
+            .land_consult_result(task, &changed)
+            .expect_err("a changed option cannot be an idempotent replay");
+        assert_eq!(
+            error.code,
+            if option == Some("unknown") {
+                crate::memory::MEMORY_CODE_BAD_REQUEST
+            } else {
+                crate::memory::MEMORY_CODE_INVALID_STATE
+            }
+        );
+        assert_eq!(
+            fixture
+                .vault
+                .memory(fixture.owner, EdgeActorClass::Human)
+                .tasks_ask_evidence(handle)?,
+            original_evidence
+        );
+        assert_eq!(
+            super::wire_decode::task_verb_body(&fixture.vault, task)?
+                .expect("member task")
+                .terminal(),
+            Some(&first.terminal)
+        );
+    }
+    assert!(memory.land_consult_result(task, &input)?.idempotent_replay);
+    Ok(())
+}
+
+#[test]
 fn consult_result_without_an_option_on_an_options_ask_is_refused_before_the_write() -> Result<()> {
     let (fixture, _handle, peer, task) = peer_option_ask()?;
     let input = ConsultResultInput {

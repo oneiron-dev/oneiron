@@ -461,6 +461,57 @@ pub(super) fn admit_word(
     Ok(answer)
 }
 
+/// The terminal register does not carry the option. A replay of an ask answer
+/// must also match the immutable word recorded for this member. If two words
+/// with the same terminal payload disagree on the option, the terminal alone
+/// cannot identify the original word, so refuse the ambiguous replay.
+pub(super) fn replay_answer_option_matches(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+    body: &super::consult_result::TaskVerbBody,
+    actor: EntityId,
+    terminal: &super::TaskTerminalRecord,
+    option: Option<&super::TaskAskOptionId>,
+) -> Result<bool> {
+    let Some(payload) = &body.consult else {
+        return Ok(option.is_none());
+    };
+    let Some(group) = read_group(vault, txn, payload.correlation_ref)? else {
+        return Ok(option.is_none());
+    };
+    if !group
+        .members
+        .iter()
+        .any(|member| member.task == task.to_hex() && member.actor == actor.to_hex())
+    {
+        return Ok(option.is_none());
+    }
+    let Some(super::ConsultResultSummary::Answer { evidence_refs }) = &terminal.summary else {
+        return Ok(false);
+    };
+    let word = TaskAskWord {
+        result_ref: terminal.result_ref.ok_or_else(invalid)?,
+        option: option.cloned(),
+        inform_for: None,
+        provenance_refs: evidence_refs.iter().copied().collect(),
+    };
+    validate_word(&group, &word)?;
+    let mut matching = evidence_in(vault, txn, payload.correlation_ref, &group)?
+        .into_iter()
+        .filter(|entry| {
+            entry.answer.task_ref == task
+                && entry.answer.actor_ref == actor
+                && entry.word.result_ref == word.result_ref
+                && entry.word.inform_for.is_none()
+                && entry.word.provenance_refs == word.provenance_refs
+        });
+    let Some(first) = matching.next() else {
+        return Ok(false);
+    };
+    Ok(first.word.option == word.option && matching.all(|entry| entry.word.option == word.option))
+}
+
 pub(super) fn record_answer(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

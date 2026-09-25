@@ -191,6 +191,18 @@ impl Memory<'_> {
             // second result, so it reports the winner and mutates nothing.
             if let Some(existing) = body.terminal() {
                 if existing == landed {
+                    if let Some(super::ConsultResultKind::Answer { option, .. }) = consult_kind
+                        && !super::ask_record::replay_answer_option_matches(
+                            self.vault(), &*wtxn, task_ref, &body, self.actor(),
+                            existing, option.as_ref(),
+                        )?
+                    {
+                        return Err(consult_refusal(
+                            MEMORY_CODE_INVALID_STATE,
+                            "ask answer option differs from the settled word",
+                            "Read the settled ask evidence; a different option is not a replay.",
+                        ));
+                    }
                     return Ok((existing.clone(), true));
                 }
                 return Err(consult_refusal(
