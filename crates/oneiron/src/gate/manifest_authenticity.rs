@@ -130,6 +130,54 @@ impl Vault {
         Ok(())
     }
 
+    /// Shared owner-authenticated manifest write door. Fixture policies and
+    /// re-authoring take the same decode, target-type and write checks.
+    pub(crate) fn write_owner_policy_manifest_in_txn(
+        &self,
+        owner: &AuthenticatedOwner,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        data: Vec<u8>,
+        now: u64,
+    ) -> Result<()> {
+        owner.revalidate_in_txn(self, txn)?;
+        if super::decode::decode_policy_manifest(&data).is_none() {
+            return Err(Error::InvalidConfig("malformed policy manifest".into()));
+        }
+        if let Some(raw) = self.store.entities.get(txn, id.as_bytes())? {
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("policy manifest header"))?;
+            if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
+                return Err(Error::InvalidConfig(
+                    "policy manifest id belongs to another entity".into(),
+                ));
+            }
+        }
+        crate::batch::apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_POLICY_MANIFEST,
+                occurred: crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    }
+
     /// Explicit owner re-authoring, never grandfathering a product-band permit.
     /// The legacy carrier remains inert; the mapping records the re-key provenance.
     pub fn reauthor_legacy_policy_manifest(
@@ -157,32 +205,7 @@ impl Vault {
             ));
         }
         let data = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-        if super::decode::decode_policy_manifest(&data).is_none() {
-            return Err(Error::InvalidConfig("malformed legacy manifest".into()));
-        }
-        crate::batch::apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut txn,
-            vec![crate::batch::BatchOp::Put {
-                id: target,
-                entity_type: ENTITY_TYPE_POLICY_MANIFEST,
-                occurred: crate::TimeRange {
-                    start: now,
-                    end: now,
-                },
-                learned_at: now,
-                data,
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
+        self.write_owner_policy_manifest_in_txn(owner, &mut txn, target, data, now)?;
         self.store
             .sync_state
             .put(&mut txn, &key(&legacy, "rekey"), target.as_bytes())?;

@@ -314,10 +314,9 @@ impl SourceTrustRow {
     }
 
     fn merge(self, other: Self) -> Self {
-        // Two manifests binding one source's permit to different actors is a
-        // malformed policy state, not a precedence question: the merged row
-        // grants no auto at all rather than picking a winner or widening to
-        // the union of both bindings.
+        // This merge handles overlapping scopes only. Distinct actor-bound
+        // slots are kept separate by SourceTrustCeiling; an unbound/bound
+        // collision still grants no auto rather than widening either scope.
         if self.actor_ref != other.actor_ref {
             return Self {
                 max_auto_sensitivity: None,
@@ -341,7 +340,7 @@ impl SourceTrustRow {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct SourceTrustCeiling {
     pub(super) user_stated: Option<SourceTrustRow>,
     pub(super) observed: Option<SourceTrustRow>,
@@ -349,6 +348,9 @@ pub(super) struct SourceTrustCeiling {
     pub(super) imported: Option<SourceTrustRow>,
     pub(super) tool_output: Option<SourceTrustRow>,
     pub(super) generated: Option<SourceTrustRow>,
+    // Distinct owner-authored actor bindings are disjoint slots, not competing
+    // values for one actor. The first slot remains above for the usual case.
+    pub(super) additional_bound_rows: BTreeMap<(ClaimSource, EntityId), SourceTrustRow>,
     pub(super) malformed_manifest_seen: bool,
 }
 
@@ -371,16 +373,49 @@ impl SourceTrustCeiling {
         }
     }
 
-    pub(super) fn set_row(&mut self, source: ClaimSource, row: SourceTrustRow) {
-        let slot = match source {
+    pub(super) fn row_for_actor(
+        &self,
+        source: ClaimSource,
+        actor_ref: Option<&str>,
+    ) -> Option<SourceTrustRow> {
+        let first = self.row(source)?;
+        // Actor-specific untrusted clamps override a class-wide permit only
+        // for that actor. They can never create a permit without that baseline.
+        if let Some(id) = actor_ref.and_then(|actor| EntityId::from_hex(actor).ok())
+            && let Some(row) = self.additional_bound_rows.get(&(source, id))
+        {
+            return Some(*row);
+        }
+        first.binds_actor(actor_ref).then_some(first)
+    }
+
+    fn slot_mut(&mut self, source: ClaimSource) -> &mut Option<SourceTrustRow> {
+        match source {
             ClaimSource::UserStated => &mut self.user_stated,
             ClaimSource::Observed => &mut self.observed,
             ClaimSource::Inferred => &mut self.inferred,
             ClaimSource::Imported => &mut self.imported,
             ClaimSource::ToolOutput => &mut self.tool_output,
             ClaimSource::Generated => &mut self.generated,
-        };
-        *slot = Some(slot.map_or(row, |existing| existing.merge(row)));
+        }
+    }
+
+    pub(super) fn set_row(&mut self, source: ClaimSource, row: SourceTrustRow) {
+        match (self.row(source), row.actor_ref) {
+            (Some(first), Some(actor)) if first.actor_ref.is_some_and(|id| id != actor) => {
+                self.additional_bound_rows
+                    .entry((source, actor))
+                    .and_modify(|existing| *existing = existing.merge(row))
+                    .or_insert(row);
+            }
+            (Some(first), actor) if first.actor_ref != actor => {
+                // Unbound versus bound is not disjoint: retain the old
+                // fail-closed collision rule for overlapping scopes.
+                *self.slot_mut(source) = Some(first.merge(row));
+                self.additional_bound_rows.retain(|(s, _), _| *s != source);
+            }
+            (first, _) => *self.slot_mut(source) = Some(first.map_or(row, |v| v.merge(row))),
+        }
     }
 
     pub(super) fn merge(&mut self, other: Self) {
@@ -397,6 +432,52 @@ impl SourceTrustCeiling {
                 self.set_row(source, row);
             }
         }
+        for ((source, _), row) in other.additional_bound_rows {
+            self.set_row(source, row);
+        }
+    }
+
+    fn restrict_row(&mut self, source: ClaimSource, row: SourceTrustRow) {
+        let Some(first) = self.row(source) else {
+            return; // Untrusted input cannot open a source permit.
+        };
+        match row.actor_ref {
+            Some(actor) if first.actor_ref != Some(actor) => {
+                if let Some(existing) = self.additional_bound_rows.get_mut(&(source, actor)) {
+                    *existing = existing.merge(row);
+                } else if first.actor_ref.is_none() {
+                    // A class-wide permit covers this actor. Intersect just
+                    // that actor's scope, leaving every other actor unchanged.
+                    let bound_first = SourceTrustRow {
+                        actor_ref: Some(actor),
+                        ..first
+                    };
+                    self.additional_bound_rows
+                        .insert((source, actor), bound_first.merge(row));
+                }
+            }
+            _ => {
+                if row.actor_ref.is_none() {
+                    // A class-wide restriction intersects every existing
+                    // actor slot, preserving each binding. It must neither
+                    // single out the first scanned actor nor grant outsiders.
+                    *self.slot_mut(source) = Some(first.merge(SourceTrustRow {
+                        actor_ref: first.actor_ref,
+                        ..row
+                    }));
+                    for ((slot_source, _), bound) in &mut self.additional_bound_rows {
+                        if *slot_source == source {
+                            *bound = bound.merge(SourceTrustRow {
+                                actor_ref: bound.actor_ref,
+                                ..row
+                            });
+                        }
+                    }
+                } else {
+                    *self.slot_mut(source) = Some(first.merge(row));
+                }
+            }
+        }
     }
 
     pub(super) fn restrict_only(&mut self, other: Self) {
@@ -409,11 +490,12 @@ impl SourceTrustCeiling {
             ClaimSource::ToolOutput,
             ClaimSource::Generated,
         ] {
-            if self.row(source).is_some()
-                && let Some(row) = other.row(source)
-            {
-                self.set_row(source, row);
+            if let Some(row) = other.row(source) {
+                self.restrict_row(source, row);
             }
+        }
+        for ((source, _), row) in other.additional_bound_rows {
+            self.restrict_row(source, row);
         }
     }
 
@@ -486,8 +568,8 @@ fn check_source_trust_member(
 
     // An actor-bound row is invisible to every other actor, so the source
     // reads as carrying no row at all and keeps its default posture.
-    let row = match ceiling.row(source) {
-        Some(row) if row.binds_actor(actor_ref) => row,
+    let row = match ceiling.row_for_actor(source, actor_ref) {
+        Some(row) => row,
         _ => {
             if source.requires_explicit_auto_permit() {
                 return Err(Error::Gate(GateError::SourceNotTrustedForAuto {

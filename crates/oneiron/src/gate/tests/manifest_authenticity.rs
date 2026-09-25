@@ -1,5 +1,276 @@
 use super::*;
 
+fn replicated_actor_denial(actor: crate::EntityId) -> Value {
+    Value::Map(vec![
+        (Value::from("actor_ref"), Value::from(actor.to_hex())),
+        (Value::from("max_auto_sensitivity"), Value::from(0_u64)),
+        (Value::from("auto"), Value::Boolean(false)),
+    ])
+}
+
+#[test]
+fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> Result<()> {
+    let _dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::default())?;
+    let actor = test_id(0xB1);
+    let other = test_id(0xB2);
+    let body = public_stamped(source_trust_claim(ClaimSource::ToolOutput));
+    for id in [actor, other] {
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&id.to_hex()),
+            &resolve(&vault)?,
+            None,
+        )?;
+    }
+    let denial = encode_policy_manifest(vec![(
+        Value::from(POLICY_SOURCE_TRUST_KEY),
+        Value::Map(vec![(
+            Value::from("tool_output"),
+            replicated_actor_denial(actor),
+        )]),
+    )]);
+    vault
+        .batch()
+        .put_replicated(
+            &test_id(0xB3),
+            ENTITY_TYPE_POLICY_MANIFEST,
+            test_time(1),
+            1,
+            &denial,
+        )
+        .commit()?;
+    let policy = resolve(&vault)?;
+    assert!(
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&actor.to_hex()),
+            &policy,
+            None
+        )
+        .is_err()
+    );
+    crate::gate::resolution::check_claim_source_trust(&body, Some(&other.to_hex()), &policy, None)?;
+    crate::gate::resolution::check_claim_source_trust(&body, None, &policy, None)?;
+    Ok(())
+}
+
+#[test]
+fn replicated_class_wide_cap_narrows_every_bound_actor_in_either_manifest_order() -> Result<()> {
+    let actors = [test_id(0x81), test_id(0x82)];
+    for order in [actors, [actors[1], actors[0]]] {
+        let (_dir, vault) = temp_vault();
+        for (manifest_id, actor) in [test_id(0x71), test_id(0x72)].into_iter().zip(order) {
+            let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2)
+            else {
+                unreachable!("source trust fixture is a map")
+            };
+            let Value::Map(ref mut row) = sources[0].1 else {
+                unreachable!("source trust row fixture is a map")
+            };
+            row.push((Value::from("actor_ref"), Value::from(actor.to_hex())));
+            put_policy_manifest_bytes(
+                &vault,
+                manifest_id,
+                &encode_policy_manifest(vec![(key, Value::Map(sources))]),
+            )?;
+        }
+        let band_two = source_trust_claim(ClaimSource::Generated);
+        let public = public_stamped(source_trust_claim(ClaimSource::Generated));
+        for actor in actors {
+            crate::gate::resolution::check_claim_source_trust(
+                &band_two,
+                Some(&actor.to_hex()),
+                &resolve(&vault)?,
+                None,
+            )?;
+        }
+        let clamp = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Generated, 0)]);
+        vault
+            .batch()
+            .put_replicated(
+                &test_id(0x93),
+                ENTITY_TYPE_POLICY_MANIFEST,
+                test_time(1),
+                1,
+                &clamp,
+            )
+            .commit()?;
+        let policy = resolve(&vault)?;
+        for actor in actors {
+            assert!(
+                crate::gate::resolution::check_claim_source_trust(
+                    &band_two,
+                    Some(&actor.to_hex()),
+                    &policy,
+                    None,
+                )
+                .is_err()
+            );
+            crate::gate::resolution::check_claim_source_trust(
+                &public,
+                Some(&actor.to_hex()),
+                &policy,
+                None,
+            )?;
+        }
+        assert!(
+            crate::gate::resolution::check_claim_source_trust(
+                &public,
+                Some(&test_id(0x83).to_hex()),
+                &policy,
+                None,
+            )
+            .is_err()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_order() -> Result<()> {
+    for reversed in [false, true] {
+        let _dir = tempfile::tempdir()?;
+        let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::default())?;
+        let actor = test_id(0xB4);
+        let projector = crate::commitment_schedule::commitment_projection_actor().entity_ref();
+        let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
+            unreachable!("source trust fixture is a map")
+        };
+        let Value::Map(ref mut row) = sources[0].1 else {
+            unreachable!("source trust row fixture is a map")
+        };
+        row.push((Value::from("actor_ref"), Value::from(actor.to_hex())));
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0xB5),
+            &encode_policy_manifest(vec![(key, Value::Map(sources))]),
+        )?;
+        let body = public_stamped(source_trust_claim(ClaimSource::Generated));
+        for id in [actor, projector] {
+            crate::gate::resolution::check_claim_source_trust(
+                &body,
+                Some(&id.to_hex()),
+                &resolve(&vault)?,
+                None,
+            )?;
+        }
+        let mut rows = vec![
+            (Value::from("generated"), replicated_actor_denial(actor)),
+            (Value::from("generated"), replicated_actor_denial(projector)),
+        ];
+        if reversed {
+            rows.reverse();
+        }
+        let denial = encode_policy_manifest(vec![(
+            Value::from(POLICY_SOURCE_TRUST_KEY),
+            Value::Map(rows),
+        )]);
+        vault
+            .batch()
+            .put_replicated(
+                &test_id(0xB6),
+                ENTITY_TYPE_POLICY_MANIFEST,
+                test_time(1),
+                1,
+                &denial,
+            )
+            .commit()?;
+        let policy = resolve(&vault)?;
+        for id in [actor, projector] {
+            assert!(
+                crate::gate::resolution::check_claim_source_trust(
+                    &body,
+                    Some(&id.to_hex()),
+                    &policy,
+                    None
+                )
+                .is_err()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn trusted_disjoint_generated_actor_bindings_preserve_each_permit() -> Result<()> {
+    let _dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::default())?;
+    let actor = test_id(0x86);
+    let default_actor = crate::commitment_schedule::commitment_projection_actor().entity_ref();
+    let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
+        unreachable!("source trust fixture is a map")
+    };
+    let Value::Map(ref mut row) = sources[0].1 else {
+        unreachable!("source trust row fixture is a map")
+    };
+    row.push((Value::from("actor_ref"), Value::from(actor.to_hex())));
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x87),
+        &encode_policy_manifest(vec![(key, Value::Map(sources))]),
+    )?;
+    let policy = resolve(&vault)?;
+    let body = source_trust_claim(ClaimSource::Generated);
+    for allowed in [default_actor, actor] {
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&allowed.to_hex()),
+            &policy,
+            None,
+        )?;
+    }
+    assert!(
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&test_id(0x88).to_hex()),
+            &policy,
+            None,
+        )
+        .is_err()
+    );
+    // A replicated row for a third actor cannot mint a permit on an absent slot.
+    let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
+        unreachable!("source trust fixture is a map")
+    };
+    let Value::Map(ref mut row) = sources[0].1 else {
+        unreachable!("source trust row fixture is a map")
+    };
+    row.push((
+        Value::from("actor_ref"),
+        Value::from(test_id(0x88).to_hex()),
+    ));
+    vault
+        .batch()
+        .put_replicated(
+            &test_id(0x89),
+            ENTITY_TYPE_POLICY_MANIFEST,
+            test_time(1),
+            1,
+            &encode_policy_manifest(vec![(key, Value::Map(sources))]),
+        )
+        .commit()?;
+    let policy = resolve(&vault)?;
+    assert!(
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&test_id(0x88).to_hex()),
+            &policy,
+            None,
+        )
+        .is_err()
+    );
+    for allowed in [default_actor, actor] {
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&allowed.to_hex()),
+            &policy,
+            None,
+        )?;
+    }
+    Ok(())
+}
+
 #[test]
 fn untrusted_source_rows_only_narrow_present_slots_independent_of_scan_order() -> Result<()> {
     for (trusted, peer) in [

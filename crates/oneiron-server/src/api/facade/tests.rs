@@ -600,6 +600,7 @@ fn task_outside_read_floor() -> (
     read.verbs = ScopeAxis::Some(["read".to_owned()].into());
     oneiron::conversation_dag::test_support::put_test_policy_manifest(
         &vault,
+        oneiron::WriteActor::new(owner, EdgeActorClass::Human),
         EntityId::now(),
         &json!({
             "schema_version": "1.2", "pack_id": "task-read-floor", "pack_version": "1",

@@ -161,6 +161,19 @@ fn hash_source_trust(hasher: &mut Sha256, source_trust: &SourceTrustCeiling) {
     ] {
         hash_str(hasher, source.as_str());
         hash_source_trust_row(hasher, source_trust.row(source));
+        let bound: Vec<_> = source_trust
+            .additional_bound_rows
+            .iter()
+            .filter(|((class, _), _)| *class == source)
+            .collect();
+        if !bound.is_empty() {
+            hash_str(hasher, "additional_actor_bindings");
+            hash_len(hasher, bound.len());
+            for ((_, actor), row) in bound {
+                hash_str(hasher, &actor.to_hex());
+                hash_source_trust_row(hasher, Some(*row));
+            }
+        }
     }
 }
 
