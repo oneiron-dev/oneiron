@@ -21,7 +21,9 @@ jobs:
     if: ${{ vars.CI_PAUSED != 'true' }}
     # Schedule by capability; receipt validation still refuses a different
     # measured host or build configuration until its floor is approved.
-    runs-on: ${{ fromJSON(inputs.host == 'arch' && '["self-hosted","linux","x64"]' || '["self-hosted","macos","arm64"]') }}
+    runs-on:
+      group: oneiron-trusted
+      labels: ${{ fromJSON(inputs.host == 'arch' && '["self-hosted","linux","x64"]' || '["self-hosted","macos","arm64"]') }}
     timeout-minutes: 180
     env:
       FLEET_HOST: ${{ inputs.host }}

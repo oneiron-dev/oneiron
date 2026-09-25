@@ -31,7 +31,9 @@ jobs:
     # CI_PAUSED is the wave switch shared with ci.yml. ripgrep is part of
     # the runner host contract (AGENTS.md "Self-hosted runners"), so the old
     # apt-get install step is gone.
-    runs-on: [self-hosted, macos, arm64]
+    runs-on:
+      group: oneiron-trusted
+      labels: [self-hosted, macos, arm64]
     timeout-minutes: 15
     if: vars.CI_PAUSED != 'true'
     steps:

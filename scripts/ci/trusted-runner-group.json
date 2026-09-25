@@ -1,0 +1,18 @@
+{
+  "name": "oneiron-trusted",
+  "visibility": "selected",
+  "selected_repository_ids": [
+    1113618625
+  ],
+  "allows_public_repositories": true,
+  "restricted_to_workflows": true,
+  "selected_workflows": [
+    "oneiron-dev/oneiron/.github/workflows/android-embedded.yml@refs/heads/main",
+    "oneiron-dev/oneiron/.github/workflows/ci.yml@refs/heads/main",
+    "oneiron-dev/oneiron/.github/workflows/fleet-regression.yml@refs/heads/main",
+    "oneiron-dev/oneiron/.github/workflows/ratchet.yml@refs/heads/main",
+    "oneiron-dev/oneiron/.github/workflows/seal-oracle.yml@refs/heads/main",
+    "oneiron-dev/oneiron/.github/workflows/uniffi-stub.yml@refs/heads/main",
+    "oneiron-dev/oneiron/.github/workflows/wire-quickstart.yml@refs/heads/main"
+  ]
+}

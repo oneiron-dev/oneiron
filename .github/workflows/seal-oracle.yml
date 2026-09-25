@@ -42,7 +42,9 @@ concurrency:
 jobs:
   oracle:
     name: Differential oracle (pyHanko + pdfsig)
-    runs-on: [self-hosted, macos, arm64]
+    runs-on:
+      group: oneiron-trusted
+      labels: [self-hosted, macos, arm64]
     timeout-minutes: 60
     if: vars.CI_PAUSED != 'true'
     steps:

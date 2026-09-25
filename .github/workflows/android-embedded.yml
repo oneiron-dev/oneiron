@@ -1,25 +1,33 @@
 name: Android embedded
 on:
-  pull_request:
+  pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
     paths: ['crates/oneiron/**', 'crates/oneiron-android/**', 'crates/heed/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', '.github/workflows/android-embedded.yml']
   workflow_dispatch:
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 concurrency:
   group: android-embedded-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 jobs:
   android:
-    runs-on: [self-hosted, macos, arm64]
+    runs-on:
+      group: oneiron-trusted
+      labels: [self-hosted, macos, arm64]
     timeout-minutes: 45
-    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    # Fork PRs fail CI required statuses; maintainers test via an internal branch.
     if: >-
-      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request_target' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
+          persist-credentials: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

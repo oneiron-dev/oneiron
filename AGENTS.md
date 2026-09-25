@@ -186,10 +186,11 @@ build to work around an occupied target directory.
 
 ## CI truth
 
-Every workflow runs on our own runners since 2026-09-08 (HYG-06b) — hosts, labels and the cache
-contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
+Build and test jobs use our own runners; CI's trusted PR admission and status jobs use
+GitHub-hosted runners. Host labels and cache policy are under *Self-hosted runners* below.
+The persistent jobs honour `CI_PAUSED`; admission still refuses fork heads during a pause.
 
-- `ci.yml` — `pull_request` (non-draft) + `push` to `main` + `workflow_dispatch`; `CI_PAUSED=true`
+- `ci.yml` — base-owned `pull_request_target` + `push` to `main` + `workflow_dispatch`; `CI_PAUSED=true`
   repo variable pauses every job (wave affordance); drafts do not run. No `paths` filter
   (2026-09-11): every non-draft internal PR and every `main` push starts a run, because the `main` ruleset
   requires the `Checks` and `Test` contexts and a filtered trigger starts no run at all, so a
@@ -199,8 +200,8 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   code-map pin, tooling fixture tests, typos, `cargo-deny` policy — one job, one runner slot) / `test` (macOS) /
   `test-linux` (Linux reference) / `package` (`oneiron-server`, Linux);
   no `RUSTFLAGS` (see *Self-hosted runners*). `checks` and `test-linux` run on every non-draft
-  internal `pull_request`, on every `push` to `main` and on `workflow_dispatch`, so both required
-  contexts report for internal PRs; each gates its cargo steps on a rust diff (always on dispatch and tags, fail-open
+  internal PR, on every `push` to `main` and on `workflow_dispatch`. A hosted reporter posts
+  the actual `Checks`/`Test` results to the PR head; each gates its cargo steps on a rust diff (always on dispatch and tags, fail-open
   if the detector broke), so a docs-only run still checks the code-map pin, tooling fixtures, typos, and
   `cargo-deny` policy. `.cargo/**` changes count as Rust-relevant. `test` runs the macOS recipe
   (the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS
@@ -233,7 +234,7 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 - Hosts and labels: MacBook `self-hosted,macos,arm64,mbp` (16 cores, the first and strongest);
   the Mac mini joins with the same macOS labels; Arch box `self-hosted,linux,x64,arch` (16 cores,
   the Wave host — only `test-linux`, `package` and dispatch runs touch it). Workflows target
-  `[self-hosted, macos, arm64]` or `[self-hosted, linux, x64]`, never a host name.
+  the restricted organization group `oneiron-trusted` with those labels, never a host name.
 - Cache contract: each runner's `~/actions-runner/.env` exports `CARGO_TARGET_DIR=~/ci/target`
   (persistent, outside the checkout, so `clean: true` checkouts never wipe it; on macOS it must
   also stay outside `~/Desktop`, `~/Documents` and `~/Downloads` — the runner is a launchd agent
@@ -259,14 +260,16 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   macOS runner they serialise. Every job has `timeout-minutes` so a hang cannot hold the slot.
 - Waves: set the repository variable `CI_PAUSED=true` while a wave lands commits and every job
   in every workflow skips; flip it back when the wave closes.
-- Adding a runner: mint a registration token (repo Settings → Actions → Runners → New
-  self-hosted runner) and run it from the environment only, never from a file or a commit:
+- Adding a runner: mint an **organization** registration token (org Settings → Actions → Runners)
+  for the restricted `oneiron-trusted` group. Use it from the environment only, never from a file or a commit:
   `RUNNER_TOKEN=… scripts/ci/install-runner.sh <name> <labels> <os-arch> <cargo-target-dir> [tmpdir]`,
   e.g. `… install-runner.sh mac-mini self-hosted,macos,arm64,mini osx-arm64 ~/ci/target
   /private/tmp/ci-t`; then `./run.sh` or `./svc.sh install && ./svc.sh start` in `~/actions-runner`.
 Fork PRs never run on our self-hosted runners, even after outside-contributor approval.
-Their required `Checks` and `Test` contexts do not report by design. To test a fork PR, a
-maintainer pushes its code to an internal branch and opens an internal PR.
+Trusted admission marks both required `Checks` and `Test` statuses as failed on their head and test-merge SHAs;
+a maintainer tests fork code by pushing it to an internal branch and opening an internal PR.
+The runner-group and dedicated status-App settings and migration checklist are in
+`docs/ops/ci-fork-isolation.md`.
 
 ## Where new code goes
 

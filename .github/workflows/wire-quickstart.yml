@@ -4,7 +4,7 @@ name: Wire quickstart
 # through the real facade fixture. No publication or upload occurs here.
 on:
   workflow_dispatch:
-  pull_request:
+  pull_request_target:
     branches: [main]
     # `ready_for_review` so a draft that becomes ready gets its first run
     # (the guard below skips drafts).
@@ -66,7 +66,7 @@ env:
 
 concurrency:
   group: wire-quickstart-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   wire-quickstart:
@@ -76,12 +76,14 @@ jobs:
     # dir (no rust-cache action). Bun, Node and Python stay version-pinned
     # through their setup actions, which populate the runner's own tool
     # cache (_work/_tool) on first use. Same pause/draft/fork guard as ci.yml.
-    runs-on: [self-hosted, macos, arm64]
+    runs-on:
+      group: oneiron-trusted
+      labels: [self-hosted, macos, arm64]
     timeout-minutes: 30
-    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    # Fork PRs fail CI required statuses; maintainers test via an internal branch.
     if: >-
-      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request_target' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
     defaults:
       run:
         shell: bash
@@ -89,6 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
           persist-credentials: false
           clean: true
 

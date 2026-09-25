@@ -10,16 +10,18 @@ name: CI
 # an internal docs-only PR costs one checkout per job plus the cheap always-on steps
 # (code-map pin, tooling tests, typos, and the cargo-deny policy).
 #
-# Wave affordance: setting the repository variable CI_PAUSED=true skips
-# every job (each job's `if:` checks it). A wave that lands many commits
-# fast flips it on and flips it off when the wave closes. Draft PRs also
-# skip every job; `ready_for_review` starts the first real run.
+# Wave affordance: CI_PAUSED=true skips persistent jobs, but the hosted
+# admission/reporter still mark PR-head checks non-successful. Draft PRs
+# likewise cannot pass required PR-head statuses.
 on:
   workflow_dispatch:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,10 +41,11 @@ concurrency:
   # result for, and a merge burst would otherwise cancel the run for the
   # commit before it. Per-sha group on push, per-PR group on pull_request.
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
-# Runners (2026-09-08, HYG-06b): every job runs on our own machines, not a
-# cloud pool. The MacBook and the Mac mini carry the
+# Runners (2026-09-08, HYG-06b): persistent jobs run only in a restricted
+# organization runner group. Admission and status reporting use hosted VMs.
+# The MacBook and the Mac mini carry the
 # `self-hosted,macos,arm64` labels; the Arch box, and during a wave a rented
 # box, carry `self-hosted,linux,x64`. Since 2026-09-25 (owner: own machines
 # before a paid CI service) PR CI uses the Linux boxes as well: `changes`,
@@ -66,7 +69,7 @@ concurrency:
 # jobs. `checks` (code-map pin, fmt, clippy workspace + featureless + server,
 # strict rustdoc, tool tests, typos, cargo-deny policy) and `test-linux` (named `Test`, the
 # Linux reference recipe) both run on every non-draft internal PR, on every push to main and on
-# dispatch, so the two required contexts report for internal PRs. Inside each, the cargo steps run only when the diff
+# dispatch. Hosted trusted jobs publish their real outcomes as required PR-head statuses. Inside each, the cargo steps run only when the diff
 # is rust-relevant — always on dispatch and on tags, and fail-open if the
 # detector broke (deny is the dispatch-era gate, ONE-335). A docs-only run is
 # therefore a checkout, a toolchain print and the always-on policy steps, and
@@ -83,21 +86,53 @@ concurrency:
 # host for main pushes and dispatch only; `package` (publish-integrity) runs
 # on release tags only.
 #
-# Every job's `if:` starts with the pause/draft guard from the header,
-#   vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-#   && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
+# Persistent jobs' `if:` starts with the pause/draft guard from the header,
+#   vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request_target' || github.event.pull_request.draft == false)
+#   && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
 # AND-ed with that job's own gate.
 jobs:
+  admission:
+    name: Trusted PR admission
+    # Base-owned workflow on a disposable hosted runner. Never checkout fork code.
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      # A separate status App is required by the main ruleset. Fork workflows
+      # cannot mint its token or fake its required Checks/Test source.
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.ONEIRON_CI_STATUS_APP_ID }}
+          private-key: ${{ secrets.ONEIRON_CI_STATUS_APP_PRIVATE_KEY }}
+          owner: oneiron-dev
+          repositories: oneiron
+          permission-statuses: write
+      - name: Mark PR head pending or refuse fork
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: python3 scripts/ci/pr_status.py admission
+
   changes:
     name: Detect changed paths
-    runs-on: [self-hosted]
+    runs-on:
+      group: oneiron-trusted
+      labels: [self-hosted]
     timeout-minutes: 10
-    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    needs: admission
+    # The trusted hosted admission runs first; on push/dispatch it is skipped.
     if: >-
-      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
-    # paths-filter reads PR changed-files via the REST API — grant it
-    # explicitly so a restricted default GITHUB_TOKEN can't strand PRs.
+      always()
+      && (github.event_name != 'pull_request_target' || needs.admission.result == 'success')
+      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request_target' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
+    # paths-filter reads PR changed files through the API, including
+    # pull_request_target; keep pull-requests:read on this job.
     permissions:
       contents: read
       pull-requests: read
@@ -106,6 +141,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
           clean: true
       - uses: dorny/paths-filter@v3
         id: filter
@@ -131,7 +167,9 @@ jobs:
 
   checks:
     name: Checks
-    runs-on: [self-hosted]
+    runs-on:
+      group: oneiron-trusted
+      labels: [self-hosted]
     timeout-minutes: 60
     needs: changes
     # The former fmt / clippy / typos / cargo-deny jobs, folded into one so a
@@ -144,15 +182,16 @@ jobs:
     # always run, so a docs-only PR reports checks it really ran. Inside
     # always(): dispatch is the deny gate's unconditional route (ONE-335), so a broken
     # `changes` job must not skip it; the pause/draft guard still applies.
-    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    # Fork PRs fail required PR-head statuses; maintainers test via an internal branch.
     if: >-
       always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
-      && (github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request_target' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
+      && (github.event_name == 'pull_request_target' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
           clean: true
       - name: Shared compiler cache (sccache 0.15.0)
         run: |
@@ -239,13 +278,14 @@ jobs:
         run: scripts/ci/cap-target-cache.sh 20
   test:
     name: Test (macOS)
-    runs-on: [self-hosted, macos, arm64]
+    runs-on:
+      group: oneiron-trusted
+      labels: [self-hosted, macos, arm64]
     timeout-minutes: 90
     needs: changes
-    # PRs: EVERY non-draft one, because `Test` is a required context and a
-    # job that never starts never reports it. The rust-diff gate moved down to
-    # the heavy steps below, so a docs-only PR pays one checkout and a
-    # toolchain print and goes green.
+    # This macOS recipe runs on main pushes and manual dispatch only.
+    # The Linux job below is the required PR Test; its rust-diff gate lives
+    # in its heavy steps, so an internal docs-only PR still runs a real job.
     # Dispatch: always (a manual run is the full gate).
     # Main pushes: rust diffs (the changes job
     # runs the same filter on push), but fail OPEN — if the detector job
@@ -254,11 +294,11 @@ jobs:
     # no sane diff base on a tag event); that clause is inert until a
     # tag-push trigger returns to `on:` (see `package`). The pause/draft
     # guard sits inside always() so a paused wave or a draft PR still skips.
-    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    # Fork PRs fail required PR-head statuses; maintainers test via an internal branch.
     if: >-
       always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
+      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request_target' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
       && (
         github.event_name == 'workflow_dispatch'
         || (github.event_name == 'push' && (
@@ -270,6 +310,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
           clean: true
       - name: Shared compiler cache (sccache 0.15.0)
         run: |
@@ -348,7 +389,9 @@ jobs:
         run: scripts/ci/cap-target-cache.sh 20
   test-linux:
     name: Test
-    runs-on: [self-hosted, linux, x64]
+    runs-on:
+      group: oneiron-trusted
+      labels: [self-hosted, linux, x64]
     timeout-minutes: 90
     needs: changes
     # Linux is the reference host (AGENTS.md): this lane runs the suite with
@@ -362,14 +405,14 @@ jobs:
     # fail-open, tags), same pause/draft guard inside always(); on a PR the
     # cargo steps gate themselves on a rust-relevant diff so a docs-only PR
     # still reports the context.
-    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    # Fork PRs fail required PR-head statuses; maintainers test via an internal branch.
     if: >-
       always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
+      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request_target' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
       && (
         github.event_name == 'workflow_dispatch'
-        || github.event_name == 'pull_request'
+        || github.event_name == 'pull_request_target'
         || (github.event_name == 'push' && (
           startsWith(github.ref, 'refs/tags/')
           || needs.changes.outputs.rust == 'true'
@@ -379,6 +422,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
           clean: true
       - name: Shared compiler cache (sccache 0.15.0)
         run: |
@@ -414,7 +458,9 @@ jobs:
 
   package:
     name: Package oneiron-server
-    runs-on: [self-hosted, linux, x64]
+    runs-on:
+      group: oneiron-trusted
+      labels: [self-hosted, linux, x64]
     timeout-minutes: 60
     # Publish-integrity + standalone-build check. Not needed per-merge at
     # 0.1.0 (we don't publish every merge) — gate to release tags only. A
@@ -426,10 +472,10 @@ jobs:
     # in `on:`. Today `push` is `branches: [main]` only, so the gate below
     # is unreachable — unchanged behaviour, now stated. Re-add the tag
     # trigger to turn release validation back on.
-    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    # Fork PRs fail required PR-head statuses; maintainers test via an internal branch.
     if: >-
-      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request_target' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
       && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
@@ -466,19 +512,22 @@ jobs:
     name: Mutation audit
     permissions:
       contents: read
-    runs-on: [self-hosted]
+    runs-on:
+      group: oneiron-trusted
+      labels: [self-hosted]
     timeout-minutes: 180
     needs: changes
-    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    # Fork PRs fail required PR-head statuses; maintainers test via an internal branch.
     if: >-
       always()
       && vars.CI_PAUSED != 'true'
-      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
+      && (github.event_name != 'pull_request_target' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
       && (needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success')
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
           clean: true
           persist-credentials: false
           fetch-depth: 0
@@ -510,6 +559,38 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mutation-audit-${{ github.sha }}
+          name: mutation-audit-${{ github.event.pull_request.merge_commit_sha || github.sha }}
           path: target/mutation-audit/outcomes.json
           if-no-files-found: ignore
+
+  pr-status:
+    name: Report trusted PR checks
+    if: >-
+      always()
+      && (github.event_name == 'pull_request_target' ||
+          (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    needs: [checks, test-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      # A separate status App is required by the main ruleset. Fork workflows
+      # cannot mint its token or fake its required Checks/Test source.
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.ONEIRON_CI_STATUS_APP_ID }}
+          private-key: ${{ secrets.ONEIRON_CI_STATUS_APP_PRIVATE_KEY }}
+          owner: oneiron-dev
+          repositories: oneiron
+          permission-statuses: write
+      - name: Post actual Checks and Test outcomes to PR or main commit
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          TEST_RESULT: ${{ needs.test-linux.result }}
+        run: python3 scripts/ci/pr_status.py completion

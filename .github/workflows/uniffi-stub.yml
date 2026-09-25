@@ -7,7 +7,7 @@
 name: UniFFI stub
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [main]
     # `ready_for_review` so a draft that becomes ready gets its first run
     # (the guard below skips drafts).
@@ -18,6 +18,9 @@ on:
       - 'Cargo.lock'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   # No RUSTFLAGS, as in ci.yml: the vendored heed path dependency is not
@@ -25,7 +28,7 @@ env:
 
 concurrency:
   group: uniffi-stub-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   uniffi-stub:
@@ -37,17 +40,21 @@ jobs:
     # Needs a full Xcode (Swift Package Manager's manifest link step fails on
     # Command Line Tools alone), so it asks for the `xcode` capability label
     # rather than any macOS runner; both Macs carry it today.
-    runs-on: [self-hosted, macos, arm64, xcode]
+    runs-on:
+      group: oneiron-trusted
+      labels: [self-hosted, macos, arm64, xcode]
     timeout-minutes: 30
-    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    # Fork PRs fail CI required statuses; maintainers test via an internal branch.
     if: >-
-      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request_target' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
     steps:
       # fetch-depth 0 so the PR-only forbidden-path guard can always reach
       # the base SHA, with no implementer-chosen baseline.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
+          persist-credentials: false
           fetch-depth: 0
           clean: true
 
@@ -80,7 +87,7 @@ jobs:
       # The raw C ABI and the root Swift package stay untouched by this
       # lane. A PR-base property, so it only runs on pull_request events.
       - name: Legacy FFI and root Swift package untouched
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request_target'
         run: |
           CHANGED=$(mktemp)
           git diff --name-only "${{ github.event.pull_request.base.sha }}...HEAD" \
