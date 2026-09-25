@@ -4,6 +4,7 @@ use super::document::decode_frontier;
 use super::side_keys::HexPair;
 use super::{DocAuthorization, EntityDoc, ForkStatus, TextAnchor, invalid, storage};
 use crate::error::{ArtifactError, Error, Result};
+use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -240,9 +241,9 @@ impl Vault {
                 }
             }
             storage::persist(self, txn, entity, &mut h, &shallow, None)?;
-            self.store.sync_state.put(
+            self.store.port_document_shallow_since_put(
                 txn,
-                &format!("ssv:e:{}", h.document),
+                DocumentSlot::from_hex(&h.document)?,
                 &shallow.doc.shallow_since_vv().encode(),
             )?;
             let receipt_id = EntityId::now();

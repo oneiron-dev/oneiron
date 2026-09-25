@@ -1,7 +1,8 @@
 //! The NOTE-adjacent per-entity `sync_state` workflow rows swept alongside
 //! the canonical entity-document family. These sit beside, but are distinct
 //! from, the ARCH-0023b document families (`d:e:`, `u:e:`, `sv:e:`, `ssv:e:`,
-//! `m:u_seq:e:`), which stay on their existing raw calls.
+//! `m:u_seq:e:`), which go through the document-row port
+//! (`crate::ports::DocumentRowStore`).
 //!
 //! Every one of these prefixes is also written from `crate::sync`, outside
 //! this module's assigned slice; the bindings here are local to the NOTE

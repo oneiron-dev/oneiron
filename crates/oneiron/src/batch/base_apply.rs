@@ -69,23 +69,23 @@ pub(super) fn apply_ops_with_origin(
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
-    gate_mode: ApplyOpsGateMode,
+    mut gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
-    let hub_admission = gate_mode.hub_admission;
+    let hub_admission = gate_mode.hub_admission.take();
     let birth_mask = gate_mode.birth_mask;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
-    let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
     let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
-    let mut claim_materializations = gate_mode.claim_materializations;
+    let mut claim_materializations = std::mem::take(&mut gate_mode.claim_materializations);
     if claim_gate_prechecked && !claim_materializations.is_empty() {
         return Err(Error::InvariantViolation(
             "owner-bound materialization cannot skip the gate",
         ));
     }
-    let mut preflight_gate_decision_ids = gate_mode.preflight_gate_decision_ids;
+    let mut preflight_gate_decision_ids =
+        std::mem::take(&mut gate_mode.preflight_gate_decision_ids);
 
     secret_scan::scan_batch_ops(&ops)?;
     // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
@@ -136,6 +136,8 @@ pub(super) fn apply_ops_with_origin(
         check_decode_point_taint_guard(store, &op, origin)?;
         let materialization =
             consume_claim_materialization(store, &*wtxn, &mut claim_materializations, &op, origin)?;
+        let mut put_options = PutOptions::for_batch_op(&op, &gate_mode);
+        put_options.indexing.later_text_op_covers = later_text_coverage_by_op[op_index];
         match op {
             BatchOp::Put {
                 id,
@@ -219,38 +221,31 @@ pub(super) fn apply_ops_with_origin(
                 } else {
                     None
                 };
+                put_options.consent.can_resolve_pending =
+                    pending_gate_consent_at_batch_start.contains(&id);
+                put_options.decision.preflight = preflight_decision_id;
                 let applied = apply_put(
                     store,
                     wtxn,
-                    id,
-                    entity_type,
-                    occurred,
-                    learned_at,
-                    &data,
-                    allow_reserved_predicate,
-                    // ONE-1141: `replicated_put_op` is the SINGLE constructor
-                    // that opens BOTH admit bands at once (see its doc), so
-                    // both-flags-set identifies the sync replay doors
-                    // (`put_replicated` → here). The replicated arm of
-                    // `apply_put` deindexes the loser's BM25F postings on a
-                    // body-changing overwrite, same-txn (ARCH-0031 amendment).
-                    replicated,
-                    hub_sync_imported,
-                    hub_admission.as_ref(),
-                    later_text_coverage_by_op[op_index],
-                    write_policy.as_ref(),
-                    materialization
-                        .as_ref()
-                        .and_then(ClaimMaterialization::gate_envelope),
-                    false,
-                    record_gate_decisions,
-                    persist_gate_pending_consent,
-                    pending_gate_consent_at_batch_start.contains(&id),
-                    include_source_in_gate_input,
-                    claim_gate_prechecked,
-                    preflight_decision_id,
-                    Some(&companion_retired_histories),
-                    origin,
+                    PutRequest {
+                        row: PutRow {
+                            id,
+                            entity_type,
+                            occurred,
+                            learned_at,
+                            data: &data,
+                        },
+                        options: put_options,
+                        context: PutContext {
+                            origin,
+                            write_policy: write_policy.as_ref(),
+                            write_envelope: materialization
+                                .as_ref()
+                                .and_then(ClaimMaterialization::gate_envelope),
+                            hub_admission: hub_admission.as_ref(),
+                            companion_retired_histories: Some(&companion_retired_histories),
+                        },
+                    },
                 )?;
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
                     apply_ops_with_origin(
@@ -378,23 +373,23 @@ pub(super) fn apply_ops_with_origin(
                 } else {
                     None
                 };
+                put_options.consent.can_resolve_pending =
+                    pending_gate_consent_at_batch_start.contains(&id);
+                put_options.decision.preflight = preflight_decision_id;
                 let applied = apply_claim_candidate(
                     store,
                     wtxn,
-                    id,
-                    *candidate,
-                    &envelope,
-                    occurred,
-                    learned_at,
-                    later_text_coverage_by_op[op_index],
-                    write_policy.as_ref(),
-                    internal_lexical_query_hint,
-                    record_gate_decisions,
-                    persist_gate_pending_consent,
-                    pending_gate_consent_at_batch_start.contains(&id),
-                    include_source_in_gate_input,
-                    claim_gate_prechecked,
-                    preflight_decision_id,
+                    ClaimCandidateRequest {
+                        id,
+                        candidate: *candidate,
+                        envelope: &envelope,
+                        occurred,
+                        learned_at,
+                        decision: put_options.decision,
+                        consent: put_options.consent,
+                        indexing: put_options.indexing,
+                        write_policy: write_policy.as_ref(),
+                    },
                 )?;
                 if !internal_lexical_query_hint {
                     claim_materialization::record_committed_claim(store, wtxn, &id, true)?;
@@ -637,117 +632,6 @@ fn finalize_batch_indexes(
     }
 
     Ok(())
-}
-
-/// Applies one op of the edge family and invalidates the PPR caches of both
-/// endpoints when it changes an edge. Returns whether the graph changed: every
-/// edge op changes it except a delete of an edge that is not stored.
-fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) -> Result<bool> {
-    match op {
-        BatchOp::Edge {
-            src,
-            kind,
-            tgt,
-            weight,
-            vad,
-        } => {
-            validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
-            apply_edge(store, wtxn, src, kind, tgt, weight, vad)?;
-            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            Ok(true)
-        }
-        BatchOp::PublicEdgeWithCreatedAt {
-            src,
-            kind,
-            tgt,
-            weight,
-            created_at,
-            vad,
-        } => {
-            validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
-            apply_public_edge_with_created_at(
-                store, wtxn, src, kind, tgt, weight, created_at, vad,
-            )?;
-            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            Ok(true)
-        }
-        // UNGATED by design — this is the replicated/replay shape. A
-        // bare-over-provenanced LWW edge is a legitimate remote winner;
-        // gating here would turn a legitimate remote merge into a
-        // permanent local sync-wedging abort (H2). The public timestamped
-        // builders route through the gated `PublicEdgeWithCreatedAt` arm
-        // instead.
-        //
-        // Ungated is not unvalidated: the ONE-1645 `FacetOf` type table
-        // runs on every path INTO this arm instead, as a
-        // quarantine-and-continue rejection rather than an abort —
-        // `sync::window`'s forward-remat edge write and
-        // `sync::bridge`'s Observer-B edge batch both call
-        // `validate_facet_of_edge` after endpoint readiness, and
-        // `sync::selector`'s federation admission door drops a provably
-        // off-table row before it ever enters the admitted document. A
-        // federation peer therefore cannot replay a facet stamp local
-        // writers may not write.
-        BatchOp::EdgeWithCreatedAt {
-            src,
-            kind,
-            tgt,
-            weight,
-            created_at,
-            vad,
-            provenance,
-        } => {
-            apply_edge_with_created_at(
-                store, wtxn, src, kind, tgt, weight, created_at, vad, provenance,
-            )?;
-            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            Ok(true)
-        }
-        BatchOp::SetEdgeWeight {
-            src,
-            kind,
-            tgt,
-            weight,
-        } => {
-            apply_set_edge_weight(store, wtxn, src, kind, tgt, weight)?;
-            // The weight at offset 0 is the PPR edge weight — invalidate
-            // and bump exactly like the plain edge-write arms.
-            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            Ok(true)
-        }
-        BatchOp::SetEdgeVad {
-            src,
-            kind,
-            tgt,
-            vad,
-        } => {
-            apply_set_edge_vad(store, wtxn, src, kind, tgt, vad)?;
-            // Mirror the existing edge-write behavior: every edge value
-            // rewrite invalidates the endpoint PPR caches.
-            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            Ok(true)
-        }
-        BatchOp::DeleteEdge { src, kind, tgt } => {
-            // Deleting or purging the source removes its stamp with it;
-            // a live NOTE or ASSET keeps the one it was born with.
-            if kind == crate::edge::EdgeKind::FacetOf
-                && matches!(
-                    stored_entity_type(store, wtxn, &src)?,
-                    Some(crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET)
-                )
-            {
-                return Err(Error::Registry(RegistryError::FacetStampImmutable { src }));
-            }
-            let deleted = apply_delete_edge(store, wtxn, src, kind, tgt)?;
-            if deleted {
-                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            }
-            Ok(deleted)
-        }
-        _ => Err(Error::InvariantViolation(
-            "only an edge op reaches the edge applier",
-        )),
-    }
 }
 
 type PreflightDecisionIds = HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>;

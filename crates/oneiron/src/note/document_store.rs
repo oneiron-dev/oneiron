@@ -9,6 +9,7 @@ use super::side_keys::HexHexHash;
 use super::{NoteBody, NoteKind, encode_note_body};
 use crate::error::Result;
 use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
+use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
 use crate::side_table::HexId;
 use crate::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, WriteActor};
@@ -216,12 +217,10 @@ impl Memory<'_> {
                 .map_err(|_| invalid("NOTE history purge failed"))?;
             let shallow = NoteDocument::load(note, &snapshot)?;
             super::storage::snapshot(self.vault(), txn, note, &shallow.doc, false)?;
-            self.vault().store.sync_state.put(
+            let slot = DocumentSlot::of(super::storage::slot(self.vault(), txn, note)?);
+            self.vault().store.port_document_shallow_since_put(
                 txn,
-                &format!(
-                    "ssv:e:{}",
-                    super::storage::slot(self.vault(), txn, note)?.to_hex()
-                ),
+                slot,
                 &shallow.doc.shallow_since_vv().to_vv().encode(),
             )?;
             Ok(())

@@ -2,7 +2,6 @@
 
 use super::Vault;
 use super::doctor_manifest::{TextIndexStatus, read_text_schema_version};
-use crate::batch::TxnBatchBuilder;
 use crate::error::{Error, Result};
 use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
 use crate::store::{
@@ -268,17 +267,18 @@ impl Vault {
         }
     }
 
-    /// Creates a new write batch builder bound to this vault.
+    /// Creates a new write batch builder bound to this vault. Call
+    /// [`BatchBuilder::commit`] to write it in its own transaction.
     pub fn batch(&self) -> BatchBuilder<'_> {
         BatchBuilder::new(self)
     }
 
-    /// Creates a batch builder that writes into an externally-owned transaction.
+    /// Creates the same builder for a transaction the caller owns.
     ///
-    /// Call `.apply(wtxn)` to execute writes without committing.
+    /// Call [`BatchBuilder::apply`] to execute writes without committing.
     /// Use with `with_write_txn()` for atomic multi-operation writes (e.g. entity + pm marker).
-    pub fn batch_in(&self) -> TxnBatchBuilder<'_> {
-        TxnBatchBuilder::new(self)
+    pub fn batch_in(&self) -> BatchBuilder<'_> {
+        BatchBuilder::new(self)
     }
 
     /// Creates a query pipeline builder for multi-signal retrieval.

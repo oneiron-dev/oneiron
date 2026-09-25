@@ -21,6 +21,7 @@ use crate::identity_topology::{
     StoredIdentityOpAction, decode_identity_topology_event_body,
     encode_identity_topology_event_body,
 };
+use crate::ports::{EntityStoreMaintenance, ScrubbedRecord};
 use crate::ppr;
 use crate::provenance::EdgeRef;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
@@ -355,14 +356,15 @@ impl Vault {
             let Some(event) = event.without_author_stamp() else {
                 continue;
             };
-            let mut record = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
-            record.extend_from_slice(&encode_identity_topology_event_body(&event)?);
-            scrubbed.push((event_id, record));
+            scrubbed.push((event_id, encode_identity_topology_event_body(&event)?));
         }
-        for (event_id, record) in &scrubbed {
+        for (event_id, body) in scrubbed {
             // Erasure must remove the old author stamp from retained history too.
-            crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, event_id)?;
-            self.store.entities.put(wtxn, event_id.as_bytes(), record)?;
+            crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, &event_id)?;
+            let recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+            let body = ScrubbedRecord::AuthorStampRemoved(body);
+            self.store
+                .port_entity_scrub(wtxn, &event_id, body, recorded_at)?;
         }
         Ok(())
     }
@@ -460,8 +462,6 @@ impl Vault {
         };
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
-        let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
-        let changed = entity_record.len() > ENTITY_METADATA_HEADER_LEN;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the
@@ -493,21 +493,8 @@ impl Vault {
         crate::claim::remove_claim_projection_index(&self.store, wtxn, *id)?;
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
-        self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
-        if changed {
-            crate::ports::audit_mutation_in_txn(
-                &self.store,
-                wtxn,
-                crate::ports::MutationAudit {
-                    entity: *id,
-                    op: crate::ports::ChangeOp::Redact,
-                    actor_principal: None,
-                    occurred_at: mutation_recorded_at,
-                    input: id.as_bytes(),
-                    reason: None,
-                },
-            )?;
-        }
+        self.store
+            .port_entity_scrub(wtxn, id, ScrubbedRecord::Shell, mutation_recorded_at)?;
         Ok((true, had_vector))
     }
 

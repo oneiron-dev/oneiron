@@ -25,7 +25,7 @@ use crate::error::Result;
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+/// Storage errors; [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) on an undecodable row.
 pub fn rebuild_routing_projection(vault: &Vault) -> Result<()> {
     let judged: BTreeMap<String, AmendmentJudgment> = amendment_judgments(vault)?
         .into_iter()

@@ -10,6 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 #[cfg(feature = "sync")]
 use crate::error::{Error, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation};
+use crate::ports::{DocumentRowStore, DocumentUpdateKey, UpdateSeq};
 use crate::side_table::{self, Raw, SideTable};
 #[cfg(feature = "sync")]
 use crate::sync::window_rows::{
@@ -49,6 +50,11 @@ const SNAPSHOT_CARRIERS: SideTable<String, Vec<u8>, Raw> =
 pub(super) const UPDATE_CARRIERS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_U_W);
 
+/// Unacknowledged local text-document edit frames (`qd:e:{id}:{seq:08x}`), bound for the same
+/// reason as [`SNAPSHOT_CARRIERS`].
+const PENDING_EDIT_CARRIERS: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SYNC_QD_E);
+
 /// Distinct window labels currently carrying persisted CRDT state —
 /// `d:w:{key}` snapshots and `u:w:{key}:{seq:08x}` update rows.
 fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
@@ -69,29 +75,38 @@ fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
             }
         }
     }
-    for prefix in ["d:e:", "u:e:", "qd:e:"] {
-        for row in vault.store.sync_state.prefix_iter(&rtxn, prefix)? {
-            let (key, _) = row?;
-            let rest = &key[prefix.len()..];
-            let hex = if prefix != "d:e:" {
-                match rest.rsplit_once(':') {
-                    Some((hex, seq)) if seq.len() == 8 && u32::from_str_radix(seq, 16).is_ok() => {
-                        hex
-                    }
-                    _ => {
-                        malformed = true;
-                        continue;
-                    }
-                }
-            } else {
-                rest
-            };
-            match EntityId::from_hex(hex) {
-                Ok(id) if id.to_hex() == hex => {
-                    labels.insert(format!("e:{hex}"));
-                }
-                _ => malformed = true,
+    // Entity-document carriers. An update numbered by an entity-document generation
+    // (`{:020}`) does not spell a sequence here and is reported as malformed.
+    let snapshots = vault.store.port_document_snapshot_slots(&rtxn)?;
+    let updates = vault.store.port_document_update_keys(&rtxn)?;
+    let updates = updates.into_iter().map(|key| match key {
+        Some(DocumentUpdateKey {
+            slot,
+            seq: UpdateSeq::Sequence(_),
+        }) => Some(slot),
+        _ => None,
+    });
+    for slot in snapshots.into_iter().chain(updates) {
+        match slot {
+            Some(slot) => {
+                labels.insert(format!("e:{}", slot.to_hex()));
             }
+            None => malformed = true,
+        }
+    }
+    for rest in PENDING_EDIT_CARRIERS.scan_keys(&vault.store, &rtxn, &[])? {
+        let hex = match rest.rsplit_once(':') {
+            Some((hex, seq)) if seq.len() == 8 && u32::from_str_radix(seq, 16).is_ok() => hex,
+            _ => {
+                malformed = true;
+                continue;
+            }
+        };
+        match EntityId::from_hex(hex) {
+            Ok(id) if id.to_hex() == hex => {
+                labels.insert(format!("e:{hex}"));
+            }
+            _ => malformed = true,
         }
     }
     Ok((labels, malformed))

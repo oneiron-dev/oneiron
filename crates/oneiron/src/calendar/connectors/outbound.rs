@@ -37,7 +37,7 @@ pub(super) const OUTBOX: SideTable<OutboxKey, StoredOutboxRow, LegacyJson> =
     SideTable::new(&side_table::CALENDAR_CONNECTOR_WRITE);
 
 /// Node-local remote-object cursors: `CALENDAR_CONNECTOR_WRITE`'s
-/// [`REMOTE_OBJECT_TAG`] shape, the same declaration as [`OUTBOX`] under its
+/// [`REMOTE_OBJECT_TAG`] shape, the same declaration as `OUTBOX` under its
 /// own tag and row type. Key: `obj:` ‖ `sha256(system, calendar_ref, uid)`.
 const REMOTE_OBJECT: SideTable<RemoteObjectKey, StoredRemoteObjectRow, LegacyJson> =
     SideTable::new(&side_table::CALENDAR_CONNECTOR_WRITE);
@@ -128,7 +128,7 @@ impl CalendarWriteOutboxState {
 
 /// One durable local write-outbox row.
 ///
-/// Staged under [`OUTBOX`] BEFORE the provider call, so a crash between the
+/// Staged under `OUTBOX` BEFORE the provider call, so a crash between the
 /// remote mutation and the local commit resumes from the row instead of
 /// repeating a blind write. Carries refs and hashes only — never a
 /// credential.

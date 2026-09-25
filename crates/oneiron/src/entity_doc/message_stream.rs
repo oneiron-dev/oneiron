@@ -4,6 +4,7 @@ use super::storage::ENTITY_DOC_HEAD;
 use super::{EntityDoc, TextField, invalid, storage};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreMaintenance;
 use crate::side_table::HexId;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -51,13 +52,12 @@ pub(crate) fn birth_message_stream_in_txn(
         rmpv::Value::from("entity_doc_ref"),
         rmpv::Value::from(entity.to_hex()),
     ));
-    let mut replacement = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
-    rmpv::encode::write_value(&mut replacement, &rmpv::Value::Map(fields))
+    let mut pointer = Vec::new();
+    rmpv::encode::write_value(&mut pointer, &rmpv::Value::Map(fields))
         .map_err(|_| invalid("message document pointer"))?;
     vault
         .store
-        .entities
-        .put(txn, entity.as_bytes(), &replacement)?;
+        .port_entity_document_pointer_put(txn, entity, &pointer)?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),

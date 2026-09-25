@@ -188,6 +188,20 @@ side_tables! {
     SYNC_SVF_ROOT: SyncState b"svf:root" Raw;
     /// Whether a sync window's state vector is fresh (document family). Key: yyyy-mm.
     WINDOW_SHALLOW_FENCE: SyncState b"svf:w:" Raw;
+    /// Test-fixture row, never read or written by production code: a cached
+    /// minted capability slip for one request-credential recipe id
+    /// (`crates/oneiron-server/src/test_credentials.rs`, mounted only as
+    /// `#[cfg(test)] mod test_credentials;`). Declared so the generic host
+    /// door's declared-table check (`side_table::host_declared_sync_state`)
+    /// does not refuse this well-known test fixture prefix. Key: hex64
+    /// (blake3 of the fixture's request-recipe id).
+    TEST_API_SLIP_CACHE: SyncState b"test:api:slip:" Raw;
+    /// Test-fixture row, never read or written by production code: a cached
+    /// minted MCP-paired capability-slip token for one pairing label
+    /// (`crates/oneiron-server/src/api/tests/support_mcp_credentials.rs`,
+    /// reached only from `#[cfg(test)]` code under `api/tests/`). Same
+    /// rationale as `TEST_API_SLIP_CACHE`. Key: hex64 (blake3 of the label).
+    TEST_MCP_PAIRED_CACHE: SyncState b"test:mcp:paired:" Raw;
     /// One pending update of an entity document (document family). Key: hex32 (entity id) ":" hex8
     /// (sequence).
     DOCUMENT_UPDATE: SyncState b"u:e:" Raw;

@@ -56,7 +56,7 @@ fn stack_claims(stack: &ModelStack, model: &ModelId) -> bool {
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+/// Storage errors; [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) on an undecodable row.
 pub fn serving_model_version(vault: &Vault) -> Result<String> {
     let rtxn = vault.store.env.read_txn()?;
     Ok(SERVING_MODEL.get(&vault.store, &rtxn, &())?.map_or_else(

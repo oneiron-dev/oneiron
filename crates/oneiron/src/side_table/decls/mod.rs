@@ -40,6 +40,38 @@ pub(crate) fn declared() -> impl Iterator<Item = &'static SideTableDecl> {
     PARTS.into_iter().flatten().copied()
 }
 
+/// The declared table whose prefix `key` falls under, in `db`, or `None` when
+/// no declared prefix matches. Declared prefixes are disjoint within one
+/// database (`assert_disjoint`), so at most one table can match; this is the
+/// production door a caller-chosen key (a host's `sync_state` row) is checked
+/// against before it is allowed to write, over the same [`PARTS`] list the
+/// disjointness check walks at compile time. Gated with its only callers
+/// (the generic host doors, `sync`-only) so a featureless build does not
+/// carry an unused production function.
+#[cfg(feature = "sync")]
+pub(crate) fn declared_for(db: SideDb, key: &[u8]) -> Option<&'static SideTableDecl> {
+    PARTS
+        .iter()
+        .flat_map(|part| part.iter())
+        .find(|decl| decl.db == db && key.starts_with(decl.prefix))
+        .copied()
+}
+
+/// Whether `prefix` (in `db`) overlaps a declared table: either it extends a
+/// declared prefix ([`declared_for`] would find one) or it is itself a
+/// leading substring of one — a family or whole-table scan, e.g. `"rm:"`
+/// covers both `SYNC_REMAT_MARKER` (`rm:w:`) and
+/// `SYNC_REPLAY_REMAT_MARKER_PROVENANCE` (`rmp:w:`). A scan can only surface
+/// rows a declared door already wrote, so either direction is a read over
+/// declared territory; only the exact-key doors ([`declared_for`]) and the
+/// write doors need the one-directional check.
+#[cfg(feature = "sync")]
+pub(crate) fn declared_overlaps(db: SideDb, prefix: &[u8]) -> bool {
+    PARTS.iter().flat_map(|part| part.iter()).any(|decl| {
+        decl.db == db && (prefix.starts_with(decl.prefix) || decl.prefix.starts_with(prefix))
+    })
+}
+
 /// The files in byte order of their prefixes: `sync_state`, then `vault_meta` by leading byte.
 static PARTS: [&[&SideTableDecl]; 5] = [
     SYNC_STATE,

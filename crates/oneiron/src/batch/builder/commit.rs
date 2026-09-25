@@ -1,8 +1,9 @@
-//! Commit terminal: validation short-circuit, preflight, apply, VAD postcommit.
+//! Committing terminal: builder-time checks, its own transaction, preflight,
+//! apply, commit, VAD postcommit.
 
 use super::super::*;
-use super::BatchBuilder;
 use super::preflight::preflight_gate_decisions_in_txn;
+use super::{BatchBuilder, CommitCheck};
 
 use std::collections::HashMap;
 
@@ -61,73 +62,83 @@ impl BatchBuilder<'_> {
         target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
+        CommitCheck::run_all(&self.commit_checks, self.vault, &self.ops)?;
         if let Some(err) = self.validation_error {
             return Err(err);
         }
+        let vault = self.vault;
         let text_index_trusted = if contains_text_op(&self.ops) {
-            self.vault.ensure_text_index_trusted()?;
+            vault.ensure_text_index_trusted()?;
             true
         } else {
-            self.vault
+            vault
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire)
         };
-        let mut wtxn = self.vault.store.env.write_txn()?;
+        let mut wtxn = vault.store.env.write_txn()?;
         target_guard(&wtxn)?;
+        #[cfg(feature = "sync")]
+        let mut ops = self.ops;
+        #[cfg(not(feature = "sync"))]
+        let ops = self.ops;
+        #[cfg(feature = "sync")]
+        super::apply::admit_federated_puts(vault, &mut wtxn, &mut ops, &self.federated_puts)?;
         let mut staged_gate_decisions = Vec::new();
         let mut preflight_gate_decision_ids = HashMap::new();
         if let Err(err) = preflight_gate_decisions_in_txn(
-            &self.vault.store,
-            &self.ops,
+            &vault.store,
+            &ops,
             &mut wtxn,
             &mut staged_gate_decisions,
             &mut preflight_gate_decision_ids,
             checker,
+            self.origin,
         ) {
             // A gate rejection is itself an intentional ledger event. Keep
             // that denial receipt, matching the historical gate semantics;
             // later phase-2 failures drop this transaction and its receipt.
-            crate::ports::recorded_at_in_txn(&self.vault.store, &mut wtxn)?;
+            crate::ports::recorded_at_in_txn(&vault.store, &mut wtxn)?;
             wtxn.commit()?;
             for decision in staged_gate_decisions {
-                decision.record_metrics(&self.vault.store.diagnostics.gate);
+                decision.record_metrics(&vault.store.diagnostics.gate);
             }
             return Err(err);
         }
 
         let pending_vad_ids =
-            super::vad_postcommit::pending_dreamer_vad_approvals(self.vault, &wtxn, &self.ops)?;
+            super::vad_postcommit::pending_dreamer_vad_approvals(vault, &wtxn, &ops)?;
 
         // ONE-1741: batch deletes no longer pre-scan for scan-verdict
         // relocation. The content-hash index row is maintained by
         // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
         // content bytes rather than to any departing holder.
-        apply_ops_with_gate_mode(
-            &self.vault.store,
-            &self.vault.config,
-            &self.vault.analyzer,
+        apply_ops_with_origin(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
             &mut wtxn,
-            self.ops,
+            ops,
             text_index_trusted,
             ApplyOpsGateMode::new(false, true)
-                .with_preflight_gate_decision_ids(preflight_gate_decision_ids),
+                .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
+                .with_birth_mask(self.birth_mask),
+            self.origin,
         )?;
         after_apply(&mut wtxn)?;
-        let approved_vad_ids = self
-            .vault
-            .resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
-        crate::ports::recorded_at_in_txn(&self.vault.store, &mut wtxn)?;
+        let approved_vad_ids =
+            vault.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
+        crate::ports::recorded_at_in_txn(&vault.store, &mut wtxn)?;
         wtxn.commit()?;
-        while self.vault.collect_lfs_garbage(32)? != 0 {}
+        while vault.collect_lfs_garbage(32)? != 0 {}
         for decision in staged_gate_decisions {
-            decision.record_metrics(&self.vault.store.diagnostics.gate);
+            decision.record_metrics(&vault.store.diagnostics.gate);
         }
         // The canonical wrapper starts a separate write transaction. Never run
         // it during apply or preflight, and never turn a population error into
         // success merely because the approval is already durable.
-        let now = self.vault.store.clock.now_recorded_at();
+        let now = vault.store.clock.now_recorded_at();
         for id in approved_vad_ids {
-            self.vault.consolidate_claim_vad_now(&id, now)?;
+            vault.consolidate_claim_vad_now(&id, now)?;
         }
         Ok(())
     }

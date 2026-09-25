@@ -62,7 +62,7 @@ pub enum ComplianceAmendmentOutcome {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConfig`] when the proposal is malformed, renames the pack,
+/// [`Error::InvalidConfig`](crate::Error::InvalidConfig) when the proposal is malformed, renames the pack,
 /// or fails to advance the pack version.
 pub fn classify_compliance_amendment(
     current: &CompliancePack,
@@ -223,7 +223,7 @@ fn apply_compliance_amendment(
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConfig`] when nothing is staged, when the hash names
+/// [`Error::InvalidConfig`](crate::Error::InvalidConfig) when nothing is staged, when the hash names
 /// different rows or a different version, or when the staged proposal no longer
 /// advances the active version.
 pub fn stamp_compliance_amendment(
@@ -291,7 +291,7 @@ const fn amendment_class_token(class: ComplianceAmendmentClass) -> &'static str 
 ///
 /// # Errors
 ///
-/// Storage errors, and [`Error::CorruptedIndex`] when a notice is not UTF-8.
+/// Storage errors, and [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) when a notice is not UTF-8.
 pub fn compliance_amendment_notices(vault: &Vault) -> Result<Vec<String>> {
     let rtxn = vault.store.env.read_txn()?;
     Ok(NOTICE
@@ -306,7 +306,7 @@ pub fn compliance_amendment_notices(vault: &Vault) -> Result<Vec<String>> {
 ///
 /// # Errors
 ///
-/// [`Error::InvariantViolation`] when the canonical form cannot be encoded.
+/// [`Error::InvariantViolation`](crate::Error::InvariantViolation) when the canonical form cannot be encoded.
 pub fn compliance_proposal_hash(pack: &CompliancePack) -> Result<[u8; 32]> {
     let mut canonical = pack.clone();
     canonical.rows.sort_by(|left, right| {

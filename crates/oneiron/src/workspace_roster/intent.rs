@@ -6,7 +6,7 @@ use super::*;
 ///
 /// This is the caller's statement of "which workplace, whose org, which seeded
 /// row wears the house pen, and what the venture is called". It is stored
-/// verbatim under [`PRESET`] the first time a
+/// verbatim under `PRESET` the first time a
 /// member is onboarded into `workspace_ref`, and every later onboarding into
 /// the same `workspace_ref` must agree with it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,7 +161,7 @@ impl DelegatedMailboxOnboarding {
 ///
 /// Not `Eq`: [`AgentDefinition`] carries an `f32` confidence and is `PartialEq`
 /// only. Equality of two intents is decided by
-/// [`ONBOARDING`] digest comparison anyway, which hashes
+/// `ONBOARDING` digest comparison anyway, which hashes
 /// the canonical encoding rather than the in-memory value.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemberOnboardingIntent {

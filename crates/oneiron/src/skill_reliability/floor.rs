@@ -24,7 +24,7 @@ use super::read::{active_claims_in_txn, resolved_reliability_posterior_in_txn};
 pub const PREDICATE_SKILL_QUARANTINE_PROPOSAL: &str = "skill.quarantine_proposal";
 
 /// `vault_meta` key of the reliability floor dial. Kept as a public constant for crate
-/// consumers (re-exported from [`crate::skill_reliability`]); [`FLOOR`] is this module's own
+/// consumers (re-exported from [`crate::skill_reliability`]); `FLOOR` is this module's own
 /// door onto the row and owns the read/write path below.
 pub const SKILL_RELIABILITY_FLOOR_KEY: &[u8] = b"settings:skill:v1:reliability_floor";
 
@@ -32,7 +32,7 @@ pub const SKILL_RELIABILITY_FLOOR_KEY: &[u8] = b"settings:skill:v1:reliability_f
 const FLOOR: SideTable<(), ReliabilityFloorRow, Raw> =
     SideTable::new(&side_table::SKILL_RELIABILITY_FLOOR);
 
-/// [`FLOOR`]'s row: four big-endian bytes, finite and within `[0, 1]`. Any other shape is a
+/// `FLOOR`'s row: four big-endian bytes, finite and within `[0, 1]`. Any other shape is a
 /// corrupted dial rather than a silently-defaulted one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ReliabilityFloorRow(f32);

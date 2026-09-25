@@ -591,7 +591,7 @@ fn recall_scope_honesty_stays_bounded_on_a_large_claim_index() {
 /// materialized every edge up front.
 #[test]
 fn neighbors_stays_bounded_on_a_high_degree_node() {
-    use crate::store::Store;
+    use crate::ports::{EdgeStoreMaintenance, EntityStoreMaintenance};
 
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x5E);
@@ -615,9 +615,14 @@ fn neighbors_stays_bounded_on_a_high_degree_node() {
                 let target = seeded_bulk_id(0xE1, i);
                 // Neighbor visibility requires a real readable destination;
                 // dangling edges are not a substitute for a high-degree graph.
-                vault.store.entities.put(wtxn, target.as_bytes(), &raw)?;
-                let key = Store::encode_edge_key(&center, EdgeKind::BelongsTo, &target);
-                vault.store.edges_out.put(wtxn, &key, &value)?;
+                vault.store.port_raw_record_seed(wtxn, &target, &raw)?;
+                vault.store.port_raw_outgoing_edge_seed(
+                    wtxn,
+                    &center,
+                    EdgeKind::BelongsTo,
+                    &target,
+                    &value,
+                )?;
             }
             Ok(())
         })

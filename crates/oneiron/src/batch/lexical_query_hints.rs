@@ -41,7 +41,7 @@ pub(super) enum RawPutDoor {
     Public,
     Internal,
     /// The ONE-1686 witness MESSAGE door
-    /// ([`super::TxnBatchBuilder::put_witness_message`]).
+    /// ([`super::BatchBuilder::put_witness_message`]).
     ///
     /// Reachable only by presenting a `gate::WitnessMessageAuthorization`,
     /// whose sole constructor is the approval-ceiling door itself, so this arm

@@ -3,6 +3,8 @@ use super::document::{NoteDocument, invalid};
 #[cfg(feature = "sync")]
 use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_AD_E, SYNC_NC_E, SYNC_QD_E};
 use super::sync_rows::{SYNC_DS_E, SYNC_QN_E};
+#[cfg(feature = "sync")]
+use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
 use crate::side_table::HexId;
 use crate::{EntityId, Result, Vault};
 
@@ -136,13 +138,8 @@ pub(crate) fn restore(
     SYNC_AD_E.delete_from(&vault.store, txn, &key_prefix)?;
     NOTE_RECEIPT_BY_REQUEST.delete_from(&vault.store, txn, &key_prefix)?;
     SYNC_NC_E.delete_from(&vault.store, txn, &key_prefix)?;
-    let slot = super::storage::slot(vault, txn, note)?;
-    // ARCH-0023b document families: not ours, left exactly as they were.
-    for prefix in ["ssv:e:", "m:u_seq:e:"] {
-        vault
-            .store
-            .sync_state
-            .delete(txn, &format!("{prefix}{}", slot.to_hex()))?;
-    }
+    let slot = DocumentSlot::of(super::storage::slot(vault, txn, note)?);
+    let rows = [DocumentRow::ShallowSince, DocumentRow::UpdateSequence];
+    vault.store.port_document_rows_delete(txn, slot, &rows)?;
     super::document_store::persist(vault, txn, &doc)
 }

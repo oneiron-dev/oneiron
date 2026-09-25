@@ -296,6 +296,7 @@ pub enum ErrorKind {
     PackKindNotInstalled,
     InvalidPackByteMap,
     SideTableRow,
+    SideTableKeyUndeclared,
 }
 
 /// Crate error type.

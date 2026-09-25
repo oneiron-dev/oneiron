@@ -270,7 +270,7 @@ impl Vault {
     /// makes.
     ///
     /// `logical_send_ref` names the owning TASK/intent, never an `AttemptId`
-    /// (see [`SEND_ADMIT`]), and is validated like
+    /// (see `SEND_ADMIT`), and is validated like
     /// `settle_connector_spend`'s `event_ref`: nonblank, ≤128 bytes, no NUL —
     /// checked BEFORE any charge or dedupe write.
     ///

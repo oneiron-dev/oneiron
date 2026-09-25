@@ -277,7 +277,7 @@ pub(crate) fn write_window_svf_in_txn(
 /// `u:w:{key}:` family is a typed error and nothing is deleted — the
 /// prune must not be able to touch `q:`/`d:`/`h:`/`dt:` rows or another
 /// window's updates.
-fn prune_subsumed_window_updates_in_txn(
+pub(crate) fn prune_subsumed_window_updates_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     key: &WindowKey,

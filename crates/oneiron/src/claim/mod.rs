@@ -5,8 +5,8 @@
 //! the ON-DISK vocabulary. ARCH-0003's camelCase `Claim` shape is the
 //! app-layer view. The v2 Scope stamps use their canonical camelCase keys.
 //!
-//! Every type-0 write on every path (`Vault::put_entity`, `BatchBuilder`,
-//! `TxnBatchBuilder`, sync replay via `apply_ops`) is structurally validated
+//! Every type-0 write on every path (`Vault::put_entity`, both `BatchBuilder`
+//! terminals, sync replay via `apply_ops`) is structurally validated
 //! here (D18). Bodies of all OTHER type bytes stay opaque at the storage
 //! layer. Validation is fail-closed: a body that does not decode to a
 //! MessagePack map carrying exactly the pinned vocabulary with all required

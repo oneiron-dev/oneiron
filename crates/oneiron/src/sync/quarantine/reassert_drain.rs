@@ -102,7 +102,7 @@ pub(in crate::sync) fn enqueue_tombstone_reassert_marker(
 /// whole remainder is reported as the pending window. A re-assertion intent
 /// is never dropped by a read.
 ///
-/// Deliberately RAW `sync_state` access (not [`REASSERT_MARKER`]) for the
+/// Deliberately RAW `sync_state` access (not `REASSERT_MARKER`) for the
 /// same reason as `pending_remat_windows`: the typed door's key decode
 /// either succeeds or fails the whole scan, and this reader's contract
 /// surfaces even an unparsable key rather than dropping it or aborting.

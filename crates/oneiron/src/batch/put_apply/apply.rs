@@ -5,21 +5,21 @@ use std::collections::BTreeSet;
 use super::owned_body::guard_storage_owned_body;
 use heed::RwTxn;
 
+use super::request::{PutContext, PutRequest, PutRow, Replication};
 use super::{
-    AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,
-    ENTITY_METADATA_HEADER_LEN, apply_short_id_plan, authority_observation_secs_for_write,
-    check_authority_log_store_key, delete_short_id_rows_for_id,
-    evict_authority_log_store_key_squatter, parse_entity_metadata, plan_short_id_update,
-    reject_overlay_member_base_write, stage_claim_projection, stage_entity_body_row,
-    stage_entity_index_rows, stage_optimizer_birth_marker_row, validate_companion_register_put,
-    validate_local_agent_definition_create, validate_local_skill_create,
-    validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
-    validate_task_checkin_immutable,
+    AppliedPut, AuthorityLogKeyOccupant, ENTITY_METADATA_HEADER_LEN, apply_short_id_plan,
+    authority_observation_secs_for_write, check_authority_log_store_key,
+    delete_short_id_rows_for_id, evict_authority_log_store_key_squatter, parse_entity_metadata,
+    plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
+    stage_entity_body_row, stage_entity_index_rows, stage_optimizer_birth_marker_row,
+    validate_companion_register_put, validate_local_agent_definition_create,
+    validate_local_skill_create, validate_replicated_authority_log_for_local_vault,
+    validate_skill_body_overwrite, validate_task_checkin_immutable,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Error, ErrorKind, RecordError, RegistryError, Result};
+use crate::error::{ArtifactError, Error, RecordError, RegistryError, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_DIAGNOSTIC,
@@ -28,38 +28,37 @@ use crate::registry::{
 };
 use crate::secret_custody::plan_replicated_name_index;
 use crate::store::Store;
-use crate::temporal::TimeRange;
-use crate::write_envelope::WriteEnvelope;
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "decomposing would obscure direct LMDB write logic"
-)]
 pub(in crate::batch) fn apply_put(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    id: EntityId,
-    entity_type: u8,
-    occurred: TimeRange,
-    learned_at: u64,
-    data: &[u8],
-    allow_reserved_predicate: bool,
-    replicated: bool,
-    hub_sync_imported: bool,
-    hub_admission: Option<&crate::skill_hub::HubAdmissionProof>,
-    has_later_covering_text_op: bool,
-    write_policy: Option<&crate::gate::PolicyManifestResolution>,
-    write_envelope: Option<&WriteEnvelope>,
-    internal_lexical_query_hint: bool,
-    record_gate_decisions: bool,
-    persist_gate_pending_consent: bool,
-    can_resolve_pending_consent: bool,
-    include_source_in_gate_input: bool,
-    claim_gate_prechecked: bool,
-    preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
-    companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
-    origin: BaseWriteOrigin<'_>,
+    request: PutRequest<'_>,
 ) -> Result<AppliedPut> {
+    let PutRequest {
+        row:
+            PutRow {
+                id,
+                entity_type,
+                occurred,
+                learned_at,
+                data,
+            },
+        options,
+        context:
+            PutContext {
+                origin,
+                write_policy,
+                write_envelope,
+                hub_admission,
+                companion_retired_histories,
+            },
+    } = request;
+    let Replication {
+        replicated,
+        reserved_predicate: allow_reserved_predicate,
+    } = options.replication;
+    let hub_sync_imported = options.hub.sync_imported;
+    let claim_gate_prechecked = options.decision.prechecked;
     super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
@@ -177,7 +176,7 @@ pub(in crate::batch) fn apply_put(
             ));
         }
         if !(replicated
-            || is_lexical_query_hint_claim && internal_lexical_query_hint
+            || is_lexical_query_hint_claim && options.decision.internal_lexical_query_hint
             || claim_gate_prechecked)
         {
             let policy = write_policy.ok_or(Error::InvariantViolation(
@@ -192,22 +191,16 @@ pub(in crate::batch) fn apply_put(
                     &id,
                     crate::gate::ClaimGateWrite::plain(&body, write_envelope),
                     policy,
-                    crate::gate::GateWriteMode {
-                        record_decision: record_gate_decisions,
-                        persist_pending_consent: persist_gate_pending_consent,
-                        resolve_pending: true,
-                        can_resolve_pending_consent,
-                        include_source_in_gate_input,
-                    },
-                    preflight_gate_decision_id,
+                    options.gate_write_mode(),
+                    options.decision.preflight,
                 )?;
             }
         }
         decoded_claim_body = Some(body);
     } else if entity_type == crate::registry::ENTITY_TYPE_NOTE {
-        validate_note_birth_put(store, wtxn, &id, data)?;
+        super::claim_admission::validate_note_birth_put(store, wtxn, &id, data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
-        validate_witness_message_body(data, replicated)?;
+        super::claim_admission::validate_witness_message_body(data, replicated)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
@@ -407,7 +400,8 @@ pub(in crate::batch) fn apply_put(
     let mut optimizer_birth_marker = None;
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
-        previous_skill_record = decode_previous_skill_record(old_type, &old_record)?;
+        previous_skill_record =
+            super::put_entity_update::decode_previous_skill_record(old_type, &old_record)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.
@@ -428,7 +422,7 @@ pub(in crate::batch) fn apply_put(
             .is_some_and(|body| !crate::claim::claim_surfaceable(body));
         let should_deindex_stale_text = body_changed
             && (withdrawn_claim
-                || ((replicated || !has_later_covering_text_op)
+                || ((replicated || !options.indexing.later_text_op_covers)
                     && !crate::vault::entity_revision::storage_manages_text(
                         store, wtxn, &id, data,
                     )?));
@@ -750,71 +744,6 @@ fn reconcile_replicated_critical_confirm(
     }
 }
 
-// The ledger is immutable birth identity, never a second text plane. This
-// shared guard covers local writes and replicated/window rematerialization.
-fn validate_note_birth_put(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    data: &[u8],
-) -> Result<()> {
-    crate::note::decode_note_body_in_txn(store, txn, data)?;
-    if let Some(old) = store.entities.get(txn, id.as_bytes())?
-        && old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
-    {
-        return Err(Error::Record(RecordError::InvalidNoteBody(
-            "NOTE birth body is immutable",
-        )));
-    }
-    Ok(())
-}
-
-fn validate_witness_message_body(data: &[u8], replicated: bool) -> Result<()> {
-    // ONE-1686 (RT-04): the witness ENVELOPE law, at the one arm every
-    // road to a MESSAGE body converges on — the witness door, promote
-    // replay, and sync rematerialization alike. The AUTHORITY half
-    // (which actor may write which author bucket) is answered before
-    // staging by `gate::check_witness_message_ceiling`, which is the only
-    // way to reach `TxnBatchBuilder::put_witness_message`; what is left
-    // for a chokepoint that holds bytes and no actor is proving the bytes
-    // ARE the canonical envelope those axes encode. A local row already
-    // is one by construction (the put consumes the door's own output), so
-    // this costs the witness path nothing and closes every other road.
-    //
-    // Placed BEFORE any store mutation in this function, so a refusal on
-    // either road leaves nothing partial behind for the caller's
-    // quarantine-and-continue to clean up.
-    if replicated {
-        // The REPLICATED road has no actor to run the ceiling against and
-        // the protocol carries no verified source actor or peer signer at
-        // this door, so it fails closed for every author bucket: see
-        // `gate::validate_replicated_witness_message_body`.
-        crate::gate::validate_replicated_witness_message_body(data)?;
-    } else {
-        crate::gate::validate_canonical_witness_message_body(data)?;
-    }
-    Ok(())
-}
-
-fn decode_previous_skill_record(
-    old_type: u8,
-    old_record: &[u8],
-) -> Result<Option<crate::skill::SkillRecord>> {
-    if old_type != ENTITY_TYPE_SKILL {
-        return Ok(None);
-    }
-    let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
-    match crate::skill::decode_skill_record(prior_body) {
-        Ok(record) => Ok(Some(record)),
-        Err(error)
-            if error.kind() == ErrorKind::InvalidSkillBody
-                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
-        {
-            Ok(None)
-        }
-        Err(error) => Err(error),
-    }
-}
 /// Keep first observation, signer maximum and replay advisory in the same put transaction.
 fn observe_authority_put(
     store: &Store,

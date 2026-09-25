@@ -1,6 +1,6 @@
 //! Rebuild mechanical projections and reset leased attempt ownership.
 use super::codec_error;
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{
     EntityId, Error, Result, Vault,
     attempt_queue::AttemptState,
@@ -16,6 +16,13 @@ const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
 /// postings. Key: id16.
 const INDEX_SOURCE_PHONETIC: SideTable<EntityId, Vec<String>, Named> =
     SideTable::new(&side_table::BATCH_PHONETIC_INDEX_SOURCE);
+/// A sync window needs a full resync (`fr:w:{key}`). Marker byte `[1]`.
+/// Bound locally rather than reused from `crate::sync::window_rows` because
+/// that module lives behind `feature = "sync"` and this rebuild runs without
+/// it; the declaration itself (`side_table::WINDOW_FULL_RESYNC_MARKER`) is
+/// unconditional, so both bindings share one declared table.
+const WINDOW_FULL_RESYNC_MARKER: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::WINDOW_FULL_RESYNC_MARKER);
 pub(super) fn unlease_attempt(key: &[u8], bytes: &[u8]) -> Result<Vec<u8>> {
     let (&version, _) = bytes.split_first().ok_or_else(codec_error)?;
     let mut record = crate::attempt_queue::decode_record(
@@ -147,10 +154,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
             .map(|r| r.map(|(k, _)| k.into_owned()))
             .collect::<std::result::Result<_, _>>()?;
         for key in windows {
-            vault
-                .store
-                .sync_state
-                .put(txn, &format!("fr:w:{}", &key[4..]), &[1])?;
+            WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &key[4..].to_owned(), &[1u8])?;
         }
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;

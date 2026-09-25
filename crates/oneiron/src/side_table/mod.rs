@@ -583,3 +583,76 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         std::str::from_utf8(full).map_err(|_| self.decl.row_error(SideTableRowProblem::KeyNotUtf8))
     }
 }
+
+// ─── Generic host doors ────────────────────────────────────────────────
+//
+// `Vault::sync_state_get`/`put`/`put_in_write_txn`/`delete`/
+// `keys_with_prefix`/`visit_prefix_in_write_txn` (`vault/transactions.rs`)
+// take a caller-chosen key instead of a bound [`SideTable`]: they exist for
+// `crates/oneiron-server`, which owns rows this crate never declares a typed
+// key/value shape for. A crate-internal writer always goes through a bound
+// table and never reaches these; the check below is what stands in for that
+// binding when the caller is outside the crate.
+
+/// `key` must fall under a declared `SyncState` table. Refuses with a typed
+/// error instead of letting a host door read or write a row no declaration
+/// owns. For an exact key (`sync_state_get`, `sync_state_put` and their
+/// `_in_write_txn`/`delete` siblings): a lookup or a write always names one
+/// specific row, so it must name one a table actually declares.
+#[cfg(feature = "sync")]
+pub(crate) fn host_declared_sync_state(key: &str) -> Result<()> {
+    declared_for(SideDb::SyncState, key.as_bytes())
+        .map(|_| ())
+        .ok_or_else(|| {
+            Error::Store(StoreError::SideTableKeyUndeclared {
+                key: key.to_owned(),
+            })
+        })
+}
+
+/// `prefix` must overlap a declared `SyncState` table, for the scan-shaped
+/// host doors (`sync_state_keys_with_prefix`, `sync_state_visit_prefix_in_write_txn`).
+/// Looser than [`host_declared_sync_state`] in two ways a lookup does not
+/// need: `prefix` may be shorter than a declared prefix (a family scan, see
+/// [`side_table::decls::declared_overlaps`](decls::declared_overlaps)), and a
+/// prefix of 0 or 1 bytes is accepted unconditionally — no declared table is
+/// that short, and LMDB refuses an empty prefix, so a caller walking the
+/// whole keyspace one leading byte at a time (a diagnostic byte-scan, not a
+/// lookup) is a legitimate read this check cannot usefully judge either way.
+/// A scan can only ever surface a row a declared door already wrote, so it
+/// is refused only when it could not possibly reach any declared table.
+#[cfg(feature = "sync")]
+pub(crate) fn host_declared_sync_state_scan(prefix: &str) -> Result<()> {
+    if prefix.len() <= 1 || declared_overlaps(SideDb::SyncState, prefix.as_bytes()) {
+        return Ok(());
+    }
+    Err(Error::Store(StoreError::SideTableKeyUndeclared {
+        key: prefix.to_owned(),
+    }))
+}
+
+/// The write half of the generic host door: checks [`host_declared_sync_state`],
+/// then puts through the same `sync_state` handle every declared table writes
+/// through, so the raw call lives here rather than in `vault/transactions.rs`.
+#[cfg(feature = "sync")]
+pub(crate) fn host_sync_state_put(
+    dbs: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    key: &str,
+    value: &[u8],
+) -> Result<()> {
+    host_declared_sync_state(key)?;
+    dbs.side_sync_state()?.put(txn, key, value)
+}
+
+/// The delete half of the generic host door: checks [`host_declared_sync_state`],
+/// then deletes. `true` when a row was present.
+#[cfg(feature = "sync")]
+pub(crate) fn host_sync_state_delete(
+    dbs: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    key: &str,
+) -> Result<bool> {
+    host_declared_sync_state(key)?;
+    dbs.side_sync_state()?.delete(txn, key)
+}

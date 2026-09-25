@@ -38,7 +38,7 @@ const REPLAY_REMAT_MARKER_PROVENANCE_PREFIX: &str = "rmp:w:";
 /// an unrelated entity's successful purge can never discharge another
 /// entity's GDPR purge retry.
 ///
-/// Production reads and writes go through the typed [`REMAT_MARKER`] table;
+/// Production reads and writes go through the typed `REMAT_MARKER` table;
 /// this raw string builder stays only for this module's own tests, which
 /// address the row directly through raw `sync_state` access.
 #[cfg(test)]
@@ -173,7 +173,7 @@ pub(in crate::sync) fn clear_replay_remat_marker_in_txn(
 /// reported as the pending window. A needs-remat row is never dropped by a
 /// read.
 ///
-/// Deliberately RAW `sync_state` access (not [`REMAT_MARKER`]): the typed
+/// Deliberately RAW `sync_state` access (not `REMAT_MARKER`): the typed
 /// door's key decode either succeeds or turns the whole scan into an `Err`,
 /// and this reader's contract is the opposite — a key that fails to parse is
 /// still surfaced (as its own best-effort "window"), never dropped and never

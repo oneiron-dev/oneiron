@@ -16,6 +16,7 @@ use crate::entity_id::EntityId;
 #[cfg(all(feature = "sync", test))]
 use crate::error::SyncEngineContext;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreMaintenance;
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 #[cfg(all(feature = "sync", test))]
 use crate::sync::window_rows::WINDOW_UPDATE;
@@ -82,7 +83,7 @@ pub(super) fn finalize_job(
             return Ok(None);
         }
         let mut finalized = 0u64;
-        let mut rewrites: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut completed: Vec<EntityId> = Vec::new();
         for entry in vault
             .store
             .type_index
@@ -124,7 +125,7 @@ pub(super) fn finalize_job(
             // WHOLE sweep run instead of keeping this one h: row for retry.
             validate_redaction_receipt_body(&raw[header_len..])
                 .map_err(|_| Error::CorruptedIndex("redaction audit receipt body"))?;
-            let mut receipt = decode_redaction_audit_receipt(&raw[header_len..])?;
+            let receipt = decode_redaction_audit_receipt(&raw[header_len..])?;
             if receipt.sweep_queued_at.is_none() || receipt.sweep_complete_at.is_some() {
                 continue;
             }
@@ -138,31 +139,14 @@ pub(super) fn finalize_job(
                 continue;
             }
 
-            // The single sanctioned mutation: monotone None→Some, envelope
-            // preserved byte-exactly, body re-validated before the put.
-            receipt.sweep_complete_at = Some(now);
-            let body = rmp_serde::to_vec_named(&receipt)
-                .map_err(|_| Error::InvariantViolation("redaction audit receipt encode"))?;
-            validate_redaction_receipt_body(&body)?;
-            let mut rewritten = Vec::with_capacity(header_len + body.len());
-            rewritten.extend_from_slice(&raw[..header_len]);
-            rewritten.extend_from_slice(&body);
-            rewrites.push((id_bytes.to_vec(), rewritten));
+            completed.push(EntityId::from_bytes(id_bytes)?);
         }
-        for (id_bytes, rewritten) in &rewrites {
-            let id = EntityId::from_bytes(
-                id_bytes
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("redaction audit entity id"))?,
-            )?;
-            crate::vault::entity_revision::capture_entity_revision(
-                &vault.store,
-                wtxn,
-                &id,
-                rewritten,
-            )?;
-            vault.store.entities.put(wtxn, id_bytes, rewritten)?;
+        // The single sanctioned mutation: monotone None→Some, envelope
+        // preserved byte-exactly, body re-validated before the put.
+        for id in &completed {
+            vault
+                .store
+                .port_redaction_receipt_sweep_complete(wtxn, id, now)?;
             finalized += 1;
         }
         // Obligation row deletion LAST, same txn (crash-safe ordering).

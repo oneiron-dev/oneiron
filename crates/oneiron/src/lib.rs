@@ -603,6 +603,7 @@ pub(crate) mod test_util {
     //! model, HNSW params); a copy that is value-identical to the shared
     //! helper is a drift hazard and must route through it.
 
+    pub(crate) mod row_dump;
     /// Test-only-file classification for the source-scanning fences. The
     /// integration binaries mount the same file through `tests/common`.
     pub(crate) mod source_scan;

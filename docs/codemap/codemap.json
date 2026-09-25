@@ -2477,13 +2477,24 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/base_apply.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/builder/apply.rs",
+     "purpose": "Caller-transaction terminal: stages the batch into a transaction the caller owns and commits",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -2502,7 +2513,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/builder/commit.rs",
-     "purpose": "Commit terminal: validation short-circuit, preflight, apply, VAD postcommit",
+     "purpose": "Committing terminal: builder-time checks, its own transaction, preflight, apply, commit, VAD postcommit",
      "surface": {
       "crate-vis": 2,
       "fn": 1
@@ -2526,9 +2537,9 @@
       "BatchBuilder"
      ],
      "path": "src/batch/builder/mod.rs",
-     "purpose": "Atomic multi-database write-batch builder doors",
+     "purpose": "The atomic multi-database write-batch builder and its two terminals",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "struct": 1
      }
     },
@@ -2553,13 +2564,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/builder/puts.rs",
-     "purpose": "Entity-put builder doors including the sync/test replicated door",
+     "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -2644,13 +2655,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/edge_apply.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -3029,7 +3040,7 @@
      "surface": {
       "crate-vis": 22,
       "mod": 1,
-      "re-export": 2
+      "re-export": 1
      }
     },
     {
@@ -3063,7 +3074,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/put_apply/apply.rs",
@@ -3079,7 +3090,7 @@
      "path": "src/batch/put_apply/claim_admission.rs",
      "purpose": "Claim-body and immutable-ledger admission before any put side effect",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -3099,7 +3110,7 @@
      "path": "src/batch/put_apply/mod.rs",
      "purpose": "Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -3119,7 +3130,7 @@
      "path": "src/batch/put_apply/put_entity_update.rs",
      "purpose": "SKILL body validators shared by the put and update arms",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -3130,6 +3141,16 @@
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/put_apply/request.rs",
+     "purpose": "The one typed request `apply_put` takes: the row, the options that govern how it is admitted, and the…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -3223,7 +3244,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/batch/tests/mod.rs",
@@ -3288,20 +3309,6 @@
      "purpose": "Thread claims reuse the existing ClaimOf index at every storage door",
      "surface": {
       "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "TxnBatchBuilder"
-     ],
-     "path": "src/batch/txn_builder.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 14,
-      "fn": 15,
-      "struct": 1
      }
     },
     {
@@ -15258,7 +15265,7 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage and row-pointer migration",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 1
      }
@@ -19118,7 +19125,7 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 167,
       "re-export": 71
      }
@@ -21426,7 +21433,7 @@
      "path": "src/note/delete.rs",
      "purpose": "Transactional erasure of a NOTE's own carriers and outgoing pin indexes",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -24229,6 +24236,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ports/document_rows.rs",
+     "purpose": "The document-row port: the ARCH-0023b entity-document families of one document slot",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ports/integrity.rs",
      "purpose": "Source-prefix dependency index and deletion invalidation in the caller's transaction",
      "surface": {
@@ -24249,6 +24266,14 @@
      "notable": [],
      "path": "src/ports/lmdb_claim.rs",
      "purpose": "Claim adapter preserves the history door; current-state queries exclude stale claims",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/lmdb_document_rows.rs",
+     "purpose": "LMDB/session adapter of the document-row port, over the declared `sync_state` families",
      "surface": {}
     },
     {
@@ -24338,7 +24363,7 @@
      "path": "src/ports/maintenance.rs",
      "purpose": "Narrow operational writes of the entity and edge ports",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -24387,7 +24412,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 6
      }
     },
@@ -27470,7 +27495,7 @@
      "path": "src/side_table/decls/mod.rs",
      "purpose": "The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`, one entry each",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -27530,7 +27555,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 37
      }
     },
     {
@@ -30718,7 +30743,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 6,
       "mod": 1,
       "re-export": 5,
@@ -31485,6 +31510,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_util/row_dump.rs",
+     "purpose": "Byte dump of every named LMDB database a vault holds, and the rows a write changed between two dumps",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -32033,7 +32068,7 @@
      "path": "src/vault/transactions.rs",
      "purpose": "Vault maintenance, learned-at range scans, transaction helpers and sync state",
      "surface": {
-      "fn": 18
+      "fn": 19
      }
     },
     {
@@ -33278,7 +33313,7 @@
      "path": "tests/it/effect_spine_oracle.rs",
      "purpose": "Effect Spine forward test oracle (doc 13, ONE-1713 epic) — authored by the ONE-1714 path opener",
      "surface": {
-      "crate-vis": 102
+      "crate-vis": 101
      }
     },
     {
@@ -33779,9 +33814,9 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 83,
+     "files": 84,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
@@ -34570,7 +34605,7 @@
      "purpose": "Policy classification over two planes"
     },
     "ports": {
-     "files": 32,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34899,7 +34934,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_util": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir (no mod.rs)",
@@ -35004,9 +35039,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 9,
+   "over_bar": 7,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2074,
+   "source_files": 2078,
    "test_files": 704
   },
   "oneiron-android": {

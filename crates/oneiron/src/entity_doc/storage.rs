@@ -3,6 +3,9 @@
 use super::{DocAuthorization, EntityDoc, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::ports::{
+    DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
+};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -35,13 +38,6 @@ pub(super) struct Head {
 /// counters.
 pub(super) const ENTITY_DOC_HEAD: SideTable<HexId, Head, Named> =
     SideTable::new(&side_table::ENTITY_DOC_HEAD);
-
-pub(super) fn snapshot_key(doc: &str) -> String {
-    format!("d:e:{doc}")
-}
-fn update_prefix(doc: &str) -> String {
-    format!("u:e:{doc}:")
-}
 
 pub(super) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     let mut reader = std::io::Cursor::new(bytes);
@@ -76,22 +72,20 @@ pub(super) fn head(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Result<
 }
 
 pub(super) fn load(store: &Store, txn: &RoTxn<'_>, h: &Head) -> Result<EntityDoc> {
+    let slot = DocumentSlot::from_hex(&h.document)?;
     let bytes = store
-        .sync_state
-        .get(txn, &snapshot_key(&h.document))?
+        .port_document_row(txn, slot, DocumentRow::Snapshot)?
         .ok_or(Error::CorruptedIndex("entity document snapshot missing"))?;
     let doc = EntityDoc::from_snapshot(&bytes)?;
     if doc.birth().entity != h.entity {
         return Err(Error::CorruptedIndex("document birth entity mismatch"));
     }
     // Strictly replay snapshot then updates. Fixed-width keys preserve order.
-    let prefix = update_prefix(&h.document);
     let mut count = 0_u64;
-    for row in store.sync_state.prefix_iter(txn, &prefix)? {
-        let (_, update) = row?;
+    for update in store.port_document_updates(txn, slot)? {
         let status = doc
             .doc
-            .import(&update)
+            .import(&update.bytes)
             .map_err(|_| Error::CorruptedIndex("entity document update"))?;
         if status.pending.is_some() {
             return Err(Error::CorruptedIndex("entity document update dependencies"));
@@ -102,18 +96,6 @@ pub(super) fn load(store: &Store, txn: &RoTxn<'_>, h: &Head) -> Result<EntityDoc
         return Err(Error::CorruptedIndex("entity document update sequence"));
     }
     Ok(doc)
-}
-
-pub(super) fn delete_prefix(store: &Store, txn: &mut RwTxn<'_>, prefix: &str) -> Result<()> {
-    let keys: Vec<String> = store
-        .sync_state
-        .prefix_iter(txn, prefix)?
-        .map(|row| row.map(|(key, _)| key.into_owned()))
-        .collect::<std::result::Result<_, _>>()?;
-    for key in keys {
-        store.sync_state.delete(txn, &key)?;
-    }
-    Ok(())
 }
 
 pub(super) fn persist(
@@ -145,26 +127,20 @@ pub(super) fn persist(
         .generation
         .checked_add(1)
         .ok_or(invalid("document generation overflow"))?;
+    let slot = DocumentSlot::from_hex(&h.document)?;
     if let Some(before) = before.filter(|_| h.pending < 31) {
         let bytes = doc
             .doc
             .export(loro::ExportMode::updates(before))
             .map_err(|_| invalid("document update export"))?;
-        let key = format!("{}{:020}", update_prefix(&h.document), h.generation);
-        store.sync_state.put(txn, &key, &bytes)?;
+        store.port_document_update_put(txn, slot, UpdateSeq::Generation(h.generation), &bytes)?;
         h.pending += 1;
     } else {
-        store
-            .sync_state
-            .put(txn, &snapshot_key(&h.document), &doc.export_snapshot()?)?;
-        delete_prefix(store, txn, &update_prefix(&h.document))?;
+        store.port_document_snapshot_put(txn, slot, &doc.export_snapshot()?)?;
+        store.port_document_updates_delete(txn, slot)?;
         h.pending = 0;
     }
-    store.sync_state.put(
-        txn,
-        &format!("sv:e:{}", h.document),
-        &doc.doc.oplog_vv().encode(),
-    )?;
+    store.port_document_state_vector_put(txn, slot, &doc.doc.oplog_vv().encode())?;
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
     Ok(())
 }
@@ -242,13 +218,10 @@ impl Vault {
             )?;
             let doc = EntityDoc::open(*entity, &initial, birth_actor, header.occurred_start)?;
             super::forks::bind_actor(self, txn, &doc, birth_actor, header.occurred_start)?;
-            let mut replacement = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
-            replacement.extend_from_slice(&pointer);
             // The immutable envelope, type/time indexes and other body fields do
             // not change. The only replaced bytes are text -> head pointer.
             self.store
-                .entities
-                .put(txn, entity.as_bytes(), &replacement)?;
+                .port_entity_document_pointer_put(txn, entity, &pointer)?;
             let mut h = Head {
                 entity: entity.to_hex(),
                 incarnation: EntityId::now().to_hex(),
@@ -342,10 +315,7 @@ pub(crate) fn guard_record_put(
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     if let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? {
         for doc in [entity.to_hex(), h.document] {
-            store.sync_state.delete(txn, &snapshot_key(&doc))?;
-            store.sync_state.delete(txn, &format!("sv:e:{doc}"))?;
-            store.sync_state.delete(txn, &format!("ssv:e:{doc}"))?;
-            delete_prefix(store, txn, &update_prefix(&doc))?;
+            drop_document(store, txn, &doc)?;
         }
     }
     super::forks::erase_forks(store, txn, entity)?;
@@ -380,18 +350,22 @@ pub(super) fn move_pointer(
         .find(|(key, _)| key.as_str() == Some("entity_doc_ref"))
         .ok_or(Error::CorruptedIndex("document pointer missing"))?;
     slot.1 = rmpv::Value::from(document);
-    let mut out = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
-    rmpv::encode::write_value(&mut out, &rmpv::Value::Map(fields))
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields))
         .map_err(|_| invalid("document pointer encoding"))?;
-    store.entities.put(txn, entity.as_bytes(), &out)?;
-    Ok(())
+    store.port_entity_document_pointer_put(txn, entity, &body)
 }
 
+/// Removes a document's snapshot, state vectors and pending updates.
 pub(super) fn drop_document(store: &Store, txn: &mut RwTxn<'_>, document: &str) -> Result<()> {
-    store.sync_state.delete(txn, &snapshot_key(document))?;
-    store.sync_state.delete(txn, &format!("sv:e:{document}"))?;
-    store.sync_state.delete(txn, &format!("ssv:e:{document}"))?;
-    delete_prefix(store, txn, &update_prefix(document))
+    let slot = DocumentSlot::from_hex(document)?;
+    let rows = [
+        DocumentRow::Snapshot,
+        DocumentRow::StateVector,
+        DocumentRow::ShallowSince,
+    ];
+    store.port_document_rows_delete(txn, slot, &rows)?;
+    store.port_document_updates_delete(txn, slot)
 }
 
 /// A migrated record keeps the EntityDoc codec, even when it is a NOTE.

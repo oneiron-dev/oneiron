@@ -212,6 +212,12 @@ pub enum StoreError {
         table: &'static str,
         problem: SideTableRowProblem,
     },
+    /// A generic host door (`Vault::sync_state_put` and its siblings) was
+    /// given a key that falls under no declared `side_table` prefix. A host
+    /// row needs a declaration the same way a crate-internal one does — the
+    /// door refuses to write it rather than let an undeclared key land.
+    #[error("sync_state key {key:?} is not declared in side_table")]
+    SideTableKeyUndeclared { key: String },
 }
 
 /// What was wrong with one side-table row.
@@ -265,6 +271,7 @@ impl StoreError {
             Self::AnalyzerAssetMissing(_) => ErrorKind::AnalyzerAssetMissing,
             Self::AnalyzerError(_) => ErrorKind::AnalyzerError,
             Self::SideTableRow { .. } => ErrorKind::SideTableRow,
+            Self::SideTableKeyUndeclared { .. } => ErrorKind::SideTableKeyUndeclared,
         }
     }
 }

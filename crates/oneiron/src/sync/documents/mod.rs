@@ -10,6 +10,7 @@ pub(crate) mod storage;
 mod tests;
 
 use crate::error::{Error, Result, SyncEngineContext, SyncProtocolValidation};
+use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::sync::loro_support::doc_from_snapshot;
 use crate::sync::transport::{document_sub_tags, encode_document};
@@ -459,12 +460,11 @@ impl EntityDocument {
                 None => true,
             };
             let slot = note_head.map_or(self.id, |(head, _)| head);
-            if let Some(bytes) = self
-                .vault
-                .store
-                .sync_state
-                .get(txn, &format!("ssv:e:{}", slot.to_hex()))?
-            {
+            if let Some(bytes) = self.vault.store.port_document_row(
+                txn,
+                DocumentSlot::of(slot),
+                DocumentRow::ShallowSince,
+            )? {
                 state_copy |= !covers(&peer, &storage::decode_vv(&bytes)?);
             }
             state_copy |= !covers(&peer, &doc.shallow_since_vv().to_vv());
