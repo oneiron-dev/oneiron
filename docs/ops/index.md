@@ -11,5 +11,7 @@ surfaces. They do not replace counsel review for jurisdiction-specific calls.
   one captured-review repair, not a response guide.
 - [Wave-6 module-split map](w6-module-split-map.md) — old→new paths for the fifteen 2026-08
   monolith splits; use it to re-anchor tickets, docs, and tooling.
+- [Forked dependencies](forked-dependencies.md) — the crates pinned by `rev` to the org forks
+  (sudachi, formualizer): upstream base, fork branch, our commits, and how to change one.
 - [Code map](../CODEMAP.md) — generated crate/module/file map (`python3 scripts/codemap/codemap.py`);
   per-crate file tables in [`../codemap/`](../codemap/).

@@ -155,7 +155,10 @@ build to work around an occupied target directory.
   if you find a reference to it, that reference is stale.
 - Pre-GA, no deployed vaults: don't request migrations or legacy decoders for storage-ABI
   versions that have never shipped. `REVIEW.md`.
-- Don't review or touch `crates/*/vendor/**` unless the PR modifies it.
+- Don't review or touch `crates/*/vendor/**` (heed, paste, pkix-chain) unless the PR modifies it.
+- sudachi and formualizer (from `oneiron-xlsx-formula` on) are git dependencies on the `oneiron-dev`
+  forks pinned by `rev`, never vendored: a change to either is a fork commit plus a new `rev`
+  (`docs/ops/forked-dependencies.md`).
 - `scripts/refactor/conformance.sh` is GPS refactor-wave machinery — it needs a stage-id, a
   base-rev, and a pre-registered `moves/<stage>.tsv` manifest. Not general-purpose tooling; see
   `scripts/refactor/README.md`.
