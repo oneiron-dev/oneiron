@@ -1,6 +1,7 @@
 use super::*;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill_hub::{LocalDirSkillHubAdapter, SkillHubAdapter};
+use crate::test_util::put_policy_manifest_bytes;
 
 #[test]
 fn bootstrap_is_active_versioned_and_does_not_rewrite_on_reopen() -> Result<()> {
@@ -101,6 +102,90 @@ fn bootstrap_does_not_reactivate_changed_or_non_seed_records() -> Result<()> {
     assert_eq!(
         vault.get_skill_record(&outsider)?.unwrap().lifecycle_status,
         SkillLifecycle::Candidate
+    );
+    Ok(())
+}
+
+// Import judge before a malformed policy defers the first seeded open. The
+// fail-closed manifest also blocks ordinary hub imports, so the earlier import
+// must happen while the policy is healthy.
+fn deferred_judge_import() -> Result<(tempfile::TempDir, EntityId, Vec<u8>)> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::default())?;
+    put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let imported = EntityId::now();
+    let (name, markdown) = FILES[1];
+    let package = package(name, markdown)?;
+    let reference = HubRef::new(
+        stable_id("hub")?,
+        name,
+        HubPin::ContentHash(package.content_hash()?.to_hex()),
+    )?;
+    assert_eq!(
+        vault.import_skill_from_hub_with_id(
+            &reference,
+            &package,
+            imported,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )?,
+        imported,
+    );
+    let before = vault.get_raw(&imported)?.expect("imported judge bytes");
+    let manifest = EntityId::now();
+    put_policy_manifest_bytes(&vault, manifest, b"not-a-manifest")?;
+    drop(vault);
+
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, SEED_KEY)?
+            .is_none()
+    );
+    vault.with_write_txn(|wtxn| {
+        crate::batch::deindex_entity_for_test(&vault.store, wtxn, &manifest)
+    })?;
+    drop(vault);
+    Ok((dir, imported, before))
+}
+
+#[test]
+fn open_succeeds_when_an_earlier_import_holds_a_seed_under_another_id() -> Result<()> {
+    let (dir, imported, _) = deferred_judge_import()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert_ne!(imported, stable_id("judge")?);
+    assert!(vault.get_skill_record(&imported)?.is_some());
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, SEED_KEY)?
+            .is_some()
+    );
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_SKILL)?,
+        FILES.len() as u64
+    );
+    Ok(())
+}
+
+#[test]
+fn a_seed_held_under_another_id_is_not_rewritten() -> Result<()> {
+    let (dir, imported, before) = deferred_judge_import()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert_eq!(vault.get_raw(&imported)?, Some(before));
+    assert_eq!(
+        vault
+            .get_skill_record(&imported)?
+            .expect("imported judge")
+            .lifecycle_status,
+        SkillLifecycle::Candidate,
     );
     Ok(())
 }
