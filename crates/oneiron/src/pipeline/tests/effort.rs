@@ -39,6 +39,13 @@ fn five_effort_stage_sets_match_explicit_plans() -> Result<()> {
         } else {
             base().search_temporal(now, now, 10)
         };
+        // The manual now anchor must carry the same provenance as the effort
+        // anchor; a host-supplied window deliberately suppresses recency.
+        explicit
+            .temporal_search
+            .as_mut()
+            .expect("manual now anchor")
+            .effort_anchor = true;
         if depth > 0 {
             explicit = explicit.search_ppr(&[seed], 1);
         }
