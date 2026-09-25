@@ -457,10 +457,14 @@ impl SourceTrustCeiling {
                 }
             }
             _ => {
-                *self.slot_mut(source) = Some(first.merge(row));
                 if row.actor_ref.is_none() {
-                    // A class-wide denial also narrows every existing bound
-                    // slot, regardless of manifest and row order.
+                    // A class-wide restriction intersects every existing
+                    // actor slot, preserving each binding. It must neither
+                    // single out the first scanned actor nor grant outsiders.
+                    *self.slot_mut(source) = Some(first.merge(SourceTrustRow {
+                        actor_ref: first.actor_ref,
+                        ..row
+                    }));
                     for ((slot_source, _), bound) in &mut self.additional_bound_rows {
                         if *slot_source == source {
                             *bound = bound.merge(SourceTrustRow {
@@ -469,6 +473,8 @@ impl SourceTrustCeiling {
                             });
                         }
                     }
+                } else {
+                    *self.slot_mut(source) = Some(first.merge(row));
                 }
             }
         }

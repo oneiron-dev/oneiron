@@ -56,6 +56,78 @@ fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> 
 }
 
 #[test]
+fn replicated_class_wide_cap_narrows_every_bound_actor_in_either_manifest_order() -> Result<()> {
+    let actors = [test_id(0x81), test_id(0x82)];
+    for order in [actors, [actors[1], actors[0]]] {
+        let (_dir, vault) = temp_vault();
+        for (manifest_id, actor) in [test_id(0x71), test_id(0x72)].into_iter().zip(order) {
+            let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2)
+            else {
+                unreachable!("source trust fixture is a map")
+            };
+            let Value::Map(ref mut row) = sources[0].1 else {
+                unreachable!("source trust row fixture is a map")
+            };
+            row.push((Value::from("actor_ref"), Value::from(actor.to_hex())));
+            put_policy_manifest_bytes(
+                &vault,
+                manifest_id,
+                &encode_policy_manifest(vec![(key, Value::Map(sources))]),
+            )?;
+        }
+        let band_two = source_trust_claim(ClaimSource::Generated);
+        let public = public_stamped(source_trust_claim(ClaimSource::Generated));
+        for actor in actors {
+            crate::gate::resolution::check_claim_source_trust(
+                &band_two,
+                Some(&actor.to_hex()),
+                &resolve(&vault)?,
+                None,
+            )?;
+        }
+        let clamp = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Generated, 0)]);
+        vault
+            .batch()
+            .put_replicated(
+                &test_id(0x93),
+                ENTITY_TYPE_POLICY_MANIFEST,
+                test_time(1),
+                1,
+                &clamp,
+            )
+            .commit()?;
+        let policy = resolve(&vault)?;
+        for actor in actors {
+            assert!(
+                crate::gate::resolution::check_claim_source_trust(
+                    &band_two,
+                    Some(&actor.to_hex()),
+                    &policy,
+                    None,
+                )
+                .is_err()
+            );
+            crate::gate::resolution::check_claim_source_trust(
+                &public,
+                Some(&actor.to_hex()),
+                &policy,
+                None,
+            )?;
+        }
+        assert!(
+            crate::gate::resolution::check_claim_source_trust(
+                &public,
+                Some(&test_id(0x83).to_hex()),
+                &policy,
+                None,
+            )
+            .is_err()
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_order() -> Result<()> {
     for reversed in [false, true] {
         let _dir = tempfile::tempdir()?;
