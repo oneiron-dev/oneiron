@@ -37,63 +37,65 @@ use super::presence_scan::{
 };
 use super::rate_limit::{task_create_owner_in, task_verb_contract};
 use super::route_receipts::{
-    DEFAULT_TASK_CANCEL_MODE, TaskAckReceipt, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
+    DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskDescription,
+    TaskUpdateReceipt,
 };
 
 impl Memory<'_> {
-    /// Renders the current TASKS section through the existing board renderer.
+    /// Describes one TASK, or the whole TASKS section when no task is named.
     ///
-    /// The TASK type-index walk is bounded and paged, so a vault past the
-    /// 100k-row `entities_by_type` cliff still renders a live board (ARCH-0067
-    /// §2: the board is the dynamic tail, re-rendered every turn). What the
-    /// scan or the render cap left out is stated in the section's additive
-    /// overflow footer, never silently dropped.
-    pub fn tasks_check(&self) -> MemoryResult<TasksSection> {
-        let _provenance = facade_provenance(task_verb_contract(AgentVerb::TasksCheck));
-        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let snapshot = task_presence(self.vault())?;
-        Ok(TasksSection::render_bounded(
-            &snapshot.intents,
-            &snapshot.bare_jobs,
-            snapshot.source_exhausted,
-        ))
-    }
-
-    /// Expands one TASK intent through the existing Context Board projection.
+    /// The section renders through the existing board renderer. The TASK
+    /// type-index walk is bounded and paged, so a vault past the 100k-row
+    /// `entities_by_type` cliff still renders a live board (ARCH-0067 §2: the
+    /// board is the dynamic tail, re-rendered every turn). What the scan or
+    /// the render cap left out is stated in the section's additive overflow
+    /// footer, never silently dropped.
     ///
-    /// Direct by id: a row outside the collapsed board prefix is hidden, never
-    /// gone, so this never inherits `tasks.check`'s scan cap.
-    pub fn tasks_expand(&self, task_ref: EntityId) -> MemoryResult<Vec<String>> {
-        let _provenance = facade_provenance(task_verb_contract(AgentVerb::TasksExpand));
+    /// A named task's card is read direct by id: a row outside the collapsed
+    /// board prefix is hidden, never gone, so the card never inherits the
+    /// section's scan cap.
+    pub fn describe(&self, task_ref: Option<EntityId>) -> MemoryResult<TaskDescription> {
+        let _provenance = facade_provenance(task_verb_contract(AgentVerb::Describe));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let Some(task_ref) = task_ref else {
+            let snapshot = task_presence(self.vault())?;
+            return Ok(TaskDescription::Section(TasksSection::render_bounded(
+                &snapshot.intents,
+                &snapshot.bare_jobs,
+                snapshot.source_exhausted,
+            )));
+        };
         let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
             return Err(MemoryError::from(Error::EntityNotFound));
         };
         // An acked failure has left the TASKS surface (the renderer drops it);
-        // the typed read verbs must agree, so it is not expandable by id
-        // either.
+        // the typed read verbs must agree, so it has no card by id either.
         if intent.is_acked_failure() {
             return Err(MemoryError::from(Error::EntityNotFound));
         }
-        Ok(expand_task(&intent))
+        Ok(TaskDescription::Card {
+            lines: expand_task(&intent),
+        })
     }
 
-    /// Persists the free render-tier acknowledgement bit for one TASK.
-    pub fn tasks_ack(&self, task_ref: EntityId) -> MemoryResult<TaskAckReceipt> {
-        let _provenance = facade_provenance(task_verb_contract(AgentVerb::TasksAck));
+    /// Updates one TASK. Today the update is the free render-tier
+    /// acknowledgement bit of a failed task.
+    pub fn tasks_update(&self, task_ref: EntityId) -> MemoryResult<TaskUpdateReceipt> {
+        let _provenance = facade_provenance(task_verb_contract(AgentVerb::TasksUpdate));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        // Ack applies only to a currently-FAILED task: failed rows stay
-        // surfaced until acked (08b §3). Acking a queued/running task would
-        // pre-set the bit so the later failure is dropped from render and never
-        // surfaced — so a non-failed ack is a no-op that leaves the bit unset.
+        // The acknowledgement applies only to a currently-FAILED task: failed
+        // rows stay surfaced until acknowledged (08b §3). Acknowledging a
+        // queued/running task would pre-set the bit so the later failure is
+        // dropped from render and never surfaced — so updating a non-failed
+        // task is a no-op that leaves the bit unset.
         //
-        // Direct by id, like `tasks.expand`: a failed row past the board scan
-        // prefix must stay acknowledgeable.
+        // Direct by id, like a `describe` card: a failed row past the board
+        // scan prefix must stay acknowledgeable.
         let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
             return Err(MemoryError::from(Error::EntityNotFound));
         };
         if intent.status != TaskBoardStatus::Failed {
-            return Ok(TaskAckReceipt {
+            return Ok(TaskUpdateReceipt {
                 task_ref,
                 acked: intent.acked,
             });
@@ -106,45 +108,45 @@ impl Memory<'_> {
             ack_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)
                 .map_err(MemoryError::from)
         })?;
-        Ok(TaskAckReceipt {
+        Ok(TaskUpdateReceipt {
             task_ref,
             acked: task_is_acked(self.vault(), task_ref)?,
         })
     }
 
     /// Cancels under the own-scoped `auto` default.
-    pub fn tasks_cancel(&self, target: TaskCancelTarget) -> MemoryResult<TaskCancelReceipt> {
-        self.tasks_cancel_with_mode(target, DEFAULT_TASK_CANCEL_MODE)
+    pub fn cancel(&self, target: TaskCancelTarget) -> MemoryResult<TaskCancelReceipt> {
+        self.cancel_with_mode(target, DEFAULT_TASK_CANCEL_MODE)
     }
 
     /// Cancels under one ladder vocabulary token. `auto` and `full-access`
     /// map to the existing Auto ceiling; `manual` maps to Proposed.
-    pub fn tasks_cancel_with_mode(
+    pub fn cancel_with_mode(
         &self,
         target: TaskCancelTarget,
         mode: TaskCancelMode,
     ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let state = cancel_target_state(self.vault(), self.actor(), target)?;
-        self.tasks_cancel_resolved(mode, state)
+        self.cancel_resolved(mode, state)
     }
 
     /// Crate-test seam: runs the cancel decision over a caller-supplied (and
     /// possibly deliberately stale) target snapshot, so the in-txn live-state
     /// re-read (P1-b) can be exercised without a mid-call injection point.
     #[cfg(test)]
-    pub(super) fn tasks_cancel_with_injected_state_for_test(
+    pub(super) fn cancel_with_injected_state_for_test(
         &self,
         mode: TaskCancelMode,
         state: CancelTargetState,
     ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        self.tasks_cancel_resolved(mode, state)
+        self.cancel_resolved(mode, state)
     }
 
     /// RUNG 2: the owner's nonrefusable stop.
     ///
-    /// Distinct verb, deliberately: [`Self::tasks_cancel`] stays SOFT — it asks
+    /// Distinct verb, deliberately: [`Self::cancel`] stays SOFT — it asks
     /// a running worker to land and lets it refuse with a reason — and this is
     /// the door for the case that rung cannot answer (a worker that will not
     /// land, evidence of pathology, an owner who needs the machine back now).
@@ -162,14 +164,14 @@ impl Memory<'_> {
     ///
     /// Lease expiry and criticality keep their own runtime grounds and do not
     /// pass through here.
-    pub fn tasks_cancel_force(
+    pub fn cancel_force(
         &self,
         target: TaskCancelTarget,
         reason: Option<String>,
     ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let state = cancel_target_state(self.vault(), self.actor(), target)?;
-        let verb = task_verb_contract(AgentVerb::TasksCancel);
+        let verb = task_verb_contract(AgentVerb::Cancel);
         let now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
 
@@ -315,12 +317,12 @@ impl Memory<'_> {
         }
     }
 
-    fn tasks_cancel_resolved(
+    fn cancel_resolved(
         &self,
         mode: TaskCancelMode,
         state: CancelTargetState,
     ) -> MemoryResult<TaskCancelReceipt> {
-        let verb = task_verb_contract(AgentVerb::TasksCancel);
+        let verb = task_verb_contract(AgentVerb::Cancel);
         let now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
         if !state.owned || mode.ceiling() == PolicyApprovalCeiling::Proposed {
@@ -488,7 +490,7 @@ impl Memory<'_> {
                         AttemptInterventionEffect::AlreadyCancelled => {}
                         _ => {
                             return Err(MemoryError::from(Error::InvariantViolation(
-                                "tasks.cancel.effect",
+                                "cancel.effect",
                             )));
                         }
                     }

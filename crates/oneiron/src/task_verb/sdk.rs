@@ -39,6 +39,14 @@ pub struct RoomClaimRequest {
 pub struct TaskRequest {
     pub task_ref: String,
 }
+/// `describe`'s one input: the task to describe, or none for the whole
+/// TASKS section.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DescribeRequest {
+    #[serde(default)]
+    pub task_ref: Option<String>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskCreateRequest {

@@ -92,13 +92,11 @@ class AgentSdkProjectionTests(unittest.TestCase):
         calls = []
         tasks = module.TasksVerbs(lambda name, value: calls.append((name, value)))
         request = {"task_ref": "task"}
-        tasks.ack(request)
-        tasks.cancel(request)
-        tasks.expand(request)
+        tasks.update(request)
         create = {"spec": {"goal": "review"}, "label": "review"}
         tasks.create(create)
-        tasks.check()
-        self.assertEqual(calls, [("tasks_ack", request), ("tasks_cancel", request), ("tasks_expand", request), ("tasks_create", create), ("tasks_check", {})])
+        self.assertEqual(calls, [("tasks_update", request), ("tasks_create", create)])
+
 
     def test_python_ask_wait_answer_and_room_arguments(self):
         spec = importlib.util.spec_from_file_location("generated_agent_verbs", ROOT / "crates/oneiron-py/python/oneiron/agent_verbs.py")

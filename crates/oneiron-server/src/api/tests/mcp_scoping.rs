@@ -91,7 +91,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
             MCP_TOOL_FIRST_PATH,
             wide,
             "scope-mismatch",
-            "tasks.check",
+            "describe",
             mcp_endpoint_envelope(seeded_test_entity_id(0x1704_0082), "read_tasks"),
         ),
     )
@@ -148,7 +148,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
             MCP_TOOL_FIRST_PATH,
             wide,
             "scope-facade",
-            "tasks.expand",
+            "describe",
             mcp_merge_args(
                 mcp_endpoint_envelope(wide_actor, "read_tasks"),
                 json!({ "arguments": { "task_ref": stray.to_hex() } }),
@@ -161,7 +161,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
     // 5. Bound-verb ceiling refusal.
     let bound_actor = seeded_test_entity_id(0x1704_0084);
     let bound = "one-1704-bound-verb-credential";
-    register_bound_verb_mcp_actor(&server, bound, bound_actor, &["tasks.check"]).await;
+    register_bound_verb_mcp_actor(&server, bound, bound_actor, &["describe"]).await;
     let body = mcp_refusal(
         &server,
         mcp_endpoint_call_request(
@@ -307,7 +307,7 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
             MCP_TOOL_FIRST_PATH,
             credential,
             id,
-            "tasks.expand",
+            "describe",
             mcp_merge_args(
                 mcp_scoped_envelope(actor_ref, "read_tasks", scope),
                 json!({ "arguments": { "task_ref": target.to_hex() } }),
@@ -402,7 +402,7 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
             MCP_TOOL_FIRST_PATH,
             cred_facet_b,
             "cross-write-b",
-            "tasks.ack",
+            "tasks.update",
             mcp_merge_args(
                 mcp_scoped_envelope(actor_ref, "ack_task", &facet_only_b),
                 json!({ "arguments": { "task_ref": owned.to_hex() } }),
@@ -464,7 +464,7 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
                 MCP_TOOL_FIRST_PATH,
                 credential,
                 id,
-                "tasks.check",
+                "describe",
                 mcp_scoped_envelope(actor_ref, "read_tasks", scope),
             )
         };

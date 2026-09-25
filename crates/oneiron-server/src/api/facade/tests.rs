@@ -691,9 +691,9 @@ async fn post_task_verb(
 }
 
 #[tokio::test]
-async fn http_tasks_check_omits_a_task_outside_the_callers_read_floor() {
+async fn http_describe_omits_a_task_outside_the_callers_read_floor() {
     let (_dir, server, recipe, _, task) = task_outside_read_floor();
-    let (_, section) = post_task_verb(&server, &recipe, "tasks.check", json!({})).await;
+    let (_, section) = post_task_verb(&server, &recipe, "describe", json!({})).await;
     assert!(
         section["rows"]
             .as_array()
@@ -705,12 +705,12 @@ async fn http_tasks_check_omits_a_task_outside_the_callers_read_floor() {
 }
 
 #[tokio::test]
-async fn http_tasks_expand_refuses_a_task_outside_the_callers_read_floor() {
+async fn http_describe_card_refuses_a_task_outside_the_callers_read_floor() {
     let (_dir, server, recipe, _, task) = task_outside_read_floor();
     let (status, _) = post_task_verb(
         &server,
         &recipe,
-        "tasks.expand",
+        "describe",
         json!({"task_ref": task.to_hex()}),
     )
     .await;
@@ -718,24 +718,23 @@ async fn http_tasks_expand_refuses_a_task_outside_the_callers_read_floor() {
 }
 
 #[tokio::test]
-async fn http_tasks_ack_writes_nothing_on_a_task_outside_the_callers_read_floor() {
+async fn http_tasks_update_writes_nothing_on_a_task_outside_the_callers_read_floor() {
     let (_dir, server, recipe, owner, task) = task_outside_read_floor();
     post_task_verb(
         &server,
         &recipe,
-        "tasks.ack",
+        "tasks.update",
         json!({"task_ref": task.to_hex()}),
     )
     .await;
     // A failed task stays on the owner's board until its ack bit is set.
-    assert!(
-        server
-            .vault
-            .memory(owner, EdgeActorClass::Human)
-            .tasks_check()
-            .unwrap()
-            .rows
-            .iter()
-            .any(|row| row.id == task.to_hex())
-    );
+    let oneiron::task_verb::TaskDescription::Section(section) = server
+        .vault
+        .memory(owner, EdgeActorClass::Human)
+        .describe(None)
+        .unwrap()
+    else {
+        panic!("describe without a task returns the TASKS section");
+    };
+    assert!(section.rows.iter().any(|row| row.id == task.to_hex()));
 }

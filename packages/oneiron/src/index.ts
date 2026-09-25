@@ -16,6 +16,7 @@
 import { OneironError, translateNativeError } from "./error.js"
 import { NativeClient } from "./native.js"
 import { agentVerbs } from "./agent-verbs.js"
+import type { TaskCancelReceipt, TaskDescription } from "./agent-verbs.js"
 
 import { itemFromWire, keyedJson } from "./key-value.js"
 import type { WireItem } from "./key-value.js"
@@ -119,6 +120,10 @@ export class Oneiron {
   }
 
   // BEGIN GENERATED FACADE VERBS
+  /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
+  cancel(taskRef: string): TaskCancelReceipt { return this.#call(() => this.#client.cancel({task_ref: taskRef}) as TaskCancelReceipt) }
+  /** Describes one task's card, or the whole TASKS section when no task is named. */
+  describe(taskRef?: string): TaskDescription { return this.#call(() => this.#client.describe({task_ref: taskRef}) as TaskDescription) }
   /**
    * Witnesses one conversational turn.
    *

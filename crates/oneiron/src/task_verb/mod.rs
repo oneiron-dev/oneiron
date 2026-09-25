@@ -63,8 +63,9 @@ pub use dormant_magistrate::{
 };
 pub use follow_up::{decode_consult_expiry_recovery, task_follow_up_dedupe_key};
 pub use route_receipts::{
-    DEFAULT_TASK_CANCEL_MODE, TaskAckReceipt, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
-    TaskCreateReceipt, TaskResultInput, TaskRouteLane, TaskRouteOutcome, TaskStartedReceipt,
+    DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
+    TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome,
+    TaskStartedReceipt, TaskUpdateReceipt,
 };
 pub use terminal_state::{
     ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition,
