@@ -179,29 +179,32 @@ fn facade_admit_readable_ref(
     }
 }
 
-/// Drops every TASKS row this credential cannot read, as MCP's board does,
-/// then encodes the section. A row id that is not an entity id cannot be
-/// proven readable, so only a credential without a slip, which reads every
-/// entity, keeps it.
+/// Drops every TASKS row this credential cannot read from a described
+/// section, as MCP's board does, then encodes the description. A row id that
+/// is not an entity id cannot be proven readable, so only a credential without
+/// a slip, which reads every entity, keeps it. A card passes unchanged: its
+/// task ref was admitted before the engine call.
 fn facade_readable_task_rows(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
-    mut section: oneiron::context_board::TasksSection,
+    mut description: oneiron::task_verb::TaskDescription,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let mut rows = Vec::with_capacity(section.rows.len());
-    for row in section.rows {
-        let readable = match EntityId::from_hex(&row.id) {
-            Ok(id) => auth
-                .can_read_entity(vault, &id)
-                .map_err(MemoryError::from)?,
-            Err(_) => auth.verified_slip().is_none(),
-        };
-        if readable {
-            rows.push(row);
+    if let oneiron::task_verb::TaskDescription::Section(section) = &mut description {
+        let mut rows = Vec::with_capacity(section.rows.len());
+        for row in std::mem::take(&mut section.rows) {
+            let readable = match EntityId::from_hex(&row.id) {
+                Ok(id) => auth
+                    .can_read_entity(vault, &id)
+                    .map_err(MemoryError::from)?,
+                Err(_) => auth.verified_slip().is_none(),
+            };
+            if readable {
+                rows.push(row);
+            }
         }
+        section.rows = rows;
     }
-    section.rows = rows;
-    serde_json::to_value(section).map_err(|_| {
+    serde_json::to_value(description).map_err(|_| {
         FacadeApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             MEMORY_CODE_INTERNAL,

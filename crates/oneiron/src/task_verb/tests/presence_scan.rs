@@ -5,7 +5,7 @@ use super::*;
 
 /// The cliff itself: one more row than `MAX_TYPE_QUERY_RESULTS`, the point
 /// at which unpaged `entities_by_type` returns `IndexOverflow` and takes
-/// `tasks.check` down permanently. The bounded loop stops at its own cap,
+/// `describe` down permanently. The bounded loop stops at its own cap,
 /// never materializes the index, and reports the truncation honestly.
 #[test]
 fn task_presence_page_loop_handles_100_001_synthetic_ids_without_unpaged_query() {
@@ -90,7 +90,7 @@ fn a_non_advancing_cursor_stops_the_scan_instead_of_looping() {
 /// Real vault, injected small limits: the walk crosses several
 /// `entities_by_type_page` calls and every processed id appears once.
 #[test]
-fn tasks_check_pages_across_multiple_vault_pages() {
+fn describe_section_pages_across_multiple_vault_pages() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let facade = vault.memory(own, EdgeActorClass::Agent);
@@ -136,7 +136,7 @@ fn tasks_check_pages_across_multiple_vault_pages() {
 /// Past both caps the board shows a capped prefix and says the count is a
 /// LOWER bound — never an exact census it could not have taken.
 #[test]
-fn tasks_check_scan_cap_reports_honest_additive_overflow() {
+fn describe_section_scan_cap_reports_honest_additive_overflow() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let facade = vault.memory(own, EdgeActorClass::Agent);
@@ -165,7 +165,7 @@ fn tasks_check_scan_cap_reports_honest_additive_overflow() {
 /// Past the render cap but inside the scan cap the count IS exact, so the
 /// footer carries no lower-bound hedge.
 #[test]
-fn tasks_check_exact_exhaustion_reports_exact_additive_overflow() {
+fn describe_section_exact_exhaustion_reports_exact_additive_overflow() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let facade = vault.memory(own, EdgeActorClass::Agent);
@@ -200,7 +200,7 @@ fn tasks_check_exact_exhaustion_reports_exact_additive_overflow() {
 /// Hidden means one call away, never gone: a TASK ordered after the board
 /// scan prefix still expands by id.
 #[test]
-fn tasks_expand_direct_lookup_survives_board_scan_cap() {
+fn describe_card_direct_lookup_survives_board_scan_cap() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let facade = vault.memory(own, EdgeActorClass::Agent);
@@ -223,23 +223,23 @@ fn tasks_expand_direct_lookup_survives_board_scan_cap() {
         .expect("direct lookup")
         .expect("a valid TASK id is always reachable");
     assert_eq!(direct.id, beyond_hex);
-    let lines = facade.tasks_expand(beyond_prefix).expect("expand by id");
+    let lines = facade.describe_card(beyond_prefix).expect("expand by id");
     assert!(lines[0].starts_with(&beyond_hex));
 
     // An unknown id is still EntityNotFound, not a silent empty expansion.
     assert_eq!(
         facade
-            .tasks_expand(EntityId::from_bytes([0xD9; 16]).expect("unknown id"))
+            .describe_card(EntityId::from_bytes([0xD9; 16]).expect("unknown id"))
             .expect_err("an unknown id is not found")
             .code,
         crate::memory::MEMORY_CODE_NOT_FOUND
     );
 }
 
-/// The same for `tasks.ack`, including the failed-only invariant and the
+/// The same for `tasks.update`, including the failed-only invariant and the
 /// acked-failure invisibility that follows it.
 #[test]
-fn tasks_ack_direct_lookup_survives_board_scan_cap() {
+fn tasks_update_direct_lookup_survives_board_scan_cap() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let facade = vault.memory(own, EdgeActorClass::Agent);
@@ -286,17 +286,19 @@ fn tasks_ack_direct_lookup_survives_board_scan_cap() {
     );
 
     // Failed-only ack, reached directly by id past the board prefix.
-    let receipt = facade.tasks_ack(beyond_prefix).expect("ack past the cap");
+    let receipt = facade
+        .tasks_update(beyond_prefix)
+        .expect("ack past the cap");
     assert!(receipt.acked);
     assert!(task_is_acked(&vault, beyond_prefix).expect("ack bit"));
     // A non-failed task acked by id is still a no-op.
     let queued = created[0];
-    assert!(!facade.tasks_ack(queued).expect("ack queued task").acked);
+    assert!(!facade.tasks_update(queued).expect("ack queued task").acked);
     assert!(!task_is_acked(&vault, queued).expect("no ack bit"));
     // The acked failure has left BOTH the board and the typed read verbs.
     assert_eq!(
         facade
-            .tasks_expand(beyond_prefix)
+            .describe_card(beyond_prefix)
             .expect_err("acked failure is not expandable")
             .code,
         crate::memory::MEMORY_CODE_NOT_FOUND
@@ -341,7 +343,7 @@ fn exhausted_task_scan_still_renders_genuinely_dangling_job_once() {
         1
     );
     let facade = vault.memory(own, EdgeActorClass::Agent);
-    let section = facade.tasks_check().expect("check tasks");
+    let section = facade.describe_section().expect("check tasks");
     assert_eq!(
         section.rows.iter().filter(|row| row.id == job_id).count(),
         1
@@ -444,7 +446,7 @@ fn filtered_rows_still_consume_the_scan_budget() {
     let facade = vault.memory(own, EdgeActorClass::Agent);
     let created = created_task_refs(&facade, 3);
     facade
-        .tasks_cancel(TaskCancelTarget::Task(created[0]))
+        .cancel(TaskCancelTarget::Task(created[0]))
         .expect("cancel the first task");
 
     let snapshot = task_presence_with_limits(&vault, 1, 4).expect("scan-capped presence");

@@ -38,7 +38,7 @@ fn role_only_task_is_present_and_cancel_fails_closed() {
     };
     let facade = vault.memory(own, EdgeActorClass::Agent);
 
-    let section = facade.tasks_check().expect("check tasks");
+    let section = facade.describe_section().expect("check tasks");
     assert_eq!(section.rows.len(), 1);
     assert_eq!(
         section
@@ -50,7 +50,7 @@ fn role_only_task_is_present_and_cancel_fails_closed() {
     );
 
     let cancel = facade
-        .tasks_cancel(TaskCancelTarget::Task(task_ref))
+        .cancel(TaskCancelTarget::Task(task_ref))
         .expect("cancel task");
     let realization = AttemptQueue::new(&vault)
         .get(attempt.id)
@@ -98,24 +98,24 @@ fn ack_persists_and_removes_failed_task_from_render() {
         })
         .expect("fail task");
 
-    let before = facade.tasks_check().expect("check before ack");
+    let before = facade.describe_section().expect("check before ack");
     assert_eq!(before.rows.len(), 1);
     assert_eq!(before.rows[0].status, TaskBoardStatus::Failed);
     assert!(!task_is_acked(&vault, task_ref).expect("read unacked state"));
     // An unacked failure is still expandable by id.
-    assert!(facade.tasks_expand(task_ref).is_ok());
-    let ack = facade.tasks_ack(task_ref).expect("ack task");
+    assert!(facade.describe_card(task_ref).is_ok());
+    let ack = facade.tasks_update(task_ref).expect("ack task");
     assert!(ack.acked);
     assert!(task_is_acked(&vault, task_ref).expect("read ack"));
     // Once acked, the failure has left the surface — expand agrees with check.
     assert_eq!(
         facade
-            .tasks_expand(task_ref)
+            .describe_card(task_ref)
             .expect_err("acked failure is not expandable")
             .code,
         crate::memory::MEMORY_CODE_NOT_FOUND
     );
-    let after = facade.tasks_check().expect("check after ack");
+    let after = facade.describe_section().expect("check after ack");
     assert_eq!(after.rows.len(), 0);
 }
 
@@ -129,7 +129,7 @@ fn ack_before_failure_is_a_noop_and_failure_still_surfaces() {
 
     // The task is Queued (not failed): acking it is a no-op — the bit stays
     // unset so a later failure is not pre-suppressed.
-    let premature = facade.tasks_ack(task_ref).expect("ack queued task");
+    let premature = facade.tasks_update(task_ref).expect("ack queued task");
     assert!(!premature.acked);
     assert!(!task_is_acked(&vault, task_ref).expect("no ack bit set"));
 
@@ -159,14 +159,21 @@ fn ack_before_failure_is_a_noop_and_failure_still_surfaces() {
         .expect("fail task");
 
     // The failure STILL surfaces — the premature ack did not suppress it.
-    let after_fail = facade.tasks_check().expect("check after fail");
+    let after_fail = facade.describe_section().expect("check after fail");
     assert_eq!(after_fail.rows.len(), 1);
     assert_eq!(after_fail.rows[0].status, TaskBoardStatus::Failed);
 
     // A real ack (now that it is failed) removes it from the surface.
-    let acked = facade.tasks_ack(task_ref).expect("ack failed task");
+    let acked = facade.tasks_update(task_ref).expect("ack failed task");
     assert!(acked.acked);
-    assert_eq!(facade.tasks_check().expect("check after ack").rows.len(), 0);
+    assert_eq!(
+        facade
+            .describe_section()
+            .expect("check after ack")
+            .rows
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -195,9 +202,9 @@ fn malformed_dreamer_row_does_not_poison_the_board() {
     };
     // The board still reads for the unrelated healthy TASK — one bad row
     // degrades to a bare job in the run tree instead of poisoning the whole
-    // read (previously the tree read errored and failed tasks.check/expand).
+    // read (previously the tree read errored and failed both describe arms).
     let section = facade
-        .tasks_check()
+        .describe_section()
         .expect("board reads despite the malformed row");
     assert_eq!(
         section
@@ -208,7 +215,7 @@ fn malformed_dreamer_row_does_not_poison_the_board() {
         1
     );
     // The typed read verb for the healthy TASK also works.
-    assert!(facade.tasks_expand(task_ref).is_ok());
+    assert!(facade.describe_card(task_ref).is_ok());
 }
 
 /// P1-a, as amended by ONE-1896 §9: a Queued+Leased mix stops what CAN be
@@ -261,10 +268,10 @@ fn queued_leased_mix_cancel_is_honest_and_not_hidden() {
     }
 
     let cancel = facade
-        .tasks_cancel(TaskCancelTarget::Task(task_ref))
+        .cancel(TaskCancelTarget::Task(task_ref))
         .expect("cancel task");
     let records = queue.list().expect("list attempts");
-    let section = facade.tasks_check().expect("check tasks");
+    let section = facade.describe_section().expect("check tasks");
 
     assert_eq!(
         usize::from(cancel.effected),
@@ -354,7 +361,7 @@ fn cancel_uses_in_txn_live_state_not_stale_leased_snapshot() {
         target_ref: task_hex.clone(),
     };
     let cancel = facade
-        .tasks_cancel_with_injected_state_for_test(TaskCancelMode::Auto, stale)
+        .cancel_with_injected_state_for_test(TaskCancelMode::Auto, stale)
         .expect("cancel with stale snapshot");
     let after = queue.list().expect("list after");
 
@@ -433,7 +440,7 @@ fn cancel_reaches_a_retry_minted_between_snapshot_and_write_txn() {
     assert_ne!(next.id, claimed.id);
 
     let cancel = facade
-        .tasks_cancel_with_injected_state_for_test(TaskCancelMode::Auto, snapshot)
+        .cancel_with_injected_state_for_test(TaskCancelMode::Auto, snapshot)
         .expect("cancel with pre-retry snapshot");
     let after = queue.list().expect("list after");
 
@@ -509,7 +516,7 @@ fn board_reads_a_retry_chain_off_its_head_not_a_superseded_try() {
 
     // Held retry: the task is deferred, not failed — and only the head is
     // folded, so the board shows one live realization, not three rows.
-    let section = facade.tasks_check().expect("check tasks");
+    let section = facade.describe_section().expect("check tasks");
     let row = section
         .rows
         .iter()
@@ -542,7 +549,7 @@ fn board_reads_a_retry_chain_off_its_head_not_a_superseded_try() {
         })
         .expect("complete the head");
 
-    let done = facade.tasks_check().expect("check after success");
+    let done = facade.describe_section().expect("check after success");
     let row = done
         .rows
         .iter()
@@ -551,7 +558,7 @@ fn board_reads_a_retry_chain_off_its_head_not_a_superseded_try() {
     assert_eq!(row.status, TaskBoardStatus::Done);
 }
 
-/// P1-c: a stored, `tasks.cancel`-granted actor cannot DIRECTLY cancel a
+/// P1-c: a stored, `cancel`-granted actor cannot DIRECTLY cancel a
 /// role-only task it cannot prove it owns — it surfaces a proposal. Role-only
 /// ownership is not derivable from storage, so the fallback fails closed.
 #[test]
@@ -592,13 +599,13 @@ fn role_only_task_cancel_by_foreign_granted_actor_proposes() {
     let facade = vault.memory(agent_b, EdgeActorClass::Agent);
 
     let cancel = facade
-        .tasks_cancel(TaskCancelTarget::Task(task_ref))
+        .cancel(TaskCancelTarget::Task(task_ref))
         .expect("cancel role-only task");
     let realization = AttemptQueue::new(&vault)
         .get(attempt.id)
         .expect("read realization")
         .expect("realization exists");
-    let section = facade.tasks_check().expect("check tasks");
+    let section = facade.describe_section().expect("check tasks");
 
     assert_eq!(usize::from(cancel.effected), 0);
     assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
@@ -691,7 +698,7 @@ fn a_cancelled_task_leaves_the_board_even_when_also_acked() {
     // never intervened here — the facts were appended directly — so they stay
     // visible as the bare work they are, which is exactly the honesty the
     // board owes: cancelling the INTENT never hides live work.
-    let section = facade.tasks_check().expect("check tasks");
+    let section = facade.describe_section().expect("check tasks");
     assert_eq!(section.rows.iter().filter(|row| row.is_intent).count(), 0);
     for task_ref in [ack_first, cancel_first] {
         assert!(
@@ -702,7 +709,7 @@ fn a_cancelled_task_leaves_the_board_even_when_also_acked() {
         assert!(task_is_acked(&vault, task_ref).expect("ack state"));
         assert_eq!(
             facade
-                .tasks_expand(task_ref)
+                .describe_card(task_ref)
                 .expect_err("a cancelled task is off the surface")
                 .code,
             crate::memory::MEMORY_CODE_NOT_FOUND
@@ -747,7 +754,7 @@ fn typed_task_cancel_ignores_forged_body_owner() {
         .expect("typed task");
     let cancel = vault
         .memory(attacker, EdgeActorClass::Agent)
-        .tasks_cancel(TaskCancelTarget::Task(task_ref))
+        .cancel(TaskCancelTarget::Task(task_ref))
         .expect("cancel forged-owner task");
     let task_hex = task_ref.to_hex();
     let attempts = AttemptQueue::new(&vault).list().expect("list attempts");
@@ -812,7 +819,7 @@ fn dangling_backlink_job_still_renders_once() {
     };
     let facade = vault.memory(own, EdgeActorClass::Agent);
 
-    let section = facade.tasks_check().expect("check tasks");
+    let section = facade.describe_section().expect("check tasks");
     let job_id = attempt_hex(attempt.id);
 
     assert_eq!(
@@ -889,7 +896,7 @@ fn unprojectable_task_backlinks_render_jobs_exactly_once() {
 
     let section = vault
         .memory(own, EdgeActorClass::Agent)
-        .tasks_check()
+        .describe_section()
         .expect("check tasks");
     let malformed_job = attempt_hex(attempts[0].id);
     let non_task_job = attempt_hex(attempts[1].id);
@@ -934,7 +941,7 @@ fn unprojectable_task_backlinks_render_jobs_exactly_once() {
 /// onto any TASK id — takes exactly THAT row off the board and leaves the rest
 /// of the page rendering. Nothing about the fork is softened where it binds:
 /// the authority lens still refuses to pick an owner, so the direct-cancel
-/// door keeps failing closed on that one task while `tasks.check` survives.
+/// door keeps failing closed on that one task while `describe` survives.
 #[test]
 fn a_forked_owner_companion_does_not_poison_the_board() {
     let (_dir, vault) = open_vault();
@@ -974,7 +981,9 @@ fn a_forked_owner_companion_does_not_poison_the_board() {
         Err(crate::error::Error::InvariantViolation(_))
     ));
 
-    let section = facade.tasks_check().expect("check tasks survives the fork");
+    let section = facade
+        .describe_section()
+        .expect("check tasks survives the fork");
 
     assert_eq!(
         section
@@ -1068,7 +1077,7 @@ fn a_malformed_authority_fact_row_does_not_poison_the_board() {
     assert!(!authority.acked);
 
     let section = facade
-        .tasks_check()
+        .describe_section()
         .expect("check tasks survives the poison");
 
     assert_eq!(

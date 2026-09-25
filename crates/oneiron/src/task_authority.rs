@@ -15,7 +15,7 @@
 //! the merged set sets `cancelled`, under every merge order, forever.
 //!
 //! Facts are ENGINE-AUTHORED. `put_task_authority_fact_in_txn` is reached
-//! only from the verified `tasks.create` / `tasks.cancel` / `tasks.ack` write
+//! only from the verified `tasks.create` / `cancel` / `tasks.update` write
 //! transactions; the generic raw TASK doors refuse role 6 outright
 //! (`habit::reject_public_streak_fields`), so no caller can mint the proof of
 //! its own ownership. The replication/replay door admits role 6 exactly like

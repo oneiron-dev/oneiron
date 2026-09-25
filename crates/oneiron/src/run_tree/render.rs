@@ -254,7 +254,7 @@ fn attempt_metadata(record: &AttemptRecord) -> AttemptMetadata {
         // envelope): a malformed dreamer payload — reachable via the public
         // `AttemptQueue::enqueue` API, which accepts an arbitrary `kind` and
         // `payload` — must degrade this row to a bare job rather than abort the
-        // whole tree render and poison `tasks.check`/`expand` for unrelated
+        // whole tree render and poison `describe` for unrelated
         // tasks.
         let Ok(payload) = decode_dreamer_attempt_payload(&record.payload) else {
             return AttemptMetadata {

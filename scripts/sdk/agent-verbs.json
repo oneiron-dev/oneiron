@@ -69,26 +69,10 @@
       "section": true
     },
     {
-      "name": "tasks.ack",
-      "input": "TaskRequest",
-      "output": "crate::task_verb::TaskAckReceipt",
-      "call": "memory.tasks_ack(crate::EntityId::from_hex(&input.task_ref)?)?",
-      "scope": "Write",
-      "mcp": "tool-first",
-      "mcp_fields": {
-        "task_ref": "task_ref"
-      },
-      "admission": {
-        "unrestricted_record_scope": true,
-        "readable": "task_ref"
-      },
-      "section": true
-    },
-    {
-      "name": "tasks.cancel",
+      "name": "cancel",
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskCancelReceipt",
-      "call": "memory.tasks_cancel(crate::task_verb::TaskCancelTarget::Task(crate::EntityId::from_hex(&input.task_ref)?))?",
+      "call": "memory.cancel(crate::task_verb::TaskCancelTarget::Task(crate::EntityId::from_hex(&input.task_ref)?))?",
       "scope": "Write",
       "mcp": "tool-first",
       "mcp_fields": {
@@ -96,26 +80,64 @@
       },
       "admission": {
         "unrestricted_record_scope": true,
-        "readable": "task_ref"
+        "readable": [
+          "task_ref"
+        ]
       },
-      "section": true
+      "section": true,
+      "binding": {
+        "assemble": true,
+        "native": "agent_verb",
+        "args": [
+          {
+            "name": "task_ref",
+            "kind": "text"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Cancels one task under the ladder's `auto` default. The receipt says\n    /// what stopped and what became a proposal instead.\n",
+          "ts": "/** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */",
+          "py": "Cancels one task under the ladder's ``auto`` default. The receipt says what stopped and what became a proposal instead."
+        }
+      }
     },
     {
-      "name": "tasks.check",
-      "input": "EmptyRequest",
-      "output": "crate::context_board::TasksSection",
-      "call": "memory.tasks_check()?",
+      "name": "describe",
+      "input": "DescribeRequest",
+      "output": "crate::task_verb::TaskDescription",
+      "call": "memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)?",
       "scope": "Read",
       "mcp": "tool-first",
-      "mcp_fields": {},
-      "mcp_result": "mcp_tasks_section(server, actor, output)?",
+      "mcp_fields": {
+        "task_ref": "task_ref"
+      },
+      "mcp_required_fields": [],
+      "mcp_result": "mcp_describe_result(server, actor, output)?",
       "admission": {
         "unrestricted_record_scope": true,
-        "readable": "rows"
+        "readable": [
+          "task_ref",
+          "rows"
+        ]
       },
       "mcp_scope": "filtered",
       "mcp_page": true,
-      "section": true
+      "section": true,
+      "binding": {
+        "assemble": true,
+        "native": "agent_verb",
+        "args": [
+          {
+            "name": "task_ref",
+            "kind": "ref"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Describes one task's card, or the whole TASKS section when no task is\n    /// named.\n",
+          "ts": "/** Describes one task's card, or the whole TASKS section when no task is named. */",
+          "py": "Describes one task's card, or the whole TASKS section when no task is named."
+        }
+      }
     },
     {
       "name": "tasks.create",
@@ -138,18 +160,20 @@
       "section": true
     },
     {
-      "name": "tasks.expand",
+      "name": "tasks.update",
       "input": "TaskRequest",
-      "output": "Vec<String>",
-      "call": "memory.tasks_expand(crate::EntityId::from_hex(&input.task_ref)?)?",
-      "scope": "Read",
+      "output": "crate::task_verb::TaskUpdateReceipt",
+      "call": "memory.tasks_update(crate::EntityId::from_hex(&input.task_ref)?)?",
+      "scope": "Write",
       "mcp": "tool-first",
       "mcp_fields": {
         "task_ref": "task_ref"
       },
       "admission": {
         "unrestricted_record_scope": true,
-        "readable": "task_ref"
+        "readable": [
+          "task_ref"
+        ]
       },
       "section": true
     },

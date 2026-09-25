@@ -455,7 +455,7 @@ impl TaskIntentPresence {
     /// force-cancel doors refuse that task. The board never asks who the owner
     /// is, so its readers map that same `Err` to a per-row outcome instead:
     /// `task_verb::presence_scan` skips the poisoned row inside the page loop
-    /// (P2 F8 — one bad row must never abort `tasks.check`, and these rows
+    /// (P2 F8 — one bad row must never abort `describe`, and these rows
     /// replicate), and the by-id door answers `Ok(None)`. The degrade is a
     /// SKIP, never a render with false bits, because a row whose facts cannot
     /// be read may really be cancelled.

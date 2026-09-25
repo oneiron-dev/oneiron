@@ -27,23 +27,23 @@ fn cancel_ladder_is_own_scoped_and_records_gate_decision() {
 
         let (own_cancel, foreign_cancel) = match mode {
             TaskCancelMode::Auto => (
-                facade.tasks_cancel(own_target).expect("own cancel"),
-                facade.tasks_cancel(other_target).expect("foreign cancel"),
+                facade.cancel(own_target).expect("own cancel"),
+                facade.cancel(other_target).expect("foreign cancel"),
             ),
             TaskCancelMode::FullAccess => (
                 facade
-                    .tasks_cancel_with_mode(own_target, TaskCancelMode::FullAccess)
+                    .cancel_with_mode(own_target, TaskCancelMode::FullAccess)
                     .expect("own cancel"),
                 facade
-                    .tasks_cancel_with_mode(other_target, TaskCancelMode::FullAccess)
+                    .cancel_with_mode(other_target, TaskCancelMode::FullAccess)
                     .expect("foreign cancel"),
             ),
             TaskCancelMode::Manual => (
                 facade
-                    .tasks_cancel_with_mode(own_target, TaskCancelMode::Manual)
+                    .cancel_with_mode(own_target, TaskCancelMode::Manual)
                     .expect("own cancel"),
                 facade
-                    .tasks_cancel_with_mode(other_target, TaskCancelMode::Manual)
+                    .cancel_with_mode(other_target, TaskCancelMode::Manual)
                     .expect("foreign cancel"),
             ),
         };
@@ -126,7 +126,7 @@ fn pending_cancel_proposes_without_intervening_realization() {
     let task_ref = created.task_ref.expect("task ref");
 
     let cancel = facade
-        .tasks_cancel(TaskCancelTarget::Task(task_ref))
+        .cancel(TaskCancelTarget::Task(task_ref))
         .expect("propose cancel");
     let records = AttemptQueue::new(&vault).list().expect("list attempts");
     let task_hex = task_ref.to_hex();
@@ -187,13 +187,13 @@ fn leased_realization_keeps_cancel_receipt_running() {
     };
 
     let cancel = facade
-        .tasks_cancel(TaskCancelTarget::Task(task_ref))
+        .cancel(TaskCancelTarget::Task(task_ref))
         .expect("cancel task");
     let post_cancel = queue
         .get(claimed.id)
         .expect("read realization")
         .expect("realization exists");
-    let section = facade.tasks_check().expect("check tasks");
+    let section = facade.describe_section().expect("check tasks");
 
     // P1-a: a leased realization is NOT stoppable in-txn, so the cancel is
     // honest — it does not claim effect and does not hide the task.
@@ -261,13 +261,13 @@ fn terminal_task_cancel_is_uneffected_and_keeps_intent_folded() {
         .expect("complete realization");
 
     let cancel = facade
-        .tasks_cancel(TaskCancelTarget::Task(task_ref))
+        .cancel(TaskCancelTarget::Task(task_ref))
         .expect("cancel terminal task");
     let realization = queue
         .get(claimed.id)
         .expect("read realization")
         .expect("realization exists");
-    let section = facade.tasks_check().expect("check tasks");
+    let section = facade.describe_section().expect("check tasks");
     let job_hex = attempt_hex(claimed.id);
 
     assert_eq!(usize::from(cancel.effected), 0);
@@ -400,7 +400,7 @@ fn terminal_spawn_cancel_is_uneffected_and_preserves_terminal_state() {
 
     let facade = vault.memory(own, EdgeActorClass::Agent);
     let cancel = facade
-        .tasks_cancel(TaskCancelTarget::Spawn(child.attempt.id))
+        .cancel(TaskCancelTarget::Spawn(child.attempt.id))
         .expect("cancel terminal spawn");
     let terminal = queue
         .get(child.attempt.id)
@@ -427,7 +427,7 @@ fn terminal_spawn_cancel_is_uneffected_and_preserves_terminal_state() {
 }
 
 #[test]
-fn tasks_cancel_spawn_non_dreamer_attempt_falls_through_to_proposal() {
+fn cancel_spawn_non_dreamer_attempt_falls_through_to_proposal() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let queue = AttemptQueue::new(&vault);
@@ -445,7 +445,7 @@ fn tasks_cancel_spawn_non_dreamer_attempt_falls_through_to_proposal() {
     };
     let cancel = vault
         .memory(own, EdgeActorClass::Agent)
-        .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
+        .cancel(TaskCancelTarget::Spawn(attempt.id))
         .expect("cancel");
     assert!(!cancel.effected);
     assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
@@ -462,7 +462,7 @@ fn tasks_cancel_spawn_non_dreamer_attempt_falls_through_to_proposal() {
 }
 
 #[test]
-fn tasks_cancel_spawn_malformed_dreamer_payload_is_propose_only() {
+fn cancel_spawn_malformed_dreamer_payload_is_propose_only() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let queue = AttemptQueue::new(&vault);
@@ -480,7 +480,7 @@ fn tasks_cancel_spawn_malformed_dreamer_payload_is_propose_only() {
     };
     let cancel = vault
         .memory(own, EdgeActorClass::Agent)
-        .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
+        .cancel(TaskCancelTarget::Spawn(attempt.id))
         .expect("cancel");
     assert!(!cancel.effected);
     assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
@@ -497,19 +497,19 @@ fn tasks_cancel_spawn_malformed_dreamer_payload_is_propose_only() {
 }
 
 #[test]
-fn tasks_cancel_spawn_missing_attempt_still_returns_entity_not_found() {
+fn cancel_spawn_missing_attempt_still_returns_entity_not_found() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let missing = AttemptId::from_bytes(&[0xa7; 16]).expect("id");
     let error = vault
         .memory(own, EdgeActorClass::Agent)
-        .tasks_cancel(TaskCancelTarget::Spawn(missing))
+        .cancel(TaskCancelTarget::Spawn(missing))
         .expect_err("missing row");
     assert_eq!(error.code, crate::memory::MEMORY_CODE_NOT_FOUND);
 }
 
 #[test]
-fn tasks_cancel_owned_agent_dispatch_spawn_still_effects_under_auto() {
+fn cancel_owned_agent_dispatch_spawn_still_effects_under_auto() {
     let (_dir, vault) = open_vault();
     let own = EntityId::from_bytes([0xE1; 16]).expect("actor id");
     let (keeper_id, keeper) = vault
@@ -582,7 +582,7 @@ fn tasks_cancel_owned_agent_dispatch_spawn_still_effects_under_auto() {
     );
     let cancel = vault
         .memory(own, EdgeActorClass::Agent)
-        .tasks_cancel(TaskCancelTarget::Spawn(child.attempt.id))
+        .cancel(TaskCancelTarget::Spawn(child.attempt.id))
         .expect("cancel");
     assert_eq!(cancel.approval, ClaimApprovalStatus::Auto);
     assert!(cancel.effected);
@@ -600,7 +600,7 @@ fn tasks_cancel_owned_agent_dispatch_spawn_still_effects_under_auto() {
 }
 
 #[test]
-fn tasks_cancel_non_owned_spawn_manual_and_auto_both_propose() {
+fn cancel_non_owned_spawn_manual_and_auto_both_propose() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);
     let queue = AttemptQueue::new(&vault);
@@ -619,10 +619,10 @@ fn tasks_cancel_non_owned_spawn_manual_and_auto_both_propose() {
     let facade = vault.memory(own, EdgeActorClass::Agent);
     for cancel in [
         facade
-            .tasks_cancel_with_mode(TaskCancelTarget::Spawn(attempt.id), TaskCancelMode::Manual)
+            .cancel_with_mode(TaskCancelTarget::Spawn(attempt.id), TaskCancelMode::Manual)
             .expect("manual cancel"),
         facade
-            .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
+            .cancel(TaskCancelTarget::Spawn(attempt.id))
             .expect("auto cancel"),
     ] {
         assert!(!cancel.effected);
@@ -664,7 +664,7 @@ mod spawn_cancel_unknown_kinds_never_hard_error_on_payload_shape {
                 panic!("enqueue must succeed")
             };
             let cancel = vault.memory(own, EdgeActorClass::Agent)
-                .tasks_cancel(TaskCancelTarget::Spawn(attempt.id))
+                .cancel(TaskCancelTarget::Spawn(attempt.id))
                 .expect("payload shape is tolerated");
             prop_assert!(!cancel.effected);
             prop_assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed);
@@ -720,7 +720,7 @@ fn connector_send_cancel_cancels_queued_realization() {
     let task_ref = tasks[0].task_ref;
 
     let cancel = facade
-        .tasks_cancel(TaskCancelTarget::Task(task_ref))
+        .cancel(TaskCancelTarget::Task(task_ref))
         .expect("cancel send");
     let attempts = AttemptQueue::new(&vault).list().expect("list attempts");
     let task_hex = task_ref.to_hex();
@@ -826,7 +826,7 @@ fn cancel_stops_every_sibling_while_the_landing_parent_is_preserved() {
     assert_eq!(paused.state, AttemptState::Paused);
 
     let cancel = facade
-        .tasks_cancel(TaskCancelTarget::Task(task_ref))
+        .cancel(TaskCancelTarget::Task(task_ref))
         .expect("owner cancel");
 
     assert_eq!(cancel.approval, ClaimApprovalStatus::Auto);
@@ -890,7 +890,7 @@ fn only_a_verified_owner_reaches_the_hard_cancel_rung() {
     grant_cancel(&vault, stranger_ref, 0xDE);
     let stranger = vault.memory(stranger_ref, EdgeActorClass::Agent);
     let refused = stranger
-        .tasks_cancel_force(TaskCancelTarget::Task(task_ref), None)
+        .cancel_force(TaskCancelTarget::Task(task_ref), None)
         .expect("a stranger's force is refused, not an error");
     assert_eq!(refused.approval, ClaimApprovalStatus::Proposed);
     assert!(!refused.forced);
@@ -906,7 +906,7 @@ fn only_a_verified_owner_reaches_the_hard_cancel_rung() {
 
     // The verified owner can, and the runtime authors the receipt.
     let forced = facade
-        .tasks_cancel_force(
+        .cancel_force(
             TaskCancelTarget::Task(task_ref),
             Some("refused to land three times".to_owned()),
         )
@@ -935,7 +935,7 @@ fn only_a_verified_owner_reaches_the_hard_cancel_rung() {
 
     // Replay is idempotent: a settled target is reported, never re-killed.
     let replay = facade
-        .tasks_cancel_force(TaskCancelTarget::Task(task_ref), None)
+        .cancel_force(TaskCancelTarget::Task(task_ref), None)
         .expect("replay");
     assert!(!replay.effected, "there was nothing left to stop");
     assert_eq!(
@@ -994,7 +994,7 @@ fn repeated_refusal_surfaces_on_the_owner_board_and_ordinary_rows_are_unchanged(
 
     // One refusal is a legitimate "not yet" and must not clutter the board.
     refuse_once(0);
-    let quiet = facade.tasks_check().expect("board");
+    let quiet = facade.describe_section().expect("board");
     let quiet_row = quiet
         .rows
         .iter()
@@ -1011,7 +1011,7 @@ fn repeated_refusal_surfaces_on_the_owner_board_and_ordinary_rows_are_unchanged(
         refuse_once(round * 10);
     }
 
-    let board = facade.tasks_check().expect("board");
+    let board = facade.describe_section().expect("board");
     let row = board
         .rows
         .iter()
@@ -1051,9 +1051,9 @@ fn repeated_refusal_surfaces_on_the_owner_board_and_ordinary_rows_are_unchanged(
     );
 
     // The by-id owner path carries it too: a row past the collapsed board's
-    // scan prefix is hidden, never gone, so `tasks.expand` must not be the one
+    // scan prefix is hidden, never gone, so a `describe` card must not be the one
     // owner surface where the refusal disappears.
-    let expanded = facade.tasks_expand(task_ref).expect("expand");
+    let expanded = facade.describe_card(task_ref).expect("expand");
     assert!(
         expanded.iter().any(|line| line.contains(signal.as_str())),
         "the expanded owner view carries the same refusal signal: {expanded:?}"
@@ -1061,10 +1061,10 @@ fn repeated_refusal_surfaces_on_the_owner_board_and_ordinary_rows_are_unchanged(
 
     // Settling the attempt retires the signal: an owner can no longer act on it.
     let stopped = facade
-        .tasks_cancel_force(TaskCancelTarget::Task(task_ref), None)
+        .cancel_force(TaskCancelTarget::Task(task_ref), None)
         .expect("the owner forces");
     assert!(stopped.forced);
-    let settled = facade.tasks_check().expect("board");
+    let settled = facade.describe_section().expect("board");
     assert!(
         settled
             .rows

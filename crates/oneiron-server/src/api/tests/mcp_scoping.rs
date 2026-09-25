@@ -57,6 +57,57 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
     }
 }
 
+/// ARCH-0067's 2026-09-22 amendment renamed the four task rows. Their old
+/// names resolve to no tool on either endpoint and neither listing names them.
+#[tokio::test]
+async fn retired_task_tool_names_are_unknown_tool_on_both_endpoints() {
+    let (_dir, server) = auth_test_server();
+    let actor_ref = seeded_test_entity_id(0x0060_0001);
+    let credential = "t60-retired-task-names";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let scope = crate::mcp::mcp_effective_scope_value(&crate::mcp::McpConnectorScope::vault_wide());
+    let retired = ["tasks.check", "tasks.expand", "tasks.ack", "tasks.cancel"];
+
+    for (index, name) in retired.iter().enumerate() {
+        for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
+            let body = mcp_refusal(
+                &server,
+                mcp_endpoint_call_request(
+                    path,
+                    credential,
+                    &format!("retired-{index}"),
+                    name,
+                    mcp_merge_args(
+                        mcp_endpoint_envelope(actor_ref, "read_tasks"),
+                        json!({ "arguments": { "task_ref": actor_ref.to_hex() } }),
+                    ),
+                ),
+            )
+            .await;
+            assert_mcp_structured_error(&body, "unknown_tool");
+            assert_scoped_refusal(&body, &scope, &format!("{name} on {path}"));
+        }
+    }
+
+    for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
+        let (_, listing) = route_json(
+            server.clone(),
+            mcp_list_request(path, credential, "retired-list"),
+        )
+        .await;
+        let names = mcp_listed_tool_names(&listing);
+        for name in &retired {
+            assert!(!names.contains(name), "{name} must not be listed on {path}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn mcp_actor_derived_errors_all_carry_effective_scope() {
     let (_dir, server) = auth_test_server();
@@ -91,7 +142,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
             MCP_TOOL_FIRST_PATH,
             wide,
             "scope-mismatch",
-            "tasks.check",
+            "describe",
             mcp_endpoint_envelope(seeded_test_entity_id(0x1704_0082), "read_tasks"),
         ),
     )
@@ -148,7 +199,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
             MCP_TOOL_FIRST_PATH,
             wide,
             "scope-facade",
-            "tasks.expand",
+            "describe",
             mcp_merge_args(
                 mcp_endpoint_envelope(wide_actor, "read_tasks"),
                 json!({ "arguments": { "task_ref": stray.to_hex() } }),
@@ -161,7 +212,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
     // 5. Bound-verb ceiling refusal.
     let bound_actor = seeded_test_entity_id(0x1704_0084);
     let bound = "one-1704-bound-verb-credential";
-    register_bound_verb_mcp_actor(&server, bound, bound_actor, &["tasks.check"]).await;
+    register_bound_verb_mcp_actor(&server, bound, bound_actor, &["describe"]).await;
     let body = mcp_refusal(
         &server,
         mcp_endpoint_call_request(
@@ -307,7 +358,7 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
             MCP_TOOL_FIRST_PATH,
             credential,
             id,
-            "tasks.expand",
+            "describe",
             mcp_merge_args(
                 mcp_scoped_envelope(actor_ref, "read_tasks", scope),
                 json!({ "arguments": { "task_ref": target.to_hex() } }),
@@ -402,7 +453,7 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
             MCP_TOOL_FIRST_PATH,
             cred_facet_b,
             "cross-write-b",
-            "tasks.ack",
+            "tasks.update",
             mcp_merge_args(
                 mcp_scoped_envelope(actor_ref, "ack_task", &facet_only_b),
                 json!({ "arguments": { "task_ref": owned.to_hex() } }),
@@ -464,7 +515,7 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
                 MCP_TOOL_FIRST_PATH,
                 credential,
                 id,
-                "tasks.check",
+                "describe",
                 mcp_scoped_envelope(actor_ref, "read_tasks", scope),
             )
         };

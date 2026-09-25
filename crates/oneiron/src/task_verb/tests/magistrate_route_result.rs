@@ -329,7 +329,7 @@ fn a_countered_original_renders_as_rejected_with_its_counter() {
         .task_ref
         .expect("counter task minted");
 
-    let section = facade.tasks_check().expect("board renders");
+    let section = facade.describe_section().expect("board renders");
     let original_row = section
         .rows
         .iter()
@@ -378,7 +378,7 @@ fn an_escalated_consult_renders_its_escalation_rather_than_a_bare_pause() {
 
     let section = vault
         .memory(asker, EdgeActorClass::Agent)
-        .tasks_check()
+        .describe_section()
         .expect("board renders");
     let row = section
         .rows

@@ -63,7 +63,7 @@ impl Memory<'_> {
             cursor = page.last().copied();
             for task_ref in page {
                 // One malformed body must not wedge the sweep for every other
-                // consult — the same degrade `tasks.check` already applies.
+                // consult — the same degrade `describe` already applies.
                 let Ok(Some(body)) = task_verb_body(self.vault(), task_ref) else {
                     continue;
                 };

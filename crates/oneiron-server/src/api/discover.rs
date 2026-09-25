@@ -184,7 +184,7 @@ pub(crate) struct FeatureFlags {
     /// `mcp.tool.<name>.<op>` token per closed tool operation, and one
     /// `mcp.endpoint.<mode>.<name>` token per tool a registered MCP endpoint
     /// actually accepts.
-    #[schema(value_type = Vec<String>, example = json!(["core.discover", "search.vector", "search.text", "mcp.tool.setup_oneiron", "mcp.endpoint.primary.setup_oneiron", "mcp.endpoint.tool_first.tasks.check"]))]
+    #[schema(value_type = Vec<String>, example = json!(["core.discover", "search.vector", "search.text", "mcp.tool.setup_oneiron", "mcp.endpoint.primary.setup_oneiron", "mcp.endpoint.tool_first.describe"]))]
     capabilities: Vec<String>,
     /// Model or runtime effort modes advertised by the API.
     #[schema(value_type = Vec<String>, example = json!(["flash", "thinking", "pro", "ultra"]))]

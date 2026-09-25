@@ -31,6 +31,8 @@ pub(super) const CONSULT_SETTLE_PAGE: usize = 256;
 /// fact (`task_authority`) and has no prefix here.
 pub(super) const TASK_CREATE_RATE_KEY_PREFIX: &[u8] = b"tasks.create.rate.v1\0";
 pub(super) const TASK_CREATE_PROPOSAL_PREDICATE: &str = "tasks.create";
+/// The stored predicate of a cancel proposal claim. It is a storage string, not
+/// the verb's name: the verb is `cancel`, and renaming it moved no stored row.
 pub(super) const TASK_CANCEL_PROPOSAL_PREDICATE: &str = "tasks.cancel";
 pub(super) const TASK_CANCEL_GATE_CHANNEL: &str = "tasks";
 /// Mode token a refused HARD cancel records on its proposal, so a reviewer can

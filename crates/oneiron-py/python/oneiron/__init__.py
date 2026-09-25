@@ -173,6 +173,12 @@ class Oneiron:
         return Oneiron(_translate(lambda: self._client.as_actor(actor_key)))
 
     # BEGIN GENERATED FACADE VERBS
+    def cancel(self, task_ref: str) -> dict[str, Any]:
+        """Cancels one task under the ladder's ``auto`` default. The receipt says what stopped and what became a proposal instead."""
+        return json.loads(_translate(lambda: self._client.cancel(json.dumps({"task_ref": task_ref}))))
+    def describe(self, task_ref: str | None = None) -> dict[str, Any]:
+        """Describes one task's card, or the whole TASKS section when no task is named."""
+        return json.loads(_translate(lambda: self._client.describe(json.dumps({"task_ref": task_ref}))))
     def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
         """Witnesses one conversational turn.
 

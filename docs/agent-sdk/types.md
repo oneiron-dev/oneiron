@@ -368,6 +368,30 @@ class KeyValueNamespaces(TypedDict):
     limit: NotRequired[int]
     offset: NotRequired[int]
 
+class TasksOverflow(TypedDict):
+    known_omitted_rows: int
+    source_exhausted: bool
+
+class TasksSectionDescription(TypedDict):
+    kind: Literal["tasks_section"]
+    rows: list[dict[str, Any]]
+    overflow: TasksOverflow | None
+
+class TaskCardDescription(TypedDict):
+    kind: Literal["task_card"]
+    lines: list[str]
+
+TaskDescription = TasksSectionDescription | TaskCardDescription
+
+class TaskCancelReceipt(TypedDict):
+    approval: Literal["auto", "proposed", "approved", "rejected"]
+    effected: bool
+    proposal_ref: str | None
+    gate_decision_ref: str | None
+    status: Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"] | None
+    cancel_requested: bool
+    forced: bool
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -390,6 +414,8 @@ class Oneiron:
     def pair(cls, link: str) -> tuple["Oneiron", str]: ...
     def as_actor(self, actor_key: str) -> "Oneiron": ...
     # BEGIN GENERATED FACADE VERBS
+    def cancel(self, task_ref: str) -> TaskCancelReceipt: ...
+    def describe(self, task_ref: str | None = None) -> TaskDescription: ...
     def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
     def claim_upsert(self, claim: ClaimInput) -> CommitReceipt: ...
     def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None) -> MemoryPack: ...

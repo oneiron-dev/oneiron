@@ -104,7 +104,7 @@ fn schema_v1_body_decodes_as_standard_dreamer_task() {
         .expect("v1 row is typed");
     let section = vault
         .memory(own, EdgeActorClass::Agent)
-        .tasks_check()
+        .describe_section()
         .expect("board reads the v1 row");
 
     assert_eq!(body.schema_version, 1);
@@ -594,10 +594,12 @@ fn expired_consult_holds_the_failed_lane_until_acked() {
         .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
         .expect("settle the expired consult");
 
-    let before = facade.tasks_check().expect("board before ack");
+    let before = facade.describe_section().expect("board before ack");
     let lane = crate::context_board::failed_lane(&before);
-    let acked = facade.tasks_ack(task_ref).expect("ack the expired consult");
-    let after = facade.tasks_check().expect("board after ack");
+    let acked = facade
+        .tasks_update(task_ref)
+        .expect("ack the expired consult");
+    let after = facade.describe_section().expect("board after ack");
 
     assert_eq!(lane.len(), 1);
     assert_eq!(lane[0].id, task_hex);

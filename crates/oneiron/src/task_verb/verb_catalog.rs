@@ -5,11 +5,10 @@ pub enum AgentVerb {
     BoardRefresh,
     BoardSubscribe,
     BoardUnsubscribe,
-    TasksAck,
-    TasksCancel,
-    TasksCheck,
+    Cancel,
+    Describe,
     TasksCreate,
-    TasksExpand,
+    TasksUpdate,
     Witness,
     ClaimUpsert,
     Recall,
@@ -34,11 +33,10 @@ impl AgentVerb {
         Self::BoardRefresh,
         Self::BoardSubscribe,
         Self::BoardUnsubscribe,
-        Self::TasksAck,
-        Self::TasksCancel,
-        Self::TasksCheck,
+        Self::Cancel,
+        Self::Describe,
         Self::TasksCreate,
-        Self::TasksExpand,
+        Self::TasksUpdate,
         Self::Witness,
         Self::ClaimUpsert,
         Self::Recall,
@@ -66,11 +64,10 @@ impl AgentVerb {
             Self::BoardRefresh => "board.refresh",
             Self::BoardSubscribe => "board.subscribe",
             Self::BoardUnsubscribe => "board.unsubscribe",
-            Self::TasksAck => "tasks.ack",
-            Self::TasksCancel => "tasks.cancel",
-            Self::TasksCheck => "tasks.check",
+            Self::Cancel => "cancel",
+            Self::Describe => "describe",
             Self::TasksCreate => "tasks.create",
-            Self::TasksExpand => "tasks.expand",
+            Self::TasksUpdate => "tasks.update",
             Self::Witness => "witness",
             Self::ClaimUpsert => "claim_upsert",
             Self::Recall => "recall",
@@ -93,11 +90,10 @@ impl AgentVerb {
     pub const fn is_facade(self) -> bool {
         matches!(
             self,
-            Self::TasksAck
-                | Self::TasksCancel
-                | Self::TasksCheck
+            Self::Cancel
+                | Self::Describe
                 | Self::TasksCreate
-                | Self::TasksExpand
+                | Self::TasksUpdate
                 | Self::Witness
                 | Self::ClaimUpsert
                 | Self::Recall
@@ -124,11 +120,10 @@ impl AgentVerb {
                 | Self::BoardRefresh
                 | Self::BoardSubscribe
                 | Self::BoardUnsubscribe
-                | Self::TasksAck
-                | Self::TasksCancel
-                | Self::TasksCheck
+                | Self::Cancel
+                | Self::Describe
                 | Self::TasksCreate
-                | Self::TasksExpand
+                | Self::TasksUpdate
                 | Self::TasksAsk
                 | Self::TasksWait
                 | Self::TasksAnswer
@@ -142,11 +137,10 @@ impl AgentVerb {
                 | Self::BoardRefresh
                 | Self::BoardSubscribe
                 | Self::BoardUnsubscribe
-                | Self::TasksAck
-                | Self::TasksCancel
-                | Self::TasksCheck
+                | Self::Cancel
+                | Self::Describe
                 | Self::TasksCreate
-                | Self::TasksExpand
+                | Self::TasksUpdate
                 | Self::TasksAsk
                 | Self::TasksWait
                 | Self::TasksAnswer
@@ -161,8 +155,7 @@ impl AgentVerb {
         matches!(
             self,
             Self::BoardExpand
-                | Self::TasksCheck
-                | Self::TasksExpand
+                | Self::Describe
                 | Self::TasksOutcomes
                 | Self::RoomsList
                 | Self::RoomsMessages
@@ -175,7 +168,7 @@ impl AgentVerb {
                 | Self::BoardRefresh
                 | Self::BoardSubscribe
                 | Self::BoardUnsubscribe
-                | Self::TasksCheck
+                | Self::Describe
         )
     }
     pub const fn requires_unscoped(self) -> bool {
@@ -195,9 +188,9 @@ impl AgentVerb {
     pub const fn writes(self) -> bool {
         matches!(
             self,
-            Self::TasksAck
-                | Self::TasksCancel
+            Self::Cancel
                 | Self::TasksCreate
+                | Self::TasksUpdate
                 | Self::Witness
                 | Self::ClaimUpsert
                 | Self::KeyValuePut
@@ -215,11 +208,10 @@ impl AgentVerb {
             Self::BoardRefresh => Some(&["frame_epoch"]),
             Self::BoardSubscribe => Some(&["scopes"]),
             Self::BoardUnsubscribe => Some(&["scopes"]),
-            Self::TasksAck => Some(&["task_ref"]),
-            Self::TasksCancel => Some(&["task_ref"]),
-            Self::TasksCheck => Some(&[]),
+            Self::Cancel => Some(&["task_ref"]),
+            Self::Describe => Some(&["task_ref"]),
             Self::TasksCreate => Some(&["spec", "label"]),
-            Self::TasksExpand => Some(&["task_ref"]),
+            Self::TasksUpdate => Some(&["task_ref"]),
             Self::TasksAsk => Some(&["spec"]),
             Self::TasksWait => Some(&["spec"]),
             Self::TasksAnswer => Some(&["spec"]),
@@ -237,11 +229,10 @@ impl AgentVerb {
             Self::BoardRefresh => Some(&[]),
             Self::BoardSubscribe => Some(&["scopes"]),
             Self::BoardUnsubscribe => Some(&["scopes"]),
-            Self::TasksAck => Some(&["task_ref"]),
-            Self::TasksCancel => Some(&["task_ref"]),
-            Self::TasksCheck => Some(&[]),
+            Self::Cancel => Some(&["task_ref"]),
+            Self::Describe => Some(&[]),
             Self::TasksCreate => Some(&["spec"]),
-            Self::TasksExpand => Some(&["task_ref"]),
+            Self::TasksUpdate => Some(&["task_ref"]),
             Self::TasksAsk => Some(&["spec"]),
             Self::TasksWait => Some(&["spec"]),
             Self::TasksAnswer => Some(&["spec"]),

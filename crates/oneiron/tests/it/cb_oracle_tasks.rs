@@ -186,7 +186,7 @@ mod cb_t {
     }
 
     /// ONE-1694 fixture: two FAILED tasks — `tk_failed_unacked` (never acked)
-    /// and `tk_failed_acked` (acked via `tasks.ack`); render the TASKS
+    /// and `tk_failed_acked` (acked via `tasks.update`); render the TASKS
     /// section and return only its failed-lane rows.
     fn arm_render_failed_lane() -> TasksSectionRender {
         use oneiron::context_board::{
@@ -532,11 +532,12 @@ mod cb_t {
             .entities_by_type(ENTITY_TYPE_TASK)
             .expect("list task entities after create")
             .len();
+        // The TASKS section's facade verbs: the `tasks.*` family and the bare
+        // verbs over a task handle.
         let mut verbs: Vec<String> = AgentVerb::ALL
             .iter()
-            .map(|verb| verb.as_str())
-            .filter(|name| name.starts_with("tasks."))
-            .map(str::to_owned)
+            .filter(|verb| verb.is_section() && verb.is_facade())
+            .map(|verb| verb.as_str().to_owned())
             .collect();
         verbs.sort();
         let agent_visible_jobqueue_verbs = verbs
@@ -553,20 +554,20 @@ mod cb_t {
         }
     }
 
-    /// ONE-1696 · 08b §3 (r9): the family supports create/check/expand/
-    /// ack/cancel; `tasks.create` mints TASK entities and the ENGINE decides
-    /// realizing jobs — the agent never touches the JobQueue.
+    /// ONE-1696 · 08b §3 (r9), renamed by ARCH-0067's 2026-09-22 amendment:
+    /// the surface supports create/update, describe and cancel;
+    /// `tasks.create` mints TASK entities and the ENGINE decides realizing
+    /// jobs — the agent never touches the JobQueue.
     #[test]
     fn tasks_verb_family_includes_step_waits_and_never_exposes_jobqueue() {
         let surface = arm_tasks_verb_surface();
         for required in [
-            "tasks.ack",
+            "cancel",
+            "describe",
             "tasks.ask",
             "tasks.wait",
-            "tasks.cancel",
-            "tasks.check",
             "tasks.create",
-            "tasks.expand",
+            "tasks.update",
         ] {
             assert!(surface.verbs.iter().any(|verb| verb == required));
         }
@@ -669,7 +670,7 @@ mod cb_t {
 
     /// Cancel semantics across the auto-approval ladder.
     struct CancelLadderOutcome {
-        /// Ladder modes available on `tasks.cancel`, sorted.
+        /// Ladder modes available on `cancel`, sorted.
         ladder_modes: Vec<String>,
         /// Mode in effect with no explicit policy set.
         default_mode: String,
@@ -740,17 +741,17 @@ mod cb_t {
                     origin_action_id: "cancel".to_owned(),
                     origin_receipt_ref: None,
                     scope: GrantMintIntentScope::VerbClass {
-                        verb_class: "tasks.cancel".to_owned(),
+                        verb_class: "cancel".to_owned(),
                     },
                 },
                 120,
             )
             .expect("mint cancel grant");
         let own_cancel = facade
-            .tasks_cancel(TaskCancelTarget::Task(own.task_ref.expect("own task ref")))
+            .cancel(TaskCancelTarget::Task(own.task_ref.expect("own task ref")))
             .expect("cancel own task");
         let foreign_cancel = facade
-            .tasks_cancel(TaskCancelTarget::Task(
+            .cancel(TaskCancelTarget::Task(
                 other.task_ref.expect("other task ref"),
             ))
             .expect("propose foreign task cancel");
@@ -790,7 +791,7 @@ mod cb_t {
     /// gate (decision recorded); own tasks + own spawns cancel directly,
     /// others' cancel surfaces as a proposal.
     #[test]
-    fn tasks_cancel_rides_auto_approval_ladder_with_auto_default() {
+    fn cancel_rides_auto_approval_ladder_with_auto_default() {
         let outcome = arm_cancel_ladder();
         assert_eq!(outcome.ladder_modes.len(), 3);
         for required in ["auto", "full-access", "manual"] {
@@ -1313,7 +1314,11 @@ mod cb_a {
                 .is_some(),
         );
 
-        let section = facade.tasks_check().expect("render asker board");
+        let oneiron::task_verb::TaskDescription::Section(section) =
+            facade.describe(None).expect("render asker board")
+        else {
+            panic!("describe without a task returns the TASKS section");
+        };
         let assignee = section
             .rows
             .iter()
@@ -1416,7 +1421,11 @@ mod cb_a {
             )
             .expect("settle the expired consult");
 
-        let section = facade.tasks_check().expect("render asker board");
+        let oneiron::task_verb::TaskDescription::Section(section) =
+            facade.describe(None).expect("render asker board")
+        else {
+            panic!("describe without a task returns the TASKS section");
+        };
         let lane: Vec<_> = failed_lane(&section)
             .into_iter()
             .filter(|row| row.id == task_hex)
@@ -1552,16 +1561,23 @@ mod cb_a {
                 )
                 .expect("peer lands its own result");
 
-            let section = facade.tasks_check().expect("render asker board");
+            let oneiron::task_verb::TaskDescription::Section(section) =
+                facade.describe(None).expect("render asker board")
+            else {
+                panic!("describe without a task returns the TASKS section");
+            };
             let task_hex = task_ref.to_hex();
             let row = section
                 .rows
                 .iter()
                 .find(|row| row.id == task_hex)
                 .expect("answered consult stays on the asker's board");
-            let detail = facade
-                .tasks_expand(*task_ref)
-                .expect("expand the answered consult");
+            let oneiron::task_verb::TaskDescription::Card { lines: detail } = facade
+                .describe(Some(*task_ref))
+                .expect("describe the answered consult")
+            else {
+                panic!("describe with a task returns its card");
+            };
             let tokens: Vec<&str> = detail
                 .iter()
                 .flat_map(|line| line.split_whitespace())
@@ -2019,7 +2035,11 @@ mod cb_a {
             .filter(|record| record.task_ref == task_ref)
             .count();
 
-        let section = facade.tasks_check().expect("render the board");
+        let oneiron::task_verb::TaskDescription::Section(section) =
+            facade.describe(None).expect("render the board")
+        else {
+            panic!("describe without a task returns the TASKS section");
+        };
         let rows: Vec<_> = section
             .rows
             .iter()

@@ -49,7 +49,7 @@ pub enum CancelRequestOutcome {
     /// and NOTHING is recorded — a pending request against a queued row would
     /// be an ask addressed to no one, which the pathology counters would then
     /// read as a worker refusing to answer. Pre-lease work is stopped by
-    /// `tasks.cancel`'s queue cancellation, not by asking.
+    /// `cancel`'s queue cancellation, not by asking.
     NotRunning(AttemptRecord),
 }
 

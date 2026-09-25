@@ -111,3 +111,13 @@ def test_room_refusal_preserves_typed_error_without_creating_a_room(agent_memory
     assert caught.value.code == "BAD_REQUEST"
     assert caught.value.suggestions
     assert memory.rooms.list() == before
+
+
+def test_retired_task_names_are_unknown(tmp_path):
+    """ARCH-0067's 2026-09-22 amendment renamed the four task rows, with no alias."""
+    memory = Oneiron.open(tmp_path / "vault")
+    for retired in ("check", "expand", "ack", "cancel"):
+        assert not hasattr(memory.tasks, retired)
+    assert callable(memory.describe)
+    assert callable(memory.cancel)
+    assert memory.describe()["kind"] == "tasks_section"

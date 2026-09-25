@@ -229,7 +229,7 @@ fn cancelled_ask_member_cannot_answer_or_mint_a_wait_trap() -> Result<()> {
             origin_action_id: "cancel".into(),
             origin_receipt_ref: None,
             scope: crate::genui::GrantMintIntentScope::VerbClass {
-                verb_class: AgentVerb::TasksCancel.as_str().into(),
+                verb_class: AgentVerb::Cancel.as_str().into(),
             },
         },
         1,
@@ -249,7 +249,7 @@ fn cancelled_ask_member_cannot_answer_or_mint_a_wait_trap() -> Result<()> {
     )?;
     assert!(
         memory
-            .tasks_cancel_with_mode(TaskCancelTarget::Task(task), TaskCancelMode::FullAccess)?
+            .cancel_with_mode(TaskCancelTarget::Task(task), TaskCancelMode::FullAccess)?
             .effected
     );
     assert!(vault.task_authority_state(task)?.unwrap().cancelled);

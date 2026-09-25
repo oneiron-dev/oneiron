@@ -6,11 +6,10 @@ not a claim that every engine-internal method is a public SDK verb.
 Names are stable: a new export or rename must update the engine catalog,
 both bindings and their export-census tests in one reviewed change.
 
-- `tasks.ack`
-- `tasks.cancel`
-- `tasks.check`
+- `cancel`
+- `describe`
 - `tasks.create`
-- `tasks.expand`
+- `tasks.update`
 - `witness`
 - `claim_upsert`
 - `recall`

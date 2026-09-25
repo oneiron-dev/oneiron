@@ -307,7 +307,7 @@ async fn paired_mcp_enrollment_requires_holder_proof_and_consumes_both_header_no
     let slip = CapabilitySlip::from_token(token).unwrap();
     let actor = fixture.actor.to_hex();
     let call = json!({"jsonrpc":"2.0","id":"paired-mcp","method":"tools/call","params":{
-        "name":"tasks.check","arguments":{
+        "name":"describe","arguments":{
             "schema_version":crate::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION,
             "actor":{"actor_ref":actor,"actor_class":"human","gate_actor_ref":actor,
                 "gate_actor_class":"human","scope":{}},

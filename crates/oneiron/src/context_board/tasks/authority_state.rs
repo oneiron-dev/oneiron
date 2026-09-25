@@ -22,7 +22,7 @@ pub(crate) fn task_is_acked(vault: &Vault, task_ref: EntityId) -> Result<bool> {
 }
 
 /// Appends the immutable Acked fact for one TASK, inside the caller's
-/// transaction — so the acknowledgement commits with the verified `tasks.ack`
+/// transaction — so the acknowledgement commits with the verified `tasks.update`
 /// effect that earned it, or not at all.
 pub(crate) fn ack_task_in_txn(
     vault: &Vault,

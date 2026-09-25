@@ -65,6 +65,16 @@ describe("export census", () => {
     expect(typeof pkg.Oneiron.pair).toBe("function")
   })
 
+  test("retired task names are absent", () => {
+    // ARCH-0067's 2026-09-22 amendment renamed the four task rows, with no alias.
+    const instance = pkg.Oneiron.connect("http://127.0.0.1:9/", "census-unused")
+    for (const retired of ["check", "expand", "ack", "cancel"]) {
+      expect(instance.tasks).not.toHaveProperty(retired)
+    }
+    expect(typeof pkg.Oneiron.prototype.describe).toBe("function")
+    expect(typeof pkg.Oneiron.prototype.cancel).toBe("function")
+  })
+
   test("OneironError carries the contract fields", () => {
     const error = new pkg.OneironError("BAD_REQUEST", "nope", ["fix it"])
     expect(error).toBeInstanceOf(Error)

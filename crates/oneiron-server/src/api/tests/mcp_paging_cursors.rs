@@ -93,7 +93,7 @@ async fn mcp_page_budget_enforces_limit_end_marker_and_cursor() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "page-3",
-            "tasks.check",
+            "describe",
             mcp_endpoint_envelope(actor_ref, "read_tasks"),
         ),
     )
@@ -112,7 +112,7 @@ async fn mcp_page_budget_enforces_limit_end_marker_and_cursor() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "page-4",
-            "tasks.check",
+            "describe",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_tasks"),
                 json!({ "page": { "limit": 200, "forceful_override": true } }),
@@ -204,7 +204,7 @@ async fn mcp_page_cursor_continues_exactly_once_and_is_bound() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "cursor-tool",
-            "tasks.check",
+            "describe",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_tasks"),
                 json!({ "page": { "limit": 5, "cursor": cursor.clone() } }),
@@ -406,15 +406,7 @@ async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
             .subscribed
             .clone()
     };
-    let task_ids_before = server
-        .vault
-        .memory(actor_ref, oneiron::EdgeActorClass::Human)
-        .tasks_check()
-        .expect("the task producer is readable")
-        .rows
-        .into_iter()
-        .map(|row| row.id)
-        .collect::<Vec<_>>();
+    let task_ids_before = task_ids(&server, actor_ref);
 
     let create_refusal = mcp_refusal(
         &server,
@@ -441,7 +433,7 @@ async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "preflight-cancel",
-            "tasks.cancel",
+            "cancel",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "write_tasks"),
                 json!({
@@ -473,15 +465,7 @@ async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
     .await;
     assert_mcp_structured_error(&subscribe_refusal, "mcp_page_cursor_invalid");
 
-    let task_ids_after = server
-        .vault
-        .memory(actor_ref, oneiron::EdgeActorClass::Human)
-        .tasks_check()
-        .expect("the task producer remains readable")
-        .rows
-        .into_iter()
-        .map(|row| row.id)
-        .collect::<Vec<_>>();
+    let task_ids_after = task_ids(&server, actor_ref);
     assert_eq!(
         task_ids_after, task_ids_before,
         "cursor refusal did not create/cancel a task"
@@ -511,17 +495,30 @@ async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
     );
 }
 
-/// ONE-1704 repair: `tasks.expand` is a continuable READ producer.
+/// The row ids of the TASKS section `describe` renders for one actor.
+fn task_ids(server: &Arc<SyncServer>, actor_ref: oneiron::EntityId) -> Vec<String> {
+    let oneiron::task_verb::TaskDescription::Section(section) = server
+        .vault
+        .memory(actor_ref, oneiron::EdgeActorClass::Human)
+        .describe(None)
+        .expect("the task producer is readable")
+    else {
+        panic!("describe without a task returns the TASKS section");
+    };
+    section.rows.into_iter().map(|row| row.id).collect()
+}
+
+/// ONE-1704 repair: a `describe` card is a continuable READ producer.
 ///
 /// Its continuation is served from the retained producer rows — proven by a
 /// target the facade itself refuses — and a mutating verb still cannot use the
 /// handle, which the untouched live continuation proves happened before
 /// dispatch.
 #[tokio::test]
-async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_use() {
+async fn mcp_describe_card_continues_retained_rows_and_refuses_mutating_cursor_use() {
     let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0103);
-    let credential = "one-1704-tasks-expand-cursor";
+    let credential = "one-1704-describe-card-cursor";
     register_mcp_actor(
         &server,
         credential,
@@ -531,7 +528,7 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
     .await;
 
     // An entity that exists — so the scope gate admits it — but is not a TASK,
-    // so the expand FACADE refuses it. A result that nevertheless returns rows
+    // so the describe FACADE refuses it. A result that nevertheless returns rows
     // can only have come from the retained snapshot.
     let expand_args = mcp_merge_args(
         mcp_endpoint_envelope(actor_ref, "read_tasks"),
@@ -543,7 +540,7 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
             MCP_TOOL_FIRST_PATH,
             credential,
             "expand-direct",
-            "tasks.expand",
+            "describe",
             expand_args.clone(),
         ),
     )
@@ -551,22 +548,25 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
     assert_eq!(
         direct["error"]["data"]["error_code"],
         Value::from("facade_error"),
-        "a cursorless expand of a non-task row reaches the facade and is refused: {direct:?}"
+        "a cursorless describe of a non-task row reaches the facade and is refused: {direct:?}"
     );
 
     // The handle is minted for the EXACT payload this call carries: the digest
     // comes from the production binding, never a hand-built copy.
     let tool = crate::mcp::registered_surface(crate::mcp::McpSurfaceMode::ToolFirst)
-        .resolve("tasks.expand")
-        .expect("tasks.expand is registered on the tool-first endpoint");
+        .resolve("describe")
+        .expect("describe is registered on the tool-first endpoint");
     let crate::mcp::McpValidatedToolArgs::Verb(validated) =
         crate::mcp::validate_mcp_endpoint_tool_args(tool, expand_args.clone())
-            .expect("the expand payload validates")
+            .expect("the describe payload validates")
     else {
-        panic!("tasks.expand must validate into the generated verb arm");
+        panic!("describe must validate into the generated verb arm");
     };
     let digest = crate::mcp::mcp_page_argument_digest(&validated.payload);
-    let retained = json!(["task line", "  realizing job", "  result=abc"]);
+    let retained = json!({
+        "kind": "task_card",
+        "lines": ["task line", "  realizing job", "  result=abc"],
+    });
     let (connection, cursor) = {
         let mut registry = server.mcp_registry.lock().await;
         let connection = registry
@@ -579,7 +579,7 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
             .stream_connection;
         let cursor = registry.mint_page_cursor_with_snapshot(
             &connection,
-            "tasks.expand",
+            "describe",
             digest,
             7,
             1,
@@ -600,7 +600,7 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
             MCP_TOOL_FIRST_PATH,
             credential,
             "expand-cursor-ack",
-            "tasks.ack",
+            "tasks.update",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "ack_task"),
                 json!({
@@ -624,7 +624,7 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
         MCP_TOOL_FIRST_PATH,
         credential,
         "expand-cursor-continue",
-        "tasks.expand",
+        "describe",
         mcp_merge_args(
             expand_args.clone(),
             json!({ "page": { "limit": 50, "cursor": cursor.clone() } }),
@@ -639,7 +639,7 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
     let structured = &continued["result"]["structuredContent"];
     assert_eq!(
         structured["output"],
-        json!(["  realizing job", "  result=abc"]),
+        json!({"kind": "task_card", "lines": ["  realizing job", "  result=abc"]}),
         "page two is exactly the retained producer remainder: {structured:?}"
     );
     assert_eq!(structured["meta"]["end"], Value::from("Complete"));
@@ -657,7 +657,7 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
             MCP_TOOL_FIRST_PATH,
             credential,
             "expand-cursor-replay",
-            "tasks.expand",
+            "describe",
             mcp_merge_args(
                 expand_args,
                 json!({ "page": { "limit": 50, "cursor": cursor } }),
