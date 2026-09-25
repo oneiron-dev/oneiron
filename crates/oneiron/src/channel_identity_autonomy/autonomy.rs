@@ -429,7 +429,8 @@ impl Vault {
         if identity_ref != mode.identity_ref
             || grant.principal_ref != actor
             || !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read")
-            || grant.effective_status_at(at) != AccessGrantStatus::Active
+            || grant.effective_status_at(self.store.clock.now_recorded_at())
+                != AccessGrantStatus::Active
             || grant.created_at > at
         {
             return Err(invalid_autonomy());
