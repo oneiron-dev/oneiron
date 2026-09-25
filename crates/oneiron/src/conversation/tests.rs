@@ -159,6 +159,20 @@ fn codec_defaults_validation_and_membership_are_atomic() {
     assert_eq!(vault.members(room).unwrap(), vec![bob]);
 }
 #[test]
+fn a_conversation_cannot_be_created_over_a_deleted_shell() {
+    let (_dir, vault, actor, room, _bob) = fixture();
+    vault
+        .delete_entity_with_reason(&room, crate::DeleteReason::UserDelete)
+        .unwrap();
+
+    let err = vault
+        .create_conversation(room, &ConversationBody::default(), actor, 2)
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::ConversationState);
+    assert!(err.to_string().contains("conversation already exists"));
+}
+
+#[test]
 fn membership_windows_survive_kick_rejoin_and_history_revoke() {
     let (_dir, vault, actor, room, bob) = fixture();
     let before = record(&vault, room, actor, 2);
