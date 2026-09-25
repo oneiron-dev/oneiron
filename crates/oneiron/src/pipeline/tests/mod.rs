@@ -18,6 +18,7 @@ mod world_authority_tests;
 mod corpus_tests;
 
 mod community_quality;
+mod effort;
 mod facet_status_world;
 mod relationship_scope_filter;
 mod rerank_hyde_session_stale;

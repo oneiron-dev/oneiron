@@ -11,6 +11,9 @@
 //! two embedding spaces inside one vault.
 
 mod endpoint;
+mod remote;
+pub(crate) use local::prepare as prepare_local;
+pub(crate) use remote::build_remote_rung;
 mod local;
 
 use std::sync::{Arc, OnceLock};
@@ -157,6 +160,7 @@ impl EmbedderSlot {
     /// The endpoint provider is ready on return: it holds an HTTP client and
     /// no artifacts. The local provider is not, by design.
     pub(crate) fn from_config(config: &EmbedderConfig) -> oneiron::Result<Option<Self>> {
+        crate::config::remote_embedder::validate_remote(config)?;
         if !config.is_active() {
             return Ok(None);
         }
@@ -233,6 +237,7 @@ fn engine_locality(config: crate::config::EmbedderLocality) -> EmbedderLocality 
     match config {
         crate::config::EmbedderLocality::OnDevice => EmbedderLocality::OnDevice,
         crate::config::EmbedderLocality::OwnerServer => EmbedderLocality::OwnerServer,
+        crate::config::EmbedderLocality::ThirdParty => EmbedderLocality::ThirdParty,
     }
 }
 
@@ -267,6 +272,11 @@ pub(crate) fn build_slot(config: Option<&EmbedderConfig>) -> anyhow::Result<Opti
             }
             Err(error) => anyhow::bail!("{error}"),
         }
+    }
+    if let Some(remote) = &config.remote {
+        let http = endpoint::HttpEmbedder::from_config(&remote.endpoint_config(config))?;
+        // Unreachable routes can fall back locally; a reachable wrong model cannot.
+        endpoint::probe_endpoint(&http)?;
     }
     tracing::info!(
         provider = slot.provider().as_str(),

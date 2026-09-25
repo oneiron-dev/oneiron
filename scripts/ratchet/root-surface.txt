@@ -165,7 +165,6 @@ CompactionWatermark
 CompactionWindowMessage
 CompanionAssembly
 CompanionBirthIntent
-CompanionExportClassification
 CompanionExpression
 CompanionExpressionRegister
 CompanionProvenance

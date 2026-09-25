@@ -139,7 +139,10 @@ impl<'e, 'n, KC, DC, C> DatabaseOpenOptions<'e, 'n, KC, DC, C> {
     {
         assert_eq_env_txn!(self.env, rtxn);
 
-        match self.env.raw_init_database::<C>(rtxn.txn, self.name, self.flags) {
+        match self
+            .env
+            .raw_init_database::<C>(rtxn.txn, self.name, self.flags)
+        {
             Ok(dbi) => Ok(Some(Database::new(self.env.env_mut_ptr() as _, dbi))),
             Err(Error::Mdb(e)) if e.not_found() => Ok(None),
             Err(e) => Err(e),
@@ -164,7 +167,10 @@ impl<'e, 'n, KC, DC, C> DatabaseOpenOptions<'e, 'n, KC, DC, C> {
         assert_eq_env_txn!(self.env, wtxn);
 
         let flags = self.flags | AllDatabaseFlags::CREATE;
-        match self.env.raw_init_database::<C>(wtxn.txn.txn, self.name, flags) {
+        match self
+            .env
+            .raw_init_database::<C>(wtxn.txn.txn, self.name, flags)
+        {
             Ok(dbi) => Ok(Database::new(self.env.env_mut_ptr() as _, dbi)),
             Err(e) => Err(e),
         }
@@ -299,7 +305,11 @@ pub struct Database<KC, DC, C = DefaultComparator> {
 
 impl<KC, DC, C> Database<KC, DC, C> {
     pub(crate) fn new(env_ident: usize, dbi: ffi::MDB_dbi) -> Database<KC, DC, C> {
-        Database { env_ident, dbi, marker: std::marker::PhantomData }
+        Database {
+            env_ident,
+            dbi,
+            marker: std::marker::PhantomData,
+        }
     }
 
     /// Retrieves the value associated with a key.
@@ -352,7 +362,12 @@ impl<KC, DC, C> Database<KC, DC, C> {
         let mut data_val = mem::MaybeUninit::uninit();
 
         let result = unsafe {
-            mdb_result(ffi::mdb_get(txn.txn, self.dbi, &mut key_val, data_val.as_mut_ptr()))
+            mdb_result(ffi::mdb_get(
+                txn.txn,
+                self.dbi,
+                &mut key_val,
+                data_val.as_mut_ptr(),
+            ))
         };
 
         match result {
@@ -1837,7 +1852,13 @@ impl<KC, DC, C> Database<KC, DC, C> {
         let flags = 0;
 
         unsafe {
-            mdb_result(ffi::mdb_put(txn.txn.txn, self.dbi, &mut key_val, &mut data_val, flags))?
+            mdb_result(ffi::mdb_put(
+                txn.txn.txn,
+                self.dbi,
+                &mut key_val,
+                &mut data_val,
+                flags,
+            ))?
         }
 
         Ok(())
@@ -1898,7 +1919,13 @@ impl<KC, DC, C> Database<KC, DC, C> {
         let flags = ffi::MDB_RESERVE;
 
         unsafe {
-            mdb_result(ffi::mdb_put(txn.txn.txn, self.dbi, &mut key_val, &mut reserved, flags))?
+            mdb_result(ffi::mdb_put(
+                txn.txn.txn,
+                self.dbi,
+                &mut key_val,
+                &mut reserved,
+                flags,
+            ))?
         }
 
         let mut reserved = unsafe { ReservedSpace::from_val(reserved) };
@@ -1990,7 +2017,13 @@ impl<KC, DC, C> Database<KC, DC, C> {
         let flags = flags.bits();
 
         unsafe {
-            mdb_result(ffi::mdb_put(txn.txn.txn, self.dbi, &mut key_val, &mut data_val, flags))?
+            mdb_result(ffi::mdb_put(
+                txn.txn.txn,
+                self.dbi,
+                &mut key_val,
+                &mut data_val,
+                flags,
+            ))?
         }
 
         Ok(())
@@ -2097,7 +2130,13 @@ impl<KC, DC, C> Database<KC, DC, C> {
         let flags = (flags | PutFlags::NO_OVERWRITE).bits();
 
         let result = unsafe {
-            mdb_result(ffi::mdb_put(txn.txn.txn, self.dbi, &mut key_val, &mut data_val, flags))
+            mdb_result(ffi::mdb_put(
+                txn.txn.txn,
+                self.dbi,
+                &mut key_val,
+                &mut data_val,
+                flags,
+            ))
         };
 
         match result {
@@ -2247,7 +2286,13 @@ impl<KC, DC, C> Database<KC, DC, C> {
         let flags = (flags | PutFlags::NO_OVERWRITE).bits() | lmdb_master_sys::MDB_RESERVE;
 
         let result = unsafe {
-            mdb_result(ffi::mdb_put(txn.txn.txn, self.dbi, &mut key_val, &mut reserved, flags))
+            mdb_result(ffi::mdb_put(
+                txn.txn.txn,
+                self.dbi,
+                &mut key_val,
+                &mut reserved,
+                flags,
+            ))
         };
 
         match result {
@@ -2324,7 +2369,12 @@ impl<KC, DC, C> Database<KC, DC, C> {
         let mut key_val = unsafe { crate::into_val(&key_bytes) };
 
         let result = unsafe {
-            mdb_result(ffi::mdb_del(txn.txn.txn, self.dbi, &mut key_val, ptr::null_mut()))
+            mdb_result(ffi::mdb_del(
+                txn.txn.txn,
+                self.dbi,
+                &mut key_val,
+                ptr::null_mut(),
+            ))
         };
 
         match result {
@@ -2410,8 +2460,14 @@ impl<KC, DC, C> Database<KC, DC, C> {
         let mut key_val = unsafe { crate::into_val(&key_bytes) };
         let mut data_val = unsafe { crate::into_val(&data_bytes) };
 
-        let result =
-            unsafe { mdb_result(ffi::mdb_del(txn.txn.txn, self.dbi, &mut key_val, &mut data_val)) };
+        let result = unsafe {
+            mdb_result(ffi::mdb_del(
+                txn.txn.txn,
+                self.dbi,
+                &mut key_val,
+                &mut data_val,
+            ))
+        };
 
         match result {
             Ok(()) => Ok(true),
@@ -2477,7 +2533,9 @@ impl<KC, DC, C> Database<KC, DC, C> {
         assert_eq_env_db_txn!(self, txn);
 
         let mut count = 0;
-        let mut iter = self.remap_data_type::<DecodeIgnore>().range_mut(txn, range)?;
+        let mut iter = self
+            .remap_data_type::<DecodeIgnore>()
+            .range_mut(txn, range)?;
 
         while iter.next().is_some() {
             // safety: We do not keep any reference from the database while using `del_current`.

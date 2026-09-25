@@ -511,7 +511,9 @@ fn git_wire_durable_rows_carry_no_payload_secret_or_path() {
 #[test]
 fn git_wire_reads_absence_positively_and_keeps_fatal_failures_typed() {
     let (_vault_dir, vault) = open_test_vault();
-    let repo = init_repo();
+    // Discovery must never escape into a containing repository after deletion.
+    let parent = init_repo();
+    let repo = init_repo_at(tempfile::tempdir_in(parent.path()).expect("nested repo"));
     let wire = new_wire(&vault);
     let bound = open(&wire, &repo);
 
@@ -535,8 +537,20 @@ fn git_wire_reads_absence_positively_and_keeps_fatal_failures_typed() {
 
     // A destroyed repository is a failure, never an absence.
     fs::remove_dir_all(repo.path().join(".git")).expect("destroy repository");
-    assert!(wire.read_ref(&bound, &repo.branch).is_err());
-    assert!(wire.object_exists(&bound, &repo.head).is_err());
+    assert!(matches!(
+        wire.read_ref(&bound, &repo.branch),
+        Err(Error::Code(CodeError::RepoMutationFailed(_)))
+    ));
+    assert!(matches!(
+        wire.object_exists(&bound, &repo.head),
+        Err(Error::Code(CodeError::RepoMutationFailed(_)))
+    ));
+    let parent_bound = open(&wire, &parent);
+    assert_eq!(
+        wire.read_ref(&parent_bound, &parent.branch)
+            .expect("parent unchanged"),
+        Some(parent.head.clone())
+    );
 }
 
 #[test]
@@ -553,13 +567,16 @@ fn git_wire_cached_handle_refuses_ancestor_rediscovery_after_repository_removal(
     let inner_bound = open(&wire, &inner);
     fs::remove_dir_all(inner.path().join(".git")).expect("remove inner repository");
 
+    // The subprocess search ceiling refuses discovery before the cached
+    // binding check could observe the ancestor. This is a typed git failure,
+    // never a successful read (including an absent ref/object).
     assert!(matches!(
         wire.read_ref(&inner_bound, &outer.branch),
-        Err(crate::Error::Code(CodeError::InvalidRepoMutationRecord(_)))
+        Err(crate::Error::Code(CodeError::RepoMutationFailed(_)))
     ));
     assert!(matches!(
         wire.object_exists(&inner_bound, &outer.head),
-        Err(crate::Error::Code(CodeError::InvalidRepoMutationRecord(_)))
+        Err(crate::Error::Code(CodeError::RepoMutationFailed(_)))
     ));
     let marker = GitRefName::parse_full("refs/oneiron/test/no-ancestor-write").expect("ref");
     assert!(
@@ -1706,4 +1723,46 @@ fn production_git_constructor_scan_excludes_only_test_scopes() {
             "production constructor was hidden: {source}"
         );
     }
+}
+
+#[test]
+#[cfg(unix)]
+fn hub_budget_walk_passes_the_git_init_symlink_probe_and_refuses_every_other_link() {
+    use std::os::unix::fs::symlink;
+    let scratch = tempfile::tempdir().expect("scratch");
+    let git_dir = scratch.path().join("repo");
+    fs::create_dir_all(git_dir.join("objects")).expect("git dir");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+
+    // `git init` links <git dir>/tXXXXXX -> testing for a moment to test
+    // symlink support. The walk runs while git works, so it can see that link.
+    let probe = git_dir.join("tAb3dE9");
+    symlink("testing", &probe).expect("probe");
+    super::hub_read::check_budget(scratch.path(), deadline).expect("git's own init probe");
+    fs::remove_file(&probe).expect("remove probe");
+
+    for (link, target) in [
+        (git_dir.join("tQ1w2E3"), "/etc/passwd"),
+        (git_dir.join("escape"), "testing"),
+        (git_dir.join("tQ1w2E3x"), "testing"),
+        (git_dir.join("objects/tQ1w2E3"), "testing"),
+        (scratch.path().join("tQ1w2E3"), "testing"),
+    ] {
+        symlink(target, &link).expect("symlink fixture");
+        assert!(
+            matches!(
+                super::hub_read::check_budget(scratch.path(), deadline),
+                Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+                    "symlink in hub Git scratch"
+                )))
+            ),
+            "{} -> {target} must refuse",
+            link.display()
+        );
+        fs::remove_file(&link).expect("remove fixture");
+    }
+
+    // A directory git removes while the walk runs counts as empty.
+    super::hub_read::check_budget(&scratch.path().join("removed"), deadline)
+        .expect("a vanished directory holds nothing");
 }

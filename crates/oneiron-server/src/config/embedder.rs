@@ -162,6 +162,8 @@ pub enum EmbedderLocality {
     OnDevice,
     /// Infrastructure the vault owner controls.
     OwnerServer,
+    /// A third-party endpoint, only behind a host egress predicate.
+    ThirdParty,
 }
 
 impl EmbedderLocality {
@@ -169,6 +171,7 @@ impl EmbedderLocality {
         match self {
             Self::OnDevice => "on-device",
             Self::OwnerServer => "owner-server",
+            Self::ThirdParty => "third-party",
         }
     }
 }
@@ -180,13 +183,7 @@ impl FromStr for EmbedderLocality {
         match value {
             "on-device" => Ok(Self::OnDevice),
             "owner-server" => Ok(Self::OwnerServer),
-            // Named on purpose rather than folded into the catch-all: a
-            // third-party embedder is a real locality the engine models, and
-            // this server has no egress predicate to gate it with yet.
-            "third-party" => Err(
-                "embedder locality third-party is rejected until an egress predicate is wired"
-                    .to_owned(),
-            ),
+            "third-party" => Ok(Self::ThirdParty),
             other => Err(format!(
                 "unknown embedder locality {other:?} (expected on-device or owner-server)"
             )),
@@ -229,6 +226,8 @@ impl Default for LocalEmbedderConfig {
 /// Keys only the endpoint provider reads.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EndpointEmbedderConfig {
+    /// Name of an environment variable; never the key value.
+    pub api_key_env: Option<String>,
     /// Base URL of an OpenAI-compatible server, e.g. `http://127.0.0.1:1234/v1`.
     pub endpoint: Option<String>,
     /// Model name the remote server answers to.
@@ -244,6 +243,7 @@ impl Default for EndpointEmbedderConfig {
     fn default() -> Self {
         Self {
             endpoint: None,
+            api_key_env: None,
             model_key: None,
             artifact: None,
             locality: EmbedderLocality::default(),
@@ -258,6 +258,7 @@ impl Default for EndpointEmbedderConfig {
 /// Fully resolved `[embedder]` section.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmbedderConfig {
+    pub remote: Option<super::remote_embedder::RemoteEmbedderConfig>,
     pub provider: EmbedderProvider,
     /// The vault's embedding space id. Every provider reports exactly this.
     pub model_id: String,
@@ -275,6 +276,7 @@ impl Default for EmbedderConfig {
     fn default() -> Self {
         Self {
             provider: EmbedderProvider::default(),
+            remote: None,
             model_id: DEFAULT_MODEL_ID.to_owned(),
             dimensions: DEFAULT_DIMENSIONS,
             query_instruction: DEFAULT_QUERY_INSTRUCTION.to_owned(),
@@ -298,6 +300,9 @@ impl EmbedderConfig {
         apply_common(self, &over);
         apply_local(&mut self.local, &over);
         apply_endpoint(&mut self.endpoint, &over);
+        if over.remote.is_some() {
+            self.remote = over.remote;
+        }
     }
 }
 
@@ -353,6 +358,9 @@ fn apply_local(local: &mut LocalEmbedderConfig, over: &EmbedderConfigOverride) {
 }
 
 fn apply_endpoint(endpoint: &mut EndpointEmbedderConfig, over: &EmbedderConfigOverride) {
+    if over.api_key_env.is_some() {
+        endpoint.api_key_env.clone_from(&over.api_key_env);
+    }
     if let Some(value) = over.endpoint.clone() {
         endpoint.endpoint = Some(value);
     }
@@ -375,6 +383,8 @@ fn apply_endpoint(endpoint: &mut EndpointEmbedderConfig, over: &EmbedderConfigOv
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct EmbedderConfigOverride {
+    pub remote: Option<super::remote_embedder::RemoteEmbedderConfig>,
+    pub api_key_env: Option<String>,
     pub provider: Option<EmbedderProvider>,
     pub model_id: Option<String>,
     pub dimensions: Option<usize>,
@@ -413,6 +423,8 @@ impl EmbedderConfigOverride {
             )+};
         }
         take!(
+            remote,
+            api_key_env,
             provider,
             model_id,
             dimensions,
@@ -440,6 +452,12 @@ impl EmbedderConfigOverride {
 /// `--embedder-*` flags, flattened into the serve command.
 #[derive(Args, Clone, Debug, Default)]
 pub struct EmbedderArgs {
+    /// Remote rung JSON (endpoint, model_key, locality, lease_ms, egress).
+    #[arg(long = "embedder-remote", value_parser = parse_remote)]
+    pub embedder_remote: Option<super::remote_embedder::RemoteEmbedderConfig>,
+    /// Environment variable holding the endpoint key. Never pass the key itself.
+    #[arg(long = "embedder-api-key-env")]
+    pub embedder_api_key_env: Option<String>,
     /// Embedder provider: `local`, `endpoint` or `none`.
     #[arg(long = "embedder-provider", value_parser = parse_provider)]
     pub embedder_provider: Option<EmbedderProvider>,
@@ -502,6 +520,10 @@ pub struct EmbedderArgs {
     pub embedder_timeout_ms: Option<u64>,
 }
 
+fn parse_remote(value: &str) -> Result<super::remote_embedder::RemoteEmbedderConfig, String> {
+    serde_json::from_str(value).map_err(|_| "invalid remote embedder JSON".into())
+}
+
 fn parse_provider(value: &str) -> Result<EmbedderProvider, String> {
     value.parse()
 }
@@ -521,6 +543,8 @@ fn parse_locality(value: &str) -> Result<EmbedderLocality, String> {
 impl From<&EmbedderArgs> for EmbedderConfigOverride {
     fn from(args: &EmbedderArgs) -> Self {
         Self {
+            remote: args.embedder_remote.clone(),
+            api_key_env: args.embedder_api_key_env.clone(),
             provider: args.embedder_provider,
             model_id: args.embedder_model_id.clone(),
             dimensions: args.embedder_dimensions,
@@ -560,6 +584,10 @@ pub(super) fn lookup_embedder_override(
     lookup: &mut impl FnMut(&str) -> Option<String>,
 ) -> anyhow::Result<Option<EmbedderConfigOverride>> {
     let over = EmbedderConfigOverride {
+        remote: lookup("ONEIRON_EMBEDDER_REMOTE")
+            .map(|value| parse_remote(&value).map_err(anyhow::Error::msg))
+            .transpose()?,
+        api_key_env: lookup("ONEIRON_EMBEDDER_API_KEY_ENV"),
         provider: lookup_parse(lookup, "ONEIRON_EMBEDDER_PROVIDER")?,
         model_id: lookup("ONEIRON_EMBEDDER_MODEL_ID"),
         dimensions: lookup_parse(lookup, "ONEIRON_EMBEDDER_DIMENSIONS")?,

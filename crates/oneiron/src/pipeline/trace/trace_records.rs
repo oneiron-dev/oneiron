@@ -244,6 +244,7 @@ pub(in crate::pipeline) fn filter_retrieval_trace_scores(
             claim_gate,
         )? && super::authority::candidate_allowed(
             filters.authority_filter,
+            filters.type_filter,
             store,
             rtxn,
             &scored.id,

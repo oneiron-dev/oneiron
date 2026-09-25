@@ -238,13 +238,13 @@ fn book_as(vault: &Vault, page_seed: u8, start: u64, host: u8) -> ConfirmReceipt
 
 fn policy(vault: &Vault) {
     let bytes = rmp_serde::to_vec_named(&serde_json::json!({
-        "schema_version": "1.1", "pack_id": "emergency-tests", "pack_version": "v1",
+        "schema_version": "1.2", "pack_id": "emergency-tests", "pack_version": "v1",
         "min_engine_version": env!("CARGO_PKG_VERSION"),
         "defaults": { "criticality": "normal", "sensitivity": "normal" }, "rules": [],
         "actor_ceilings": [ { "actor_class": "agent", "actor_ref": id(OWNER).to_hex(), "ceiling": "auto" },
             { "actor_class": "first_party", "ceiling": "auto" }, { "actor_class": "human", "ceiling": "auto" } ],
-        "scoped_grants": [ { "actor_ref": id(OWNER).to_hex(), "effector": "external:calendar.invite", "scope": { "channel": "calendar" } },
-            { "actor_ref": id(OWNER).to_hex(), "effector": "external:send", "scope": { "channel": "email" } } ]
+        "scoped_grants": [ { "actor_ref": id(OWNER).to_hex(), "effector": "external:calendar.invite", "scope": crate::federation::scope_codec::effect_preset(), "selectors": { "channel": "calendar" } },
+            { "actor_ref": id(OWNER).to_hex(), "effector": "external:send", "scope": crate::federation::scope_codec::effect_preset(), "selectors": { "channel": "email" } } ]
     })).unwrap();
     crate::test_util::put_policy_manifest_bytes(vault, id(0x7a), &bytes).unwrap();
 }

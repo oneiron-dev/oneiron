@@ -461,7 +461,7 @@ impl LensRenderFrame {
                 "lens action handle must resolve to an action-target backing ref".to_string(),
             ));
         }
-        Self::ensure_target_readable(scoped_read, &backing_ref.target)?;
+        self.ensure_target_readable(scoped_read, &backing_ref.target)?;
         Ok(backing_ref)
     }
 }

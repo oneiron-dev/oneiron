@@ -109,3 +109,17 @@ use crate::store::{GateDecisionRecord, GateSystemNoticeRecord, SEND_RECEIPT_RECO
 use serde::Serialize;
 #[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet};
+
+pub(crate) use ledgers::attempt_pack_receipt_page;
+
+pub(crate) use ledgers::attempt_pack_receipt_in_txn;
+
+mod archive_source;
+pub(crate) use archive_source::{
+    archived_receipt_sources_in_txn, is_receipt_archive_source, receipt_archive_custody_exists,
+    receipt_archives_for_holder, remove_receipt_archive_custody,
+    retire_receipt_archives_for_erased_id, stage_receipt_archive_put, validate_receipt_archive_put,
+};
+
+#[cfg(feature = "sync")]
+pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_id};

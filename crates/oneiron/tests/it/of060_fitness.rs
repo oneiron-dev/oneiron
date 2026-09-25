@@ -291,6 +291,17 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
 
 fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
     BTreeMap::from([
+        // W7-C10: host-owned key metadata and observed wire receipts, never
+        // guest entity writes. Their fixed prefixes stay service-private.
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &key, &encode(&row)?)?;".to_owned()}, 3),
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &new_key, &encode(&new)?)?;".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &old_key, &encode(&old)?)?;".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"try_with_write_txn".to_owned(),line:"let result = self.vault.try_with_write_txn(|txn| {".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"try_with_write_txn".to_owned(),line:"self.vault.try_with_write_txn(|txn| {".to_owned()}, 3),
+        (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put".to_owned(),line:"self.vault.sync_state_put(".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put".to_owned(),line:"self.vault.sync_state_put(MANIFEST, &encode(thresholds)?)".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &key, &encode(&question)?)?;".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"with_write_txn".to_owned(),line:"self.vault.with_write_txn(|txn| {".to_owned()}, 1),
         (
             RawHit {
                 path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
@@ -397,35 +408,24 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
             },
             1,
         ),
+        // W7-C09: host-owned lease and money metadata, never foreign/guest
+        // entities, edges or vectors. Lease scope is minted under one fixed key.
+        // Usage writes validated stamped events, vault-only derived rollups,
+        // and a converted host limit. Restore rebuilds rollups atomically.
+        // Deleted tenant rollups and cloud-only top-ups have no exception here.
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
-                ident: "try_with_write_txn".to_owned(),
-                line: ".try_with_write_txn(|wtxn| -> Result<LedgerWriteResult, UsageError> {".to_owned(),
+                path: "crates/oneiron-server/src/managed/vault_gates.rs".to_owned(),
+                ident: "with_write_txn".to_owned(),
+                line: ".with_write_txn(|txn| {".to_owned(),
             },
             1,
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
+                path: "crates/oneiron-server/src/managed/vault_gates.rs".to_owned(),
                 ident: "sync_state_put_in_write_txn".to_owned(),
-                line: ".sync_state_put_in_write_txn(wtxn, &tenant_key, &tenant_raw)?;".to_owned(),
-            },
-            1,
-        ),
-        (
-            RawHit {
-                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
-                ident: "sync_state_put_in_write_txn".to_owned(),
-                line: ".sync_state_put_in_write_txn(wtxn, &vault_key, &vault_raw)?;".to_owned(),
-            },
-            1,
-        ),
-        (
-            RawHit {
-                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
-                ident: "sync_state_put_in_write_txn".to_owned(),
-                line: ".sync_state_put_in_write_txn(wtxn, &event_key, &entry_raw)?;".to_owned(),
+                line: "vault.sync_state_put_in_write_txn(txn, KEY, &id.to_be_bytes())?;".to_owned(),
             },
             1,
         ),
@@ -433,7 +433,15 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
             RawHit {
                 path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "try_with_write_txn".to_owned(),
-                line: ".try_with_write_txn(|wtxn| -> Result<TopUpWriteResult, UsageError> {".to_owned(),
+                line: ".try_with_write_txn(|txn| -> Result<_, UsageError> {".to_owned(),
+            },
+            2,
+        ),
+        (
+            RawHit {
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
+                ident: "sync_state_put_in_write_txn".to_owned(),
+                line: ".sync_state_put_in_write_txn(txn, &key, &encode_entry(&stored)?)?;".to_owned(),
             },
             1,
         ),
@@ -443,7 +451,23 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
                 ident: "sync_state_put_in_write_txn".to_owned(),
                 line: "self.vault.sync_state_put_in_write_txn(".to_owned(),
             },
-            2,
+            3,
+        ),
+        (
+            RawHit {
+                path: "crates/oneiron-server/src/usage/limit.rs".to_owned(),
+                ident: "try_with_write_txn".to_owned(),
+                line: ".try_with_write_txn(|txn| -> Result<(), UsageError> {".to_owned(),
+            },
+            1,
+        ),
+        (
+            RawHit {
+                path: "crates/oneiron-server/src/usage/limit.rs".to_owned(),
+                ident: "sync_state_put_in_write_txn".to_owned(),
+                line: "self.vault.sync_state_put_in_write_txn(txn, &key, &raw)?;".to_owned(),
+            },
+            1,
         ),
     ])
 }

@@ -48,10 +48,11 @@ fn readonly_fold_matches_full_fold_and_writes_nothing() {
 }
 
 #[test]
-fn readonly_fold_forward_wall_clock_skew_keeps_owner_enrollment_pending() {
+fn readonly_fold_injected_clock_behind_real_time_keeps_owner_enrollment_pending() {
     let dir = tempfile::tempdir().unwrap();
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    // Seed this vault's untouched monotonic clock far behind real Unix time.
+    // Open seeds this vault's monotonic clock from its injected clock, far
+    // behind real Unix time.
+    let vault = open_vault_at(dir.path(), 1_000);
     let seeded_at = authority_observation_secs(&vault.store, 0, 1_000);
     assert!(seeded_at >= 1_000);
     assert!(seeded_at < 1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS);
@@ -114,7 +115,7 @@ fn readonly_fold_forward_wall_clock_skew_keeps_owner_enrollment_pending() {
     assert!(!readonly.roster.contains_key(&second_key));
     assert!(
         !actor_binding_is_active(&readonly, &actor, "human"),
-        "wall-clock skew must not expose an owner binding inside the veto window",
+        "an injected clock behind real time must not expose an owner binding inside the veto window",
     );
     assert_eq!(
         sync_state_snapshot(&vault),
@@ -124,11 +125,69 @@ fn readonly_fold_forward_wall_clock_skew_keeps_owner_enrollment_pending() {
 }
 
 #[test]
-fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
+fn readonly_fold_for_store_uses_injected_clock_for_owner_enrollment() {
     let dir = tempfile::tempdir().unwrap();
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    // Real Unix time is behind the injected local authority clock.
-    let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
+    let clock = crate::ports::ManualClock::new(1_000);
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = crate::ports::StoreClock::new(clock.clone(), clock);
+    let vault = crate::Vault::open(dir.path(), config.clone()).unwrap();
+    let owner = ed_key(213);
+    let genesis = genesis_entry(213, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let second_key = authority_key_from_ed(&ed_key(214));
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 214,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (enroll, TimeRange { start: 2, end: 2 }, 2),
+        ])
+        .unwrap();
+    // An existing anchor or persisted floor would mask which clock the fold reads.
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_state
+                .delete(wtxn, authority_first_seen_clock_sync_key())?;
+            Ok(())
+        })
+        .unwrap();
+    drop(vault);
+    let vault = crate::Vault::open(dir.path(), config).unwrap();
+    let sync_state_before = sync_state_snapshot(&vault);
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly =
+        authority_fold_readonly_for_store_in_txn(&vault.store, vault.privacy_posture(), &rtxn)
+            .unwrap();
+    drop(rtxn);
+    assert!(readonly.pending_widens.contains_key(&enroll_hash));
+    assert_eq!(
+        readonly.pending_widens[&enroll_hash].first_seen_at_secs,
+        Some(1_000),
+    );
+    assert!(!readonly.roster.contains_key(&second_key));
+    assert_eq!(sync_state_snapshot(&vault), sync_state_before);
+}
+
+#[test]
+fn readonly_fold_rolled_back_injected_clock_keeps_elapsed_rotation_applied() {
+    let dir = tempfile::tempdir().unwrap();
+    // The reopen's clock is ten days behind the injected local authority clock.
+    let rolled_back = 1_000;
+    let future = rolled_back + 10 * 24 * 60 * 60;
+    let vault = open_vault_at(dir.path(), future);
     let seeded_at = authority_observation_secs(&vault.store, 0, future);
     assert!(seeded_at >= future);
     assert!(seeded_at < future + DEFAULT_PENDING_WIDEN_DELAY_SECS);
@@ -212,12 +271,12 @@ fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
     );
     assert!(
         !actor_binding_is_active(&readonly, &actor, "human"),
-        "wall-clock rollback must not resurrect the retired key's owner binding",
+        "a rolled-back injected clock must not resurrect the retired key's owner binding",
     );
 
     // Reopen drops the old handle's clock; only the persisted floor remains.
     drop(vault);
-    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let reopened = open_vault_at(dir.path(), rolled_back);
     let rtxn = reopened.store.env.read_txn().unwrap();
     let after_reopen = reopened.authority_fold_readonly_in_txn(&rtxn).unwrap();
     drop(rtxn);
@@ -234,7 +293,7 @@ fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
     );
     assert!(
         !actor_binding_is_active(&after_reopen, &actor, "human"),
-        "a reopen under wall-clock rollback must not resurrect the owner binding",
+        "a reopen under a rolled-back injected clock must not resurrect the owner binding",
     );
 }
 
@@ -601,7 +660,7 @@ fn readonly_observation_secs(vault: &crate::Vault) -> u64 {
         .and_then(|raw| decode_authority_first_seen_secs(&raw))
         .unwrap_or(0);
     drop(rtxn);
-    authority_observation_secs(&vault.store, floor, crate::unix_seconds_now())
+    authority_observation_secs(&vault.store, floor, vault.now_recorded_at())
 }
 
 /// A sidecar missing AFTER the one-shot migration ran is unrecoverable, so the

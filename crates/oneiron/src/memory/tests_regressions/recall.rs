@@ -153,7 +153,7 @@ fn recall_returns_versioned_pack_with_provenance() {
         })
         .expect("witness");
 
-    for effort in [Effort::Minimal, Effort::Standard] {
+    for effort in [Effort::Light, Effort::Medium] {
         let pack = facade
             .recall("aurora", effort, &RecallScope::default(), 10, None, None)
             .expect("recall");
@@ -173,7 +173,7 @@ fn recall_returns_versioned_pack_with_provenance() {
     let pack = facade
         .recall(
             "aurora",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -233,7 +233,7 @@ fn recall_scope_honesty_lists_excluded_worlds() {
     let pack = facade
         .recall(
             "atlantis",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope {
                 world_ref: Some(world_one.to_hex()),
                 facet: None,
@@ -260,7 +260,7 @@ fn recall_scope_honesty_lists_excluded_worlds() {
     let floor = facade
         .recall(
             "atlantis",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -279,7 +279,7 @@ fn recall_deep_requires_lease_and_marks_pending() {
     let err = facade
         .recall(
             "anything",
-            Effort::Deep,
+            Effort::High,
             &RecallScope::default(),
             5,
             None,
@@ -289,17 +289,17 @@ fn recall_deep_requires_lease_and_marks_pending() {
     assert_eq!(err.code, MEMORY_CODE_LEASE_REQUIRED);
 
     let lease = crate::llm::BudgetLease::for_test("recall-spike");
-    let pack = facade
+    let error = facade
         .recall(
             "anything",
-            Effort::Deep,
+            Effort::High,
             &RecallScope::default(),
             5,
             None,
             Some(&lease),
         )
-        .expect("leased deep executes as standard");
-    assert_eq!(pack.retrieval_meta.deep_pending, Some(true));
+        .expect_err("paid tier without a prepared scorer must not execute a lower tier");
+    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
 }
 
 #[test]
@@ -326,7 +326,7 @@ fn recall_and_query_verbs_respect_limits() {
         facade
             .recall(
                 "pelican",
-                Effort::Minimal,
+                Effort::Light,
                 &RecallScope::default(),
                 2,
                 None,
@@ -423,7 +423,7 @@ fn recall_confidence_is_absolute_across_candidate_sets() {
     let first = facade
         .recall(
             "quokka",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -448,7 +448,7 @@ fn recall_confidence_is_absolute_across_candidate_sets() {
     let second = facade
         .recall(
             "quokka",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -490,7 +490,7 @@ fn recall_short_ids_hydrate_and_formats_render() {
     let pack = facade
         .recall(
             "ceramic",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             Some("md"),
@@ -518,7 +518,7 @@ fn recall_short_ids_hydrate_and_formats_render() {
     let err = facade
         .recall(
             "ceramic",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             Some("docx"),
@@ -569,7 +569,7 @@ fn recall_scope_honesty_stays_bounded_on_a_large_claim_index() {
     let pack = facade
         .recall(
             "anything",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope {
                 world_ref: Some(world.to_hex()),
                 facet: None,
@@ -605,8 +605,17 @@ fn neighbors_stays_bounded_on_a_high_degree_node() {
     value[4..12].copy_from_slice(&1_u64.to_le_bytes());
     vault
         .with_write_txn(|wtxn| {
+            let raw = vault
+                .store
+                .entities
+                .get(wtxn, center.as_bytes())?
+                .expect("readable person fixture")
+                .to_vec();
             for i in 0..edge_count {
                 let target = seeded_bulk_id(0xE1, i);
+                // Neighbor visibility requires a real readable destination;
+                // dangling edges are not a substitute for a high-degree graph.
+                vault.store.entities.put(wtxn, target.as_bytes(), &raw)?;
                 let key = Store::encode_edge_key(&center, EdgeKind::BelongsTo, &target);
                 vault.store.edges_out.put(wtxn, &key, &value)?;
             }
@@ -626,4 +635,385 @@ fn neighbors_stays_bounded_on_a_high_degree_node() {
         .expect("neighbors must not hard-fail on a high-degree node");
     assert_eq!(hits.len(), 5, "bounded by limit, not the full edge set");
     assert!(hits.iter().all(|hit| hit.direction == "out"));
+}
+
+#[test]
+fn recall_raw_deadline_cuts_graph_expansion_but_keeps_direct_hits() {
+    use crate::retrieval_depth::{RecallExecution, RetrievalDeadline};
+    use std::sync::Arc;
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x71);
+    let facade = facade_for(&vault, actor);
+    let anchor = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".into(),
+            body: serde_json::json!({"name": "deadlineanchor"}),
+            text_fields: Some(vec![TextIndexField {
+                field: "name".into(),
+                value: "deadlineanchor".into(),
+            }]),
+            edges: None,
+            occurred_at: 1,
+            learned_at: None,
+        })
+        .unwrap();
+    let neighbor = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".into(),
+            body: serde_json::json!({"name": "graphneighbor"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 1,
+            learned_at: None,
+        })
+        .unwrap();
+    let anchor_id = EntityId::from_hex(&anchor.id_hex).unwrap();
+    let neighbor_id = EntityId::from_hex(&neighbor.id_hex).unwrap();
+    vault
+        .batch()
+        .edge(&anchor_id, crate::EdgeKind::Mentions, &neighbor_id, 1.0)
+        .commit()
+        .unwrap();
+    let complete = facade
+        .recall(
+            "deadlineanchor",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(
+        complete
+            .items
+            .iter()
+            .any(|item| item.value_text.contains("graphneighbor"))
+    );
+    let deadline = Arc::new(RetrievalDeadline::at(
+        std::time::Instant::now() + std::time::Duration::from_secs(60),
+    ));
+    let cut = deadline.clone();
+    *vault.test_hooks().after_retrieval_text.lock().unwrap() = Some(Box::new(move || cut.cancel()));
+    let partial = facade
+        .recall_with_execution(
+            "deadlineanchor",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+            &RecallExecution {
+                deadline: Some(&deadline),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(partial.retrieval_meta.partial);
+    assert!(deadline.was_cut_short());
+    assert!(
+        partial
+            .items
+            .iter()
+            .any(|item| item.value_text.contains("deadlineanchor"))
+    );
+    assert!(
+        !partial
+            .items
+            .iter()
+            .any(|item| item.value_text.contains("graphneighbor"))
+    );
+}
+
+#[test]
+fn recall_sparse_reports_completed_vector_execution_in_both_paths() {
+    use crate::retrieval_depth::{RecallExecution, RetrievalDeadline};
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x71);
+    let facade = facade_for(&vault, actor);
+    let facet = EntityId::now();
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .unwrap();
+    let embedding = vec![1.0; vault.config.dimensions];
+    for facet in [None, Some(facet.to_hex())] {
+        let scope = RecallScope {
+            facet,
+            ..Default::default()
+        };
+        for mode in [0, 1, 2] {
+            let deadline = RetrievalDeadline::at(if mode == 0 {
+                std::time::Instant::now() - std::time::Duration::from_secs(1)
+            } else {
+                std::time::Instant::now() + std::time::Duration::from_secs(60)
+            });
+            if mode == 1 {
+                deadline.cancel();
+            }
+            let pack = facade
+                .recall_with_execution(
+                    "no matching text",
+                    Effort::Light,
+                    &scope,
+                    10,
+                    None,
+                    None,
+                    &RecallExecution {
+                        embedding: Some(&embedding),
+                        deadline: Some(&deadline),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(pack.retrieval_meta.sparse, Some(mode != 2));
+            assert_eq!(pack.retrieval_meta.partial, mode != 2);
+        }
+    }
+}
+
+/// ARCH-0004: the blend over recency, salience, confidence and gravity is
+/// constant at every effort level. The effort's default now anchor is no
+/// host window, so it must not switch recency off. Two identical messages
+/// tie on every other blend column; the older one is written first and so
+/// holds the lower id, which is the order a recall without recency returns.
+#[test]
+fn recall_default_effort_ranks_the_newer_identical_message_first() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x61);
+    let facade = facade_for(&vault, actor);
+    let now = crate::unix_seconds_now();
+    let text = "I prefer a window seat when I fly.";
+    let mut witnessed = Vec::new();
+    for (seed, days_ago) in [(0x62, 56), (0x63, 28)] {
+        let receipt = facade
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::from_bytes([seed; 16]).unwrap().to_hex(),
+                turn_ref: None,
+                messages: vec![witness_message(0, WitnessAuthor::User, text)],
+                occurred_at: now - days_ago * 86_400,
+            })
+            .expect("witness");
+        witnessed.push(receipt.message_short_ids[0].clone());
+    }
+    let [older, newer] = <[String; 2]>::try_from(witnessed).expect("two messages");
+
+    // Medium is the SDKs' default recall effort.
+    let pack = facade
+        .recall(
+            "window seat",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("recall");
+    let refs: Vec<&str> = pack
+        .items
+        .iter()
+        .map(|item| item.short_id.split('@').next().unwrap_or_default())
+        .collect();
+    let position = |id: &str| refs.iter().position(|item| *item == id);
+    let (Some(newer_at), Some(older_at)) = (position(&newer), position(&older)) else {
+        panic!("both messages recalled: {refs:?}");
+    };
+    assert!(newer_at < older_at, "newer message first: {refs:?}");
+}
+
+/// ARCH-0002: AUTHORITY_LOG is a maintenance record with no short-id prefix,
+/// so it never appears in a prompt-facing pack. A pairing appends a SlipMint
+/// seconds before the recall, inside the effort's default now anchor, where
+/// the temporal channel reaches it. Naming the kind still reaches it.
+#[test]
+fn recall_leaves_a_fresh_slip_mint_out_unless_the_kind_is_named() {
+    use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x64);
+    let facade = facade_for(&vault, actor);
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x65; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![witness_message(
+                0,
+                WitnessAuthor::User,
+                "I prefer a window seat when I fly.",
+            )],
+            occurred_at: crate::unix_seconds_now() - 28 * 86_400,
+        })
+        .expect("witness");
+
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"recall pairing secret").unwrap();
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    let holder = SigningKey::from_bytes(&[0x66; 32]);
+    let public = holder.verifying_key().to_bytes();
+    let link = vault
+        .issue_pairing_link(&issuer, crate::federation::Scope::top(), 3_600)
+        .expect("pairing link");
+    let transcript =
+        crate::authority::pairing_binding_transcript(&link.code, &public, "recall-holder").unwrap();
+    vault
+        .redeem_pairing_link(
+            &issuer,
+            &link.code,
+            "recall-holder",
+            public,
+            &holder.sign(&transcript).to_bytes(),
+        )
+        .expect("pair");
+
+    // Medium is the SDKs' default recall effort; no vector makes it sparse.
+    let pack = facade
+        .recall(
+            "window seat",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("recall");
+    let kinds: Vec<&str> = pack.items.iter().map(|item| item.kind.as_str()).collect();
+    assert_eq!(pack.retrieval_meta.sparse, Some(true));
+    assert!(kinds.contains(&"MESSAGE"), "{kinds:?}");
+    assert!(!kinds.contains(&"AUTHORITY_LOG"), "{kinds:?}");
+
+    // The caller's own kind filter names it.
+    let named = vault
+        .context_pack()
+        .search_text("window seat", 10)
+        .limit(10)
+        .retrieval_effort(Effort::Medium, &[])
+        .filter_types(&[ENTITY_TYPE_AUTHORITY_LOG])
+        .run()
+        .expect("named pack");
+    assert!(!named.results.is_empty());
+    assert!(
+        named
+            .results
+            .iter()
+            .all(|entity| entity.entity_type == ENTITY_TYPE_AUTHORITY_LOG)
+    );
+
+    // So does an authority filter that lists it.
+    let floor =
+        crate::gate::resolve_policy_manifest(&vault.store, &vault.store.env.read_txn().unwrap())
+            .unwrap()
+            .retrieval_floor_for_actor(None);
+    let filter = crate::gate::narrow_retrieval_filter(
+        &floor,
+        Some(&crate::gate::RetrievalFilter {
+            entity_types: Some([ENTITY_TYPE_AUTHORITY_LOG].into()),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    let hits = vault
+        .query()
+        .search_text("window seat", 10)
+        .limit(10)
+        .retrieval_effort(Effort::Medium, &[])
+        .authority_filter(filter)
+        .run()
+        .expect("named query");
+    assert!(!hits.is_empty());
+}
+
+/// The Node SDK count-limits fixture: the embedded owner witnesses one
+/// conversation with one turn "window seat" and claims on the turn. The store
+/// clock ticks in whole seconds, so the first compared recall lands in the
+/// tick the fixture was written and the second one tick later. The TURN and
+/// the CONVERSATION tie on every blend column but recency, and both recalls
+/// must rank them the same way. A first recall fills the PPR cache, as the
+/// Node test's earlier recalls do, so the compared packs differ in nothing
+/// but what the clock could move.
+#[test]
+fn identical_recalls_return_the_same_pack_across_a_clock_tick() {
+    // The seconds are held still while ids stay time-ordered, as they are
+    // under the system clock the SDK runs on.
+    struct TimeOrderedIds;
+    impl crate::ports::IdGen for TimeOrderedIds {
+        fn ulid(&self) -> [u8; 16] {
+            uuid::Uuid::now_v7().into_bytes()
+        }
+    }
+    let written = crate::unix_seconds_now();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let clock = crate::ports::ManualClock::new(written);
+    let config = crate::config::VaultConfig {
+        store_clock: crate::ports::StoreClock::new(
+            clock.clone(),
+            std::sync::Arc::new(TimeOrderedIds),
+        ),
+        ..crate::config::VaultConfig::default()
+    };
+    let vault = crate::Vault::open(dir.path(), config).expect("open vault");
+    let actor = vault.ensure_embedded_owner_actor().expect("owner actor");
+    let facade = facade_for(&vault, actor);
+    let witnessed = facade
+        .witness(&WitnessTurn {
+            conversation_ref: "11111111111111111111111111111111".to_owned(),
+            turn_ref: None,
+            messages: vec![witness_message(0, WitnessAuthor::User, "window seat")],
+            occurred_at: written,
+        })
+        .expect("witness");
+    facade
+        .claim_upsert(&ClaimInput {
+            id: None,
+            predicate: "preference.travel.seat".to_owned(),
+            subject_ref: witnessed.turn_short_id,
+            value: serde_json::json!({ "seat": "window" }),
+            confidence: 1.0,
+            source: "user_stated".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: None,
+        })
+        .expect("claim");
+
+    let recall = || {
+        facade
+            .recall(
+                "window seat",
+                Effort::Medium,
+                &RecallScope::default(),
+                10,
+                None,
+                None,
+            )
+            .expect("recall")
+    };
+    recall();
+    let in_the_written_tick = recall();
+    clock.set(written + 1);
+    let one_tick_later = recall();
+
+    let kinds: Vec<&str> = in_the_written_tick
+        .items
+        .iter()
+        .map(|item| item.kind.as_str())
+        .collect();
+    assert!(
+        ["CLAIM", "TURN", "CONVERSATION"]
+            .iter()
+            .all(|kind| kinds.contains(kind)),
+        "the fixture recalls the claim and the tied TURN and CONVERSATION: {kinds:?}"
+    );
+    assert_eq!(in_the_written_tick, one_tick_later);
 }

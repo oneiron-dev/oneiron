@@ -141,7 +141,9 @@ fn completed_sends_and_non_approval_holds_leave_the_pile() {
         None,
     )
     .unwrap();
-    assert!(vault.agent_inbox_lens(query(None, 10)).unwrap().is_empty());
+    let delivered = vault.agent_inbox_lens(query(None, 10)).unwrap();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].kind, AgentInboxItemKind::CoordinationUpdate);
     let mut window_hold = held(identity, "window", 99, 3);
     window_hold
         .fields
@@ -360,3 +362,5 @@ fn unproven_projectors_and_lineage_are_rejected_by_completeness_scan() {
         ));
     }
 }
+
+mod inbound;

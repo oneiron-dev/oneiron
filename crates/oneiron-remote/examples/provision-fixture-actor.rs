@@ -3,9 +3,13 @@
 //! Used only by `scripts/wire-test-server.sh`. It opens the temporary vault
 //! through the ordinary SDK constructor — which runs the core-owned
 //! `ensure_embedded_owner_actor` bootstrap — and prints the resulting 32-hex
-//! actor id. The fixture then mints a slip whose `principal_ref` names that
-//! same actor, so the server's first witness succeeds because the PERSON it
-//! writes as already exists.
+//! actor id. The fixture then creates pairing links whose `--principal-ref`
+//! names that same actor, so the server's first witness succeeds because the
+//! PERSON it writes as already exists.
+//!
+//! `provision-fixture-actor pair <link>` is the fixture's second use: it
+//! redeems one link through `OneironClient::pair`, the SDK's own pairing path,
+//! and prints the credential.
 //!
 //! This deliberately reaches for the SDK constructor rather than a storage
 //! primitive. Embedded construction-time ownership IS the authority (OF-452
@@ -19,9 +23,25 @@
 fn main() -> std::process::ExitCode {
     let mut args = std::env::args_os().skip(1);
     let Some(path) = args.next() else {
-        eprintln!("usage: provision-fixture-actor <vault-dir>");
+        eprintln!("usage: provision-fixture-actor <vault-dir> | pair <link>");
         return std::process::ExitCode::FAILURE;
     };
+    if path == "pair" {
+        let Some(link) = args.next().and_then(|link| link.into_string().ok()) else {
+            eprintln!("usage: provision-fixture-actor pair <link>");
+            return std::process::ExitCode::FAILURE;
+        };
+        return match oneiron_remote::OneironClient::pair(&link) {
+            Ok((_, credential)) => {
+                println!("{credential}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("could not pair: {} {}", error.code, error.message);
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
 
     // Keep this fixture pin aligned with --dimensions in scripts/wire-test-server.sh.
     // Embedded and server defaults differ; neither default defines this fixture.

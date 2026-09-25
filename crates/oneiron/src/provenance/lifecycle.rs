@@ -8,12 +8,10 @@ use super::{
 use crate::Vault;
 use crate::batch::BatchOp;
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, encode_claim_body, validate_claim_body_bytes};
-use crate::edge::{
-    EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    EdgeActorClass, EdgeProvenanceFlags,
-};
+use crate::edge::{EdgeActorClass, EdgeProvenanceFlags};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -171,33 +169,7 @@ pub(crate) fn restamp_edge_flags(
     subject: &EdgeRef,
     flags: EdgeProvenanceFlags,
 ) -> Result<()> {
-    let key_out = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
-    let key_in = Store::encode_edge_key(&subject.target, subject.kind, &subject.source);
-
-    let existing = store
-        .edges_out
-        .get(wtxn, &key_out)?
-        .map(|value| value.to_vec())
-        .ok_or(Error::EdgeNotFound)?;
-    let mut value = match existing.len() {
-        EDGE_VALUE_SEMANTIC_LEN | EDGE_VALUE_SEMANTIC_PROVENANCED_LEN => {
-            let mut value = existing;
-            value.resize(EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, 0);
-            value
-        }
-        EDGE_VALUE_STRUCTURAL_LEN => {
-            return Err(Error::Claim(ClaimError::ProvenanceOnStructuralEdge {
-                kind: subject.kind as u8,
-            }));
-        }
-        _ => return Err(Error::CorruptedIndex("edge value")),
-    };
-    value[24] = flags.confirmation_status as u8;
-    value[25] = flags.actor_class as u8;
-
-    store.edges_out.put(wtxn, &key_out, &value)?;
-    store.edges_in.put(wtxn, &key_in, &value)?;
-    Ok(())
+    crate::ports::EdgeStoreMaintenance::port_edge_stamp_provenance(store, wtxn, subject, flags)
 }
 
 /// The D16 downgrade primitive: when deleting / SoftErasing an
@@ -218,32 +190,7 @@ pub(crate) fn downgrade_edge_to_bare(
     wtxn: &mut RwTxn<'_>,
     subject: &EdgeRef,
 ) -> Result<bool> {
-    let key_out = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
-    let key_in = Store::encode_edge_key(&subject.target, subject.kind, &subject.source);
-
-    let existing = store
-        .edges_out
-        .get(wtxn, &key_out)?
-        .map(|value| value.to_vec())
-        .ok_or(Error::EdgeNotFound)?;
-    let value = match existing.len() {
-        EDGE_VALUE_SEMANTIC_PROVENANCED_LEN => {
-            let mut value = existing;
-            value.truncate(EDGE_VALUE_SEMANTIC_LEN);
-            value
-        }
-        EDGE_VALUE_SEMANTIC_LEN => return Ok(false),
-        EDGE_VALUE_STRUCTURAL_LEN => {
-            return Err(Error::Claim(ClaimError::ProvenanceOnStructuralEdge {
-                kind: subject.kind as u8,
-            }));
-        }
-        _ => return Err(Error::CorruptedIndex("edge value")),
-    };
-
-    store.edges_out.put(wtxn, &key_out, &value)?;
-    store.edges_in.put(wtxn, &key_in, &value)?;
-    Ok(true)
+    crate::ports::EdgeStoreMaintenance::port_edge_clear_provenance(store, wtxn, subject)
 }
 
 /// One stored `edge.provenance` Claim loaded for a lifecycle operation
@@ -388,8 +335,8 @@ pub(super) fn provenance_materialization_op(
 ) -> Result<(BatchOp, crate::batch::ClaimMaterialization)> {
     use sha2::{Digest, Sha256};
     let prior = store
-        .entities
-        .get(txn, id.as_bytes())?
+        .port_entity_record(txn, &id)?
+        .map(|row| row.encode())
         .map(|raw| Sha256::digest(&raw).into());
     let binding = crate::batch::ClaimMaterialization::provenance(ProvenanceMaterialization::new(
         id,

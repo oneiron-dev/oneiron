@@ -362,7 +362,15 @@ fn tee_observes_committed_lmdb_once_per_container_batch_and_preserves_origin() {
     impl LiveQueryTee for Tee {
         fn on_materialized(&self, path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
             assert_eq!(path, "w:2026-03/entities");
-            assert_eq!(diff.containers.len(), 2);
+            let entities: std::collections::BTreeSet<_> = diff
+                .containers
+                .iter()
+                .filter_map(|path| path.strip_prefix("e:"))
+                .collect();
+            assert_eq!(
+                entities,
+                std::collections::BTreeSet::from([WORLD_A, WORLD_B])
+            );
             for hex in [WORLD_A, WORLD_B] {
                 assert_eq!(
                     self.vault
@@ -469,4 +477,40 @@ fn deferred_own_write_does_not_hide_a_later_foreign_write() {
     }
     tier.refresh().unwrap();
     assert_eq!(tier.pending(1).unwrap()[0].result, Some(json!(2)));
+}
+
+#[test]
+fn bridge_origin_edge_updates_name_both_entity_documents() {
+    use oneiron::sync::bridge::{
+        BRIDGE_ORIGIN, Materializer, encode_edge_value_for_crdt, format_edge_key,
+        register_observer_b_with_tee,
+    };
+    struct Tee(Mutex<Vec<MaterializedDiffSummary>>);
+    impl LiveQueryTee for Tee {
+        fn on_materialized(&self, _: &str, diff: &MaterializedDiffSummary, _: &OriginMark) {
+            self.0.lock().unwrap().push(diff.clone());
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let tee = Arc::new(Tee(Mutex::new(Vec::new())));
+    let erased: Arc<dyn LiveQueryTee> = tee.clone();
+    materializer.attach_live_query_tee(&erased);
+    let _subs = register_observer_b_with_tee(&doc, &vault, &materializer, "2026-03", None);
+    let a = oneiron::EntityId::from_hex(WORLD_A).unwrap();
+    let b = oneiron::EntityId::from_hex(WORLD_B).unwrap();
+    let kind = oneiron::EdgeKind::ChildOf;
+    let key = format_edge_key(&a, kind, &b);
+    let value = encode_edge_value_for_crdt(kind, 1.0, 1_772_000_000, None, None).unwrap();
+    doc.get_map("edges").insert(&key, value.as_slice()).unwrap();
+    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    let seen = tee.0.lock().unwrap();
+    let deps: std::collections::BTreeSet<_> = seen
+        .iter()
+        .flat_map(|diff| &diff.containers)
+        .filter_map(|path| path.strip_prefix("e:"))
+        .collect();
+    assert_eq!(deps, std::collections::BTreeSet::from([WORLD_A, WORLD_B]));
 }

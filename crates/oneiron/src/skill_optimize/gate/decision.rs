@@ -46,7 +46,13 @@ pub fn score_gate_skill_edit_with_scorer(
     scorer: &dyn HeldOutReplayScorer,
 ) -> Result<HeldOutVerdict> {
     let cycle = SkillEditCycle::of_proposal(vault, proposal)?;
-    rule_on_proposal(vault, proposal, scorer, &cycle, crate::unix_seconds_now())
+    rule_on_proposal(
+        vault,
+        proposal,
+        scorer,
+        &cycle,
+        vault.store.clock.now_recorded_at(),
+    )
 }
 
 /// [`score_gate_skill_edit`] under the cycle a Dreamer ATTEMPT proves.
@@ -149,7 +155,7 @@ fn rule_on_proposal(
         // refusal — one the world had already outrun — impossible to commit.
         match (presented, terminal_reason(&staged, current.as_ref())) {
             (Some(presented), Some(committed)) if presented == committed => {
-                let verdict = refusal(proposal, &target, cycle, committed, at);
+                let verdict = refusal(vault.store.clock.entity_id()?, proposal, &target, cycle, committed, at);
                 record_verdict_in_txn(vault, wtxn, &verdict)?;
                 if committed.closes_proposal() {
                     close_answered_proposal_in_txn(vault, wtxn, proposal, at)?;
@@ -246,7 +252,7 @@ fn rule_on_proposal(
             before,
             after,
             accepted: false,
-            id: EntityId::now(),
+            id: vault.store.clock.entity_id()?,
             proposal: *proposal,
             skill: target,
             disposition: SkillEditDisposition::Rejected,
@@ -601,6 +607,7 @@ pub(super) fn standing_verdict_in_txn(
 /// together with the closure it implies — never by a transaction of its own,
 /// which is how a reason that stopped holding used to become a durable answer.
 fn refusal(
+    id: EntityId,
     proposal: &EntityId,
     skill: &EntityId,
     cycle: &SkillEditCycle,
@@ -612,7 +619,7 @@ fn refusal(
         before: 0.0,
         after: 0.0,
         accepted: false,
-        id: EntityId::now(),
+        id,
         proposal: *proposal,
         skill: *skill,
         disposition,

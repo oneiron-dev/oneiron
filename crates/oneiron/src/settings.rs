@@ -3,10 +3,10 @@
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
+use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::overlay_db::OverlayDb;
-use crate::{Vault, unix_seconds_now};
 
 pub mod model_versioning;
 
@@ -43,6 +43,9 @@ const SETTINGS_BOOL_FALSE: [u8; 1] = [0];
 const CUSTOMIZATION_SETTINGS_KEY: &[u8] = b"settings:customization:v1:profile";
 const CUSTOMIZATION_EVENT_SEQUENCE_KEY: &[u8] = b"settings:customization:v1:event_sequence";
 const CUSTOMIZATION_EVENT_KEY_PREFIX: &[u8] = b"settings:customization:v1:event:";
+/// One row per world this device keeps to itself. Absence means the world
+/// syncs; the row never goes on the wire.
+const DEVICE_ONLY_WORLD_KEY_PREFIX: &str = "settings:sync:v1:device_only_world:";
 const TOKEN_MAX_BYTES: usize = 64;
 const WORLD_LABEL_MAX_BYTES: usize = 128;
 
@@ -409,6 +412,45 @@ impl Vault {
         })
     }
 
+    /// Flags `world` device-only on this device, or clears the flag. No row of
+    /// a device-only world, and no NOTE in it, reaches any peer. The world must
+    /// be a stored WORLD row; base reality can never be flagged.
+    pub fn set_world_device_only(&self, world: EntityId, device_only: bool) -> Result<()> {
+        if world == crate::claim::base_world_id() {
+            return Err(Error::InvalidConfig(
+                "base reality cannot be device-only".to_owned(),
+            ));
+        }
+        self.with_write_txn(|wtxn| {
+            if self.get_entity_type_in_txn(wtxn, &world)?
+                != Some(crate::registry::ENTITY_TYPE_WORLD)
+            {
+                return Err(Error::InvalidConfig(
+                    "a device-only world must be a stored WORLD row".to_owned(),
+                ));
+            }
+            let key = device_only_world_key(world);
+            if device_only {
+                self.store
+                    .vault_meta
+                    .put(wtxn, key.as_bytes(), &SETTINGS_BOOL_TRUE)?;
+            } else {
+                self.store.vault_meta.delete(wtxn, key.as_bytes())?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Whether `world` is flagged device-only on this device.
+    pub fn world_is_device_only(&self, world: EntityId) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self
+            .store
+            .vault_meta
+            .get(&rtxn, device_only_world_key(world).as_bytes())?
+            .is_some())
+    }
+
     /// Reads the persisted customization settings, or the default four-layer model.
     pub fn customization_settings(&self) -> Result<CustomizationSettings> {
         let rtxn = self.store.env.read_txn()?;
@@ -436,7 +478,7 @@ impl Vault {
             let sequence = next_customization_event_sequence(&self.store.vault_meta, wtxn)?;
             let event = CustomizationSettingsChangeEvent::new(
                 sequence,
-                unix_seconds_now(),
+                self.store.clock.now_recorded_at(),
                 previous,
                 value,
             );
@@ -596,3 +638,69 @@ fn validate_label(field: &'static str, value: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests;
+
+fn device_only_world_key(world: EntityId) -> String {
+    format!("{DEVICE_ONLY_WORLD_KEY_PREFIX}{}", world.to_hex())
+}
+
+/// Every world flagged device-only on this device.
+#[cfg(feature = "sync")]
+pub(crate) fn device_only_worlds_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    let mut worlds = std::collections::BTreeSet::new();
+    for row in store
+        .vault_meta
+        .prefix_iter(txn, DEVICE_ONLY_WORLD_KEY_PREFIX.as_bytes())?
+    {
+        let (key, _) = row?;
+        let hex = key
+            .get(DEVICE_ONLY_WORLD_KEY_PREFIX.len()..)
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .ok_or(Error::CorruptedIndex("device-only world key"))?;
+        worlds.insert(EntityId::from_hex(hex)?);
+    }
+    Ok(worlds)
+}
+
+/// Whether a device-only world keeps `id` on this device: the flagged WORLD
+/// row itself, a CLAIM whose `worldId` is flagged, or a NOTE with a stored
+/// `InWorld` edge to a flagged world.
+#[cfg(feature = "sync")]
+pub(crate) fn device_only_withholds(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    flagged: &std::collections::BTreeSet<EntityId>,
+    id: &EntityId,
+) -> Result<bool> {
+    if flagged.is_empty() {
+        return Ok(false);
+    }
+    if flagged.contains(id) {
+        return Ok(true);
+    }
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Ok(false);
+    };
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("entity header"))?;
+    match header.entity_type {
+        crate::registry::ENTITY_TYPE_CLAIM => Ok(crate::claim::decode_claim_body(
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            true,
+        )
+        .is_ok_and(|body| body.world.is_some_and(|world| flagged.contains(&world)))),
+        crate::registry::ENTITY_TYPE_NOTE => {
+            let prefix = crate::vault::edge_kind_prefix(id, crate::edge::EdgeKind::InWorld);
+            for row in store.edges_out.prefix_iter(txn, &prefix)? {
+                let (key, value) = row?;
+                if flagged.contains(&crate::vault::parse_edge_record(&key, &value)?.target) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
+}

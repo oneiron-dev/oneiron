@@ -773,7 +773,11 @@ fn stale_completion_preserves_newer_pending_job() -> Result<()> {
     assert_eq!(leased.work.len(), 1);
     put_claim(&vault, id, "new")?;
 
-    let filled = reconciler.complete_leased_work(&leased.work[0], &[1.0, 0.0, 0.0, 0.0])?;
+    let filled = reconciler.complete_leased_work(
+        &leased.work[0],
+        &[1.0, 0.0, 0.0, 0.0],
+        EmbedderLocality::OnDevice,
+    )?;
     assert!(!filled, "old-token fill must be stale");
     assert!(
         pending_token(&vault, &id)?.is_some(),
@@ -781,9 +785,12 @@ fn stale_completion_preserves_newer_pending_job() -> Result<()> {
     );
 
     let report = reconciler.reconcile_once_at(2)?;
-    assert_eq!(report.filled, 1);
-    assert_eq!(embedder.seen(), vec![id]);
-    assert!(pending_token(&vault, &id)?.is_none());
+    assert_eq!(
+        report.filled, 0,
+        "edits are published by idle, not per operation"
+    );
+    assert!(embedder.seen().is_empty());
+    assert!(pending_token(&vault, &id)?.is_some());
     Ok(())
 }
 

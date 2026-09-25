@@ -1,9 +1,11 @@
 mod actor_dispatch;
 mod admission;
+mod board_observations;
 mod board_setup;
 mod envelope;
 mod exec_board_verbs;
 mod facade_verbs;
+mod memory_response;
 mod tasks_response;
 
 pub(crate) use self::actor_dispatch::{
@@ -11,7 +13,7 @@ pub(crate) use self::actor_dispatch::{
     resolve_mcp_gateway_actor,
 };
 pub(crate) use self::admission::mcp_admit_scoped_call;
-use self::admission::{mcp_scope_covers_entity, mcp_validated_call_args};
+use self::admission::{mcp_credential_reads, mcp_scope_covers_entity, mcp_validated_call_args};
 pub(crate) use self::board_setup::{McpBoardOmissions, execute_mcp_setup};
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,
@@ -43,5 +45,3 @@ pub(crate) use self::tasks_response::{
     mcp_engine_error, mcp_error_response, mcp_scoped_read, mcp_text_content,
 };
 use super::{booking, hex_bytes};
-
-mod agent_verbs;

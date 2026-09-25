@@ -34,8 +34,6 @@ use super::support::read_entity_metadata;
 pub(crate) const DEFAULT_RESULT_LIMIT: usize = 20;
 pub(super) const DEFAULT_SIGMA_SECS: u64 = 86_400;
 pub(super) const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
-pub(super) const TEMPORAL_KEY_LEN: usize = 24;
-pub(super) const LONG_INTERVAL_VALUE_LEN: usize = 8;
 pub(super) const TEMPORAL_FLOOR: f64 = 0.05;
 
 /// A scored entity result.
@@ -145,6 +143,11 @@ pub(super) struct TemporalSearchConfig {
     pub(super) anchor_mode: TemporalAnchorMode,
     pub(super) adaptive: bool,
     pub(super) limit: usize,
+    /// The effort dial's default now anchor, not a host-supplied window.
+    /// Only a host window ranks by time on its own and switches the
+    /// recency blend off; the default anchor keeps it (ARCH-0004: the
+    /// blend is constant at every effort level).
+    pub(super) effort_anchor: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -165,6 +168,7 @@ pub(super) struct PipelineFilterConfig<'a> {
     pub(super) authority_filter: &'a crate::gate::ResolvedRetrievalFilter,
     pub(super) candidate_filter: Option<&'a CandidateFilter<'a>>,
     pub(super) type_filter: Option<&'a [u8]>,
+    pub(super) criticality: Option<bool>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
     pub(super) learned_range: Option<(u64, u64)>,
@@ -172,7 +176,7 @@ pub(super) struct PipelineFilterConfig<'a> {
     pub(super) project_id_filter: Option<&'a str>,
     pub(super) facet_filter: Option<(EntityId, FacetMode)>,
     pub(super) relationship_filter: Option<(EntityId, RelMode)>,
-    pub(super) world_scope: WorldScope,
+    pub(super) world_scope: &'a WorldScope,
     /// The turn's resolved [`WorldScope::ActiveSet`] membership, resolved ONCE
     /// per run under the run's read transaction and borrowed by every
     /// per-candidate check. `None` for every other scope.
@@ -191,6 +195,8 @@ pub(super) struct PipelineFilterConfig<'a> {
 #[derive(Default)]
 pub(super) struct EntityMetadataCache {
     entries: HashMap<EntityId, Option<EntityMetadata>>,
+    /// Unique evaluated candidates rejected by read authority or D19. Not telemetry.
+    pub(super) read_suppressed: std::collections::HashSet<EntityId>,
     // Counts D19 body lookups across all gates sharing this run cache, including
     // probes whose decoded bodies are discarded rather than imported.
     #[cfg(test)]
@@ -214,11 +220,15 @@ pub(super) struct ClaimStatusGateCache {
 }
 
 pub(crate) struct PipelineOutput {
+    pub(crate) vector_completed: bool,
+    pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     pub(crate) retrieval_quality: RetrievalQualityReport,
     pub(crate) scores: Vec<ScoredEntity>,
+    pub(crate) capabilities: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
     pub(crate) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(crate) claims_suppressed: usize,
+    pub(crate) read_suppressed: usize,
     pub(crate) cosine_ghosts_dampened: usize,
     pub(crate) total_in_scope: usize,
     pub(crate) empty_reason: Option<EmptyReason>,
@@ -310,11 +320,10 @@ pub enum RelMode {
 /// [`PipelineBuilder::world`]; the default is [`WorldScope::All`].
 ///
 /// A claim's world is the `world` key in its body — an absent key is base
-/// reality (the elide-the-default pattern). Non-claim entities have no world
-/// and are treated as base for the `Base` / `World` scopes. `WorldSet` is the
-/// repo-world scope key: it keeps only entities explicitly indexed as members
-/// of that codebase scope.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// reality (the elide-the-default pattern). Non-claim entities belong to base
+/// reality. `WorldSet` selects ordinary world ids and explicitly includes or
+/// excludes base; `CodebaseSet` selects repository-indexed entity membership.
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum WorldScope {
     /// Span every world — base-reality claims plus every fictional / dream
@@ -330,7 +339,10 @@ pub enum WorldScope {
     /// Entities explicitly indexed under this codebase scope key. This is the
     /// repository-backed world-set clamp and does not include base reality by
     /// default.
-    WorldSet(CodebaseScopeKey),
+    CodebaseSet(CodebaseScopeKey),
+    /// Explicit ordinary world ids, with a separately selected base-reality member.
+    /// This is a narrowing read filter, never a replacement for principal authority.
+    WorldSet(WorldAuthoritySet),
     /// The claim-backed per-turn ActiveSet (ONE-1420): reads are restricted to
     /// the base/world members the turn selected, and the selection itself must
     /// sit inside the owner-granted ALLOWED-SET.
@@ -426,6 +438,11 @@ impl WorldAuthoritySet {
     #[must_use]
     pub fn worlds(&self) -> &BTreeSet<EntityId> {
         &self.worlds
+    }
+
+    /// Membership of an ordinary claim world, or base reality for non-claims.
+    pub(crate) fn admits(&self, world: Option<EntityId>) -> bool {
+        world.map_or(self.include_base, |world| self.worlds.contains(&world))
     }
 
     /// Whether every member of `self` is also a member of `allowed`.

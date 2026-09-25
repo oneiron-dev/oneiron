@@ -1,5 +1,6 @@
 //! Name index, borrowing admission projection, sealed put, and Vault doors.
 
+use crate::ports::EntityStoreRead;
 use rmpv::ValueRef;
 
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
@@ -60,7 +61,7 @@ pub(crate) fn read_secret_custody_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SecretCustodyRecord>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -270,7 +271,7 @@ pub(crate) fn read_secret_custody_admission_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SecretCustodyAdmission>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -388,7 +389,7 @@ impl Vault {
         if rec.schema_version != SECRET_CUSTODY_SCHEMA_VERSION {
             return Err(invalid_body("unsupported secret custody schema version"));
         }
-        let id = EntityId::now();
+        let id = self.store.clock.entity_id()?;
 
         let mut wtxn = self.store.env.write_txn()?;
         let index_key = name_index_key(&rec.name);

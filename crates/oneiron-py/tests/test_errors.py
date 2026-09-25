@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from oneiron import OneironError
+from oneiron import Oneiron, OneironError
 from oneiron import _translate  # noqa: PLC2701 — the seam under test
 
 
@@ -28,15 +28,15 @@ def test_preserves_code_message_and_suggestions() -> None:
             native_raise(
                 {
                     "code": "LEASE_REQUIRED",
-                    "message": "deep recall requires a budget lease",
-                    "suggestions": ["Use effort 'standard'."],
+                    "message": "high recall requires a budget lease",
+                    "suggestions": ["Use effort 'medium'."],
                 }
             )
         )
     error = caught.value
     assert error.code == "LEASE_REQUIRED"
-    assert error.message == "deep recall requires a budget lease"
-    assert error.suggestions == ("Use effort 'standard'.",)
+    assert error.message == "high recall requires a budget lease"
+    assert error.suggestions == ("Use effort 'medium'.",)
 
 
 def test_unknown_future_codes_pass_through() -> None:
@@ -72,3 +72,9 @@ def test_already_typed_errors_pass_straight_through() -> None:
     with pytest.raises(OneironError) as caught:
         _translate(operation)
     assert caught.value is original
+
+
+def test_pair_refuses_a_malformed_link_before_any_request() -> None:
+    with pytest.raises(OneironError) as caught:
+        Oneiron.pair("not a link")
+    assert caught.value.code == "BAD_REQUEST"

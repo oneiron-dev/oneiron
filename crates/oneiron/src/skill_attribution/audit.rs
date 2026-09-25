@@ -72,7 +72,7 @@ pub fn run_attribution_audit(vault: &Vault) -> Result<f32> {
         vault,
         &fixtures,
         &RuleAttributionJudge,
-        crate::unix_seconds_now(),
+        vault.store.clock.now_recorded_at(),
     )?;
     Ok(report.pass_rate())
 }

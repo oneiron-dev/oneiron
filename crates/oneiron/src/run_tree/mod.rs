@@ -7,6 +7,7 @@ mod a2a;
 mod adapter;
 mod consent;
 mod render;
+pub(crate) use render::effective_parent;
 mod types;
 
 pub use self::a2a::project_attempt_to_a2a;

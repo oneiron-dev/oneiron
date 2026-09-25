@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use super::{
@@ -469,8 +470,8 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
-            .entities
-            .get(&wtxn, prior_claim_id.as_bytes())?
+            .port_entity_record(&wtxn, prior_claim_id)?
+            .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -513,7 +514,7 @@ impl Vault {
             ));
         };
 
-        let new_claim_id = EntityId::now();
+        let new_claim_id = self.store.clock.entity_id()?;
         let mut closed = prior_body.clone();
         closed.lifecycle = ClaimLifecycleStatus::Superseded;
         closed.valid_to = Some(now);

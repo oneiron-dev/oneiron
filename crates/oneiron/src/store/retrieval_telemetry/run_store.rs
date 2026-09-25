@@ -59,6 +59,7 @@ impl SessionStoreView<'_> {
         wtxn: &mut RwTxn<'_>,
         record: &RetrievalRunRecord,
     ) -> Result<()> {
+        crate::ports::recorded_at_in_txn(self, wtxn)?;
         stage_retrieval_run_with_visibility(self, wtxn, record, true)
     }
 
@@ -106,6 +107,12 @@ impl SessionStoreView<'_> {
 }
 
 impl Store {
+    pub fn retrieval_telemetry_writes_enabled(&self) -> bool {
+        !self
+            .retrieval_writes_disabled
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
     pub(crate) fn record_retrieval_run(&self, record: &RetrievalRunRecord) -> Result<()> {
         self.record_retrieval_run_with_visibility(record, true)
     }
@@ -122,8 +129,18 @@ impl Store {
         record: &RetrievalRunRecord,
         published: bool,
     ) -> Result<()> {
+        if !self.retrieval_telemetry_writes_enabled() {
+            return Err(Error::InvariantViolation(
+                "retrieval telemetry writes disabled",
+            ));
+        }
+        // Invalid caller state is not a storage failure. Session staging also
+        // validates in-transaction because it does not enter this outer door.
+        record.state.validate()?;
         #[cfg(test)]
         if test_hooks::take_fail_next_retrieval_run_write(&self.owner._registered_path.path) {
+            self.retrieval_writes_disabled
+                .store(true, std::sync::atomic::Ordering::Release);
             return Err(Error::InvariantViolation(
                 "forced retrieval telemetry write failure",
             ));
@@ -134,10 +151,17 @@ impl Store {
             ));
         }
 
-        let mut wtxn = self.env.write_txn()?;
-        stage_retrieval_run_with_visibility(self, &mut wtxn, record, published)?;
-        wtxn.commit()?;
-        Ok(())
+        let result = (|| {
+            let mut wtxn = self.env.write_txn()?;
+            stage_retrieval_run_with_visibility(self, &mut wtxn, record, published)?;
+            wtxn.commit()?;
+            Ok(())
+        })();
+        if result.is_err() {
+            self.retrieval_writes_disabled
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        result
     }
 
     pub(crate) fn delete_retrieval_run(&self, run_id: RetrievalRunId) -> Result<()> {
@@ -192,7 +216,7 @@ impl Store {
             reward: outcome.reward,
             accepted: outcome.accepted,
             metadata: outcome.metadata,
-            updated_at: crate::unix_seconds_now(),
+            updated_at: self.clock.now_recorded_at(),
         };
         let key = retrieval_outcome_key(record.run_id, &record.key);
         let value = encode_retrieval_outcome(&record)?;
@@ -362,10 +386,15 @@ fn stage_retrieval_run_with_visibility(
     published: bool,
 ) -> Result<()> {
     let key = retrieval_run_key(record.run_id);
+    record.state.validate()?;
+    if let Some(raw) = target.vault_meta().get(wtxn, &key)? {
+        super::turn_index::delete(target, wtxn, &decode_retrieval_run(&raw)?)?;
+    }
     let value = encode_retrieval_run(record)?;
     let provisional_key = retrieval_run_provisional_key(record.run_id);
     target.vault_meta().put(wtxn, &key, &value)?;
     if published {
+        super::turn_index::put(target, wtxn, record)?;
         target.vault_meta().delete(wtxn, &provisional_key)?;
         if let Some(trace) = &record.trace {
             put_retrieval_trace_fork_index(
@@ -391,6 +420,7 @@ fn stage_retrieval_run_delete(
     let key = retrieval_run_key(run_id);
     let provisional_key = retrieval_run_provisional_key(run_id);
     let outcome_prefix = retrieval_outcome_run_prefix(run_id);
+    super::turn_index::delete_for_run(target, wtxn, run_id)?;
     delete_retrieval_trace_fork_indexes_for_run(target.vault_meta(), wtxn, &key, run_id)?;
     let mut outcome_keys = Vec::new();
     for row in target.vault_meta().prefix_iter(wtxn, &outcome_prefix)? {
@@ -466,6 +496,7 @@ fn stage_context_pack_retrieval_run_finalize(
         trace.final_stage.candidates = record.score_breakdown.clone();
     }
     record.empty_reason = empty_reason;
+    super::turn_index::put(target, wtxn, &record)?;
     let value = encode_retrieval_run(&record)?;
     target.vault_meta().put(wtxn, &key, &value)?;
     if let Some(trace) = &record.trace {
@@ -640,6 +671,10 @@ pub(in crate::store) fn decode_retrieval_run(raw: &[u8]) -> Result<RetrievalRunR
     if record.version != RETRIEVAL_TELEMETRY_VERSION {
         return Err(Error::CorruptedIndex("retrieval run telemetry"));
     }
+    record
+        .state
+        .validate()
+        .map_err(|_| Error::CorruptedIndex("retrieval run state"))?;
     Ok(record)
 }
 

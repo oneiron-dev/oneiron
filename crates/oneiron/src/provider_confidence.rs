@@ -195,6 +195,16 @@ pub fn write_provider_prior(
     prior: f32,
     evidence: &str,
 ) -> Result<EntityId> {
+    vault.with_write_txn(|txn| write_provider_prior_in_txn(vault, txn, provider, prior, evidence))
+}
+
+pub(crate) fn write_provider_prior_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    provider: &str,
+    prior: f32,
+    evidence: &str,
+) -> Result<EntityId> {
     validate_provider_key(provider)?;
     if !prior.is_finite() || !(0.0..=1.0).contains(&prior) {
         return Err(Error::InvalidClaimBody(
@@ -207,59 +217,58 @@ pub fn write_provider_prior(
         ));
     }
 
-    let now = crate::unix_seconds_now();
-    vault.with_write_txn(|wtxn| {
-        let actor = resolve_or_create_provider_actor_in_txn(vault, wtxn, provider)?;
-        let active_priors = prior_claims_for_actor_in_txn(vault, &*wtxn, &actor)?
-            .into_iter()
-            .filter(|(_, body)| body.lifecycle == ClaimLifecycleStatus::Active)
-            .map(|(id, _)| id)
-            .collect::<Vec<_>>();
+    let now = vault.store.clock.now_recorded_at();
+    let actor = resolve_or_create_provider_actor_in_txn(vault, wtxn, provider)?;
+    let active_priors = prior_claims_for_actor_in_txn(vault, &*wtxn, &actor)?
+        .into_iter()
+        .filter(|(_, body)| body.lifecycle == ClaimLifecycleStatus::Active)
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
 
-        let claim_id = EntityId::now();
-        let mut body = ClaimBody::new(
-            PREDICATE_ACTOR_CONFIDENCE_PRIOR,
-            ClaimSubject::Entity(actor),
-            Value::F32(prior),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        );
-        body.evidence = Some(Value::from(evidence));
-        body.valid_from = Some(now);
-        body.source = Some(ClaimSource::Observed);
-        vault.put_reserved_claim_in_txn(
-            wtxn,
-            &claim_id,
-            &body,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
-        )?;
-        for prior_id in active_priors {
-            vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, &prior_id, now)?;
-        }
-        // The shortcut moves in the SAME transaction that mints the head it
-        // names. A separate write would leave a window in which the row points
-        // at a claim this transaction is about to supersede — survivable (the
-        // read revalidates and falls back) but pointless churn, and a rollback
-        // would strand it pointing at a claim that never landed.
-        vault.store.vault_meta.put(
-            wtxn,
-            &provider_prior_head_index_key(provider),
-            claim_id.as_bytes(),
-        )?;
-        Ok(claim_id)
-    })
+    let claim_id = vault.store.clock.entity_id()?;
+    let mut body = ClaimBody::new(
+        PREDICATE_ACTOR_CONFIDENCE_PRIOR,
+        ClaimSubject::Entity(actor),
+        Value::F32(prior),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.evidence = Some(Value::from(evidence));
+    body.valid_from = Some(now);
+    body.source = Some(ClaimSource::Observed);
+    vault.put_reserved_claim_in_txn(
+        wtxn,
+        &claim_id,
+        &body,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    )?;
+    for prior_id in active_priors {
+        vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, &prior_id, now)?;
+    }
+    // The shortcut moves in the SAME transaction that mints the head it
+    // names. A separate write would leave a window in which the row points
+    // at a claim this transaction is about to supersede — survivable (the
+    // read revalidates and falls back) but pointless churn, and a rollback
+    // would strand it pointing at a claim that never landed.
+    vault.store.vault_meta.put(
+        wtxn,
+        &provider_prior_head_index_key(provider),
+        claim_id.as_bytes(),
+    )?;
+    Ok(claim_id)
 }
 
 /// Mints a fresh stand-in enriched entity for the [`write_enrichment_claim`]
 /// oracle seam. Not indexed — the claim references it by subject only.
 #[cfg(feature = "test-support")]
 fn mint_enriched_entity_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Result<EntityId> {
-    let id = EntityId::now();
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    let id = vault.store.clock.entity_id()?;
     let body = encode_value(&Value::Map(vec![(
         Value::from("enriched"),
         Value::Boolean(true),
@@ -273,7 +282,7 @@ fn mint_enriched_entity_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Res
             id,
             entity_type: ENTITY_TYPE_PERSON,
             occurred: TimeRange { start: 0, end: 0 },
-            learned_at: crate::unix_seconds_now(),
+            learned_at: mutation_recorded_at,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -304,10 +313,10 @@ fn mint_enriched_entity_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Res
 #[doc(hidden)]
 pub fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) -> Result<EntityId> {
     validate_provider_key(provider)?;
-    let now = crate::unix_seconds_now();
+    let now = vault.store.clock.now_recorded_at();
     vault.with_write_txn(|wtxn| {
         let enriched = mint_enriched_entity_in_txn(vault, wtxn)?;
-        let claim_id = EntityId::now();
+        let claim_id = vault.store.clock.entity_id()?;
         let mut body = ClaimBody::new(
             PREDICATE_PROVIDER_ENRICHMENT,
             ClaimSubject::Entity(enriched),

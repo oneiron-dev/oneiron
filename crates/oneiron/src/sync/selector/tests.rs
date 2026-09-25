@@ -16,8 +16,7 @@ use crate::claim::{
     decode_claim_body, encode_claim_body,
 };
 use crate::companion::{
-    CompanionProvenance, CompanionRecord, CompanionScope, ENTITY_TYPE_COMPANION_REGISTER,
-    encode_companion_record_body,
+    CompanionProvenance, CompanionRecord, CompanionScope, encode_companion_record_body,
 };
 use crate::edge::EdgeActorClass;
 use crate::federation::{
@@ -30,7 +29,7 @@ use crate::provenance::{
 };
 use crate::registry::{
     ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST,
-    ENTITY_TYPE_WORLD,
+    ENTITY_TYPE_WORLD, TypeByteFamily,
 };
 use crate::store::Store;
 use crate::sync::bridge::{BRIDGE_ORIGIN, encode_edge_value_for_crdt};
@@ -67,6 +66,7 @@ fn authority_genesis_entry(seed: u8) -> AuthorityLogEntry {
             roles: ROLE_OWNER | ROLE_ADMIN,
         },
         genesis_nonce: [seed.wrapping_add(1); 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
         tier_floor: AuthorityTier::Software,
         pending_widen_delay_secs: 86_400,
     };
@@ -159,24 +159,20 @@ fn edge_provenance_claim_blob() -> Vec<u8> {
 
 fn companion_record_body(
     persona_ref: EntityId,
-    export_classification: CompanionExportClassification,
+    sensitivity: crate::federation::Sensitivity,
 ) -> Vec<u8> {
-    companion_record_body_in_scope(
-        persona_ref,
-        CompanionScope::neutral(),
-        export_classification,
-    )
+    companion_record_body_in_scope(persona_ref, CompanionScope::neutral(), sensitivity)
 }
 
 fn companion_record_body_in_scope(
     persona_ref: EntityId,
     scope: CompanionScope,
-    export_classification: CompanionExportClassification,
+    sensitivity: crate::federation::Sensitivity,
 ) -> Vec<u8> {
     companion_record_body_in_scope_with_lifecycle(
         persona_ref,
         scope,
-        export_classification,
+        sensitivity,
         ClaimLifecycleStatus::Active,
     )
 }
@@ -184,7 +180,7 @@ fn companion_record_body_in_scope(
 fn companion_record_body_in_scope_with_lifecycle(
     persona_ref: EntityId,
     scope: CompanionScope,
-    export_classification: CompanionExportClassification,
+    sensitivity: Sensitivity,
     lifecycle: ClaimLifecycleStatus,
 ) -> Vec<u8> {
     let mut record = CompanionRecord::persona(
@@ -198,7 +194,7 @@ fn companion_record_body_in_scope_with_lifecycle(
             ClaimApprovalStatus::Approved,
             Value::from("private provenance"),
         ),
-        export_classification,
+        sensitivity,
     );
     record.lifecycle = lifecycle;
     match lifecycle {
@@ -219,7 +215,10 @@ fn companion_record_body_in_scope_with_lifecycle(
 
 fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
     let mut entries = vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("selector-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (
@@ -269,6 +268,7 @@ fn put_imported_source_trust(vault: &Vault) {
     let payload = entity_blob(ENTITY_TYPE_POLICY_MANIFEST, &body);
     vault
         .with_write_txn(|wtxn| {
+            crate::gate::stamp_manifest_origin(&vault.store, wtxn, &id, &body, false)?;
             vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
             let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
             vault.store.type_index.put(wtxn, &type_key, &[])?;
@@ -455,7 +455,22 @@ fn test_client_with_grant(
         Arc::new(crate::sync::bridge::Materializer::new()),
         "selector-test",
     ));
-    let (client, _rx) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    let selector = SyncSelector::new(grant_id, member_ref, SyncSelectorWorld::All, vec![], vec![]);
+    let peer = crate::sync::federation_burst::FederationPeer::authorize(
+        &vault,
+        member_ref,
+        test_selector_scope(),
+        &selector,
+    )
+    .unwrap();
+    let (client, _rx) = SyncClient::new(
+        manager,
+        SyncClientConfig {
+            federation_peer: Some(peer),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     // LOADED, not cold: this is the arm a federated import materializes
     // through synchronously.
     client.ensure_window(window).unwrap();
@@ -473,6 +488,96 @@ fn import_federated(
     client
         .import_federated_window_update(window, &update, role)
         .unwrap_or_else(|e| panic!("{role:?}: federated import must not fail closed: {e:?}"));
+    client.replay_deferred_federation_update().unwrap();
+}
+
+/// Seeds mandatory record stamps for a manually built source doc.
+///
+/// The export filter withholds unstamped non-CLAIM rows, so every FACET /
+/// PERSON / EVENT / WORLD doc row needs a matching local stamp (same bytes,
+/// same digest) for the facet/band/world doors — not missing stamps — to
+/// decide. CLAIM rows are intrinsic and skipped.
+///
+/// Same-type overwrites update the stamp to the doc bytes (type unchanged,
+/// so scoping is unaffected); different-type conflicts are left alone
+/// (`EntityTypeImmutable` ignored) so stored truth wins and the doc blob
+/// stays unstamped-filtered, fail-closed.
+fn seed_doc_stamps(vault: &Vault, doc: &LoroDoc) {
+    use crate::sync::loro_support::map_for_each_value_bytes;
+    let mut puts = Vec::new();
+    map_for_each_value_bytes(&doc.get_map("entities"), |raw_key, maybe_blob| {
+        let Some(blob) = maybe_blob else {
+            return;
+        };
+        let Ok(id) = EntityId::from_hex(raw_key) else {
+            return;
+        };
+        if id.to_hex() != raw_key {
+            return;
+        };
+        let Some(header) = EntityMetadataHeader::parse(blob) else {
+            return;
+        };
+        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            return;
+        }
+        puts.push((id, header.entity_type, blob.to_vec()));
+    });
+    for (id, entity_type, blob) in puts {
+        let body = &blob[ENTITY_METADATA_HEADER_LEN..];
+        let res = vault
+            .batch()
+            .put(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, body)
+            .commit();
+        match res {
+            Ok(()) => {}
+            Err(Error::Registry(crate::error::RegistryError::EntityTypeImmutable { .. })) => {}
+            Err(other) => panic!("seed_doc_stamps failed for {id:?}: {other:?}"),
+        }
+    }
+}
+
+/// Stamps ONLY the listed honest rows from a live (federated) doc.
+///
+/// Replicated opaque rows carry no record stamp (`stamp_put` refuses to invent
+/// one for peer bytes), so the export filter withholds them until the owner
+/// explicitly verifies the position with a local put. This helper is that
+/// explicit verification for test fixtures: it reads the CURRENT live-doc
+/// bytes for each id and puts them locally (same type, same bytes, digest
+/// matches). CLAIM ids are skipped (intrinsic, no stamp needed).
+///
+/// The caller names ONLY honest controls — never forged sources, forged
+/// targets, retype conflicts, or hostile neighbors. A conflicting doc blob
+/// (rejected retype) fails with `EntityTypeImmutable` and is left unstamped,
+/// fail-closed, exactly like `seed_doc_stamps`.
+fn stamp_live_rows(vault: &Vault, doc: &LoroDoc, ids: &[EntityId]) {
+    for id in ids {
+        let Some(blob) = map_get_bytes(&doc.get_map("entities"), &id.to_hex()) else {
+            panic!("stamp_live_rows: {id:?} not in live doc");
+        };
+        let Some(header) = EntityMetadataHeader::parse(&blob) else {
+            panic!("stamp_live_rows: {id:?} header unparsable");
+        };
+        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            continue;
+        }
+        let body = &blob[ENTITY_METADATA_HEADER_LEN..];
+        match vault
+            .batch()
+            .put(
+                id,
+                header.entity_type,
+                TimeRange { start: 1, end: 1 },
+                1,
+                body,
+            )
+            .commit()
+        {
+            Ok(()) => {}
+            Err(Error::Registry(crate::error::RegistryError::EntityTypeImmutable { .. })) => {}
+            Err(other) => panic!("stamp_live_rows failed for {id:?}: {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -497,41 +602,45 @@ fn selector_codec_round_trips_strict_payload() {
     trailing.push(0);
     assert!(decode_sync_selector(&trailing).is_err());
 
-    let unsupported_version = Value::Map(vec![
-        (Value::from(KEY_SCHEMA_VERSION), Value::from(2_u64)),
-        (
-            Value::from(KEY_GRANT_ID),
-            Value::from(selector.grant_id.to_hex()),
-        ),
-        (
-            Value::from(KEY_MEMBER_REF),
-            Value::from(selector.member_ref.to_hex()),
-        ),
-        (Value::from(KEY_WORLD), encode_world(selector.world)),
-        (
-            Value::from(KEY_FACETS),
-            Value::Array(
-                selector
-                    .facets
-                    .iter()
-                    .map(|facet| Value::from(facet.to_hex()))
-                    .collect(),
+    for bad_version in [3_u64, 99_u64] {
+        let unsupported_version = Value::Map(vec![
+            (Value::from(KEY_SCHEMA_VERSION), Value::from(bad_version)),
+            (
+                Value::from(KEY_GRANT_ID),
+                Value::from(selector.grant_id.to_hex()),
             ),
-        ),
-        (
-            Value::from(KEY_BANDS),
-            Value::Array(
-                selector
-                    .bands
-                    .iter()
-                    .map(|band| Value::from(band_to_wire(*band)))
-                    .collect(),
+            (
+                Value::from(KEY_MEMBER_REF),
+                Value::from(selector.member_ref.to_hex()),
             ),
-        ),
-    ]);
-    let mut unsupported = Vec::new();
-    rmpv::encode::write_value(&mut unsupported, &unsupported_version).unwrap();
-    assert!(decode_sync_selector(&unsupported).is_err());
+            (Value::from(KEY_WORLD), encode_world(selector.world)),
+            (
+                Value::from(KEY_FACETS),
+                Value::Array(
+                    selector
+                        .facets
+                        .named()
+                        .iter()
+                        .map(|facet| Value::from(facet.to_hex()))
+                        .collect(),
+                ),
+            ),
+            (
+                Value::from(KEY_BANDS),
+                Value::Array(
+                    selector
+                        .bands
+                        .named()
+                        .iter()
+                        .map(|band| Value::from(band_to_wire(*band)))
+                        .collect(),
+                ),
+            ),
+        ]);
+        let mut unsupported = Vec::new();
+        rmpv::encode::write_value(&mut unsupported, &unsupported_version).unwrap();
+        assert!(decode_sync_selector(&unsupported).is_err());
+    }
 }
 
 #[test]
@@ -863,13 +972,47 @@ fn selected_window_omits_other_facets_and_keeps_closed_edges() {
     insert_edge(&doc, claim_denied, EdgeKind::Supports, person);
     insert_edge(&doc, claim_denied, EdgeKind::Supports, denied_only_person);
     doc.commit();
+    // Mandatory record stamps for the non-CLAIM doc rows, including the
+    // denied ones: facet withholding (not missing stamps) must decide.
+    vault
+        .batch()
+        .put(
+            &facet_allowed,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet-a",
+        )
+        .put(
+            &facet_denied,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet-b",
+        )
+        .put(
+            &person,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .put(
+            &denied_only_person,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"denied-only-person",
+        )
+        .commit()
+        .unwrap();
 
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
         vec![facet_allowed],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let filtered =
         filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).unwrap();
@@ -924,6 +1067,8 @@ fn envelope_strips_membership() {
 
     let person = entity_id(0x21);
     let membership = entity_id(0x41);
+    let facet_allowed = entity_id(0x50);
+    let claim_seed = entity_id(0x60);
     let other_grant = FederationGrant::new(
         test_selector_scope(),
         other_member,
@@ -933,10 +1078,45 @@ fn envelope_strips_membership() {
     let grant_body = encode_federation_grant_body(&other_grant).unwrap();
     insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
     insert_entity(&doc, membership, ENTITY_TYPE_FEDERATION_GRANT, &grant_body);
+    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
+    insert_blob(&doc, claim_seed, &claim_blob(None));
     insert_edge(&doc, person, EdgeKind::Supports, membership);
+    // Facet closure: the seed claims the selected facet and neighbors the
+    // person, so the person rides one-hop closure under the Bottom
+    // facet filter. Membership neighbors the person (two hops from the
+    // seed), so it is withheld by facet closure AND stripped as
+    // guest-share metadata — the test pins the stripping leg.
+    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, claim_seed, EdgeKind::Supports, person);
     doc.commit();
+    // Mandatory record stamps for the non-CLAIM doc rows (CLAIM is
+    // intrinsic). Same bytes, so digests match.
+    vault
+        .batch()
+        .put(
+            &person,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .put(
+            &facet_allowed,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet-a",
+        )
+        .commit()
+        .unwrap();
 
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_allowed],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
+    );
     let envelope = guest_share_envelope(
         &vault,
         &doc,
@@ -1028,6 +1208,8 @@ fn strip_happens_before_sign() {
     let person = entity_id(0x23);
     let membership = entity_id(0x43);
     let authority_id = entity_id(0x53);
+    let facet_allowed = entity_id(0x51);
+    let claim_seed = entity_id(0x61);
     let other_grant = FederationGrant::new(
         test_selector_scope(),
         other_member,
@@ -1045,12 +1227,40 @@ fn strip_happens_before_sign() {
         ENTITY_TYPE_AUTHORITY_LOG,
         &authority_body,
     );
+    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
+    insert_blob(&doc, claim_seed, &claim_blob(None));
     insert_edge(&doc, person, EdgeKind::Supports, membership);
     insert_edge(&doc, person, EdgeKind::Supports, authority_id);
+    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, claim_seed, EdgeKind::Supports, person);
     insert_tombstone(&doc, entity_id(0x63));
     doc.commit();
+    vault
+        .batch()
+        .put(
+            &person,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .put(
+            &facet_allowed,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet-a",
+        )
+        .commit()
+        .unwrap();
 
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_allowed],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
+    );
     let signed_transcript = std::cell::RefCell::new(Vec::new());
     let envelope = guest_share_envelope(
         &vault,
@@ -1096,57 +1306,106 @@ fn companion_register_api_selector_suppresses_local_only_records() {
     let shared_id = entity_id(0x3C);
     let other_shared_id = entity_id(0x3D);
     let retired_portable_id = entity_id(0x3E);
-    insert_entity(
-        &doc,
-        local_id,
-        ENTITY_TYPE_COMPANION_REGISTER,
-        &companion_record_body(local_id, CompanionExportClassification::LocalOnly),
+    // Distinct persona subjects: the FACET id and its PERSON subject must
+    // differ, otherwise the write door mints PERSON at the same id and fails
+    // with `EntityTypeImmutable` (PERSON/FACET retirement).
+    let local_persona = entity_id(0x4A);
+    let portable_persona = entity_id(0x4B);
+    let shared_persona = entity_id(0x4C);
+    let other_persona = entity_id(0x4D);
+    let retired_persona = entity_id(0x4E);
+    let local_body =
+        companion_record_body(local_persona, crate::federation::Sensitivity::Restricted);
+    let portable_body =
+        companion_record_body(portable_persona, crate::federation::Sensitivity::Public);
+    let shared_body = companion_record_body_in_scope(
+        shared_persona,
+        CompanionScope::shared_vault(7),
+        crate::federation::Sensitivity::Private,
     );
-    insert_entity(
-        &doc,
-        portable_id,
-        ENTITY_TYPE_COMPANION_REGISTER,
-        &companion_record_body(portable_id, CompanionExportClassification::Portable),
+    // Same sensitivity as the admitted shared row: only the destination vault
+    // binding can distinguish these records, never the sensitivity ceiling.
+    let other_body = companion_record_body_in_scope(
+        other_persona,
+        CompanionScope::shared_vault(8),
+        crate::federation::Sensitivity::Private,
     );
-    insert_entity(
-        &doc,
-        shared_id,
-        ENTITY_TYPE_COMPANION_REGISTER,
-        &companion_record_body_in_scope(
-            shared_id,
-            CompanionScope::shared_vault(7),
-            CompanionExportClassification::SharedVault,
-        ),
+    let retired_body = companion_record_body_in_scope_with_lifecycle(
+        retired_persona,
+        CompanionScope::neutral(),
+        crate::federation::Sensitivity::Public,
+        ClaimLifecycleStatus::Retracted,
     );
-    insert_entity(
-        &doc,
-        other_shared_id,
-        ENTITY_TYPE_COMPANION_REGISTER,
-        &companion_record_body_in_scope(
-            other_shared_id,
-            CompanionScope::shared_vault(8),
-            CompanionExportClassification::SharedVault,
-        ),
-    );
-    insert_entity(
-        &doc,
-        retired_portable_id,
-        ENTITY_TYPE_COMPANION_REGISTER,
-        &companion_record_body_in_scope_with_lifecycle(
-            retired_portable_id,
-            CompanionScope::neutral(),
-            CompanionExportClassification::Portable,
-            ClaimLifecycleStatus::Retracted,
-        ),
-    );
+    for (id, body) in [
+        (&local_id, &local_body),
+        (&portable_id, &portable_body),
+        (&shared_id, &shared_body),
+        (&other_shared_id, &other_body),
+        (&retired_portable_id, &retired_body),
+    ] {
+        insert_entity(&doc, *id, ENTITY_TYPE_FACET, body);
+    }
     doc.commit();
+    // Mandatory record stamps: the export filter withholds unstamped
+    // non-CLAIM rows, so the same bodies are stored locally first. Digest
+    // matches because the bytes are identical.
+    vault
+        .batch()
+        .put(
+            &local_id,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &local_body,
+        )
+        .put(
+            &portable_id,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &portable_body,
+        )
+        .put(
+            &shared_id,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &shared_body,
+        )
+        .put(
+            &other_shared_id,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &other_body,
+        )
+        .put(
+            &retired_portable_id,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &retired_body,
+        )
+        .commit()
+        .unwrap();
 
+    // All five FACET rows are named, so the sensitivity and destination doors
+    // — not the facet door — decide. Restricted content and content bound to
+    // another vault stay withheld.
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
-        vec![],
-        vec![SelectorRange::Companion],
+        vec![
+            local_id,
+            portable_id,
+            shared_id,
+            other_shared_id,
+            retired_portable_id,
+        ],
+        // FACET(13) lives in the Core range (1-63), not Companion (64-79):
+        // the retired type-78 band no longer carries companion rows.
+        vec![SelectorRange::Core],
     );
     let filtered =
         filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).unwrap();
@@ -1193,13 +1452,14 @@ fn selector_denies_entity_with_any_unselected_facet_of() {
     insert_edge(&doc, dual_facet_claim, EdgeKind::FacetOf, facet_denied);
     insert_edge(&doc, dual_facet_claim, EdgeKind::Supports, person);
     doc.commit();
+    seed_doc_stamps(&vault, &doc);
 
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
         vec![facet_allowed],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
         .unwrap()
@@ -1262,13 +1522,14 @@ fn selector_denies_event_scoped_to_unselected_facet() {
     insert_edge(&doc, event, EdgeKind::FacetOf, facet_unselected);
     insert_edge(&doc, claim_seed, EdgeKind::Supports, event);
     doc.commit();
+    seed_doc_stamps(&vault, &doc);
 
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
         vec![facet_selected],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
         .unwrap()
@@ -1383,13 +1644,17 @@ fn forged_facet_seed_cannot_move_entities_across_the_disclosure_boundary() {
         &window_key,
     )
     .unwrap();
+    // The local owner verifies these known fixture bodies, not the forged
+    // FacetOf edge. With all four records stamped, missing Scope evidence
+    // cannot mask a failure of the edge-disclosure boundary under test.
+    stamp_live_rows(&vault, &local, &[facet_selected, event, person, neighbor]);
 
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
         vec![facet_selected],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let exported = filtered_window_doc(
         &vault,
@@ -1737,13 +2002,21 @@ fn out_of_order_off_table_residue_cannot_scope_the_export_for_either_role() {
             "{role:?}: precondition — PERSON P must be present in the live doc, \
              or its absence from the export below would hold vacuously"
         );
+        // Owner-verified bodies do not endorse the hostile FacetOf residue.
+        // Stamp all known fixture records so the negative observes the facet
+        // boundary rather than an unrelated absence of record evidence.
+        stamp_live_rows(
+            &vault,
+            &live.doc,
+            &[facet_selected, event, person, neighbor],
+        );
 
         let selector = SyncSelector::new(
             grant_id,
             member,
             SyncSelectorWorld::All,
             vec![facet_selected],
-            vec![],
+            vec![SelectorRange::Semantic, SelectorRange::Core],
         );
         let exported = filtered_window_doc(
             &vault,
@@ -1824,12 +2097,16 @@ fn out_of_order_on_table_source_still_scopes_after_the_mirror() {
     );
 
     let live = client.window(window).expect("window still loaded");
+    // Explicit verified positions for the honest opaque rows (the CLAIM is
+    // intrinsic and needs no stamp): the facet and the one-hop neighbor ride
+    // replicated bytes, which carry no stamp until verified here.
+    stamp_live_rows(&vault, &live.doc, &[facet_selected, neighbor]);
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
         vec![facet_selected],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let exported = filtered_window_doc(
         &vault,
@@ -1899,13 +2176,14 @@ fn selector_ignores_off_table_stamp_to_an_unselected_facet() {
     insert_edge(&doc, claim_seed, EdgeKind::Supports, person);
     insert_edge(&doc, claim_seed, EdgeKind::Supports, event);
     doc.commit();
+    seed_doc_stamps(&vault, &doc);
 
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
         vec![facet_selected],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
         .unwrap()
@@ -2018,13 +2296,21 @@ fn selector_target_must_resolve_to_a_facet_before_any_scope_is_honored() {
                 "{role:?}/{target_arrives_as_facet}: precondition — the named id \
                  must be present in the live doc"
             );
+            // Explicit verified positions: the neighbor is honest in both arms
+            // (the CLAIM is intrinsic). The named id is verified ONLY when it
+            // arrived as a real FACET — a PERSON forgery gets no stamp.
+            if target_arrives_as_facet {
+                stamp_live_rows(&vault, &live.doc, &[named, neighbor]);
+            } else {
+                stamp_live_rows(&vault, &live.doc, &[neighbor]);
+            }
 
             let selector = SyncSelector::new(
                 grant_id,
                 member,
                 SyncSelectorWorld::All,
                 vec![named],
-                vec![],
+                vec![SelectorRange::Semantic, SelectorRange::Core],
             );
             let exported = filtered_window_doc(
                 &vault,
@@ -2190,13 +2476,17 @@ fn selector_source_type_resolves_stored_first_against_a_winning_retype_blob() {
             "{role:?}: precondition — the re-type must be QUARANTINED, which is \
              what makes the stored type permanent truth the mirror can rely on"
         );
+        // Explicit verified positions for the honest controls only. The forged
+        // source, its neighbor, and the pad rows stay unstamped — no stamp
+        // invention for hostile input.
+        stamp_live_rows(&vault, &live.doc, &[facet_selected, event]);
 
         let selector = SyncSelector::new(
             grant_id,
             member,
             SyncSelectorWorld::All,
             vec![facet_selected],
-            vec![],
+            vec![SelectorRange::Semantic, SelectorRange::Core],
         );
         let exported = filtered_window_doc(
             &vault,
@@ -2296,13 +2586,14 @@ fn selector_conflicting_document_blob_never_displaces_the_stored_type() {
     insert_edge(&doc, conflicted, EdgeKind::FacetOf, facet_unselected);
     insert_edge(&doc, claim_seed, EdgeKind::Supports, conflicted);
     doc.commit();
+    seed_doc_stamps(&vault, &doc);
 
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
         vec![facet_selected],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
         .unwrap()
@@ -2371,13 +2662,14 @@ fn selector_honors_scope_when_stored_and_document_source_types_agree() {
     insert_edge(&doc, event, EdgeKind::FacetOf, facet_unselected);
     insert_edge(&doc, claim_seed, EdgeKind::Supports, event);
     doc.commit();
+    seed_doc_stamps(&vault, &doc);
 
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
         vec![facet_selected],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
         .unwrap()
@@ -2454,13 +2746,21 @@ fn selector_target_conflict_keeps_the_stored_facet_scope() {
         insert_edge(&first, claim_seed, EdgeKind::Supports, event);
         first.commit();
         import_federated(&mut client, window, &first, role);
+        // Explicit verified positions for the honest opaque rows (the CLAIM
+        // seed is intrinsic). The forged retype below targets facet_t, whose
+        // stamp then mismatches the conflicting doc blob — fail-closed — while
+        // the EVENT and selected-facet stamps persist across both exports.
+        {
+            let live = client.window(window).expect("window still loaded");
+            stamp_live_rows(&vault, &live.doc, &[facet_t, facet_selected, event]);
+        }
 
         let selector = SyncSelector::new(
             grant_id,
             member,
             SyncSelectorWorld::All,
             vec![facet_selected],
-            vec![],
+            vec![SelectorRange::Semantic, SelectorRange::Core],
         );
         let export_ids = |client: &mut SyncClient| {
             let live = client.window(window).expect("window still loaded");
@@ -2620,11 +2920,15 @@ fn selector_source_conflict_cannot_dissolve_a_multi_edge_withhold() {
              both halves of this withhold are stored truth"
         );
 
-        // The SELECTED facet and its seed stamp are DOC-ONLY: written straight
-        // into the live doc under the bridge origin so Observer B leaves LMDB
-        // alone. That is the second endpoint-resolution branch (no stored row
-        // ⇒ the document blob), so this one fixture exercises the conflict
-        // branch and the doc-only branch in the same closure computation.
+        // The SELECTED facet and its seed stamp ride the live doc under the
+        // bridge origin so Observer B leaves LMDB alone; the facet is then
+        // explicitly verified with a local put (same bytes, digest matches) so
+        // the export filter — which withholds unstamped doc-only rows — can
+        // carry it. The doc-blob endpoint-resolution branch this used to pin is
+        // now covered by `selector_document_only_target_scopes_only_when_it_
+        // types_a_facet` (which asserts scoping, not the doc-only row's own
+        // export); this fixture keeps the conflict branch plus the honest
+        // closure controls.
         let live = client
             .window(window)
             .expect("federated import opens window");
@@ -2633,10 +2937,17 @@ fn selector_source_conflict_cannot_dissolve_a_multi_edge_withhold() {
         insert_edge(&live.doc, claim_seed, EdgeKind::FacetOf, facet_selected);
         live.doc
             .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+        // Explicit verified positions: the unselected facet (stored FACET) and
+        // the selected facet (same bytes). E's doc blob is honest here (EVENT)
+        // but will be retyped below; it is left unstamped throughout so the
+        // withhold after the retype is fail-closed on both the facet door and
+        // the missing-stamp door, and no stamp is ever invented for the
+        // rejected PERSON blob.
+        stamp_live_rows(&vault, &live.doc, &[facet_unselected, facet_selected]);
         assert!(
-            vault.get_raw(&facet_selected).unwrap().is_none(),
-            "{role:?}: precondition — the selected facet must stay DOC-ONLY, or \
-             the doc-blob resolution branch is not exercised"
+            vault.get_raw(&facet_selected).unwrap().is_some(),
+            "{role:?}: precondition — the selected facet must be verified (stored) \
+             so its own export proves closure, not missing stamps"
         );
 
         let selector = SyncSelector::new(
@@ -2644,7 +2955,7 @@ fn selector_source_conflict_cannot_dissolve_a_multi_edge_withhold() {
             member,
             SyncSelectorWorld::All,
             vec![facet_selected],
-            vec![],
+            vec![SelectorRange::Semantic, SelectorRange::Core],
         );
         let export_ids = |client: &mut SyncClient| {
             let live = client.window(window).expect("window still loaded");
@@ -2792,6 +3103,7 @@ fn selector_forged_facet_blob_cannot_retype_a_stored_person_target() {
     insert_edge(&doc, riding_source, EdgeKind::FacetOf, person_target);
     insert_edge(&doc, claim_seed, EdgeKind::Supports, riding_source);
     doc.commit();
+    seed_doc_stamps(&vault, &doc);
 
     // The peer NAMES the forged id, which is the whole point: being selected
     // is not evidence of being a FACET.
@@ -2800,7 +3112,7 @@ fn selector_forged_facet_blob_cannot_retype_a_stored_person_target() {
         member,
         SyncSelectorWorld::All,
         vec![person_target, facet_real],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
         .unwrap()
@@ -2886,13 +3198,35 @@ fn selector_document_only_target_scopes_only_when_it_types_a_facet() {
         neighbor_of_person_claim,
     );
     doc.commit();
+    // H2 doc-only premise preserved: the two TARGETS stay unstamped (no
+    // stored rows, types resolve from the document alone). Only the
+    // one-hop neighbors are stamped so closure — not missing stamps —
+    // decides their verdicts.
+    vault
+        .batch()
+        .put(
+            &neighbor_of_facet_claim,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"neighbor-a",
+        )
+        .put(
+            &neighbor_of_person_claim,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"neighbor-b",
+        )
+        .commit()
+        .unwrap();
 
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
         vec![facet_doc_only, person_doc_only],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
         .unwrap()
@@ -2947,13 +3281,14 @@ fn selector_facet_closure_does_not_expand_from_facet_entities() {
     insert_edge(&doc, claim_allowed, EdgeKind::Supports, selected_person);
     insert_edge(&doc, facet_allowed, EdgeKind::Supports, facet_neighbor);
     doc.commit();
+    seed_doc_stamps(&vault, &doc);
 
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
         vec![facet_allowed],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
         .unwrap()
@@ -2983,19 +3318,55 @@ fn selector_applies_world_and_band_filters() {
     let claim_other_world = entity_id(0x43);
     let world_entity = world.entity_id();
     let task_like = entity_id(0x45);
+    let facet_allowed = entity_id(0x52);
 
     insert_blob(&doc, claim_world, &claim_blob(Some(world.entity_id())));
     insert_blob(&doc, claim_base, &claim_blob(None));
     insert_blob(&doc, claim_other_world, &claim_blob(Some(other_world)));
     insert_entity(&doc, world_entity, ENTITY_TYPE_WORLD, b"world");
     insert_entity(&doc, task_like, 80, b"task-list");
+    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
+    // Every CLAIM seeds the selected facet so world filtering (not facet
+    // withholding) decides: the other-world claim passes facets but fails
+    // worlds. The WORLD row and the Productivity probe ride one-hop closure
+    // from a seed so band filtering (not facet withholding) decides them.
+    insert_edge(&doc, claim_world, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, claim_base, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, claim_other_world, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, claim_world, EdgeKind::Supports, world_entity);
+    insert_edge(&doc, claim_world, EdgeKind::Supports, task_like);
     doc.commit();
+    // The Productivity probe (type 80, COUNTERPARTY_CONTACT) is an
+    // engine-authored maintenance kind: no public put can stamp it
+    // (`MaintenanceKindNotWritable`), so its doc row stays unstamped and is
+    // withheld by the missing-stamp door as well as the band door. Both doors
+    // fail closed; the negative below holds either way. The WORLD and FACET
+    // rows are stamped so world/band filtering — not missing stamps —
+    // decides the positives.
+    vault
+        .batch()
+        .put(
+            &world_entity,
+            ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .put(
+            &facet_allowed,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet-a",
+        )
+        .commit()
+        .unwrap();
 
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::World(world),
-        vec![],
+        vec![facet_allowed],
         vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
@@ -3058,11 +3429,41 @@ fn selector_suppresses_tombstoned_live_map_residue() {
     let window_key = WindowKey::new("2026-06");
     let doc = create_window_doc("source", &window_key);
     let residue = entity_id(0x57);
+    let facet_allowed = entity_id(0x58);
+    let claim_seed = entity_id(0x59);
     insert_entity(&doc, residue, ENTITY_TYPE_PERSON, b"stale-live-blob");
+    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
+    insert_blob(&doc, claim_seed, &claim_blob(None));
+    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, claim_seed, EdgeKind::Supports, residue);
     insert_tombstone(&doc, residue);
     doc.commit();
+    vault
+        .batch()
+        .put(
+            &residue,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"stale-live-blob",
+        )
+        .put(
+            &facet_allowed,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet-a",
+        )
+        .commit()
+        .unwrap();
 
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_allowed],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
+    );
     let filtered =
         filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).unwrap();
     let receiver = create_window_doc("receiver", &window_key);
@@ -3093,11 +3494,41 @@ fn selector_suppresses_tombstone_alias_live_map_residue() {
     let window_key = WindowKey::new("2026-08");
     let doc = create_window_doc("source", &window_key);
     let residue = entity_id(0x58);
+    let facet_allowed = entity_id(0x5A);
+    let claim_seed = entity_id(0x5B);
     insert_entity(&doc, residue, ENTITY_TYPE_PERSON, b"stale-live-blob");
+    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
+    insert_blob(&doc, claim_seed, &claim_blob(None));
+    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, claim_seed, EdgeKind::Supports, residue);
     insert_uppercase_tombstone_alias(&doc, residue);
     doc.commit();
+    vault
+        .batch()
+        .put(
+            &residue,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"stale-live-blob",
+        )
+        .put(
+            &facet_allowed,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet-a",
+        )
+        .commit()
+        .unwrap();
 
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_allowed],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
+    );
     let filtered =
         filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).unwrap();
     let receiver = create_window_doc("receiver", &window_key);
@@ -3144,13 +3575,14 @@ fn selector_treats_malformed_facet_of_value_as_denied_scope() {
     insert_edge(&doc, authorized_claim, EdgeKind::Supports, malformed_claim);
     insert_edge(&doc, authorized_claim, EdgeKind::Supports, unstamped_claim);
     doc.commit();
+    seed_doc_stamps(&vault, &doc);
 
     let selector = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
         vec![facet_allowed],
-        vec![],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
         .unwrap()
@@ -3578,10 +4010,11 @@ fn assert_grant_scope_mismatch(err: &Error, label: &str) {
     );
 }
 
-/// Empty wire axes request nothing under a pact; named worlds retain their
-/// export boundary, and wire round trips preserve independently expected sets.
+/// Empty wire axes request no narrowing, and a ⊥ ceiling axis still exports
+/// nothing to them; named worlds retain their export boundary, and wire round
+/// trips preserve independently expected sets.
 #[test]
-fn selector_direction_scope_decodes_wire_semantics() {
+fn selector_request_decodes_wire_semantics() {
     let member = entity_id(0x34);
     let grant = entity_id(0x35);
     let world = local_world_id(0x51);
@@ -3604,6 +4037,7 @@ fn selector_direction_scope_decodes_wire_semantics() {
     let base_claim = entity_id(0x71);
     let named_claim = entity_id(0x72);
     let other_claim = entity_id(0x73);
+    let facet_allowed = entity_id(0x54);
     insert_blob(&doc, base_claim, &claim_blob(None));
     insert_blob(&doc, named_claim, &claim_blob(Some(world.entity_id())));
     insert_blob(
@@ -3611,7 +4045,22 @@ fn selector_direction_scope_decodes_wire_semantics() {
         other_claim,
         &claim_blob(Some(local_world_id(0x52).entity_id())),
     );
+    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
+    insert_edge(&doc, base_claim, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, named_claim, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, other_claim, EdgeKind::FacetOf, facet_allowed);
     doc.commit();
+    vault
+        .batch()
+        .put(
+            &facet_allowed,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet-a",
+        )
+        .commit()
+        .unwrap();
 
     let silent = SyncSelector::new(grant, member, SyncSelectorWorld::All, vec![], vec![]);
     for (world_axis, include_named, include_other) in [
@@ -3619,7 +4068,13 @@ fn selector_direction_scope_decodes_wire_semantics() {
         (SyncSelectorWorld::Base, false, false),
         (SyncSelectorWorld::World(world), true, false),
     ] {
-        let selector = SyncSelector::new(grant, member, world_axis, vec![], vec![]);
+        let selector = SyncSelector::new(
+            grant,
+            member,
+            world_axis,
+            vec![facet_allowed],
+            vec![SelectorRange::Semantic, SelectorRange::Core],
+        );
         let selector = decode_sync_selector(&encode_sync_selector(&selector).unwrap()).unwrap();
         let update =
             filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
@@ -3641,10 +4096,13 @@ fn selector_direction_scope_decodes_wire_semantics() {
         vec![SelectorRange::Core, SelectorRange::Semantic],
     );
     let decoded = decode_sync_selector(&encode_sync_selector(&filtered).unwrap()).unwrap();
-    assert_eq!(decoded.facets, vec![entity_id(0x61), entity_id(0x62)]);
+    assert_eq!(
+        decoded.facets,
+        RequestedAxis::Named(vec![entity_id(0x61), entity_id(0x62)])
+    );
     assert_eq!(
         decoded.bands,
-        vec![SelectorRange::Semantic, SelectorRange::Core],
+        RequestedAxis::Named(vec![SelectorRange::Semantic, SelectorRange::Core]),
     );
 
     // Test each empty axis independently: the other axis remains populated.
@@ -3849,7 +4307,9 @@ fn selector_wider_than_pact_ceiling_on_any_axis_denies() {
             "band widen",
             SyncSelectorWorld::World(world_a),
             vec![facet_a],
-            vec![SelectorRange::Companion],
+            vec![SelectorRange::Family(
+                crate::registry::TypeByteFamily::Companion,
+            )],
         ),
     ] {
         let selector = SyncSelector::new(grant_id, member, world, facets, bands);
@@ -3862,8 +4322,8 @@ fn selector_wider_than_pact_ceiling_on_any_axis_denies() {
 /// Done-means 4: the masking regression. Concurrent disjoint facet narrows and
 /// concurrent disjoint band narrows meet at ⊥, and ⊥ denies every
 /// content-carrying selector — a disjoint meet must never decode as an
-/// accidental widen. The empty-vector selector's vacuous pass is asserted
-/// alongside it so the decode is never mistaken for one.
+/// accidental widen. The unnarrowed selector's pass, which resolves to that
+/// ⊥, is asserted alongside it.
 #[test]
 fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     let member = entity_id(0x34);
@@ -3913,74 +4373,63 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
         assert_grant_scope_mismatch(&err, name);
     }
 
-    // The empty-vector selector decodes to ⊥ on both axes, so it narrows even a
-    // ⊥ ceiling. This pass is vacuous, not a widen — the EXPORT half of that
-    // claim ("can exfiltrate nothing") is proven by
-    // `pact_ceiling_binds_the_export_not_only_the_door`, which is where a
-    // ⊥-authorized selector is actually run through `filtered_window_doc`.
+    // The empty-vector selector requests no narrowing, so it sits within even a
+    // ⊥ ceiling and resolves to that ⊥. The EXPORT half ("can exfiltrate
+    // nothing") is proven by
+    // `bottom_ceiling_exports_nothing_to_an_unnarrowed_request`.
     let silent = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     assert_eq!(
-        selector_direction_scope(&silent).facets,
+        resolve_selector_position(&silent, &ceiling).unwrap().facets,
         FederationScopeFacets::Bottom
     );
     authorize_sync_selector(&vault, test_selector_scope(), &silent)
-        .expect("a ⊥ selector requests nothing and narrows every ceiling");
+        .expect("an unnarrowed request sits within every ceiling");
 }
 
-/// Done-means 4, export half (OF-453 L3): a selector authorized as ⊥ on an axis
-/// must EXPORT as ⊥ on that axis.
-///
-/// The regression this pins is the empty-decodes-as-everything inversion. One
-/// wire field had two readers that disagreed: `selector_direction_scope` read
-/// an empty facet/band vector as the lattice ⊥, which narrows every ceiling, so
-/// the DEFAULT wire shape sailed through `authorize_sync_selector` under any
-/// pact however narrow — and the filter then read that same emptiness as "no
-/// filter" and exported the whole window, including the Core-band and
-/// unnamed-facet content the ceiling exists to withhold. The ceiling check was
-/// decoration on exactly the selector a peer sends by default.
-///
-/// The unpacted arm is both the control (it proves the fixture carries content
-/// the pact arms could have leaked, so their emptiness is not vacuous) and the
-/// done-means 7 pin: a grant with no pact has no ceiling to escape, so silence
-/// keeps its legacy wire meaning and shipped guest grants do not brick.
-#[test]
-fn pact_ceiling_binds_the_export_not_only_the_door() {
-    let member = entity_id(0x3D);
+/// The source window the pact-ceiling export tests share. CLAIM is band
+/// Semantic, PERSON and FACET are band Core, and only `facet_named` (0x64) is
+/// inside the ceiling — so every leak is content the ceiling names as out of
+/// scope, not merely extra rows. The non-CLAIM rows are stamped so filtering,
+/// not a missing stamp, decides every verdict.
+fn pact_ceiling_source_doc(vault: &Vault, window_key: &WindowKey) -> LoroDoc {
     let facet_named = entity_id(0x64);
     let facet_unnamed = entity_id(0x65);
     let claim_named = entity_id(0x66);
     let claim_unnamed = entity_id(0x67);
-    let person = entity_id(0x68);
-    let deleted = entity_id(0x69);
+    let doc = create_window_doc("source", window_key);
+    insert_entity(&doc, facet_named, ENTITY_TYPE_FACET, b"facet-in");
+    insert_entity(&doc, facet_unnamed, ENTITY_TYPE_FACET, b"facet-out");
+    insert_blob(&doc, claim_named, &claim_blob(None));
+    insert_blob(&doc, claim_unnamed, &claim_blob(None));
+    insert_entity(&doc, entity_id(0x68), ENTITY_TYPE_PERSON, b"person");
+    insert_edge(&doc, claim_named, EdgeKind::FacetOf, facet_named);
+    insert_edge(&doc, claim_unnamed, EdgeKind::FacetOf, facet_unnamed);
+    insert_tombstone(&doc, entity_id(0x69));
+    doc.commit();
+    seed_doc_stamps(vault, &doc);
+    doc
+}
+
+/// Done-means 4, export half (OF-453 L3): the ceiling binds the export, not
+/// only the door. A request that leaves an axis unnarrowed resolves to the
+/// ceiling's axis, so it exports what the ceiling allows and none of the
+/// Core-band or unnamed-facet content the ceiling exists to withhold.
+#[test]
+fn pact_ceiling_binds_the_export_not_only_the_door() {
+    let member = entity_id(0x3D);
+    let facet_named = entity_id(0x64);
+    let claim_named = entity_id(0x66);
     let window_key = WindowKey::new("2026-12");
-
-    // CLAIM is band Semantic, PERSON and FACET are band Core, and only
-    // `facet_named` is inside the ceiling — so every leak below is content the
-    // ceiling names as out of scope, not merely extra rows.
-    let source_doc = || {
-        let doc = create_window_doc("source", &window_key);
-        insert_entity(&doc, facet_named, ENTITY_TYPE_FACET, b"facet-in");
-        insert_entity(&doc, facet_unnamed, ENTITY_TYPE_FACET, b"facet-out");
-        insert_blob(&doc, claim_named, &claim_blob(None));
-        insert_blob(&doc, claim_unnamed, &claim_blob(None));
-        insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
-        insert_edge(&doc, claim_named, EdgeKind::FacetOf, facet_named);
-        insert_edge(&doc, claim_unnamed, EdgeKind::FacetOf, facet_unnamed);
-        insert_tombstone(&doc, deleted);
-        doc.commit();
-        doc
-    };
-
     let ceiling = FederationDirectionScope {
         worlds: FederationScopeWorlds::All,
         facets: FederationScopeFacets::Some(vec![facet_named]),
         bands: FederationScopeBands::Some(vec![SelectorRange::Semantic]),
     };
     for (name, facets, bands) in [
-        ("both axes silent", Vec::new(), Vec::new()),
-        ("band axis silent", vec![facet_named], Vec::new()),
+        ("both axes unnarrowed", Vec::new(), Vec::new()),
+        ("band axis unnarrowed", vec![facet_named], Vec::new()),
         (
-            "facet axis silent",
+            "facet axis unnarrowed",
             Vec::new(),
             vec![SelectorRange::Semantic],
         ),
@@ -3988,61 +4437,55 @@ fn pact_ceiling_binds_the_export_not_only_the_door() {
         let (_dir, vault, grant_id) = test_vault_with_grant(member);
         seed_scoped_pacts_for_grant(&vault, grant_id, std::slice::from_ref(&ceiling));
         let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, facets, bands);
-        let update = filtered_window_doc(
-            &vault,
-            &source_doc(),
-            &window_key,
-            test_selector_scope(),
-            &selector,
-        )
-        .unwrap_or_else(|err| panic!("{name}: a ⊥ selector authorizes: {err:?}"))
+        let doc = pact_ceiling_source_doc(&vault, &window_key);
+        let update =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap_or_else(|err| panic!("{name}: the request authorizes: {err:?}"))
+                .export(ExportMode::all_updates())
+                .unwrap();
+
+        assert_eq!(import_ids(&update), vec![claim_named], "{name}");
+    }
+}
+
+#[test]
+fn unnarrowed_request_under_an_unpacted_grant_narrows_no_facet() {
+    let member = entity_id(0x3D);
+    let window_key = WindowKey::new("2026-12");
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let doc = pact_ceiling_source_doc(&vault, &window_key);
+    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+    let ids = import_ids(&update);
+
+    assert!(ids.contains(&entity_id(0x66)) && ids.contains(&entity_id(0x67)));
+}
+
+#[test]
+fn bottom_ceiling_exports_nothing_to_an_unnarrowed_request() {
+    let member = entity_id(0x3D);
+    let window_key = WindowKey::new("2026-12");
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[FederationDirectionScope {
+            worlds: FederationScopeWorlds::All,
+            facets: FederationScopeFacets::Bottom,
+            bands: FederationScopeBands::All,
+        }],
+    );
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let doc = pact_ceiling_source_doc(&vault, &window_key);
+    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+        .unwrap()
         .export(ExportMode::all_updates())
         .unwrap();
 
-        assert_eq!(
-            import_ids(&update),
-            Vec::new(),
-            "{name}: a selector authorized as ⊥ must export nothing, not everything"
-        );
-        assert_eq!(
-            imported_tombstone_count(&update),
-            0,
-            "{name}: ⊥ is a filter, so the no-filter tombstone passthrough must not fire"
-        );
-    }
-
-    // Control and done-means 7: the same silent selector on an UNPACTED grant
-    // keeps the legacy reading and exports the window.
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let update = filtered_window_doc(
-        &vault,
-        &source_doc(),
-        &window_key,
-        test_selector_scope(),
-        &selector,
-    )
-    .expect("an unpacted grant keeps legacy-allow")
-    .export(ExportMode::all_updates())
-    .unwrap();
-    let mut expected = vec![
-        facet_named,
-        facet_unnamed,
-        claim_named,
-        claim_unnamed,
-        person,
-    ];
-    expected.sort_unstable();
-    assert_eq!(
-        import_ids(&update),
-        expected,
-        "an unpacted grant has no ceiling, so silence still means no filter"
-    );
-    assert_eq!(
-        imported_tombstone_count(&update),
-        1,
-        "the unfiltered legacy export still carries tombstones"
-    );
+    assert!(import_ids(&update).is_empty());
 }
 
 /// Done-means 5: several Active pacts on one grant intersect into a single
@@ -4118,12 +4561,13 @@ fn foreign_world_ids_cannot_enter_a_selector_scope() {
     );
 
     let local = local_world_id(0x51);
+    let facet_allowed = entity_id(0x53);
     let selector = SyncSelector::new(
         entity_id(0x35),
         entity_id(0x34),
         SyncSelectorWorld::World(local),
-        vec![],
-        vec![],
+        vec![facet_allowed],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let (_dir, vault, _) = test_vault_with_grant(entity_id(0x34));
     put_selector_test_federation_grant(
@@ -4152,7 +4596,25 @@ fn foreign_world_ids_cannot_enter_a_selector_scope() {
         &claim_blob(Some(local_world_id(0x52).entity_id())),
     );
     insert_blob(&doc, foreign_claim, &claim_blob(Some(foreign)));
+    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
+    // All four seed the selected facet so the world axis (not facet
+    // withholding) decides each verdict.
+    insert_edge(&doc, base_claim, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, local_claim, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, other_claim, EdgeKind::FacetOf, facet_allowed);
+    insert_edge(&doc, foreign_claim, EdgeKind::FacetOf, facet_allowed);
     doc.commit();
+    vault
+        .batch()
+        .put(
+            &facet_allowed,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet-a",
+        )
+        .commit()
+        .unwrap();
 
     let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
         .unwrap()
@@ -4523,8 +4985,11 @@ impl CoreferenceExport {
     fn window(&self, claims: &[EntityId]) -> LoroDoc {
         let doc = create_window_doc("source", &WindowKey::new("2026-03"));
         insert_entity(&doc, self.facet, ENTITY_TYPE_FACET, b"facet");
-        insert_entity(&doc, self.person_a, ENTITY_TYPE_PERSON, b"person-a");
-        insert_entity(&doc, self.person_b, ENTITY_TYPE_PERSON, b"person-b");
+        // Bodies match the vault rows (`b"person"`) so the mandatory record
+        // stamps (same digest) let the coreference door — not missing stamps
+        // — decide. The facet has no vault row yet; it is seeded below.
+        insert_entity(&doc, self.person_a, ENTITY_TYPE_PERSON, b"person");
+        insert_entity(&doc, self.person_b, ENTITY_TYPE_PERSON, b"person");
         for claim in std::iter::once(&self.control_claim).chain(claims) {
             let raw = self.vault.get_raw(claim).unwrap().expect("stored claim");
             insert_blob(&doc, *claim, &raw);
@@ -4538,6 +5003,19 @@ impl CoreferenceExport {
         insert_edge(&doc, self.control_claim, EdgeKind::Mentions, self.person_b);
         insert_structural_edge(&doc, self.person_a, EdgeKind::SameAs, self.person_b, 0.0);
         doc.commit();
+        // Seed the selected facet's stamp (same bytes); persons and claims
+        // already match vault rows (CLAIMs are intrinsic).
+        self.vault
+            .batch()
+            .put(
+                &self.facet,
+                ENTITY_TYPE_FACET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"facet",
+            )
+            .commit()
+            .unwrap();
         doc
     }
 
@@ -4725,6 +5203,278 @@ fn an_undecodable_coreference_claim_is_withheld_not_passed_through() {
 }
 
 #[test]
+fn selector_roundtrips_every_classification_family_and_rejects_retired_schema() {
+    for family in crate::registry::TYPE_BYTE_FAMILIES {
+        let selector = SyncSelector::new(
+            entity_id(0xA0),
+            entity_id(0xA7),
+            SyncSelectorWorld::All,
+            vec![],
+            vec![SelectorRange::Family(family.family)],
+        );
+        let bytes = encode_sync_selector(&selector).unwrap();
+        assert_eq!(decode_sync_selector(&bytes).unwrap(), selector);
+        let Value::Map(mut fields) = rmpv::decode::read_value(&mut Cursor::new(bytes)).unwrap()
+        else {
+            panic!("selector encoding must be a map");
+        };
+        fields
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(KEY_SCHEMA_VERSION))
+            .unwrap()
+            .1 = Value::from(1);
+        let mut retired = Vec::new();
+        rmpv::encode::write_value(&mut retired, &Value::Map(fields)).unwrap();
+        assert!(decode_sync_selector(&retired).is_err());
+    }
+}
+
+#[test]
+fn explicit_crm_pack_registration_exports_by_family_after_reopen() {
+    use crate::registry::{
+        TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TypeByteFamily,
+        TypeByteZone, entity_type_registry_entry,
+    };
+    let member = entity_id(0xD1);
+    let (dir, vault, grant_id) = test_vault_with_grant(member);
+    let slots: Vec<_> = (TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
+        ..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
+        .filter(|byte| {
+            entity_type_registry_entry(*byte).is_none()
+                && vault.structural_kind_registration(*byte).is_none()
+        })
+        .take(3)
+        .collect();
+    let pack = crate::campaign::register_crm_pack(
+        &vault,
+        slots[0],
+        slots[1],
+        crate::registry::TypeByteFamily::Productivity,
+    )
+    .unwrap();
+    // Whole-pack retry preserves the same declared family and assigned slots.
+    assert_eq!(
+        crate::campaign::register_crm_pack(
+            &vault,
+            slots[0],
+            slots[1],
+            crate::registry::TypeByteFamily::Productivity
+        )
+        .unwrap(),
+        pack
+    );
+    vault
+        .register_structural_kind(slots[2], "qx", TypeByteZone::CompiledProduct, "local-only")
+        .unwrap();
+    let ids = [entity_id(0xD2), entity_id(0xD3), entity_id(0xD4)];
+    for (id, kind) in ids.iter().zip(&slots) {
+        vault
+            .put_entity(id, *kind, TimeRange { start: 1, end: 1 }, 1, b"record")
+            .unwrap();
+    }
+    drop(vault);
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let window = WindowKey::new("2026-03");
+    let doc = create_window_doc("source", &window);
+    let facet = entity_id(0xD5);
+    let seed = entity_id(0xD6);
+    insert_entity(&doc, facet, ENTITY_TYPE_FACET, b"pack facet");
+    insert_blob(&doc, seed, &claim_blob(None));
+    insert_edge(&doc, seed, EdgeKind::FacetOf, facet);
+    seed_doc_stamps(&vault, &doc);
+    for id in &ids {
+        insert_blob(&doc, *id, &vault.get_raw(id).unwrap().unwrap());
+        insert_edge(&doc, seed, EdgeKind::Supports, *id);
+    }
+    doc.commit();
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![
+            SelectorRange::Semantic,
+            SelectorRange::Family(TypeByteFamily::Productivity),
+        ],
+    );
+    let filtered =
+        filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &selector).unwrap();
+    let exported = import_ids(&filtered.export(ExportMode::all_updates()).unwrap());
+    assert!(exported.contains(&ids[0]));
+    assert!(exported.contains(&ids[1]));
+    assert!(!exported.contains(&ids[2]));
+    let other_family = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![
+            SelectorRange::Semantic,
+            SelectorRange::Family(TypeByteFamily::Documents),
+        ],
+    );
+    let filtered =
+        filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &other_family).unwrap();
+    let exported = import_ids(&filtered.export(ExportMode::all_updates()).unwrap());
+    assert!(
+        exported.contains(&seed),
+        "the facet seed must cross, else this proves nothing"
+    );
+    assert!(ids.iter().all(|id| !exported.contains(id)));
+}
+
+#[test]
+fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
+    use crate::sync::transport::document_sub_tags;
+    for active in [true, false] {
+        let member = entity_id(0x34);
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        let grant = FederationGrant::new(
+            test_selector_scope(),
+            member,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        );
+        vault
+            .batch()
+            .put_replicated(
+                &grant_id,
+                ENTITY_TYPE_FEDERATION_GRANT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &encode_federation_grant_body(&grant).unwrap(),
+            )
+            .commit()
+            .unwrap();
+        let id = entity_id(0x41);
+        let facet = entity_id(0x44);
+        vault
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_TURN,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"turn",
+            )
+            .unwrap();
+        vault
+            .put_entity(
+                &facet,
+                ENTITY_TYPE_FACET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"facet",
+            )
+            .unwrap();
+        vault.put_edge(&id, EdgeKind::FacetOf, &facet, 1.0).unwrap();
+        if active {
+            let mut ceiling = all_direction_scope();
+            ceiling.facets = FederationScopeFacets::Some(vec![facet]);
+            seed_scoped_pacts_for_grant(&vault, grant_id, &[ceiling]);
+        } else {
+            seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Disconnected);
+        }
+        let vault = Arc::new(vault);
+        let manager = Arc::new(WindowManager::new(
+            vault.clone(),
+            Arc::new(crate::sync::bridge::Materializer::new()),
+            "document pact",
+        ));
+        let doc = manager.documents().open(id).unwrap();
+        let remote = LoroDoc::new();
+        remote.get_text("body").insert(0, "admitted").unwrap();
+        remote.commit();
+        let update = remote.export(ExportMode::all_updates()).unwrap();
+        let selector = SyncSelector::new(
+            grant_id,
+            member,
+            SyncSelectorWorld::All,
+            vec![facet],
+            vec![
+                crate::federation::selector_range_of(crate::registry::ENTITY_TYPE_TURN)
+                    .expect("TURN has a registered selector identity"),
+            ],
+        );
+        let result = doc.import_from_peer(
+            document_sub_tags::UPDATE,
+            &update,
+            test_selector_scope(),
+            &selector,
+        );
+        if active {
+            result.unwrap();
+            assert_eq!(doc.text().unwrap(), "admitted");
+            let mut wider = selector.clone();
+            wider.facets = RequestedAxis::Named(vec![facet, entity_id(0x43)]);
+            let error = doc
+                .import_from_peer(
+                    document_sub_tags::UPDATE,
+                    &update,
+                    test_selector_scope(),
+                    &wider,
+                )
+                .unwrap_err();
+            assert_grant_scope_mismatch(&error, "peer document writer");
+        } else {
+            assert!(matches!(
+                result.unwrap_err(),
+                Error::Sync(SyncError::SyncProtocolError {
+                    context: SyncProtocolValidation::Selector {
+                        reason: SelectorError::GrantInactive
+                    },
+                })
+            ));
+            assert_eq!(doc.text().unwrap(), "");
+        }
+    }
+    // Expiry shares the exact txn-bound grant door with NOTE reads. Delegate
+    // roles never write, even before expiry; expired reads must also refuse.
+    let member = entity_id(0x34);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let grant = FederationGrant {
+        authority_scope: crate::federation::scope_codec::read_preset(),
+        scope: test_selector_scope(),
+        member_ref: member,
+        role: FederationGrantRole::Delegate,
+        preset: FederationGrantPreset::Delegate,
+        expires_at: Some(1),
+        delegated_by: Some(entity_id(0x35)),
+    };
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let error = vault
+        .with_write_txn(|txn| {
+            super::document_admission::authorize_in_txn(
+                &vault,
+                txn,
+                test_selector_scope(),
+                &selector,
+                None,
+            )
+            .map(|_| ())
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::Sync(SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::Selector {
+                reason: SelectorError::GrantExpired
+            },
+        })
+    ));
+}
+
+#[test]
 fn replay_tier_fork_scales_federated_confidence_once_and_audits_remote_value() {
     use crate::sync::client::ImportTier;
     let key = WindowKey::new("2026-03");
@@ -4825,4 +5575,186 @@ fn replay_tier_fork_scales_federated_confidence_once_and_audits_remote_value() {
             confidence
         );
     }
+}
+
+#[test]
+fn selector_custody_locality_uses_the_export_read_snapshot() {
+    use crate::secret_custody::{
+        CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
+        SecretCustodyStatus,
+    };
+
+    let member = entity_id(0xB6);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let key = WindowKey::new("2026-03");
+    let doc = create_window_doc("custody-selector", &key);
+    let facet = entity_id(0xB7);
+    let seed = entity_id(0xB8);
+    insert_entity(&doc, facet, ENTITY_TYPE_FACET, b"custody facet");
+    insert_blob(&doc, seed, &claim_blob(None));
+    insert_edge(&doc, seed, EdgeKind::FacetOf, facet);
+    seed_doc_stamps(&vault, &doc);
+    let mut secrets = Vec::new();
+    for device_only in [false, true] {
+        let id = vault
+            .register_secret(SecretCustodyRecord {
+                schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+                name: format!("selector-custody-{device_only}"),
+                class: CustodyClass::CustodyPortable,
+                device_only,
+                value_bytes: b"selector-custody-canary".to_vec(),
+                status: SecretCustodyStatus::Active,
+                registered_at: 1,
+                rotated_at: None,
+                rotation_generation: 0,
+                bindings: Vec::new(),
+                manifest_ref: "secrets.toml".into(),
+                declared_paths: Vec::new(),
+                policy_floor_snapshot: SecretCustodyFloor::default(),
+            })
+            .unwrap();
+        let raw = vault.get_raw_unsealed(&id).unwrap().unwrap();
+        insert_blob(&doc, id, &raw);
+        insert_edge(&doc, seed, EdgeKind::Supports, id);
+        secrets.push((id, device_only));
+    }
+    doc.commit();
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![
+            SelectorRange::Semantic,
+            SelectorRange::Core,
+            SelectorRange::Family(TypeByteFamily::AuthorityPolicyCustody),
+        ],
+    );
+    let update = filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+    let ids = import_ids(&update);
+    assert!(ids.contains(&seed));
+    for (id, device_only) in secrets {
+        assert_eq!(ids.contains(&id), !device_only);
+    }
+}
+
+fn member_grant_vault(member: EntityId) -> (tempfile::TempDir, Vault, EntityId) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let grant_id = EntityId::now();
+    put_selector_test_federation_grant(
+        &vault,
+        &grant_id,
+        &FederationGrant::new(
+            test_selector_scope(),
+            member,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        ),
+        1,
+    )
+    .unwrap();
+    (dir, vault, grant_id)
+}
+
+fn note_window_export(vault: &Vault, note: EntityId, selector: &SyncSelector) -> Vec<u8> {
+    let raw = vault.get_raw(&note).unwrap().unwrap();
+    let key = WindowKey::from_timestamp(EntityMetadataHeader::parse(&raw).unwrap().learned_at);
+    let doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(vault, &doc, &key).unwrap();
+    filtered_window_doc(vault, &doc, &key, test_selector_scope(), selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap()
+}
+
+#[test]
+fn a_replica_serves_a_replicated_note_that_carries_its_stamp() {
+    let origin_dir = tempfile::tempdir().unwrap();
+    let origin = Vault::open(origin_dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = origin.ensure_embedded_owner_actor().unwrap();
+    let note = origin
+        .create_note(
+            "research",
+            "replicated birth",
+            crate::WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .unwrap();
+    let raw = origin.get_raw(&note).unwrap().unwrap();
+    let header = EntityMetadataHeader::parse(&raw).unwrap();
+    let stamp = origin
+        .edges_out(&note)
+        .unwrap()
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::FacetOf)
+        .unwrap();
+    let member = entity_id(0x3E);
+    let (_dir, host, grant_id) = member_grant_vault(member);
+    host.batch()
+        .put_replicated(
+            &note,
+            crate::registry::ENTITY_TYPE_NOTE,
+            TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )
+        .edge_with_value_fields(
+            &note,
+            EdgeKind::FacetOf,
+            &stamp.target,
+            crate::batch::EdgeValueFields {
+                weight: stamp.weight,
+                created_at: stamp.created_at,
+                vad: Vad::NEUTRAL,
+                provenance: None,
+            },
+        )
+        .commit()
+        .unwrap();
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+
+    assert!(import_ids(&note_window_export(&host, note, &selector)).contains(&note));
+}
+
+#[test]
+fn a_named_facet_request_selects_a_note_born_under_that_facet() {
+    let member = entity_id(0x3F);
+    let (_dir, vault, grant_id) = member_grant_vault(member);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let facet = entity_id(0x6A);
+    vault
+        .put_entity(
+            &facet,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .unwrap();
+    let receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .author_note(&crate::note::NoteWriteEnvelope {
+            kind: crate::note::NoteKind::OpinionTake,
+            scope: crate::note::NoteScope::About(crate::note::TakeTarget::Subject(owner)),
+            markdown: "masked take".to_owned(),
+            source_revision_ref: [0x6B; 16],
+            mask: Some(facet),
+        })
+        .unwrap();
+    let note = EntityId::from_hex(&receipt.id_hex).unwrap();
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![],
+    );
+
+    assert!(import_ids(&note_window_export(&vault, note, &selector)).contains(&note));
 }

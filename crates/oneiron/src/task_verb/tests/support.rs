@@ -1,6 +1,7 @@
 //! Shared fixtures and helpers for the task_verb tests.
 
 use super::*;
+use crate::task_verb::sdk::AgentVerb;
 
 pub(super) fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -65,7 +66,7 @@ pub(super) fn grant_cancel(vault: &Vault, actor: EntityId, seed: u8) {
                 origin_action_id: "cancel".to_owned(),
                 origin_receipt_ref: None,
                 scope: GrantMintIntentScope::VerbClass {
-                    verb_class: TasksVerb::Cancel.as_str().to_owned(),
+                    verb_class: AgentVerb::TasksCancel.as_str().to_owned(),
                 },
             },
             1,
@@ -81,7 +82,7 @@ pub(super) const CONSULT_NOW: u64 = 1_772_400_000;
 
 pub(super) const CONSULT_DEADLINE: u64 = CONSULT_NOW + 60;
 
-pub(super) fn consult_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
+pub(in crate::task_verb) fn consult_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
     let turn_ref = EntityId::from_bytes([seed; 16]).expect("turn id");
     let mut body = Vec::new();
     rmpv::encode::write_value(
@@ -916,9 +917,21 @@ pub(super) fn enqueue_sibling(queue: &AttemptQueue<'_>, task_hex: &str, now: u64
 
 /// Outcome fixtures make deliberate Approved writes. Keep the shipped policy
 /// and its actor ceilings; classify only these fixture predicates as normal.
-pub(in crate::task_verb) fn permit_outcome_fixture_predicates(vault: &Vault) -> crate::Result<()> {
+/// Outcome labels are scoped reads by the asking principal, so it alone holds
+/// an unrestricted `core:read` grant.
+pub(in crate::task_verb) fn permit_outcome_fixture_predicates(
+    vault: &Vault,
+    principal: EntityId,
+) -> crate::Result<()> {
     let bytes = crate::gate::default_policy_manifest();
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
+    manifest["scoped_grants"] = serde_json::json!([{
+        "actor_ref": principal.to_hex(),
+        "effector": "core:read",
+        "scope": serde_json::to_value(crate::federation::scope_codec::read_preset())
+            .expect("read preset"),
+        "receipt_required": false,
+    }]);
     let rules = manifest["rules"].as_array_mut().expect("policy rules");
     for predicate in [
         "outcome.earned",

@@ -5,7 +5,7 @@ use crate::policy_model::{PolicyEnforcementAction, PolicyModelConfig};
 fn install_policy(vault: &Vault, action: &str) -> Result<()> {
     // Test-owned policy only. The cascade itself supplies no rules or persona.
     let manifest = json!({
-        "schema_version": "1.1",
+        "schema_version": crate::gate::POLICY_SCHEMA_VERSION,
         "pack_id": "voice-cascade-fixture",
         "pack_version": "v1",
         "min_engine_version": env!("CARGO_PKG_VERSION"),

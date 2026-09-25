@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use serde::{Deserialize, Serialize};
 
 use super::capability::normalize_key;
@@ -236,8 +237,8 @@ pub(crate) fn put_connector_send_task_in_txn(
         Some(ENTITY_TYPE_MACHINE) => {
             let raw = vault
                 .store
-                .entities
-                .get(&*wtxn, assignee_ref.as_bytes())?
+                .port_entity_record(&*wtxn, &assignee_ref)?
+                .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("connector actor entity"))?;
             if !connector_actor_raw_matches(&raw, &connector_class)? {
                 return Err(Error::InvariantViolation(
@@ -493,20 +494,16 @@ fn update_connector_send_task_body(
     vault.with_write_txn(|wtxn| {
         let raw = vault
             .store
-            .entities
-            .get(&*wtxn, task_ref.as_bytes())?
+            .port_entity_record(&*wtxn, &task_ref)?
             .ok_or(Error::EntityNotFound)?;
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("connector task entity header"))?;
-        if header.entity_type != ENTITY_TYPE_TASK {
+        if raw.entity_type != ENTITY_TYPE_TASK {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "connector send entity is not a TASK",
             )));
         }
-        let mut body: ConnectorSendTaskBody =
-            rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).map_err(|_| {
-                Error::Record(RecordError::InvalidTaskBody("invalid connector send body"))
-            })?;
+        let mut body: ConnectorSendTaskBody = rmp_serde::from_slice(&raw.body).map_err(|_| {
+            Error::Record(RecordError::InvalidTaskBody("invalid connector send body"))
+        })?;
         if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
             || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
             || body.role != TaskRole::Task.role_byte()
@@ -527,7 +524,7 @@ fn update_connector_send_task_body(
         // row byte-identical, while any real projection — the terminal
         // outcome, a timezone refresh, a different node picking the attempt up
         // — still differs in bytes and writes exactly once.
-        if raw[ENTITY_METADATA_HEADER_LEN..] == encoded[..] {
+        if raw.body == encoded[..] {
             return Ok(());
         }
         vault

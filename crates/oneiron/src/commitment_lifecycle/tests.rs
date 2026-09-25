@@ -946,7 +946,10 @@ fn auto_permitting_manifest() -> Vec<u8> {
         ])
     };
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("cmt4-lifecycle-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (

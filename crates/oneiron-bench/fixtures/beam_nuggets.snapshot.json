@@ -1,0 +1,57 @@
+{
+  "scorerVersion": "beam-fixed-scorer-v1",
+  "overallScore": 0.0,
+  "abilities": [],
+  "beam": {
+    "convention": "official:int(score); side:float(score).clamp(0,1); nugget mean",
+    "aggregate": {
+      "count": 4,
+      "officialIntCast": 0.0,
+      "fixedFloatClamped": 0.5
+    },
+    "abilities": {
+      "Temporal": {
+        "count": 1,
+        "officialIntCast": 0.0,
+        "fixedFloatClamped": 0.5
+      },
+      "Contradiction": {
+        "count": 1,
+        "officialIntCast": 0.0,
+        "fixedFloatClamped": 0.5
+      },
+      "EventOrdering": {
+        "count": 1,
+        "officialIntCast": 0.0,
+        "fixedFloatClamped": 0.5
+      },
+      "KnowledgeUpdate": {
+        "count": 1,
+        "officialIntCast": 0.0,
+        "fixedFloatClamped": 0.5
+      }
+    },
+    "wedgeBuckets": {
+      "temporal": {
+        "count": 1,
+        "officialIntCast": 0.0,
+        "fixedFloatClamped": 0.5
+      },
+      "contradiction": {
+        "count": 1,
+        "officialIntCast": 0.0,
+        "fixedFloatClamped": 0.5
+      },
+      "event_ordering": {
+        "count": 1,
+        "officialIntCast": 0.0,
+        "fixedFloatClamped": 0.5
+      },
+      "knowledge_update": {
+        "count": 1,
+        "officialIntCast": 0.0,
+        "fixedFloatClamped": 0.5
+      }
+    }
+  }
+}

@@ -46,6 +46,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let record = self.set_result_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(record)
     }
 
@@ -119,6 +120,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.abandon_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(outcome)
     }
 

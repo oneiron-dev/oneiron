@@ -31,15 +31,13 @@ pub enum EntityClassification {
 /// namespace allocation — an unregistered byte still has a zone but is
 /// rejected by `validate_entity_type` on every write path.
 ///
-/// This is NOT the sync-selector / federation-scope vocabulary. That is a
-/// separate, deliberately frozen wire type
-/// ([`crate::federation::SelectorRange`]); allocation decisions read this
-/// enum and nothing else.
+/// This table validates allocation only. Replication scopes resolve a registry
+/// kind's declared classification and family, never a byte interval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TypeByteZone {
     /// Byte `0` — CLAIM's semantic type byte, not a StructuralKind.
     Semantic,
-    /// Bytes `1–63` — universal CORE StructuralKinds. LOCKED, UNTOUCHED.
+    /// Bytes `1–63` — universal CORE StructuralKinds, with v3.1 family gaps.
     Core,
     /// Bytes `64–99` — system kinds. Engine-authored maintenance records plus
     /// the classification-routed exceptions that stay publicly writable.

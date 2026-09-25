@@ -54,6 +54,8 @@ pub struct CalendarSel {
 /// One projected calendar EVENT.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CalendarEventView {
+    /// Deciding live origin, or dreamer for a legacy origin-less EVENT.
+    pub origin: String,
     /// Hex EVENT entity id.
     pub event_ref: String,
     /// EVENT display name, when the body carries one.

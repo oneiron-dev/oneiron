@@ -38,6 +38,7 @@ fn delegated_body_entries(shape: &str, version: u64) -> Vec<(Value, Value)> {
         (Value::from("reputation_ref"), Value::Nil),
         (Value::from("manifest_ref"), Value::Nil),
         (Value::from("binding_facet_ref"), Value::Nil),
+        (Value::from("auth_mode"), Value::from("oauth")),
         (
             Value::from("delegated_grant_ref"),
             Value::from("gmail-delegated:member@member-owned.example"),
@@ -49,8 +50,8 @@ fn delegated_body_entries(shape: &str, version: u64) -> Vec<(Value, Value)> {
     ]
 }
 
-const DELEGATED_GRANT_REF_IDX: usize = 13;
-const GRANT_SCOPES_IDX: usize = 14;
+const DELEGATED_GRANT_REF_IDX: usize = 14;
+const GRANT_SCOPES_IDX: usize = 15;
 
 fn encode_entries(entries: Vec<(Value, Value)>) -> Vec<u8> {
     let mut out = Vec::new();
@@ -154,7 +155,7 @@ fn delegated_bodies_fail_closed_on_version_shape_key_and_scope_drift() {
 
     let mut self_held_with_custody_key =
         delegated_body_entries("dedicated_address", CHANNEL_IDENTITY_SCHEMA_VERSION);
-    self_held_with_custody_key.truncate(14);
+    self_held_with_custody_key.truncate(15);
     reject(
         self_held_with_custody_key,
         "self-held body with an extra custody key must fail closed",
@@ -219,7 +220,7 @@ fn unsupported_schema_versions_are_rejected() -> Result<()> {
         else {
             panic!("current identity must be a map");
         };
-        for version in [0u64, 1, 2, 5, u64::MAX] {
+        for version in [0u64, 1, 2, 3, 4, 7, u64::MAX] {
             let mut unsupported = entries.clone();
             unsupported[0].1 = Value::from(version);
             assert!(matches!(

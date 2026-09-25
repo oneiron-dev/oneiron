@@ -1,9 +1,7 @@
 //! Cursor codecs, page and output builders with byte-cap logic, and day-shard civil-date math.
 
-use crate::edge::EDGE_KEY_LEN;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::Store;
 
 use super::model::{
     GRAPH_FS_MORE_RESERVE_BYTES, GraphFsEntry, GraphFsEntryKind, GraphFsMount, GraphFsOptions,
@@ -19,6 +17,13 @@ pub(super) struct TemporalCursor {
 }
 
 impl TemporalCursor {
+    pub(super) fn port_position(self) -> crate::ports::EntityTime {
+        crate::ports::EntityTime {
+            id: self.id,
+            timestamp: self.learned_at,
+        }
+    }
+
     pub(super) fn parse_optional(value: Option<&str>) -> Result<Option<Self>> {
         value.map(Self::parse).transpose()
     }
@@ -41,16 +46,6 @@ impl TemporalCursor {
     pub(super) fn encode(self) -> String {
         format!("{}:{}", self.learned_at, self.id.to_hex())
     }
-
-    pub(super) fn temporal_key(self) -> [u8; 24] {
-        Store::encode_temporal_key(self.learned_at, &self.id)
-    }
-
-    pub(super) fn next_temporal_key(self) -> [u8; 24] {
-        let mut key = self.temporal_key();
-        increment_lexicographic_key(&mut key);
-        key
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -60,6 +55,16 @@ pub(super) struct EdgeCursor {
 }
 
 impl EdgeCursor {
+    pub(super) fn port_position(self) -> (u8, EntityId) {
+        (self.kind, self.source)
+    }
+    pub(super) fn from_port(edge: &crate::edge::EdgeInfo) -> Self {
+        Self {
+            kind: edge.kind as u8,
+            source: edge.target,
+        }
+    }
+
     pub(super) fn encode(self) -> String {
         format!("{}:{}", self.kind, self.source.to_hex())
     }
@@ -190,38 +195,6 @@ impl CommandOutputBuilder {
     }
 }
 
-pub(super) fn temporal_cursor_from_key(key: &[u8]) -> Result<TemporalCursor> {
-    if key.len() != 24 {
-        return Err(Error::CorruptedIndex("temporal learned key"));
-    }
-    let learned_at = u64::from_be_bytes(
-        key[..8]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
-    );
-    let id = EntityId::from_bytes(
-        key[8..24]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
-    )
-    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
-    Ok(TemporalCursor { learned_at, id })
-}
-
-pub(super) fn edge_cursor_from_key(key: &[u8]) -> Result<EdgeCursor> {
-    if key.len() != EDGE_KEY_LEN {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
-    let kind = key[ENTITY_ID_LEN];
-    let source = EntityId::from_bytes(
-        key[ENTITY_ID_LEN + 1..]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("edge record"))?,
-    )
-    .map_err(|_| Error::CorruptedIndex("edge record"))?;
-    Ok(EdgeCursor { kind, source })
-}
-
 pub(super) fn parse_edge_cursor(value: &str) -> Result<EdgeCursor> {
     let Some((kind, source)) = value.split_once(':') else {
         return Err(Error::InvalidConfig(
@@ -235,25 +208,6 @@ pub(super) fn parse_edge_cursor(value: &str) -> Result<EdgeCursor> {
         kind,
         source: parse_entity_id(source)?,
     })
-}
-
-pub(super) fn edge_cursor_key(target: &EntityId, cursor: EdgeCursor) -> Vec<u8> {
-    let mut key = Vec::with_capacity(EDGE_KEY_LEN);
-    key.extend_from_slice(target.as_bytes());
-    key.push(cursor.kind);
-    key.extend_from_slice(cursor.source.as_bytes());
-    key
-}
-
-fn increment_lexicographic_key(key: &mut [u8]) {
-    for byte in key.iter_mut().rev() {
-        if *byte == u8::MAX {
-            *byte = 0;
-        } else {
-            *byte += 1;
-            return;
-        }
-    }
 }
 
 pub(super) fn format_day_shard(day: u64) -> String {

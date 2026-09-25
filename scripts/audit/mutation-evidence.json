@@ -1,0 +1,99 @@
+{
+  "runner": "cargo-mutants 27.1.0",
+  "started_at": "2026-09-19T06:12:44.53736Z",
+  "completed_at": "2026-09-19T07:26:59.411164Z",
+  "baseline": "Success",
+  "source_sha256": {
+    "crates/oneiron/src/self_heal/tripwires.rs": "3bc53b7a87536e8c786807c41925f4d3c283822088ae0dab5a09725ea124c132",
+    "crates/oneiron-server/src/runtime/gpu.rs": "1c0c265ccc4d81c5dff79a0c463233938b41911e3f85a633dcbd37817d6d4873",
+    "crates/oneiron/src/self_heal/tripwire_tests.rs": "30d12b5380591cdd3a82220360b460461602aa5d61ddbfcf1a9eb8c99438febe"
+  },
+  "outcomes_sha256": "12b66602cc5460b2f98a3ff498b13ec540409eab28c8f474da3109f31d2df4a1",
+  "mutants": [
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:9: replace TripwireBounds::valid -> bool with true",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:9: replace TripwireBounds::valid -> bool with false",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:56: replace && with || in TripwireBounds::valid",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:30: replace && with || in TripwireBounds::valid",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:26: replace > with == in TripwireBounds::valid",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:26: replace > with < in TripwireBounds::valid",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:26: replace > with >= in TripwireBounds::valid",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:52: replace > with == in TripwireBounds::valid",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:52: replace > with < in TripwireBounds::valid",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:52: replace > with >= in TripwireBounds::valid",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:77: replace > with == in TripwireBounds::valid",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:77: replace > with < in TripwireBounds::valid",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron/src/self_heal/tripwires.rs:140:77: replace > with >= in TripwireBounds::valid",
+      "package": "oneiron",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron-server/src/runtime/gpu.rs:15:9: replace GpuHealth::healthy -> bool with true",
+      "package": "oneiron-server",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron-server/src/runtime/gpu.rs:15:9: replace GpuHealth::healthy -> bool with false",
+      "package": "oneiron-server",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron-server/src/runtime/gpu.rs:15:36: replace && with || in GpuHealth::healthy",
+      "package": "oneiron-server",
+      "result": "CaughtMutant"
+    },
+    {
+      "name": "crates/oneiron-server/src/runtime/gpu.rs:15:24: replace && with || in GpuHealth::healthy",
+      "package": "oneiron-server",
+      "result": "CaughtMutant"
+    }
+  ]
+}

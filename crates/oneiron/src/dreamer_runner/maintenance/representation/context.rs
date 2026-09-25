@@ -84,7 +84,11 @@ fn read_source(
     id: EntityId,
     voice_owner: Option<EntityId>,
 ) -> Result<RepresentationSource> {
-    let (kind, _, bytes) = reader.get_entity_parts(&id)?.ok_or_else(invalid)?;
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = reader.get_entity_parts_with_receipt(&id, None)?;
+    let (kind, _, bytes) = value.ok_or_else(invalid)?;
     if kind != crate::registry::ENTITY_TYPE_CLAIM {
         return Err(invalid());
     }

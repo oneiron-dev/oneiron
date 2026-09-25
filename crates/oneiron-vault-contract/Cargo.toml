@@ -20,7 +20,12 @@ serde = { workspace = true }
 subtle = "2"
 zeroize = "1"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["sync", "time", "macros"] }
+
 [dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
+tempfile = "3"
 serde_json = { workspace = true }
 
 [lints]

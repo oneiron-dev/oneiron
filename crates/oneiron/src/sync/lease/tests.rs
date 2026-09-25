@@ -20,6 +20,7 @@ fn signed_receipt(seed: u8, client_id: u64) -> (EntityId, [u8; 32], Vec<u8>) {
     let receipt_id = EntityId::now();
     let subject = EntityId::now();
     let input = crate::deletion::RedactionReceiptInput {
+        actor_principal: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b".to_owned(),
         scope: crate::deletion::RedactionScope::entity(&subject),
         reason: crate::DeleteReason::GdprDelete,

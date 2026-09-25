@@ -1,4 +1,8 @@
 mod config;
+mod gpu;
+pub use gpu::{
+    GPU_LEASE_SECONDS, GPU_RENEW_SECONDS, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError,
+};
 mod defaults;
 mod mode;
 mod routes;

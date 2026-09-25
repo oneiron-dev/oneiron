@@ -91,7 +91,7 @@ pub(crate) fn inbox_claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
     normalized.stale = false;
     let encoded = crate::claim::encode_claim_body(&normalized)?;
     let mut hasher = Sha256::new();
-    hasher.update(b"oneiron.inbox.claim_hash.v0");
+    hasher.update(b"oneiron.inbox.claim_hash.v1");
     hasher.update(&encoded);
     Ok(hasher.finalize().into())
 }
@@ -220,7 +220,13 @@ fn classify_member(
         classes.push(InboxExceptionClass::PluginInstall);
     }
 
-    let verb_class = if member.body.predicate == PREDICATE_CONFLICT_OPEN {
+    let verb_class = if member.body.predicate == PREDICATE_CONFLICT_OPEN
+        || member
+            .pending
+            .reason_codes
+            .iter()
+            .any(|code| code == "gate.pending.contradiction_closure")
+    {
         classes.push(InboxExceptionClass::Conflict);
         VERB_CLASS_CONFLICT
     } else {

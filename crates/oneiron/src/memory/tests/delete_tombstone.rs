@@ -555,7 +555,7 @@ fn a_soft_erase_that_erased_nothing_writes_no_pending_tombstone() {
                 let vault_ref = &vault;
                 let deleter = scope.spawn(move || {
                     // Per-vault seam: armed on the vault that will fire it.
-                    vault_ref.test_hooks().install_after_header_read_signal(tx);
+                    vault_ref.test_hooks().install_after_delete_probe_signal(tx);
                     deleter_barrier.wait();
                     vault_ref.delete_entity_with_reason(&id, reason)
                 });

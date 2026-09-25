@@ -171,7 +171,7 @@ fn project_in_txn(
         _ => false,
     };
     if !unchanged {
-        let claim_id = EntityId::now();
+        let claim_id = vault.store.clock.entity_id()?;
         let mut body = ClaimBody::new(
             PREDICATE_SKILL_RELIABILITY,
             ClaimSubject::Entity(*skill),

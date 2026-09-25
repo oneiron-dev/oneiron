@@ -66,7 +66,13 @@ fn batch_put_multiple_entities_atomically() -> Result<()> {
         .batch()
         .put(&id_a, 1, test_time_range(100, 100), 101, b"a")
         .put(&id_b, 1, test_time_range(200, 201), 202, b"b")
-        .put(&id_c, 6, test_time_range(300, 400), 401, b"c")
+        .put(
+            &id_c,
+            crate::registry::ENTITY_TYPE_EVENT,
+            test_time_range(300, 400),
+            401,
+            b"c",
+        )
         .commit()?;
 
     assert_eq!(vault.get(&id_a)?.ok_or(Error::EntityNotFound)?, b"a");
@@ -108,7 +114,13 @@ fn batch_put_writes_temporal_indexes() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 6, test_time_range(1_000, 2_000), 3_000, b"range")
+        .put(
+            &id,
+            crate::registry::ENTITY_TYPE_EVENT,
+            test_time_range(1_000, 2_000),
+            3_000,
+            b"range",
+        )
         .commit()?;
 
     {
@@ -144,7 +156,7 @@ fn batch_put_writes_temporal_indexes() -> Result<()> {
         .batch()
         .put(
             &point_id,
-            6,
+            crate::registry::ENTITY_TYPE_EVENT,
             test_time_range(7_777, 7_777),
             8_888,
             b"point-event",
@@ -193,7 +205,13 @@ fn batch_put_writes_long_interval_index_by_end_time() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 6, test_time_range(1_000, end), 3_000, b"long-range")
+        .put(
+            &id,
+            crate::registry::ENTITY_TYPE_EVENT,
+            test_time_range(1_000, end),
+            3_000,
+            b"long-range",
+        )
         .commit()?;
 
     let key = Store::encode_temporal_key(end, &id);
@@ -223,14 +241,14 @@ fn batch_put_and_deindex_pin_temporal_boundary_comparisons() -> Result<()> {
         .batch()
         .put(
             &exact_id,
-            6,
+            crate::registry::ENTITY_TYPE_EVENT,
             test_time_range(start, exact_end),
             3_000,
             b"exact-threshold",
         )
         .put(
             &over_id,
-            6,
+            crate::registry::ENTITY_TYPE_EVENT,
             test_time_range(start, over_end),
             3_001,
             b"over-threshold",
@@ -271,7 +289,7 @@ fn batch_put_and_deindex_pin_temporal_boundary_comparisons() -> Result<()> {
     }
     vault.put_entity(
         &exact_id,
-        6,
+        crate::registry::ENTITY_TYPE_EVENT,
         test_time_range(start, exact_end),
         3_010,
         b"exact-threshold-updated",
@@ -320,7 +338,7 @@ fn batch_put_and_deindex_pin_temporal_boundary_comparisons() -> Result<()> {
     let point_ts = 7_000_u64;
     vault.put_entity(
         &point_id,
-        6,
+        crate::registry::ENTITY_TYPE_EVENT,
         test_time_range(point_ts, point_ts),
         8_000,
         b"point",
@@ -337,7 +355,7 @@ fn batch_put_and_deindex_pin_temporal_boundary_comparisons() -> Result<()> {
     }
     vault.put_entity(
         &point_id,
-        6,
+        crate::registry::ENTITY_TYPE_EVENT,
         test_time_range(point_ts, point_ts),
         8_001,
         b"point-updated",
@@ -367,7 +385,7 @@ fn open_migrates_legacy_long_interval_rows() -> Result<()> {
         .batch()
         .put(
             &id,
-            6,
+            crate::registry::ENTITY_TYPE_EVENT,
             test_time_range(1_000, end),
             3_000,
             b"legacy-long-range",
@@ -452,7 +470,7 @@ fn open_checks_model_id_before_migrating_long_interval_schema() -> Result<()> {
         .batch()
         .put(
             &id,
-            6,
+            crate::registry::ENTITY_TYPE_EVENT,
             test_time_range(1_000, end),
             3_000,
             b"legacy-long-range",
@@ -528,7 +546,13 @@ fn batch_with_edges_and_entities() -> Result<()> {
     vault
         .batch()
         .put(&src, 1, test_time_range(1, 2), 3, b"src")
-        .put(&tgt, 4, test_time_range(4, 5), 6, b"tgt")
+        .put(
+            &tgt,
+            crate::registry::ENTITY_TYPE_PERSON,
+            test_time_range(4, 5),
+            6,
+            b"tgt",
+        )
         .vector(&src, &vector)
         .edge(&src, EdgeKind::BelongsTo, &tgt, 0.5)
         .commit()?;

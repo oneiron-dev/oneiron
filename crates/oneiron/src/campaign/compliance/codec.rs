@@ -1,6 +1,9 @@
 //! Claim-store readers, comm-party mirror, and the msgpack value toolkit.
 
-use sha2::{Digest, Sha256};
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
+use sha2::Digest;
+use sha2::Sha256;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, decode_claim_body};
@@ -9,7 +12,6 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::store::Store;
-use crate::vault::{edge_kind_prefix, parse_edge_record};
 
 /// Live claim heads of `predicate` on `subject`.
 ///
@@ -27,12 +29,15 @@ pub(super) fn active_claim_bodies_in_txn(
     predicate: &str,
 ) -> Result<Vec<ClaimBody>> {
     let mut bodies = Vec::new();
-    for entry in store
-        .edges_in
-        .prefix_iter(txn, &edge_kind_prefix(subject, EdgeKind::ClaimOf))?
-    {
-        let (key, value) = entry?;
-        let id = parse_edge_record(&key, &value)?.target;
+    for entry in store.port_edges(
+        txn,
+        subject,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::ClaimOf),
+        None,
+    )? {
+        let edge_row = entry?;
+        let id = edge_row.target;
         let Some(body) = claim_body_in_txn(store, txn, &id)? else {
             continue;
         };
@@ -76,7 +81,7 @@ pub(super) fn claim_body_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<ClaimBody>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -132,16 +137,14 @@ fn person_with_party_key_in_txn(
     id: &EntityId,
     party_key: &str,
 ) -> Result<bool> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(false);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(false);
-    };
-    if header.entity_type != ENTITY_TYPE_PERSON {
+
+    if raw.entity_type != ENTITY_TYPE_PERSON {
         return Ok(false);
     }
-    let mut cursor = std::io::Cursor::new(&raw[ENTITY_METADATA_HEADER_LEN..]);
+    let mut cursor = std::io::Cursor::new(&raw.body);
     let Ok(body) = rmpv::decode::read_value(&mut cursor) else {
         return Ok(false);
     };

@@ -1,7 +1,12 @@
 mod codec;
 mod keys;
 mod rust_source;
+mod semantic_diff;
 mod storage;
+pub use semantic_diff::{
+    CodeContentVersion, CodeSemanticChange, code_text_diff, render_code_semantic_diff,
+    semantic_code_diff,
+};
 mod text_diff;
 mod types;
 mod validate;
@@ -21,8 +26,8 @@ pub use self::types::{
     CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_MANIFEST_MAX_CHUNKS,
     CODE_SYMBOL_MANIFEST_MAX_SYMBOLS, CODE_SYMBOL_NAME_MAX_BYTES,
     CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CODE_SYMBOL_TEXT_HASH_LEN, CodeChunk, CodeEmbeddingInput,
-    CodeEmbeddingVector, CodeSymbolBlame, CodeSymbolDefinition, CodeSymbolGraph,
-    CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
+    CodeEmbeddingVector, CodeProducingOperation, CodeSymbolBlame, CodeSymbolDefinition,
+    CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
 };
 
 #[cfg(test)]

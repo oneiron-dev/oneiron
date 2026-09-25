@@ -184,12 +184,21 @@ pub(super) fn rebuild_code_revision_frontier_in_txn(
     Ok(())
 }
 
+/// Only admission converts an otherwise valid divergent frontier to a proposal.
+/// Trace rebuild and read verification keep treating divergent finalized rows
+/// as corruption.
+pub(super) enum FrontierUpdate {
+    Advance,
+    Converged,
+    Diverged(CodeRevisionFrontierRecord),
+}
+
 pub(super) fn validate_code_revision_frontier_update(
     store: &Store,
     rtxn: &RoTxn<'_>,
     revision: &CodeRevision,
     integrity: &CodeRevisionIntegrityRecord,
-) -> Result<bool> {
+) -> Result<FrontierUpdate> {
     let Some(frontier) = get_code_revision_frontier_in_txn(store, rtxn, &revision.session_id)?
     else {
         if revision.parent_revision_id.is_some() {
@@ -197,7 +206,7 @@ pub(super) fn validate_code_revision_frontier_update(
                 "code revision frontier record missing",
             )));
         }
-        return Ok(true);
+        return Ok(FrontierUpdate::Advance);
     };
     if frontier.session_id != revision.session_id {
         return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
@@ -205,8 +214,13 @@ pub(super) fn validate_code_revision_frontier_update(
         )));
     }
     verify_code_revision_frontier_record_in_txn(store, rtxn, &frontier)?;
-
-    code_revision_frontier_update_decision(Some(&frontier), revision, integrity)
+    if integrity.parent_fold == Some(frontier.revision_fold) {
+        Ok(FrontierUpdate::Advance)
+    } else if integrity.revision_fold == frontier.revision_fold {
+        Ok(FrontierUpdate::Converged)
+    } else {
+        Ok(FrontierUpdate::Diverged(frontier))
+    }
 }
 
 fn code_revision_frontier_update_decision(

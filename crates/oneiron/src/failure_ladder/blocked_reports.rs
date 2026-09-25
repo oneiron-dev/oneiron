@@ -70,6 +70,9 @@ fn verify_blocked_report(
     {
         return Ok(dropped());
     }
+    if crate::code_run::blocked::read_blocked_receipt(vault, &receipt)?.is_none() {
+        return Ok(dropped());
+    }
     Ok(BlockedReportVerification::Verified(report.clone()))
 }
 
@@ -78,6 +81,7 @@ fn verify_blocked_report(
 pub struct FailureIssueEntry {
     pub report: BlockedReportRef,
     pub semi_trusted: bool,
+    pub receipt: crate::code_run::blocked::BlockedReceipt,
 }
 
 /// Verifies and projects a report into Issues.
@@ -92,10 +96,18 @@ pub struct FailureIssueEntry {
 /// [`Error::InvalidConfig`] when the ref does not verify.
 pub fn ingest_report_blocked(vault: &Vault, report: BlockedReportRef) -> Result<FailureIssueEntry> {
     match verify_blocked_report(vault, &report)? {
-        BlockedReportVerification::Verified(report) => Ok(FailureIssueEntry {
-            report,
-            semi_trusted: true,
-        }),
+        BlockedReportVerification::Verified(report) => {
+            let receipt = crate::code_run::blocked::read_blocked_receipt(
+                vault,
+                &EntityId::from_hex(&report.receipt_ref)?,
+            )?
+            .ok_or(Error::InvalidConfig("blocked receipt disappeared".into()))?;
+            Ok(FailureIssueEntry {
+                report,
+                semi_trusted: true,
+                receipt,
+            })
+        }
         BlockedReportVerification::Dropped { receipt_ref } => Err(Error::InvalidConfig(format!(
             "blocked report {receipt_ref} does not resolve to a durable report_blocked receipt"
         ))),

@@ -16,7 +16,7 @@ from typing import Any, Literal, NotRequired, TypedDict
 __all__ = ["Oneiron", "OneironError"]
 
 WitnessAuthor = Literal["user", "companion", "system"]
-Effort = Literal["minimal", "standard", "deep"]
+Effort = Literal["light", "medium", "high", "xhigh", "max"]
 PackFormat = Literal["json", "yaml", "toon", "md", "txt"]
 
 class WitnessMessage(TypedDict):
@@ -87,6 +87,7 @@ class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
 
 class RetrievalMeta(TypedDict):
+    partial: bool
     sparse: bool | None
     total_candidates: int
     claims_returned: int
@@ -110,6 +111,44 @@ class FacadeReceipt(TypedDict):
     content_kind: str
     claim_ref: str | None
 
+
+class KeyValueAddress(TypedDict):
+    namespace: list[str]
+    key: str
+
+class KeyValuePut(KeyValueAddress):
+    value: dict[str, Any]
+    request_id: str
+    source: NotRequired[str]
+
+class KeyValueItem(KeyValueAddress):
+    value: dict[str, Any]
+    created_at: int
+    updated_at: int
+    revision: str
+
+class KeyValuePutReceipt(TypedDict):
+    item: KeyValueItem
+    replayed: bool
+    receipt_ref: str
+
+class KeyValueDeleteReceipt(TypedDict):
+    existed: bool
+    receipt_refs: list[str]
+
+class KeyValueSearch(TypedDict):
+    namespace_prefix: NotRequired[list[str]]
+    filter: NotRequired[dict[str, Any] | None]
+    limit: NotRequired[int]
+    offset: NotRequired[int]
+
+class KeyValueNamespaces(TypedDict):
+    prefix: NotRequired[list[str]]
+    suffix: NotRequired[list[str]]
+    max_depth: NotRequired[int | None]
+    limit: NotRequired[int]
+    offset: NotRequired[int]
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -128,16 +167,18 @@ class Oneiron:
     ) -> "Oneiron": ...
     @classmethod
     def connect(cls, url: str, key: str) -> "Oneiron": ...
+    @classmethod
+    def pair(cls, link: str) -> tuple["Oneiron", str]: ...
     def as_actor(self, actor_key: str) -> "Oneiron": ...
+    # BEGIN GENERATED FACADE VERBS
     def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
     def claim_upsert(self, claim: ClaimInput) -> CommitReceipt: ...
-    def recall(
-        self,
-        query: str,
-        *,
-        effort: Effort = "standard",
-        scope: RecallScope | None = None,
-        limit: int = 10,
-        format: PackFormat | None = None,
-    ) -> MemoryPack: ...
+    def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None) -> MemoryPack: ...
     def receipts(self, limit: int = 100) -> list[FacadeReceipt]: ...
+    def key_value_get(self, request: KeyValueAddress) -> KeyValueItem | None: ...
+    def key_value_put(self, request: KeyValuePut) -> KeyValuePutReceipt: ...
+    def key_value_delete(self, request: KeyValueAddress) -> KeyValueDeleteReceipt: ...
+    def key_value_search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
+    def key_value_namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...
+
+# END GENERATED FACADE VERBS

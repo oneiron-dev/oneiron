@@ -95,7 +95,7 @@ fn decode_signature(bytes: &[u8]) -> Result<IssueSignature> {
 ///
 /// Storage errors.
 pub fn emit_issue_signature(vault: &Vault, sig: IssueSignature) -> PublisherResult<EntityId> {
-    let id = EntityId::now();
+    let id = vault.store.clock.entity_id()?;
     let value = encode_signature(&sig)?;
     put_meta(vault, &signature_key(id), &value)?;
     Ok(id)

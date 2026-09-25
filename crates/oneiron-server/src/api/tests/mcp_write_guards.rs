@@ -4,7 +4,7 @@ use super::*;
 
 #[tokio::test]
 async fn mcp_tools_call_read_uses_connector_actor_and_scoped_read() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1222_0001);
     let credential = "one-1222-read-credential";
     register_mcp_actor(
@@ -68,7 +68,7 @@ async fn mcp_tools_call_read_uses_connector_actor_and_scoped_read() {
 
 #[tokio::test]
 async fn mcp_edit_propose_claim_persists_gate_decision_with_forced_stamp() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1222_0101);
     let credential = "one-1222-write-credential";
     register_mcp_actor(
@@ -166,7 +166,7 @@ async fn mcp_edit_propose_claim_persists_gate_decision_with_forced_stamp() {
 
 #[tokio::test]
 async fn mcp_edit_idempotency_is_actor_scoped_and_replays_without_mutation() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_a = seeded_test_entity_id(0x1222_0601);
     let actor_b = seeded_test_entity_id(0x1222_0602);
     let credential_a = "one-1222-idem-a";
@@ -289,7 +289,7 @@ async fn mcp_edit_idempotency_is_actor_scoped_and_replays_without_mutation() {
 
 #[tokio::test]
 async fn mcp_edit_rejects_source_approval_spoofing_without_partial_mutation() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1222_0201);
     let credential = "one-1222-denied-credential";
     register_mcp_actor(
@@ -357,7 +357,7 @@ async fn mcp_edit_rejects_source_approval_spoofing_without_partial_mutation() {
 
 #[tokio::test]
 async fn mcp_edit_rejects_legacy_entity_wrapper_without_partial_mutation() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1222_0401);
     let credential = "one-1222-non-claim-credential";
     register_mcp_actor(
@@ -429,7 +429,7 @@ async fn mcp_edit_rejects_legacy_entity_wrapper_without_partial_mutation() {
 
 #[tokio::test]
 async fn mcp_edit_supersede_claim_lands_deferred_proposal_without_closing_old_claim() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1222_0501);
     let credential = "one-1222-deferred-credential";
     register_mcp_actor(
@@ -442,6 +442,16 @@ async fn mcp_edit_supersede_claim_lands_deferred_proposal_without_closing_old_cl
 
     let subject_ref = seeded_test_entity_id(0x1222_0502);
     let old_claim = seeded_test_entity_id(0x1222_0503);
+    server
+        .vault
+        .put_entity(
+            &subject_ref,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"supersede subject",
+        )
+        .expect("seed supersede subject");
     seed_active_claim(&server, old_claim, subject_ref, "before", 500);
 
     let (status, body) = mcp_legacy_adapter_json(
@@ -500,7 +510,7 @@ async fn mcp_edit_supersede_claim_lands_deferred_proposal_without_closing_old_cl
 
 #[tokio::test]
 async fn mcp_ask_returns_accepted_without_mutation() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1222_0301);
     let credential = "one-1222-ask-credential";
     register_mcp_actor(
@@ -556,7 +566,7 @@ async fn mcp_ask_returns_accepted_without_mutation() {
 
 #[tokio::test]
 async fn mcp_malformed_call_returns_stable_json_rpc_error() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let request = Request::builder()
         .method("POST")
         .uri("/mcp")
@@ -575,7 +585,7 @@ async fn mcp_malformed_call_returns_stable_json_rpc_error() {
 
 #[tokio::test]
 async fn mcp_stale_edit_rejected_before_proposal() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1936_0101);
     let credential = "one-1936-stale-edit-credential";
     register_mcp_actor(
@@ -739,7 +749,7 @@ async fn mcp_stale_edit_rejected_before_proposal() {
 
 #[tokio::test]
 async fn mcp_stale_attest_returns_current_provenance_head() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1936_0201);
     let credential = "one-1936-stale-attest-credential";
     register_mcp_actor(
@@ -844,7 +854,7 @@ async fn mcp_stale_attest_returns_current_provenance_head() {
 
 #[tokio::test]
 async fn mcp_first_attestation_without_a_prior_has_no_lifecycle_target() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1936_0301);
     let credential = "one-1936-first-attest-credential";
     register_mcp_actor(
@@ -887,4 +897,71 @@ async fn mcp_first_attestation_without_a_prior_has_no_lifecycle_target() {
         body["result"]["structuredContent"]["status"],
         Value::from("proposed")
     );
+}
+
+/// ONE-2280: relationship scope crosses MCP argument validation and the write
+/// gate, and invalid references cannot leave a claim or Gate receipt behind.
+#[tokio::test]
+async fn mcp_edit_relationship_scope_persists_and_invalid_refs_are_atomic() {
+    let (_dir, server) = auth_test_server();
+    let actor = seeded_test_entity_id(0x2280_0001);
+    let relationship = seeded_test_entity_id(0x2280_0002);
+    let unknown = seeded_test_entity_id(0x2280_0003);
+    let credential = "relationship-mcp-credential";
+    register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    server
+        .vault
+        .put_entity(
+            &relationship,
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .unwrap();
+
+    let args = |rel: oneiron::EntityId, key: &str| {
+        let mut args = mcp_propose_claim_args(actor, actor, key);
+        args["predicate"] = json!("profile.nickname");
+        args["value"] = json!("Ada");
+        args["relationship"] = json!(rel.to_hex());
+        args["scope"] = json!({"sensitivity": "public"});
+        args
+    };
+    let (_, body) = mcp_legacy_adapter_json(
+        server.clone(),
+        mcp_call_request(
+            credential,
+            "rel-ok",
+            "oneiron.edit",
+            args(relationship, "rel-ok"),
+        ),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body:?}");
+    let id =
+        oneiron::EntityId::from_hex(body["result"]["structuredContent"]["id"].as_str().unwrap())
+            .unwrap();
+    let stored = server.vault.get_claim(&id).unwrap().unwrap();
+    assert_eq!(stored.rel, Some(relationship));
+    assert_eq!(stored.predicate, "profile.nickname");
+
+    let claims = server
+        .vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+        .unwrap();
+    let decisions = server.vault.gate_decisions(100).unwrap();
+    for (invalid, key) in [(unknown, "rel-unknown"), (actor, "rel-wrong-kind")] {
+        let error = mcp_edit_error(&server, credential, args(invalid, key)).await;
+        assert_eq!(error["code"], json!(-32603));
+        assert_eq!(error["data"]["kind"], json!("engine_error"));
+        assert_eq!(
+            server
+                .vault
+                .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+                .unwrap(),
+            claims,
+        );
+        assert_eq!(server.vault.gate_decisions(100).unwrap(), decisions);
+    }
 }

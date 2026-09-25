@@ -50,6 +50,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_with_task_ref_in_txn(&mut wtxn, input, None)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -124,6 +125,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_consolidation_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -176,6 +178,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_skill_optimize_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -241,6 +244,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_vault_cleanup_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -441,6 +445,18 @@ impl<'a> DreamerRunnerStore<'a> {
     /// A row already parked by a DIFFERENT owner is never overwritten
     /// (fail-closed error); the same owner may re-park to refresh the row.
     pub fn park_attempt(&self, input: ParkDreamerAttempt) -> Result<DreamerParkedAttemptRecord> {
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let record = self.park_attempt_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
+        Ok(record)
+    }
+
+    pub(crate) fn park_attempt_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: ParkDreamerAttempt,
+    ) -> Result<DreamerParkedAttemptRecord> {
         validate_park_reason(&input.reason)?;
         validate_park_owner(&input.park_owner)?;
         if self.status(input.attempt_id)?.is_none() {
@@ -455,12 +471,11 @@ impl<'a> DreamerRunnerStore<'a> {
         };
         let encoded = encode_parked_record(&record)?;
         let key = parked_key(record.attempt_id);
-        let mut wtxn = self.vault.store.env.write_txn()?;
         let existing = self
             .vault
             .store
             .vault_meta
-            .get(&wtxn, &key)?
+            .get(&*wtxn, &key)?
             .map(|raw| decode_parked_record(&raw))
             .transpose()?;
         if let Some(existing) = existing
@@ -470,8 +485,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 "dreamer parked row is owned by a different parker",
             ));
         }
-        self.vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
-        wtxn.commit()?;
+        self.vault.store.vault_meta.put(wtxn, &key, &encoded)?;
         Ok(record)
     }
 
@@ -493,6 +507,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let resumed = self.resume_parked_in_txn(&mut wtxn, attempt_id, park_owner, now)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(resumed)
     }
 

@@ -152,7 +152,7 @@ fn valid_artifact_with_unexpected_type_quarantines_without_use() -> Result<()> {
 }
 
 #[test]
-fn repeated_invalid_artifact_quarantine_is_idempotent() -> Result<()> {
+fn repeated_invalid_artifact_quarantine_preserves_each_original() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let artifact_path = dir.path().join("snapshot.oneiron-artifact");
     let mut corrupt = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?;
@@ -172,10 +172,11 @@ fn repeated_invalid_artifact_quarantine_is_idempotent() -> Result<()> {
         panic!("second corrupt artifact should return typed quarantine");
     };
 
-    assert_eq!(second.quarantine_path, first.quarantine_path);
+    assert_ne!(second.quarantine_path, first.quarantine_path);
+    assert_eq!(fs::read(&first.quarantine_path)?, corrupt);
     assert_eq!(fs::read(&second.quarantine_path)?, corrupt);
     assert!(!artifact_path.exists(), "second source is removed");
-    assert_invalid_suffix(&second.quarantine_path, &artifact_path, 1);
+    assert_invalid_suffix(&second.quarantine_path, &artifact_path, 2);
     Ok(())
 }
 
@@ -234,19 +235,12 @@ fn quarantine_preserves_validated_bytes_when_source_changes() -> Result<()> {
     let concurrently_written = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"new")?;
     fs::write(&artifact_path, &concurrently_written)?;
 
-    let quarantine_path = quarantine_invalid_artifact(&artifact_path, &validated_bad)?;
-
-    assert_eq!(
-        fs::read(&quarantine_path)?,
-        validated_bad,
-        "quarantine keeps the bytes that drove validation"
-    );
-    assert_eq!(
-        fs::read(&artifact_path)?,
-        concurrently_written,
-        "changed source bytes are not removed after quarantine"
-    );
-    assert_invalid_suffix(&quarantine_path, &artifact_path, 1);
+    assert!(matches!(
+        quarantine_invalid_artifact(&artifact_path, &validated_bad),
+        Err(Error::ConcurrentWrite(_))
+    ));
+    assert_eq!(fs::read(&artifact_path)?, concurrently_written);
+    assert!(!invalid_artifact_path(&artifact_path, 1).exists());
     Ok(())
 }
 

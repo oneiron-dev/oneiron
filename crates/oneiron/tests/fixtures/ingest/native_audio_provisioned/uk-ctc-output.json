@@ -1,0 +1,84 @@
+{
+  "words": [
+    {
+      "start_ms": 0,
+      "end_ms": 421,
+      "text": "Привіт.",
+      "confidence": null
+    },
+    {
+      "start_ms": 743,
+      "end_ms": 823,
+      "text": "Це",
+      "confidence": null
+    },
+    {
+      "start_ms": 943,
+      "end_ms": 1445,
+      "text": "перевірка",
+      "confidence": null
+    },
+    {
+      "start_ms": 1565,
+      "end_ms": 1927,
+      "text": "часу",
+      "confidence": null
+    },
+    {
+      "start_ms": 2027,
+      "end_ms": 2308,
+      "text": "слів.",
+      "confidence": null
+    },
+    {
+      "start_ms": 2689,
+      "end_ms": 2749,
+      "text": "Ми",
+      "confidence": null
+    },
+    {
+      "start_ms": 2870,
+      "end_ms": 3653,
+      "text": "зустрінемося",
+      "confidence": null
+    },
+    {
+      "start_ms": 3773,
+      "end_ms": 3954,
+      "text": "біля",
+      "confidence": null
+    },
+    {
+      "start_ms": 4094,
+      "end_ms": 4797,
+      "text": "бібліотеки.",
+      "confidence": null
+    }
+  ],
+  "provenance": {
+    "runtime_binding": {
+      "profile_sha256": "fc56078fabe09e0eae53be5ea0f62db6f72bab12f7f022f61d55eb5832c06cff",
+      "python_version": "3.13.5",
+      "code_sha256": {
+        "meeting-audio-worker.py": "8de86b391dee7d5267ed27bcc6106771fd6de22f544b8d188ff30a6216ba2851",
+        "meeting_audio_ctc.py": "d9a89905d461db38b995c7dac166453452d680cf6ae06be0f106933cbcd295ba",
+        "meeting-audio-native.py": "b9661ba32cb2a52e1c3db59902bf1dde6a20f403a9c6363ce2d0029c72571133",
+        "meeting_audio_runtime.py": "67ea854c9eae412db604a38ccd955d181e179e8ebd573c0d4645ad6aefc60fec",
+        "meeting_audio_process.py": "707ef32d057dbb478889c070119659db4113c80524df684c5bc3af63880f9abb"
+      }
+    },
+    "provenance": {
+      "invocation_id": "1d47e38b-739a-4b0d-8595-ff94d3f30e6f",
+      "model_id": "Yehor/w2v-xls-r-uk",
+      "input_sha256": "13b6ccff034ea5683f9e66891c0d3ab4ad8556bd71cfcabc36736dfe626b3842",
+      "execution": "measured",
+      "runtime_components_sha256": {
+        "meeting_audio_runtime.py": "67ea854c9eae412db604a38ccd955d181e179e8ebd573c0d4645ad6aefc60fec",
+        "meeting_audio_process.py": "707ef32d057dbb478889c070119659db4113c80524df684c5bc3af63880f9abb",
+        "meeting_audio_ctc.py": "d9a89905d461db38b995c7dac166453452d680cf6ae06be0f106933cbcd295ba"
+      },
+      "transcript_sha256": "8e256aa265ab5f2a6e2ef79c1a48c5b87b819778b8ebfa1a433342ac74d5a634",
+      "language": "Ukrainian"
+    }
+  }
+}

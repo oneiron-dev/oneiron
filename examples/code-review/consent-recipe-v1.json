@@ -1,0 +1,4 @@
+{
+  "version": 1,
+  "template": "The agent asked to run code for this purpose: {purpose}. Host analysis reached {reached_symbols} symbols and {reached_entities} entities, up to {max_depth} steps from the touched symbols. Reported write targets: {writes}. Reported network destinations: {egress}. This summary does not cover: {side_channels}."
+}

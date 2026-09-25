@@ -19,6 +19,9 @@ pub struct RunTreeNode {
     pub run_id: Option<String>,
     pub parent_id: Option<String>,
     pub worker_kind: String,
+    /// Operator-selected worker, if this attempt has been redirected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<String>,
     /// The dispatched agent's label for `agent.dispatch` attempts (decoded from
     /// the payload snapshot; tolerant — a malformed inner input renders as
     /// `None`). Additive and elided when absent, so serialized trees stay
@@ -97,6 +100,7 @@ pub enum RunTreeEventKind {
     Failed,
     Cancelled,
     Interrupted,
+    Redirected,
     /// The attempt reached [`RunTreeStatus::Abandoned`].
     Abandoned,
     /// The attempt named the artifact version carrying its durable output.
@@ -177,6 +181,7 @@ impl From<AttemptInterventionKind> for RunTreeEventKind {
             AttemptInterventionKind::Pause => Self::Paused,
             AttemptInterventionKind::Resume => Self::Resumed,
             AttemptInterventionKind::Cancel => Self::Cancelled,
+            AttemptInterventionKind::Redirect => Self::Redirected,
         }
     }
 }

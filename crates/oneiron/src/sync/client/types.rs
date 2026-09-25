@@ -3,10 +3,19 @@
 /// Client-side sync configuration.
 #[derive(Debug, Clone)]
 pub struct SyncClientConfig {
+    /// Federation principal/grant supplied by the authenticated transport host.
+    /// Never inferred from `auth_token` or untrusted CRDT peer ids.
+    pub federation_peer: Option<crate::sync::federation_burst::FederationPeer>,
+    /// Explicit role for selector UPDATE frames on a bound federation lane.
+    pub federation_admission_role: crate::sync::FederationAdmissionRole,
     /// WebSocket server URL (e.g., "wss://user-{id}.fly.dev/ws").
     pub server_url: String,
     /// Auth token (WorkOS JWT for production, shared secret for Phase 1).
     pub auth_token: String,
+    /// Opt in to this configured server as the NOTE admission authority.
+    /// Must be a MAC-verified actor-bound slip with core:read,core:write and jti.
+    /// Only TLS or loopback URLs are accepted for this lane.
+    pub note_session: Option<NoteSyncSession>,
     /// Number of default windows to sync (current + previous). Default: 2.
     pub default_window_count: u8,
     /// Debounce interval for rapid edits before sending. Default: 50ms.
@@ -22,14 +31,41 @@ pub struct SyncClientConfig {
 impl Default for SyncClientConfig {
     fn default() -> Self {
         Self {
+            federation_peer: None,
+            federation_admission_role: crate::sync::FederationAdmissionRole::Guest,
             server_url: String::new(),
             auth_token: String::new(),
+            note_session: None,
             default_window_count: 2,
             sync_debounce_ms: 50,
             reconnect_backoff_max_ms: 60_000,
             reconnect_initial_ms: 1_000,
             ephemeral_timeout_ms: 30_000,
         }
+    }
+}
+
+/// An actor credential for the explicit NOTE authority lane: the slip token
+/// and the holder's signing key, whose public half is the slip's binding key.
+#[derive(Clone)]
+pub struct NoteSyncSession {
+    token: String,
+    key: ed25519_dalek::SigningKey,
+}
+impl NoteSyncSession {
+    pub fn new(token: String, key: ed25519_dalek::SigningKey) -> Self {
+        Self { token, key }
+    }
+    pub(super) fn token(&self) -> &str {
+        &self.token
+    }
+    pub(super) fn key(&self) -> &ed25519_dalek::SigningKey {
+        &self.key
+    }
+}
+impl std::fmt::Debug for NoteSyncSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NoteSyncSession([redacted])")
     }
 }
 
@@ -64,6 +100,12 @@ pub enum SyncEvent {
         added: Vec<String>,
         updated: Vec<String>,
         removed: Vec<String>,
+    },
+    /// Inbound bytes are durably retained, not materialized or discarded.
+    FederationDeferred {
+        window_key: String,
+        request_id: [u8; 32],
+        inputs: crate::llm::NormalizedBurstInputs,
     },
     Error(String),
 }

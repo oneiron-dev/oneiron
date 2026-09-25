@@ -1,16 +1,33 @@
-//! Canonical recovery artifact loader shell.
+//! Canonical Layer-1 recovery, validated rebuilds and bounded repair.
 //!
 //! The shell is deliberately small: it validates the self-describing artifact
 //! header before handing payload bytes to a caller. Corrupt or unsupported
 //! artifacts are moved into a deterministic quarantine path next to the source
 //! artifact so the original bytes remain available for later inspection.
 
+pub mod checkpoint;
+
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::fs;
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
+mod canonical;
+mod document;
+mod ladder;
+mod quarantine;
+mod redaction;
+#[cfg(feature = "sync")]
+mod soft_shell;
+mod validation;
+#[cfg(feature = "sync")]
+pub(crate) use soft_shell::{materialize_retained_shells, retained_soft_shell};
+
+pub use canonical::*;
+pub use document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
+#[cfg(feature = "sync")]
+pub(crate) use document::{materialize_window_documents, validate_window_documents};
+pub use ladder::*;
+use quarantine::quarantine_invalid_artifact;
 
 use crate::error::{ArtifactError, Error, Result};
 
@@ -26,7 +43,6 @@ const KIND_OFFSET: usize = VERSION_OFFSET + 2;
 const LEN_OFFSET: usize = KIND_OFFSET + 2;
 const CHECKSUM_OFFSET: usize = LEN_OFFSET + 8;
 const HEADER_LEN: usize = CHECKSUM_OFFSET + 32;
-const QUARANTINE_SUFFIX_RETRY_LIMIT: usize = 2;
 
 /// Recovery ladder result for a filesystem artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,72 +253,13 @@ fn validate_recovery_artifact(
 }
 
 fn recovery_artifact_checksum(artifact_type: u16, payload: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(artifact_type.to_le_bytes());
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&RECOVERY_ARTIFACT_MAGIC);
+    hasher.update(&RECOVERY_ARTIFACT_VERSION.to_le_bytes());
+    hasher.update(&artifact_type.to_le_bytes());
+    hasher.update(&(payload.len() as u64).to_le_bytes());
     hasher.update(payload);
-    hasher.finalize().into()
-}
-
-fn quarantine_invalid_artifact(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
-    'suffixes: for suffix in 1..=u16::MAX {
-        let candidate = invalid_artifact_path(path, suffix);
-        for _attempt in 0..=QUARANTINE_SUFFIX_RETRY_LIMIT {
-            match persist_quarantine_bytes(&candidate, bytes) {
-                Ok(()) => {
-                    remove_original_if_unchanged(path, bytes)?;
-                    return Ok(candidate);
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                    match artifact_file_matches(&candidate, bytes) {
-                        Ok(true) => {
-                            remove_original_if_unchanged(path, bytes)?;
-                            return Ok(candidate);
-                        }
-                        Ok(false) => continue 'suffixes,
-                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                        Err(err) => return Err(Error::Io(err)),
-                    }
-                }
-                Err(err) => return Err(Error::Io(err)),
-            }
-        }
-    }
-
-    Err(Error::Artifact(
-        ArtifactError::RecoveryArtifactQuarantineExhausted {
-            path: path.to_path_buf(),
-        },
-    ))
-}
-
-fn artifact_file_matches(path: &Path, bytes: &[u8]) -> std::io::Result<bool> {
-    let path_metadata = fs::symlink_metadata(path)?;
-    if !path_metadata.file_type().is_file() || path_metadata.len() != bytes.len() as u64 {
-        return Ok(false);
-    }
-
-    let mut file = File::open(path)?;
-    let file_metadata = file.metadata()?;
-    if !file_metadata.file_type().is_file() || file_metadata.len() != bytes.len() as u64 {
-        return Ok(false);
-    }
-
-    let mut offset = 0;
-    let mut buffer = [0_u8; 8192];
-    while offset < bytes.len() {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            return Ok(false);
-        }
-        let end = offset + read;
-        if end > bytes.len() || buffer[..read] != bytes[offset..end] {
-            return Ok(false);
-        }
-        offset = end;
-    }
-
-    let mut trailing = [0_u8; 1];
-    Ok(file.read(&mut trailing)? == 0)
+    *hasher.finalize().as_bytes()
 }
 
 fn invalid_artifact_path(path: &Path, suffix: u16) -> PathBuf {
@@ -314,27 +271,16 @@ fn invalid_artifact_path(path: &Path, suffix: u16) -> PathBuf {
     parent.join(file_name)
 }
 
-fn persist_quarantine_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
-    if let Err(err) = file.write_all(bytes) {
-        let _ = fs::remove_file(path);
-        return Err(err);
-    }
-    if let Err(err) = file.sync_all() {
-        let _ = fs::remove_file(path);
-        return Err(err);
-    }
-    Ok(())
-}
-
-fn remove_original_if_unchanged(path: &Path, bytes: &[u8]) -> Result<()> {
-    match fs::read(path) {
-        Ok(current) if current == bytes => fs::remove_file(path).map_err(Error::Io),
-        Ok(_) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(Error::Io(err)),
-    }
-}
-
+#[cfg(test)]
+mod canonical_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "sync")]
+pub(crate) use document::materialize_recovery_notes_in_txn;
+
+mod privacy_kit;
+pub use privacy_kit::{
+    BackupShareLocation, PrivacyBackupError, PrivacyBackupShare, RestoredVaultKey,
+    issue_privacy_backup_kit, restore_privacy_backup_kit,
+};

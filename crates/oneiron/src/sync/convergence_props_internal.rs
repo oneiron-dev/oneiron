@@ -153,7 +153,13 @@ fn reimport_same_update_bytes_is_byte_stable_across_all_dbs_and_versions() {
         entities
             .insert(
                 tgt.to_hex().as_str(),
-                entity_blob(4, range, T0 + 1, b"reimport-tgt").as_slice(),
+                entity_blob(
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    range,
+                    T0 + 1,
+                    b"reimport-tgt",
+                )
+                .as_slice(),
             )
             .unwrap();
         let edges = window_a.doc.get_map("edges");

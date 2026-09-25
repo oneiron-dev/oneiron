@@ -120,42 +120,45 @@ fn type_byte_zone_allocation_matches_contract() {
     // canon outranks the old test.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
     for (byte, name) in [
-        (64_u8, "REDACTION_AUDIT"),
-        (65, "MODEL"),
-        (66, "AUTHORITY_LOG"),
-        (67, "POLICY_MANIFEST"),
-        (68, "FEDERATION_GRANT"),
-        (69, "DIAGNOSTIC"),
-        (70, "CONNECTOR_KEY"),
-        (71, "PSYCH_PROFILE"),
-        (73, "ACCESS_GRANT"),
-        (76, "IDENTITY_TOPOLOGY_EVENT"),
-        (77, "SECRET_CUSTODY"),
-        (79, "CHANNEL_IDENTITY"),
-        (80, "COUNTERPARTY_CONTACT"),
-        (81, "OUTBOUND_GRANT"),
-        (82, "PERSONA_SNAPSHOT_EXPORT"),
-        (83, "COMM_RECORD"),
-        (84, "SKILL_CONTENT_ANCHOR"),
+        (72_u8, "REDACTION_AUDIT"),
+        (90, "MODEL"),
+        (64, "AUTHORITY_LOG"),
+        (65, "POLICY_MANIFEST"),
+        (66, "FEDERATION_GRANT"),
+        (73, "DIAGNOSTIC"),
+        (80, "CONNECTOR_KEY"),
+        (94, "PSYCH_PROFILE"),
+        (67, "ACCESS_GRANT"),
+        (74, "IDENTITY_TOPOLOGY_EVENT"),
+        (68, "SECRET_CUSTODY"),
+        (81, "CHANNEL_IDENTITY"),
+        (82, "COUNTERPARTY_CONTACT"),
+        (83, "OUTBOUND_GRANT"),
+        (85, "PERSONA_SNAPSHOT_EXPORT"),
+        (84, "COMM_RECORD"),
+        (92, "SKILL_HUB"),
+        (93, "SKILL_CONTENT_ANCHOR"),
     ] {
         assert!(
             !is_structural_kind(byte),
             "{name} ({byte}) is engine-authored, NOT a StructuralKind"
         );
     }
-    for byte in 1..=17_u8 {
+    for byte in [
+        1_u8, 2, 3, 4, 5, 10, 11, 12, 13, 20, 21, 22, 30, 31, 40, 41, 42,
+    ] {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
     // COMPANION_REGISTER (78) shares the system zone with the records above and
     // is still a StructuralKind: classification, not zone, decides.
-    for byte in [78_u8, 100, 101, 102, 103, 104, 105, 106] {
+    for byte in [115_u8, 100, 101, 102, 105, 106, 110, 111] {
         assert!(is_structural_kind(byte), "pack byte {byte}");
     }
 
     // Unregistered bytes — including bytes INSIDE structural zones — are not
     // StructuralKinds, and the write-path gate still rejects them with the
     // same typed error.
-    for byte in [63_u8, 72, 74, 75, 85, 99, 107, 125, 128, 247, 255] {
+    for byte in [63_u8, 75, 91, 86, 99, 107, 125, 128, 247, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -167,14 +170,10 @@ fn type_byte_zone_allocation_matches_contract() {
     }
 
     // Canon reserves the engine has not built yet stay explicitly
-    // unregistered rather than disappearing from the record. DIAGNOSTIC (69)
+    // unregistered rather than disappearing from the record. DIAGNOSTIC (73)
     // LEFT this list when ONE-1394 built its substrate — a reserve is a
     // promise to implement, not a permanent shelf.
-    for (byte, name) in [
-        (72_u8, "SUSPICIOUS_WAKE"),
-        (74, "CLAIM_CLASS_DESCRIPTOR"),
-        (75, "SKILL_HUB"),
-    ] {
+    for (byte, name) in [(75_u8, "SUSPICIOUS_WAKE"), (91, "CLAIM_CLASS_DESCRIPTOR")] {
         assert!(
             entity_type_registry_entry(byte).is_none(),
             "{name} byte {byte} must stay reserved-unregistered"
@@ -283,8 +282,8 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
     // A declared zone that disagrees with the byte is rejected before any
     // zone-admissibility question is even asked.
     let err = vault
-        .register_structural_kind(110, "cx", TypeByteZone::System, "wrong-zone")
-        .expect_err("byte 110 is compiled-product, not system");
+        .register_structural_kind(112, "cx", TypeByteZone::System, "wrong-zone")
+        .expect_err("byte 112 is compiled-product, not system");
     assert_eq!(err.kind(), ErrorKind::StructuralKindZoneViolation);
     assert!(
         vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)? == initial_rows,
@@ -308,28 +307,28 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
     );
 
     let registered =
-        vault.register_structural_kind(110, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
-    assert_eq!(registered.type_byte, 110);
+        vault.register_structural_kind(112, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
+    assert_eq!(registered.type_byte, 112);
     assert_eq!(registered.short_id_prefix, "np");
     assert_eq!(registered.zone, TypeByteZone::CompiledProduct);
     assert!(entity_type_registry_entry(registered.type_byte).is_none());
 
     vault.register_structural_kind(
-        111,
+        113,
         "pd",
         TypeByteZone::CompiledProduct,
         "productivity-pack",
     )?;
-    vault.register_structural_kind(112, "cm", TypeByteZone::CompiledProduct, "crm-pack")?;
+    vault.register_structural_kind(114, "cm", TypeByteZone::CompiledProduct, "crm-pack")?;
 
     let before = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
     let err = vault
-        .register_structural_kind(110, "nx", TypeByteZone::CompiledProduct, "duplicate-byte")
+        .register_structural_kind(112, "nx", TypeByteZone::CompiledProduct, "duplicate-byte")
         .expect_err("duplicate type byte must be rejected");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(
         err,
-        Error::Registry(RegistryError::StructuralKindTypeByteCollision(110))
+        Error::Registry(RegistryError::StructuralKindTypeByteCollision(112))
     );
     assert_eq!(
         vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
@@ -338,7 +337,7 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
     );
 
     let err = vault
-        .register_structural_kind(113, "np", TypeByteZone::CompiledProduct, "duplicate-prefix")
+        .register_structural_kind(116, "np", TypeByteZone::CompiledProduct, "duplicate-prefix")
         .expect_err("duplicate dynamic prefix must be rejected");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(err, Error::Registry(RegistryError::StructuralKindPrefixCollision(ref prefix)) if prefix == "np");
@@ -351,7 +350,7 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
     for static_prefix in ["tn", "cr"] {
         let err = vault
             .register_structural_kind(
-                113,
+                116,
                 static_prefix,
                 TypeByteZone::CompiledProduct,
                 "static-prefix",
@@ -386,7 +385,7 @@ fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()
         let mut raw = vec![
             STRUCTURAL_KIND_REGISTRY_RECORD_VERSION,
             ENTITY_TYPE_COMPANION_REGISTER,
-            2,
+            3,
             2,
         ];
         raw.extend_from_slice(
@@ -396,6 +395,7 @@ fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()
         );
         raw.extend_from_slice(prefix.as_bytes());
         raw.extend_from_slice(pack.as_bytes());
+        raw.push(0);
         raw
     }
 
@@ -449,9 +449,9 @@ fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
     {
         let vault = Vault::open(dir.path(), test_config())?;
         before = vault.structural_kind_registrations();
-        vault.register_structural_kind(110, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
+        vault.register_structural_kind(112, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
 
-        let key = structural_kind_registry_key(110);
+        let key = structural_kind_registry_key(112);
         let rows = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
         assert_eq!(rows.len(), before.len() + 1);
         assert!(rows.iter().any(|row| row.0 == key));
@@ -459,9 +459,9 @@ fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
 
     let reopened = Vault::open(dir.path(), test_config())?;
     let registration = reopened
-        .structural_kind_registration(110)
+        .structural_kind_registration(112)
         .expect("registration must load from vault_meta on reopen");
-    assert_eq!(registration.type_byte, 110);
+    assert_eq!(registration.type_byte, 112);
     assert_eq!(registration.short_id_prefix, "np");
     assert_eq!(registration.zone, TypeByteZone::CompiledProduct);
     assert_eq!(registration.pack, "notes-pack");
@@ -483,16 +483,16 @@ fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let before = EntityId::now();
     let err = vault
-        .put_entity(&before, 110, test_time_range(1, 1), 2, b"before-register")
+        .put_entity(&before, 112, test_time_range(1, 1), 2, b"before-register")
         .expect_err("unregistered dynamic byte must fail closed");
     assert_eq!(err.kind(), ErrorKind::InvalidEntityType);
-    assert_matches!(err, Error::InvalidEntityType(110));
+    assert_matches!(err, Error::InvalidEntityType(112));
     assert_no_entity_state(&vault, &before)?;
 
-    vault.register_structural_kind(110, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
+    vault.register_structural_kind(112, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
 
     let after = EntityId::now();
-    vault.put_entity(&after, 110, test_time_range(3, 3), 4, b"after-register")?;
+    vault.put_entity(&after, 112, test_time_range(3, 3), 4, b"after-register")?;
     assert_eq!(
         vault.get(&after)?.ok_or(Error::EntityNotFound)?,
         b"after-register"
@@ -506,7 +506,7 @@ fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
     let counter = vault
         .store
         .vault_meta
-        .get(&rtxn, &short_id_counter_key(110))?
+        .get(&rtxn, &short_id_counter_key(112))?
         .expect("dynamic type short-id counter must live in vault_meta");
     assert_eq!(*counter, 1_u64.to_le_bytes());
     Ok(())
@@ -536,6 +536,7 @@ fn legacy_dynamic_registration_on_static_byte_is_tolerated_on_open() -> Result<(
     record.extend_from_slice(&u16::try_from(pack.len()).expect("pack len").to_le_bytes());
     record.extend_from_slice(b"zz");
     record.extend_from_slice(pack);
+    record.push(0);
     vault.with_write_txn(|wtxn| {
         vault.store.vault_meta.put(wtxn, &key, &record)?;
         Ok(())
@@ -564,7 +565,7 @@ fn legacy_dynamic_registration_on_static_byte_is_tolerated_on_open() -> Result<(
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     // …and the legacy prefix stays reserved for rows minted under it.
     let err = vault
-        .register_structural_kind(110, "zz", TypeByteZone::CompiledProduct, "new-pack")
+        .register_structural_kind(112, "zz", TypeByteZone::CompiledProduct, "new-pack")
         .expect_err("legacy prefix must stay reserved");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     Ok(())
@@ -771,12 +772,12 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
 
     // Every byte the v3 re-key moved into the system zone left this list when
     // its kind was registered; public puts of those bytes now fail
-    // MaintenanceKindNotWritable — covered by the D5 gate test. DIAGNOSTIC (69)
-    // left it that way in ONE-1394. What stays InvalidEntityType is the
-    // canon-reserved system bytes with no engine substrate (72 SUSPICIOUS_WAKE,
-    // 74 CLAIM_CLASS_DESCRIPTOR, 75 SKILL_HUB), free bytes inside
-    // otherwise-live zones, the PackByteMap half (128–247), and the 255
-    // sentinel.
+    // MaintenanceKindNotWritable — covered by the D5 gate test. DIAGNOSTIC (73)
+    // left it that way in ONE-1394, and SKILL_HUB (92) is registered on the
+    // C02 side too. What stays InvalidEntityType is the canon-reserved system
+    // bytes with no engine substrate (75 SUSPICIOUS_WAKE, 91
+    // CLAIM_CLASS_DESCRIPTOR), free bytes inside otherwise-live zones, the
+    // PackByteMap half (128–247), and the 255 sentinel.
     let free = (crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
         ..=crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
         .find(|kind| {
@@ -784,7 +785,7 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
                 && vault.structural_kind_registration(*kind).is_none()
         })
         .unwrap();
-    for unknown in [72_u8, 74, 75, 99, free, 125, 130, 200, 255] {
+    for unknown in [75_u8, 91, 99, 107, free, 125, 130, 200, 255] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")
@@ -1286,5 +1287,36 @@ fn point_event_start_equals_end_stays_accepted() -> Result<()> {
             .is_none()
     );
 
+    Ok(())
+}
+
+#[test]
+fn family_allocator_persists_identity_through_overflow_and_reopen() -> Result<()> {
+    use crate::registry::TypeByteFamily;
+    let dir = tempfile::tempdir()?;
+    {
+        let vault = Vault::open(dir.path(), test_config())?;
+        for (prefix, expected) in [("qa", 112), ("qb", 113), ("qc", 114), ("qd", 120)] {
+            let row = vault.allocate_structural_kind(
+                TypeByteFamily::Documents,
+                prefix,
+                "document-fixture",
+            )?;
+            assert_eq!(row.type_byte, expected);
+            assert_eq!(row.family, Some(TypeByteFamily::Documents));
+        }
+    }
+    let vault = Vault::open(dir.path(), test_config())?;
+    let row = vault
+        .structural_kind_registration(120)
+        .expect("spilled registration survives reopen");
+    assert_eq!(row.family, Some(TypeByteFamily::Documents));
+    assert_eq!(row.short_id_prefix, "qd");
+    assert_eq!(
+        vault
+            .allocate_structural_kind(TypeByteFamily::Documents, "qe", "document-fixture")?
+            .type_byte,
+        121
+    );
     Ok(())
 }

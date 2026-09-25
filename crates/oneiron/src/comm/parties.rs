@@ -1,10 +1,12 @@
 //! Node-local party shortcut vs synced PERSON truth plus twin reconciliation.
 
+use crate::ports::EntityStoreRead;
+use sha2::Digest;
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
 use rmpv::Value;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use super::claims::{
     COMM_SCHEMA_VERSION, CommError, CommResult, KEY_PARTY_KEY, KEY_SCHEMA_VERSION,
@@ -13,7 +15,7 @@ use super::records::{
     decode_entity_id, encode_value, required_string, validate_key_string, value_map,
 };
 use crate::Vault;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, apply_ops};
 use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::identity_topology::{
@@ -23,7 +25,6 @@ use crate::identity_topology::{
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::Store;
 use crate::temporal::TimeRange;
-use crate::vault::entity_id_from_type_index_key;
 
 const PARTY_INDEX_PREFIX: &[u8] = b"comm.party.v1:";
 
@@ -59,19 +60,17 @@ pub(super) fn active_comm_party_key_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> CommResult<Option<String>> {
-    let Some(raw) = vault.store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = vault.store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
-    if header.entity_type != ENTITY_TYPE_PERSON {
+
+    if raw.entity_type != ENTITY_TYPE_PERSON {
         return Ok(None);
     }
     if vault.entity_lifecycle_state_in_txn(rtxn, &id)? != EntityLifecycleState::Active {
         return Ok(None);
     }
-    let mut cursor = Cursor::new(&raw[ENTITY_METADATA_HEADER_LEN..]);
+    let mut cursor = Cursor::new(&raw.body);
     let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
         return Ok(None);
     };
@@ -92,11 +91,9 @@ fn active_comm_persons_by_party_key_in_txn(
     let mut groups: BTreeMap<String, Vec<EntityId>> = BTreeMap::new();
     for entry in vault
         .store
-        .type_index
-        .prefix_iter(rtxn, &[ENTITY_TYPE_PERSON])?
+        .port_entity_ids_by_type(rtxn, ENTITY_TYPE_PERSON, None)?
     {
-        let (key, _) = entry?;
-        let id = entity_id_from_type_index_key(&key)?;
+        let id = entry?;
         if let Some(party_key) = active_comm_party_key_in_txn(vault, rtxn, id)? {
             groups.entry(party_key).or_default().push(id);
         }
@@ -193,7 +190,8 @@ pub(super) fn mint_comm_person_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     party: &str,
 ) -> CommResult<EntityId> {
-    let id = EntityId::now();
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    let id = vault.store.clock.entity_id()?;
     let body = encode_value(&Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -210,7 +208,7 @@ pub(super) fn mint_comm_person_in_txn(
             id,
             entity_type: ENTITY_TYPE_PERSON,
             occurred: TimeRange { start: 0, end: 0 },
-            learned_at: crate::unix_seconds_now(),
+            learned_at: mutation_recorded_at,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -284,16 +282,14 @@ pub(crate) fn resolve_party_ref_from_store_in_txn(
         return Ok(None);
     };
     let id = decode_entity_id(&raw_id)?;
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, &id)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
-    if header.entity_type != ENTITY_TYPE_PERSON {
+
+    if raw.entity_type != ENTITY_TYPE_PERSON {
         return Ok(None);
     }
-    let mut cursor = Cursor::new(&raw[ENTITY_METADATA_HEADER_LEN..]);
+    let mut cursor = Cursor::new(&raw.body);
     let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
         return Ok(None);
     };

@@ -256,3 +256,51 @@ fn session_tag_is_untouched_by_the_lineage_axis() {
     assert_eq!(envelope.session_tag.as_deref(), Some("session-1314"));
     assert!(envelope.lineage().contains(ClaimSource::ToolOutput));
 }
+
+#[test]
+fn a_claim_written_with_no_mask_carries_the_vault_default_facet() -> crate::Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let at = crate::TimeRange { start: 10, end: 10 };
+    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
+    let facet = EntityId::from_bytes([0x41; 16]).expect("facet id");
+    vault.put_entity(&facet, crate::registry::ENTITY_TYPE_FACET, at, 10, b"facet")?;
+    vault
+        .set_default_facet(facet, WriteActor::new(owner, EdgeActorClass::Human))
+        .expect("the owner sets the default");
+    let agent = actor();
+    vault.put_entity(
+        &agent.entity_ref(),
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        10,
+        b"agent",
+    )?;
+    let id = EntityId::from_bytes([0x42; 16]).expect("claim id");
+    let envelope = WriteEnvelope::new(
+        agent,
+        ClaimSource::Observed,
+        provenance(),
+        ClaimApprovalStatus::Proposed,
+    );
+    vault
+        .batch()
+        .claim_candidate(
+            &id,
+            ClaimCandidate::new(
+                "test.default_facet",
+                ClaimSubject::Entity(owner),
+                Value::from("fact"),
+                1.0,
+            ),
+            &envelope,
+            at,
+            10,
+        )
+        .commit()?;
+
+    assert_eq!(
+        vault.get_claim(&id)?.expect("stored claim").scope_facet,
+        facet
+    );
+    Ok(())
+}

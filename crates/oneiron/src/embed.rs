@@ -1,9 +1,16 @@
+mod cold_attach;
+mod locality;
+pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_claims_pending_in_txn};
+pub(crate) use locality::clear_embedding_locality_in_txn;
+
+#[cfg(feature = "sync")]
+use crate::ports::EntityStoreRead;
 use std::borrow::Cow;
 
 use crate::entity_id::EntityId;
+use crate::error::Result;
 #[cfg(feature = "sync")]
-use crate::error::StoreError;
-use crate::error::{Error, Result};
+use crate::error::{Error, StoreError};
 
 /// Highest priority: a pending claim surfaced in user-visible retrieval.
 pub const EMBED_PRIORITY_SURFACED_HOT: u8 = 0;
@@ -318,7 +325,12 @@ impl PendingEmbeddingReconciler {
                     }
                     report.routed_remote += remote_work.len();
                     report.embedded += vectors.len();
-                    self.fill_batch(&remote_work, &vectors, &mut report)?;
+                    self.fill_batch(
+                        &remote_work,
+                        &vectors,
+                        rung.embedder.locality(),
+                        &mut report,
+                    )?;
                 }
                 Err(e) => {
                     tracing::warn!(?e, "remote embed failed; falling back to local");
@@ -367,17 +379,18 @@ impl PendingEmbeddingReconciler {
             ));
         }
         report.embedded += vectors.len();
-        self.fill_batch(work, &vectors, report)
+        self.fill_batch(work, &vectors, self.embedder.locality(), report)
     }
 
     fn fill_batch(
         &self,
         work: &[LeasedPendingEmbedding],
         vectors: &[Vec<f32>],
+        locality: EmbedderLocality,
         report: &mut PendingEmbeddingReconcileReport,
     ) -> Result<()> {
         for (item, vector) in work.iter().zip(vectors.iter()) {
-            if self.complete_leased_work(item, vector)? {
+            if self.complete_leased_work(item, vector, locality)? {
                 report.filled += 1;
             } else {
                 report.stale_fills += 1;
@@ -425,6 +438,13 @@ impl PendingEmbeddingReconciler {
 
         self.vault.with_write_txn(|wtxn| {
             for job in jobs {
+                if crate::vault::entity_revision::entity_has_pending_revision(
+                    &self.vault.store,
+                    wtxn,
+                    &job.entity_id,
+                )? {
+                    continue;
+                }
                 if batch.work.len() >= self.batch_size {
                     break;
                 }
@@ -483,7 +503,12 @@ impl PendingEmbeddingReconciler {
         Ok(batch)
     }
 
-    fn complete_leased_work(&self, work: &LeasedPendingEmbedding, vector: &[f32]) -> Result<bool> {
+    fn complete_leased_work(
+        &self,
+        work: &LeasedPendingEmbedding,
+        vector: &[f32],
+        locality: EmbedderLocality,
+    ) -> Result<bool> {
         let mut filled_current = false;
         self.vault.with_write_txn(|wtxn| {
             let current_before = self
@@ -528,53 +553,18 @@ impl PendingEmbeddingReconciler {
                 )?;
             }
             filled_current = token_was_current && current_after.is_none();
+            if filled_current {
+                locality::stamp_embedding_locality_in_txn(
+                    &self.vault,
+                    wtxn,
+                    &work.input.entity_id,
+                    locality,
+                )?;
+            }
             Ok(())
         })?;
         Ok(filled_current)
     }
-}
-
-/// Re-marks every persisted claim after an embedding-space replacement.
-/// Queue replacement deliberately deletes an old row first: queue insertion otherwise
-/// preserves a hotter priority that belonged to the old model.
-///
-/// `priority` is consumed by the sync embed-queue re-push below; the signature
-/// stays feature-independent because the base caller (`vault.rs`) supplies it
-/// either way.
-#[cfg_attr(not(feature = "sync"), allow(unused_variables))]
-pub(crate) fn remark_all_claims_pending_in_txn(
-    vault: &crate::Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    priority: u8,
-) -> Result<usize> {
-    let mut claims = Vec::new();
-    for row in vault.store.entities.iter(wtxn)? {
-        let (key, raw) = row?;
-        let header = crate::batch::EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            let id = EntityId::from_bytes(
-                key.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("entity id"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("entity id"))?;
-            claims.push((id, raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec()));
-        }
-    }
-    for (id, body) in &claims {
-        vault.store.mark_pending_embedding(wtxn, id, body)?;
-        #[cfg(feature = "sync")]
-        {
-            crate::sync::queue::delete_embed_job_in_txn(&vault.store, wtxn, id)?;
-            crate::sync::queue::push_embed_job_in_txn(&vault.store, wtxn, id, priority)?;
-            vault
-                .store
-                .sync_state
-                .delete(wtxn, pending_embedding_lease_key(id).as_str())?;
-        }
-    }
-    Ok(claims.len())
 }
 
 /// Enqueues background embed jobs for ids that still carry a `pe:` marker.
@@ -633,17 +623,16 @@ fn pending_input_in_txn(
     let Some(token) = vault.store.pending_embedding_token_in_txn(wtxn, id)? else {
         return Ok(None);
     };
-    let Some(raw) = vault.store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(raw) = vault.store.port_entity_record(wtxn, id)? else {
         return Ok(None);
     };
-    let header = crate::batch::EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("entity header"))?;
-    let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+
+    let body = &raw.body;
     // RT-05 (ONE-1687): the epoch-summary keyframe is embeddable alongside
     // CLAIM, and what the embedder (and egress gate) receives is its TEXT: the
     // record's framing keys carry no retrievable meaning. The pending-embedding
     // token still commits to the whole record, so a re-mint invalidates it.
-    let payload = match header.entity_type {
+    let payload = match raw.entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => PendingEmbeddingPayload::ClaimBody(body.to_vec()),
         crate::registry::ENTITY_TYPE_SUMMARY => {
             // An ordinary witness SUMMARY shares the type byte and is not an

@@ -17,8 +17,8 @@ use super::records::{
     encode_pending_gate_consent, vet_pending_gate_consent_record,
 };
 use super::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord,
-    RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT, decode_gate_decision, gate_decision_key,
+    GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT,
+    decode_gate_decision, gate_decision_key,
 };
 
 impl Store {
@@ -129,7 +129,7 @@ impl Store {
         }
         let record = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: GateDecisionId::now(),
+            decision_id: crate::store::GateDecisionId::from_bytes(self.clock.ulid()?),
             created_at,
             outcome: outcome.to_owned(),
             reason_codes,

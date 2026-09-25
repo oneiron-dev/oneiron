@@ -22,7 +22,7 @@ fn restore_prefix_divergence_suppresses_authority_fork_alarm() {
         },
     );
     let recovery = cosign_ed(
-        recovery_reboot_entry(vault_id, &enroll_second, &owner, 75, 2),
+        re_root_entry(vault_id, &enroll_second, &owner, 75, 2),
         &owner,
         &second,
     );
@@ -131,7 +131,7 @@ fn shared_restore_marker_does_not_suppress_later_strict_prefix_fork() {
         },
     );
     let recovery = cosign_ed(
-        recovery_reboot_entry(vault_id, &enroll_second, &owner, 85, 2),
+        re_root_entry(vault_id, &enroll_second, &owner, 85, 2),
         &owner,
         &second,
     );
@@ -183,10 +183,8 @@ fn invalid_restore_marker_does_not_suppress_strict_prefix_fork_group() {
             Some(vault_id),
             2,
             vec![authority_entry_hash(&enroll_second).unwrap()],
-            AuthorityOp::RecoveryReboot {
-                new_genesis_nonce: [87; 32],
+            AuthorityOp::ReRoot {
                 new_device: device(second_key, ROLE_OWNER | ROLE_ADMIN, AuthorityTier::Software),
-                tier_floor: AuthorityTier::Software,
             },
             owner_key,
             3,
@@ -224,7 +222,7 @@ fn invalid_restore_marker_does_not_suppress_strict_prefix_fork_group() {
         *by_hash
             .iter()
             .find_map(|(hash, entry)| {
-                matches!(entry.op, AuthorityOp::SetCeiling { .. }).then_some(hash)
+                matches!(entry.op, AuthorityOp::RetiredCeiling { .. }).then_some(hash)
             })
             .expect("short branch present"),
         *by_hash
@@ -657,7 +655,7 @@ fn invalid_candidates_do_not_exempt_forked_cosigner_ancestor() {
             Some(vault_id),
             2,
             forged_parents.clone(),
-            AuthorityOp::SetCeiling {
+            AuthorityOp::RetiredCeiling {
                 authority_key: forked_key.clone(),
                 actor_class: "agent".to_owned(),
                 ceiling: 1,
@@ -856,7 +854,7 @@ fn all_invalid_same_seq_group_resolves_clean_prefix_revoke() {
 }
 
 #[test]
-fn recovery_reboot_sibling_resolves_all_invalid_fork_in_both_hash_orders() {
+fn re_root_sibling_resolves_all_invalid_fork_in_both_hash_orders() {
     let owner = ed_key(145);
     let second = ed_key(146);
     let third = ed_key(147);
@@ -896,7 +894,7 @@ fn recovery_reboot_sibling_resolves_all_invalid_fork_in_both_hash_orders() {
     let mut recovery_candidates: Vec<_> = (0_u64..256)
         .map(|offset| {
             cosign_ed(
-                recovery_reboot_entry_at(vault_id, &enroll_third, &second, 148, 0, 10_000 + offset),
+                re_root_entry_at(vault_id, &enroll_third, &second, 148, 0, 10_000 + offset),
                 &second,
                 &third,
             )

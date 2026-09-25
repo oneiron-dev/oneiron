@@ -68,7 +68,13 @@ fn put_edge_with_vad_round_trip() -> Result<()> {
     vault
         .batch()
         .put(&src, 1, test_time_range(1, 2), 3, b"src")
-        .put(&tgt, 4, test_time_range(4, 5), 6, b"tgt")
+        .put(
+            &tgt,
+            crate::registry::ENTITY_TYPE_PERSON,
+            test_time_range(4, 5),
+            6,
+            b"tgt",
+        )
         .commit()?;
 
     vault.put_edge_with_vad(

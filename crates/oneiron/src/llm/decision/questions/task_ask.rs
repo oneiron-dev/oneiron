@@ -16,15 +16,17 @@ pub(crate) struct TaskAnswerBinding<'a> {
     pub(crate) task: EntityId,
     pub(crate) principal: EntityId,
     pub(crate) unit: EntityId,
-    pub(crate) question: &'a serde_json::Value,
+    pub(crate) question: &'a str,
     pub(crate) binding: &'a OutcomeBinding,
     pub(crate) now: u64,
+    pub(crate) choice: &'a str,
+    pub(crate) revision: u32,
 }
 
-/// The caller holds the first-answer CAS transaction. An ask has exactly one
-/// immutable version, keyed by its TASK id, and one receipt-bearing claim.
-/// Its prediction is the submitted result reference, not a model probability:
-/// probability=1 records a definite selection by the winning holder.
+/// The caller holds the answer admission transaction. An ask has exactly one
+/// immutable version, keyed by its group id, and one receipt-bearing claim.
+/// Its prediction is a settled human selection, never a companion estimate.
+/// The cutoff owns quorum resolution before this learning path may run.
 pub(crate) fn bind_task_answer_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -36,7 +38,7 @@ pub(crate) fn bind_task_answer_in_txn(
     }
     let (source_kind, source) =
         validate_task_answer_unit(vault, txn, input.principal, actor.entity_ref(), input.unit)?;
-    let choice = input.unit.to_hex();
+    let choice = input.choice.to_owned();
     let band = DecisionBand::default();
     let record = QuestionRecord {
         schema_version: 1,
@@ -44,7 +46,7 @@ pub(crate) fn bind_task_answer_in_txn(
         definition: QuestionDefinition {
             question: DecisionQuestion {
                 id: input.task,
-                version: 1,
+                version: input.revision,
                 text: input.question.to_string(),
                 class: DecisionClass::Judgment,
                 contract: AnswerContract::Choice {
@@ -55,7 +57,7 @@ pub(crate) fn bind_task_answer_in_txn(
             adapter: "tasks.ask".into(),
             units: vec![input.unit],
             recipe: "tasks.ask.v1".into(),
-            profile: "holder-selection".into(),
+            profile: "responder-selection".into(),
             dial: DecisionDial {
                 first: DecisionRung::Human,
                 ceiling: DecisionRung::Human,
@@ -82,7 +84,7 @@ pub(crate) fn bind_task_answer_in_txn(
             in_band: false,
             receipt: DecisionReceipt {
                 question: input.task,
-                question_version: 1,
+                question_version: input.revision,
                 principal: input.principal,
                 providers: Vec::new(),
                 band,
@@ -139,7 +141,7 @@ pub(crate) fn bind_task_answer_in_txn(
     put(
         vault,
         txn,
-        &key(input.task, b"version", &1_u32.to_be_bytes()),
+        &key(input.task, b"version", &input.revision.to_be_bytes()),
         &record,
     )?;
     put(
@@ -147,7 +149,7 @@ pub(crate) fn bind_task_answer_in_txn(
         txn,
         &key(input.task, b"head", &[]),
         &QuestionHead {
-            version: 1,
+            version: input.revision,
             paused: false,
             last_refresh: Some(input.now),
         },
@@ -172,7 +174,8 @@ pub(crate) fn validate_task_answer_unit(
 ) -> Result<(u8, Vec<u8>)> {
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     for principal in [principal, holder] {
-        let reader = ScopedReadActorKey::new(principal.to_hex()).expect("canonical principal");
+        let reader = ScopedReadActorKey::new(principal.to_hex())
+            .ok_or(Error::InvariantViolation("canonical ask principal"))?;
         if !arrival::readable(&vault.store, txn, &policy, &reader, &unit)? {
             return Err(Error::EntityNotFound);
         }

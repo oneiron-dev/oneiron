@@ -1,5 +1,7 @@
 //! Guard behavior tests for booking anti-abuse enforcement.
 
+use std::sync::Arc;
+
 use axum::extract::State;
 use oneiron::booking::anti_abuse::{
     BookingRuleScope, booking_anti_abuse_rules, booking_email_hash, booking_ip_hash,
@@ -347,5 +349,90 @@ pub(crate) mod tests {
             .await
             .expect("fresh ip");
         assert_eq!(disposition, BookingHttpDisposition::Continue);
+    }
+    #[tokio::test]
+    async fn booking_clock_is_server_local_and_rollover_preserves_quota_and_cache_laws() {
+        let (_first_dir, mut first) = test_server();
+        let (_second_dir, second) = test_server();
+        install_defaults(&first);
+        install_defaults(&second);
+        let listing = facts();
+
+        // Identical IPs in separate vaults each own the full 120-request
+        // quota. Both clocks start at the last second of the same minute.
+        for server in [&first, &second] {
+            for _ in 0..120 {
+                assert_eq!(
+                    enforce_slot_list(State(server.clone()), listing.clone(), false)
+                        .await
+                        .unwrap(),
+                    BookingHttpDisposition::Continue
+                );
+            }
+            assert_eq!(
+                enforce_slot_list(State(server.clone()), listing.clone(), false)
+                    .await
+                    .unwrap(),
+                BookingHttpDisposition::RetryAfter { seconds: 1 }
+            );
+        }
+        let body = b"{\"slots\":[]}";
+        assert!(remember_slot_list_body(&first, &page(), Some(&event()), body).unwrap());
+        assert_eq!(
+            enforce_slot_list(State(first.clone()), listing.clone(), true)
+                .await
+                .unwrap(),
+            BookingHttpDisposition::Continue
+        );
+        assert_eq!(
+            enforce_slot_list(State(first.clone()), listing.clone(), false)
+                .await
+                .unwrap(),
+            BookingHttpDisposition::RetryAfter { seconds: 1 },
+            "a cache hit does not reset an exhausted counter"
+        );
+
+        // Only the first server crosses the minute boundary. Its next
+        // request consumes token one in the new bucket; the sibling stays
+        // exhausted in the old minute, including its exact Retry-After.
+        Arc::get_mut(&mut first).unwrap().booking_test_now_secs = Some(10_800);
+        assert_eq!(
+            enforce_slot_list(State(first.clone()), listing.clone(), false)
+                .await
+                .unwrap(),
+            BookingHttpDisposition::Continue
+        );
+        assert_eq!(
+            enforce_slot_list(State(second), listing.clone(), false)
+                .await
+                .unwrap(),
+            BookingHttpDisposition::RetryAfter { seconds: 1 }
+        );
+        for _ in 1..120 {
+            assert_eq!(
+                enforce_slot_list(State(first.clone()), listing.clone(), false)
+                    .await
+                    .unwrap(),
+                BookingHttpDisposition::Continue
+            );
+        }
+        assert_eq!(
+            enforce_slot_list(State(first.clone()), listing, false)
+                .await
+                .unwrap(),
+            BookingHttpDisposition::RetryAfter { seconds: 60 }
+        );
+
+        Arc::get_mut(&mut first).unwrap().booking_test_now_secs = Some(10_799 + 44);
+        assert_eq!(
+            cached_slot_list_body(&first, &page(), Some(&event())).unwrap(),
+            Some(body.to_vec())
+        );
+        Arc::get_mut(&mut first).unwrap().booking_test_now_secs = Some(10_799 + 45);
+        assert_eq!(
+            cached_slot_list_body(&first, &page(), Some(&event())).unwrap(),
+            None,
+            "the configured 45-second cache expires exactly at its TTL"
+        );
     }
 }

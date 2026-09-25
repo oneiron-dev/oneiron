@@ -3,6 +3,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
 };
@@ -36,8 +37,12 @@ pub(super) fn require_anchor_entities_in_txn(
     actor: &EntityId,
     subject: &EntityId,
 ) -> Result<()> {
-    let actor_raw = store.entities.get(txn, actor.as_bytes())?;
-    let subject_raw = store.entities.get(txn, subject.as_bytes())?;
+    let actor_raw = store
+        .port_entity_record(txn, actor)?
+        .map(|row| row.encode());
+    let subject_raw = store
+        .port_entity_record(txn, subject)?
+        .map(|row| row.encode());
     require_anchor_headers(actor_raw.as_deref(), subject_raw.as_deref())
 }
 
@@ -96,7 +101,9 @@ pub(super) fn require_person_in_txn(
     txn: &heed::RoTxn<'_>,
     person: &EntityId,
 ) -> Result<()> {
-    let raw = store.entities.get(txn, person.as_bytes())?;
+    let raw = store
+        .port_entity_record(txn, person)?
+        .map(|row| row.encode());
     require_person_header(raw.as_deref())
 }
 

@@ -30,7 +30,7 @@ pub(super) fn fork_winner_post_quarantine_issue(
                 return Some(AuthorityFoldIssue::MissingAuthorityConsent(hash));
             }
         }
-        AuthorityOp::RecoveryReboot { .. } if entry_participants_include_key(entry, forked_key) => {
+        AuthorityOp::ReRoot { .. } if entry_participants_include_key(entry, forked_key) => {
             let Some(parent_state) = folded_parent_state_for_entry(entry, states) else {
                 return Some(AuthorityFoldIssue::MissingQuorum(hash));
             };
@@ -79,10 +79,11 @@ pub(super) fn fork_winner_post_quarantine_issue(
         }
         AuthorityOp::Genesis { .. }
         | AuthorityOp::EnrollDevice { .. }
-        | AuthorityOp::SetCeiling { .. }
+        | AuthorityOp::RetiredCeiling { .. }
+        | AuthorityOp::SlipMint(_) | AuthorityOp::SlipRevoke {..} | AuthorityOp::SlipConsume {..}
         | AuthorityOp::RotateKey { .. }
         | AuthorityOp::SetTierFloor { .. }
-        | AuthorityOp::RecoveryReboot { .. }
+        | AuthorityOp::ReRoot { .. }
         | AuthorityOp::FederationConfirm(_) | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
@@ -289,7 +290,7 @@ pub(in crate::authority) fn resolve_global_forks_for_revoke(
     }
 }
 
-pub(in crate::authority) fn resolve_global_forks_for_recovery_reboot(
+pub(in crate::authority) fn resolve_global_forks_for_re_root(
     state: &mut FoldState,
     context: FoldContext<'_>,
 ) {

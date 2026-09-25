@@ -1,8 +1,11 @@
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+use sha2::Sha256;
 
 use crate::Vault;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -223,7 +226,7 @@ impl Vault {
             }
         }
 
-        let claim_id = EntityId::now();
+        let claim_id = self.store.clock.entity_id()?;
         let mut value = vec![
             (Value::from("contentHash"), Value::from(hash_hex)),
             (
@@ -411,7 +414,11 @@ impl Vault {
         learned_at: u64,
     ) -> Result<EntityId> {
         let anchor = skill_content_anchor_entity_id(content_hash)?;
-        if let Some(raw) = self.store.entities.get(&*wtxn, anchor.as_bytes())? {
+        if let Some(raw) = self
+            .store
+            .port_entity_record(&*wtxn, &anchor)?
+            .map(|row| row.encode())
+        {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_SKILL_CONTENT_ANCHOR {
@@ -530,24 +537,31 @@ pub(crate) fn skill_scan_verdicts_for_content_hash_in_store(
 ) -> Result<Vec<ClaimBody>> {
     let hash_hex = content_hash.to_hex();
     let anchor = skill_content_anchor_entity_id(content_hash)?;
-    let prefix = crate::vault::edge_kind_prefix(&anchor, crate::edge::EdgeKind::ClaimOf);
+
     let mut rows = Vec::new();
-    for (scanned, entry) in store.edges_in.prefix_iter(rtxn, &prefix)?.enumerate() {
+    for (scanned, entry) in store
+        .port_edges(
+            rtxn,
+            &anchor,
+            crate::ports::EdgeDirection::In,
+            Some(crate::edge::EdgeKind::ClaimOf),
+            None,
+        )?
+        .enumerate()
+    {
         if scanned >= crate::vault::MAX_EDGE_QUERY_RESULTS {
             return Err(Error::IndexOverflow("skill scan verdicts for content hash"));
         }
-        let (key, value) = entry?;
-        let claim_id = crate::vault::parse_edge_record(&key, &value)?.target;
-        let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
+        let edge_row = entry?;
+        let claim_id = edge_row.target;
+        let Some(raw) = store.port_entity_record(rtxn, &claim_id)? else {
             continue;
         };
-        let Some(header) = EntityMetadataHeader::parse(&raw) else {
-            continue;
-        };
-        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+
+        if raw.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
             continue;
         }
-        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        let body = crate::claim::decode_claim_body(&raw.body, true)?;
         // Defense in depth: every row on this anchor is for `content_hash`
         // by construction, but the exact-hash filter keeps discovery precise
         // even against a truncation collision on the derived anchor id.

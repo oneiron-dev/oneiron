@@ -215,6 +215,9 @@ fn valid_gate_notice_token(value: &str, max_len: usize) -> bool {
 }
 
 pub(in crate::store) fn valid_gate_receipt_reason(reason: &str) -> bool {
+    if reason.starts_with("tripwire_normal_") {
+        return crate::self_heal::tripwires::normal_baseline_predicate(reason).is_some();
+    }
     if let Some(rest) = reason.strip_prefix("gate.allow.") {
         return !rest.is_empty()
             && rest.len() <= GATE_RECEIPT_REASON_MAX_LEN

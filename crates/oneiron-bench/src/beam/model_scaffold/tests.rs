@@ -1,0 +1,539 @@
+use super::*;
+use crate::beam::{
+    judge::AnswerPromptPin,
+    llm_judge::JudgeBenchmark,
+    model::JudgeMetadata,
+    model_usage::{ModelPrice, PriceTable},
+};
+use oneiron::{
+    BudgetLease, ContentPart, FinishReason, LlmBackend, LlmGenerateFuture, LlmInputUsage,
+    LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamResult, LlmUsage,
+};
+#[derive(Default)]
+struct FixtureBackend {
+    answer_inputs: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+    routing_prompts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    rejected_alias: Option<String>,
+}
+impl LlmBackend for FixtureBackend {
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            let text = match request.envelope.purpose {
+                CallPurpose::Eval => {
+                    let ContentPart::Text { text } = &request.messages[1].content[0] else {
+                        panic!("text")
+                    };
+                    let input: serde_json::Value = serde_json::from_str(text).unwrap();
+                    if self
+                        .rejected_alias
+                        .as_deref()
+                        .is_some_and(|alias| input["gold_answer"] == alias)
+                    {
+                        "0"
+                    } else {
+                        "1"
+                    }
+                }
+                CallPurpose::ToolRouting => "contract launch code",
+                _ => "tulip",
+            };
+            if request.envelope.purpose == CallPurpose::ToolRouting {
+                let ContentPart::Text { text } = &request.messages[0].content[0] else {
+                    panic!("text")
+                };
+                self.routing_prompts.lock().unwrap().push(text.clone());
+            }
+            if request.envelope.purpose == CallPurpose::AnswerGen {
+                let input = match &request.messages[1].content[0] {
+                    ContentPart::Text { text } => text,
+                    _ => panic!("text"),
+                };
+                let fields: serde_json::Value = serde_json::from_str(input).unwrap();
+                assert_eq!(fields.as_object().unwrap().len(), 2);
+                assert!(fields.get("gold").is_none());
+                assert!(fields.get("arm").is_none());
+                self.answer_inputs.lock().unwrap().push(fields);
+            }
+            Ok(LlmResponse {
+                message: LlmMessage {
+                    role: LlmMessageRole::Assistant,
+                    content: vec![ContentPart::Text { text: text.into() }],
+                },
+                usage: LlmUsage {
+                    input: LlmInputUsage {
+                        total: 100,
+                        ..Default::default()
+                    },
+                    output: LlmOutputUsage {
+                        total: 3,
+                        text: 3,
+                        reasoning: 0,
+                    },
+                    raw_provider: serde_json::json!({"prompt_tokens":100,"completion_tokens":3}),
+                },
+                finish_reason: FinishReason::Stop,
+            })
+        })
+    }
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(oneiron::FatalLlmError::InvalidRequest.into())
+    }
+}
+#[test]
+fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut corpus: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    corpus["corpus"][0]["metadata"]["stated_claim_predicate"] = serde_json::json!("status.fixture");
+    std::fs::write(dir.path().join("run.jsonl"), corpus.to_string()).unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
+    manifest["dataset"]["path"] = serde_json::json!("run.jsonl");
+    let manifest_path = dir.path().join("run.json");
+    std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+    let backbone = ModelPin {
+        model_id: "openai/gpt-4.1@2025-04-14".parse().unwrap(),
+        provider_model: "gpt-4.1-2025-04-14".into(),
+        max_tokens: 256,
+        temperature: 0.0,
+    };
+    let cheap = ModelPin {
+        model_id: "openai/gpt-4.1-nano@2025-04-14".parse().unwrap(),
+        provider_model: "gpt-4.1-nano-2025-04-14".into(),
+        ..backbone
+    };
+    let judge_model = ModelPin {
+        model_id: "openai/gpt-4.1-mini@2025-04-14".parse().unwrap(),
+        provider_model: "gpt-4.1-mini-2025-04-14".into(),
+        max_tokens: 128,
+        temperature: 0.0,
+    };
+    let price = ModelPrice {
+        input_per_million: 2.0,
+        output_per_million: 8.0,
+        cache_read_per_million: 0.5,
+        cache_write_per_million: 2.0,
+    };
+    let prices = PriceTable {
+        revision: "fixture-v1".into(),
+        source: "fixture://prices".into(),
+        models: [&backbone, &cheap, &judge_model]
+            .into_iter()
+            .map(|pin| (pin.model_id.clone(), price.clone()))
+            .collect(),
+    };
+    let prompt = "Answer only from the supplied evidence.";
+    let mut plan = ModelRunPlan {
+        retrieval_manifest: manifest_path,
+        temporal_now: 1_800_000_000,
+        host: HostConfig {
+            endpoint: "http://127.0.0.1".into(),
+            api_key_env: None,
+            token_budget: 1_000_000,
+            prices: prices.clone(),
+        },
+        judge: JudgeConfig {
+            benchmark: JudgeBenchmark::Beam,
+            instruction: AnswerPromptPin::from_exact_text("Fixture scoring policy."),
+            model: judge_model.clone(),
+            card: JudgeMetadata {
+                judge_id: "gpt-4.1-mini".into(),
+                version: "2025-04-14".into(),
+                notes: "fixture".into(),
+                answer_prompt: Some(AnswerPromptPin::from_exact_text(prompt)),
+                vote_count: 3,
+            },
+        },
+        answer_prompt: prompt.into(),
+        routing_prompt: AnswerPromptPin::from_exact_text("Fixture query routing policy."),
+        answerers: [
+            ArmKind::Deterministic,
+            ArmKind::Agentic,
+            ArmKind::BackboneSolo,
+            ArmKind::Chat,
+        ]
+        .into_iter()
+        .map(|arm| AnswererArm {
+            arm,
+            model: if arm == ArmKind::Chat {
+                cheap.clone()
+            } else {
+                backbone.clone()
+            },
+            cheap_chat: arm == ArmKind::Chat,
+        })
+        .collect(),
+        efforts: vec![
+            Effort {
+                name: "light".into(),
+                token_budget: 1024,
+                retrieval_steps: 1,
+            },
+            Effort {
+                name: "medium".into(),
+                token_budget: 2048,
+                retrieval_steps: 2,
+            },
+        ],
+        amortized_question_count: 1,
+        chroma: None,
+    };
+    let session = ModelSession::with_backend(
+        Box::new(FixtureBackend::default()),
+        prices,
+        &[backbone, cheap, judge_model],
+        1_000_000,
+    )
+    .unwrap();
+    let report = run_with_session(&plan, &session).unwrap();
+    assert!(report.ablation_unavailable.is_empty());
+    assert!(
+        report
+            .access_factor_observations
+            .iter()
+            .any(|row| row.baseline < row.ablated)
+    );
+    assert_eq!(report.ablation_rows.len(), 4);
+    assert!(
+        report
+            .ablation_rows
+            .iter()
+            .any(|row| row.ablation.as_deref() == Some("ablation-2:access-factor-neutral"))
+    );
+    assert_eq!(
+        report.scorer.judge_instruction_sha256.as_deref(),
+        Some(plan.judge.instruction.sha256.as_str())
+    );
+    assert_eq!(report.rows.len(), 8);
+    assert_eq!(report.chat_cost_accuracy_points.len(), 2);
+    assert!(!report.frontier.is_empty());
+    assert!(report.offline_total.input_tokens > 0);
+    assert!(report.offline_total.elapsed_us > 0);
+    assert_eq!(report.amortized_question_count, 1);
+    for row in &report.rows {
+        assert!(row.query_cost.input_tokens > 0 && row.query_cost.cost_usd > 0.0);
+        assert!(row.judge_overhead.cost_usd > 0.0);
+    }
+    let det = report
+        .points
+        .iter()
+        .find(|p| p.arm == ArmKind::Deterministic)
+        .unwrap();
+    let chat = &report.chat_cost_accuracy_points[0];
+    assert!(agency_lift(det, chat).is_err());
+    let mut agent = report
+        .points
+        .iter()
+        .find(|point| point.arm == ArmKind::Agentic && point.effort == det.effort)
+        .unwrap()
+        .clone();
+    agent.answerer_params_sha256 = "different parameters".into();
+    assert!(agency_lift(det, &agent).is_err());
+    let saved = plan.answerers[3].model.clone();
+    plan.answerers[3].model = plan.judge.model.clone();
+    assert!(plan.validate().is_err());
+    plan.answerers[3].model = saved;
+    plan.answerers[1].model.model_id = "other/answerer@v1".parse().unwrap();
+    assert!(plan.validate().is_err());
+}
+
+#[test]
+fn shipped_measured_plan_pins_answerer_judge_and_example_prices() {
+    let plan = shipped_plan();
+    plan.validate().unwrap();
+    assert_eq!(plan.host.prices.revision, "example-not-current-tariff");
+    let session = fixture_session(&plan, FixtureBackend::default());
+    let report = run_with_session(&plan, &session).unwrap();
+    assert_eq!(
+        report.scorer.judge_instruction_sha256.as_deref(),
+        Some(plan.judge.instruction.sha256.as_str())
+    );
+    assert_eq!(report.rows.len(), 8);
+    assert!(report.rows.iter().all(|row| {
+        row.scoring.beam.as_ref().unwrap().wedge_buckets[&WedgeBucket::KnowledgeUpdate].is_some()
+    }));
+}
+
+fn shipped_plan() -> ModelRunPlan {
+    let mut plan: ModelRunPlan =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.example.json")).unwrap();
+    plan.retrieval_manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join(&plan.retrieval_manifest);
+    plan
+}
+
+fn fixture_session(plan: &ModelRunPlan, backend: FixtureBackend) -> ModelSession {
+    let models: Vec<_> = plan
+        .answerers
+        .iter()
+        .map(|arm| arm.model.clone())
+        .chain(std::iter::once(plan.judge.model.clone()))
+        .collect();
+    ModelSession::with_backend(
+        Box::new(backend),
+        plan.host.prices.clone(),
+        &models,
+        plan.host.token_budget,
+    )
+    .unwrap()
+}
+
+#[test]
+fn measured_chroma_and_deterministic_arms_keep_cards_citations_and_gold_isolation() {
+    let mut plan = shipped_plan();
+    let mock = crate::beam::chroma::tests::support::MockChroma::start(plan.efforts.len());
+    plan.chroma = Some(crate::beam::chroma::ChromaConfig {
+        endpoint: mock.endpoint.clone(),
+        retrieval_k: 5,
+        card_id: "vanilla-rag".into(),
+    });
+    plan.answerers.push(AnswererArm {
+        arm: ArmKind::VanillaRag,
+        model: plan.answerers[0].model.clone(),
+        cheap_chat: false,
+    });
+    let backend = FixtureBackend::default();
+    let inputs = backend.answer_inputs.clone();
+    let session = fixture_session(&plan, backend);
+    let report = run_with_session(&plan, &session).unwrap();
+    let requests = mock.finish();
+    for arm in [ArmKind::Deterministic, ArmKind::VanillaRag] {
+        assert_eq!(
+            report.rows.iter().filter(|row| row.arm == arm).count(),
+            plan.efforts.len()
+        );
+    }
+    assert_eq!(report.chroma_card_id.as_deref(), Some("vanilla-rag"));
+    assert!(
+        report
+            .retrieval_cards
+            .contains_key("deterministic-context-pack")
+    );
+    assert!(report.retrieval_cards.contains_key("vanilla-rag"));
+    assert!(!report.citations.appendix.is_empty());
+    let corpus: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    let expected_context = format!("{}\n", corpus["corpus"][0]["text"].as_str().unwrap());
+    assert_eq!(
+        inputs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|input| input["context"] == expected_context)
+            .count(),
+        plan.efforts.len()
+    );
+    assert!(requests.iter().all(|(_, body)| body.get("gold").is_none()));
+    assert_eq!(
+        requests[1].1["documents"],
+        serde_json::json!([corpus["corpus"][0]["text"], corpus["corpus"][1]["text"]])
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(url, _)| url.contains("/query"))
+            .count(),
+        plan.efforts.len()
+    );
+    let wire = serde_json::to_value(report).unwrap();
+    assert_eq!(wire["chroma_card_id"], "vanilla-rag");
+    assert!(wire["retrieval_cards"]["deterministic-context-pack"].is_object());
+    assert!(wire["citations"]["appendix"].is_array());
+}
+
+#[test]
+fn measured_judge_must_match_the_loaded_dataset_before_model_calls() {
+    struct NoCalls;
+    impl LlmBackend for NoCalls {
+        fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+            panic!("mismatched benchmark must not invoke a model")
+        }
+        fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+            panic!("mismatched benchmark must not invoke a model")
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = shipped_plan();
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
+    manifest["dataset"]["path"] = serde_json::json!("run.jsonl");
+    plan.retrieval_manifest = dir.path().join("run.json");
+    std::fs::write(&plan.retrieval_manifest, manifest.to_string()).unwrap();
+    let mut record: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    for (dataset, benchmark, model) in [
+        (
+            "longmemeval-s",
+            JudgeBenchmark::Beam,
+            "openai/gpt-4.1-mini@2025-04-14",
+        ),
+        (
+            "beam-measure-conformance",
+            JudgeBenchmark::LongMemEvalS,
+            "openai/gpt-4o@2024-08-06",
+        ),
+    ] {
+        record["dataset"]["id"] = serde_json::json!(dataset);
+        std::fs::write(dir.path().join("run.jsonl"), record.to_string()).unwrap();
+        plan.judge.benchmark = benchmark;
+        plan.judge.model.model_id = model.parse().unwrap();
+        plan.judge.model.provider_model = format!(
+            "{}-{}",
+            plan.judge.model.model_id.name(),
+            plan.judge.model.model_id.revision()
+        );
+        plan.judge.card.judge_id = plan.judge.model.model_id.name().into();
+        plan.judge.card.version = plan.judge.model.model_id.revision().into();
+        let price = plan.host.prices.models.values().next().unwrap().clone();
+        plan.host
+            .prices
+            .models
+            .insert(plan.judge.model.model_id.clone(), price);
+        let models: Vec<_> = plan
+            .answerers
+            .iter()
+            .map(|arm| arm.model.clone())
+            .chain(std::iter::once(plan.judge.model.clone()))
+            .collect();
+        plan.validate().unwrap();
+        let session = ModelSession::with_backend(
+            Box::new(NoCalls),
+            plan.host.prices.clone(),
+            &models,
+            plan.host.token_budget,
+        )
+        .unwrap();
+        assert!(matches!(
+            run_with_session(&plan, &session),
+            Err(BeamError::JudgeCardInvalid { .. })
+        ));
+    }
+}
+
+#[test]
+fn routing_prompt_is_exactly_supplied_reported_and_validated_before_calls() {
+    let mut plan = shipped_plan();
+    plan.routing_prompt = AnswerPromptPin::from_exact_text("Custom query routing policy.\n");
+    let backend = FixtureBackend::default();
+    let prompts = backend.routing_prompts.clone();
+    let session = fixture_session(&plan, backend);
+    for invalid in [
+        AnswerPromptPin::from_exact_text(""),
+        AnswerPromptPin {
+            content: "changed".into(),
+            sha256: plan.routing_prompt.sha256.clone(),
+        },
+    ] {
+        let saved = std::mem::replace(&mut plan.routing_prompt, invalid);
+        assert!(run_with_session(&plan, &session).is_err());
+        assert!(session.receipts().is_empty());
+        plan.routing_prompt = saved;
+    }
+    let report = run_with_session(&plan, &session).unwrap();
+    assert_eq!(report.routing_prompt, plan.routing_prompt);
+    let prompts = prompts.lock().unwrap();
+    assert_eq!(
+        prompts.len(),
+        plan.efforts
+            .iter()
+            .map(|e| e.retrieval_steps)
+            .sum::<usize>()
+    );
+    assert!(prompts.iter().all(|p| p == &plan.routing_prompt.content));
+}
+
+#[test]
+fn chat_history_orders_by_dataset_time_and_keeps_the_newest_suffix() {
+    let record: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    let corpus: Vec<super::super::report_model::ContractCorpusRecord> =
+        serde_json::from_value(record["corpus"].clone()).unwrap();
+    let newer = &corpus[0].text;
+    let older = &corpus[1].text;
+    assert_eq!(
+        chat_history(&corpus, Path::new("fixture"), 1024).unwrap(),
+        format!("{older}\n{newer}\n")
+    );
+    let suffix = format!("{newer}\n");
+    assert_eq!(
+        chat_history(
+            &corpus,
+            Path::new("fixture"),
+            oneiron::count_context_pack_tokens(&suffix)
+        )
+        .unwrap(),
+        suffix
+    );
+}
+
+#[test]
+fn measured_gold_aliases_are_one_question_and_all_votes_are_billed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = shipped_plan();
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
+    manifest["dataset"]["path"] = serde_json::json!("run.jsonl");
+    plan.retrieval_manifest = dir.path().join("run.json");
+    std::fs::write(&plan.retrieval_manifest, manifest.to_string()).unwrap();
+    let mut record: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    record["gold"]["answers"] = serde_json::json!(["tulip", "tulip flower"]);
+    std::fs::write(dir.path().join("run.jsonl"), record.to_string()).unwrap();
+    let backend = FixtureBackend {
+        rejected_alias: Some("tulip flower".into()),
+        ..Default::default()
+    };
+    let session = fixture_session(&plan, backend);
+    let report = run_with_session(&plan, &session).unwrap();
+    for row in report.rows.iter().chain(&report.ablation_rows) {
+        let aggregate = &row.scoring.beam.as_ref().unwrap().aggregate;
+        assert_eq!(aggregate.count, 1);
+        assert_eq!(aggregate.official_int_cast, 1.0);
+        assert_eq!(row.judge_overhead.input_tokens, 600);
+    }
+}
+
+#[test]
+fn measured_chroma_frontier_excludes_walled_and_dropped_cards() {
+    for (regime, withdrawn) in [("full", false), ("oracle", false), ("full", true)] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut plan = shipped_plan();
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
+        manifest["dataset"]["path"] = serde_json::json!(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/beam_measure.run.jsonl")
+        );
+        manifest["competitors"][1]["card"]["axes"]["regime"] = serde_json::json!(regime);
+        manifest["competitors"][1]["card"]["axes"]["provenance"]["withdrawn"] =
+            serde_json::json!(withdrawn);
+        plan.retrieval_manifest = dir.path().join("run.json");
+        std::fs::write(&plan.retrieval_manifest, manifest.to_string()).unwrap();
+        let mock = crate::beam::chroma::tests::support::MockChroma::start(plan.efforts.len());
+        plan.chroma = Some(crate::beam::chroma::ChromaConfig {
+            endpoint: mock.endpoint.clone(),
+            retrieval_k: 5,
+            card_id: "vanilla-rag".into(),
+        });
+        plan.answerers.push(AnswererArm {
+            arm: ArmKind::VanillaRag,
+            model: plan.answerers[0].model.clone(),
+            cheap_chat: false,
+        });
+        let session = fixture_session(&plan, FixtureBackend::default());
+        let report = run_with_session(&plan, &session).unwrap();
+        mock.finish();
+        assert!(report.rows.iter().any(|row| row.arm == ArmKind::VanillaRag));
+        assert_eq!(
+            report
+                .frontier
+                .iter()
+                .any(|point| point.arm == ArmKind::VanillaRag),
+            regime == "full" && !withdrawn
+        );
+    }
+}

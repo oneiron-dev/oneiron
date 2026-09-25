@@ -73,6 +73,16 @@ pub(super) fn open_queue() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::device())
 }
 
+pub(super) fn open_queue_at(
+    now: u64,
+) -> (tempfile::TempDir, Vault, Arc<crate::ports::ManualClock>) {
+    let clock = crate::ports::ManualClock::new(now);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    (dir, vault, clock)
+}
+
 pub(super) fn enqueue(kind: &str, dedupe_key: Option<&str>, now: u64) -> EnqueueAttempt {
     EnqueueAttempt {
         kind: kind.to_owned(),
@@ -155,7 +165,7 @@ pub(super) fn enqueued(queue: &AttemptQueue<'_>, now: u64) -> Result<AttemptReco
 /// door, returning its stamped receipt (if any) and its receipt id.
 pub(super) fn run_packed_attempt(
     vault: &Vault,
-    terminal: fn(&AttemptQueue<'_>, AttemptId, u32) -> Result<()>,
+    terminal: impl FnOnce(&AttemptQueue<'_>, AttemptId, u32) -> Result<()>,
 ) -> Result<(String, Option<crate::receipt::ReceiptRecord>)> {
     let queue = AttemptQueue::new(vault);
     let attempt = enqueued(&queue, 10)?;

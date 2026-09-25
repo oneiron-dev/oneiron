@@ -33,7 +33,7 @@ const MULTI_CARDINALITY_VALUE_KEY: &str = "question_id";
 
 /// One claim to commit. `approval` is deliberately NOT settable by callers
 /// (pin 2); the facade computes the request and the gate decides.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClaimInput {
     /// Caller-supplied deterministic 32-hex claim id; `None` ⇒ generated.
     /// Load-bearing for ONE-258's idempotent backfill.
@@ -51,6 +51,9 @@ pub struct ClaimInput {
     pub source: String,
     /// Optional WORLD entity ref.
     pub world_ref: Option<String>,
+    /// Optional RELATIONSHIP ref; unknown or wrong-kind refs are rejected.
+    #[serde(default)]
+    pub relationship_ref: Option<String>,
     /// Optional scope map (e.g. `{"sensitivity": 0}`).
     pub scope: Option<serde_json::Value>,
     /// Validity window start (Unix seconds).
@@ -218,6 +221,12 @@ impl Memory<'_> {
         self.commit_one(input, true, None)
     }
 
+    /// Proposes an independent claim without implicitly replacing a peer's head.
+    /// A conflict review can cite this proposal; the proposal grants no authority.
+    pub fn claim_propose(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
+        self.commit_one(input, false, Some(ClaimApprovalStatus::Proposed))
+    }
+
     /// Retracts an active claim (deliberate withdrawal; record preserved).
     ///
     /// Authority (fail-closed): the asserted actor is RESOLVED against the
@@ -242,7 +251,7 @@ impl Memory<'_> {
         before_txn: impl FnOnce(),
     ) -> MemoryResult<CommitReceipt> {
         let id = self.resolve_ref(claim_ref)?;
-        let now = crate::unix_seconds_now();
+        let now = self.vault.store.clock.now_recorded_at();
         before_txn();
         let (approval, consent_decision_id) = self.vault.try_with_write_txn(|wtxn| {
             verify_actor_binding_in_txn(self.vault, wtxn, self.actor, self.actor_class)?;
@@ -271,10 +280,19 @@ impl Memory<'_> {
             if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
                 self.verify_public_booking_writer_in_txn(wtxn)?;
             }
+            let owns_claim = claim_envelope_actor(&body) == Some(self.actor)
+                && crate::batch::authenticated_claim_author_in_txn(&self.vault.store, wtxn, &id, &body)?
+                    .is_some_and(|author| author.entity_ref() == self.actor);
+            if self.actor_class == EdgeActorClass::System || owns_claim {
+                super::authorship::require_claim_self_grant_in_txn(
+                    self.vault, wtxn, WriteActor::new(self.actor, self.actor_class),
+                    id, &body, "memory.claim.retract",
+                )?;
+            }
             // Retracting your OWN claim is not an owner power and needs no
             // owner binding; retracting SOMEONE ELSE'S is, so it gets the
             // authority-log teeth.
-            if claim_envelope_actor(&body) != Some(self.actor) {
+            if !owns_claim && self.actor_class != EdgeActorClass::System {
                 if self.actor_class != EdgeActorClass::Human {
                     return Err(MemoryError::new(
                         MEMORY_CODE_FORBIDDEN,
@@ -290,6 +308,13 @@ impl Memory<'_> {
                     ));
                 }
                 verify_owner_actor_binding_in_txn(self.vault, &*wtxn, self.actor)?;
+                let raw = crate::claim::encode_claim_body(&body)?;
+                let receipt = super::authorship::decision(
+                    WriteActor::new(self.actor, self.actor_class), "memory_claim_override", "approved",
+                    "gate.memory.explicit_owner_retraction", Some(id),
+                    blake3::hash(&raw).as_bytes().to_vec(), now,
+                );
+                self.vault.store.append_gate_decision_in_txn(wtxn, &receipt)?;
             }
             if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
                 super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
@@ -474,6 +499,18 @@ impl Memory<'_> {
         // Every generic claim-write door routes through here (`commit`,
         // `claim_upsert`, `seed_claims` via `commit_all`), so one guard covers
         // all three.
+        // Keyed facts bind subject, envelope actor/class, worldless scope,
+        // exact address, and replay identity together. A generic upsert's
+        // subject+scope match must not supersede another actor's keyed fact.
+        if input.predicate == super::key_value::PREDICATE {
+            return Err(MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "keyed memory is written through key_value_put",
+                &[
+                    "Use the actor-bound keyed-memory door; generic claims cannot replace keyed facts.",
+                ],
+            ));
+        }
         if crate::claim::is_expression_preference_predicate(&input.predicate) {
             return Err(MemoryError::new(
                 MEMORY_CODE_INVALID_STATE,
@@ -485,7 +522,7 @@ impl Memory<'_> {
             ));
         }
         self.verified_actor_class()?;
-        let id = id_from_optional_hex(input.id.as_deref())?;
+        let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         let subject = self.resolve_ref(&input.subject_ref)?;
         if self.vault.get_entity_type(&subject)?.is_none() {
             return Err(MemoryError::not_found(format!(
@@ -499,8 +536,13 @@ impl Memory<'_> {
             Some(world_ref) => Some(self.resolve_ref(world_ref)?),
             None => None,
         };
+        let relationship = input
+            .relationship_ref
+            .as_deref()
+            .map(|r| self.resolve_ref(r))
+            .transpose()?;
         let scope_rmpv = input.scope.as_ref().map(json_to_rmpv);
-        let now = crate::unix_seconds_now();
+        let now = self.vault.store.clock.now_recorded_at();
         let occurred_at = input.occurred_at.unwrap_or(now);
         let learned_at = input.learned_at.unwrap_or(now);
 
@@ -541,10 +583,13 @@ impl Memory<'_> {
             if let Some(world) = world {
                 candidate = candidate.with_world(world);
             }
+            if let Some(relationship) = relationship {
+                candidate = candidate.with_relationship(relationship);
+            }
             if let Some(scope) = scope_rmpv.clone() {
                 candidate = candidate.with_scope(scope);
             }
-            let envelope = WriteEnvelope::new(
+            let mut envelope = WriteEnvelope::new(
                 WriteActor::new(self.actor, self.actor_class),
                 source,
                 WriteProvenance::new(facade_provenance("commit"))?,
@@ -563,11 +608,44 @@ impl Memory<'_> {
                         "booking publication owner authority refused",
                     ));
                 }
+                if let Some(raw) = self.vault.get_raw_in(wtxn, &id)?
+                    && crate::batch::EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                        header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                    })
+                    && self
+                        .vault
+                        .get_claim_in_txn(wtxn, &id)?
+                        .is_some_and(|existing| existing.predicate == super::key_value::PREDICATE)
+                {
+                    return Err(Error::InvalidClaimBody(
+                        "keyed claim revisions cannot be overwritten through generic claims",
+                    ));
+                }
                 if self
                     .vault
                     .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
                 {
                     return Ok(true);
+                }
+                super::authorship::guard_existing_claim_in_txn(
+                    self.vault,
+                    wtxn,
+                    envelope.actor(),
+                    id,
+                )?;
+                if let Some(old_id) = prior {
+                    let old = self
+                        .vault
+                        .get_claim_in_txn(wtxn, &old_id)?
+                        .ok_or(Error::EntityNotFound)?;
+                    super::authorship::require_claim_self_grant_in_txn(
+                        self.vault,
+                        wtxn,
+                        envelope.actor(),
+                        old_id,
+                        &old,
+                        "memory.claim.supersede",
+                    )?;
                 }
                 let publication_write =
                     input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
@@ -579,6 +657,32 @@ impl Memory<'_> {
                         )?;
                     }
                 }
+                if let Some(old_id) = prior {
+                    let policy = crate::gate::resolve_policy_manifest(&self.vault.store, wtxn)?;
+                    let old = self
+                        .vault
+                        .require_named_claim_target_active_in(wtxn, &old_id)?;
+                    let probe = candidate
+                        .clone()
+                        .into_claim_body(&envelope, self.vault.default_facet_in_txn(wtxn)?);
+                    if !policy.is_single_valued_predicate(&input.predicate)
+                        || crate::claim::claim_source_widens_beyond(
+                            old.source.unwrap_or(ClaimSource::UserStated),
+                            source,
+                        )
+                        || self
+                            .vault
+                            .supersession_requires_confirmation_in_txn(wtxn, &old_id, &probe)?
+                    {
+                        envelope = WriteEnvelope::new(
+                            envelope.actor(),
+                            source,
+                            envelope.provenance().clone(),
+                            ClaimApprovalStatus::Proposed,
+                        );
+                    }
+                }
+                let closure_envelope = envelope.clone();
                 apply_ops_with_gate_mode(
                     &self.vault.store,
                     &self.vault.config,
@@ -596,8 +700,13 @@ impl Memory<'_> {
                     ApplyOpsGateMode::new(true, true),
                 )?;
                 if let Some(old_id) = prior {
-                    self.vault
-                        .supersede_claim_in_txn(wtxn, &id, &old_id, learned_at)?;
+                    self.vault.stage_claim_supersession_in_txn(
+                        wtxn,
+                        &id,
+                        &old_id,
+                        &closure_envelope,
+                        learned_at,
+                    )?;
                 }
                 if publication_write {
                     crate::booking::publication::index_publication_in_txn(
@@ -630,7 +739,15 @@ impl Memory<'_> {
         }
 
         let superseded_short_id = match prior {
-            Some(old_id) => Some(self.short_ref_or_hex(&old_id)?),
+            Some(old_id)
+                if self
+                    .vault
+                    .get_claim(&old_id)?
+                    .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Superseded) =>
+            {
+                Some(self.short_ref_or_hex(&old_id)?)
+            }
+            Some(_) => None,
             None => None,
         };
         let final_approval = self.vault.get_claim(&id)?.map_or_else(
@@ -664,6 +781,16 @@ impl Memory<'_> {
             None
         };
         let new_scope = input.scope.clone();
+        let world = input
+            .world_ref
+            .as_deref()
+            .map(|r| self.resolve_ref(r))
+            .transpose()?;
+        let relationship = input
+            .relationship_ref
+            .as_deref()
+            .map(|r| self.resolve_ref(r))
+            .transpose()?;
         let ids = self.vault.claims_for_subject(subject)?;
         let mut best: Option<EntityId> = None;
         for id in ids {
@@ -673,11 +800,18 @@ impl Memory<'_> {
             let Some(body) = self.vault.get_claim(&id)? else {
                 continue;
             };
-            if body.lifecycle != ClaimLifecycleStatus::Active || body.predicate != input.predicate {
+            if body.lifecycle != ClaimLifecycleStatus::Active
+                || !matches!(
+                    body.approval,
+                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+                )
+                || body.predicate != input.predicate
+                || body.world != world
+            {
                 continue;
             }
             let prior_scope = body.scope.as_ref().map(companion_value_to_json);
-            if prior_scope != new_scope {
+            if prior_scope != new_scope || body.world != world || body.rel != relationship {
                 continue;
             }
             if let Some(new_qid) = &multi_key {

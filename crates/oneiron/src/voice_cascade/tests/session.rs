@@ -661,3 +661,51 @@ fn normal_end_is_idempotent_drops_context_handles_and_is_not_barge_in() -> Resul
     );
     Ok(())
 }
+
+#[test]
+fn barge_in_settles_actual_generation_spend_and_aborts_unspent_reservation() -> Result<()> {
+    use crate::llm::*;
+    for spent in [0, 7] {
+        let (_dir, vault) = vault();
+        let mut session = VoiceCascadeSession::new(vault, config())?;
+        let generation = start(&mut session, false)?.generation;
+        let guard = Arc::new(BudgetGuard::with_reserve_units(
+            "voice",
+            1000,
+            100,
+            BudgetExhaustionPolicy::Suspend,
+        ));
+        let request = LlmRequest {
+            model: ModelId::new("test/voice@1").expect("model"),
+            envelope: CallEnvelope {
+                scope: Default::default(),
+                purpose: CallPurpose::Voice,
+                class: CallClass::BestEffort,
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Voice,
+                    ModelTierRef("voice".into()),
+                ),
+                response_format: ResponseFormat::Text,
+                locality: ModelLocality::ThirdParty,
+            },
+            messages: vec![],
+            tools: vec![],
+            params: Default::default(),
+            provider_options: Default::default(),
+        };
+        session.reserve_generation_budget(generation, guard.clone(), &request)?;
+        assert_eq!(guard.read().reserved_units, 100);
+        let mut usage = LlmUsage::zero();
+        usage.output.total = spent;
+        assert!(session.observe_generation_usage(generation, usage)?);
+        session.observe_speech(Duration::ZERO, true)?;
+        let stop = session
+            .observe_speech(Duration::from_millis(120), true)?
+            .expect("cancel");
+        assert_eq!(stop.reason, StopReason::UserBargeIn);
+        assert_eq!(guard.read().reserved_units, 0);
+        assert_eq!(guard.read().used_units, spent);
+        assert!(!session.observe_generation_usage(generation, LlmUsage::zero())?);
+    }
+    Ok(())
+}

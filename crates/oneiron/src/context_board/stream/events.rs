@@ -7,7 +7,20 @@ use serde::{Deserialize, Serialize};
 use super::frames::{DeltaRow, StreamConnectionId};
 use super::provenance::{ChildEvent, VerifiedOwnTaskEvent};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum SubscriptionScope {
     MyTasks,
     MyChildren,

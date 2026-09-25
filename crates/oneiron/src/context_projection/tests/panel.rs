@@ -87,7 +87,7 @@ fn context_from_resolves_only_settled_completed_sibling_task_results() {
     let manifest = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("schema_version"),
-            rmpv::Value::from("1.1"),
+            rmpv::Value::from(crate::gate::POLICY_SCHEMA_VERSION),
         ),
         (
             rmpv::Value::from("pack_id"),

@@ -10,9 +10,10 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
-use crate::vault::{MAX_EDGE_QUERY_RESULTS, edge_kind_prefix, parse_edge_record, require_key_len};
+use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 
 /// How many inbound claim rows a streaming lookup will walk before refusing.
@@ -58,15 +59,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<ClaimBody>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
-            return Ok(None);
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
-        }
-        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
+        crate::ports::ClaimStore::port_claim_get(self, rtxn, id)
     }
 
     pub(crate) fn session_claim_bundle_members_in_txn(
@@ -80,15 +73,13 @@ impl Vault {
         let mut members = Vec::new();
         for entry in self
             .store
-            .type_index
-            .prefix_iter(rtxn, &[ENTITY_TYPE_CLAIM])?
+            .port_entity_ids_by_type(rtxn, ENTITY_TYPE_CLAIM, None)?
         {
-            let (key, _) = entry?;
-            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let id = entry?;
             let raw = self
                 .store
-                .entities
-                .get(rtxn, id.as_bytes())?
+                .port_entity_record(rtxn, &id)?
+                .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("claim type index"))?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -130,14 +121,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         subject: &EntityId,
     ) -> Result<Vec<EntityId>> {
-        self.filtered_edge_peers(
-            rtxn,
-            &self.store.edges_in,
-            subject,
-            EdgeKind::ClaimOf,
-            Some(ENTITY_TYPE_CLAIM),
-            "claims for subject",
-        )
+        crate::ports::ClaimStore::port_claim_list(self, rtxn, subject)
     }
 
     /// Walks the CLAIMs attached to `subject` via inbound `claim_of` edges and
@@ -193,15 +177,19 @@ impl Vault {
         ceiling: usize,
         mut found: impl FnMut(&EntityId, &ClaimBody) -> Option<T>,
     ) -> Result<Option<T>> {
-        let prefix = edge_kind_prefix(subject, EdgeKind::ClaimOf);
         let mut scanned = 0usize;
-        for entry in self.store.edges_in.prefix_iter(rtxn, &prefix)? {
+        for entry in self.port_edges(
+            rtxn,
+            subject,
+            EdgeDirection::In,
+            Some(EdgeKind::ClaimOf),
+            None,
+        )? {
             scanned += 1;
             if scanned > ceiling {
                 return Err(Error::IndexOverflow("claim lookup for subject"));
             }
-            let (key, value) = entry?;
-            let claim_id = parse_edge_record(&key, &value)?.target;
+            let claim_id = entry?.target;
             let Some(body) = self.claim_body_if_claim_in_txn(rtxn, &claim_id)? else {
                 continue;
             };
@@ -219,7 +207,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<ClaimBody>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self.port_entity_raw(rtxn, id)? else {
             return Ok(None);
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -245,30 +233,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         predicate: &str,
     ) -> Result<Vec<(EntityId, ClaimBody)>> {
-        let mut rows = Vec::new();
-        for entry in self
-            .store
-            .type_index
-            .prefix_iter(rtxn, &[ENTITY_TYPE_CLAIM])?
-        {
-            let (key, _) = entry?;
-            let id = crate::vault::entity_id_from_type_index_key(&key)?;
-            let raw = self
-                .store
-                .entities
-                .get(rtxn, id.as_bytes())?
-                .ok_or(Error::CorruptedIndex("claim type index"))?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_CLAIM {
-                return Err(Error::CorruptedIndex("claim type index"));
-            }
-            let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if body.predicate == predicate {
-                rows.push((id, body));
-            }
-        }
-        Ok(rows)
+        crate::ports::ClaimStore::port_claim_list_by_predicate(self, rtxn, predicate)
     }
 
     pub(crate) fn claim_bodies_for_subjects_matching(
@@ -279,24 +244,23 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let mut claims = Vec::new();
         for subject in subjects {
-            let prefix = edge_kind_prefix(subject, EdgeKind::ClaimOf);
-            for (scanned, entry) in self.store.edges_in.prefix_iter(&rtxn, &prefix)?.enumerate() {
+            for (scanned, entry) in self
+                .port_edges(
+                    &rtxn,
+                    subject,
+                    EdgeDirection::In,
+                    Some(EdgeKind::ClaimOf),
+                    None,
+                )?
+                .enumerate()
+            {
                 if scanned >= MAX_EDGE_QUERY_RESULTS {
                     return Err(Error::IndexOverflow("claim_bodies_for_subjects"));
                 }
-                let (key, value) = entry?;
-                let claim_id = parse_edge_record(&key, &value)?.target;
-                let Some(raw) = self.store.entities.get(&rtxn, claim_id.as_bytes())? else {
+                let claim_id = entry?.target;
+                let Some(body) = self.claim_body_if_claim_in_txn(&rtxn, &claim_id)? else {
                     continue;
                 };
-                let Some(header) = EntityMetadataHeader::parse(&raw) else {
-                    continue;
-                };
-                if header.entity_type != ENTITY_TYPE_CLAIM {
-                    continue;
-                }
-                let body =
-                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
                 if matches(&body, subject) {
                     claims.push(body);
                 }
@@ -329,7 +293,7 @@ pub(crate) fn facet_refs_in_db(
             return Err(Error::IndexOverflow("claim_facet_refs"));
         }
         let (key, _) = entry?;
-        require_key_len(&key, ENTITY_ID_LEN + 1 + ENTITY_ID_LEN, "facet edge key")?;
+        crate::vault::require_key_len(&key, ENTITY_ID_LEN + 1 + ENTITY_ID_LEN, "facet edge key")?;
         let target = EntityId::from_bytes(
             key[ENTITY_ID_LEN + 1..]
                 .try_into()

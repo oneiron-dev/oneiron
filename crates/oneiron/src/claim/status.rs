@@ -2,7 +2,8 @@
 //! approval (consent), lifecycle (currentness), and source (provenance).
 
 /// Claim approval status (`appr`): the ARCH-0003 consent axis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ClaimApprovalStatus {
     Auto,
     Proposed,
@@ -68,7 +69,10 @@ impl ClaimLifecycleStatus {
 /// can be a `BTreeSet` member in `SourceLineage`. Declaration order carries no
 /// trust meaning — the trust lattice is `claim_source_rank`/`source_meet`, and
 /// the auto-permit question is `requires_explicit_auto_permit` below.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ClaimSource {
     UserStated,
     Observed,

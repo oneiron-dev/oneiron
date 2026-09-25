@@ -112,6 +112,13 @@ pub(crate) fn index_text(
         None => {}
     }
 
+    // Canonical caller input, not tokenizer output. Restore rebuilds postings from it.
+    let mut source_key = b"index_source:text:v1:".to_vec();
+    source_key.extend_from_slice(id.as_bytes());
+    let source = rmp_serde::to_vec_named(fields)
+        .map_err(|_| Error::InvariantViolation("index source encode"))?;
+    store.vault_meta().put(wtxn, &source_key, &source)?;
+
     let mut tokens: Vec<Token> = Vec::new();
     let ctx = AnalyzerContext::for_index();
     for (_, value) in fields {
@@ -217,6 +224,9 @@ pub(crate) fn deindex_text(
     id: &EntityId,
 ) -> Result<()> {
     validate_text_doc_id(id)?;
+    let mut source_key = b"index_source:text:v1:".to_vec();
+    source_key.extend_from_slice(id.as_bytes());
+    store.vault_meta().delete(wtxn, &source_key)?;
 
     let Some(forward_raw) = store.text_forward().get(wtxn, id.as_bytes())? else {
         if store.text_meta().get(wtxn, id.as_bytes())?.is_some() {

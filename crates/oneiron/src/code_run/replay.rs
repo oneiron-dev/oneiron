@@ -77,7 +77,7 @@ impl CodeRunBridgeCall {
             seq,
             effect: call.effect(),
             request: self_call_request_value(call)?,
-            outcome: self_dispatch_outcome_value(outcome),
+            outcome: self_dispatch_outcome_value(outcome)?,
             started_at_ms,
             finished_at_ms,
         };

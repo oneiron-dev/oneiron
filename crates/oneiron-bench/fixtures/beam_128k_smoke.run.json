@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "runId": "beam-128k-smoke",
   "dataset": {
     "kind": "fixture",
@@ -35,6 +35,29 @@
         "tokenAccounting": {
           "source": "tokenizer_count",
           "notes": "Local deterministic context-pack query and serialized output counted with the offline o200k_base tokenizer."
+        },
+        "axes": {
+          "tier": {
+            "row": "fixture",
+            "reference": "fixture"
+          },
+          "regime": "full",
+          "nativeScale": "fixture-only; not a public native-scale measurement",
+          "backbone": {
+            "modelPin": "not-applicable/deterministic@v1",
+            "soloRow": "backbone-solo"
+          },
+          "judge": {
+            "identity": "beam-fixture-judge@v1",
+            "inFamily": false
+          },
+          "retrievalK": 5,
+          "provenance": {
+            "source": "fixture://beam_128k_smoke.run.json",
+            "independent": true,
+            "caveat": "Synthetic conformance only; not public benchmark accuracy.",
+            "withdrawn": false
+          }
         }
       }
     },
@@ -57,6 +80,29 @@
         "tokenAccounting": {
           "source": "tokenizer_count",
           "notes": "Local vanilla-RAG query and serialized output counted with the offline o200k_base tokenizer under the same token budget."
+        },
+        "axes": {
+          "tier": {
+            "row": "fixture",
+            "reference": "fixture"
+          },
+          "regime": "full",
+          "nativeScale": "fixture-only; not a public native-scale measurement",
+          "backbone": {
+            "modelPin": "not-applicable/deterministic@v1",
+            "soloRow": "backbone-solo"
+          },
+          "judge": {
+            "identity": "beam-fixture-judge@v1",
+            "inFamily": false
+          },
+          "retrievalK": 5,
+          "provenance": {
+            "source": "fixture://beam_128k_smoke.run.json",
+            "independent": true,
+            "caveat": "Synthetic conformance only; not public benchmark accuracy.",
+            "withdrawn": false
+          }
         }
       }
     },
@@ -79,6 +125,29 @@
         "tokenAccounting": {
           "source": "not_applicable",
           "notes": "Backbone-solo adapter is not implemented in the fixture harness."
+        },
+        "axes": {
+          "tier": {
+            "row": "fixture",
+            "reference": "fixture"
+          },
+          "regime": "full",
+          "nativeScale": "fixture-only; not a public native-scale measurement",
+          "backbone": {
+            "modelPin": "not-applicable/deterministic@v1",
+            "soloRow": "backbone-solo"
+          },
+          "judge": {
+            "identity": "beam-fixture-judge@v1",
+            "inFamily": false
+          },
+          "retrievalK": 5,
+          "provenance": {
+            "source": "fixture://beam_128k_smoke.run.json",
+            "independent": true,
+            "caveat": "Synthetic conformance only; not public benchmark accuracy.",
+            "withdrawn": false
+          }
         }
       }
     },
@@ -101,6 +170,29 @@
         "tokenAccounting": {
           "source": "not_applicable",
           "notes": "Agentic adapter is not implemented in the fixture harness."
+        },
+        "axes": {
+          "tier": {
+            "row": "fixture",
+            "reference": "fixture"
+          },
+          "regime": "full",
+          "nativeScale": "fixture-only; not a public native-scale measurement",
+          "backbone": {
+            "modelPin": "not-applicable/deterministic@v1",
+            "soloRow": "backbone-solo"
+          },
+          "judge": {
+            "identity": "beam-fixture-judge@v1",
+            "inFamily": false
+          },
+          "retrievalK": 5,
+          "provenance": {
+            "source": "fixture://beam_128k_smoke.run.json",
+            "independent": true,
+            "caveat": "Synthetic conformance only; not public benchmark accuracy.",
+            "withdrawn": false
+          }
         }
       }
     },
@@ -123,6 +215,29 @@
         "tokenAccounting": {
           "source": "not_applicable",
           "notes": "Chat adapter is not implemented in the fixture harness."
+        },
+        "axes": {
+          "tier": {
+            "row": "fixture",
+            "reference": "fixture"
+          },
+          "regime": "full",
+          "nativeScale": "fixture-only; not a public native-scale measurement",
+          "backbone": {
+            "modelPin": "not-applicable/deterministic@v1",
+            "soloRow": "backbone-solo"
+          },
+          "judge": {
+            "identity": "beam-fixture-judge@v1",
+            "inFamily": false
+          },
+          "retrievalK": 5,
+          "provenance": {
+            "source": "fixture://beam_128k_smoke.run.json",
+            "independent": true,
+            "caveat": "Synthetic conformance only; not public benchmark accuracy.",
+            "withdrawn": false
+          }
         }
       }
     }

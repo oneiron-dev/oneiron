@@ -16,7 +16,6 @@ use axum::response::IntoResponse;
 use axum::response::Json;
 use axum::response::Response;
 use serde::Serialize;
-use serde_json::Value;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
@@ -114,40 +113,140 @@ pub(crate) async fn get_entity(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
-    let blob = scoped_read
-        .get(&id)
-        .inspect_err(|e| {
-            tracing::error!(error = %e, "get entity failed");
-        })
+    let scoped_read = scoped_read_for_legacy_api(&server)?;
+    let read = scoped_read
+        .get_entity_parts_with_receipt(&id, None)
+        .inspect_err(|error| tracing::error!(%error,"get entity failed"))
         .map_err(|_| ApiError::internal_server_error("get entity failed"))?;
-
-    let Some(data) = blob else {
-        return Err(ApiError::not_found("entity", Some(&id_hex)));
+    let response = match read.value {
+        None => ApiError::not_found("entity", Some(&id_hex)).into_response(),
+        Some((_, _, data)) if view == View::Standard => {
+            (StatusCode::OK, redacted_payload(data)?).into_response()
+        }
+        Some((entity_type, updated_at, data)) => (
+            StatusCode::OK,
+            Json(projection::project_entity_parts(
+                &id,
+                entity_type,
+                updated_at,
+                &data,
+                view,
+            )),
+        )
+            .into_response(),
     };
+    attach_read_receipt(response, &read.receipt)
+}
 
-    if view == View::Standard {
-        return Ok((StatusCode::OK, data).into_response());
+/// Preserve the legacy raw transport, but never return surviving credentials.
+fn redacted_payload(bytes: Vec<u8>) -> Result<Vec<u8>, ApiError> {
+    oneiron::batch::export::redacted_memory_payload(bytes)
+        .map_err(|_| ApiError::internal_server_error("redaction serialization failed"))
+}
+
+fn attach_read_receipt(
+    mut response: Response,
+    receipt: &oneiron::claim::ScopedReadReceipt,
+) -> Result<Response, ApiError> {
+    let value = serde_json::to_string(receipt)
+        .map_err(|_| ApiError::internal_server_error("read receipt serialization failed"))?;
+    let value = axum::http::HeaderValue::from_str(&value)
+        .map_err(|_| ApiError::internal_server_error("read receipt header failed"))?;
+    response
+        .headers_mut()
+        .insert("x-oneiron-read-receipt", value);
+    Ok(response)
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    use serde_json::Value;
+    #[test]
+    fn raw_entity_transport_filters_credentials_and_preserves_safe_bytes() {
+        assert_eq!(
+            redacted_payload(b"safe opaque text".to_vec()).unwrap(),
+            b"safe opaque text"
+        );
+        for json in [true, false] {
+            let value = serde_json::json!({"safe":"kept","nested":{"password":"legacy-value"}});
+            let encoded = if json {
+                serde_json::to_vec(&value).unwrap()
+            } else {
+                rmp_serde::to_vec_named(&value).unwrap()
+            };
+            let bytes = redacted_payload(encoded).unwrap();
+            let got: Value = if json {
+                serde_json::from_slice(&bytes).unwrap()
+            } else {
+                rmp_serde::from_slice(&bytes).unwrap()
+            };
+            assert_eq!(got["safe"], "kept");
+            assert_eq!(got["nested"]["password"], "[redacted]");
+        }
     }
-
-    let entity_type = server
-        .vault
-        .get_entity_type(&id)
-        .inspect_err(|e| {
-            tracing::error!(error = %e, "get entity type failed");
-        })
-        .map_err(|_| ApiError::internal_server_error("get entity type failed"))?
-        .ok_or_else(|| ApiError::not_found("entity", Some(&id_hex)))?;
-    let updated_at = server
-        .vault
-        .get_learned_at(&id)
-        .inspect_err(|e| {
-            tracing::error!(error = %e, "get entity learned_at failed");
-        })
-        .map_err(|_| ApiError::internal_server_error("get entity learned_at failed"))?;
-    let response = projection::project_entity_parts(&id, entity_type, updated_at, &data, view);
-
-    Ok((StatusCode::OK, Json(response)).into_response())
+    #[tokio::test]
+    async fn edge_transport_keeps_its_array_and_receipts_missing_and_live_sources() {
+        let (_dir, server) = crate::api::tests::auth_test_server();
+        let mut owner = HeaderMap::new();
+        owner.insert(
+            axum::http::header::AUTHORIZATION,
+            crate::api::tests::owner_bearer().parse().unwrap(),
+        );
+        let id = oneiron::EntityId::from_bytes([0x31; 16]).unwrap();
+        for present in [false, true] {
+            if present {
+                server
+                    .vault
+                    .put_entity(
+                        &id,
+                        oneiron::registry::ENTITY_TYPE_PERSON,
+                        oneiron::TimeRange { start: 1, end: 1 },
+                        1,
+                        b"source",
+                    )
+                    .unwrap();
+            }
+            let response = get_edges(
+                owner.clone(),
+                State(server.clone()),
+                Path(id.to_hex()),
+                Ok(Query(ViewQuery {
+                    view: Some(View::Full),
+                })),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                response.status(),
+                if present {
+                    StatusCode::OK
+                } else {
+                    StatusCode::NOT_FOUND
+                }
+            );
+            let receipt: Value = serde_json::from_str(
+                response.headers()["x-oneiron-read-receipt"]
+                    .to_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(receipt["suppressed_count"], 0);
+            assert!(receipt["applied"].is_object());
+            if present {
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let edges = serde_json::from_slice::<Value>(&body).unwrap();
+                assert_eq!(edges.as_array().unwrap().len(), 1);
+                assert_eq!(edges[0]["kind"], oneiron::EdgeKind::HasFacet as u8);
+                assert_eq!(
+                    edges[0]["target"],
+                    oneiron::claim::substrate_facet_id(id).to_hex()
+                );
+            }
+        }
+    }
 }
 
 /// Get outbound edges for an entity.
@@ -167,6 +266,7 @@ pub(crate) async fn get_entity(
         (
             status = 200,
             description = "Outbound graph edges from the requested entity, projected according to `view`.",
+            headers(("x-oneiron-read-receipt" = String, description = "JSON requested scope, actor ceiling, intersection, narrowed axes and suppression count.")),
             body = Vec<Object>,
             content_type = "application/json",
             example = json!([{
@@ -199,7 +299,7 @@ pub(crate) async fn get_edges(
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
-) -> Result<Json<Vec<Value>>, ApiError> {
+) -> Result<Response, ApiError> {
     check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
@@ -208,21 +308,24 @@ pub(crate) async fn get_edges(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
-    let edges = scoped_read
+    let scoped_read = scoped_read_for_legacy_api(&server)?;
+    let read = scoped_read
         .edges_out(&id)
         .inspect_err(|e| {
             tracing::error!(error = %e, "get edges failed");
         })
-        .map_err(|_| ApiError::internal_server_error("get edges failed"))?
-        .ok_or_else(|| ApiError::not_found("entity", Some(&id_hex)))?;
-
-    let response: Vec<Value> = edges
-        .into_iter()
-        .map(|edge| projection::project_edge(&edge, view))
-        .collect();
-
-    Ok(Json(response))
+        .map_err(|_| ApiError::internal_server_error("get edges failed"))?;
+    let response = match read.value {
+        None => ApiError::not_found("entity", Some(&id_hex)).into_response(),
+        Some(edges) => Json(
+            edges
+                .into_iter()
+                .map(|edge| projection::project_edge(&edge, view))
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
+    };
+    attach_read_receipt(response, &read.receipt)
 }
 
 /// Outbound edge from one entity to another.

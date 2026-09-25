@@ -15,6 +15,35 @@ use super::{
 use crate::error::Result;
 
 impl GitWire<'_> {
+    /// Write and pin objects without preparing any served-ref publication.
+    /// Origin publication owns its own provenance/CAS protocol; using `stage`
+    /// there would let generic recovery advance a ref before origin T2.
+    pub fn write_objects(
+        &self,
+        repo: &GitWireRepo,
+        plan: &GitWirePlan,
+        now: u64,
+    ) -> GitWireResult<Vec<GitOid>> {
+        if !plan.publications.is_empty() || plan.objects.is_empty() {
+            return Err(invalid(
+                "object-only plan requires objects and no publications",
+            ));
+        }
+        let _guard = lock_repository(&repo.common_dir)?;
+        let mut written = Vec::with_capacity(plan.objects.len());
+        for object in &plan.objects {
+            let argv = object.argv()?;
+            let output = self.run_mutation(repo, &argv)?;
+            let oid = parse_oid_output(&output.stdout)?;
+            let pinned = self.write_keep_ref(repo, &oid, now)?;
+            if matches!(pinned, GitWireCommitOutcome::Rejected { .. }) {
+                return Err(invalid("object-only keep-ref refused"));
+            }
+            written.push(oid);
+        }
+        Ok(written)
+    }
+
     /// Phase one: runs every object write outside any vault write transaction,
     /// protects the result with keep-refs, and journals the prepared intent.
     ///

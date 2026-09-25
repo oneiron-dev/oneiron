@@ -41,6 +41,8 @@ impl StandingOutboundGrantStatus {
 /// Vault-resident standing outbound-grant claim.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StandingOutboundGrant {
+    /// Canonical grant authority. Resource fields below are narrowing presets.
+    pub authority_scope: crate::federation::Scope,
     /// Principal that authenticated the consent action.
     pub principal_ref: String,
     /// OF-336 component that originated the grant.
@@ -74,6 +76,7 @@ impl StandingOutboundGrant {
         read_frontier_hash: [u8; 32],
     ) -> Result<Self> {
         let grant = Self {
+            authority_scope: crate::federation::scope_codec::effect_preset(),
             principal_ref: non_empty_string(&intent.principal_ref)?,
             origin_component_id: non_empty_string(&intent.origin_component_id)?,
             origin_action_id: non_empty_string(&intent.origin_action_id)?,
@@ -99,6 +102,7 @@ impl StandingOutboundGrant {
         read_frontier_hash: [u8; 32],
     ) -> Result<Self> {
         let grant = Self {
+            authority_scope: crate::federation::scope_codec::effect_preset(),
             principal_ref: non_empty_string(&intent.principal_ref)?,
             origin_component_id: non_empty_string(&intent.origin_component_id)?,
             origin_action_id: non_empty_string(&intent.origin_action_id)?,
@@ -154,7 +158,8 @@ impl StandingOutboundGrant {
     /// supplied current policy-floor hash.
     #[must_use]
     pub fn is_active_under_policy(&self, read_frontier_hash: &[u8; 32]) -> bool {
-        self.status == StandingOutboundGrantStatus::Active
+        crate::federation::grant_scope::admits_preset(&self.authority_scope, "effect")
+            && self.status == StandingOutboundGrantStatus::Active
             && self.revoked_at.is_none()
             && &self.read_frontier_hash == read_frontier_hash
     }

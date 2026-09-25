@@ -16,9 +16,9 @@ use crate::deletion::DeleteReason;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK};
-use crate::vault::{LiveEntityRow, edge_kind_prefix, live_entity_row_in_txn};
-use uuid::Uuid;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 // ---------------------------------------------------------------------------
 // The tripwire
@@ -105,7 +105,11 @@ pub(crate) fn zero_live_members_in_txn(
     rtxn: &heed::RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<Option<CleanupKind>> {
-    let Some(raw) = vault.store.entities.get(rtxn, entity.as_bytes())? else {
+    let Some(raw) = vault
+        .store
+        .port_entity_record(rtxn, entity)?
+        .map(|row| row.encode())
+    else {
         return Ok(None);
     };
     let header =
@@ -178,11 +182,6 @@ fn has_live_claim(vault: &Vault, rtxn: &heed::RoTxn<'_>, subject: &EntityId) -> 
     Ok(false)
 }
 
-enum EdgeDirection {
-    In,
-    Out,
-}
-
 /// Whether `id` has at least ONE edge of `kind` in `direction`.
 ///
 /// A PRESENCE probe, not a query: it reads the first key under the
@@ -197,12 +196,12 @@ fn has_any_edge_in_txn(
     id: &EntityId,
     kind: EdgeKind,
 ) -> Result<bool> {
-    let db = match direction {
-        EdgeDirection::In => &vault.store.edges_in,
-        EdgeDirection::Out => &vault.store.edges_out,
-    };
-    let prefix = edge_kind_prefix(id, kind);
-    Ok(db.prefix_iter(rtxn, &prefix)?.next().transpose()?.is_some())
+    Ok(vault
+        .store
+        .port_edges(rtxn, id, direction, Some(kind), None)?
+        .next()
+        .transpose()?
+        .is_some())
 }
 
 /// Every current cleanup candidate in the vault, in checker-table order.
@@ -303,8 +302,9 @@ pub(super) fn run_cleanup_candidates_in_txn(
     attempt: &AttemptId,
     candidates: Vec<CleanupCandidate>,
 ) -> Result<CleanupRunReport> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let posture = cleanup_posture_in_txn(vault, wtxn)?;
-    let now = crate::unix_seconds_now();
+    let now = mutation_recorded_at;
 
     if candidates.is_empty() {
         return Ok(CleanupRunReport {
@@ -320,7 +320,7 @@ pub(super) fn run_cleanup_candidates_in_txn(
     match posture {
         CleanupPosture::ProposeFirst => {
             let proposal = CleanupProposal {
-                id: fresh_row_id()?,
+                id: fresh_row_id(vault)?,
                 attempt: *attempt,
                 created_at: now,
                 candidates: candidates.clone(),
@@ -338,7 +338,7 @@ pub(super) fn run_cleanup_candidates_in_txn(
         CleanupPosture::AutoWithDigest => {
             let applied = apply_archives_in_txn(vault, wtxn, &candidates)?;
             let digest = CleanupDigest {
-                id: fresh_row_id()?,
+                id: fresh_row_id(vault)?,
                 attempt: Some(*attempt),
                 proposal: None,
                 decision: CleanupDecision::AutoArchived,
@@ -380,6 +380,7 @@ pub(super) fn apply_archives_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     candidates: &[CleanupCandidate],
 ) -> Result<AppliedArchives> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let mut archived = Vec::new();
     let mut skipped = Vec::new();
     for candidate in candidates {
@@ -398,8 +399,8 @@ pub(super) fn apply_archives_in_txn(
         }
         let tombstone = crate::deletion::TombstoneValueV2 {
             reason: DeleteReason::ArchivedByCleanup.into(),
-            deleted_at: crate::unix_seconds_now(),
-            request_id: Uuid::now_v7().into_bytes(),
+            deleted_at: mutation_recorded_at,
+            request_id: uuid::Uuid::from_bytes(vault.store.clock.ulid()?).into_bytes(),
         };
         if vault.archive_cleanup_candidate_in_txn(wtxn, &candidate.entity, &tombstone)? {
             archived.push(candidate.entity);

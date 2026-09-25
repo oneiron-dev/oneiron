@@ -1,0 +1,80 @@
+package oneiron:code-run@1.0.0;
+
+// The guest authoring language remains plain JavaScript. These imports are the
+// typed host ABI, not an additional authoring surface. @js names are consumed
+// by the SDK/declaration generator. JSON fields carry values from the existing
+// SelfCall ABI; the host still performs the normal per-operation admission.
+world guest {
+    record time-range { start: u64, end: u64 }
+    record search-input { query: string, limit: option<u32> }
+    record claim-input {
+        id: string,
+        predicate: string,
+        // @json
+        subject: string,
+        // @json
+        value: string,
+        confidence: option<f32>,
+        occurred: option<time-range>,
+        learned-at: option<u64>,
+    }
+    record search-output {
+        // @json-list
+        results: list<string>,
+    }
+    record claim-output { id: string }
+    record edge-output { src: string, kind: string, tgt: string }
+    record wait-output { wait-id: string }
+    record speech-output { order: u32, is-visible: bool }
+    record supersede-input { new-id: string, old-id: string, now: u64 }
+    record edge-input { src: string, kind: string, tgt: string, weight: option<f32> }
+    record prompt-input { prompt: string }
+    record text-input { text: string }
+    record credential-input {
+        operation: string,
+        credential-handle: string,
+        // @json
+        args: string,
+    }
+    record file-proposal { path: string, bytes: list<u8> }
+    variant proposal-delta {
+        file-write(file-proposal),
+        claim-candidate(claim-input),
+    }
+    record step-result {
+        result-json: string,
+        proposals: list<proposal-delta>,
+    }
+
+    // @js sandbox.fs.read_file
+    import read-file: func(path: string) -> result<list<u8>, string>;
+    // @js sandbox.credential.call
+    import credential-call: func(input: credential-input) -> result<string, string>;
+    // @js oneiron.clock.now_unix_ms
+    import clock-now-unix-ms: func() -> u64;
+    // @js oneiron.random.bytes
+    import random-bytes: func(length: u32) -> result<list<u8>, string>;
+
+    // First-party-only imports. Foreign components must not import these;
+    // their writes are exported as proposals and never linked as host effects.
+    // @js self.memory.search
+    import memory-search: func(input: search-input) -> result<search-output, string>;
+    // @js self.memory.put_claim
+    import memory-put-claim: func(input: claim-input) -> result<claim-output, string>;
+    // @js self.memory.supersede_claim
+    import memory-supersede-claim: func(input: supersede-input) -> result<claim-output, string>;
+    // @js self.memory.put_edge
+    import memory-put-edge: func(input: edge-input) -> result<edge-output, string>;
+    // @js self.ask_human
+    import ask-human: func(input: prompt-input) -> result<wait-output, string>;
+    // @js self.askHuman
+    import ask-human-camel: func(input: prompt-input) -> result<wait-output, string>;
+    // @js self.speak
+    import speak: func(input: text-input) -> result<speech-output, string>;
+    // @js self.think
+    import think: func(input: text-input) -> result<speech-output, string>;
+    // @js self.express
+    import express: func(input: text-input) -> result<speech-output, string>;
+
+    export run-step: func(source: string) -> result<step-result, string>;
+}

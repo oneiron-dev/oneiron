@@ -1,0 +1,14 @@
+# Oneiron — Memory Wire
+
+> Actor-bound memory for agents. Start with witness, recall and receipts.
+> The mirror below is full fidelity, generated from shipped SDK sources.
+
+## Memory Wire SDK
+
+- [Complete quickstarts and API](docs/agent-sdk/quickstart.md): JS/Python, embedded/remote, complete imports and typed errors.
+- [Type declarations](docs/agent-sdk/types.md): full TypeScript DTOs and Python stubs.
+- [Error catalogue](docs/agent-sdk/errors.md): stable codes, suggestions and remediation.
+- [Verb census](docs/agent-sdk/verbs.md): authoritative shipped facade and stable names.
+- [Vercel AI SDK tools](packages/oneiron-ai-sdk/README.md): thin three-verb satellite and runnable agent sample.
+- [LangGraph BaseStore](packages/oneiron-langgraph/README.md): exact actor-owned long-term keyed memory, not checkpoints.
+- [HTTP API](oneiron.skills.md): endpoint activation index, endpoint details and error schemas.

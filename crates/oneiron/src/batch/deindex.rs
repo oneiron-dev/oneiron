@@ -16,6 +16,7 @@ pub(super) fn reject_engine_authored_delete(
     id: &EntityId,
 ) -> Result<()> {
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
+    crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(());
     };
@@ -38,6 +39,11 @@ pub(crate) fn deindex_entity(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::ports::invalidate_source_in_txn(store, wtxn, id)?;
+    store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
+    crate::agent_def::remove_birth_custody_in_txn(store, wtxn, id)?;
+    crate::receipt::remove_receipt_archive_custody(store, wtxn, id)?;
+    crate::skill_hub::remove_hub_package_in_txn(store, wtxn, id)?;
     let (mut had_vector, mut had_graph_mutation, mut neighbors) =
         deindex_lexical_query_hints_for_target(store, wtxn, id)?;
 
@@ -83,9 +89,30 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::federation::reject_ruling_delete(store, wtxn, id)?;
+    #[cfg(feature = "sync")]
+    crate::entity_doc::erase_in_txn(store, wtxn, id)?;
+    store
+        .l2_base_cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .erase(id, store.env.info().last_txn_id);
     let mut had_vector = false;
     let mut had_graph_mutation = false;
     let mut neighbors = Vec::new();
+
+    let memberships = crate::ports::EdgeStoreRead::port_edges(
+        store,
+        wtxn,
+        id,
+        crate::ports::EdgeDirection::Out,
+        Some(crate::EdgeKind::ChildOf),
+        None,
+    )?
+    .collect::<Result<Vec<_>>>()?;
+    for edge in memberships {
+        crate::conversation_dag::keep_membership_pin(store, wtxn, id, edge.kind, &edge.target)?;
+    }
 
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
@@ -98,6 +125,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::task_verb::forget_task_mirror(store, wtxn, *id)?;
     crate::task_verb::forget_symbols(store, wtxn, *id)?;
     crate::bm25::deindex_text(store, wtxn, id)?;
+    crate::vault::entity_revision::remove_entity_revisions(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
     crate::code_revision::delete_code_revision_lifecycle_in_txn(store, wtxn, id)?;
     crate::codebase::delete_codebase_snapshot_in_txn(store, wtxn, id)?;
@@ -109,6 +137,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     // arm below — where the anchor type can no longer be read back — is
     // covered by the same call.
     crate::code_memory::delete_code_memory_rows_for_entity_in_txn(store, wtxn, id)?;
+    crate::origin::lfs::delete_lfs_lifecycle_in_txn(store, wtxn, id)?;
     let blob_cleanup =
         crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(store, wtxn, id)?;
     had_vector |= blob_cleanup.had_vector;
@@ -172,8 +201,26 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
 
     crate::dreamer_runner::deindex_dreamer_milestone_claim(store, wtxn, id)?;
     crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;
+    crate::ingest::reindex_identity_hints(store, wtxn, id, None)?;
+    crate::ports::reindex_named_entities(store, wtxn, id, None)?;
+    crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
+    store
+        .sync_state
+        .delete(wtxn, &crate::gate::trusted_manifest_key(id))?;
     crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
     store.entities.delete(wtxn, id.as_bytes())?;
+    crate::ports::audit_mutation_in_txn(
+        store,
+        wtxn,
+        crate::ports::MutationAudit {
+            entity: *id,
+            op: crate::ports::ChangeOp::Delete,
+            actor_principal: None,
+            occurred_at: store.clock.now_recorded_at(),
+            input: id.as_bytes(),
+            reason: None,
+        },
+    )?;
     neighbors.sort_unstable();
     neighbors.dedup();
     Ok((true, had_vector, had_graph_mutation, neighbors))

@@ -62,3 +62,5 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 #[cfg(test)]
 use rmpv::Value;
+
+pub(crate) use self::storage::rebuild_checkpoint_contact_index;

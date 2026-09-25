@@ -635,7 +635,7 @@ fn raw_put_doors_reject_secret_custody_byte() {
     assert!(
         matches!(
             err,
-            Error::Registry(RegistryError::MaintenanceKindNotWritable(77))
+            Error::Registry(RegistryError::MaintenanceKindNotWritable(68))
         ),
         "got {err:?}"
     );
@@ -649,7 +649,7 @@ fn raw_put_doors_reject_secret_custody_byte() {
     assert!(
         matches!(
             err,
-            Error::Registry(RegistryError::MaintenanceKindNotWritable(77))
+            Error::Registry(RegistryError::MaintenanceKindNotWritable(68))
         ),
         "got {err:?}"
     );

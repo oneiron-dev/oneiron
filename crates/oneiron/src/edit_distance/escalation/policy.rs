@@ -40,7 +40,7 @@ pub fn maybe_propose_standing_policy(
     scope: &str,
     trigger: EscalationTrigger,
 ) -> Result<Option<EntityId>> {
-    maybe_propose_standing_policy_at(vault, scope, trigger, crate::unix_seconds_now())
+    maybe_propose_standing_policy_at(vault, scope, trigger, vault.store.clock.now_recorded_at())
 }
 
 /// [`maybe_propose_standing_policy`] against a caller-supplied clock.
@@ -51,7 +51,7 @@ pub(crate) fn maybe_propose_standing_policy_at(
     at: u64,
 ) -> Result<Option<EntityId>> {
     let scope = normalized_scope(scope)?.to_owned();
-    let row_ref = EntityId::now();
+    let row_ref = vault.store.clock.entity_id()?;
     vault.with_write_txn(|wtxn| {
         let key = standing_policy_key(&scope, trigger);
         if vault.store.vault_meta.get(&*wtxn, &key)?.is_some() {
@@ -188,7 +188,7 @@ const fn policy_status(row: &StoredStandingPolicy) -> StandingPolicyStatus {
 /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when no row carries `row_ref`, plus
 /// [`Error::CorruptedIndex`] on an unreadable row and storage failures.
 pub fn accept_standing_policy(vault: &Vault, row_ref: &EntityId) -> Result<()> {
-    accept_standing_policy_at(vault, row_ref, crate::unix_seconds_now())
+    accept_standing_policy_at(vault, row_ref, vault.store.clock.now_recorded_at())
 }
 
 /// [`accept_standing_policy`] against a caller-supplied clock.

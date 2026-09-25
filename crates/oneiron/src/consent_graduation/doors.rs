@@ -46,7 +46,7 @@ impl Vault {
         outcome: ProposalOutcome,
     ) -> Result<ScopeOutcomeStats> {
         scope.validate()?;
-        let at = crate::unix_seconds_now();
+        let at = self.store.clock.now_recorded_at();
         let counters = self.with_write_txn(|wtxn| {
             record_outcome_for_scope_in_txn(self, wtxn, scope, outcome, at, OutcomeWitness::Door)
         })?;
@@ -100,7 +100,7 @@ impl Vault {
     /// Storage failures.
     pub fn graduation_offers(&self) -> Result<Vec<RampScope>> {
         let rtxn = self.store.env.read_txn()?;
-        let now = crate::unix_seconds_now();
+        let now = self.store.clock.now_recorded_at();
         let mut offers = Vec::new();
         for stats in ramp_stats_in_txn(self, &rtxn)? {
             if stats.state == RampState::Offered
@@ -149,7 +149,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         scope: &RampScope,
     ) -> Result<ConsentReceipt> {
-        let at = crate::unix_seconds_now();
+        let at = self.store.clock.now_recorded_at();
         self.with_write_txn(|wtxn| accept_graduation_offer_in_txn(self, wtxn, owner, scope, at))
     }
 
@@ -169,7 +169,7 @@ impl Vault {
     /// plus storage failures.
     pub fn demote_scope_to_propose(&self, scope: &RampScope, reason: DemotionReason) -> Result<()> {
         scope.validate()?;
-        let at = crate::unix_seconds_now();
+        let at = self.store.clock.now_recorded_at();
         self.with_write_txn(|wtxn| append_demotion_in_txn(self, wtxn, scope, reason, at))
     }
 

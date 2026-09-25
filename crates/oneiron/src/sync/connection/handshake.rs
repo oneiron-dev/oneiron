@@ -159,6 +159,7 @@ impl SyncConnection {
         >,
         String,
     > {
+        client.note_session_bound = false;
         // Connect WebSocket. The credential (SyncClientConfig.auth_token)
         // rides as `Authorization: Bearer` on the upgrade request — the same
         // scheme the server HTTP API uses — and the server rejects the

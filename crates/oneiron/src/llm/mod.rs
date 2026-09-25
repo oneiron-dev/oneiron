@@ -4,27 +4,47 @@
 //! and catalog types consumed by engine callers and host-supplied adapters. It
 //! intentionally contains no provider implementation or inference dependency.
 
+mod assembly;
+pub use assembly::StreamAssembly;
 mod autocheck;
 mod backend;
+mod bus;
+mod subscribers;
+pub use bus::{LlmEventBus, StreamSubscription, TerminalSink};
+pub use subscribers::{ProgressSnapshot, ProgressSubscriber, VoiceChunker};
 mod budget;
+mod burst_inputs;
 mod call;
+mod defaults;
+#[cfg(test)]
+mod streaming_tests;
+pub use defaults::PurposeDefault;
 pub mod scope;
 pub use self::scope::{Scope, ScopeResource};
 mod catalog;
+pub(crate) mod entity_refs;
 mod error;
+mod fallback;
+pub use fallback::{DeterministicRunner, FallbackError, FallbackRegistry};
+pub mod image;
+pub mod manifest;
 mod model_id;
 mod protocol;
+pub mod registry;
 mod safeguard;
+pub mod score_scraper;
 mod step;
+pub mod tagger;
 
 pub use step::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
     DurableStepContext, DurableStepError, DurableStepResult, PeerResultWaitBinding, StepOutcome,
-    StepProgression, TrapRef, call_as_step, consume_trap_signal, open_trap,
-    reconcile_peer_result_signals, register_peer_result_wait, register_wait,
+    StepProgression, TrapRef, call_as_step, call_as_step_with_fallbacks, consume_trap_signal,
+    open_trap, reconcile_peer_result_signals, register_peer_result_wait, register_wait,
     send_peer_result_signal, send_trap_signal, trap_for_durable_wait, trap_park_owner,
+    validate_json_schema,
 };
 pub(crate) use step::{
     consume_step_wait_in_txn, deindex_dreamer_step_claim, index_dreamer_step_claim_for_put,
@@ -41,6 +61,8 @@ pub use budget::{
     BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS,
 };
 pub(crate) use budget::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
+
+pub use self::burst_inputs::{NormalizedBurstInputs, normalized_burst_inputs};
 
 pub(crate) use self::autocheck::truncate_on_char_boundary;
 pub use self::autocheck::{
@@ -107,3 +129,7 @@ use std::time::Duration;
 
 /// Typed question and outcome contracts.
 pub mod decision;
+pub use budget::{
+    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiSettlement, RsiSpendPurpose,
+};
+pub(crate) use step::resume_peer_result_steps;

@@ -213,7 +213,8 @@ pub(crate) fn check_witness_message_ceiling<'a>(
     policy: &PolicyManifestResolution,
 ) -> Result<WitnessMessageAuthorization<'a>> {
     let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, txn, actor);
-    let input = witness_message_gate_input(actor, agent_definition_ceiling);
+    let mut input = witness_message_gate_input(actor, agent_definition_ceiling);
+    input.foreign_agent_ceiling = super::foreign_agent::resolve(store, txn, actor)?;
 
     // The floor runs whether or not a manifest is loaded, for the same reason
     // the GATE-12 Dreamer pre-commit floor does: "is this a well-formed
@@ -266,6 +267,7 @@ fn witness_message_gate_input(
         },
         external_effect: None,
         agent_definition_ceiling,
+        foreign_agent_ceiling: None,
         consent: None,
     }
 }

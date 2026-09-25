@@ -4,7 +4,7 @@ use super::*;
 
 #[tokio::test]
 async fn mcp_page_budget_enforces_limit_end_marker_and_cursor() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_00b1);
     let credential = "one-1704-page-credential";
     register_mcp_actor(
@@ -133,7 +133,7 @@ async fn mcp_page_budget_enforces_limit_end_marker_and_cursor() {
 /// connector, tool, arguments, and snapshot it was minted under.
 #[tokio::test]
 async fn mcp_page_cursor_continues_exactly_once_and_is_bound() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_00e1);
     let credential = "one-1704-cursor-credential";
     let other = "one-1704-cursor-other-credential";
@@ -302,7 +302,11 @@ async fn mcp_page_cursor_continues_exactly_once_and_is_bound() {
     {
         let mut registry = server.mcp_registry.lock().await;
         let connection = registry
-            .resolve(credential, 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection;
         // A different board STATE advances the snapshot epoch by exactly one,
@@ -352,7 +356,7 @@ async fn mcp_page_cursor_continues_exactly_once_and_is_bound() {
 /// dispatcher, and the retained cursor/stream state stays untouched.
 #[tokio::test]
 async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_00f1);
     let credential = "one-1704-cursor-pre-dispatch";
     register_mcp_actor(
@@ -385,7 +389,11 @@ async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
     let connection = {
         let registry = server.mcp_registry.lock().await;
         registry
-            .resolve(credential, 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection
     };
@@ -511,7 +519,7 @@ async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
 /// dispatch.
 #[tokio::test]
 async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_use() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0103);
     let credential = "one-1704-tasks-expand-cursor";
     register_mcp_actor(
@@ -558,14 +566,15 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
         panic!("tasks.expand must validate into the generated verb arm");
     };
     let digest = crate::mcp::mcp_page_argument_digest(&validated.payload);
-    let retained = json!({
-        "kind": "expanded",
-        "lines": ["task line", "  realizing job", "  result=abc"],
-    });
+    let retained = json!(["task line", "  realizing job", "  result=abc"]);
     let (connection, cursor) = {
         let mut registry = server.mcp_registry.lock().await;
         let connection = registry
-            .resolve(credential, 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection;
         let cursor = registry.mint_page_cursor_with_snapshot(
@@ -629,7 +638,7 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
     );
     let structured = &continued["result"]["structuredContent"];
     assert_eq!(
-        structured["output"]["lines"],
+        structured["output"],
         json!(["  realizing job", "  result=abc"]),
         "page two is exactly the retained producer remainder: {structured:?}"
     );
@@ -663,7 +672,7 @@ async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_us
 /// consumes them independently.
 #[tokio::test]
 async fn mcp_two_live_cursors_on_one_connection_continue_independently() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0101);
     let credential = "one-1704-two-cursor-credential";
     register_mcp_actor(
@@ -712,7 +721,11 @@ async fn mcp_two_live_cursors_on_one_connection_continue_independently() {
     let connection = {
         let registry = server.mcp_registry.lock().await;
         let connection = registry
-            .resolve(credential, 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection;
         assert_eq!(

@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use std::collections::BTreeMap;
 
 use super::grant::scan_entities_by_type;
@@ -8,11 +9,8 @@ use super::kernel::{
 };
 use crate::Vault;
 use crate::companion::{
-    ENTITY_TYPE_COMPANION_REGISTER,
-    {
-        CompanionLifecycleEvent, CompanionRecord, CompanionScope, CompanionSubject,
-        decode_companion_record_body,
-    },
+    CompanionLifecycleEvent, CompanionRecord, CompanionScope, CompanionSubject,
+    decode_companion_record_body,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -27,9 +25,12 @@ pub(super) fn companion_lifecycle_receipts(
     scan_entities_by_type(
         vault,
         txn,
-        ENTITY_TYPE_COMPANION_REGISTER,
-        "companion register type index",
+        crate::registry::ENTITY_TYPE_FACET,
+        "identity facet type index",
         |id, header, body| {
+            if !crate::companion::is_identity_facet_body(body) {
+                return Ok(());
+            }
             let record = decode_companion_record_body(body)?;
             for (index, event) in record.lifecycle_events.iter().enumerate() {
                 let receipt =
@@ -103,27 +104,25 @@ fn companion_lifecycle_receipt(
 /// order, this bounded scan can starve an older-minted in-window receipt;
 /// avoiding that requires an `at`-ordered index or cursor pagination. The
 /// family is engine-authored and door-validated: an undecodable row is
-/// corruption, never skipped.
+/// corruption, never skipped. Production passes [`MAX_RECEIPT_QUERY_SCAN`] as
+/// `scan_cap`; local tests inject a small cap to prove the bound without a
+/// 100k-row vault.
 pub(super) fn identity_topology_receipts(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     query: &ReceiptQuery,
+    scan_cap: usize,
 ) -> Result<Vec<ReceiptRecord>> {
-    let start = [crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT];
-    let end = [crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT + 1];
-    let bounds = (
-        std::ops::Bound::Included(&start[..]),
-        std::ops::Bound::Excluded(&end[..]),
-    );
     let mut receipts = Vec::new();
     for entry in vault
         .store
-        .type_index
-        .rev_range(rtxn, &bounds)?
-        .take(MAX_RECEIPT_QUERY_SCAN)
+        .port_entity_ids_by_type_descending(
+            rtxn,
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        )?
+        .take(scan_cap)
     {
-        let (key, _) = entry?;
-        let event_id = crate::vault::entity_id_from_type_index_key(&key)?;
+        let event_id = entry?;
         let record = vault
             .identity_topology_event_in_txn(rtxn, &event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;

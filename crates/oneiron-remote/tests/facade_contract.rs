@@ -7,30 +7,30 @@
 //! process-wide open counter is isolated from the vault opens in this binary.
 
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN};
-use oneiron_remote::{FACADE_VERB_CATALOG, OneironClient, OpenOptions, unix_seconds_now};
-
-/// The declared catalog, spelled once here so a silent reorder or addition in
-/// the crate fails a test rather than a downstream census.
-const EXPECTED_CATALOG: [&str; 12] = [
-    "witness",
-    "claim_upsert",
-    "recall",
-    "receipts",
-    "tasks.ask",
-    "tasks.wait",
-    "tasks.answer",
-    "tasks.outcomes",
-    "rooms.list",
-    "rooms.messages",
-    "rooms.claim",
-    "rooms.speak",
-];
+use oneiron_remote::{OneironClient, OpenOptions, unix_seconds_now};
 
 /// §Test/Shared #1 — `facade_contract_catalog_is_exact`.
 #[test]
 fn facade_contract_catalog_is_exact() {
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../scripts/sdk/agent-verbs.json"))
+            .expect("manifest");
+    let expected: Vec<&str> = manifest["verbs"]
+        .as_array()
+        .expect("verb rows")
+        .iter()
+        .filter(|row| row["context"].as_str().unwrap_or("memory") == "memory")
+        .map(|row| row["name"].as_str().expect("verb name"))
+        .collect();
+    let catalog: Vec<_> = oneiron::task_verb::sdk::AgentVerb::ALL
+        .iter()
+        .filter(|verb| verb.is_facade())
+        .map(|verb| verb.as_str())
+        .collect();
+    assert_eq!(catalog.len(), expected.len());
     assert_eq!(
-        FACADE_VERB_CATALOG, EXPECTED_CATALOG,
+        catalog.as_slice(),
+        expected,
         "the shipped catalog must equal the declared catalog, in order"
     );
 }
@@ -43,7 +43,11 @@ fn facade_contract_catalog_is_exact() {
 #[test]
 fn remote_route_catalog_is_total() {
     let mut seen = std::collections::BTreeSet::new();
-    for verb in FACADE_VERB_CATALOG {
+    for verb in oneiron::task_verb::sdk::AgentVerb::ALL
+        .iter()
+        .filter(|verb| verb.is_facade())
+        .map(|verb| verb.as_str())
+    {
         assert!(
             !verb.is_empty()
                 && verb
@@ -53,7 +57,13 @@ fn remote_route_catalog_is_total() {
         );
         assert!(seen.insert(verb), "{verb:?} appears twice in the catalog");
     }
-    assert_eq!(seen.len(), FACADE_VERB_CATALOG.len());
+    assert_eq!(
+        seen.len(),
+        oneiron::task_verb::sdk::AgentVerb::ALL
+            .iter()
+            .filter(|verb| verb.is_facade())
+            .count()
+    );
 }
 
 /// §Test/Shared #3 — divergent reopen options are a typed refusal.
@@ -95,6 +105,32 @@ fn embedded_backend_calls_memory_facade() {
     assert_eq!(client.base_url(), None);
 }
 
+#[test]
+fn claim_upsert_refuses_non_finite_salience_before_encoding() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let client = OneironClient::open(Some(&dir.path().join("vault")), &OpenOptions::default())
+        .expect("open");
+    let error = client
+        .claim_upsert(&oneiron::memory::ClaimInput {
+            id: None,
+            predicate: "test.salience".to_owned(),
+            subject_ref: client.actor_ref().expect("owner"),
+            value: serde_json::json!("small"),
+            confidence: 1.0,
+            source: "user_stated".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: Some(f32::NAN),
+        })
+        .expect_err("a NaN salience is refused");
+    assert_eq!(error.message, "salience must be a finite number");
+}
+
 /// The caps are enforced before dispatch, not after (I11).
 #[test]
 fn boundary_caps_refuse_before_dispatch() {
@@ -106,7 +142,7 @@ fn boundary_caps_refuse_before_dispatch() {
     let error = client
         .recall(
             &oversized,
-            oneiron::memory::Effort::Standard,
+            oneiron::memory::Effort::Medium,
             &oneiron::memory::RecallScope::default(),
             10,
             None,
@@ -152,6 +188,33 @@ fn omitted_timestamp_is_stamped_in_unix_seconds() {
         assert!(
             oneiron_remote::stamp_occurred_at(Some(rejected)).is_err(),
             "{rejected} must be refused before core entry"
+        );
+    }
+}
+
+#[test]
+fn facade_agent_dispatch_validates_before_remote_transport() {
+    let client = OneironClient::connect("http://127.0.0.1:9/", "unused").unwrap();
+    for (verb, input) in [
+        ("receipts", serde_json::json!({"limit": 0})),
+        (
+            "key_value_get",
+            serde_json::json!({"namespace": 3, "key": false}),
+        ),
+        (
+            "recall",
+            serde_json::json!({"query": "x".repeat(oneiron_remote::MAX_QUERY_BYTES + 1)}),
+        ),
+        (
+            "witness",
+            serde_json::json!({"conversation_ref": "11111111111111111111111111111111", "occurred_at": 1,
+            "messages": [{"author": "user", "message_type": "text", "content": "x".repeat(oneiron_remote::MAX_ENTITY_PAYLOAD_BYTES + 1), "is_visible": true, "order": 0}]}),
+        ),
+    ] {
+        assert_eq!(
+            client.agent_verb(verb, input).unwrap_err().code,
+            MEMORY_CODE_BAD_REQUEST,
+            "{verb}"
         );
     }
 }

@@ -4,14 +4,13 @@ use rmpv::Value;
 use crate::affect::Vad;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-    encode_companion_record_body,
+    CompanionProvenance, CompanionRecord, CompanionScope, encode_companion_record_body,
 };
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::SyncError;
 use crate::off_record::OffRecordBackendClass;
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
@@ -84,10 +83,12 @@ fn window_packing_door_skips_overlay_members_and_packs_commissioned_writes() -> 
 
     assert!(crate::sync::window::window_packing_excludes_entity(
         &vault,
+        &Default::default(),
         &room_member
     )?);
     assert!(!crate::sync::window::window_packing_excludes_entity(
         &vault,
+        &Default::default(),
         &commissioned
     )?);
 
@@ -117,6 +118,7 @@ fn window_packing_door_skips_overlay_members_and_packs_commissioned_writes() -> 
     session.close()?;
     assert!(!crate::sync::window::window_packing_excludes_entity(
         &vault,
+        &Default::default(),
         &room_member
     )?);
     assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 1);
@@ -181,7 +183,7 @@ fn commit_entity(window: &LoadedWindow, learned_at: u64, data: &[u8]) -> EntityI
 
 fn companion_record(
     persona_ref: EntityId,
-    export_classification: CompanionExportClassification,
+    sensitivity: crate::federation::Sensitivity,
 ) -> CompanionRecord {
     CompanionRecord::persona(
         CompanionScope::neutral(),
@@ -194,7 +196,7 @@ fn companion_record(
             ClaimApprovalStatus::Approved,
             Value::from("private provenance"),
         ),
-        export_classification,
+        sensitivity,
     )
 }
 
@@ -392,10 +394,13 @@ fn companion_register_api_reverse_remat_excludes_local_only_records() -> Result<
     let local_id = EntityId::from_bytes([0x31; 16]).unwrap();
     let portable_id = EntityId::from_bytes([0x32; 16]).unwrap();
     let external_local_id = EntityId::from_bytes([0x35; 16]).unwrap();
-    let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
-    let portable = companion_record(portable_id, CompanionExportClassification::Portable);
+    let local_persona = EntityId::from_bytes([0x3A; 16]).unwrap();
+    let portable_persona = EntityId::from_bytes([0x3B; 16]).unwrap();
+    let external_persona = EntityId::from_bytes([0x3C; 16]).unwrap();
+    let local = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
+    let portable = companion_record(portable_persona, crate::federation::Sensitivity::Public);
     let external_local =
-        companion_record(external_local_id, CompanionExportClassification::LocalOnly);
+        companion_record(external_persona, crate::federation::Sensitivity::Restricted);
 
     vault.create_companion_record(&local_id, &local, learned_at)?;
     vault.create_companion_record(&portable_id, &portable, learned_at)?;
@@ -410,7 +415,7 @@ fn companion_register_api_reverse_remat_excludes_local_only_records() -> Result<
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
     let mut stale_local_blob = Vec::new();
-    stale_local_blob.push(ENTITY_TYPE_COMPANION_REGISTER);
+    stale_local_blob.push(ENTITY_TYPE_FACET);
     stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
     stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
     stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
@@ -462,8 +467,10 @@ fn companion_register_api_forward_remat_excludes_local_only_records() -> Result<
     let learned_at = window_key.start_timestamp().unwrap() + 90;
     let local_id = EntityId::from_bytes([0x33; 16]).unwrap();
     let portable_id = EntityId::from_bytes([0x34; 16]).unwrap();
-    let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
-    let portable = companion_record(portable_id, CompanionExportClassification::Portable);
+    let local_persona = EntityId::from_bytes([0x3D; 16]).unwrap();
+    let portable_persona = EntityId::from_bytes([0x3E; 16]).unwrap();
+    let local = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
+    let portable = companion_record(portable_persona, crate::federation::Sensitivity::Public);
 
     let doc = create_window_doc("remote", &window_key);
     let entities = doc.get_map("entities");
@@ -472,7 +479,7 @@ fn companion_register_api_forward_remat_excludes_local_only_records() -> Result<
         &entities,
         &local_id.to_hex(),
         &make_entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             learned_at,
             &encode_companion_record_body(&local.created_at(learned_at)?)?,
         ),
@@ -481,7 +488,7 @@ fn companion_register_api_forward_remat_excludes_local_only_records() -> Result<
         &entities,
         &portable_id.to_hex(),
         &make_entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             learned_at,
             &encode_companion_record_body(&portable.created_at(learned_at)?)?,
         ),
@@ -529,8 +536,10 @@ fn companion_register_api_pending_mirror_replay_excludes_local_only_edges() -> R
     let learned_at = window_key.start_timestamp().unwrap() + 120;
     let local_id = EntityId::from_bytes([0x35; 16]).unwrap();
     let portable_id = EntityId::from_bytes([0x36; 16]).unwrap();
-    let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
-    let portable = companion_record(portable_id, CompanionExportClassification::Portable);
+    let local_persona = EntityId::from_bytes([0x3F; 16]).unwrap();
+    let portable_persona = EntityId::from_bytes([0x40; 16]).unwrap();
+    let local = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
+    let portable = companion_record(portable_persona, crate::federation::Sensitivity::Public);
 
     vault.create_companion_record(&local_id, &local, learned_at)?;
     vault.create_companion_record(&portable_id, &portable, learned_at)?;
@@ -544,7 +553,7 @@ fn companion_register_api_pending_mirror_replay_excludes_local_only_edges() -> R
         &entities,
         &local_id.to_hex(),
         &make_entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             learned_at,
             &encode_companion_record_body(&local.created_at(learned_at)?)?,
         ),
@@ -931,6 +940,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
     let make_receipt_body = |receipt_id: &EntityId, subject: &EntityId, request_id: &str| {
         encode_redaction_audit_receipt(
             RedactionReceiptInput {
+                actor_principal: None,
                 request_id: request_id.to_owned(),
                 scope: RedactionScope::entity(subject),
                 reason: crate::DeleteReason::GdprDelete,
@@ -1068,6 +1078,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
     let make_receipt_body = |receipt_id: &EntityId, subject: &EntityId, request_id: &str| {
         encode_redaction_audit_receipt(
             RedactionReceiptInput {
+                actor_principal: None,
                 request_id: request_id.to_owned(),
                 scope: RedactionScope::entity(subject),
                 reason: crate::DeleteReason::GdprDelete,
@@ -1216,6 +1227,7 @@ fn forward_remat_quarantines_receipt_when_lease_revoked_between_check_and_write(
     };
     let vault_id = crate::sync::lease::DEFAULT_LEASE_VAULT_ID;
     let input = crate::deletion::RedactionReceiptInput {
+        actor_principal: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b".to_owned(),
         scope: crate::deletion::RedactionScope::entity(&subject),
         reason: crate::DeleteReason::GdprDelete,
@@ -1293,6 +1305,7 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
     };
 
     let remote_input = crate::deletion::RedactionReceiptInput {
+        actor_principal: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5c".to_owned(),
         scope: crate::deletion::RedactionScope::entity(&subject),
         reason: crate::DeleteReason::GdprDelete,
@@ -1308,6 +1321,7 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
     remote_blob.extend_from_slice(&remote_body);
 
     let local_input = crate::deletion::RedactionReceiptInput {
+        actor_principal: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5d".to_owned(),
         scope: crate::deletion::RedactionScope::entity(&subject),
         reason: crate::DeleteReason::GdprDelete,
@@ -1932,6 +1946,7 @@ fn authority_genesis_fixture_for_window(seed: u8) -> crate::authority::Authority
                 roles: crate::authority::ROLE_OWNER,
             },
             genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: crate::authority::AuthorityTier::Software,
             pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
@@ -3432,8 +3447,13 @@ fn forward_remat_refuses_replicated_message_bodies_before_any_mutation() -> Resu
 }
 
 #[test]
-fn replicated_lww_overwrite_removes_loser_bm25f_in_the_write_transaction() -> Result<()> {
+fn replicated_lww_overwrite_keeps_indexed_body_until_idle_removes_loser_bm25f() -> Result<()> {
+    use crate::memory::ReadMode;
     let (_dir, vault) = test_vault();
+    // Vault::open seeds the bootstrap skills with staged revisions; publish
+    // them first so the idle report below covers only this entity.
+    vault.set_indexed_idle_delay_ms(0)?;
+    vault.refresh_staged_indexed_at_idle(u64::MAX)?;
     let id = EntityId::now();
     vault.put_entity(
         &id,
@@ -3463,7 +3483,29 @@ fn replicated_lww_overwrite_removes_loser_bm25f_in_the_write_transaction() -> Re
                 b"winner",
             )
             .apply(txn)?;
-        // Assert stored postings inside the overwrite transaction, before commit.
+        let row = vault.store.entities.get(txn, id.as_bytes())?.unwrap();
+        assert_eq!(&row[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"winner");
+        Ok(())
+    })?;
+    // A replicated overwrite advances Live, not the published search frontier.
+    // Retained hits must still hydrate the exact body that owned those postings.
+    let hits = vault.search_text("loseruniquetoken", 10)?;
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].id, id);
+    let indexed = vault.get_raw_with_mode(&id, ReadMode::Indexed)?.unwrap();
+    assert_eq!(&indexed[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"old");
+    let live = vault.get_raw_with_mode(&id, ReadMode::Live)?.unwrap();
+    assert_eq!(&live[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"winner");
+
+    let report = vault.refresh_staged_indexed_at_idle(u64::MAX)?;
+    assert_eq!(report.refreshed.len(), 1);
+    assert_eq!(report.refreshed[0].0, id);
+    assert!(report.failed.is_empty());
+    assert!(report.superseded.is_empty());
+    assert_eq!(vault.get_raw_with_mode(&id, ReadMode::Indexed)?, Some(live));
+    assert!(vault.search_text("loseruniquetoken", 10)?.is_empty());
+    vault.with_write_txn(|txn| {
+        // Idle publication removes every old text-index component together.
         assert!(vault.store.text_forward.get(txn, id.as_bytes())?.is_none());
         assert!(
             vault
@@ -3472,9 +3514,203 @@ fn replicated_lww_overwrite_removes_loser_bm25f_in_the_write_transaction() -> Re
                 .get(txn, id.as_bytes())?
                 .is_none()
         );
-        assert!(vault.store.text_postings.iter(txn)?.next().is_none());
+        for item in vault.store.text_postings.iter(txn)? {
+            let (_term, posting) = item?;
+            assert!(!posting.starts_with(id.as_bytes()));
+        }
         let row = vault.store.entities.get(txn, id.as_bytes())?.unwrap();
         assert_eq!(&row[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"winner");
         Ok(())
     })
+}
+
+#[test]
+fn diagnostic_carriers_never_leave_window_in_live_state_or_history() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let key = WindowKey::new("2026-03");
+    let learned_at = key.start_timestamp().unwrap() + 60;
+    let diagnostic = EntityId::from_bytes([0x71; 16])?;
+    let ordinary = EntityId::from_bytes([0x72; 16])?;
+    let marker = b"local-only-diagnostic-observation";
+    let doc = create_window_doc("source", &key);
+    let diagnostic_blob =
+        make_entity_blob(crate::registry::ENTITY_TYPE_DIAGNOSTIC, learned_at, marker);
+    for raw_key in [diagnostic.to_hex(), "malformed-diagnostic-id".to_owned()] {
+        map_insert_bytes(&doc.get_map("entities"), &raw_key, &diagnostic_blob)?;
+    }
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &ordinary.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary"),
+    )?;
+    doc.commit();
+
+    // A second export must stay history-free after the live rows are gone.
+    for _ in 0..2 {
+        let update =
+            export_window_updates_since(&vault, &key, &doc, &VersionVector::default().encode())?;
+        assert!(!update.windows(marker.len()).any(|bytes| bytes == marker));
+        let peer = LoroDoc::new();
+        import_doc(&peer, &update)?;
+        assert!(peer.is_shallow());
+        assert!(map_get_bytes(&peer.get_map("entities"), &diagnostic.to_hex()).is_none());
+        assert!(map_get_bytes(&peer.get_map("entities"), "malformed-diagnostic-id").is_none());
+        assert!(map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some());
+    }
+    assert!(history_free_window_required(&vault, &key)?);
+    Ok(())
+}
+
+#[test]
+fn diagnostic_update_admission_is_side_effect_free_and_checks_hidden_history() -> Result<()> {
+    let key = WindowKey::new("2026-03");
+    let doc = create_window_doc("receiver", &key);
+    map_insert_bytes(&doc.get_map("entities"), "ordinary", b"previously accepted")?;
+    doc.commit();
+    let before = doc.oplog_vv();
+    let diagnostic = make_entity_blob(crate::registry::ENTITY_TYPE_DIAGNOSTIC, 1, b"private");
+    for malformed_key in [false, true] {
+        let source = doc.fork();
+        let id = EntityId::from_bytes([0x71; 16])?.to_hex();
+        let raw_key = if malformed_key {
+            "malformed-diagnostic-id"
+        } else {
+            &id
+        };
+        map_insert_bytes(&source.get_map("entities"), raw_key, &diagnostic)?;
+        source.commit();
+        let live = source.export(loro::ExportMode::updates(&before)).unwrap();
+        assert!(matches!(
+            validate_window_update_locality(&doc, &live),
+            Err(Error::InvalidConfig(_))
+        ));
+        let shallow = source
+            .export(loro::ExportMode::shallow_snapshot(
+                &source.oplog_frontiers(),
+            ))
+            .unwrap();
+        assert!(matches!(
+            validate_window_update_locality(&doc, &shallow),
+            Err(Error::InvalidConfig(_))
+        ));
+        map_delete(&source.get_map("entities"), raw_key)?;
+        source.commit();
+        let hidden = source.export(loro::ExportMode::updates(&before)).unwrap();
+        assert!(matches!(
+            validate_window_update_locality(&doc, &hidden),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert_eq!(doc.oplog_vv(), before);
+        assert!(map_get_bytes(&doc.get_map("entities"), raw_key).is_none());
+    }
+    let ordinary = doc.fork();
+    map_insert_bytes(&ordinary.get_map("entities"), "second", b"ordinary")?;
+    ordinary.commit();
+    let update = ordinary.export(loro::ExportMode::updates(&before)).unwrap();
+    validate_window_update_locality(&doc, &update)?;
+    let snapshot = ordinary
+        .export(loro::ExportMode::shallow_snapshot(
+            &ordinary.oplog_frontiers(),
+        ))
+        .unwrap();
+    validate_window_update_locality(&doc, &snapshot)?;
+    let unrelated = LoroDoc::new();
+    map_insert_bytes(&unrelated.get_map("entities"), "dependency", b"first")?;
+    unrelated.commit();
+    let missing = unrelated.oplog_vv();
+    map_insert_bytes(
+        &unrelated.get_map("entities"),
+        "deferred-diagnostic",
+        &diagnostic,
+    )?;
+    unrelated.commit();
+    let pending = unrelated
+        .export(loro::ExportMode::updates(&missing))
+        .unwrap();
+    assert!(matches!(
+        validate_window_update_locality(&doc, &pending),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert_eq!(doc.oplog_vv(), before);
+    assert!(map_get_bytes(&doc.get_map("entities"), "second").is_none());
+    Ok(())
+}
+
+/// A WORLD flagged device-only and a claim in it with an `About` edge to a
+/// PERSON, all learned in `window`.
+fn device_only_world_fixture(vault: &Vault, window: &WindowKey) -> Result<(EntityId, EntityId)> {
+    let at = window.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    let world = EntityId::from_bytes([0x71; 16])?;
+    let person = EntityId::from_bytes([0x72; 16])?;
+    let claim = EntityId::from_bytes([0x73; 16])?;
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        occurred,
+        at,
+        b"person",
+    )?;
+    vault.set_world_device_only(world, true)?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.device_only",
+        crate::claim::ClaimSubject::Entity(person),
+        Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, occurred, at)?;
+    vault
+        .batch()
+        .edge(&claim, EdgeKind::About, &person, 1.0)
+        .commit()?;
+    Ok((world, claim))
+}
+
+fn packed_device_only_window(vault: &Vault) -> Result<(LoroDoc, EntityId, EntityId)> {
+    let key = WindowKey::new("2026-03");
+    let (world, claim) = device_only_world_fixture(vault, &key)?;
+    let doc = crate::sync::schema::create_window_doc("device-only", &key);
+    reverse_rematerialize(vault, &doc, &key)?;
+    Ok((doc, world, claim))
+}
+
+#[test]
+fn packing_withholds_a_claim_in_a_device_only_world() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let (doc, _, claim) = packed_device_only_window(&vault)?;
+
+    assert!(map_get_bytes(&doc.get_map("entities"), &claim.to_hex()).is_none());
+    Ok(())
+}
+
+#[test]
+fn packing_withholds_the_world_row_flagged_device_only() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let (doc, world, _) = packed_device_only_window(&vault)?;
+
+    assert!(map_get_bytes(&doc.get_map("entities"), &world.to_hex()).is_none());
+    Ok(())
+}
+
+#[test]
+fn packing_withholds_edges_that_touch_a_device_only_world_row() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let (doc, _, claim) = packed_device_only_window(&vault)?;
+    let mut named = false;
+    crate::sync::loro_support::map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
+        named |= key.contains(&claim.to_hex());
+    });
+
+    assert!(!named);
+    Ok(())
 }

@@ -58,7 +58,7 @@ fn retrieval_quality_facade_recall_projects_report_without_changing_item_confide
     let minimal = facade
         .recall(
             "quality recall needle",
-            Effort::Minimal,
+            Effort::Light,
             &RecallScope::default(),
             10,
             None,
@@ -66,15 +66,12 @@ fn retrieval_quality_facade_recall_projects_report_without_changing_item_confide
         )
         .expect("minimal recall");
     assert!(!minimal.items.is_empty());
-    assert_eq!(
-        minimal.retrieval_meta.quality,
-        RetrievalQuality::Passthrough
-    );
+    assert_eq!(minimal.retrieval_meta.quality, RetrievalQuality::Degraded);
     assert!(minimal.retrieval_meta.degradation.is_empty());
     let standard = facade
         .recall(
             "quality recall needle",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,
@@ -102,14 +99,20 @@ fn retrieval_quality_facade_recall_projects_report_without_changing_item_confide
     let empty = facade
         .recall(
             "unmatchedqualitytoken",
-            Effort::Minimal,
+            Effort::Light,
             &RecallScope::default(),
             10,
             None,
             None,
         )
         .expect("empty recall");
-    assert!(empty.items.is_empty());
-    assert_eq!(empty.retrieval_meta.quality, RetrievalQuality::Passthrough);
+    // Light now includes temporal candidates even without a lexical match.
+    assert!(
+        empty
+            .items
+            .iter()
+            .all(|item| !item.value_text.contains("unmatchedqualitytoken"))
+    );
+    assert_eq!(empty.retrieval_meta.quality, RetrievalQuality::Degraded);
     assert!(empty.retrieval_meta.degradation.is_empty());
 }

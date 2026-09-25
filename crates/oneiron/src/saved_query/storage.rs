@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use serde_json::{Map as JsonMap, Value};
 
 use crate::Vault;
@@ -140,7 +141,11 @@ pub(super) fn load_record_in_txn(
     query_ref: EntityId,
     kind: u8,
 ) -> Result<Option<SavedQueryRecord>> {
-    let Some(raw) = vault.store.entities.get(txn, query_ref.as_bytes())? else {
+    let Some(raw) = vault
+        .store
+        .port_entity_record(txn, &query_ref)?
+        .map(|row| row.encode())
+    else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {

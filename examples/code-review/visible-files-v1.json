@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "include_prefixes": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/",
+    "crates/",
+    "tests/"
+  ],
+  "exclude_prefixes": [
+    "secrets",
+    ".git",
+    "target"
+  ]
+}

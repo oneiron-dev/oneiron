@@ -13,6 +13,12 @@ use crate::error::RecordError;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AccessGrantScope {
+    /// Messages in exactly one relationship space.
+    Messages { space_ref: EntityId },
+    /// Summaries in exactly one relationship space.
+    Summaries { space_ref: EntityId },
+    /// Relationship claims in exactly one relationship space.
+    RelationshipClaims { space_ref: EntityId },
     /// Access to one companion persona profile in one person scope.
     CompanionProfile {
         /// Person scope the companion profile belongs to.
@@ -79,9 +85,12 @@ impl AccessGrantScope {
                 grant_person_ref.as_bytes() == person_ref.as_bytes()
                     && grant_persona_ref.as_bytes() == persona_ref.as_bytes()
             }
-            Self::Calendar { .. } | Self::SharedBrief { .. } | Self::ChannelIdentity { .. } => {
-                false
-            }
+            Self::Messages { .. }
+            | Self::Summaries { .. }
+            | Self::RelationshipClaims { .. }
+            | Self::Calendar { .. }
+            | Self::SharedBrief { .. }
+            | Self::ChannelIdentity { .. } => false,
         }
     }
 
@@ -93,7 +102,12 @@ impl AccessGrantScope {
                 person_ref,
                 persona_ref,
             } => Some((*person_ref, *persona_ref)),
-            Self::Calendar { .. } | Self::SharedBrief { .. } | Self::ChannelIdentity { .. } => None,
+            Self::Messages { .. }
+            | Self::Summaries { .. }
+            | Self::RelationshipClaims { .. }
+            | Self::Calendar { .. }
+            | Self::SharedBrief { .. }
+            | Self::ChannelIdentity { .. } => None,
         }
     }
 
@@ -107,6 +121,9 @@ impl AccessGrantScope {
     #[must_use]
     pub const fn required_capability(&self) -> AccessGrantCapability {
         match self {
+            Self::Messages { .. } => AccessGrantCapability::MessagesRead,
+            Self::Summaries { .. } => AccessGrantCapability::SummariesRead,
+            Self::RelationshipClaims { .. } => AccessGrantCapability::RelationshipClaimsRead,
             Self::CompanionProfile { .. } => AccessGrantCapability::CompanionProfileRead,
             Self::Calendar { .. } => AccessGrantCapability::CalendarDisclosureRead,
             Self::SharedBrief { .. } => AccessGrantCapability::SharedBriefRead,
@@ -122,7 +139,10 @@ impl AccessGrantScope {
                 calendar_ref: grant_calendar_ref,
                 rung,
             } if grant_calendar_ref.as_bytes() == calendar_ref.as_bytes() => Some(*rung),
-            Self::Calendar { .. }
+            Self::Messages { .. }
+            | Self::Summaries { .. }
+            | Self::RelationshipClaims { .. }
+            | Self::Calendar { .. }
             | Self::CompanionProfile { .. }
             | Self::SharedBrief { .. }
             | Self::ChannelIdentity { .. } => None,
@@ -134,6 +154,12 @@ impl AccessGrantScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AccessGrantCapability {
+    /// Read relationship messages, not summaries or claims.
+    MessagesRead,
+    /// Read relationship summaries, not messages or claims.
+    SummariesRead,
+    /// Read relationship claims, not messages or summaries.
+    RelationshipClaimsRead,
     /// Read one companion profile.
     CompanionProfileRead,
     /// Read one calendar as a rung projection, never as raw event rows.
@@ -149,6 +175,9 @@ impl AccessGrantCapability {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::MessagesRead => "messages.read",
+            Self::SummariesRead => "summaries.read",
+            Self::RelationshipClaimsRead => "relationshipClaims.read",
             Self::SharedBriefRead => "brief.share.read",
             Self::ChannelIdentityScopedRead => "channel_identity.scoped_read",
             Self::CompanionProfileRead => "companion_profile.read",
@@ -160,6 +189,9 @@ impl AccessGrantCapability {
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "messages.read" => Some(Self::MessagesRead),
+            "summaries.read" => Some(Self::SummariesRead),
+            "relationshipClaims.read" => Some(Self::RelationshipClaimsRead),
             "brief.share.read" => Some(Self::SharedBriefRead),
             "channel_identity.scoped_read" => Some(Self::ChannelIdentityScopedRead),
             "companion_profile.read" => Some(Self::CompanionProfileRead),
@@ -173,6 +205,8 @@ impl AccessGrantCapability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AccessGrantStatus {
+    /// Wall-clock expiry has passed. Revocation remains independently terminal.
+    Expired,
     /// Grant is live and can authorize a matching access.
     Active,
     /// Grant has been revoked and must fail closed.
@@ -184,6 +218,7 @@ impl AccessGrantStatus {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Expired => "expired",
             Self::Active => "active",
             Self::Revoked => "revoked",
         }
@@ -193,6 +228,7 @@ impl AccessGrantStatus {
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "expired" => Some(Self::Expired),
             "active" => Some(Self::Active),
             "revoked" => Some(Self::Revoked),
             _ => None,
@@ -203,6 +239,8 @@ impl AccessGrantStatus {
 /// Vault-resident access grant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AccessGrant {
+    /// Canonical grant authority. Resource fields below are narrowing presets.
+    pub authority_scope: crate::federation::Scope,
     /// Principal receiving access.
     pub principal_ref: EntityId,
     /// Exact resource scope.
@@ -215,24 +253,28 @@ pub struct AccessGrant {
     pub created_at: u64,
     /// Revocation time in Unix seconds.
     pub revoked_at: Option<u64>,
+    /// Exclusive wall-clock end, in Unix seconds. None means no expiry.
+    pub expires_at: Option<u64>,
 }
 
 impl AccessGrant {
     /// Constructs an active companion-profile read grant.
     #[must_use]
-    pub const fn companion_profile_read(
+    pub fn companion_profile_read(
         principal_ref: EntityId,
         person_ref: EntityId,
         persona_ref: EntityId,
         created_at: u64,
     ) -> Self {
         Self {
+            authority_scope: crate::federation::scope_codec::read_preset(),
             principal_ref,
             scope: AccessGrantScope::companion_profile(person_ref, persona_ref),
             capability: AccessGrantCapability::CompanionProfileRead,
             status: AccessGrantStatus::Active,
             created_at,
             revoked_at: None,
+            expires_at: None,
         }
     }
 
@@ -241,20 +283,61 @@ impl AccessGrant {
     /// `principal_ref` is the audience: DEC-0006 binds one standing grant per
     /// `(calendar × audience)`, and this record is that binding.
     #[must_use]
-    pub const fn calendar_disclosure(
+    pub fn calendar_disclosure(
         principal_ref: EntityId,
         calendar_ref: EntityId,
         rung: DisclosureRung,
         created_at: u64,
     ) -> Self {
         Self {
+            authority_scope: crate::federation::scope_codec::read_preset(),
             principal_ref,
             scope: AccessGrantScope::calendar(calendar_ref, rung),
             capability: AccessGrantCapability::CalendarDisclosureRead,
             status: AccessGrantStatus::Active,
             created_at,
             revoked_at: None,
+            expires_at: None,
         }
+    }
+
+    /// Effective status is evaluated at every read, not persisted by a timer.
+    pub fn effective_status_at(&self, now: u64) -> AccessGrantStatus {
+        if self.status == AccessGrantStatus::Revoked {
+            return AccessGrantStatus::Revoked;
+        }
+        if self.status == AccessGrantStatus::Expired
+            || self.expires_at.is_some_and(|end| now >= end)
+        {
+            AccessGrantStatus::Expired
+        } else {
+            AccessGrantStatus::Active
+        }
+    }
+
+    /// Whether a grant is active at the current wall-clock observation.
+    pub fn is_active(&self) -> bool {
+        self.effective_status_at(crate::unix_seconds_now()) == AccessGrantStatus::Active
+    }
+
+    /// Authorizes only this principal, exact space and data type.
+    pub fn allows_relationship_read(
+        &self,
+        principal: EntityId,
+        space: EntityId,
+        capability: AccessGrantCapability,
+    ) -> bool {
+        let scoped = match self.scope {
+            AccessGrantScope::Messages { space_ref }
+            | AccessGrantScope::Summaries { space_ref }
+            | AccessGrantScope::RelationshipClaims { space_ref } => space_ref == space,
+            _ => false,
+        };
+        self.validate().is_ok()
+            && self.is_active()
+            && self.principal_ref == principal
+            && self.capability == capability
+            && scoped
     }
 
     /// Returns a revoked version of this grant.
@@ -283,7 +366,12 @@ impl AccessGrant {
                 "scope and capability are not a matched pair",
             )));
         }
+        if self.expires_at.is_some_and(|end| end < self.created_at) {
+            return Err(invalid_grant());
+        }
         match (self.status, self.revoked_at) {
+            (AccessGrantStatus::Expired, None) if self.expires_at.is_some() => Ok(()),
+            (AccessGrantStatus::Expired, _) => Err(invalid_grant()),
             (AccessGrantStatus::Active, None) => Ok(()),
             (AccessGrantStatus::Active, Some(_)) => Err(invalid_grant()),
             (AccessGrantStatus::Revoked, Some(revoked_at)) if revoked_at >= self.created_at => {
@@ -303,7 +391,8 @@ impl AccessGrant {
         person_ref: &EntityId,
         persona_ref: &EntityId,
     ) -> bool {
-        self.status == AccessGrantStatus::Active
+        crate::federation::grant_scope::admits_preset(&self.authority_scope, "read")
+            && self.is_active()
             && self.capability == AccessGrantCapability::CompanionProfileRead
             && self.principal_ref.as_bytes() == principal_ref.as_bytes()
             && self
@@ -323,7 +412,8 @@ impl AccessGrant {
         principal_ref: &EntityId,
         calendar_ref: &EntityId,
     ) -> Option<DisclosureRung> {
-        if self.status != AccessGrantStatus::Active
+        if !crate::federation::grant_scope::admits_preset(&self.authority_scope, "read")
+            || !self.is_active()
             || self.capability != AccessGrantCapability::CalendarDisclosureRead
             || self.principal_ref.as_bytes() != principal_ref.as_bytes()
         {

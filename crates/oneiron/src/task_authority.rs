@@ -21,20 +21,20 @@
 //! its own ownership. The replication/replay door admits role 6 exactly like
 //! any other TASK row — a peer's facts are already facts.
 
-use std::sync::atomic::Ordering;
+use crate::ports::EdgeStoreRead;
 
 use rmpv::Value;
 
 use crate::Vault;
-use crate::affect::Vad;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::habit::{TaskRole, task_role_from_body_bytes};
 use crate::registry::ENTITY_TYPE_TASK;
+#[cfg(test)]
 use crate::temporal::TimeRange;
-use crate::vault::{MAX_EDGE_QUERY_RESULTS, edge_kind_prefix, parse_edge_record};
+use crate::vault::MAX_EDGE_QUERY_RESULTS;
 
 /// Strict body schema for authority facts. Version 1 is the only shape ever
 /// written; a row naming any other version is refused rather than guessed at.
@@ -171,48 +171,28 @@ impl TaskAuthorityFacts {
 /// commits its TASK, this proof, and its realizing attempt as ONE unit and a
 /// failure anywhere leaves none of them.
 ///
-/// The ops are staged directly rather than through a batch builder because the
-/// builders run the raw-door TASK refusals, and role 6 is exactly what those
-/// refuse. This door earns the bypass by BUILDING the body it writes: nothing
+/// This door earns the bypass by BUILDING the body it writes: nothing
 /// a caller supplied reaches storage unvalidated.
 pub(crate) fn put_task_authority_fact_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     fact: TaskAuthorityFact,
 ) -> Result<EntityId> {
-    let fact_ref = EntityId::now();
-    let occurred = TimeRange {
-        start: fact.occurred_at,
-        end: fact.occurred_at,
-    };
-    apply_ops(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
-        wtxn,
-        vec![
-            BatchOp::Put {
-                id: fact_ref,
-                entity_type: ENTITY_TYPE_TASK,
-                occurred,
-                learned_at: fact.occurred_at,
-                data: encode_task_authority_fact_body(&fact),
-                allow_maintenance: false,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            },
-            BatchOp::Edge {
-                src: fact_ref,
-                kind: EdgeKind::ScopedTo,
-                tgt: fact.task_ref,
-                weight: SCOPED_TO_DEFAULT_WEIGHT,
-                vad: Vad::NEUTRAL,
-            },
-        ],
-        vault.text_index_trusted.load(Ordering::Acquire),
-        false,
-        true,
-    )?;
+    let fact_ref = vault.store.clock.entity_id()?;
+    vault
+        .batch_in()
+        .put_task_fact(
+            &fact_ref,
+            &encode_task_authority_fact_body(&fact),
+            fact.occurred_at,
+        )
+        .edge(
+            &fact_ref,
+            EdgeKind::ScopedTo,
+            &fact.task_ref,
+            SCOPED_TO_DEFAULT_WEIGHT,
+        )
+        .apply(wtxn)?;
     Ok(fact_ref)
 }
 
@@ -381,14 +361,23 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         task_ref: EntityId,
     ) -> Result<TaskAuthorityFacts> {
-        let prefix = edge_kind_prefix(&task_ref, EdgeKind::ScopedTo);
         let mut facts = TaskAuthorityFacts::default();
-        for (scanned, entry) in self.store.edges_in.prefix_iter(rtxn, &prefix)?.enumerate() {
+        for (scanned, entry) in self
+            .store
+            .port_edges(
+                rtxn,
+                &task_ref,
+                crate::ports::EdgeDirection::In,
+                Some(EdgeKind::ScopedTo),
+                None,
+            )?
+            .enumerate()
+        {
             if scanned >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("task authority facts"));
             }
-            let (key, value) = entry?;
-            let fact_ref = parse_edge_record(&key, &value)?.target;
+            let edge_row = entry?;
+            let fact_ref = edge_row.target;
             let Some(raw) = self.get_raw_in(rtxn, &fact_ref)? else {
                 continue;
             };

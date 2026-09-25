@@ -1,5 +1,6 @@
 //! Deterministic claim ids, idempotent claim writes and standing-state matching.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use super::claims::{
@@ -12,7 +13,7 @@ use super::records::encode_value;
 use super::thread_membership::{active_thread_refs_in_txn, matching_thread_memberships_in_txn};
 use crate::Vault;
 use crate::affect::Vad;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
 use crate::claim::encode_claim_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
@@ -159,11 +160,10 @@ pub(super) fn put_projected_comm_claim_in_txn(
     occurred_at: u64,
 ) -> CommResult<(EntityId, bool)> {
     let id = projected_comm_claim_id(source_event_id, value)?;
-    if let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
-        let header = EntityMetadataHeader::parse(&raw).ok_or(CommError::InvalidRecord)?;
+    if let Some(raw) = vault.store.port_entity_record(&*wtxn, &id)? {
         let projected_body = encode_claim_body(&value.claim_body())?;
-        if header.entity_type != ENTITY_TYPE_CLAIM
-            || raw[ENTITY_METADATA_HEADER_LEN..] != projected_body[..]
+        if raw.entity_type != ENTITY_TYPE_CLAIM
+            || raw.body != projected_body[..]
             || !vault
                 .claims_for_subject_in_txn(&*wtxn, &value.party_ref())?
                 .contains(&id)
@@ -212,6 +212,7 @@ fn put_comm_claim_with_id_in_txn_inner(
     occurred_at: u64,
     engine_owned: bool,
 ) -> CommResult<EntityId> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let body = value.claim_body();
     let data = encode_claim_body(&body)?;
     let subject = value.party_ref();
@@ -222,8 +223,8 @@ fn put_comm_claim_with_id_in_txn_inner(
     // arbitrary TASK/CLAIM/etc. entity outside the party-indexed contact APIs.
     let subject_is_person = vault
         .store
-        .entities
-        .get(&*wtxn, subject.as_bytes())?
+        .port_entity_record(&*wtxn, &subject)?
+        .map(|row| row.encode())
         .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
         == Some(ENTITY_TYPE_PERSON);
     if !subject_is_person {
@@ -242,7 +243,7 @@ fn put_comm_claim_with_id_in_txn_inner(
                     start: occurred_at,
                     end: occurred_at,
                 },
-                learned_at: crate::unix_seconds_now(),
+                learned_at: mutation_recorded_at,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: engine_owned,

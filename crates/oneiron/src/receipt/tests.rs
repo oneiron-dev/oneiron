@@ -1,9 +1,7 @@
 use super::*;
 use crate::access_grant::AccessGrant;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-};
+use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
 use crate::edge::EdgeActorClass;
 use crate::federation::{
@@ -200,7 +198,7 @@ fn companion_record(actor: EntityId) -> CompanionRecord {
         entity(0x51),
         rmpv::Value::from("persona"),
         provenance(actor),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     )
 }
 
@@ -1173,6 +1171,10 @@ fn test_memory_board(claim_score: f32) -> MemoriesSection {
         },
         asset_ref: None,
         score,
+        claim_source: None,
+        world: None,
+        tier: crate::context_board::MemoryTier::Snippet,
+        snippet: None,
     };
 
     MemoriesSection {
@@ -1461,10 +1463,9 @@ fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
         IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
     };
 
+    const SCAN_CAP: usize = 8;
     let dir = tempfile::tempdir()?;
-    let mut config = embedding_test_config();
-    config.map_size = 256 * 1024 * 1024;
-    let vault = Vault::open(dir.path(), config)?;
+    let vault = Vault::open(dir.path(), embedding_test_config())?;
     for seed in [0x61_u8, 0x62, 0x63, 0x64] {
         vault.put_entity(
             &entity(seed),
@@ -1499,16 +1500,20 @@ fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
     };
     let flood = merge(vec![entity(0x64)], entity(0x63));
     vault.with_write_txn(|wtxn| {
-        for _ in 0..=MAX_RECEIPT_QUERY_SCAN {
+        for _ in 0..=SCAN_CAP {
             vault.apply_identity_topology_op_in_txn(wtxn, &flood, &proposed, 10)?;
         }
         Ok(())
     })?;
 
-    let receipts = vault.receipts(
-        ReceiptQuery::new(10)
+    let rtxn = vault.store.env.read_txn()?;
+    let receipts = super::identity_kind::identity_topology_receipts(
+        &vault,
+        &rtxn,
+        &ReceiptQuery::new(10)
             .with_kind(ReceiptKind::IdentityLifecycle)
             .with_time_bounds(Some(500), Some(2_000)),
+        SCAN_CAP,
     )?;
     assert!(
         receipts.is_empty(),

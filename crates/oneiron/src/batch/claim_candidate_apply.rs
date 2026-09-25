@@ -40,7 +40,6 @@ pub(super) fn apply_claim_candidate(
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
-    staged_claim_gate: Option<&StagedClaimGateOutcome>,
 ) -> Result<AppliedClaimCandidate> {
     crate::gate::validate_write_envelope(envelope)?;
 
@@ -67,7 +66,37 @@ pub(super) fn apply_claim_candidate(
         return Err(Error::EntityNotFound);
     }
 
-    let body = candidate.into_claim_body(envelope);
+    if let Some(relationship) = candidate.relationship() {
+        let found = store
+            .entities
+            .get(wtxn, relationship.as_bytes())?
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
+        if found != Some(crate::registry::ENTITY_TYPE_RELATIONSHIP) {
+            return Err(crate::error::RegistryError::InvalidRelationship {
+                relationship,
+                found,
+            }
+            .into());
+        }
+    }
+    // The default stamps a birth. A candidate re-put over a stored claim keeps
+    // the facet that claim was born with.
+    let stored_facet = store
+        .entities
+        .get(wtxn, id.as_bytes())?
+        .filter(|raw| {
+            EntityMetadataHeader::parse(raw)
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+        })
+        .and_then(|raw| {
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok()
+        })
+        .map(|stored| stored.scope_facet);
+    let default_facet = match stored_facet {
+        Some(facet) => facet,
+        None => crate::claim::default_facet_in(store, wtxn)?,
+    };
+    let body = candidate.into_claim_body(envelope, default_facet);
     let data = crate::claim::encode_claim_body(&body)?;
     let applied_put = apply_put(
         store,
@@ -80,6 +109,7 @@ pub(super) fn apply_claim_candidate(
         false,
         false,
         false,
+        None,
         has_later_covering_text_op,
         write_policy,
         Some(envelope),
@@ -90,7 +120,6 @@ pub(super) fn apply_claim_candidate(
         include_source_in_gate_input,
         claim_gate_prechecked,
         preflight_gate_decision_id,
-        staged_claim_gate,
         None,
         // A claim candidate is never part of a promotion closure: promote
         // replays the session's typed journal, which stages no candidate op.

@@ -145,7 +145,7 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
     let pack = facade
         .recall(
             "moss gardens",
-            Effort::Standard,
+            Effort::Medium,
             &RecallScope::default(),
             10,
             None,

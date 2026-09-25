@@ -2,6 +2,7 @@ use crate::agent_def::decode_agent_definition;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
@@ -29,6 +30,20 @@ pub(crate) fn first_party_connector_actor_ref() -> String {
 ///   naming the actor entity id — the fail-closed re-clamp of a believed-Auto
 ///   agent must not be silent.
 pub(crate) fn agent_definition_ceiling_for_actor(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+) -> Option<PolicyApprovalCeiling> {
+    let definition = definition_only_ceiling_for_actor(store, txn, actor);
+    let foreign = super::foreign_agent::resolve(store, txn, actor)
+        .unwrap_or(Some(PolicyApprovalCeiling::Proposed));
+    match (definition, foreign) {
+        (Some(a), Some(b)) => Some(a.restrict(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+pub(super) fn definition_only_ceiling_for_actor(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     actor: WriteActor,
@@ -68,7 +83,10 @@ fn agent_bearing_for_entity(
     txn: &heed::RoTxn<'_>,
     entity_ref: EntityId,
 ) -> AgentBearing {
-    let raw = match store.entities.get(txn, entity_ref.as_bytes()) {
+    let raw = match store
+        .port_entity_record(txn, &entity_ref)
+        .map(|row| row.map(|row| row.encode()))
+    {
         Ok(Some(raw)) => raw,
         Ok(None) => return AgentBearing::Absent,
         Err(error) => {
@@ -124,7 +142,10 @@ fn parent_row_ceiling(
     txn: &heed::RoTxn<'_>,
     parent_id: &EntityId,
 ) -> PolicyApprovalCeiling {
-    let raw = match store.entities.get(txn, parent_id.as_bytes()) {
+    let raw = match store
+        .port_entity_record(txn, parent_id)
+        .map(|row| row.map(|row| row.encode()))
+    {
         Ok(Some(raw)) => raw,
         Ok(None) => {
             tracing::warn!(

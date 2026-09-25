@@ -47,6 +47,14 @@ pub const VAULT_WRITER_LEASE_HELD: &str = "vault writer lease is held by another
 /// shared native vault keeps one lease value alive (behind an `Arc`) for its
 /// whole lifetime, so the single drop that releases it is the last one.
 ///
+/// That drop releases the lease before it returns, even when a forked child
+/// still holds an inherited copy of the lock descriptor. The OS lock lives on
+/// the open file description, and every `fork` duplicates it: a sibling
+/// thread's `Command` spawn between fork and exec, or a forked worker still
+/// running, would otherwise keep the vault leased after its owner let go, and
+/// the owner's own next open would be refused. So the acquiring process
+/// unlocks explicitly before it closes the descriptor.
+///
 /// [`Self::pid`] records the acquiring process. A post-`fork` child inherits
 /// the descriptor — and therefore the kernel's lock — without ever having
 /// acquired it, so the SDK dispatcher compares [`Self::pid`] against the
@@ -217,9 +225,29 @@ impl VaultWriterLease {
 
 impl Drop for VaultWriterLease {
     fn drop(&mut self) {
-        // Never LOCK_UN: fork duplicates the SAME open file description.
-        // Closing the child's duplicate cannot unlock the parent's hold.
-        drop(self.file.take());
+        let Some(file) = self.file.take() else {
+            return;
+        };
+        // Only the acquiring process unlocks. A post-fork child shares the
+        // SAME open file description, so LOCK_UN through its duplicate would
+        // release the parent's live hold; the child only closes, and closing
+        // its duplicate cannot unlock the parent.
+        //
+        // The owner does unlock, BEFORE closing: closing alone releases the
+        // lock only once every duplicate is closed, and a child forked while
+        // the lease was held keeps one until it execs or exits.
+        #[cfg(unix)]
+        if self.held_by_current_process() {
+            use std::os::fd::AsRawFd;
+
+            // SAFETY: `file` is a live, open `std::fs::File` owned by this
+            // frame and closed only after this call, so `as_raw_fd()` yields a
+            // valid descriptor. `flock` reads only that descriptor and the
+            // flag word, and writes nothing through a pointer. A failed unlock
+            // leaves the close below as the release, exactly as before.
+            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        }
+        drop(file);
     }
 }
 

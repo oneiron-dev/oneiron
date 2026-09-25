@@ -57,6 +57,9 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
         },
     };
     vault.mint_standing_outbound_grant(&grant_id, &intent, 10)?;
+    let old_pin = vault.pin_entity_revision(&grant_id)?;
+    let old_raw =
+        vault.get_raw_with_mode(&grant_id, crate::vault::entity_revision::ReadMode::Live)?;
     let policy = resolve(&vault)?;
 
     let mut effect = external_effect_gate_input("sender", "send", "line");
@@ -70,6 +73,23 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
         .get_standing_outbound_grant(&grant_id)?
         .expect("grant stored");
     assert!(grant.last_used_at.is_some());
+    let new_pin = vault.pin_entity_revision(&grant_id)?;
+    assert_ne!(old_pin, new_pin);
+    assert_eq!(vault.pin_entity_revision(&grant_id)?, new_pin);
+    assert_eq!(
+        vault.get_raw_with_mode(
+            &grant_id,
+            crate::vault::entity_revision::ReadMode::Pinned(old_pin)
+        )?,
+        old_raw
+    );
+    assert_eq!(
+        vault.get_raw_with_mode(
+            &grant_id,
+            crate::vault::entity_revision::ReadMode::Pinned(new_pin)
+        )?,
+        vault.get_raw_with_mode(&grant_id, crate::vault::entity_revision::ReadMode::Live)?
+    );
 
     let decisions = vault.store.gate_decisions(10)?;
     let grant_ref = format!("grant:{}", grant_id.to_hex());
@@ -703,5 +723,28 @@ fn external_effect_holds_opted_out_counterparty_regardless_of_grant() -> Result<
             .map(String::as_str),
         Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
     );
+    Ok(())
+}
+
+#[test]
+fn record_bounded_effect_scope_does_not_become_an_unbounded_grant() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut bounded = crate::federation::scope_codec::effect_preset();
+    bounded.worlds = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        crate::federation::ScopeId(test_id(0xE8)),
+    ]));
+    let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+        "sender",
+        "external:send",
+        crate::federation::scope_codec::encode_scope_value(&bounded)?,
+        None,
+    )]);
+    put_policy_manifest_bytes(&vault, test_id(0xE9), &data)?;
+    let policy = resolve(&vault)?;
+    let effect = external_effect_gate_input("sender", "send", "line");
+    let (_, decision, _) = vault.with_write_txn(|txn| {
+        check_external_effect_policy_with_budget(&vault.store, txn, &effect, &policy, true)
+    })?;
+    assert_ne!(decision.outcome(), GateOutcome::Allow);
     Ok(())
 }

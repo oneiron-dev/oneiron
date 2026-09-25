@@ -4,15 +4,11 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
-use super::door_credential::DoorCredential;
 use super::door_types::{
     CredentialDoorError, DOOR_EFFECTORS, DOOR_MAX_LEASE_TTL_SECS, DoorResult, TtlCeiling,
     names_a_floor,
 };
-use crate::secret_custody::{
-    PolicyManifestWalkError, policy_manifest_bodies_strict, policy_manifest_body_map,
-};
-use crate::secret_lease::VaultInstant;
+use crate::secret_custody::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 use crate::store::Store;
 
 /// MessagePack keys this door reads out of POLICY_MANIFEST bodies.
@@ -197,11 +193,6 @@ impl PolicyFloors {
             lease_ttl: self.lease_ttl.meet(other.lease_ttl),
         }
     }
-
-    /// The resolved lease-TTL ceiling.
-    pub(super) fn lease_ttl(self) -> TtlCeiling {
-        self.lease_ttl
-    }
 }
 
 /// The resolved door dial: the floors it narrows and the effectors it leaves
@@ -221,31 +212,11 @@ impl DoorPolicy {
         self.dial = self.dial.meet(&other.dial);
     }
 
-    /// The effector set this dial resolved to.
-    pub(crate) fn dial(&self) -> &EffectorDial {
-        &self.dial
-    }
-
-    /// The resolved lease-TTL ceiling in seconds, for the refusals and
-    /// assertions that have to report a number.
-    pub(super) fn lease_ttl_ceiling_secs(&self) -> u64 {
-        self.floors.lease_ttl.secs()
-    }
-
     /// Whether this dial still admits `effector` as a door scope. An empty
     /// effector is never admitted: there is no unscoped door operation, and
     /// [`DoorEffector::parse`] is the single place that is decided.
     pub(crate) fn admits_effector(&self, effector: &str) -> bool {
         DoorEffector::parse(effector).is_some_and(|proved| self.dial.admits(proved))
-    }
-
-    /// The same effective ceiling, in seconds.
-    pub(super) fn effective_lease_ttl_ceiling(
-        &self,
-        credential: &DoorCredential,
-        now: VaultInstant,
-    ) -> u64 {
-        self.effective_ttl_ceiling(credential, now).secs()
     }
 
     /// Resolves the dial from every POLICY_MANIFEST body in the vault,
@@ -277,48 +248,6 @@ impl DoorPolicy {
         }
         Ok(policy)
     }
-}
-
-impl DoorPolicy {
-    /// The effective lease ceiling: the hard floor, narrowed by the dial,
-    /// narrowed again by the slip's own attenuation (itself already a minimum
-    /// over every caveat applied), and narrowed last by what is LEFT of the
-    /// slip's validity at `now`. Only minima compose here, so no combination
-    /// of dial, slip, caveat order, and witnessed instant can ever raise it.
-    ///
-    /// This is the ceiling on what may be REQUESTED. What the issued ticket
-    /// actually expires at is clamped once more, by the absolute credential
-    /// expiry, inside the transaction that stamps it.
-    ///
-    /// Every term is ALREADY a lattice value or enters through
-    /// [`TtlCeiling::at_most`], so the hard floor is applied by CONSTRUCTION
-    /// rather than by a `min` this function has to remember; the rest is
-    /// `meet`, which cannot raise anything. The dial's own term needs no clamp
-    /// at all now — [`PolicyFloors`] cannot hold a ceiling above the floor.
-    pub(super) fn effective_ttl_ceiling(
-        &self,
-        credential: &DoorCredential,
-        now: VaultInstant,
-    ) -> TtlCeiling {
-        let dial_ceiling = self.floors.lease_ttl;
-        dial_ceiling
-            .meet(credential.ttl_cap)
-            .meet_secs(credential.remaining_secs(now))
-    }
-}
-
-/// Decodes the `secret.door.*` rows of ONE policy-manifest body.
-///
-/// `Ok(None)` means only "this body canonically decodes to something that is
-/// not a map, so it carries no door rows" — the body schema itself belongs to
-/// the gate. A body that does not canonically decode at all fails closed
-/// instead (see [`policy_manifest_body_map`], the shared canonical-body
-/// boundary this door and the custody floor both read through).
-pub(super) fn decode_door_policy_keys(body: &[u8]) -> DoorResult<Option<DoorPolicy>> {
-    let Some(entries) = policy_manifest_body_map(body).map_err(manifest_refusal)? else {
-        return Ok(None);
-    };
-    decode_door_policy_rows(&entries).map(Some)
 }
 
 /// Decodes the `secret.door.*` rows of one canonically-decoded manifest body.

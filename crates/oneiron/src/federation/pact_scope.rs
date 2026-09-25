@@ -10,7 +10,7 @@ use crate::entity_id::{EntityId, is_foreign_world_id_range};
 use crate::error::{Error, RecordError, Result};
 
 /// Current FederationPactScope canonical encoding schema version.
-pub const FEDERATION_PACT_SCOPE_SCHEMA_VERSION: u64 = 1;
+pub const FEDERATION_PACT_SCOPE_SCHEMA_VERSION: u64 = 2;
 
 const FEDERATION_PACT_SCOPE_KEYS: [&str; 3] = ["schema_version", "lo_to_hi", "hi_to_lo"];
 
@@ -46,73 +46,18 @@ const SCOPE_AXIS_KIND_SOME: &str = "some";
 
 const SCOPE_AXIS_KIND_BOTTOM: &str = "bottom";
 
-/// The FROZEN selector-range vocabulary of federation scopes and sync
-/// selectors — deliberately NOT the allocation authority.
-///
-/// This used to be `registry::SelectorRange`, doing two unrelated jobs at once:
-/// deciding where new kinds may be allocated, and naming the byte ranges a
-/// replication scope selects. Byte-space v3 (ONE-1754) split them.
-/// [`crate::registry::TypeByteZone`] took over allocation; this type kept the
-/// wire vocabulary — the six names below are what a federation grant body and
-/// a persisted sync selector spell on disk.
-///
-/// Its ranges are frozen at their pre-v3 values ON PURPOSE. Re-deriving
-/// replication scope onto the v3 zones changes which entities a given grant
-/// replicates, which is a replication-behaviour decision this ticket does not
-/// own. The consequence is recorded rather than hidden: after the v3 re-key
-/// these names no longer describe what lives at those bytes (`Companion` now
-/// spans REDACTION_AUDIT through COMPANION_REGISTER). Nothing derives
-/// allocation from this enum, so the staleness is inert until a selector
-/// ticket re-derives it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SelectorRange {
-    /// Byte `0`.
-    Semantic,
-    /// Bytes `1–63`.
-    Core,
-    /// Bytes `64–79`.
-    Companion,
-    /// Bytes `80–99`.
-    Productivity,
-    /// Bytes `100–119`.
-    Crm,
-    /// Bytes `120–255`.
-    InducedDynamicMaintenance,
-}
-
-/// Maps a type byte to its frozen selector range. Total over all 256 bytes.
-///
-/// Allocation code must call [`crate::registry::zone_of`] instead.
-#[must_use]
-pub const fn selector_range_of(type_byte: u8) -> SelectorRange {
-    match type_byte {
-        0 => SelectorRange::Semantic,
-        1..=63 => SelectorRange::Core,
-        64..=79 => SelectorRange::Companion,
-        80..=99 => SelectorRange::Productivity,
-        100..=119 => SelectorRange::Crm,
-        120..=u8::MAX => SelectorRange::InducedDynamicMaintenance,
-    }
-}
-
-/// Normalized band order shared with `SyncSelector::new`.
-const FEDERATION_SCOPE_BAND_ORDER: [SelectorRange; 6] = [
-    SelectorRange::Semantic,
-    SelectorRange::Core,
-    SelectorRange::Companion,
-    SelectorRange::Productivity,
-    SelectorRange::Crm,
-    SelectorRange::InducedDynamicMaintenance,
-];
+pub use super::selector_kind::{SelectorRange, selector_range_of};
 
 /// World axis of a federation pact direction scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FederationScopeWorlds {
+    /// No world, including no implicit base world.
+    Bottom,
     /// Base reality plus every world.
     All,
     /// Base reality only.
     Base,
-    /// Base reality plus the named worlds (sorted, deduplicated, non-empty,
+    /// Exactly the named worlds (sorted, deduplicated, non-empty,
     /// local-range only — foreign-range world ids fail closed).
     Worlds(Vec<EntityId>),
 }
@@ -172,7 +117,7 @@ pub struct FederationPactScope {
 impl FederationScopeWorlds {
     fn validate(&self) -> Result<()> {
         match self {
-            Self::All | Self::Base => Ok(()),
+            Self::All | Self::Base | Self::Bottom => Ok(()),
             Self::Worlds(ids) => {
                 validate_strictly_ascending_ids(ids)?;
                 if ids.iter().any(|id| is_foreign_world_id_range(*id)) {
@@ -183,28 +128,38 @@ impl FederationScopeWorlds {
         }
     }
 
-    pub(super) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
+    pub(crate) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
         match (self, ceiling) {
-            (_, Self::All) => true,
-            (Self::All, _) => false,
-            (Self::Base, _) => true,
-            (Self::Worlds(_), Self::Base) => false,
+            (Self::Bottom, _) | (_, Self::All) => true,
+            (Self::All, _) | (_, Self::Bottom) => false,
+            (Self::Base, Self::Base) => true,
+            (Self::Base, Self::Worlds(wide)) => wide.contains(&crate::claim::base_world_id()),
+            (Self::Worlds(narrow), Self::Base) => {
+                narrow.iter().all(|id| *id == crate::claim::base_world_id())
+            }
             (Self::Worlds(narrow), Self::Worlds(wide)) => narrow.iter().all(|id| wide.contains(id)),
         }
     }
-
     fn intersect(&self, other: &Self) -> Self {
         match (self, other) {
+            (Self::Bottom, _) | (_, Self::Bottom) => Self::Bottom,
             (Self::All, x) | (x, Self::All) => x.clone(),
-            (Self::Base, _) | (_, Self::Base) => Self::Base,
+            (Self::Base, Self::Base) => Self::Base,
+            (Self::Base, Self::Worlds(ids)) | (Self::Worlds(ids), Self::Base) => {
+                if ids.contains(&crate::claim::base_world_id()) {
+                    Self::Base
+                } else {
+                    Self::Bottom
+                }
+            }
             (Self::Worlds(left), Self::Worlds(right)) => {
-                let both: Vec<EntityId> = left
+                let both: Vec<_> = left
                     .iter()
                     .filter(|id| right.contains(id))
                     .copied()
                     .collect();
                 if both.is_empty() {
-                    Self::Base
+                    Self::Bottom
                 } else {
                     Self::Worlds(both)
                 }
@@ -221,7 +176,7 @@ impl FederationScopeFacets {
         }
     }
 
-    pub(super) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
+    pub(crate) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
         match (self, ceiling) {
             (_, Self::All) => true,
             (Self::Bottom, _) => true,
@@ -259,9 +214,7 @@ impl FederationScopeBands {
                 if bands.is_empty() {
                     return Err(invalid_pact_scope());
                 }
-                let ascending = bands
-                    .windows(2)
-                    .all(|pair| band_order_index(pair[0]) < band_order_index(pair[1]));
+                let ascending = *bands == SelectorRange::normalize(bands.clone());
                 if ascending {
                     Ok(())
                 } else {
@@ -271,13 +224,15 @@ impl FederationScopeBands {
         }
     }
 
-    pub(super) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
+    pub(crate) fn is_narrowing_of(&self, ceiling: &Self) -> bool {
         match (self, ceiling) {
             (_, Self::All) => true,
             (Self::Bottom, _) => true,
             (Self::All, _) => false,
             (Self::Some(_), Self::Bottom) => false,
-            (Self::Some(narrow), Self::Some(wide)) => narrow.iter().all(|band| wide.contains(band)),
+            (Self::Some(narrow), Self::Some(wide)) => {
+                narrow.iter().all(|band| band.covered_by(wide))
+            }
         }
     }
 
@@ -286,11 +241,21 @@ impl FederationScopeBands {
             (Self::Bottom, _) | (_, Self::Bottom) => Self::Bottom,
             (Self::All, x) | (x, Self::All) => x.clone(),
             (Self::Some(left), Self::Some(right)) => {
-                let both: Vec<SelectorRange> = left
-                    .iter()
-                    .filter(|band| right.contains(band))
-                    .copied()
-                    .collect();
+                let both = SelectorRange::normalize(
+                    left.iter()
+                        .flat_map(|a| {
+                            right.iter().filter_map(move |b| {
+                                if a.includes(*b) {
+                                    Some(*b)
+                                } else if b.includes(*a) {
+                                    Some(*a)
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .collect(),
+                );
                 if both.is_empty() {
                     Self::Bottom
                 } else {
@@ -439,6 +404,7 @@ fn decode_direction_scope_value(value: &Value) -> Result<FederationDirectionScop
 
 fn worlds_axis_value(worlds: &FederationScopeWorlds) -> Value {
     match worlds {
+        FederationScopeWorlds::Bottom => axis_kind_value(SCOPE_AXIS_KIND_BOTTOM),
         FederationScopeWorlds::All => axis_kind_value(SCOPE_WORLDS_KIND_ALL),
         FederationScopeWorlds::Base => axis_kind_value(SCOPE_WORLDS_KIND_BASE),
         FederationScopeWorlds::Worlds(ids) => Value::Map(vec![
@@ -500,10 +466,16 @@ fn axis_kind_value(kind: &str) -> Value {
 fn decode_worlds_axis(value: &Value) -> Result<FederationScopeWorlds> {
     let (kind, ids) = decode_axis_map(value)?;
     match (kind, ids) {
+        (SCOPE_AXIS_KIND_BOTTOM, None) => Ok(FederationScopeWorlds::Bottom),
         (SCOPE_WORLDS_KIND_ALL, None) => Ok(FederationScopeWorlds::All),
         (SCOPE_WORLDS_KIND_BASE, None) => Ok(FederationScopeWorlds::Base),
         (SCOPE_WORLDS_KIND_WORLDS, Some(ids)) => {
-            Ok(FederationScopeWorlds::Worlds(decode_hex_id_array(ids)?))
+            let ids = decode_hex_id_array(ids)?;
+            Ok(if ids.is_empty() {
+                FederationScopeWorlds::Bottom
+            } else {
+                FederationScopeWorlds::Worlds(ids)
+            })
         }
         _ => Err(invalid_pact_scope()),
     }
@@ -605,34 +577,12 @@ fn validate_strictly_ascending_ids(ids: &[EntityId]) -> Result<()> {
     }
 }
 
-fn band_order_index(band: SelectorRange) -> usize {
-    FEDERATION_SCOPE_BAND_ORDER
-        .iter()
-        .position(|known| *known == band)
-        .unwrap_or(FEDERATION_SCOPE_BAND_ORDER.len())
-}
-
 fn federation_band_wire(band: SelectorRange) -> &'static str {
-    match band {
-        SelectorRange::Semantic => "semantic",
-        SelectorRange::Core => "core",
-        SelectorRange::Companion => "companion",
-        SelectorRange::Productivity => "productivity",
-        SelectorRange::Crm => "crm",
-        SelectorRange::InducedDynamicMaintenance => "maintenance",
-    }
+    band.wire_name()
 }
 
 fn parse_federation_band_wire(value: &str) -> Option<SelectorRange> {
-    match value {
-        "semantic" => Some(SelectorRange::Semantic),
-        "core" => Some(SelectorRange::Core),
-        "companion" => Some(SelectorRange::Companion),
-        "productivity" => Some(SelectorRange::Productivity),
-        "crm" => Some(SelectorRange::Crm),
-        "maintenance" => Some(SelectorRange::InducedDynamicMaintenance),
-        _ => None,
-    }
+    SelectorRange::from_wire_name(value)
 }
 
 fn validate_exact_keys(entries: &[(Value, Value)], expected: &[&str]) -> Result<()> {

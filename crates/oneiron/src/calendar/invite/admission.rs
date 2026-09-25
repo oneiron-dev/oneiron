@@ -139,7 +139,7 @@ impl CalendarInviteAdmission {
             _ => {}
         }
 
-        let claim_id = EntityId::now();
+        let claim_id = vault.store.clock.entity_id()?;
         let body = ClaimBody::new(
             PREDICATE_CALENDAR_PASSPORT,
             ClaimSubject::Entity(self.event_ref),

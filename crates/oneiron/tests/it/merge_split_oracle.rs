@@ -918,7 +918,9 @@ fn ms03_reassignment_residue_stays_ambiguous_on_original() {
 }
 
 /// r5/§5: facet(entity, facets[]) mints exactly N ARCH-0022 FACET
-/// (type-13) entities.
+/// (type-13) scenario masks. The PERSON put already minted the mandatory
+/// substrate mask, so the total `facets_of` count is N+1; the assertion
+/// distinguishes the substrate from the scenario masks it pins.
 #[test]
 fn ms03_facet_mints_exactly_n_type13_entities() {
     let (_dir, vault) = open_vault();
@@ -926,7 +928,15 @@ fn ms03_facet_mints_exactly_n_type13_entities() {
     let minted = seam::apply_facet(&vault, &person, &["reg-a", "reg-b"], &[]);
     assert_eq!(minted.len(), 2);
     assert_ne!(minted[0], minted[1]);
-    assert_eq!(seam::count_facet_entities_of(&vault, &person), 2);
+    let all = vault.facets_of(&person).expect("facets of");
+    assert_eq!(all.len(), 3);
+    assert!(all.contains(&oneiron::claim::substrate_facet_id(person)));
+    let scenario_count = all
+        .into_iter()
+        .filter(|mask| *mask != oneiron::claim::substrate_facet_id(person))
+        .count();
+    assert_eq!(scenario_count, 2);
+    assert_eq!(seam::count_facet_entities_of(&vault, &person), 3);
 }
 
 /// r5/r6: the facet op backfills `facet_of` scoping on the named

@@ -21,6 +21,9 @@ pub(super) async fn handle_sync_message(
     conn_state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
     match msg {
+        SyncMessage::LfsChunks(payload) => {
+            super::lfs_chunks::handle(server, payload, direct_tx, conn_state).await
+        }
         SyncMessage::Doc {
             entity,
             kind,
@@ -186,14 +189,39 @@ pub(super) fn handle_app_message_with_connection(
             }
         })?;
         if request.method == "auth.bind" {
-            if state.bound_auth.is_some() {
-                return Err(ProtocolError::RpcNoPrincipal);
-            }
-            let token = crate::livequery::bind_token(&request.params)
+            let binding = (|| {
+                if state.bound_auth.is_some() {
+                    return Err(ProtocolError::RpcNoPrincipal);
+                }
+                let token = crate::livequery::bind_token(&request.params)
+                    .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+                let proof: crate::auth::BindingProof = serde_json::from_value(
+                    request
+                        .params
+                        .get("binding")
+                        .cloned()
+                        .ok_or(ProtocolError::RpcNoPrincipal)?,
+                )
                 .map_err(|_| ProtocolError::RpcNoPrincipal)?;
-            let auth = CoreAuth::from_bind_token(&token, &server.config, server.vault().as_ref())
+                let auth = CoreAuth::bind_transport_once(
+                    &token,
+                    &proof,
+                    &server.config,
+                    server.vault().as_ref(),
+                )
                 .map_err(|_| ProtocolError::RpcNoPrincipal)?;
-            state.bound_auth = Some(auth);
+                auth.require_registered_principal()
+                    .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+                Ok(auth)
+            })();
+            let actor = binding.as_ref().map_or("unauthenticated", |auth| {
+                auth.principal_ref().unwrap_or(auth.principal())
+            });
+            let _ =
+                server
+                    .wire_telemetry
+                    .record("auth.bind", actor, oneiron_vault_contract::now_ts());
+            state.bound_auth = Some(binding?);
             for frame in crate::livequery::rpc_result(request.request_id, serde_json::Value::Null)?
             {
                 direct_tx
@@ -203,6 +231,11 @@ pub(super) fn handle_app_message_with_connection(
             return Ok(());
         }
         let auth = require_bound_app_auth(server, state)?;
+        let _ = server.wire_telemetry.record(
+            &request.method,
+            auth.principal_ref().unwrap_or(auth.principal()),
+            oneiron_vault_contract::now_ts(),
+        );
         let frames = if request.method == "ping" {
             vec![crate::livequery::ping_result(
                 request.request_id,
@@ -219,6 +252,11 @@ pub(super) fn handle_app_message_with_connection(
     } else {
         let auth = require_bound_app_auth(server, state)?;
         let request = crate::livequery::decode_sub(payload)?;
+        let _ = server.wire_telemetry.record(
+            "subscribe",
+            auth.principal_ref().unwrap_or(auth.principal()),
+            oneiron_vault_contract::now_ts(),
+        );
         let connection =
             connection.ok_or(ProtocolError::InvalidPayload("subscription owner missing"))?;
         for frame in connection.control(auth, request)? {
@@ -238,7 +276,9 @@ pub(super) fn require_bound_app_auth<'a>(
         .bound_auth
         .as_ref()
         .ok_or(ProtocolError::RpcNoPrincipal)?;
-    if session_credential_revoked(server.vault().as_ref(), auth.jti()) {
+    if !auth.credential_is_live(server.vault().as_ref())
+        || session_credential_revoked(server.vault().as_ref(), auth.jti())
+    {
         return Err(ProtocolError::RpcNoPrincipal);
     }
     Ok(auth)

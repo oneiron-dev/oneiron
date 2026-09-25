@@ -141,8 +141,8 @@ fn text_diff_preserves_equal_length_eof_newline_in_chunk_hash() -> Result<()> {
     let chunks = derive_code_chunks_from_text_diff("README.md", "a\nb\n", "a\nc\n")?;
 
     assert_eq!(chunks.len(), 1);
-    assert_eq!((chunks[0].start_line, chunks[0].end_line), (2, 2));
-    assert_eq!(chunks[0].content_hash, sha256_bytes("c\n".as_bytes()));
+    assert_eq!((chunks[0].start_line, chunks[0].end_line), (1, 2));
+    assert_eq!(chunks[0].content_hash, sha256_bytes("a\nc\n".as_bytes()));
     Ok(())
 }
 
@@ -428,7 +428,16 @@ fn symbol_blame_returns_provenance_claim_and_source_session_when_available() -> 
     let id = entity(0xB1);
     let claim_id = entity(0xC1);
     let repo_ref = repo_ref();
-    let manifest = manifest_with_blame(Some(claim_id), Some("codex-session-001".to_owned()))?;
+    let mut manifest = manifest_with_blame(Some(claim_id), Some("codex-session-001".to_owned()))?;
+    let op = CodeProducingOperation {
+        operation: entity(11),
+        actor: entity(12),
+        turn: entity(13),
+        activity: entity(14),
+        intent: entity(15),
+    };
+    manifest.symbols[0].producing_operations = vec![op.clone()];
+    manifest.chunks[1].producing_operations = vec![op.clone()];
     let fingerprint = manifest.symbols[0].fingerprint;
 
     vault.put_code_artifact(
@@ -442,6 +451,11 @@ fn symbol_blame_returns_provenance_claim_and_source_session_when_available() -> 
     let direct = vault
         .code_symbol_blame(&id, "src/lib.rs", "answer", &fingerprint)?
         .expect("direct blame");
+    assert_eq!(direct.producing_operations, vec![op]);
+    assert_eq!(
+        vault.get_code_symbol_manifest(&id)?.unwrap().chunks[1].producing_operations,
+        direct.producing_operations
+    );
     assert_eq!(direct.provenance_claim_id, Some(claim_id));
     assert_eq!(direct.source_session.as_deref(), Some("codex-session-001"));
 
@@ -667,5 +681,32 @@ fn symbol_manifest_repo_ref_must_match_code_artifact() -> Result<()> {
 
     let artifact = encode_code_artifact_body(&code_body(&repo_ref))?;
     assert!(decode_code_artifact_body(&artifact).is_ok());
+    Ok(())
+}
+
+#[test]
+fn legacy_manifest_without_operations_decodes() -> Result<()> {
+    let manifest = manifest_with_blame(None, None)?;
+    let bytes = encode_code_symbol_manifest(&manifest)?;
+    let mut value = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap();
+    let rmpv::Value::Map(entries) = &mut value else {
+        panic!("map")
+    };
+    for (key, value) in entries {
+        if matches!(key.as_str(), Some("chunks" | "symbols")) {
+            let rmpv::Value::Array(rows) = value else {
+                panic!("array")
+            };
+            for row in rows {
+                let rmpv::Value::Map(fields) = row else {
+                    panic!("map")
+                };
+                fields.retain(|(key, _)| key.as_str() != Some("producing_operations"));
+            }
+        }
+    }
+    let mut old = Vec::new();
+    rmpv::encode::write_value(&mut old, &value).unwrap();
+    assert_eq!(decode_code_symbol_manifest(&old)?, manifest);
     Ok(())
 }

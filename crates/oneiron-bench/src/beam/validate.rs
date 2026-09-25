@@ -485,6 +485,13 @@ pub(super) fn validate_competitor_card(
             "fixture-backed BEAM manifests cannot claim public parity",
         ));
     }
+    card.axes.validate()?;
+    if card.axes.judge.identity != format!("{}@{}", card.judge.judge_id, card.judge.version) {
+        return Err(invalid_manifest(
+            manifest,
+            "card judge axis differs from its runtime judge pin",
+        ));
+    }
     if card.display_name.trim().is_empty() {
         return Err(invalid_manifest(
             manifest,

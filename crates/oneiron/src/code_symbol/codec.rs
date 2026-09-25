@@ -10,8 +10,8 @@ use crate::error::{Error, Result};
 use super::keys::repo_identity_key;
 use super::types::{
     CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_NAME_MAX_BYTES,
-    CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CODE_SYMBOL_TEXT_HASH_LEN, CodeChunk, CodeSymbolManifest,
-    CodeSymbolRevision,
+    CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CODE_SYMBOL_TEXT_HASH_LEN, CodeChunk,
+    CodeProducingOperation, CodeSymbolManifest, CodeSymbolRevision,
 };
 use super::validate::{
     normalize_commit_hash, validate_chunk, validate_code_symbol_manifest, validate_manifest_path,
@@ -22,9 +22,15 @@ use crate::error::CodeError;
 pub const CODE_SYMBOL_MANIFEST_BODY_KEYS: [&str; 4] =
     ["repo_ref", "commit_hash", "chunks", "symbols"];
 
-pub const CODE_SYMBOL_CHUNK_KEYS: [&str; 4] = ["path", "start_line", "end_line", "content_hash"];
+pub const CODE_SYMBOL_CHUNK_KEYS: [&str; 5] = [
+    "path",
+    "start_line",
+    "end_line",
+    "content_hash",
+    "producing_operations",
+];
 
-pub const CODE_SYMBOL_REVISION_KEYS: [&str; 7] = [
+pub const CODE_SYMBOL_REVISION_KEYS: [&str; 8] = [
     "path",
     "name",
     "kind",
@@ -32,6 +38,7 @@ pub const CODE_SYMBOL_REVISION_KEYS: [&str; 7] = [
     "chunk_indexes",
     "provenance_claim_id",
     "source_session",
+    "producing_operations",
 ];
 
 pub const CODE_SYMBOL_ENTITY_BODY_KEYS: [&str; 8] = [
@@ -85,7 +92,7 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
         .chunks
         .iter()
         .map(|chunk| {
-            Value::Map(vec![
+            Ok(Value::Map(vec![
                 (Value::from(KEY_PATH), Value::from(chunk.path.as_str())),
                 (
                     Value::from(KEY_START_LINE),
@@ -99,14 +106,18 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
                     Value::from(KEY_CONTENT_HASH),
                     Value::Binary(chunk.content_hash.to_vec()),
                 ),
-            ])
+                (
+                    Value::from("producing_operations"),
+                    encode_operations(&chunk.producing_operations)?,
+                ),
+            ]))
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     let symbols = manifest
         .symbols
         .iter()
         .map(|symbol| {
-            Value::Map(vec![
+            Ok(Value::Map(vec![
                 (Value::from(KEY_PATH), Value::from(symbol.path.as_str())),
                 (Value::from(KEY_NAME), Value::from(symbol.name.as_str())),
                 (Value::from(KEY_KIND), Value::from(symbol.kind.as_str())),
@@ -137,9 +148,13 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
                         .as_deref()
                         .map_or(Value::Nil, Value::from),
                 ),
-            ])
+                (
+                    Value::from("producing_operations"),
+                    encode_operations(&symbol.producing_operations)?,
+                ),
+            ]))
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     let value = Value::Map(vec![
         (
             Value::from(KEY_REPO_REF),
@@ -287,6 +302,7 @@ pub(super) fn decode_code_chunk(value: &Value) -> Result<CodeChunk> {
     let mut start_line: Option<u32> = None;
     let mut end_line: Option<u32> = None;
     let mut content_hash: Option<[u8; CODE_SYMBOL_TEXT_HASH_LEN]> = None;
+    let mut producing_operations = Vec::new();
     let mut seen = [false; CODE_SYMBOL_CHUNK_KEYS.len()];
 
     for (key, value) in entries {
@@ -319,11 +335,13 @@ pub(super) fn decode_code_chunk(value: &Value) -> Result<CodeChunk> {
             KEY_START_LINE => start_line = Some(u32_from_value(value, "start_line")?),
             KEY_END_LINE => end_line = Some(u32_from_value(value, "end_line")?),
             KEY_CONTENT_HASH => content_hash = Some(binary_32(value, "content_hash")?),
+            "producing_operations" => producing_operations = decode_operations(value)?,
             _ => unreachable!("index resolved from CODE_SYMBOL_CHUNK_KEYS"),
         }
     }
 
     let chunk = CodeChunk {
+        producing_operations,
         path: path.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required chunk key path",
         )))?,
@@ -354,6 +372,7 @@ pub(super) fn decode_code_symbol_revision(value: &Value) -> Result<CodeSymbolRev
     let mut chunk_indexes: Option<Vec<u32>> = None;
     let mut provenance_claim_id: Option<Option<EntityId>> = None;
     let mut source_session: Option<Option<String>> = None;
+    let mut producing_operations = Vec::new();
     let mut seen = [false; CODE_SYMBOL_REVISION_KEYS.len()];
 
     for (key, value) in entries {
@@ -429,11 +448,13 @@ pub(super) fn decode_code_symbol_revision(value: &Value) -> Result<CodeSymbolRev
                     }
                 });
             }
+            "producing_operations" => producing_operations = decode_operations(value)?,
             _ => unreachable!("index resolved from CODE_SYMBOL_REVISION_KEYS"),
         }
     }
 
     let symbol = CodeSymbolRevision {
+        producing_operations,
         path: path.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required symbol revision key path",
         )))?,
@@ -569,4 +590,51 @@ pub(super) fn hash_len(hasher: &mut Sha256, len: usize) -> Result<()> {
         .map_err(|_| Error::ArithmeticOverflow("code symbol hash material length overflow"))?;
     hasher.update(len.to_le_bytes());
     Ok(())
+}
+
+fn encode_operations(ops: &[CodeProducingOperation]) -> Result<Value> {
+    if ops.len() > 1024 {
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "operation chain exceeds cap",
+        )));
+    }
+    Ok(Value::Array(
+        ops.iter()
+            .map(|op| {
+                Value::Array(
+                    [op.operation, op.actor, op.turn, op.activity, op.intent]
+                        .into_iter()
+                        .map(|id| Value::Binary(id.as_bytes().to_vec()))
+                        .collect(),
+                )
+            })
+            .collect(),
+    ))
+}
+
+fn decode_operations(value: &Value) -> Result<Vec<CodeProducingOperation>> {
+    let entries = value
+        .as_array()
+        .filter(|v| v.len() <= 1024)
+        .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "invalid operation chain",
+        )))?;
+    entries
+        .iter()
+        .map(|value| {
+            let ids = value
+                .as_array()
+                .filter(|v| v.len() == 5)
+                .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                    "invalid producing operation",
+                )))?;
+            Ok(CodeProducingOperation {
+                operation: entity_id_from_value(&ids[0], "operation")?,
+                actor: entity_id_from_value(&ids[1], "actor")?,
+                turn: entity_id_from_value(&ids[2], "turn")?,
+                activity: entity_id_from_value(&ids[3], "activity")?,
+                intent: entity_id_from_value(&ids[4], "intent")?,
+            })
+        })
+        .collect()
 }

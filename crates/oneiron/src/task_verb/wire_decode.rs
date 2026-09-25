@@ -231,7 +231,6 @@ pub(super) fn decode_task_assignee(value: &Value) -> Result<TaskAssignee> {
         )))?;
     match kind {
         "dreamer" => Ok(TaskAssignee::Dreamer),
-        "answer_holders" => Ok(TaskAssignee::AnswerHolders),
         "agent_def" => Ok(TaskAssignee::AgentDef {
             agent_def_ref: decode_entity_ref(
                 task_body_field(entries, "agent_def_ref")?,
@@ -239,6 +238,12 @@ pub(super) fn decode_task_assignee(value: &Value) -> Result<TaskAssignee> {
             )?,
         }),
         "peer" => Ok(TaskAssignee::Peer {
+            actor_ref: decode_entity_ref(
+                task_body_field(entries, "actor_ref")?,
+                "tasks.body.assignee",
+            )?,
+        }),
+        "child" => Ok(TaskAssignee::Child {
             actor_ref: decode_entity_ref(
                 task_body_field(entries, "actor_ref")?,
                 "tasks.body.assignee",

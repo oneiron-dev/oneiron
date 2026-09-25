@@ -9,9 +9,13 @@ mod admission;
 pub(crate) use admission::admit_federated_entity_blob;
 mod authorize;
 mod codec;
+mod document_admission;
+pub(in crate::sync) use document_admission::admit_document_write_in_txn;
 #[cfg(feature = "sync")]
 mod edge;
+mod note_admission;
 mod scope;
+pub(crate) use note_admission::admit_note_in_txn;
 #[cfg(test)]
 mod tests;
 
@@ -26,9 +30,10 @@ pub(in crate::sync) use self::admission::revalidate_admitted_federated_claims;
 pub use self::admission::{FederationAdmissionRole, admit_federated_window_update};
 pub use self::authorize::authorize_sync_selector;
 pub use self::codec::{
-    SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
-    decode_selector_vv_request, decode_sync_selector, encode_selector_vv_request,
-    encode_sync_selector, filtered_window_doc, guest_share_envelope, guest_share_envelope_body,
+    RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
+    SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
+    encode_selector_vv_request, encode_sync_selector, filtered_window_doc, guest_share_envelope,
+    guest_share_envelope_body,
 };
 
 #[cfg(test)]
@@ -40,8 +45,6 @@ use crate::authority::{AuthorityOp, authority_log_entity_id, genesis_vault_id};
 #[cfg(test)]
 use crate::batch::EntityMetadataHeader;
 #[cfg(test)]
-use crate::companion::CompanionExportClassification;
-#[cfg(test)]
 use crate::edge::EdgeKind;
 #[cfg(test)]
 use crate::entity_id::{EntityId, LocalWorldId};
@@ -49,6 +52,8 @@ use crate::entity_id::{EntityId, LocalWorldId};
 use crate::error::{Error, SyncProtocolValidation, SyncSelectorValidation as SelectorError};
 #[cfg(test)]
 use crate::federation::SelectorRange;
+#[cfg(test)]
+use crate::federation::Sensitivity;
 #[cfg(test)]
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT};
 #[cfg(test)]

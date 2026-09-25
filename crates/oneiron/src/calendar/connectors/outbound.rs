@@ -118,6 +118,9 @@ pub struct CalendarWriteOutboxRow {
     pub sequence: u32,
     /// The content hash the write intends.
     pub content_hash: [u8; 32],
+    /// Per-EVENT hashes captured from the staged resource, before transport I/O.
+    /// Receipt settlement uses these members even if local content changes.
+    pub component_hashes: Vec<(EntityId, [u8; 32])>,
     /// The precondition the write carries.
     pub expected_etag: Option<String>,
     /// The resource the write targets, when one is known.
@@ -183,6 +186,9 @@ pub fn write_calendar_event(
         return Err(ingest_error("write target is not an EVENT"));
     }
 
+    // A detached edit targets its full UID resource, never a standalone PUT
+    // that would replace the master and erase its siblings.
+    let event_ref = super::resource::master_for(vault, event_ref)?;
     let system = seat.config.system.as_str();
     let passports = live_passports_for_event(vault, &event_ref)?;
     let own = passports
@@ -204,7 +210,7 @@ pub fn write_calendar_event(
         ensure_outbox_matches(&row, seat, transport, event_ref, &uid)?;
         match row.state {
             CalendarWriteOutboxState::Prepared => {
-                let ics = render_owner_vevent(vault, &event_ref, &uid, row.sequence, now)?;
+                let ics = render_owner_vevent(vault, &event_ref, &uid, row.sequence, now)?.ics;
                 let rendered_hash = ics_content_hash(&ics, &uid)?;
                 if rendered_hash != row.content_hash {
                     return Err(CalendarConnectorError::Outbox {
@@ -222,14 +228,7 @@ pub fn write_calendar_event(
                 let receipt =
                     issue_prepared_upsert(vault, seat, transport, &uid, now, &mut row, &request)?;
                 return finish_remote_applied_write(
-                    vault,
-                    seat,
-                    transport,
-                    event_ref,
-                    own.as_ref(),
-                    &mut row,
-                    receipt,
-                    now,
+                    vault, seat, transport, event_ref, &mut row, receipt, now,
                 );
             }
             CalendarWriteOutboxState::ReconcileRequired => {
@@ -246,14 +245,7 @@ pub fn write_calendar_event(
                             detail: "remote-applied row carries no provider receipt".to_owned(),
                         })?;
                 return finish_remote_applied_write(
-                    vault,
-                    seat,
-                    transport,
-                    event_ref,
-                    own.as_ref(),
-                    &mut row,
-                    receipt,
-                    now,
+                    vault, seat, transport, event_ref, &mut row, receipt, now,
                 );
             }
             CalendarWriteOutboxState::Committed => {
@@ -263,20 +255,16 @@ pub fn write_calendar_event(
         }
     }
 
-    let sequence = match &own {
-        // A UID this seat already tracks: the mutation is an update, so the
-        // calendar contract requires the bump.
-        Some(value) => value.last_sequence.saturating_add(1),
-        // First write of this UID to this seat: carry the highest SEQUENCE any
-        // sibling source reported, so a two-provider EVENT stays ordered.
-        None => passports
-            .iter()
-            .filter(|(_, value)| value.uid == uid)
-            .map(|(_, value)| value.last_sequence)
-            .max()
-            .unwrap_or(0),
+    let floor = super::resource::sequence_floor(vault, event_ref, &uid)?;
+    let sequence = if own.is_some() {
+        floor
+            .checked_add(1)
+            .ok_or_else(|| ingest_error("calendar sequence overflow"))?
+    } else {
+        floor
     };
-    let ics = render_owner_vevent(vault, &event_ref, &uid, sequence, now)?;
+    let rendered = render_owner_vevent(vault, &event_ref, &uid, sequence, now)?;
+    let ics = rendered.ics;
     let content_hash = ics_content_hash(&ics, &uid)?;
     let object = read_remote_object(vault, system, &seat.config.calendar_ref, &uid)?;
     let expected_etag = object.as_ref().and_then(|row| row.etag.clone());
@@ -292,6 +280,7 @@ pub fn write_calendar_event(
         uid: uid.clone(),
         sequence,
         content_hash,
+        component_hashes: rendered.component_hashes,
         expected_etag: expected_etag.clone(),
         href: href.clone(),
         receipt: None,
@@ -308,16 +297,7 @@ pub fn write_calendar_event(
         ics,
     };
     let receipt = issue_prepared_upsert(vault, seat, transport, &uid, now, &mut row, &request)?;
-    finish_remote_applied_write(
-        vault,
-        seat,
-        transport,
-        event_ref,
-        own.as_ref(),
-        &mut row,
-        receipt,
-        now,
-    )
+    finish_remote_applied_write(vault, seat, transport, event_ref, &mut row, receipt, now)
 }
 
 fn ensure_outbox_matches(
@@ -409,13 +389,11 @@ fn reconcile_required_error(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn finish_remote_applied_write(
     vault: &Vault,
     seat: &CalendarConnectorSeatState,
     transport: &dyn CalendarRemoteTransport,
     event_ref: EntityId,
-    own: Option<&CalendarPassportValue>,
     row: &mut CalendarWriteOutboxRow,
     receipt: RemoteWriteReceipt,
     now: u64,
@@ -443,42 +421,67 @@ fn finish_remote_applied_write(
         },
     )?;
 
-    // Direction is a routing fact: a seat that also reads this UID is two-way,
-    // a seat that only writes it is outbound. Neither is an approval gate.
-    let direction = if own.is_some_and(|value| value.direction.is_inbound_bearing()) {
-        CalendarPassportDirection::TwoWay
-    } else {
-        CalendarPassportDirection::Outbound
-    };
-    let next = CalendarPassportValue {
-        system: row.system.clone(),
-        uid: row.uid.clone(),
-        last_sequence: receipt.sequence,
-        content_hash: receipt.content_hash,
-        direction,
-        last_seen_at: now,
-        presence: CalendarPassportPresence::Live,
-    };
-    let current = live_passport_for(vault, &event_ref, &row.system, &row.uid)?;
-    let already_applied = current.as_ref().is_some_and(|(_, value)| {
-        value.last_sequence == next.last_sequence
-            && value.content_hash == next.content_hash
-            && value.direction == next.direction
-            && value.presence == next.presence
-    });
-    if !already_applied {
-        let source_record_id = write_source_record_id(transport.provider_key(), seat, &row.uid);
-        let new_id = admit_screened(
-            vault,
-            event_ref,
-            &CalendarInboundBody::default(),
-            &source_record_id,
-            PREDICATE_CALENDAR_PASSPORT,
-            encode_passport_value(&next),
-            now,
-        )?;
-        if current.is_some() {
-            supersede_calendar_passport(vault, event_ref, &row.system, &row.uid, &new_id, now)?;
+    // A receipt settles what was staged, not the EVENTs as they look after
+    // transport I/O. Re-rendering here can strand RemoteApplied forever or
+    // misattribute a newer local edit to the older provider snapshot.
+    if row.component_hashes.first().map(|(member, _)| *member) != Some(event_ref) {
+        return Err(CalendarConnectorError::Outbox {
+            outbox_id: row.outbox_id,
+            detail: "staged resource does not name its master".to_owned(),
+        });
+    }
+    for (member, _) in &row.component_hashes {
+        crate::calendar::claims::require_event_subject(vault, member)?;
+    }
+    let single_component = row.component_hashes.len() == 1;
+    for &(member, content_hash) in &row.component_hashes {
+        // Direction is a routing fact: a seat that also reads this UID is two-way,
+        // a seat that only writes it is outbound. Neither is an approval gate.
+        let own = live_passport_for(vault, &member, &row.system, &row.uid)?;
+        let direction = if own
+            .as_ref()
+            .is_some_and(|(_, value)| value.direction.is_inbound_bearing())
+        {
+            CalendarPassportDirection::TwoWay
+        } else {
+            CalendarPassportDirection::Outbound
+        };
+        let next = CalendarPassportValue {
+            system: row.system.clone(),
+            uid: row.uid.clone(),
+            last_sequence: receipt.sequence,
+            // For one component the provider receipt is already its per-EVENT hash.
+            // A multi-component receipt names the whole resource, not one passport.
+            content_hash: if single_component {
+                receipt.content_hash
+            } else {
+                content_hash
+            },
+            direction,
+            last_seen_at: now,
+            presence: CalendarPassportPresence::Live,
+        };
+        let current = live_passport_for(vault, &member, &row.system, &row.uid)?;
+        let already_applied = current.as_ref().is_some_and(|(_, value)| {
+            value.last_sequence == next.last_sequence
+                && value.content_hash == next.content_hash
+                && value.direction == next.direction
+                && value.presence == next.presence
+        });
+        if !already_applied {
+            let source_record_id = write_source_record_id(transport.provider_key(), seat, &row.uid);
+            let new_id = admit_screened(
+                vault,
+                member,
+                &CalendarInboundBody::default(),
+                &source_record_id,
+                PREDICATE_CALENDAR_PASSPORT,
+                encode_passport_value(&next),
+                now,
+            )?;
+            if current.is_some() {
+                supersede_calendar_passport(vault, member, &row.system, &row.uid, &new_id, now)?;
+            }
         }
     }
     index_passport_uid(vault, &row.uid, &event_ref)?;
@@ -506,6 +509,7 @@ pub(super) struct StoredOutboxRow {
     uid: String,
     sequence: u32,
     content_hash: [u8; 32],
+    component_hashes: Vec<([u8; 16], [u8; 32])>,
     #[serde(default)]
     expected_etag: Option<String>,
     #[serde(default)]
@@ -529,6 +533,11 @@ impl StoredOutboxRow {
             uid: row.uid.clone(),
             sequence: row.sequence,
             content_hash: row.content_hash,
+            component_hashes: row
+                .component_hashes
+                .iter()
+                .map(|(member, hash)| (*member.as_bytes(), *hash))
+                .collect(),
             expected_etag: row.expected_etag.clone(),
             href: row.href.clone(),
             receipt: row.receipt.clone(),
@@ -550,6 +559,17 @@ impl StoredOutboxRow {
             uid: self.uid,
             sequence: self.sequence,
             content_hash: self.content_hash,
+            component_hashes: self
+                .component_hashes
+                .into_iter()
+                .map(|(member, hash)| {
+                    Ok((
+                        EntityId::from_bytes(member)
+                            .map_err(|_| ingest_error("outbox component carries no entity id"))?,
+                        hash,
+                    ))
+                })
+                .collect::<Result<_, CalendarConnectorError>>()?,
             expected_etag: self.expected_etag,
             href: self.href,
             receipt: self.receipt,
@@ -708,3 +728,6 @@ pub(super) fn ingest_reason(reason: &'static str) -> CalendarError {
 pub(super) fn ingest_error(reason: &'static str) -> CalendarConnectorError {
     CalendarConnectorError::Calendar(ingest_reason(reason))
 }
+
+#[cfg(test)]
+mod tests;

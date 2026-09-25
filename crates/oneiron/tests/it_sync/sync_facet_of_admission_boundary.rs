@@ -402,7 +402,35 @@ fn observer_b_blocks_off_table_facet_of_on_a_loaded_window_for_both_roles() {
             Arc::new(Materializer::new()),
             "test-user",
         ));
-        let (mut client, _rx) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+        let principal = EntityId::now();
+        let grant_id = EntityId::now();
+        let scope = oneiron::FederationGrantScope::vault(7);
+        let grant = oneiron::federation::FederationGrant::new(
+            scope,
+            principal,
+            oneiron::federation::FederationGrantRole::Member,
+            oneiron::federation::FederationGrantPreset::Member,
+        );
+        oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
+        let selector = oneiron::sync::SyncSelector::new(
+            grant_id,
+            principal,
+            oneiron::sync::SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        );
+        let peer = oneiron::sync::federation_burst::FederationPeer::authorize(
+            &vault, principal, scope, &selector,
+        )
+        .unwrap();
+        let (mut client, _rx) = SyncClient::new(
+            manager,
+            SyncClientConfig {
+                federation_peer: Some(peer),
+                ..Default::default()
+            },
+        )
+        .unwrap();
 
         let person = EntityId::from_bytes([0xD1; 16]).unwrap();
         let event = EntityId::from_bytes([0xD2; 16]).unwrap();
@@ -442,6 +470,7 @@ fn observer_b_blocks_off_table_facet_of_on_a_loaded_window_for_both_roles() {
         client
             .import_federated_window_update(WINDOW, &update, role)
             .unwrap_or_else(|e| panic!("{role:?}: federated import must not fail closed: {e:?}"));
+        client.replay_deferred_federation_update().unwrap();
 
         assert!(
             !vault

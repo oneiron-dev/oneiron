@@ -1,6 +1,7 @@
 //! Entity lifecycle state ([`EntityLifecycleState`]), its CRDT join, the
 //! zero-head-split ledger witness, and the vault-level lifecycle reads.
 
+use crate::ports::EdgeStoreRead;
 use std::collections::BTreeSet;
 
 use crate::edge::EdgeKind;
@@ -186,14 +187,22 @@ pub(crate) fn identity_topology_shell_peers_for_store_in_txn(
     entity: &EntityId,
     kind: EdgeKind,
 ) -> Result<Vec<EntityId>> {
-    let prefix = crate::vault::edge_kind_prefix(entity, kind);
     let mut peers = Vec::new();
-    for (scanned, entry) in store.edges_out.prefix_iter(rtxn, &prefix)?.enumerate() {
+    for (scanned, entry) in store
+        .port_edges(
+            rtxn,
+            entity,
+            crate::ports::EdgeDirection::Out,
+            Some(kind),
+            None,
+        )?
+        .enumerate()
+    {
         if scanned >= crate::vault::MAX_EDGE_QUERY_RESULTS {
             return Err(Error::IndexOverflow("identity topology"));
         }
-        let (key, value) = entry?;
-        peers.push(crate::edge::parse_strict_edge_record(&key, &value)?.target);
+        let edge_row = entry?;
+        peers.push(edge_row.target);
     }
     Ok(peers)
 }
@@ -278,7 +287,7 @@ impl Vault {
     ) -> Result<EntityLifecycleState> {
         let merged = self.filtered_edge_peers(
             rtxn,
-            &self.store.edges_out,
+            crate::ports::EdgeDirection::Out,
             id,
             EdgeKind::MergedInto,
             None,
@@ -286,7 +295,7 @@ impl Vault {
         )?;
         let split = self.filtered_edge_peers(
             rtxn,
-            &self.store.edges_out,
+            crate::ports::EdgeDirection::Out,
             id,
             EdgeKind::SplitInto,
             None,

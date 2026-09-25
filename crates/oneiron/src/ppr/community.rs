@@ -176,7 +176,7 @@ fn ppr_community_query_in_txn(
                     txn,
                     previous.as_ref(),
                     &[],
-                    crate::unix_seconds_now(),
+                    store.clock.now_recorded_at(),
                     config,
                 )?
                 .0,
@@ -239,7 +239,7 @@ fn ppr_community_query_in_txn(
                 ),
                 identity,
             ),
-            computed_at: crate::unix_seconds_now(),
+            computed_at: store.clock.now_recorded_at(),
             graph_version: version,
             state: None,
             community_snapshot: None,

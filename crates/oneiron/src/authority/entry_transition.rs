@@ -22,7 +22,36 @@ pub(super) fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
 
+    if context
+        .sequence_floors
+        .and_then(|floors| floors.get(&hash))
+        .is_some_and(|floor| entry.seq <= *floor)
+    {
+        return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
+    }
+
+    // Wire validation is posture-blind. Cloud owner roles are only lawful
+    // under the explicitly selected managed/peer root arm.
+    let incoming_device = match &entry.op {
+        AuthorityOp::Genesis { device, .. } | AuthorityOp::EnrollDevice { device } => Some(device),
+        AuthorityOp::RotateKey { new_device, .. } | AuthorityOp::ReRoot { new_device, .. } => {
+            Some(new_device)
+        }
+        _ => None,
+    };
+    if let Some(device) = incoming_device
+        && device.roles & (ROLE_OWNER | ROLE_ADMIN) != 0
+        && !context.device_can_consent(&FoldedDevice {
+            key: device.key.clone(),
+            tier: device.tier,
+            roles: device.roles,
+            revoked: false,
+        })
+    {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+    }
     if let AuthorityOp::Genesis {
+        recovery,
         device,
         tier_floor,
         pending_widen_delay_secs,
@@ -36,9 +65,14 @@ pub(super) fn fold_entry_state(
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
         };
         let mut state = FoldState {
+            slips: SlipAuthorityState::default(),
             vault_id,
             roster: BTreeMap::new(),
             tier_floor: *tier_floor,
+            migrated_roots: BTreeSet::new(),
+            genesis_recovery_dismissed: recovery.dismissed(),
+            recovery_redundancy_established: false,
+            tier_floor_events: BTreeMap::from([(hash, (*tier_floor, BTreeSet::new()))]),
             pending_widen_delay_secs: *pending_widen_delay_secs,
             pending_widens: BTreeMap::new(),
             vetoed_widens: context.vetoed_widens.clone(),
@@ -46,6 +80,7 @@ pub(super) fn fold_entry_state(
             fork_resolution_revocations: BTreeSet::new(),
             authority_forks: BTreeMap::new(),
             federation_pacts: BTreeMap::new(),
+            federation_confirms: BTreeMap::new(),
             critical_write_confirms: BTreeMap::new(),
             consumed_critical_write_confirm_nonces: BTreeSet::new(),
             critical_write_confirm_nonce_provenance: BTreeMap::new(),
@@ -53,8 +88,12 @@ pub(super) fn fold_entry_state(
             federation_grant_bindings: BTreeMap::new(),
             actor_bindings: BTreeMap::new(),
             actor_binding_revocations: BTreeMap::new(),
+            actor_revocation_hashes: BTreeMap::new(),
             seqs: BTreeMap::new(),
         };
+        if !tier_meets_floor(device.tier, *tier_floor) {
+            return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));
+        }
         upsert_device(&mut state, device);
         state.seqs.insert(device.key.clone(), 0);
         return EntryFold::Ready(state);
@@ -84,6 +123,13 @@ pub(super) fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
     }
     let signer = entry.signer_key().clone();
+    if state
+        .roster
+        .get(&signer)
+        .is_some_and(|device| !tier_meets_floor(device.tier, state.tier_floor))
+    {
+        return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));
+    }
     if entry_waits_on_unresolved_equivocation(entry, hash, context) {
         return EntryFold::Waiting;
     }
@@ -132,10 +178,9 @@ pub(super) fn fold_entry_state(
         Err(issue) => return EntryFold::Invalid(issue),
     };
     if matches!(entry.op, AuthorityOp::CriticalWriteConfirm(_))
-        && !state
-            .roster
-            .get(&signer)
-            .is_some_and(folded_signer_can_critical_write_confirm)
+        && !state.roster.get(&signer).is_some_and(|device| {
+            context.device_can_consent(device) && device.roles & ROLE_OWNER != 0
+        })
     {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
@@ -156,7 +201,24 @@ pub(super) fn fold_entry_state(
     {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
+    if let AuthorityOp::ReRoot { new_device } = &entry.op {
+        let old_root = &state.roster[&signer];
+        if old_root.roles & ROLE_OWNER == 0
+            || new_device.roles & !(old_root.roles | ROLE_CLOUD) != 0
+            || !tier_meets_floor(new_device.tier, state.tier_floor)
+        {
+            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+        }
+    }
     if op_reuses_existing_device_key(&state, &entry.op) {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    if let AuthorityOp::FederationConfirm(action) = &entry.op
+        && state
+            .federation_confirms
+            .values()
+            .any(|prior| prior.confirm_id == action.confirm_id || prior.nonce == action.nonce)
+    {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
     if let AuthorityOp::CriticalWriteConfirm(action) = &entry.op
@@ -168,6 +230,17 @@ pub(super) fn fold_entry_state(
                 .contains(&action.nonce))
     {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    if matches!(
+        entry.op,
+        AuthorityOp::SlipMint(_) | AuthorityOp::SlipRevoke { .. } | AuthorityOp::SlipConsume { .. }
+    ) {
+        // A consent cosigner cannot launder an agent primary into a mint issuer.
+        if state.slips.apply(entry, hash).is_err() {
+            return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+        }
+        state.seqs.insert(signer, entry.seq);
+        return EntryFold::Ready(state);
     }
     if let AuthorityOp::FederationLifecycle(action) = &entry.op {
         if let Err(reason) = apply_federation_lifecycle(&mut state, action, context) {
@@ -185,7 +258,7 @@ pub(super) fn fold_entry_state(
             | AuthorityOp::RebindActor { .. }
             | AuthorityOp::RevokeActor { .. }
     ) {
-        if let Err(reason) = apply_actor_binding(&mut state, &entry.op) {
+        if let Err(reason) = apply_actor_binding(&mut state, &entry.op, hash, context.consent_arm) {
             return EntryFold::Invalid(AuthorityFoldIssue::ActorBindingRejected {
                 entry: hash,
                 reason,
@@ -220,12 +293,15 @@ pub(super) fn fold_entry_state(
         AuthorityOp::RevokeDevice { revoked_key } => {
             resolve_global_forks_for_revoke(&mut state, context, revoked_key);
         }
-        AuthorityOp::RecoveryReboot { .. } => {
-            resolve_global_forks_for_recovery_reboot(&mut state, context);
+        AuthorityOp::ReRoot { .. } => {
+            resolve_global_forks_for_re_root(&mut state, context);
         }
         AuthorityOp::Genesis { .. }
         | AuthorityOp::EnrollDevice { .. }
-        | AuthorityOp::SetCeiling { .. }
+        | AuthorityOp::RetiredCeiling { .. }
+        | AuthorityOp::SlipMint(_)
+        | AuthorityOp::SlipRevoke { .. }
+        | AuthorityOp::SlipConsume { .. }
         | AuthorityOp::RotateKey { .. }
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
@@ -325,11 +401,9 @@ fn has_veto_authority_consent(
     context: FoldContext<'_>,
 ) -> bool {
     participants.iter().any(|key| {
-        state
-            .roster
-            .get(key)
-            .is_some_and(folded_device_can_owner_veto)
-            || delayed_rotation_veto_allowed(state, key, pending_widen_hash, context)
+        state.roster.get(key).is_some_and(|device| {
+            context.device_can_consent(device) && device.roles & ROLE_OWNER != 0
+        }) || delayed_rotation_veto_allowed(state, key, pending_widen_hash, context)
     })
 }
 
@@ -402,15 +476,14 @@ fn pending_widen_for_entry(
 
 fn op_has_instant_widen_authority(
     state: &FoldState,
-    op: &AuthorityOp,
+    _op: &AuthorityOp,
     participants: &BTreeSet<AuthorityKey>,
 ) -> bool {
-    if matches!(op, AuthorityOp::RecoveryReboot { .. }) {
-        return true;
-    }
     participants.iter().any(|key| {
         state.roster.get(key).is_some_and(|device| {
-            folded_device_can_authority_consent(device) && device.tier == AuthorityTier::Hardware
+            folded_device_can_authority_consent(device)
+                && device.tier == AuthorityTier::Hardware
+                && !state.migrated_roots.contains(key)
         })
     })
 }
@@ -420,7 +493,9 @@ fn op_is_delayable_widen(
     op: &AuthorityOp,
     participants: &BTreeSet<AuthorityKey>,
 ) -> bool {
-    op_can_be_pending_widen(state, op) && !op_has_instant_widen_authority(state, op, participants)
+    op_can_be_pending_widen(state, op)
+        && (matches!(op, AuthorityOp::SetTierFloor { .. })
+            || !op_has_instant_widen_authority(state, op, participants))
 }
 
 /// Whether `op` still folds while an UNRELATED widen is pending.
@@ -458,14 +533,17 @@ fn op_is_delayable_widen(
 /// monotone watermark); read the two together before changing either.
 pub(super) fn op_applies_despite_pending_widen(op: &AuthorityOp) -> bool {
     match op {
-        AuthorityOp::RevokeActor { .. } => true,
+        AuthorityOp::RevokeActor { .. }
+        | AuthorityOp::SlipRevoke { .. }
+        | AuthorityOp::SlipConsume { .. } => true,
         AuthorityOp::Genesis { .. }
         | AuthorityOp::EnrollDevice { .. }
         | AuthorityOp::RevokeDevice { .. }
-        | AuthorityOp::SetCeiling { .. }
+        | AuthorityOp::RetiredCeiling { .. }
+        | AuthorityOp::SlipMint(_)
         | AuthorityOp::RotateKey { .. }
         | AuthorityOp::SetTierFloor { .. }
-        | AuthorityOp::RecoveryReboot { .. }
+        | AuthorityOp::ReRoot { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
@@ -483,10 +561,11 @@ fn op_can_be_pending_widen(state: &FoldState, op: &AuthorityOp) -> bool {
             .is_none_or(|folded| folded.revoked),
         AuthorityOp::RotateKey { .. } => true,
         AuthorityOp::SetTierFloor { tier_floor } => *tier_floor < state.tier_floor,
-        AuthorityOp::RecoveryReboot { .. } => true,
+        AuthorityOp::ReRoot { .. } => false,
         AuthorityOp::Genesis { .. }
         | AuthorityOp::RevokeDevice { .. }
-        | AuthorityOp::SetCeiling { .. }
+        | AuthorityOp::RetiredCeiling { .. }
+        | AuthorityOp::SlipMint(_) | AuthorityOp::SlipRevoke {..} | AuthorityOp::SlipConsume {..}
         | AuthorityOp::FederationConfirm(_) | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
@@ -506,12 +585,15 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::RotateKey {
             new_device: device, ..
         }
-        | AuthorityOp::RecoveryReboot {
+        | AuthorityOp::ReRoot {
             new_device: device, ..
         } => state.roster.contains_key(&device.key),
         AuthorityOp::Genesis { .. }
         | AuthorityOp::RevokeDevice { .. }
-        | AuthorityOp::SetCeiling { .. }
+        | AuthorityOp::RetiredCeiling { .. }
+        | AuthorityOp::SlipMint(_)
+        | AuthorityOp::SlipRevoke { .. }
+        | AuthorityOp::SlipConsume { .. }
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::CriticalWriteConfirm(_)
@@ -526,7 +608,11 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
 fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
     !matches!(
         entry.op,
-        AuthorityOp::Genesis { .. } | AuthorityOp::VetoPendingWiden { .. }
+        AuthorityOp::Genesis { .. }
+            | AuthorityOp::VetoPendingWiden { .. }
+            | AuthorityOp::SlipMint(_)
+            | AuthorityOp::SlipRevoke { .. }
+            | AuthorityOp::SlipConsume { .. }
     )
 }
 

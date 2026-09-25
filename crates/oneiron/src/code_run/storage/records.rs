@@ -379,6 +379,11 @@ pub(super) fn next_additive_heal_count(
     let base = decode_code_run_model_heal_count(base)?;
     let overlay = decode_code_run_model_heal_count(overlay)?;
     let (base, overlay, next) = match target {
+        RouteTarget::Discard => {
+            return Err(Error::InvariantViolation(
+                "anonymous routes cannot update heal tallies",
+            ));
+        }
         RouteTarget::Base => {
             let next = base
                 .checked_add(1)

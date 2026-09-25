@@ -97,12 +97,29 @@
 //! [`Bm25FieldSchemaChanged`]: crate::error::StoreError::Bm25FieldSchemaChanged
 //! [`VaultConfig::skip_text_index_manifest_check`]: crate::config::VaultConfig::skip_text_index_manifest_check
 
+/// Backend-neutral storage contracts and injectable time sources.
+/// Implementations compose in a caller-owned transaction; they never commit it.
+pub mod ports {
+    pub use crate::ports::{
+        BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp, ClaimStore, Clock, DependencyIndex,
+        EdgeDirection, EdgeStore, EntityRecord, EntityStore, IdGen, JobQueue, JobScope,
+        ManualClock, PlaceStore, RetrievalIndex, ShortIdStore, SourceSpan, StoreClock,
+        TombstoneStore, Transactions, safe_read_asset_text, safe_read_text,
+    };
+    pub use crate::ports::{
+        DeletionFamily, DeletionState, EdgeStoreRead, EntityStoreRead, EntityTime, PortRows,
+        RetrievalIndexRead, ShortIdStoreRead, TimeAxis, TimelineQuery, TombstoneStoreRead,
+    };
+}
+
 mod channel_identity_receipts;
 mod commitment_due;
 mod diagnostics;
 mod gate_decision;
 mod handle;
 mod key_encoding;
+mod local_queue_budget;
+pub(crate) use local_queue_budget::check_queue_capacity;
 mod open_gates;
 mod outbound_send_receipt;
 mod pending_embedding;

@@ -214,3 +214,122 @@ fn widen_on_request_path() {
         PolicyApprovalCeiling::Auto
     );
 }
+
+#[test]
+fn single_valued_manifest_requires_unanimity_and_changes_frontier() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let key = Value::from("single_valued_predicates");
+    let manifest = encode_policy_manifest(vec![(
+        key.clone(),
+        Value::Array(vec![Value::from("profile.name")]),
+    )]);
+    put_policy_manifest_bytes(&vault, test_id(0x61), &manifest)?;
+    let first = resolve(&vault)?;
+    assert!(first.is_single_valued_predicate("profile.name"));
+    let hash = first.read_frontier_hash()?;
+    put_policy_manifest_bytes(&vault, test_id(0x62), &encode_policy_manifest(Vec::new()))?;
+    let second = resolve(&vault)?;
+    assert!(!second.is_single_valued_predicate("profile.name"));
+    assert_ne!(hash, second.read_frontier_hash()?);
+    let malformed = encode_policy_manifest(vec![(
+        key,
+        Value::Array(vec![
+            Value::from("profile.name"),
+            Value::from("profile.name"),
+        ]),
+    )]);
+    assert!(decode_policy_manifest(&malformed).is_none());
+    Ok(())
+}
+
+#[test]
+fn foreign_door_clamps_live_claim_gate_and_widen_requires_allow() -> Result<()> {
+    use crate::write_envelope::{ClaimCandidate, WriteActor, WriteProvenance};
+    let (_tmp, vault) = temp_vault();
+    let human = test_id(0x63);
+    let introducer = test_id(0x64);
+    let foreign = test_id(0x65);
+    for id in [human, introducer, foreign] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            test_time(1),
+            1,
+            b"actor",
+        )?;
+    }
+    let owner = vault.authenticate_owner(human, "principal:owner", true, GateDecisionId::now())?;
+    let mut manifest = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Observed, 0)]);
+    replace_actor_ceilings(
+        &mut manifest,
+        vec![
+            actor_ceiling_row("agent", "auto"),
+            actor_ceiling_row("human", "proposed"),
+            actor_ceiling_row_for_ref("agent", &introducer.to_hex(), "proposed"),
+        ],
+    );
+    put_policy_manifest_bytes(&vault, test_id(0x66), &manifest)?;
+    vault.register_foreign_agent(
+        &owner,
+        foreign,
+        WriteActor::new(introducer, crate::edge::EdgeActorClass::Agent),
+        AgentCeiling::Auto,
+    )?;
+    let claim = test_id(0x67);
+    let candidate = ClaimCandidate::new(
+        "profile.name",
+        crate::claim::ClaimSubject::Entity(human),
+        Value::from("name"),
+        0.8,
+    );
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(foreign, crate::edge::EdgeActorClass::Agent),
+        ClaimSource::Observed,
+        WriteProvenance::new(Value::from("foreign-test"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    vault
+        .batch()
+        .claim_candidate(&claim, candidate, &envelope, test_time(1), 1)
+        .commit()?;
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("held").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(vault.store.pending_gate_consents(100)?.iter().any(|row| {
+        row.claim_id == *claim.as_bytes()
+            && row
+                .reason_codes
+                .iter()
+                .any(|reason| reason == "gate.pending.actor_ceiling")
+    }));
+    assert!(!vault.request_foreign_agent_widen(&owner, foreign, AgentCeiling::Auto)?);
+    replace_actor_ceilings(
+        &mut manifest,
+        vec![
+            actor_ceiling_row("agent", "auto"),
+            actor_ceiling_row("human", "auto"),
+            actor_ceiling_row_for_ref("agent", &introducer.to_hex(), "proposed"),
+        ],
+    );
+    put_policy_manifest_bytes(&vault, test_id(0x66), &manifest)?;
+    let other_owner =
+        vault.authenticate_owner(introducer, "principal:other", true, GateDecisionId::now())?;
+    assert!(matches!(
+        vault.request_foreign_agent_widen(&other_owner, foreign, AgentCeiling::Auto),
+        Err(Error::Gate(
+            crate::error::GateError::ConsentOwnerNotAuthenticated(_)
+        ))
+    ));
+    assert!(vault.request_foreign_agent_widen(&owner, foreign, AgentCeiling::Auto)?);
+    let txn = vault.store.env.read_txn()?;
+    assert_eq!(
+        agent_definition_ceiling_for_actor(
+            &vault.store,
+            &txn,
+            WriteActor::new(foreign, crate::edge::EdgeActorClass::Agent)
+        ),
+        Some(PolicyApprovalCeiling::Auto)
+    );
+    Ok(())
+}

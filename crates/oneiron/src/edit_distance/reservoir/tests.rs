@@ -80,7 +80,7 @@ fn put_skill(vault: &Vault) -> Result<EntityId> {
         "1.0.0",
         ClaimApprovalStatus::Approved,
         SkillLifecycle::Candidate,
-        ClaimSource::Imported,
+        ClaimSource::UserStated,
         0.9,
         false,
         true,

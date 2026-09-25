@@ -1,0 +1,22 @@
+{
+  "small_edit": {
+    "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"EUR\" }\n",
+    "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+  },
+  "cross_file_refactor": {
+    "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::items_total(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"USD\" }\n",
+    "src/math.rs": "pub fn items_total(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+  },
+  "rename": {
+    "src/lib.rs": "pub mod math;\npub fn price(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"USD\" }\n",
+    "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+  },
+  "concurrent_merge": {
+    "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"EUR\" }\n",
+    "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price)?.checked_sub(u64::from(quantity >= 10)) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+  },
+  "contract_cleanup": {
+    "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"USD\" }\n",
+    "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { u64::from(quantity != 0) * 5 }\n"
+  }
+}

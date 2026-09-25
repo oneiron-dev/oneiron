@@ -6,10 +6,12 @@
 //! sandbox link-time boundary contract lives in [`crate::code_sandbox`].
 
 pub mod actions;
+pub mod blocked;
 pub mod consent;
 pub mod vault_read;
 
 mod codec;
+mod coordination_codec;
 mod dispatcher;
 mod payload;
 mod replay;
@@ -47,12 +49,12 @@ pub(crate) use self::storage::{
     canonical_speech_conversation_id_for_run, executor_speech_message_id,
 };
 pub use self::types::{
-    SelfAskHumanCall, SelfCall, SelfContextCall, SelfContextResult, SelfDeniedResult,
-    SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
-    SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
-    SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
-    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
-    SelfSpeechCall, SelfSpeechResult, peer_result_wait,
+    SelfAgentSpawnCall, SelfAgentSpawnResult, SelfAskHumanCall, SelfCall, SelfContextCall,
+    SelfContextResult, SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait,
+    SelfDurableWaitReason, SelfEffect, SelfFailedResult, SelfFixtureEffectCall,
+    SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
+    SelfMemorySearchResult, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
+    SelfMemoryWriteResult, SelfSpeechCall, SelfSpeechResult, peer_result_wait,
 };
 
 // The flat code_run.rs module used to provide these names to the test module

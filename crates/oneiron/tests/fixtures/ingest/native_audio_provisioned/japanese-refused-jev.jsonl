@@ -1,0 +1,7 @@
+{"stage": "setup", "status": "complete", "unix_time": 1789839548.7520251, "e1_e3_qualified": false, "mode": "japanese", "profile_sha256": "8e40caaa33020b874d94aee05a2ecc301d9b82217aa81c5d3ebd5e5c1e531e6f", "model_execution": false}
+{"stage": "synthetic-input", "status": "started", "unix_time": 1789839548.752289, "e1_e3_qualified": false, "voice": "Kyoko (Japanese (Japan))", "language": "ja_JP", "human_voice": false}
+{"stage": "synthetic-input", "status": "complete", "unix_time": 1789839549.9102259, "e1_e3_qualified": false, "bytes": 245038, "sha256": "9661da39f83a015b515f5a5704a309618639365b9e76e4375523b2c23c4c09df", "voice": "Kyoko (Japanese (Japan))", "language": "ja_JP"}
+{"stage": "decode", "status": "started", "unix_time": 1789839549.9108238, "e1_e3_qualified": false, "input_sha256": "9661da39f83a015b515f5a5704a309618639365b9e76e4375523b2c23c4c09df"}
+{"stage": "decode", "status": "complete", "unix_time": 1789839550.187815, "e1_e3_qualified": false, "pcm_sha256": "6487c45b19baa2f9ea3cf8fefa66c1ae072be816397300fb539903bd8125a7e2", "samples": 87417}
+{"stage": "native-model", "status": "started", "unix_time": 1789839550.187925, "e1_e3_qualified": false, "mode": "japanese", "fixture": "public-synthetic-no-timing-or-speaker-truth"}
+{"stage": "native-model", "status": "failed", "unix_time": 1789839570.7125912, "e1_e3_qualified": false, "error_type": "Refusal", "code": "ProcessPortRefused", "native_execution_completed": false}

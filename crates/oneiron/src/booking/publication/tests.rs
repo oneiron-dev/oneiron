@@ -116,6 +116,7 @@ fn input(value: BookingPagePublication) -> ClaimInput {
         confidence: 1.0,
         source: "user_stated".to_owned(),
         world_ref: None,
+        relationship_ref: None,
         scope: None,
         valid_from: Some(100),
         valid_to: Some(200),
@@ -212,7 +213,16 @@ fn public_booking_publication_is_durable_and_retraction_does_not_revive_old_allo
     let mut updated = publication();
     updated.owner_display = "Updated owner".to_owned();
     let receipt = owner.claim_upsert(&input(updated.clone())).expect("update");
-    assert!(receipt.superseded_short_id.is_some());
+    assert!(receipt.superseded_short_id.is_none());
+    assert_eq!(receipt.approval, "proposed");
+    assert!(
+        load_public_booking_page(&vault, id(1), 150)
+            .expect("held")
+            .is_none()
+    );
+    let confirmed = owner
+        .confirm_booking_publication(&receipt.claim_short_id, crate::unix_seconds_now())
+        .expect("confirm owner revision");
     drop(vault);
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("reopen");
     assert_eq!(
@@ -221,13 +231,56 @@ fn public_booking_publication_is_durable_and_retraction_does_not_revive_old_allo
     );
     vault
         .memory(id(2), EdgeActorClass::Human)
-        .claim_retract(&receipt.claim_short_id)
+        .claim_retract(&confirmed.claim_id)
         .expect("retract");
     drop(vault);
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("reopen revoked");
     assert!(
         load_public_booking_page(&vault, id(1), 150)
             .expect("persisted revocation")
+            .is_none()
+    );
+}
+
+#[test]
+fn owner_keeps_authorship_of_each_confirmed_publication_revision() {
+    let (_dir, vault) = open();
+    let owner = vault.memory(id(2), EdgeActorClass::Human);
+    owner.claim_upsert(&input(publication())).expect("publish");
+    let mut head = String::new();
+    for display in ["First edit", "Second edit"] {
+        let mut edited = publication();
+        edited.owner_display = display.to_owned();
+        let receipt = owner
+            .claim_upsert(&input(edited.clone()))
+            .expect("the owner edits its own confirmed publication");
+        assert_eq!(receipt.approval, "proposed");
+        head = owner
+            .confirm_booking_publication(&receipt.claim_short_id, vault.now_recorded_at())
+            .expect("confirm owner revision")
+            .claim_id;
+        assert_eq!(
+            load_public_booking_page(&vault, id(1), 150).expect("live"),
+            Some(edited)
+        );
+        let claim = crate::memory::resolve_entity_ref(&vault, &head).expect("confirmed id");
+        let body = vault.get_claim(&claim).expect("read").expect("claim");
+        assert_eq!(body.approval, ClaimApprovalStatus::Approved);
+        let txn = vault.store.env.read_txn().expect("read txn");
+        assert_eq!(
+            crate::batch::authenticated_claim_author_in_txn(&vault.store, &txn, &claim, &body)
+                .expect("author")
+                .map(crate::write_envelope::WriteActor::entity_ref),
+            Some(id(2)),
+            "an approval never removes the author"
+        );
+    }
+    owner
+        .claim_retract(&head)
+        .expect("owner retracts its own revision");
+    assert!(
+        load_public_booking_page(&vault, id(1), 150)
+            .expect("revoked")
             .is_none()
     );
 }
@@ -395,6 +448,7 @@ fn public_booking_publication_requires_current_rooted_owner_authority() {
                 roles: ROLE_OWNER | ROLE_ADMIN,
             },
             genesis_nonce: [0x31; 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },

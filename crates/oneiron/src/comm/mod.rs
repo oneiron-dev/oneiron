@@ -41,8 +41,8 @@ pub(crate) use self::consent::{
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn};
 pub use self::projector::{
-    record_comm_inbound_stop, record_comm_send_receipt, record_comm_thread_event,
-    run_comm_projector,
+    record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
+    record_comm_thread_event, run_comm_projector,
 };
 pub(crate) use self::records::validate_comm_record_body_bytes;
 
@@ -380,3 +380,7 @@ use crate::write_envelope::WriteActor;
 use rmpv::Value;
 #[cfg(test)]
 use std::collections::BTreeSet;
+
+pub(crate) use thread_membership::active_thread_refs_in_txn;
+
+pub(crate) use projector::record_comm_thread_event_in_txn;

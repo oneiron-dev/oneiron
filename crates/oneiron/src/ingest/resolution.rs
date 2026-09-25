@@ -94,7 +94,18 @@ pub fn evaluate_entity_resolution_waterfall(
     candidates: &[EntityResolutionCandidate],
     high_collision_mention: bool,
 ) -> crate::Result<EntityResolutionWaterfallDecision> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn(|txn| {
+        evaluate_entity_resolution_waterfall_in_txn(vault, txn, candidates, high_collision_mention)
+    })
+}
+
+pub(super) fn evaluate_entity_resolution_waterfall_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    candidates: &[EntityResolutionCandidate],
+    high_collision_mention: bool,
+) -> crate::Result<EntityResolutionWaterfallDecision> {
+    let (mut ranked, claims_suppressed) = {
         // Topology cannot change during scoring. Fold the zero-head-shell
         // witness once, not once for each candidate and claim subject.
         let zero_head_shells = vault.zero_head_split_shells_in_txn(&*wtxn)?;
@@ -161,64 +172,64 @@ pub fn evaluate_entity_resolution_waterfall(
                 effective_confidence,
             });
         }
-        let mut ranked = scored;
+        (scored, claims_suppressed)
+    };
 
-        // Total and deterministic: effective confidence descending, then subject
-        // ascending, then claim id ascending. The tiebreakers are what make two
-        // devices ranking the same set agree.
-        ranked.sort_by(|left, right| {
-            right
-                .effective_confidence
-                .total_cmp(&left.effective_confidence)
-                .then_with(|| left.candidate.subject.cmp(&right.candidate.subject))
-                .then_with(|| {
-                    left.candidate
-                        .confidence_claim_ref
-                        .cmp(&right.candidate.confidence_claim_ref)
-                })
-        });
+    // Total and deterministic: effective confidence descending, then subject
+    // ascending, then claim id ascending. The tiebreakers are what make two
+    // devices ranking the same set agree.
+    ranked.sort_by(|left, right| {
+        right
+            .effective_confidence
+            .total_cmp(&left.effective_confidence)
+            .then_with(|| left.candidate.subject.cmp(&right.candidate.subject))
+            .then_with(|| {
+                left.candidate
+                    .confidence_claim_ref
+                    .cmp(&right.candidate.confidence_claim_ref)
+            })
+    });
 
-        let top = ranked.first().copied();
-        let top_effective = top.map_or(0.0, |scored| scored.effective_confidence);
-        let route = if top.is_none() || top_effective < 0.50 {
-            EntityResolutionRoute::ProvisionalEntity
-        } else if top_effective < 0.70 {
-            EntityResolutionRoute::SoftLinkLow
-        } else if top_effective < 0.90 {
-            EntityResolutionRoute::SoftLink
-        } else {
-            EntityResolutionRoute::HardLink
-        };
-        let requires_async_verification = match route {
-            // A hard link is confident enough to stand alone — EXCEPT over a
-            // high-collision mention, where the score is confident about a surface
-            // form many referents share.
-            EntityResolutionRoute::HardLink => high_collision_mention,
-            EntityResolutionRoute::SoftLink | EntityResolutionRoute::SoftLinkLow => true,
-            EntityResolutionRoute::ProvisionalEntity => false,
-        };
-        let (selected, selected_effective_confidence) = match route {
-            EntityResolutionRoute::ProvisionalEntity => (None, None),
-            _ => (
-                top.map(|scored| scored.candidate.subject),
-                Some(top_effective),
-            ),
-        };
+    let top = ranked.first().copied();
+    let top_effective = top.map_or(0.0, |scored| scored.effective_confidence);
+    let route = if top.is_none() || top_effective < 0.50 {
+        EntityResolutionRoute::ProvisionalEntity
+    } else if top_effective < 0.70 {
+        EntityResolutionRoute::SoftLinkLow
+    } else if top_effective < 0.90 {
+        EntityResolutionRoute::SoftLink
+    } else {
+        EntityResolutionRoute::HardLink
+    };
+    let requires_async_verification = match route {
+        // A hard link is confident enough to stand alone — EXCEPT over a
+        // high-collision mention, where the score is confident about a surface
+        // form many referents share.
+        EntityResolutionRoute::HardLink => high_collision_mention,
+        EntityResolutionRoute::SoftLink | EntityResolutionRoute::SoftLinkLow => true,
+        EntityResolutionRoute::ProvisionalEntity => false,
+    };
+    let (selected, selected_effective_confidence) = match route {
+        EntityResolutionRoute::ProvisionalEntity => (None, None),
+        _ => (
+            top.map(|scored| scored.candidate.subject),
+            Some(top_effective),
+        ),
+    };
 
-        if let Some(subject) = selected {
-            if vault.archive_tombstone_in_txn(wtxn, &subject)?.is_some() {
-                vault.restore_archived_in_txn(wtxn, &subject)?;
-            }
-            crate::vault_cleanup::restore_task_attempts(vault, wtxn, subject)?;
+    if let Some(subject) = selected {
+        if vault.archive_tombstone_in_txn(wtxn, &subject)?.is_some() {
+            vault.restore_archived_in_txn(wtxn, &subject)?;
         }
-        Ok(EntityResolutionWaterfallDecision {
-            ranked,
-            claims_suppressed,
-            selected,
-            selected_effective_confidence,
-            route,
-            requires_async_verification,
-        })
+        crate::vault_cleanup::restore_task_attempts(vault, wtxn, subject)?;
+    }
+    Ok(EntityResolutionWaterfallDecision {
+        ranked,
+        claims_suppressed,
+        selected,
+        selected_effective_confidence,
+        route,
+        requires_async_verification,
     })
 }
 

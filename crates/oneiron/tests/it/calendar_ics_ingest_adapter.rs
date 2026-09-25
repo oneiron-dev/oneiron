@@ -29,8 +29,8 @@ use std::sync::Mutex;
 
 use oneiron::calendar::CalendarError;
 use oneiron::calendar::claims::{
-    CalendarPassportPresence, PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS,
-    PREDICATE_CALENDAR_TIME_KIND,
+    CalendarPassportPresence, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
+    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
 };
 use oneiron::calendar::ingest::{
     CustodyDoorIcsFeedFetcher, IcsFeedFetcher, IcsFeedPollConfig, IcsFeedPollPayload,
@@ -779,10 +779,17 @@ fn parse_failure_never_marks_prior_uids_missing() {
 
 #[test]
 fn raw_ics_is_archived_before_semantic_admission() {
+    use sha2::{Digest, Sha256};
+
     let (_dir, vault) = temp_vault();
+    let cfg = config("work");
     let body = feed(&[EventSpec::new("uid-r@x", 1)]);
     let expected_hash = *blake3::hash(&body).as_bytes();
-    poll(&vault, &config("work"), complete(body, "v1"), T0).expect("poll");
+    let property_prefix = format!(
+        "calendar-source:{:x}:",
+        Sha256::digest(cfg.system.as_bytes())
+    );
+    poll(&vault, &cfg, complete(body, "v1"), T0).expect("poll");
 
     // Every semantic candidate's evidence names the archived blob version.
     let event = resolve_event_by_uid(&vault, "uid-r@x")
@@ -791,15 +798,31 @@ fn raw_ics_is_archived_before_semantic_admission() {
     let claims = claims_on(&vault, &event);
     assert!(!claims.is_empty());
     let mut artifact_refs = std::collections::BTreeSet::new();
-    for (_, claim) in &claims {
+    let candidates: Vec<_> = claims
+        .iter()
+        .filter(|(_, claim)| claim.predicate != PREDICATE_CALENDAR_ORIGIN)
+        .collect();
+    assert!(
+        candidates.len() >= 2,
+        "time_kind and passport retain imported evidence"
+    );
+    for (_, claim) in candidates {
         let evidence = claim.evidence.as_ref().expect("write envelope evidence");
         let candidate = value_field(evidence, "candidate_evidence").expect("candidate evidence");
         let source_record_id = value_field(candidate, "source_record_id")
             .and_then(rmpv::Value::as_str)
             .expect("source_record_id");
-        let (artifact_hex, _) = source_record_id
+        let archive_ref = if claim.predicate == PREDICATE_CALENDAR_TIME_KIND {
+            source_record_id
+                .strip_prefix(&property_prefix)
+                .expect("time-kind provenance is scoped to its source")
+        } else {
+            source_record_id
+        };
+        let (artifact_hex, version_and_uid) = archive_ref
             .split_once("#v")
             .expect("blob version provenance");
+        assert_eq!(version_and_uid, "1:uid-r@x");
         artifact_refs.insert(artifact_hex.to_owned());
     }
     assert_eq!(artifact_refs.len(), 1, "one archive backs every candidate");
@@ -837,11 +860,34 @@ fn imported_calendar_claims_cross_gate() {
         claims.len() >= 3,
         "origin + time_kind + passport, got {claims:?}"
     );
+    assert_eq!(
+        claims
+            .iter()
+            .filter(|(_, body)| body.predicate == PREDICATE_CALENDAR_ORIGIN)
+            .count(),
+        1
+    );
     for (_, body) in &claims {
+        if body.predicate == PREDICATE_CALENDAR_ORIGIN {
+            assert_eq!(body.value.as_str(), Some("imported"));
+            assert_eq!(body.source, None);
+            assert_eq!(body.approval, oneiron::ClaimApprovalStatus::Auto);
+            assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
+            let evidence = body.evidence.as_ref().expect("projector evidence");
+            assert_eq!(
+                value_field(evidence, "kind").and_then(rmpv::Value::as_str),
+                Some("calendar_projector")
+            );
+            assert_eq!(
+                value_field(evidence, "write_class").and_then(rmpv::Value::as_str),
+                Some("recorded")
+            );
+            continue;
+        }
         assert_eq!(
             body.source,
             Some(ClaimSource::Imported),
-            "every admitted claim is Imported"
+            "every semantic candidate is Imported"
         );
         assert_eq!(
             body.approval,

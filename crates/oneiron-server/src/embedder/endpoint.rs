@@ -99,10 +99,50 @@ impl HttpEmbedder {
             oneiron::Error::InvalidConfig("embedder.model_key is required".to_owned())
         })?;
         let timeout = Duration::from_millis(config.endpoint.timeout_ms);
+        let url = reqwest::Url::parse(&endpoint)
+            .map_err(|_| oneiron::Error::InvalidConfig("invalid embedder endpoint URL".into()))?;
+        if !matches!(url.scheme(), "http" | "https")
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(oneiron::Error::InvalidConfig(
+                "embedder URL must not contain credentials or query secrets".into(),
+            ));
+        }
+        let loopback = url.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        });
+        if config.endpoint.locality == crate::config::EmbedderLocality::OnDevice && !loopback {
+            return Err(oneiron::Error::InvalidConfig("on-device endpoints must be loopback; configure remote rung locality and egress for network endpoints".into()));
+        }
+        if !loopback && url.scheme() != "https" {
+            return Err(oneiron::Error::InvalidConfig(
+                "network embedder endpoints require HTTPS".into(),
+            ));
+        }
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(name) = &config.endpoint.api_key_env {
+            let key = std::env::var(name).map_err(|_| {
+                oneiron::Error::InvalidConfig("embedder key environment variable is missing".into())
+            })?;
+            let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {key}"))
+                .map_err(|_| {
+                    oneiron::Error::InvalidConfig("invalid embedder authorization value".into())
+                })?;
+            value.set_sensitive(true);
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+        }
         // One attempt, no redirects, bounded body — the house transport shape.
         // The worker loop is the retry; a retry inside the client would hide a
         // dead remote behind a long stall and re-charge a metered one.
         let client = reqwest::blocking::Client::builder()
+            .default_headers(headers)
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(timeout)

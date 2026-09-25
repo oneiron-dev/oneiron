@@ -6,6 +6,9 @@
 //! model and pins no default reranker (1186-D2 defers the model pin; the
 //! multilingual candidate is the OneiroNER bake-off's output).
 
+pub mod affect;
+pub mod crossencoder;
+
 use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -52,6 +55,7 @@ pub trait Reranker: Send + Sync {
 }
 
 /// Per-run rerank knobs (the 1186-D2 "N knob").
+#[derive(Clone)]
 pub struct RerankOptions {
     /// Blended candidates offered to the reranker, from the top.
     pub top_n: usize,

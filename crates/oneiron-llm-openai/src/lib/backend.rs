@@ -14,10 +14,17 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenAiCompatConfig {
     pub endpoint_path: String,
-    pub models: BTreeMap<ModelId, LlmCatalogEntry>,
+    models: BTreeMap<ModelId, LlmCatalogEntry>,
 }
 
 impl OpenAiCompatConfig {
+    pub fn from_registry(vault: &oneiron::Vault) -> oneiron::Result<Self> {
+        Ok(Self::with_models(vault.model_catalog_entries(
+            oneiron::llm::registry::ModelWireFormat::OpenaiCompat,
+        )?))
+    }
+
+    #[cfg(test)]
     #[must_use]
     pub fn new(model: LlmCatalogEntry) -> Self {
         let mut models = BTreeMap::new();
@@ -29,7 +36,7 @@ impl OpenAiCompatConfig {
     }
 
     #[must_use]
-    pub fn with_models(models: impl IntoIterator<Item = LlmCatalogEntry>) -> Self {
+    fn with_models(models: impl IntoIterator<Item = LlmCatalogEntry>) -> Self {
         Self {
             endpoint_path: "/v1/chat/completions".to_owned(),
             models: models
@@ -79,6 +86,11 @@ impl<T> LlmBackend for OpenAiCompatBackend<T>
 where
     T: OpenAiCompatTransport,
 {
+    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
+        self.config
+            .catalog_entry(model)
+            .is_ok_and(|entry| entry.supports(&capability))
+    }
     fn generate<'a>(
         &'a self,
         request: LlmRequest,

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::config::{ROW_VERSION, SKILL_EDIT_VERDICT_ACCEPTED, SKILL_EDIT_VERDICT_REJECTED};
+use super::target::CompilationTarget;
 use crate::edit_distance::FinalizedProposalText;
 use crate::edit_distance::attribution::AmendmentJudgment;
 use crate::edit_distance::delta::{AmendmentDelta, DeltaSource};
@@ -29,6 +30,11 @@ use crate::write_envelope::WriteActor;
 /// disagree or none did, so a content arm never edits a skill on a split vote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubstitutionCluster {
+    /// Authenticated decider, when the receipt used the actor-bound intake.
+    /// Missing legacy identity is never treated as a global preference.
+    pub principal: Option<EntityId>,
+    /// Explicit host classification; absent semantics preserve the old chooser.
+    pub target: CompilationTarget,
     /// The `(op × target class × skill/agent)` axis this bucket lives on.
     pub scope: String,
     /// Normalized text the decider removed.
@@ -51,6 +57,8 @@ pub struct SubstitutionCluster {
 /// What one cluster earned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinedOutcome {
+    /// Repeated untouched approvals earned a Proposed affirmation.
+    UntouchedApprovalWin(EntityId),
     /// A `preference.phrasing` claim landed in the Proposed lane.
     PreferenceClaim(EntityId),
     /// A gated skill-edit proposal was minted (never applied).
@@ -97,6 +105,8 @@ impl SubstitutionClass {
 /// its prior version.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MinedSkillEditProposal {
+    /// The decider whose correction this proposal compiles. None is audit-only.
+    pub principal: Option<EntityId>,
     /// This proposal's own handle.
     pub proposal_id: EntityId,
     /// The SKILL whose content kept being corrected.
@@ -193,6 +203,8 @@ pub struct MinerRun {
 /// The `(scope, actor, from, to)` identity of one bucket.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct ClusterKey {
+    pub(super) principal: Option<EntityId>,
+    pub(super) target: CompilationTarget,
     pub(super) scope: String,
     pub(super) actor: EntityId,
     pub(super) from: String,
@@ -230,6 +242,8 @@ impl Bucket {
     pub(super) fn into_cluster(mut self, key: ClusterKey) -> SubstitutionCluster {
         self.receipts.sort();
         SubstitutionCluster {
+            principal: key.principal,
+            target: key.target,
             scope: key.scope,
             from: key.from,
             to: key.to,
@@ -350,6 +364,12 @@ impl StoredMintMark {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredMinedEvidence {
     pub(super) v: u8,
+    #[serde(
+        serialize_with = "super::stored_fields::serialize_opt_entity",
+        deserialize_with = "super::stored_fields::deserialize_opt_entity"
+    )]
+    pub(super) principal: Option<EntityId>,
+    pub(super) target: CompilationTarget,
     pub(super) scope: String,
     pub(super) from: String,
     pub(super) to: String,
@@ -363,6 +383,8 @@ impl StoredMinedEvidence {
     pub(super) fn new(cluster: &SubstitutionCluster, class: SubstitutionClass) -> Self {
         Self {
             v: ROW_VERSION,
+            principal: cluster.principal,
+            target: cluster.target.clone(),
             scope: cluster.scope.clone(),
             from: cluster.from.clone(),
             to: cluster.to.clone(),
@@ -376,6 +398,12 @@ impl StoredMinedEvidence {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredSkillEdit {
+    #[serde(default)]
+    #[serde(
+        serialize_with = "super::stored_fields::serialize_opt_entity",
+        deserialize_with = "super::stored_fields::deserialize_opt_entity"
+    )]
+    pub(super) principal: Option<EntityId>,
     pub(super) v: u8,
     pub(super) skill: String,
     pub(super) scope: String,

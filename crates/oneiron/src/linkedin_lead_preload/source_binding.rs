@@ -8,11 +8,11 @@
 //! A binding is an explicit source association, not provider authentication.
 
 use super::{Disposition, LinkedInEntityKind, LinkedInExternalKey, evidence_field};
+use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::temporal::TimeRange;
-use crate::{Vault, unix_seconds_now};
 
 fn binding_fields(key: &LinkedInExternalKey) -> [(&'static str, &str); 3] {
     [
@@ -69,6 +69,7 @@ pub(super) fn resolve_in_txn(
     id: &EntityId,
     key: &LinkedInExternalKey,
 ) -> crate::Result<Disposition> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     if let Some(raw) = vault.get_raw_in(wtxn, id)? {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -85,7 +86,7 @@ pub(super) fn resolve_in_txn(
         return Ok(Disposition::Reused);
     }
     let body = encode_bound_body(key)?;
-    let learned_at = unix_seconds_now();
+    let learned_at = mutation_recorded_at;
     let occurred = TimeRange {
         start: learned_at,
         end: learned_at,

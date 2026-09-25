@@ -30,6 +30,7 @@ impl CorpusFilter {
             authority_filter,
             candidate_filter: builder.candidate_filter,
             type_filter: builder.type_filter.as_deref(),
+            criticality: builder.criticality,
             since_filter: builder.since_filter,
             occurred_range,
             learned_range: builder.learned_range,
@@ -37,7 +38,7 @@ impl CorpusFilter {
             project_id_filter: builder.project_id_filter.as_deref(),
             facet_filter: builder.facet_filter,
             relationship_filter: builder.relationship_filter,
-            world_scope: builder.world_scope,
+            world_scope: &builder.world_scope,
             world_active_set: None,
             corpus_scope: &self.0,
         }

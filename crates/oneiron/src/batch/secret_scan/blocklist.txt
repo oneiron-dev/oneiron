@@ -1,0 +1,2 @@
+# Built deny list. Source: policy/secret-blocklist.txt
+oneiron-secret-blocklist-fixture

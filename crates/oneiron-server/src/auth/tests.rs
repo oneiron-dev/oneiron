@@ -1,880 +1,693 @@
+//! Authentication tests use real logged mints and holder signatures.
 use super::*;
+use ed25519_dalek::{Signer, SigningKey};
+use oneiron::authority::{CapabilitySlip, HostSlipIssuer, SlipCaveat, SlipClaims};
+use oneiron::federation::{
+    OrgAdminPower, Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling,
+};
 
-const SECRET: &str = "secret";
-/// Secret for the golden vectors. Pinned with the vectors themselves: the MAC
-/// key is `derive_key(CORE_TOKEN_V2_KDF_CONTEXT, secret)`, so changing either
-/// changes every token.
-const VECTOR_SECRET: &str = "correct horse battery staple";
+mod pairing;
 
-const VECTOR_OWNER: &str = "v2..326ad3492c855a6d722398f75f006241ce8808250d79f38ffd4af64470118743";
-const VECTOR_SCOPED: &str =
-    "v2.scope=core:read.1f166e678c06858ee6dca47da42e5bf257db95cadc993fa1f5db90f52370eda4";
-const VECTOR_BOUND: &str = "v2.scope=companion:profile:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.547000c78580b12473a643b569d46d4078fa9df6eab25a69cac5d72a80afc102";
+const SECRET: &str = "retained-auth-fixture-secret";
 
-/// In-memory stand-in for the persistent registry, so the crypto/grammar
-/// tests state their own revocation facts instead of opening a vault.
-#[derive(Default)]
-struct TestRevocations {
-    revoked: BTreeSet<String>,
-    unreadable: bool,
+struct Fixture {
+    vault: Arc<oneiron::Vault>,
+    issuer: HostSlipIssuer,
+    root: CapabilitySlip,
+    holder: SigningKey,
+    actor: oneiron::EntityId,
+    config: SyncServerConfig,
+    _dir: tempfile::TempDir,
 }
-
-impl TestRevocations {
-    fn none() -> Self {
-        Self::default()
+impl Fixture {
+    fn new() -> Self {
+        Self::with_secret(SECRET)
     }
-
-    fn with(jtis: &[&str]) -> Self {
+    fn with_secret(secret: &str) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+        let issuer = HostSlipIssuer::from_secret(secret.as_bytes()).unwrap();
+        let root = vault.ensure_host_root_slip(&issuer).unwrap();
         Self {
-            revoked: jtis.iter().map(|jti| (*jti).to_owned()).collect(),
-            unreadable: false,
+            vault,
+            issuer,
+            root,
+            holder: SigningKey::from_bytes(&[82; 32]),
+            actor: oneiron::EntityId::now(),
+            config: config_with_secret(secret),
+            _dir: dir,
         }
     }
-
-    fn unreadable() -> Self {
-        Self {
-            revoked: BTreeSet::new(),
-            unreadable: true,
-        }
+    fn mint(&self, configure: impl FnOnce(&mut SlipClaims)) -> CapabilitySlip {
+        let mut claims = self.root.claims.clone();
+        claims.slip_id = *blake3::hash(oneiron::EntityId::now().as_bytes()).as_bytes();
+        claims.holder_ref = self.actor.to_hex();
+        claims.binding_key = self.holder.verifying_key().to_bytes();
+        configure(&mut claims);
+        self.vault
+            .mint_capability_slip(&self.issuer, claims)
+            .unwrap()
+    }
+    fn headers(&self, slip: &CapabilitySlip) -> HeaderMap {
+        let mut headers = bearer(&slip.to_token().unwrap());
+        headers.insert(
+            "x-oneiron-binding",
+            proof_json(slip, &self.holder).parse().unwrap(),
+        );
+        headers
+    }
+    fn auth(&self, slip: &CapabilitySlip) -> Result<CoreAuth, ApiError> {
+        CoreAuth::from_headers(&self.headers(slip), &self.config, self.vault.as_ref())
+    }
+    fn register(&self, actor: oneiron::EntityId) {
+        let body = rmp_serde::to_vec_named(
+            &serde_json::json!({"txt":"registered pairing actor","spkr":"user","at":100}),
+        )
+        .unwrap();
+        self.vault
+            .put_entity(
+                &actor,
+                oneiron::registry::ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+                &body,
+            )
+            .unwrap();
     }
 }
-
-impl RevokedTokenJtis for TestRevocations {
-    fn is_revoked(&self, jti: &str) -> Result<bool, ()> {
-        if self.unreadable {
-            return Err(());
-        }
-        Ok(self.revoked.contains(jti))
-    }
-}
-
-/// Most tests assert on the token grammar and MAC, where nothing is revoked.
-fn live() -> TestRevocations {
-    TestRevocations::none()
-}
-
-fn config() -> SyncServerConfig {
-    config_with_secret(SECRET)
-}
-
 fn config_with_secret(secret: &str) -> SyncServerConfig {
     SyncServerConfig {
         auth_secret: Some(secret.to_owned()),
         ..Default::default()
     }
 }
-
-fn dev_config() -> SyncServerConfig {
-    SyncServerConfig {
-        auth_secret: None,
-        allow_unauthenticated: true,
-        ..Default::default()
-    }
-}
-
 fn bearer(token: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
     headers
 }
-
-/// Authenticates a minted token against the standard test secret.
-fn auth_for_claims(claims: &str) -> Result<CoreAuth, ApiError> {
-    CoreAuth::from_headers(
-        &bearer(&mint_core_token_v2(SECRET, claims)),
-        &config(),
-        &live(),
-    )
+fn proof_json(slip: &CapabilitySlip, holder: &SigningKey) -> String {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let nonce = oneiron::EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature = holder.sign(&slip.binding_transcript(challenge.as_bytes()).unwrap());
+    let signature: String = signature
+        .to_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    serde_json::json!({"timestamp":timestamp,"nonce":nonce,"signature":signature}).to_string()
 }
-
-fn assert_unauthorized(result: Result<CoreAuth, ApiError>, what: &str) {
+fn verbs(names: &[&str]) -> ScopeAxis<String> {
+    ScopeAxis::Some(names.iter().map(|name| (*name).to_owned()).collect())
+}
+fn assert_unauthorized(result: Result<CoreAuth, ApiError>) {
     assert_eq!(
-        result.expect_err(what).code(),
-        crate::error::ErrorCode::Unauthorized,
-        "{what} must fail closed with the uniform 401"
+        result.unwrap_err().code(),
+        crate::error::ErrorCode::Unauthorized
     );
 }
 
-/// T1 — the deleted header is now just an unknown header, with or without the
-/// correct secret in it. Inverts the old `legacy_secret_grants_all_core_scopes`.
 #[test]
-fn legacy_secret_header_is_rejected() {
-    let mut headers = HeaderMap::new();
-    headers.insert("x-oneiron-secret", SECRET.parse().unwrap());
-
-    assert_unauthorized(
-        CoreAuth::from_headers(&headers, &config(), &live()),
-        "legacy header must not authenticate",
-    );
-    assert_unauthorized(
-        require_owner_auth(&headers, &config(), &live()),
-        "legacy header must not reach owner-grade surfaces",
-    );
-}
-
-/// T2 — the pinned wire format. These three literals are the contract: they
-/// must both verify and be reproduced byte-for-byte by the mint helper.
-#[test]
-fn v2_golden_vectors_verify_and_mint_round_trips() {
-    let config = config_with_secret(VECTOR_SECRET);
-
-    let owner =
-        CoreAuth::from_headers(&bearer(VECTOR_OWNER), &config, &live()).expect("owner vector");
-    assert_eq!(owner.principal(), "bearer");
-    assert_eq!(owner.principal_ref(), None);
-    assert!(owner.require(CoreScope::Write).is_ok());
-    assert_eq!(
-        owner.idempotency_principal(),
-        "core:bearer:scopes=__implicit_all_scopes__"
-    );
-
-    let scoped =
-        CoreAuth::from_headers(&bearer(VECTOR_SCOPED), &config, &live()).expect("scoped vector");
-    assert!(scoped.require(CoreScope::Read).is_ok());
-    assert!(scoped.require(CoreScope::Write).is_err());
-    assert_eq!(
-        scoped.idempotency_principal(),
-        "core:bearer:scopes=core:read"
-    );
-
-    let bound =
-        CoreAuth::from_headers(&bearer(VECTOR_BOUND), &config, &live()).expect("bound vector");
-    assert_eq!(
-        bound.principal_ref(),
-        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-    );
-    assert!(bound.require(CoreScope::CompanionProfileRead).is_ok());
-    assert_eq!(
-        bound.idempotency_principal(),
-        "core:bearer:principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:scopes=companion:profile:read"
-    );
-
-    for (claims, expected) in [
-        ("", VECTOR_OWNER),
-        ("scope=core:read", VECTOR_SCOPED),
-        (
-            "scope=companion:profile:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            VECTOR_BOUND,
-        ),
-    ] {
-        assert_eq!(
-            mint_core_token_v2(VECTOR_SECRET, claims),
-            expected,
-            "mint must reproduce the pinned vector for claims {claims:?}"
-        );
-    }
-}
-
-/// T3 — the fusion gap itself: claims cannot be edited, widened, deleted, or
-/// paired with another claims string's MAC.
-#[test]
-fn v2_claims_tamper_fails() {
-    let scoped = mint_core_token_v2(SECRET, "scope=core:read");
-    let mac = scoped.rsplit_once('.').expect("mac segment").1;
-
-    let widened = format!("v2.scope=core:read,core:write.{mac}");
-    let stripped = format!("v2..{mac}");
-    let renarrowed = format!("v2.scope=core:write.{mac}");
-    let bound = format!("v2.scope=core:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.{mac}");
-    let cross = format!(
-        "v2.scope=core:read.{}",
-        mint_core_token_v2(SECRET, "scope=core:write")
-            .rsplit_once('.')
-            .expect("mac segment")
-            .1
-    );
-
-    for (token, what) in [
-        (widened, "scope widened under a stale MAC"),
-        (stripped, "claims deleted under a stale MAC"),
-        (renarrowed, "scope swapped under a stale MAC"),
-        (bound, "principal_ref appended under a stale MAC"),
-        (cross, "MAC lifted from a different claims string"),
-    ] {
-        assert_unauthorized(
-            CoreAuth::from_headers(&bearer(&token), &config(), &live()),
-            &format!("{what} must not authenticate"),
-        );
-    }
-}
-
-/// T4 — every malformed MAC shape exits through the same 401, so the response
-/// is not a verification oracle.
-#[test]
-fn v2_mac_tamper_fails() {
-    let token = mint_core_token_v2(SECRET, "scope=core:read");
-    let (framed, mac) = token.rsplit_once('.').expect("mac segment");
-
-    let mut flipped: Vec<char> = mac.chars().collect();
-    flipped[0] = if flipped[0] == 'a' { 'b' } else { 'a' };
-    let flipped: String = flipped.into_iter().collect();
-
-    for (token, what) in [
-        (format!("{framed}.{flipped}"), "flipped hex digit"),
-        (format!("{framed}.{}", &mac[..63]), "truncated mac"),
-        (format!("{framed}.{}", mac.to_uppercase()), "uppercase hex"),
-        (format!("{framed}."), "empty mac"),
-        (format!("{framed}.{mac}{mac}"), "over-long mac"),
-        ("v2.scope=core:read".to_owned(), "missing mac segment"),
-        (
-            format!("v3.scope=core:read.{mac}"),
-            "unknown version prefix",
-        ),
-    ] {
-        assert_unauthorized(
-            CoreAuth::from_headers(&bearer(&token), &config(), &live()),
-            &format!("{what} must not authenticate"),
-        );
-    }
-}
-
-/// T5 — the v1 grammar is dead outright, with no acceptance window. Its
-/// tokens embedded the trust root; nothing that shape may authenticate.
-#[test]
-fn v1_grammar_is_dead() {
+fn legacy_headers_and_unlogged_v1_v2_tokens_never_authenticate() {
+    let fixture = Fixture::new();
+    let mut old_header = HeaderMap::new();
+    old_header.insert("x-oneiron-secret", SECRET.parse().unwrap());
+    assert_unauthorized(CoreAuth::from_headers(
+        &old_header,
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
     for token in [
-        "secret;scope=core:read",
-        "secret;",
-        "secret;scope=core:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        format!("{SECRET};scope=core:read"),
+        mint_core_token_v2(SECRET, ""),
+        mint_core_token_v2(SECRET, "scope=core:read"),
+        mint_core_token_v2(
+            SECRET,
+            "scope=core:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+        "v2..326ad3492c855a6d722398f75f006241ce8808250d79f38ffd4af64470118743".to_owned(),
+        "v2.scope=core:read.".to_owned(),
     ] {
-        assert_unauthorized(
-            CoreAuth::from_headers(&bearer(token), &config(), &live()),
-            &format!("v1 token {token:?} must not authenticate"),
-        );
+        let headers = bearer(&token);
+        assert_unauthorized(CoreAuth::from_headers(
+            &headers,
+            &fixture.config,
+            fixture.vault.as_ref(),
+        ));
+        assert_unauthorized(require_owner_auth(
+            &headers,
+            &fixture.config,
+            fixture.vault.as_ref(),
+        ));
     }
 }
 
-/// T6 — the bare trust root over the standard header stays owner-grade.
 #[test]
-fn bare_secret_bearer_is_owner_grade() {
+fn bare_secret_is_a_revocable_logged_root_not_an_org_credential() {
+    let fixture = Fixture::new();
     let headers = bearer(SECRET);
-    let auth = CoreAuth::from_headers(&headers, &config(), &live()).expect("bare secret");
-
-    for scope in [
-        CoreScope::Read,
-        CoreScope::Write,
-        CoreScope::Auth,
-        CoreScope::CompanionProfileRead,
-        CoreScope::CompanionAccessGrantWrite,
-        CoreScope::CompanionRegisterRead,
-        CoreScope::CompanionRegisterWrite,
-    ] {
-        assert!(auth.require(scope).is_ok(), "{scope:?} must be granted");
-    }
-    assert!(auth.is_owner_grade());
+    let auth = require_owner_auth(&headers, &fixture.config, fixture.vault.as_ref()).unwrap();
+    assert_eq!(auth.principal_ref(), None);
     assert_eq!(
-        auth.idempotency_principal(),
-        "core:bearer:scopes=__implicit_all_scopes__"
+        auth.verified_slip().unwrap().claims().slip_id,
+        fixture.root.claims.slip_id
     );
-    assert!(require_owner_auth(&headers, &config(), &live()).is_ok());
-}
-
-/// T7 — an empty-claims token grants everything and reaches the full-vault
-/// surfaces, since it asserts no narrowing.
-#[test]
-fn empty_claims_v2_token_is_owner_grade() {
-    let headers = bearer(&mint_core_token_v2(SECRET, ""));
-    let auth = require_owner_auth(&headers, &config(), &live()).expect("empty-claims token");
-
+    assert_eq!(
+        auth.jti(),
+        Some(
+            fixture
+                .root
+                .claims
+                .slip_id
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+                .as_str()
+        )
+    );
+    assert!(auth.require(CoreScope::Read).is_ok());
     assert!(auth.require(CoreScope::Write).is_ok());
-    assert!(auth.is_owner_grade());
-    assert_eq!(
-        auth.idempotency_principal(),
-        "core:bearer:scopes=__implicit_all_scopes__"
-    );
+    assert!(!auth.has_scope(CoreScope::OrgAdmin(OrgAdminPower::AddMember)));
+    assert!(auth.credential_is_live(fixture.vault.as_ref()));
+    assert!(!is_revoked_or_unreadable(
+        auth.jti().unwrap(),
+        fixture.vault.as_ref()
+    ));
+    fixture
+        .vault
+        .revoke_capability_slip(&fixture.issuer, fixture.root.claims.slip_id)
+        .unwrap();
+    assert!(!auth.credential_is_live(fixture.vault.as_ref()));
+    assert!(is_revoked_or_unreadable(
+        auth.jti().unwrap(),
+        fixture.vault.as_ref()
+    ));
+    assert_unauthorized(require_owner_auth(
+        &headers,
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
 }
 
-/// T8 — the owner-grade boundary. Scoped tokens authenticate on `/v1` with
-/// exactly their claimed scopes but never reach `/ws` or legacy `/api/*`,
-/// and never read as owner-grade at the disclosure/consent gates.
-///
-/// Owner-grade requires BOTH narrowing axes absent. A `scope=…` token with no
-/// `principal_ref` is still a delegated instrument: holding a subset of the
-/// owner's capabilities is not evidence the owner is holding it. The earlier
-/// `principal_ref`-only predicate classified this credential as owner-grade,
-/// which suppressed the disclosure absence-clamp for delegated read-only
-/// tokens — the exact credential most likely to be handed to a third party.
 #[test]
-fn scoped_v2_token_is_not_owner_grade() {
-    let scoped = bearer(&mint_core_token_v2(SECRET, "scope=core:read"));
-    let auth = CoreAuth::from_headers(&scoped, &config(), &live()).expect("scoped token");
+fn identified_exact_top_slips_are_owner_grade_and_individually_revocable() {
+    let fixture = Fixture::new();
+    let slip = fixture.mint(|claims| claims.actor_class = Some("human".into()));
+    let sibling = fixture.mint(|_| {});
+    let auth = require_owner_auth(
+        &fixture.headers(&slip),
+        &fixture.config,
+        fixture.vault.as_ref(),
+    )
+    .unwrap();
+    assert!(auth.is_owner_grade());
+    assert_eq!(auth.principal_ref(), Some(fixture.actor.to_hex().as_str()));
+    assert_eq!(auth.actor_class(), Some("human"));
+    assert!(!auth.has_scope(CoreScope::OrgAdmin(OrgAdminPower::AddMember)));
+    assert_ne!(auth.jti(), fixture.auth(&sibling).unwrap().jti());
+    fixture
+        .vault
+        .revoke_capability_slip(&fixture.issuer, slip.claims.slip_id)
+        .unwrap();
+    assert!(!auth.credential_is_live(fixture.vault.as_ref()));
+    assert!(is_revoked_or_unreadable(
+        auth.jti().unwrap(),
+        fixture.vault.as_ref()
+    ));
+    assert_unauthorized(require_owner_auth(
+        &fixture.headers(&slip),
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
+    assert!(
+        require_owner_auth(
+            &fixture.headers(&sibling),
+            &fixture.config,
+            fixture.vault.as_ref()
+        )
+        .is_ok()
+    );
+    assert!(require_owner_auth(&bearer(SECRET), &fixture.config, fixture.vault.as_ref()).is_ok());
+}
+
+#[test]
+fn every_capability_axis_and_offline_caveat_excludes_owner_grade() {
+    let fixture = Fixture::new();
+    let reference = ScopeId(fixture.actor);
+    let mut cases = Vec::new();
+    let mut scope = Scope::top();
+    scope.verbs = verbs(&["read"]);
+    cases.push(scope);
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some(BTreeSet::from([reference]));
+    cases.push(scope);
+    let mut scope = Scope::top();
+    scope.facets = ScopeAxis::Some(BTreeSet::from([reference]));
+    cases.push(scope);
+    let mut scope = Scope::top();
+    scope.bands = ScopeAxis::Some(BTreeSet::from([0]));
+    cases.push(scope);
+    let mut scope = Scope::top();
+    scope.audience = ScopeAxis::Some(BTreeSet::from([reference]));
+    cases.push(scope);
+    let mut scope = Scope::top();
+    scope.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Private);
+    cases.push(scope);
+    for scope in cases {
+        let slip = fixture.mint(|claims| claims.scope = scope);
+        let auth = fixture.auth(&slip).unwrap();
+        assert!(!auth.is_owner_grade());
+        assert_unauthorized(require_owner_auth(
+            &fixture.headers(&slip),
+            &fixture.config,
+            fixture.vault.as_ref(),
+        ));
+    }
+    // An explicit inventory of all current HTTP verbs is still not Scope::top.
+    let slip = fixture.mint(|claims| {
+        claims.scope.verbs = ScopeAxis::Some(
+            CoreScope::all()
+                .into_iter()
+                .filter(|scope| !matches!(scope, CoreScope::OrgAdmin(_)))
+                .map(|scope| scope.as_str().to_owned())
+                .collect(),
+        );
+    });
+    assert!(!fixture.auth(&slip).unwrap().is_owner_grade());
+    for record_bound in [true, false] {
+        let slip = fixture.mint(|claims| {
+            if record_bound {
+                claims.records.insert("named-record".into());
+            } else {
+                claims.channels.insert("named-channel".into());
+            }
+        });
+        let auth = fixture.auth(&slip).unwrap();
+        assert!(!auth.is_owner_grade());
+        assert!(auth.require_unrestricted_record_scope().is_err());
+    }
+    let mut slip = fixture.mint(|_| {});
+    slip.attenuate(SlipCaveat {
+        ttl_secs: Some(30),
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(!fixture.auth(&slip).unwrap().is_owner_grade());
+    let single_use = fixture.mint(|claims| {
+        claims.single_use = true;
+        claims.expires_at = claims.issued_at + 60;
+        claims.ttl_secs = 60;
+    });
+    assert_unauthorized(fixture.auth(&single_use));
+}
+
+#[test]
+fn scoped_slips_enforce_verbs_and_refuse_adapters_without_record_scope() {
+    let fixture = Fixture::new();
+    let slip = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
+    let auth = fixture.auth(&slip).unwrap();
     assert!(auth.require(CoreScope::Read).is_ok());
     assert!(auth.require(CoreScope::Write).is_err());
-    assert_eq!(auth.principal_ref(), None);
-    assert!(
-        !auth.is_owner_grade(),
-        "a scope list narrows the credential even with no principal_ref"
-    );
-    assert_unauthorized(
-        require_owner_auth(&scoped, &config(), &live()),
-        "scoped token on a full-vault surface",
-    );
+    assert!(auth.require_unrestricted_record_scope().is_ok());
+    let mut narrow = slip;
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(fixture.actor)]));
+    narrow
+        .attenuate(SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        })
+        .unwrap();
+    let auth = fixture.auth(&narrow).unwrap();
+    assert!(auth.require(CoreScope::Read).is_ok());
+    assert!(auth.require_unrestricted_record_scope().is_err());
+    assert!(auth.require(CoreScope::Write).is_err());
+}
 
-    let bound = bearer(&mint_core_token_v2(
-        SECRET,
-        "scope=companion:profile:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    ));
-    let auth = CoreAuth::from_headers(&bound, &config(), &live()).expect("bound token");
+#[test]
+fn org_slips_are_closed_identified_and_never_owner_grade() {
+    let fixture = Fixture::new();
+    let org = oneiron::EntityId::now().to_hex();
+    let slip = fixture.mint(|claims| {
+        claims.org_ref = Some(org.clone());
+        claims.scope.verbs = verbs(&["org:add-member"]);
+    });
+    let auth = fixture.auth(&slip).unwrap();
+    assert_eq!(auth.org_ref(), Some(org.as_str()));
     assert_eq!(
-        auth.principal_ref(),
-        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-    );
-    assert!(!auth.is_owner_grade());
-    assert_unauthorized(
-        require_owner_auth(&bound, &config(), &live()),
-        "principal-bound token on a full-vault surface",
-    );
-}
-
-/// T8b — `is_owner_grade` is exactly the `require_owner_auth` admission rule,
-/// across every credential shape the server accepts. One predicate, one
-/// definition: a second reader of the old `principal_ref`-only rule cannot
-/// reappear without failing here.
-#[test]
-fn owner_grade_predicate_matches_the_full_vault_boundary() {
-    let cases = [
-        (bearer(SECRET), true, "bare trust root"),
-        (
-            bearer(&mint_core_token_v2(SECRET, "")),
-            true,
-            "empty claims",
-        ),
-        (
-            bearer(&mint_core_token_v2(SECRET, "scope=core:read")),
-            false,
-            "read-only scope, no principal_ref",
-        ),
-        (
-            bearer(&mint_core_token_v2(
-                SECRET,
-                "scope=core:read,core:write,core:auth,companion:profile:read,\
-                 companion:access-grant:write,companion:register:read,\
-                 companion:register:write",
-            )),
-            false,
-            "every scope listed explicitly is still a delegation",
-        ),
-        (
-            bearer(&mint_core_token_v2(
-                SECRET,
-                "scope=core:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            )),
-            false,
-            "principal-bound",
-        ),
-    ];
-
-    for (headers, expected, what) in cases {
-        let auth = CoreAuth::from_headers(&headers, &config(), &live()).expect(what);
-        assert_eq!(auth.is_owner_grade(), expected, "is_owner_grade for {what}");
-        assert_eq!(
-            require_owner_auth(&headers, &config(), &live()).is_ok(),
-            expected,
-            "require_owner_auth must agree with is_owner_grade for {what}"
-        );
-    }
-
-    // Dev mode agrees on both arms of the same rule.
-    let dev = dev_config();
-    assert!(
-        CoreAuth::from_headers(&HeaderMap::new(), &dev, &live())
-            .expect("dev fallthrough")
-            .is_owner_grade(),
-        "the dev fallthrough asserts no narrowing"
+        auth.require_registered_principal().unwrap(),
+        fixture.actor.to_hex()
     );
     assert!(
-        !CoreAuth::from_headers(&bearer("v2.scope=core:read."), &dev, &live())
-            .expect("dev scoped token")
-            .is_owner_grade(),
-        "a dev scoped token is narrowed like any other"
-    );
-}
-
-/// Guards the invariant that makes `is_owner_grade`'s two conjuncts
-/// independently load-bearing rather than one redundant clause.
-///
-/// TODAY the grammar refuses `principal_ref` without `scope` (T9), so
-/// `principal_ref.is_some()` already implies `!implicit_all_scopes` and
-/// either conjunct alone would compute the same answer. That equivalence is
-/// a property of the GRAMMAR, not of the predicate: relaxing the grammar to
-/// admit a bare `principal_ref` would silently make an
-/// `implicit_all_scopes`-only predicate classify a principal-bound token as
-/// owner-grade. This pins the coupling so such a relaxation fails HERE, at
-/// the sentence that explains it, instead of at a disclosure gate.
-#[test]
-fn owner_grade_conjuncts_are_not_redundant() {
-    assert_unauthorized(
-        auth_for_claims("principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-        "an implicit-all-scopes token carrying principal_ref must not exist",
-    );
-
-    // An empty scope list narrows to zero capabilities, including when
-    // the credential is bound to a principal.
-    for claims in [
-        "",
-        "scope=core:read",
-        "scope=core:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;scope=",
-    ] {
-        let auth = auth_for_claims(claims).expect("accepted claims");
-        assert_eq!(
-            auth.is_owner_grade(),
-            claims.is_empty(),
-            "only empty claims mint an owner-grade token: {claims:?}"
-        );
-
-        if claims == "principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;scope=" {
-            for scope in [
-                CoreScope::Read,
-                CoreScope::Write,
-                CoreScope::Auth,
-                CoreScope::CompanionProfileRead,
-                CoreScope::CompanionAccessGrantWrite,
-                CoreScope::CompanionRegisterRead,
-                CoreScope::CompanionRegisterWrite,
-            ] {
-                assert!(
-                    auth.require(scope).is_err(),
-                    "a bound empty-scope token must deny every capability"
-                );
-            }
-            assert_unauthorized(
-                require_owner_auth(
-                    &bearer(&mint_core_token_v2(SECRET, claims)),
-                    &config(),
-                    &live(),
-                ),
-                "a bound empty-scope token must not authorize owner operations",
-            );
-        }
-    }
-}
-
-/// T9 — the claims grammar is unchanged; a valid MAC does not buy a token
-/// past the grammar rules.
-#[test]
-fn claims_grammar_preserved_under_v2() {
-    for (claims, what) in [
-        ("scope=core:read;audience=other", "unknown claim key"),
-        ("audience=other", "unknown claim key alone"),
-        (
-            "principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "principal_ref without scope",
-        ),
-        (
-            "scope=companion:profile:read;principal_ref=not-an-entity",
-            "malformed principal_ref",
-        ),
-        ("scope=core:admin", "unknown scope"),
-        ("scope", "claim without a value"),
-    ] {
-        assert_unauthorized(
-            auth_for_claims(claims),
-            &format!("{what} must not authenticate even with a valid MAC"),
-        );
-    }
-
-    let multi = auth_for_claims("scope=core:read,core:auth").expect("multi-scope claims");
-    assert!(multi.require(CoreScope::Read).is_ok());
-    assert!(multi.require(CoreScope::Auth).is_ok());
-    assert!(multi.require(CoreScope::Write).is_err());
-}
-
-/// T10 — dev mode keeps its capabilities and speaks the same token shape;
-/// only the MAC goes unverified, because no key exists to verify it against.
-#[test]
-fn dev_mode_v2_shape() {
-    let config = dev_config();
-
-    let absent =
-        CoreAuth::from_headers(&HeaderMap::new(), &config, &live()).expect("no credential in dev");
-    assert!(absent.require(CoreScope::Write).is_ok());
-    assert_eq!(absent.principal(), "legacy-shared-secret");
-
-    let scoped = CoreAuth::from_headers(&bearer("v2.scope=core:read."), &config, &live())
-        .expect("dev scoped token");
-    assert_eq!(scoped.principal(), "dev-bearer");
-    assert!(scoped.require(CoreScope::Read).is_ok());
-    assert!(scoped.require(CoreScope::Write).is_err());
-    assert_unauthorized(
-        require_owner_auth(&bearer("v2.scope=core:read."), &config, &live()),
-        "dev scoped token on a full-vault surface",
-    );
-
-    // The hard break applies uniformly: dev mode does not accept v1 either.
-    for token in ["secret", "scope=core:read", "secret;scope=core:read"] {
-        assert_unauthorized(
-            CoreAuth::from_headers(&bearer(token), &config, &live()),
-            &format!("non-v2 dev bearer {token:?}"),
-        );
-    }
-
-    // An unrelated scheme is not a bearer credential at all.
-    assert!(
-        CoreAuth::from_headers(&unrelated_scheme_headers(), &config, &live())
-            .expect("unrelated scheme falls through in dev")
-            .require(CoreScope::Write)
+        auth.require(CoreScope::OrgAdmin(OrgAdminPower::AddMember))
             .is_ok()
     );
-}
-
-/// T11 — rotation semantics. Replacing the secret rewraps the MAC key, so
-/// every token minted under the old one stops verifying. Revoking a single
-/// token is a separate, explicit act, never a side effect of rotation.
-#[test]
-fn rotation_invalidates_minted_tokens() {
-    let token = mint_core_token_v2(SECRET, "scope=core:read");
-    let rotated = config_with_secret("rotated-secret");
-
-    assert!(CoreAuth::from_headers(&bearer(&token), &config(), &live()).is_ok());
-    assert_unauthorized(
-        CoreAuth::from_headers(&bearer(&token), &rotated, &live()),
-        "token minted under the previous secret",
+    assert!(
+        auth.require(CoreScope::OrgAdmin(OrgAdminPower::AssignRole))
+            .is_err()
     );
-    assert_unauthorized(
-        CoreAuth::from_headers(&bearer(SECRET), &rotated, &live()),
-        "previous bare secret",
-    );
-
-    // Credentials minted under the new secret work immediately.
-    let reminted = mint_core_token_v2("rotated-secret", "scope=core:read");
-    assert!(CoreAuth::from_headers(&bearer(&reminted), &rotated, &live()).is_ok());
-}
-
-/// T12 — fail-closed on every wrong- or empty-secret configuration.
-#[test]
-fn wrong_secret_and_empty_secret_fail_closed() {
-    assert_unauthorized(
-        CoreAuth::from_headers(&bearer("wrong"), &config(), &live()),
-        "wrong bare secret",
-    );
-    assert_unauthorized(
-        CoreAuth::from_headers(
-            &bearer(&mint_core_token_v2("wrong", "")),
-            &config(),
-            &live(),
-        ),
-        "token minted under a foreign secret",
-    );
-
-    let empty = config_with_secret("");
-    for token in [
-        "secret".to_owned(),
-        mint_core_token_v2("", "scope=core:read"),
-    ] {
-        assert_unauthorized(
-            CoreAuth::from_headers(&bearer(&token), &empty, &live()),
-            "empty configured secret must refuse everything",
-        );
-    }
-    assert_unauthorized(
-        CoreAuth::from_headers(&HeaderMap::new(), &empty, &live()),
-        "empty configured secret with no credential",
-    );
-
-    // Secret configured but the caller presents nothing: no dev fallthrough.
-    assert_unauthorized(
-        CoreAuth::from_headers(&HeaderMap::new(), &config(), &live()),
-        "no credential against a configured secret",
-    );
-    assert_unauthorized(
-        CoreAuth::from_headers(&unrelated_scheme_headers(), &config(), &live()),
-        "unrelated auth scheme against a configured secret",
-    );
-}
-
-fn unrelated_scheme_headers() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(AUTHORIZATION, "Basic unrelated".parse().unwrap());
-    headers
-}
-
-/// The MAC key is domain-separated: credentials signed under a different
-/// derive_key context or with a bare digest must not authenticate.
-#[test]
-fn token_mac_is_domain_separated_from_other_secret_uses() {
-    let other_context = blake3::derive_key("oneiron-server other context", SECRET.as_bytes());
-    let other_mac = *blake3::keyed_hash(&other_context, b"scope=core:read").as_bytes();
-
-    for (mac, what) in [
-        (
-            other_mac,
-            "a token signed under another key-derivation context",
-        ),
-        (
-            *blake3::hash(b"scope=core:read").as_bytes(),
-            "a token signed with a bare digest of the claims",
-        ),
-    ] {
-        let mut mac_hex = String::new();
-        for byte in mac {
-            mac_hex = format!("{mac_hex}{byte:02x}");
-        }
-        let token = format!("v2.scope=core:read.{mac_hex}");
-        assert_unauthorized(
-            CoreAuth::from_headers(&bearer(&token), &config(), &live()),
-            what,
-        );
-    }
-}
-
-/// Idempotency partitions stay keyed to the effective grant, so a narrowed
-/// token can never replay into an owner-grade entry.
-#[test]
-fn idempotency_principal_partitions_by_effective_grant() {
-    let owner = CoreAuth::from_headers(&bearer(SECRET), &config(), &live()).expect("owner");
-    let read = auth_for_claims("scope=core:read").expect("read token");
-    let write = auth_for_claims("scope=core:write").expect("write token");
-    let bound = auth_for_claims("scope=core:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        .expect("bound token");
-
-    let principals = [
-        owner.idempotency_principal(),
-        read.idempotency_principal(),
-        write.idempotency_principal(),
-        bound.idempotency_principal(),
-    ];
-    for (i, left) in principals.iter().enumerate() {
-        for right in &principals[i + 1..] {
-            assert_ne!(left, right, "distinct grants must not share a partition");
-        }
-    }
-    assert_eq!(
-        owner.idempotency_principal(),
-        "core:bearer:scopes=__implicit_all_scopes__"
-    );
-}
-
-/// F1 — a trust root that happens to be shaped like a token is still the
-/// trust root.
-///
-/// The secret is an opaque operator-chosen string; `v2.` is framing this code
-/// reserves, not a namespace the operator agreed to avoid. Judging the root
-/// as a token compared its own tail against a MAC over its own head, so owner
-/// auth broke outright for these secrets — the credential was misclassified,
-/// not merely inconvenienced.
-#[test]
-fn v2_shaped_trust_root_authenticates_as_the_root() {
-    for secret in [
-        "v2.something.rest",
-        // The exact shape of a real token, and a well-formed one: even a
-        // secret that would parse cleanly as claims must not be parsed.
-        "v2.scope=core:read.0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        "v2..",
-        "v2.a.b.c",
-    ] {
-        let config = config_with_secret(secret);
-        let auth = CoreAuth::from_headers(&bearer(secret), &config, &live()).unwrap_or_else(|_| {
-            panic!("v2-shaped secret {secret:?} must authenticate as the root")
-        });
-
-        assert!(
-            auth.is_owner_grade(),
-            "{secret:?} is the trust root, not a delegated token"
-        );
-        assert!(auth.require(CoreScope::Write).is_ok());
-        assert_eq!(auth.principal_ref(), None);
-        assert!(require_owner_auth(&bearer(secret), &config, &live()).is_ok());
-        assert_eq!(
-            auth.idempotency_principal(),
-            "core:bearer:scopes=__implicit_all_scopes__",
-            "{secret:?} must partition as the owner, not as its own claims"
-        );
-    }
-}
-
-/// The exact-match arm is a match on the ROOT, not a bypass of verification:
-/// tokens minted under a v2-shaped secret still verify normally, and a
-/// near-miss of the root is still refused.
-#[test]
-fn v2_shaped_root_still_mints_and_refuses_normally() {
-    const SECRET_V2: &str = "v2.something.rest";
-    let config = config_with_secret(SECRET_V2);
-
-    let scoped = mint_core_token_v2(SECRET_V2, "scope=core:read");
-    let auth = CoreAuth::from_headers(&bearer(&scoped), &config, &live()).expect("scoped token");
-    assert!(auth.require(CoreScope::Read).is_ok());
+    assert!(auth.require(CoreScope::Read).is_err());
     assert!(auth.require(CoreScope::Write).is_err());
-    assert!(
-        !auth.is_owner_grade(),
-        "a token minted under a v2-shaped root is still a delegation"
-    );
-
-    for token in [
-        "v2.something.res",
-        "v2.something.restx",
-        "v2.something.",
-        "V2.something.rest",
+    assert_unauthorized(require_owner_auth(
+        &fixture.headers(&slip),
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
+    for scope in [
+        ScopeAxis::All,
+        ScopeAxis::Bottom,
+        verbs(&["org:root"]),
+        verbs(&["org:add-member", "read"]),
+        verbs(&["org:add-member", "core:auth"]),
+        verbs(&["org:add-member", "companion:profile:read"]),
     ] {
-        assert_unauthorized(
-            CoreAuth::from_headers(&bearer(token), &config, &live()),
-            &format!("{token:?} is not the configured root"),
-        );
+        let slip = fixture.mint(|claims| {
+            claims.org_ref = Some(org.clone());
+            claims.scope.verbs = scope;
+        });
+        assert_unauthorized(fixture.auth(&slip));
+    }
+    let missing_org = fixture.mint(|claims| claims.scope.verbs = verbs(&["org:add-member"]));
+    assert_unauthorized(fixture.auth(&missing_org));
+    let missing_admin = fixture.mint(|claims| {
+        claims.scope.verbs = verbs(&["org:add-member"]);
+        claims.org_ref = Some(org);
+        claims.holder_ref = "host".into();
+    });
+    assert_unauthorized(fixture.auth(&missing_admin));
+    assert_unauthorized(CoreAuth::from_headers(
+        &fixture.headers(&slip),
+        &config_with_secret("independent-member-root"),
+        fixture.vault.as_ref(),
+    ));
+}
+
+#[test]
+fn slip_tampering_wrong_holder_and_stale_or_missing_proofs_fail_closed() {
+    let fixture = Fixture::new();
+    let slip = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
+    assert_unauthorized(CoreAuth::from_headers(
+        &bearer(&slip.to_token().unwrap()),
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
+    let mut headers = fixture.headers(&slip);
+    headers.insert(
+        "x-oneiron-binding",
+        proof_json(&slip, &SigningKey::from_bytes(&[83; 32]))
+            .parse()
+            .unwrap(),
+    );
+    assert_unauthorized(CoreAuth::from_headers(
+        &headers,
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
+    let mut proof: serde_json::Value =
+        serde_json::from_str(&proof_json(&slip, &fixture.holder)).unwrap();
+    proof["timestamp"] = serde_json::json!(0);
+    headers.insert("x-oneiron-binding", proof.to_string().parse().unwrap());
+    assert_unauthorized(CoreAuth::from_headers(
+        &headers,
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
+    let mut tampered = slip.clone();
+    tampered.claims.scope = Scope::top();
+    assert_unauthorized(fixture.auth(&tampered));
+    let mut tampered = slip.clone();
+    tampered.claims.slip_id = fixture.root.claims.slip_id;
+    assert_unauthorized(fixture.auth(&tampered));
+    assert_unauthorized(CoreAuth::from_bind_token(
+        &slip.to_token().unwrap(),
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
+}
+
+#[test]
+fn v2_shaped_secrets_are_still_verified_through_the_logged_root() {
+    for secret in ["v2.something.rest", "v2.slip.not-a-slip"] {
+        let fixture = Fixture::with_secret(secret);
+        let auth =
+            require_owner_auth(&bearer(secret), &fixture.config, fixture.vault.as_ref()).unwrap();
+        assert!(auth.is_owner_grade());
+        assert!(auth.jti().is_some());
+        let scoped = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
+        assert!(!fixture.auth(&scoped).unwrap().is_owner_grade());
+        assert_unauthorized(CoreAuth::from_headers(
+            &bearer(&format!("{secret}x")),
+            &fixture.config,
+            fixture.vault.as_ref(),
+        ));
     }
 }
 
-/// F2 — the C1 rider's explicit revocation act. A revoked token's bearer is
-/// refused while a sibling minted from identical claims keeps working, so
-/// revocation is per-token and not a scope- or claims-wide effect.
 #[test]
-fn revoked_jti_is_refused_while_its_sibling_passes() {
-    let (revoked_token, revoked_jti) = mint_identified_core_token_v2(SECRET, "scope=core:read");
-    let (sibling_token, sibling_jti) = mint_identified_core_token_v2(SECRET, "scope=core:read");
-
-    assert_ne!(
-        revoked_jti, sibling_jti,
-        "identical claims must mint distinct identities"
-    );
-    assert_ne!(
-        revoked_token, sibling_token,
-        "minting is no longer a pure function of claims and secret"
-    );
-
-    // Both are live before the act.
-    let registry = TestRevocations::none();
-    assert!(CoreAuth::from_headers(&bearer(&revoked_token), &config(), &registry).is_ok());
-    assert!(CoreAuth::from_headers(&bearer(&sibling_token), &config(), &registry).is_ok());
-
-    let registry = TestRevocations::with(&[&revoked_jti]);
-    assert_unauthorized(
-        CoreAuth::from_headers(&bearer(&revoked_token), &config(), &registry),
-        "a revoked token must not authenticate",
-    );
-    assert!(
-        CoreAuth::from_headers(&bearer(&sibling_token), &config(), &registry).is_ok(),
-        "revoking one token must not revoke its sibling"
-    );
-}
-
-/// Revocation binds to the token's identity, not to its capabilities: an
-/// owner-grade token is as revocable as a scoped one, and the check runs
-/// before the owner-grade admission rather than only on the /v1 plane.
-#[test]
-fn revocation_applies_to_owner_grade_tokens_and_full_vault_surfaces() {
-    let (token, jti) = mint_identified_core_token_v2(SECRET, "");
-    let headers = bearer(&token);
-
-    let live_auth =
-        CoreAuth::from_headers(&headers, &config(), &live()).expect("identified owner token");
-    assert!(
-        live_auth.is_owner_grade(),
-        "a jti is identity, not narrowing — it must not demote the token"
-    );
-    assert!(require_owner_auth(&headers, &config(), &live()).is_ok());
-
-    let registry = TestRevocations::with(&[&jti]);
-    assert_unauthorized(
-        CoreAuth::from_headers(&headers, &config(), &registry),
-        "a revoked owner-grade token",
-    );
-    assert_unauthorized(
-        require_owner_auth(&headers, &config(), &registry),
-        "a revoked owner-grade token on a full-vault surface",
-    );
-}
-
-/// Fail-closed on an unreadable registry. An authentic MAC proves the token
-/// was minted, never that it is still live, so "cannot check" must not
-/// resolve to "still live".
-#[test]
-fn unreadable_revocation_registry_refuses_identified_tokens() {
-    let (identified, _jti) = mint_identified_core_token_v2(SECRET, "scope=core:read");
-
-    assert_unauthorized(
-        CoreAuth::from_headers(
-            &bearer(&identified),
-            &config(),
-            &TestRevocations::unreadable(),
-        ),
-        "an identified token whose liveness cannot be established",
-    );
-
-    // A token with no identity consults nothing, so it is unaffected — the
-    // registry is read only when there is an id to look up.
-    assert!(
-        CoreAuth::from_headers(
-            &bearer(&mint_core_token_v2(SECRET, "scope=core:read")),
-            &config(),
-            &TestRevocations::unreadable(),
-        )
-        .is_ok(),
-        "an unidentified token performs no lookup"
-    );
-    assert!(
-        CoreAuth::from_headers(&bearer(SECRET), &config(), &TestRevocations::unreadable()).is_ok(),
-        "the bare trust root performs no lookup"
-    );
-}
-
-/// The `jti` claim rides the same MAC as every other claim: it cannot be
-/// added, edited, or stripped to shake off a revocation.
-#[test]
-fn jti_is_mac_covered_and_shape_checked() {
-    let (token, jti) = mint_identified_core_token_v2(SECRET, "scope=core:read");
-    let mac = token.rsplit_once('.').expect("mac segment").1;
-    let registry = TestRevocations::with(&[&jti]);
-
-    for (tampered, what) in [
-        (
-            format!("v2.scope=core:read.{mac}"),
-            "jti stripped under a stale MAC",
-        ),
-        (
-            format!("v2.scope=core:read;jti={}.{mac}", "0".repeat(32)),
-            "jti swapped under a stale MAC",
-        ),
-    ] {
-        assert_unauthorized(
-            CoreAuth::from_headers(&bearer(&tampered), &config(), &registry),
-            &format!("{what} must not authenticate"),
-        );
+fn wrong_or_empty_secret_and_absent_credentials_fail_closed() {
+    let fixture = Fixture::new();
+    let slip = fixture.mint(|_| {});
+    for secret in ["unrecognized-host", ""] {
+        let config = config_with_secret(secret);
+        assert_unauthorized(CoreAuth::from_headers(
+            &fixture.headers(&slip),
+            &config,
+            fixture.vault.as_ref(),
+        ));
+        assert_unauthorized(CoreAuth::from_headers(
+            &bearer(secret),
+            &config,
+            fixture.vault.as_ref(),
+        ));
     }
-
-    // Malformed ids are refused at the grammar, even with a valid MAC, so the
-    // registry has exactly one spelling per token to match against.
-    for bad in [
-        "",
-        "0123456789abcdef",
-        &"0".repeat(33),
-        &"A".repeat(32),
-        &"g".repeat(32),
-    ] {
-        assert_unauthorized(
-            auth_for_claims(&format!("scope=core:read;jti={bad}")),
-            &format!("malformed jti {bad:?}"),
-        );
-    }
+    assert_unauthorized(CoreAuth::from_headers(
+        &HeaderMap::new(),
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
 }
 
-/// Dev mode consults the registry too: the MAC goes unverified there because
-/// no key exists, but a revocation an operator performed is real state.
 #[test]
-fn dev_mode_honours_revocation() {
-    let dev = dev_config();
-    let jti = "0".repeat(32);
+fn idempotency_partitions_follow_the_verified_credential_and_attenuation() {
+    let fixture = Fixture::new();
+    let root = fixture.mint(|_| {});
+    let mut read = root.clone();
+    let mut scope = Scope::top();
+    scope.verbs = verbs(&["read"]);
+    read.attenuate(SlipCaveat {
+        scope: Some(scope),
+        ..Default::default()
+    })
+    .unwrap();
+    let mut write = root.clone();
+    let mut scope = Scope::top();
+    scope.verbs = verbs(&["write"]);
+    write
+        .attenuate(SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        })
+        .unwrap();
+    let sibling = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
+    let principals: BTreeSet<_> = [root, read, write, sibling]
+        .iter()
+        .map(|slip| fixture.auth(slip).unwrap().idempotency_principal())
+        .collect();
+    assert_eq!(principals.len(), 4);
+}
+
+#[test]
+fn development_hatch_does_not_mint_authority_and_honours_explicit_revocation() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
+    let config = SyncServerConfig {
+        allow_unauthenticated: true,
+        ..Default::default()
+    };
+    let auth = require_owner_auth(&HeaderMap::new(), &config, &vault).unwrap();
+    assert!(auth.verified_slip().is_none());
+    assert!(vault.authority_fold().unwrap().vault_id.is_none());
+    let jti = mint_token_jti();
     let token = format!("v2.scope=core:read;jti={jti}.");
-
-    assert!(CoreAuth::from_headers(&bearer(&token), &dev, &live()).is_ok());
-    assert_unauthorized(
-        CoreAuth::from_headers(&bearer(&token), &dev, &TestRevocations::with(&[&jti])),
-        "a revoked jti in dev mode",
-    );
+    let auth = CoreAuth::from_headers(&bearer(&token), &config, &vault).unwrap();
+    assert!(auth.require(CoreScope::Read).is_ok());
+    assert!(!auth.is_owner_grade());
+    assert!(revoke_token_jti(&vault, &jti).unwrap());
+    assert!(!revoke_token_jti(&vault, &jti).unwrap());
+    assert_unauthorized(CoreAuth::from_headers(&bearer(&token), &config, &vault));
+    assert!(!auth.credential_is_live(&vault));
+    assert!(vault.authority_fold().unwrap().vault_id.is_none());
 }
 
-/// The registry key is derived from the id alone, so the CLI writes exactly
-/// what the verify path reads.
 #[test]
 fn revocation_registry_key_is_namespaced_and_id_keyed() {
     let jti = mint_token_jti();
-
     assert_eq!(
         revoked_token_jti_key(&jti),
         format!("auth:revoked-token-jti:{jti}")
     );
     assert_ne!(revoked_token_jti_key(&jti), revoked_token_jti_key("other"));
-    assert_eq!(jti.len(), CORE_TOKEN_JTI_LEN);
-    assert!(
-        parse_jti(&jti).is_ok(),
-        "minted ids must satisfy the grammar"
+    assert!(parse_jti(&jti).is_ok());
+}
+
+#[test]
+fn later_host_fork_revokes_cached_owner_auth_and_its_session_jti() {
+    use oneiron::authority::{
+        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+        AuthoritySignatureSuite, authority_transcript,
+    };
+    let fixture = Fixture::new();
+    let auth =
+        require_owner_auth(&bearer(SECRET), &fixture.config, fixture.vault.as_ref()).unwrap();
+    let parent = fixture.vault.authority_fold().unwrap().slips.mints[&fixture.root.claims.slip_id]
+        .entry_hash;
+    let signing = SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/host-authority-signing/v2",
+        SECRET.as_bytes(),
+    ));
+    let at = oneiron::TimeRange {
+        start: fixture.root.claims.issued_at,
+        end: fixture.root.claims.issued_at,
+    };
+    let mut rows = Vec::new();
+    for id in [[71; 32], [72; 32]] {
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(fixture.root.claims.vault_id),
+            seq: 2,
+            parent_hashes: vec![parent],
+            op: AuthorityOp::SlipRevoke { slip_id: id },
+            signer: AuthoritySignature {
+                suite: AuthoritySignatureSuite::Ed25519,
+                public_key: fixture.issuer.public_key(),
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: at.start,
+        };
+        entry.signer.signature = signing
+            .sign(&authority_transcript(&entry).unwrap())
+            .to_bytes()
+            .to_vec();
+        rows.push((entry, at, at.start));
+    }
+    fixture.vault.put_authority_log_entries(&rows).unwrap();
+    assert!(!auth.credential_is_live(fixture.vault.as_ref()));
+    assert!(is_revoked_or_unreadable(
+        auth.jti().unwrap(),
+        fixture.vault.as_ref()
+    ));
+    assert_unauthorized(require_owner_auth(
+        &bearer(SECRET),
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
+}
+
+#[test]
+fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
+    struct At<'a> {
+        fixture: &'a Fixture,
+        now: u64,
+    }
+    impl RevokedTokenJtis for At<'_> {
+        fn is_revoked(&self, jti: &str) -> Result<bool, ()> {
+            self.fixture.vault.is_revoked(jti)
+        }
+        fn verify_slip(
+            &self,
+            secret: &str,
+            slip: &CapabilitySlip,
+            timestamp: u64,
+            nonce: &[u8],
+            signature: &[u8],
+        ) -> Result<oneiron::authority::VerifiedSlip, ()> {
+            let fold = self.fixture.vault.authority_fold().map_err(drop)?;
+            let nonce = std::str::from_utf8(nonce).map_err(drop)?;
+            let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+            slip.verify(
+                secret.as_bytes(),
+                &fold,
+                self.now,
+                challenge.as_bytes(),
+                signature,
+            )
+            .map_err(drop)
+        }
+    }
+    let fixture = Fixture::new();
+    let slip = fixture.mint(|claims| claims.actor_class = Some("human".to_owned()));
+    let token = slip.to_token().unwrap();
+    let first = CoreAuth::from_headers(
+        &fixture.headers(&slip),
+        &fixture.config,
+        &At {
+            fixture: &fixture,
+            now: slip.claims.issued_at,
+        },
+    )
+    .unwrap();
+    let later = CoreAuth::from_headers(
+        &fixture.headers(&slip),
+        &fixture.config,
+        &At {
+            fixture: &fixture,
+            now: slip.claims.issued_at + 20,
+        },
+    )
+    .unwrap();
+    assert!(first.same_authority(&later));
+    assert_eq!(first.idempotency_principal(), later.idempotency_principal());
+    let mut narrowed = CapabilitySlip::from_token(&token).unwrap();
+    narrowed
+        .attenuate(SlipCaveat {
+            ttl_secs: Some(30),
+            ..Default::default()
+        })
+        .unwrap();
+    let narrowed_auth = CoreAuth::from_headers(
+        &fixture.headers(&narrowed),
+        &fixture.config,
+        &At {
+            fixture: &fixture,
+            now: slip.claims.issued_at + 20,
+        },
+    )
+    .unwrap();
+    assert!(!first.same_authority(&narrowed_auth));
+    assert_ne!(
+        first.idempotency_principal(),
+        narrowed_auth.idempotency_principal()
     );
+}
+
+#[test]
+fn credential_predicate_reads_the_note_writer_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"writer-snapshot-root").unwrap();
+    let verified = vault.verified_host_root_slip(&issuer).unwrap();
+    let id = verified.claims().slip_id;
+    let auth = CoreAuth::from_verified(verified, true).unwrap();
+    vault
+        .with_write_txn(|txn| {
+            assert!(auth.credential_is_live_in_write_txn(&vault, txn));
+            Ok(())
+        })
+        .unwrap();
+    vault.revoke_capability_slip(&issuer, id).unwrap();
+    vault
+        .with_write_txn(|txn| {
+            assert!(!auth.credential_is_live_in_write_txn(&vault, txn));
+            Ok(())
+        })
+        .unwrap();
 }

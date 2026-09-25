@@ -18,8 +18,8 @@ fn process_privacy_environment() {
 
     for case in [
         "unset",
-        "self_host_local",
-        "hosted",
+        "self-host",
+        "managed",
         "non_unicode_posture",
         "non_unicode_key_default",
         "non_unicode_key_self_host_local",
@@ -46,11 +46,11 @@ fn process_privacy_environment() {
         let malformed = OsString::from_vec(malformed);
         match case {
             "unset" => {}
-            "self_host_local" => {
-                child.env("ONEIRON_PRIVACY_POSTURE", "self_host_local");
+            "self-host" => {
+                child.env("ONEIRON_PRIVACY_POSTURE", "self-host");
             }
-            "hosted" => {
-                child.env("ONEIRON_PRIVACY_POSTURE", "hosted");
+            "managed" => {
+                child.env("ONEIRON_PRIVACY_POSTURE", "managed");
                 child.env("ONEIRON_HOSTED_KMS_KEY_REF", "kms://example/clé");
             }
             "non_unicode_posture" => {
@@ -60,11 +60,11 @@ fn process_privacy_environment() {
                 child.env("ONEIRON_HOSTED_KMS_KEY_REF", &malformed);
             }
             "non_unicode_key_self_host_local" => {
-                child.env("ONEIRON_PRIVACY_POSTURE", "self_host_local");
+                child.env("ONEIRON_PRIVACY_POSTURE", "self-host");
                 child.env("ONEIRON_HOSTED_KMS_KEY_REF", &malformed);
             }
             "non_unicode_key_hosted" => {
-                child.env("ONEIRON_PRIVACY_POSTURE", "hosted");
+                child.env("ONEIRON_PRIVACY_POSTURE", "managed");
                 child.env("ONEIRON_HOSTED_KMS_KEY_REF", &malformed);
             }
             "unrelated_non_unicode" => {
@@ -119,12 +119,12 @@ fn check_child_environment(case: &str) {
     )
     .expect("valid privacy environment must resolve with default CLI arguments");
     let expected = match case {
-        "hosted" => ServeConfig {
+        "managed" => ServeConfig {
             privacy_posture: HostingPrivacyPosture::Hosted,
             hosted_kms_key_ref: Some("kms://example/clé".to_owned()),
             ..Default::default()
         },
-        "unset" | "self_host_local" | "unrelated_non_unicode" => ServeConfig::default(),
+        "unset" | "self-host" | "unrelated_non_unicode" => ServeConfig::default(),
         _ => panic!("unexpected child case: {case}"),
     };
     assert_eq!(resolved, expected);

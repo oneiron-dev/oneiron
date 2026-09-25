@@ -117,7 +117,7 @@ impl Memory<'_> {
                 "structural body must be a JSON object",
             ));
         }
-        let id = id_from_optional_hex(input.id.as_deref())?;
+        let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         let occurred = TimeRange {
             start: input.occurred_at,
             end: input.occurred_at,
@@ -224,7 +224,7 @@ impl Memory<'_> {
     /// the pack contract). The pinned `role` body key is facade-injected.
     pub fn put_habit_checkin(&self, input: &HabitCheckinInput) -> MemoryResult<EntityRefReceipt> {
         let habit_id = self.resolve_ref(&input.habit_ref)?;
-        let checkin_id = id_from_optional_hex(input.id.as_deref())?;
+        let checkin_id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         let mut entries = vec![(
             Value::from("role"),
             Value::from(u64::from(TaskRole::HabitCheckin.role_byte())),
@@ -274,7 +274,7 @@ impl Memory<'_> {
     /// Registers a blob artifact (B8 blob door; bytes ride
     /// [`Self::append_blob_version`]).
     pub fn put_blob_artifact(&self, input: &BlobArtifactInput) -> MemoryResult<EntityRefReceipt> {
-        let id = id_from_optional_hex(input.id.as_deref())?;
+        let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         let body = crate::blob_artifact::BlobArtifactBody::new(
             input.name.clone(),
             input.media_type.clone(),

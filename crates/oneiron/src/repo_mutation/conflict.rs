@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
@@ -140,7 +141,22 @@ pub(super) fn record_repo_conflict(
         )));
     }
 
-    let claim_id = EntityId::now();
+    // A replay records the same still-open conflict, never a duplicate TASK.
+    if let Some(existing) = vault
+        .repo_conflict_claims(&branch_subject)?
+        .into_iter()
+        .find(|claim| {
+            claim.repo_ref == *repo_ref
+                && claim.branch == branch_name
+                && claim.base_tree == base_tree
+                && claim.ours_tree == ours_tree
+                && claim.theirs_tree == theirs_tree
+                && claim.conflicted_paths == conflicted_paths
+        })
+    {
+        return Ok(existing.claim_id);
+    }
+    let claim_id = vault.store.clock.entity_id()?;
     put_repo_conflict_open_claim(
         vault,
         claim_id,
@@ -379,11 +395,19 @@ fn put_engine_repo_conflict_claim(
     learned_at: u64,
 ) -> Result<()> {
     let data = encode_claim_body(body)?;
+    let reconciliation_owner = if body.predicate == PREDICATE_CONFLICT_OPEN {
+        Some(
+            vault
+                .ensure_embedded_owner_actor()
+                .map_err(|error| Error::Code(CodeError::RepoMutationFailed(error.to_string())))?,
+        )
+    } else {
+        None
+    };
     let mut wtxn = vault.store.env.write_txn()?;
     if vault
         .store
-        .entities
-        .get(&wtxn, branch_subject.as_bytes())?
+        .port_entity_record(&wtxn, &branch_subject)?
         .is_none()
     {
         return Err(Error::EntityNotFound);
@@ -424,6 +448,20 @@ fn put_engine_repo_conflict_claim(
         false,
         true,
     )?;
+    if let Some(owner) = reconciliation_owner {
+        let value = decode_repo_conflict_open_value(&body.value)?;
+        let conflict = RepoConflictClaim {
+            claim_id,
+            subject: branch_subject,
+            repo_ref: value.repo_ref,
+            branch: value.branch,
+            base_tree: value.base_tree,
+            ours_tree: value.ours_tree,
+            theirs_tree: value.theirs_tree,
+            conflicted_paths: value.conflicted_paths,
+        };
+        vault.create_repo_reconciliation_task_in_txn(&mut wtxn, &conflict, owner, learned_at)?;
+    }
     wtxn.commit()?;
     Ok(())
 }
@@ -440,8 +478,8 @@ fn supersede_repo_conflict_claim(
     let mut wtxn = vault.store.env.write_txn()?;
     let new_raw = vault
         .store
-        .entities
-        .get(&wtxn, new_id.as_bytes())?
+        .port_entity_record(&wtxn, &new_id)?
+        .map(|row| row.encode())
         .ok_or(Error::EntityNotFound)?;
     let new_header =
         EntityMetadataHeader::parse(&new_raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -459,8 +497,8 @@ fn supersede_repo_conflict_claim(
 
     let old_raw = vault
         .store
-        .entities
-        .get(&wtxn, old_id.as_bytes())?
+        .port_entity_record(&wtxn, &old_id)?
+        .map(|row| row.encode())
         .ok_or(Error::EntityNotFound)?;
     let old_header =
         EntityMetadataHeader::parse(&old_raw).ok_or(Error::CorruptedIndex("entity header"))?;

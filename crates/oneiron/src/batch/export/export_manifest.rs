@@ -99,6 +99,12 @@ impl ExportManifestArtifact {
 }
 
 impl ExportManifest {
+    /// Produced after the mandatory serializer transform, never by a caller option.
+    pub(crate) fn with_serializer_nulling(mut self) -> Self {
+        self.secrets_nulled = ExportSecretsNulledManifest::from_redacted(true);
+        self
+    }
+
     #[must_use]
     pub fn clear() -> Self {
         Self::from_redacted(false)

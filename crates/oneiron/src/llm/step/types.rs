@@ -1,6 +1,6 @@
 //! Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome.
 
-use super::super::{LlmError, LlmResponse, PinnedConfigViolation, PinnedModelConfig};
+use super::super::{LlmError, LlmResponse};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline};
@@ -65,7 +65,7 @@ pub(super) const DREAMER_PRIVATE_STEP_INDEX_CLAIM_PREFIX: &[u8] = b"dreamer:step
 
 pub(super) const DREAMER_PRIVATE_TRAP_BINDING_PREFIX: &[u8] = b"dreamer:trap_binding:v1:"; // + trap anchor claim id (16)
 
-pub(super) const DREAMER_PRIVATE_PEER_WAIT_PREFIX: &[u8] = b"dreamer:peer_wait:v1:"; // + task ref (16)
+pub(super) const DREAMER_PRIVATE_PEER_WAIT_PREFIX: &[u8] = b"dreamer:peer_wait:v1:"; // + task ref (16) + trap ref (16)
 
 pub(super) const DREAMER_PRIVATE_PEER_WAIT_TRAP_PREFIX: &[u8] = b"dreamer:peer_wait_trap:v1:"; // + trap anchor claim id (16) -> task ref (16)
 
@@ -147,19 +147,21 @@ pub type DurableStepResult<T> = std::result::Result<T, DurableStepError>;
 /// Typed failure surface of the durable-step layer.
 #[derive(Debug, thiserror::Error)]
 pub enum DurableStepError {
+    #[error("LLM failure after spent corrective attempts: {source}")]
+    SpentLlm {
+        source: LlmError,
+        usage: Box<super::super::LlmUsage>,
+    },
+    #[error("JSON schema validation failed after {attempts} attempts: {errors:?}")]
+    SchemaValidation { attempts: u8, errors: Vec<String> },
     #[error(transparent)]
     Engine(#[from] Error),
     #[error(transparent)]
     Llm(#[from] LlmError),
     #[error("durable step canonicalization failed: {0}")]
     Canonical(#[from] serde_json::Error),
-    /// Fatal terminal failure on a `CallClass::Durable` request: the caller
-    /// must execute its declared deterministic fallback — silent-empty
-    /// results are FORBIDDEN (ruling L6).
-    #[error(
-        "durable step fatal LLM error; execute declared deterministic fallback {fallback:?}: {source}"
-    )]
-    FallbackDemanded { fallback: String, source: LlmError },
+    #[error(transparent)]
+    Fallback(#[from] super::super::FallbackError),
     /// NEW steps are refused once the wake pass enters its graceful-wrap
     /// finalize window (ONE-1305); memoized hits still return.
     #[error("durable step refused: wake pass is in its finalize window")]
@@ -168,11 +170,6 @@ pub enum DurableStepError {
     /// lease was aborted and the attempt parked at the hard cut (ONE-1305).
     #[error("durable step hard cut at the wake-pass deadline")]
     DeadlineHardCut,
-    /// The request was refused by the caller's opt-in pinned-model config
-    /// (ONE-1344) before any hashing, memo lookup, state write, spend, or
-    /// claim — the refusal leaves zero durable and zero private residue.
-    #[error(transparent)]
-    PinnedConfig(#[from] PinnedConfigViolation),
 }
 
 /// Live progression of one durable step, stored as `u8` in the private
@@ -308,9 +305,6 @@ pub struct DurableStepContext<'a> {
     pub run_id: Option<String>,
     pub envelope_actor: WriteActor,
     pub subject: EntityId,
-    /// Opt-in pinned-model admission policy (ONE-1344): checked before
-    /// hashing, memo, state, budget, backend, and claims. None = no policy.
-    pub pinned_config: Option<&'a PinnedModelConfig>,
     /// The wake-pass deadline (ONE-1305): Some inside wake passes. Enables
     /// the finalize-window refusal for NEW steps, the mid-call deadline
     /// race, and the budget legibility envelope on finished outcomes.

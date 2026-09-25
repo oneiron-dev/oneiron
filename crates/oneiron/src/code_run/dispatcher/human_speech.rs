@@ -19,6 +19,21 @@ pub(in crate::code_run) struct HumanWaitDispatchTarget {
 
 impl HostSelfDispatcher<'_> {
     pub(super) fn dispatch_ask_human(&self, call: SelfAskHumanCall) -> Result<SelfDispatchOutcome> {
+        let is_review = self.code_emission.as_ref().is_some_and(|(emission, _)| {
+            crate::code_run::consent::consent_lane_for(emission.tier, emission.source_trust)
+                == crate::code_run::consent::ConsentLane::Review
+        });
+        let call = if is_review {
+            match self
+                .code_emission_admission()?
+                .and_then(|a| a.consent_request)
+            {
+                Some(request) => request.ask_human(&call.prompt),
+                None => call,
+            }
+        } else {
+            call
+        };
         if let Some(target) = self.human_wait_target {
             let ExecutorStorage::Canonical(vault) = &self.storage else {
                 return Err(Error::InvalidClaimBody(
@@ -119,6 +134,17 @@ impl HostSelfDispatcher<'_> {
             is_visible: kind.is_visible(),
             emitted: true,
         }))
+    }
+
+    pub(super) fn dispatch_report_blocked(
+        &self,
+        call: crate::code_run::blocked::SelfReportBlockedCall,
+        run_id: Option<EntityId>,
+    ) -> Result<SelfDispatchOutcome> {
+        let receipt =
+            self.storage
+                .witness_blocked_report(&self.run_ref, run_id, &call, self.actor)?;
+        Ok(SelfDispatchOutcome::ReportBlocked { receipt })
     }
 
     pub(super) fn durable_wait(

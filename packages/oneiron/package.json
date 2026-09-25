@@ -1,7 +1,7 @@
 {
   "name": "oneiron",
   "version": "1.0.0",
-  "description": "Memory for agents: witness a turn, claim a fact, recall it, read the receipts.",
+  "description": "Memory Wire: the Oneiron developer profile. Witness, recall, and receipts over one actor-bound facade.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -35,7 +35,8 @@
     "check:sdk-major": "bun run scripts/assert-sdk-major.mjs",
     "test": "bun test",
     "prepack": "bun run build && bun run test && bun run check:snippets && bun run check:sdk-major",
-    "pack:dry-run": "bun pm pack --dry-run"
+    "pack:dry-run": "bun pm pack --dry-run",
+    "check:retrieval-types": "bunx --bun tsc --project tsconfig.retrieval-types.json"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",
@@ -47,6 +48,7 @@
     "agents",
     "retrieval",
     "vector-search",
-    "knowledge-graph"
+    "knowledge-graph",
+    "memory-wire"
   ]
 }

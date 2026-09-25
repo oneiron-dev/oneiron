@@ -27,6 +27,9 @@ pub struct SerializedContextPack {
 
 #[derive(Clone, Copy)]
 pub(in crate::context_pack) struct HydrateOptions<'a> {
+    pub(in crate::context_pack) read_mode: crate::vault::ReadMode,
+    pub(in crate::context_pack) policy: &'a crate::gate::PolicyManifestResolution,
+    pub(in crate::context_pack) criticality: Option<bool>,
     pub(in crate::context_pack) hydrate_fields: bool,
     pub(in crate::context_pack) include_edges: bool,
     pub(in crate::context_pack) include_vectors: bool,
@@ -93,6 +96,7 @@ impl ContextPackTelemetry<'_> {
 }
 
 pub(in crate::context_pack) struct ContextPackRun<'a> {
+    pub(in crate::context_pack) vector_completed: bool,
     pub(in crate::context_pack) pack: ContextPack,
     pub(in crate::context_pack) telemetry_run_id: Option<RetrievalRunId>,
     pub(in crate::context_pack) telemetry: ContextPackTelemetry<'a>,
@@ -126,7 +130,8 @@ impl UnfinalizedContextPack<'_> {
         config: &SerializeConfig,
     ) -> RetrievalWithTelemetry<ContextPack> {
         let pre_projection_stats = self.value.stats.clone();
-        let pre_projection_had_results = !self.value.results.is_empty();
+        let pre_projection_had_results =
+            !self.value.results.is_empty() || self.value.l2_base.is_some();
         let mut pack = crate::serialize::project_pack_for_json_response(self.value, config);
         refresh_projected_empty_context(&mut pack);
         let surfaced_result_ids: Vec<[u8; 16]> = pack

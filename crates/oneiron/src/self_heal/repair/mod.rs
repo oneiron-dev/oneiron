@@ -2,6 +2,7 @@
 
 use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
+use serde::{Deserialize, Serialize};
 
 mod invocation;
 mod validation;
@@ -14,35 +15,42 @@ pub(crate) use validation::validate_repair_proposal;
 use super::{DiagnosticEvent, DiagnosticWorkingSet};
 
 /// Healer-supplied attribution for review display, not an authority credential.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepairActor {
     /// Claimed actor class, to be rendered as untrusted disclosure text.
     pub actor_class: String,
     /// Actor the proposal claims to represent.
+    #[serde(with = "crate::self_heal::receipt_serde::id")]
     pub actor_ref: EntityId,
 }
 
 /// A closed vocabulary of repair intents. References are opaque, never opened here.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RepairOperation {
     /// Request an index rebuild within a named scope.
     Reindex { scope_ref: String },
     /// Request a fresh score for an entity.
-    Rescore { target_ref: EntityId },
+    Rescore {
+        #[serde(with = "crate::self_heal::receipt_serde::id")]
+        target_ref: EntityId,
+    },
     /// Request review of a retry, not execution of the referenced run.
     Retry { run_ref: String },
     /// Suggest a policy restriction. The name is not proof of narrowing.
     NarrowPolicy {
         predicate: String,
+        #[serde(with = "crate::self_heal::receipt_serde::value")]
         value: rmpv::Value,
     },
     /// Suggest a claim value without writing a claim.
     ProposeClaim {
         predicate: String,
+        #[serde(with = "crate::self_heal::receipt_serde::value")]
         value: rmpv::Value,
     },
     /// Suggest a skill patch. Always human-reviewed because skills can carry code.
     SkillEdit {
+        #[serde(with = "crate::self_heal::receipt_serde::id")]
         skill_ref: EntityId,
         patch_ref: String,
     },
@@ -73,15 +81,18 @@ impl RepairOperation {
 }
 
 /// Untrusted healer output. Actor and source are disclosure, not Gate inputs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepairProposal {
     /// Identity of this proposed intent within the bundle.
+    #[serde(with = "crate::self_heal::receipt_serde::id")]
     pub proposal_id: EntityId,
     /// Diagnostic records the healer cites; not evidence of permission.
+    #[serde(with = "crate::self_heal::receipt_serde::ids")]
     pub diagnostic_refs: Vec<EntityId>,
     /// Claimed actor, retained even when it differs from the engine stamp.
     pub actor: RepairActor,
     /// Claimed source, retained even when it differs from the engine stamp.
+    #[serde(with = "crate::self_heal::receipt_serde::source")]
     pub source: ClaimSource,
     /// Predicate whose CURRENT manifest criticality governs this repair.
     pub target_predicate: String,

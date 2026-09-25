@@ -686,9 +686,12 @@ fn child_of_chain_carries_no_ppr_mass() -> Result<()> {
         let rtxn = vault.store.env.read_txn()?;
         let scores = ppr::ppr_compute(&vault.store, &rtxn, &[e], 6, 0.15)?;
         assert_eq!(
-            scores.len(),
-            1,
-            "ChildOf must not propagate; only the seed may be scored"
+            scores
+                .iter()
+                .map(|s| s.id)
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from([e, crate::claim::substrate_facet_id(e)]),
+            "ChildOf must not propagate beyond the seed and its own substrate facet"
         );
         assert_eq!(scores[0].id, e);
     }
@@ -708,11 +711,41 @@ fn child_of_chain_carries_no_ppr_mass() -> Result<()> {
 
     vault
         .batch()
-        .put(&p1, 9, test_time_range(1, 1), 2, b"p1")
-        .put(&p2, 9, test_time_range(3, 3), 4, b"p2")
-        .put(&p3, 9, test_time_range(5, 5), 6, b"p3")
-        .put(&p4, 9, test_time_range(7, 7), 8, b"p4")
-        .put(&p5, 9, test_time_range(9, 9), 10, b"p5")
+        .put(
+            &p1,
+            crate::registry::ENTITY_TYPE_PLACE,
+            test_time_range(1, 1),
+            2,
+            b"p1",
+        )
+        .put(
+            &p2,
+            crate::registry::ENTITY_TYPE_PLACE,
+            test_time_range(3, 3),
+            4,
+            b"p2",
+        )
+        .put(
+            &p3,
+            crate::registry::ENTITY_TYPE_PLACE,
+            test_time_range(5, 5),
+            6,
+            b"p3",
+        )
+        .put(
+            &p4,
+            crate::registry::ENTITY_TYPE_PLACE,
+            test_time_range(7, 7),
+            8,
+            b"p4",
+        )
+        .put(
+            &p5,
+            crate::registry::ENTITY_TYPE_PLACE,
+            test_time_range(9, 9),
+            10,
+            b"p5",
+        )
         .edge(&p2, EdgeKind::PartOf, &p1, 1.0)
         .edge(&p3, EdgeKind::PartOf, &p2, 1.0)
         .edge(&p4, EdgeKind::PartOf, &p3, 1.0)

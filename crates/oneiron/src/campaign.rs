@@ -5,7 +5,7 @@
 //! runtime-assigned type byte to the existing dynamic-registration API.
 //!
 //! It deliberately owns NO type byte. Byte-space v3 assigns CAMPAIGN's byte at
-//! registration time from the `Crm` band; a static constant here (or a
+//! registration time within the compiled-product zone; a static constant here (or a
 //! `registry.rs` row) would re-introduce the compile-time allocation this pack
 //! exists to avoid. `companion.rs` is the module-layout precedent only — its
 //! `ENTITY_TYPE_COMPANION_REGISTER` static-byte style is explicitly not copied.
@@ -18,7 +18,7 @@ use crate::Vault;
 use crate::error::{Error, RegistryError, Result};
 use crate::registry::{
     StructuralKindRegistration, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END,
-    TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TypeByteZone,
+    TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TypeByteFamily, TypeByteZone,
 };
 
 /// The CRM pack's claim families: `campaign.member`, `crm.fit`, `crm.stage`,
@@ -77,10 +77,11 @@ pub const CAMPAIGN_SHORT_ID_PREFIX: &str = "ca";
 pub const CRM_PACK_ID: &str = "oneiron-crm";
 
 /// Registers the CAMPAIGN structural kind for a NEW vault.
+/// The caller declares its replication family; the assigned byte never implies one.
 ///
 /// `assigned_type_byte` comes from the byte-space-v3 registration flow run by
 /// the vault/pack initializer; this module never chooses, infers, or hard-codes
-/// a byte. The underlying `register_structural_kind` is intentionally strict and
+/// a byte. The underlying `register_structural_kind_in_family` is intentionally strict and
 /// non-idempotent for duplicate bytes, so the contract is "register once while
 /// initializing a new vault, read the persisted registration on reopen" — never
 /// "register on every open". A reopened vault recovers the row through
@@ -95,11 +96,12 @@ pub const CRM_PACK_ID: &str = "oneiron-crm";
 pub fn register_campaign_kind(
     vault: &Vault,
     assigned_type_byte: u8,
+    family: TypeByteFamily,
 ) -> Result<StructuralKindRegistration> {
-    vault.register_structural_kind(
+    vault.register_structural_kind_in_family(
         assigned_type_byte,
         CAMPAIGN_SHORT_ID_PREFIX,
-        TypeByteZone::CompiledProduct,
+        family,
         CRM_PACK_ID,
     )
 }
@@ -114,14 +116,15 @@ pub struct CrmPackRegistration {
 }
 
 /// Registers the whole CRM pack against one vault.
+/// Both kinds use the caller-declared family, independently of their assigned bytes.
 ///
 /// The pack's kinds are registered from ONE entry point so a host cannot be
 /// left with half a pack: a vault carrying CAMPAIGN but not SAVED_QUERY would
 /// let a cohort exist with no way to name the query that derived it. Both bytes
-/// are caller-assigned from the `Crm` band — this module still owns no byte.
+/// are caller-assigned within the compiled-product zone — this module still owns no byte.
 ///
 /// Two properties make the guarantee real, because
-/// [`Vault::register_structural_kind`] commits per call and cannot be composed
+/// [`Vault::register_structural_kind_in_family`] commits per call and cannot be composed
 /// into one transaction from here:
 ///
 /// * **Both slots are vetted before either is written.** A bad SAVED_QUERY byte
@@ -134,37 +137,41 @@ pub struct CrmPackRegistration {
 ///
 /// # Errors
 ///
-/// Propagates [`Vault::register_structural_kind`] errors unchanged: band
+/// Propagates [`Vault::register_structural_kind_in_family`] errors unchanged: band
 /// violations, byte collisions, and prefix collisions all keep their existing
 /// identities. Two equal bytes are a byte collision.
 pub fn register_crm_pack(
     vault: &Vault,
     campaign_type_byte: u8,
     saved_query_type_byte: u8,
+    family: TypeByteFamily,
 ) -> Result<CrmPackRegistration> {
     if campaign_type_byte == saved_query_type_byte {
         return Err(Error::Registry(
             RegistryError::StructuralKindTypeByteCollision(campaign_type_byte),
         ));
     }
-    vet_pack_slot(vault, campaign_type_byte, CAMPAIGN_SHORT_ID_PREFIX)?;
+    vet_pack_slot(vault, campaign_type_byte, CAMPAIGN_SHORT_ID_PREFIX, family)?;
     vet_pack_slot(
         vault,
         saved_query_type_byte,
         crate::saved_query::SAVED_QUERY_SHORT_ID_PREFIX,
+        family,
     )?;
     Ok(CrmPackRegistration {
         campaign: register_pack_slot(
             vault,
             campaign_type_byte,
             CAMPAIGN_SHORT_ID_PREFIX,
-            |byte| register_campaign_kind(vault, byte),
+            family,
+            |byte| register_campaign_kind(vault, byte, family),
         )?,
         saved_query: register_pack_slot(
             vault,
             saved_query_type_byte,
             crate::saved_query::SAVED_QUERY_SHORT_ID_PREFIX,
-            |byte| crate::saved_query::register_saved_query_kind(vault, byte),
+            family,
+            |byte| crate::saved_query::register_saved_query_kind(vault, byte, family),
         )?,
     })
 }
@@ -174,7 +181,7 @@ pub fn register_crm_pack(
 /// Deliberately narrow: it checks the band this pack is confined to and a byte
 /// already held by something that is not this slot. Every other rejection stays
 /// where it belongs — inside the registrar.
-fn vet_pack_slot(vault: &Vault, type_byte: u8, prefix: &str) -> Result<()> {
+fn vet_pack_slot(vault: &Vault, type_byte: u8, prefix: &str, family: TypeByteFamily) -> Result<()> {
     if !(TYPE_BYTE_ZONE_COMPILED_PRODUCT_START..=TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
         .contains(&type_byte)
     {
@@ -188,9 +195,9 @@ fn vet_pack_slot(vault: &Vault, type_byte: u8, prefix: &str) -> Result<()> {
         ));
     }
     match vault.structural_kind_registration(type_byte) {
-        Some(existing) if !slot_matches(&existing, type_byte, prefix) => Err(Error::Registry(
-            RegistryError::StructuralKindTypeByteCollision(type_byte),
-        )),
+        Some(existing) if !slot_matches(&existing, type_byte, prefix, family) => Err(
+            Error::Registry(RegistryError::StructuralKindTypeByteCollision(type_byte)),
+        ),
         _ => Ok(()),
     }
 }
@@ -200,19 +207,26 @@ fn register_pack_slot(
     vault: &Vault,
     type_byte: u8,
     prefix: &str,
+    family: TypeByteFamily,
     register: impl FnOnce(u8) -> Result<StructuralKindRegistration>,
 ) -> Result<StructuralKindRegistration> {
     match vault.structural_kind_registration(type_byte) {
-        Some(existing) if slot_matches(&existing, type_byte, prefix) => Ok(existing),
+        Some(existing) if slot_matches(&existing, type_byte, prefix, family) => Ok(existing),
         _ => register(type_byte),
     }
 }
 
-fn slot_matches(existing: &StructuralKindRegistration, type_byte: u8, prefix: &str) -> bool {
+fn slot_matches(
+    existing: &StructuralKindRegistration,
+    type_byte: u8,
+    prefix: &str,
+    family: TypeByteFamily,
+) -> bool {
     existing.type_byte == type_byte
         && existing.short_id_prefix == prefix
         && existing.zone == TypeByteZone::CompiledProduct
         && existing.pack == CRM_PACK_ID
+        && existing.family == Some(family)
 }
 
 #[cfg(test)]

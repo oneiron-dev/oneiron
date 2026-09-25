@@ -161,10 +161,12 @@ fn send_pending_with_gate<T: OutboundTransport>(
             PreparedAuthorization::None => None,
             PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
         };
+        let posting_gate =
+            vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
         let governance = gate::evaluate_external_effect_policy(
             &vault.store,
             &mut wtxn,
-            &prepared.gate,
+            &posting_gate,
             &policy,
             required_grant_id,
             match &prepared.authorization {
@@ -204,6 +206,18 @@ fn send_pending_with_gate<T: OutboundTransport>(
         ));
     }
 
+    {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        if !vault.frozen_space_posting_ready_in_txn(&txn, record.payload())? {
+            let mut result = effect_result(&record, None, replayed, None);
+            result.gate_outcome = Some("pending".to_owned());
+            result
+                .gate_receipt_reasons
+                .push("space_posting_consent_required".to_owned());
+            return Ok(result);
+        }
+    }
+
     // A definite non-delivery permits retry even without provider-native
     // idempotency. Clear that permit durably immediately before transport so a
     // crash after the wire may have started is once again Q4 Pending/uncertain.
@@ -218,6 +232,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
         verify_booking_effect(vault, &txn, record.attempt_id, record.payload())?;
     }
     let outcome = transport.send(&call);
+    vault.resume_from_slim_on_inbound()?;
     match outcome {
         OutboundSendOutcome::Acked => {
             let done = complete_record(vault, record.id, now_ms)?;

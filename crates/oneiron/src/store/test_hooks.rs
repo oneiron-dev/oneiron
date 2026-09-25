@@ -41,9 +41,9 @@ pub(crate) struct TestHooks {
     /// The one-shot delete rendezvous: the step and target entity a delete must
     /// park at, and the two `sync_channel(0)` halves that park it.
     delete_rendezvous: Mutex<Option<DeleteRendezvousChannels>>,
-    /// The one-shot sender fired once a headerful delete has proven its header
-    /// `Some` and before it takes any write lock.
-    after_header_read: Mutex<Option<SyncSender<()>>>,
+    /// The one-shot sender fired once a delete proves a header or orphan scope
+    /// exists, before it takes any write lock.
+    after_delete_probe: Mutex<Option<SyncSender<()>>>,
     /// The staged-foreign-import seams; see [`StagedImportHooks`].
     #[cfg(feature = "sync")]
     pub(crate) staged_import: StagedImportHooks,
@@ -51,6 +51,8 @@ pub(crate) struct TestHooks {
     /// sync on this vault. The durability fence is what the count proves, so
     /// the reader wants an exact delta and now gets one.
     force_sync_calls: AtomicUsize,
+    /// One-shot stage boundary for deadline tests; never shared across vaults.
+    pub(crate) after_retrieval_text: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TestHooks {
@@ -98,29 +100,29 @@ impl TestHooks {
     }
 
     /// Installs the one-shot rendezvous sender consumed by
-    /// [`Self::signal_after_header_read`]. The raced-delete harness arms the
+    /// [`Self::signal_after_delete_probe`]. The raced-delete harness arms the
     /// vault it is about to delete from; the matching receiver `recv()`s on the
     /// eraser side just before its commit.
-    pub(crate) fn install_after_header_read_signal(&self, tx: SyncSender<()>) {
+    pub(crate) fn install_after_delete_probe_signal(&self, tx: SyncSender<()>) {
         *self
-            .after_header_read
+            .after_delete_probe
             .lock()
-            .expect("after-header-read slot poisoned") = Some(tx);
+            .expect("after-delete-probe slot poisoned") = Some(tx);
     }
 
     /// Fires the rendezvous signal exactly once if this vault has a sender
-    /// armed, then clears it so a later headerful delete never blocks on a
+    /// armed, then clears it so a later delete never blocks on a
     /// stale rendezvous. A no-op on every vault that armed nothing.
-    pub(crate) fn signal_after_header_read(&self) {
+    pub(crate) fn signal_after_delete_probe(&self) {
         let sender = self
-            .after_header_read
+            .after_delete_probe
             .lock()
-            .expect("after-header-read slot poisoned")
+            .expect("after-delete-probe slot poisoned")
             .take();
         if let Some(sender) = sender {
             // The rendezvous (`sync_channel(0)`) blocks here until the eraser
             // `recv()`s; that recv is positioned immediately before its commit,
-            // so the deleter's header read is provably ordered before the erase.
+            // so the deleter's scope probe is provably ordered before the erase.
             let _ = sender.send(());
         }
     }
@@ -143,7 +145,9 @@ struct TargetedLmdbOpenHook {
 
 type LmdbOpenHook = Box<dyn FnOnce(&Path) + Send>;
 
-type LmdbOpenHookSlot = LazyLock<Mutex<Option<TargetedLmdbOpenHook>>>;
+/// Every armed hook, one per target path. Arming never replaces a sibling
+/// test's hook for a different path: both wait for their own open.
+type LmdbOpenHookSlot = LazyLock<Mutex<Vec<TargetedLmdbOpenHook>>>;
 
 /// Fires between the vault root being bound as a descriptor capability and the
 /// LMDB environment being opened through it, i.e. INSIDE the existing-only
@@ -158,14 +162,14 @@ type LmdbOpenHookSlot = LazyLock<Mutex<Option<TargetedLmdbOpenHook>>>;
 /// — the exact `/proc/self/fd/<dirfd>` path is what makes the open safe; this
 /// hook only makes the schedule observable.
 #[cfg(target_os = "linux")]
-static BEFORE_LMDB_OPEN: LmdbOpenHookSlot = LazyLock::new(|| Mutex::new(None));
+static BEFORE_LMDB_OPEN: LmdbOpenHookSlot = LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// The mirror of [`BEFORE_LMDB_OPEN`] on the other side of the open: on the
 /// existing-only door it runs the instant `mdb_env_open` returns, before any
 /// post-open identity check, which is what lets an ABA schedule restore the
 /// original before those checks look; on the create-capable door it runs once
 /// `EnvOpenOptions::open` has returned.
-static AFTER_LMDB_OPEN: LmdbOpenHookSlot = LazyLock::new(|| Mutex::new(None));
+static AFTER_LMDB_OPEN: LmdbOpenHookSlot = LazyLock::new(|| Mutex::new(Vec::new()));
 thread_local! {
     static FAIL_NEXT_RETRIEVAL_RUN_WRITE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     static FAIL_INITIAL_SEED_COMMIT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
@@ -176,7 +180,9 @@ fn arm_lmdb_open_hook(
     path: PathBuf,
     hook: impl FnOnce(&Path) + Send + 'static,
 ) {
-    *slot.lock().expect("lmdb-open hook mutex poisoned") = Some(TargetedLmdbOpenHook {
+    let mut armed = slot.lock().expect("lmdb-open hook mutex poisoned");
+    armed.retain(|armed| armed.path != path);
+    armed.push(TargetedLmdbOpenHook {
         path,
         hook: Box::new(hook),
     });
@@ -187,11 +193,10 @@ fn arm_lmdb_open_hook(
 fn run_lmdb_open_hook(slot: &LmdbOpenHookSlot, path: &Path) {
     let hook = {
         let mut armed = slot.lock().expect("lmdb-open hook mutex poisoned");
-        if armed.as_ref().is_some_and(|hook| hook.path == path) {
-            armed.take().map(|hook| hook.hook)
-        } else {
-            None
-        }
+        armed
+            .iter()
+            .position(|hook| hook.path == path)
+            .map(|at| armed.swap_remove(at).hook)
     };
     if let Some(hook) = hook {
         hook(path);

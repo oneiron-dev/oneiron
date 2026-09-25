@@ -53,6 +53,15 @@ impl GitService {
 /// Builds the git smart-HTTP routes.
 pub(crate) fn git_http_routes() -> Router<Arc<SyncServer>> {
     Router::new()
+        .route("/git/lease/{lease}/{repo}/info/refs", get(lease_info_refs))
+        .route(
+            "/git/lease/{lease}/{repo}/git-upload-pack",
+            post(lease_upload_pack),
+        )
+        .route(
+            "/git/lease/{lease}/{repo}/git-receive-pack",
+            post(lease_receive_pack),
+        )
         .route("/git/{repo}/info/refs", get(git_info_refs))
         .route("/git/{repo}/git-upload-pack", post(git_upload_pack))
         .route("/git/{repo}/git-receive-pack", post(git_receive_pack))
@@ -119,7 +128,7 @@ pub(crate) async fn git_upload_pack(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
-    serve_rpc(server, repo, headers, body, GitService::UploadPack).await
+    serve_rpc(server, repo, headers, body, GitService::UploadPack, None).await
 }
 
 /// `POST /git/{repo}/git-receive-pack` — the push, streamed.
@@ -134,7 +143,7 @@ pub(crate) async fn git_receive_pack(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
-    serve_rpc(server, repo, headers, body, GitService::ReceivePack).await
+    serve_rpc(server, repo, headers, body, GitService::ReceivePack, None).await
 }
 
 async fn serve_rpc(
@@ -143,6 +152,7 @@ async fn serve_rpc(
     headers: HeaderMap,
     body: Body,
     service: GitService,
+    lease: Option<String>,
 ) -> Response {
     let auth = match authenticate(&headers, &server.config, server.vault().as_ref(), service) {
         Ok(auth) => auth,
@@ -152,7 +162,7 @@ async fn serve_rpc(
     let request = smart_http::ServeRequest {
         method: "POST".to_owned(),
         path_info: format!("/{name}.git/{}", service.as_str()),
-        query_string: String::new(),
+        query_string: lease.map_or_else(String::new, |ticket| format!("checkout-lease={ticket}")),
         content_type: header_value(&headers, CONTENT_TYPE.as_str()),
         content_length: header_value(&headers, CONTENT_LENGTH.as_str())
             .and_then(|value| value.parse::<u64>().ok()),
@@ -165,4 +175,91 @@ async fn serve_rpc(
         remote_addr: None,
     };
     run_serve(server, name, request, body).await
+}
+
+/// Lease endpoints keep the registered-principal bearer gate. The lease is a
+/// scoped redemption reference, never an authentication bypass.
+async fn lease_info_refs(
+    State(server): State<Arc<SyncServer>>,
+    Path((lease, repo)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
+) -> Response {
+    if !lease_shape(&lease) {
+        return invalid_lease();
+    }
+    let service = match advertised_service(&query.unwrap_or_default()) {
+        Ok(service) => service,
+        Err(refusal) => return refusal.response(),
+    };
+    let auth = match authenticate(&headers, &server.config, server.vault().as_ref(), service) {
+        Ok(auth) => auth,
+        Err(response) => return *response,
+    };
+    let name = repo_name(&repo).to_owned();
+    let mut request = advertisement_request(&name, service, remote_user(&auth));
+    request
+        .query_string
+        .push_str(&format!("&checkout-lease={lease}"));
+    run_serve(server, name, request, Body::empty()).await
+}
+
+async fn lease_upload_pack(
+    State(server): State<Arc<SyncServer>>,
+    Path((lease, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    if !lease_shape(&lease) {
+        return invalid_lease();
+    }
+    serve_rpc(
+        server,
+        repo,
+        headers,
+        body,
+        GitService::UploadPack,
+        Some(lease),
+    )
+    .await
+}
+
+async fn lease_receive_pack(
+    State(server): State<Arc<SyncServer>>,
+    Path((lease, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    if !lease_shape(&lease) {
+        return invalid_lease();
+    }
+    serve_rpc(
+        server,
+        repo,
+        headers,
+        body,
+        GitService::ReceivePack,
+        Some(lease),
+    )
+    .await
+}
+
+fn lease_shape(ticket: &str) -> bool {
+    let Some((id, epoch)) = ticket.split_once('.') else {
+        return false;
+    };
+    id.len() == 32
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && epoch
+            .parse::<u64>()
+            .is_ok_and(|n| n > 0 && n.to_string() == epoch)
+}
+
+fn invalid_lease() -> Response {
+    super::gate::text_response(
+        axum::http::StatusCode::BAD_REQUEST,
+        "invalid checkout lease",
+    )
 }

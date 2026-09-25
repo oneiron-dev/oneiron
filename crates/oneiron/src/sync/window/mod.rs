@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use super::bridge::{self, Materializer, ObserverAState, OutboundSink};
-use super::diagnostic_ingest;
 use super::loro_support::{self, doc_from_snapshot, doc_version_vector, import_doc};
+use super::pack_sync;
 use super::quarantine;
 use super::queue;
 use super::quota;
@@ -18,6 +18,7 @@ use crate::Vault;
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
 use loro::{LoroDoc, Subscription};
 
+mod admission;
 mod egress;
 mod forward;
 mod reverse;
@@ -26,6 +27,7 @@ mod reverse;
 pub mod test_hooks;
 mod tombstones;
 
+pub use self::admission::validate_window_update_locality;
 pub(crate) use self::egress::export_history_free_window_snapshot;
 pub(in crate::sync) use self::egress::export_scrubbed_window_snapshot;
 use self::egress::window_packing_excludes_entity;
@@ -33,6 +35,7 @@ pub use self::egress::{
     export_window_updates_since, history_free_window_required, replay_pending_mirrors,
     require_history_free_window,
 };
+pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
 pub use self::reverse::reverse_rematerialize;
 pub(crate) use self::tombstones::{DeleteBearingUpdate, export_tombstone_commit_delta};
@@ -379,7 +382,7 @@ pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKe
     let mut applied = 0u32;
     let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
     for entry in iter {
-        let (_k, v) = entry?;
+        let (_, v) = entry?;
         import_doc(doc, &v)?;
         applied += 1;
     }
@@ -406,8 +409,6 @@ use super::loro_support::{
 use super::quarantine::QuarantineContainer;
 #[cfg(test)]
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
-#[cfg(test)]
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 #[cfg(test)]
 use crate::entity_id::EntityId;
 use crate::error::SyncError;

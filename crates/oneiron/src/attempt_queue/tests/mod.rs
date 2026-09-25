@@ -39,6 +39,8 @@ mod enqueue_pause_cancel;
 mod landing_core;
 mod landing_reserve_settle;
 mod manifest_pack_compat;
+#[cfg(feature = "sync")]
+mod observe;
 mod retry_chains;
 mod support;
 

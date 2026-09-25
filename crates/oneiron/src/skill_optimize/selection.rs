@@ -54,6 +54,14 @@ pub struct SkillOptimizeCandidate {
 ///
 /// Storage errors; body errors from an undecodable SKILL record.
 pub fn optimize_candidates(vault: &Vault) -> Result<Vec<SkillOptimizeCandidate>> {
+    select_candidates(vault, false)
+}
+
+pub(super) fn affirm_candidates(vault: &Vault) -> Result<Vec<SkillOptimizeCandidate>> {
+    select_candidates(vault, true)
+}
+
+fn select_candidates(vault: &Vault, affirm: bool) -> Result<Vec<SkillOptimizeCandidate>> {
     let min_outcomes = skill_optimize_min_outcomes(vault)?;
     let skills = all_skill_ids(vault)?;
 
@@ -89,7 +97,7 @@ pub fn optimize_candidates(vault: &Vault) -> Result<Vec<SkillOptimizeCandidate>>
         // on are partitioned, so no held-out outcome votes on which skill the
         // author is asked to rewrite.
         let reading = dev_partition_reading(vault, &id, prior)?;
-        if reading.attributed < min_outcomes {
+        if reading.attributed == 0 || (!affirm && reading.attributed < min_outcomes) {
             continue;
         }
         // And the RESERVE has to exist, because the gate scores against it and
@@ -99,12 +107,12 @@ pub fn optimize_candidates(vault: &Vault) -> Result<Vec<SkillOptimizeCandidate>>
         // such skill used to buy an LLM draft the gate could not score. The
         // check is here, at SELECTION, for the reason the tier filter is:
         // an unscorable skill is absent from the list, not refused at the end.
-        if reading.reserved == 0 {
+        if !affirm && reading.reserved == 0 {
             continue;
         }
         // Evidence of LOSS, not merely of use: the outcomes have to have moved
         // this skill below where its own birth path started it.
-        if reading.posterior.mean() >= prior.mean() {
+        if (reading.posterior.mean() >= prior.mean()) != affirm {
             continue;
         }
         candidates.push(SkillOptimizeCandidate {

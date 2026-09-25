@@ -810,8 +810,7 @@ fn imported_skill_content_never_changes_in_place_any_approval() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let candidate = imported_skill("1.0.0");
-    vault.put_skill_record(&id, &candidate, TimeRange { start: 10, end: 10 }, 11)?;
-    let active = activate(&vault, &id, &candidate)?;
+    let active = crate::skill_hub::test_support::admitted_import(&vault, &id, candidate);
 
     // No approval label permits a generic in-place imported-content edit.
     for approval in [
@@ -842,7 +841,7 @@ fn imported_skill_content_never_changes_in_place_any_approval() -> Result<()> {
         assert_eq!(stored.forked_from, active.forked_from);
     }
 
-    // State-axis flips (lifecycle/approval only, no content) stay legal.
+    // Demotion stays legal. Re-activation needs a fresh local admission.
     let mut stale = active.clone();
     stale.lifecycle_status = SkillLifecycle::Stale;
     vault.update_skill_record(&id, &stale, TimeRange { start: 40, end: 40 }, 41)?;
@@ -850,13 +849,19 @@ fn imported_skill_content_never_changes_in_place_any_approval() -> Result<()> {
         vault.get_skill_record(&id)?.map(|r| r.lifecycle_status),
         Some(SkillLifecycle::Stale),
     );
-    vault.update_skill_record(&id, &active, TimeRange { start: 42, end: 42 }, 43)?;
+    assert_eq!(
+        vault
+            .update_skill_record(&id, &active, TimeRange { start: 42, end: 42 }, 43)
+            .expect_err("re-activation needs fresh admission")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
     let stored = vault.get_skill_record(&id)?.ok_or(Error::EntityNotFound)?;
     assert_eq!(stored.skill_id, active.skill_id);
     assert_eq!(stored.desc, active.desc);
     assert_eq!(stored.version, active.version);
     assert_eq!(stored.approval_status, active.approval_status);
-    assert_eq!(stored.lifecycle_status, SkillLifecycle::Active);
+    assert_eq!(stored.lifecycle_status, SkillLifecycle::Stale);
     assert_eq!(stored.source, active.source);
     assert_eq!(stored.generated, active.generated);
     assert_eq!(stored.human_authored, active.human_authored);
@@ -874,8 +879,7 @@ fn confidence_moves_without_a_revision_and_survives_the_imported_content_gate() 
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let candidate = imported_skill("1.0.0");
-    vault.put_skill_record(&id, &candidate, TimeRange { start: 10, end: 10 }, 11)?;
-    let active = activate(&vault, &id, &candidate)?;
+    let active = crate::skill_hub::test_support::admitted_import(&vault, &id, candidate);
 
     // Refreshing the confidence cache needs no content revision.
     let mut refreshed = active.clone();
@@ -957,6 +961,11 @@ fn canonical_tree_hash_rejects_bad_trees_fail_closed() {
     let err = canonical_skill_tree_hash([("Foo.md", content), ("foo.md", content)])
         .expect_err("case-fold duplicate paths must fail closed");
     assert_eq!(err.kind(), ErrorKind::InvalidSkillBody);
+    for paths in [["file", "file/child"], ["a/b", "a"], ["A", "a/b"]] {
+        let err = canonical_skill_tree_hash(paths.map(|path| (path, content)))
+            .expect_err("a portable tree cannot use a file as a directory");
+        assert_eq!(err.kind(), ErrorKind::InvalidSkillBody);
+    }
     let err = canonical_skill_tree_hash(std::iter::empty::<(&str, &[u8])>())
         .expect_err("an empty tree has no identity");
     assert_eq!(err.kind(), ErrorKind::InvalidSkillBody);
@@ -1130,10 +1139,30 @@ fn replicated_create_keeps_writing_already_lifecycled_records() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let mut born_active = human_skill("1.0.0");
     born_active.lifecycle_status = SkillLifecycle::Active;
-    // Sync remat carries records admitted (and possibly forked) on another
-    // device: the birth and lineage gates are LOCAL-only, so a dangling
-    // forkedFrom (parent still on the remote) must replicate fine.
-    born_active.forked_from = Some(EntityId::now());
+    // Native replica births do not repeat local Candidate admission. An unresolved
+    // ancestor cannot prove this is native rather than an imported fork, however.
+    let parent = EntityId::now();
+    born_active.forked_from = Some(parent);
+    let missing_id = EntityId::now();
+    assert_eq!(
+        vault
+            .batch()
+            .put_replicated(
+                &missing_id,
+                ENTITY_TYPE_SKILL,
+                TimeRange { start: 9, end: 9 },
+                9,
+                &encode_skill_record(&born_active)?
+            )
+            .commit()
+            .expect_err("unknown ancestry cannot confer execution authority")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert!(vault.get_skill_record(&missing_id)?.is_none());
+    let mut ancestor = human_skill("1.0.0");
+    ancestor.skill_id = "oneiron.skill.parent".to_owned();
+    vault.put_skill_record(&parent, &ancestor, TimeRange { start: 9, end: 9 }, 9)?;
     let body = encode_skill_record(&born_active)?;
     let id = EntityId::now();
     vault

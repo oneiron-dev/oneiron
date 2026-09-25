@@ -68,7 +68,13 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        self.import_skill_from_hub_with_id(hub_ref, package, EntityId::now(), occurred, learned_at)
+        self.import_skill_from_hub_with_id(
+            hub_ref,
+            package,
+            self.store.clock.entity_id()?,
+            occurred,
+            learned_at,
+        )
     }
 
     /// Fetches through an adapter and enters the same import door.
@@ -295,7 +301,17 @@ impl Vault {
             occurred,
             learned_at,
         )?;
-
+        let mut saved = package.clone();
+        saved.record = self.read_skill_record_in_txn(wtxn, &entity)?;
+        self.persist_hub_package_in_txn(wtxn, &entity, &saved)?;
+        self.write_hub_import_receipt_in_txn(
+            wtxn,
+            &entity,
+            content_hash,
+            hub_ref,
+            None,
+            learned_at,
+        )?;
         Ok(entity)
     }
 
@@ -410,7 +426,12 @@ impl Vault {
         let admitted = self
             .read_admitted_capability_surface_in_txn(&wtxn, entity)?
             .unwrap_or_default();
-        if !package.capabilities.is_same_or_narrower_than(&admitted) {
+        let mut proposed_record = package.record.clone();
+        proposed_record.content_hash = Some(content_hash);
+        let requires_held_out = current.lifecycle_status == SkillLifecycle::Active
+            && crate::skill_optimize::skill_body_binding_digest(&current)?
+                != crate::skill_optimize::skill_body_binding_digest(&proposed_record)?;
+        if requires_held_out || !package.capabilities.is_same_or_narrower_than(&admitted) {
             let hub_value = hub_ref.to_value()?;
             let hash_hex = content_hash.to_hex();
             let encoded_caps = encode_capability_surface_value(&package.capabilities);
@@ -423,6 +444,10 @@ impl Vault {
                     && map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
                     && map_text(&body.value, "version") == Some(package.record.version.as_str())
                     && map_value(&body.value, "capabilities") == Some(&encoded_caps)
+                    && map_value(&body.value, "requiresHeldOut")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                        == requires_held_out
                 {
                     return Ok(HubSyncDisposition::Proposed {
                         proposal_id,
@@ -431,7 +456,7 @@ impl Vault {
                 }
             }
 
-            let proposal_id = EntityId::now();
+            let proposal_id = self.store.clock.entity_id()?;
             let mut proposal = ClaimBody::new(
                 PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
                 ClaimSubject::Entity(*entity),
@@ -443,6 +468,10 @@ impl Vault {
                     ),
                     (Value::from("contentHash"), Value::from(hash_hex)),
                     (Value::from("capabilities"), encoded_caps),
+                    (
+                        Value::from("requiresHeldOut"),
+                        Value::Boolean(requires_held_out),
+                    ),
                 ]),
                 1.0,
                 ClaimApprovalStatus::Proposed,
@@ -534,6 +563,9 @@ impl Vault {
             updated.approval_status = ClaimApprovalStatus::Proposed;
             self.apply_hub_sync_skill_record(&mut wtxn, entity, &updated, occurred, learned_at)?;
         }
+        let mut saved = package.clone();
+        saved.record = self.read_skill_record_in_txn(&wtxn, entity)?;
+        self.persist_hub_package_in_txn(&mut wtxn, entity, &saved)?;
         wtxn.commit()?;
         Ok(HubSyncDisposition::Applied)
     }

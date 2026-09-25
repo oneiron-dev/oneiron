@@ -9,7 +9,7 @@ use crate::error::ArtifactError;
 const MAX_CAPABILITY_ENTRIES: usize = 256;
 pub(super) const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
 pub(crate) const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
-pub(super) const MAX_HUB_PACKAGE_FILES: usize = 4096;
+pub(crate) const MAX_HUB_PACKAGE_FILES: usize = 4096;
 pub(crate) const MAX_HUB_PACKAGE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
 /// One file in a fetched, exportable skill package.
@@ -94,12 +94,24 @@ impl SkillCapabilitySurface {
     }
 }
 
+/// How source fields relate to native metadata. Neither variant grants trust.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillPackageFormat {
+    /// Required name, description and version come from scalar SKILL.md frontmatter.
+    Folder,
+    /// Native metadata is separate from exact authored bytes. Frontmatter may be
+    /// partial or absent; any capabilities still come from the source, not a grant.
+    Native,
+}
+
 /// Offline package fetched by an adapter or supplied directly to a vault door.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HubPackage {
     pub record: SkillRecord,
     pub files: Vec<HubFile>,
     pub capabilities: SkillCapabilitySurface,
+    pub format: SkillPackageFormat,
 }
 
 impl HubPackage {
@@ -114,6 +126,7 @@ impl HubPackage {
             record,
             files,
             capabilities,
+            format: SkillPackageFormat::Folder,
         }
     }
 

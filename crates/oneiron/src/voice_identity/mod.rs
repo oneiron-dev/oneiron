@@ -30,6 +30,7 @@
 mod codec_core;
 mod codec_records;
 mod math_keys;
+pub mod ref_bank;
 mod storage_admission;
 mod types;
 mod vault;

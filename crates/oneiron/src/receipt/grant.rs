@@ -1,3 +1,4 @@
+use crate::ports::EntityStoreRead;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -10,7 +11,7 @@ use super::projection::{GrantReceiptProjection, project_receipts_by_grant_limite
 use crate::Vault;
 use crate::access_grant::{AccessGrant, AccessGrantScope, decode_access_grant_body};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrant, FederationGrantScope, decode_federation_grant_body};
 use crate::outbound_grant::{
@@ -426,13 +427,16 @@ pub(super) fn scan_entities_by_type(
     mut visit: impl FnMut(EntityId, EntityMetadataHeader, &[u8]) -> Result<()>,
 ) -> Result<()> {
     let mut scanned = 0_usize;
-    for entry in vault.store.type_index.prefix_iter(txn, &[entity_type])? {
-        let (key, _) = entry?;
-        if key.first().copied() != Some(entity_type) {
-            return Err(Error::CorruptedIndex(context));
-        }
-        let id = entity_id_from_type_index_key(&key, context)?;
-        let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? else {
+    for entry in vault
+        .store
+        .port_entity_ids_by_type(txn, entity_type, None)?
+    {
+        let id = entry?;
+        let Some(raw) = vault
+            .store
+            .port_entity_record(txn, &id)?
+            .map(|row| row.encode())
+        else {
             return Err(Error::CorruptedIndex(context));
         };
         let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex(context))?;
@@ -448,23 +452,17 @@ pub(super) fn scan_entities_by_type(
     Ok(())
 }
 
-fn entity_id_from_type_index_key(key: &[u8], context: &'static str) -> Result<EntityId> {
-    if key.len() != 1 + ENTITY_ID_LEN {
-        return Err(Error::CorruptedIndex(context));
-    }
-    EntityId::from_bytes(
-        key[1..]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex(context))?,
-    )
-    .map_err(|_| Error::CorruptedIndex(context))
-}
-
 fn append_access_grant_scope_fields(
     fields: &mut BTreeMap<String, String>,
     scope: &AccessGrantScope,
 ) {
     match scope {
+        AccessGrantScope::Messages { space_ref }
+        | AccessGrantScope::Summaries { space_ref }
+        | AccessGrantScope::RelationshipClaims { space_ref } => {
+            fields.insert("scope".into(), scope.required_capability().as_str().into());
+            fields.insert("space_ref".into(), space_ref.to_hex());
+        }
         AccessGrantScope::ChannelIdentity {
             identity_ref,
             envelope_ref,

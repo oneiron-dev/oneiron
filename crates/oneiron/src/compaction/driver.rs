@@ -566,7 +566,7 @@ impl CompactionDriver {
         drop(rtxn);
 
         let request = CompactionRequest {
-            request_id: EntityId::now(),
+            request_id: vault.store.clock.entity_id()?,
             session_ref: *session_ref,
             summary_token_budget: self.summary_token_budget(),
             window,

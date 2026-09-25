@@ -8,7 +8,14 @@ use tokio::sync::mpsc;
 fn test_server() -> (tempfile::TempDir, SyncServer) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
+    let server = SyncServer::new(
+        vault,
+        SyncServerConfig {
+            auth_secret: Some("federation-test-root".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     (dir, server)
 }
 
@@ -33,6 +40,21 @@ fn client_window_doc() -> LoroDoc {
     doc
 }
 
+/// Deep value without empty root maps: `get_map` registers a root on the
+/// local doc at first read, so an empty root is not replicated state.
+fn replicated_deep_value(doc: &LoroDoc) -> LoroValue {
+    match doc.get_deep_value() {
+        LoroValue::Map(roots) => LoroValue::Map(
+            roots
+                .iter()
+                .filter(|(_, value)| !matches!(value, LoroValue::Map(map) if map.is_empty()))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 fn expect_window_sync(data: &[u8]) -> (String, u8, Vec<u8>) {
     let parsed = protocol::parse_message(data).unwrap();
     let SyncMessage::WindowSync {
@@ -47,27 +69,11 @@ fn expect_window_sync(data: &[u8]) -> (String, u8, Vec<u8>) {
 }
 
 fn test_legacy_conn_state() -> ConnState {
-    let config = SyncServerConfig::default();
-    ConnState::new(
-        config.max_messages_per_sec,
-        protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
-        FederationQuotaConfig::new(
-            config.max_federation_windows_per_connection,
-            config.federation_flood_pause_secs,
-        ),
-    )
+    ConnState::new(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
 }
 
 fn test_selector_conn_state() -> ConnState {
-    let config = SyncServerConfig::default();
-    ConnState::new(
-        config.max_messages_per_sec,
-        protocol::PROTOCOL_VERSION,
-        FederationQuotaConfig::new(
-            config.max_federation_windows_per_connection,
-            config.federation_flood_pause_secs,
-        ),
-    )
+    ConnState::new(protocol::PROTOCOL_VERSION)
 }
 
 #[test]
@@ -92,15 +98,18 @@ fn oversized_late_join_ephemeral_snapshot_is_skipped() {
     );
 }
 
-fn test_selector_conn_state_with_config(config: &SyncServerConfig) -> ConnState {
-    ConnState::new(
-        config.max_messages_per_sec,
-        protocol::PROTOCOL_VERSION,
-        FederationQuotaConfig::new(
-            config.max_federation_windows_per_connection,
-            config.federation_flood_pause_secs,
-        ),
-    )
+fn bind_selector_test_auth(server: &SyncServer, state: &mut ConnState, member: oneiron::EntityId) {
+    let params = crate::test_credentials::bind_payload(
+        server,
+        &format!("scope=core:read;principal_ref={}", member.to_hex()),
+    );
+    let payload = crate::livequery::test_wire::request(
+        protocol::TAG_RPC,
+        serde_json::json!({"requestId": 1, "method": "auth.bind", "params": params}),
+    );
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    handle_app_message(server, state, protocol::TAG_RPC, &payload[1..], &tx).unwrap();
+    assert!(rx.try_recv().is_ok());
 }
 
 fn entity_id(byte: u8) -> oneiron::EntityId {
@@ -124,6 +133,45 @@ fn insert_entity(doc: &LoroDoc, id: oneiron::EntityId, entity_type: u8, body: &[
             entity_blob(entity_type, body).as_slice(),
         )
         .unwrap();
+}
+
+fn selector_claim_body(person: oneiron::EntityId, predicate: &str) -> Vec<u8> {
+    let claim = oneiron::claim::ClaimBody::new(
+        predicate,
+        oneiron::claim::ClaimSubject::Entity(person),
+        Value::from("value"),
+        0.8,
+        oneiron::claim::ClaimApprovalStatus::Proposed,
+        oneiron::claim::ClaimLifecycleStatus::Active,
+    );
+    let body = Value::Map(vec![
+        (Value::from("pred"), Value::from(claim.predicate.as_str())),
+        (Value::from("val"), claim.value),
+        (Value::from("conf"), Value::F32(claim.confidence)),
+        (
+            Value::from("subj"),
+            Value::Binary(person.as_bytes().to_vec()),
+        ),
+        (Value::from("appr"), Value::from(claim.approval.as_str())),
+        (Value::from("life"), Value::from(claim.lifecycle.as_str())),
+        (
+            "worldId".into(),
+            Value::Binary(oneiron::claim::base_world_id().as_bytes().to_vec()),
+        ),
+        (
+            "scopeFacetId".into(),
+            Value::Binary(claim.scope_facet.as_bytes().to_vec()),
+        ),
+        ("scopeRelationshipId".into(), "all".into()),
+        (
+            "scopeProjectId".into(),
+            Value::Binary(claim.scope_project.as_bytes().to_vec()),
+        ),
+        ("scopeVersion".into(), 2_u64.into()),
+    ]);
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &body).unwrap();
+    encoded
 }
 
 fn edge_map_key(src: oneiron::EntityId, kind: oneiron::EdgeKind, tgt: oneiron::EntityId) -> String {
@@ -233,37 +281,6 @@ async fn submit_lease_request(
     }
 }
 
-fn root_lease_record(
-    server: &SyncServer,
-    vault_id: u64,
-    client_id: u64,
-) -> oneiron::sync::LeaseRecord {
-    let key = oneiron::sync::lease::lease_registry_key(vault_id, client_id);
-    match server
-        .root_doc
-        .get_map(oneiron::sync::ROOT_LEASES_MAP)
-        .get(&key)
-    {
-        Some(ValueOrContainer::Value(LoroValue::Binary(raw))) => {
-            oneiron::sync::decode_lease_record(&raw).unwrap()
-        }
-        other => panic!("missing scoped root lease record {key}: {other:?}"),
-    }
-}
-
-fn mirror_lease_record(
-    vault: &oneiron::Vault,
-    vault_id: u64,
-    client_id: u64,
-) -> oneiron::sync::LeaseRecord {
-    let key = oneiron::sync::lease_key(vault_id, client_id);
-    let raw = vault
-        .sync_state_get(&key)
-        .unwrap()
-        .unwrap_or_else(|| panic!("missing mirrored lease row {key}"));
-    oneiron::sync::decode_lease_record(&raw).unwrap()
-}
-
 #[tokio::test]
 async fn hosted_lease_production_path_isolates_same_client_id_by_configured_vault() {
     use ed25519_dalek::{Signer, SigningKey};
@@ -279,64 +296,23 @@ async fn hosted_lease_production_path_isolates_same_client_id_by_configured_vaul
         .sign(&oneiron::sync::lease_pop_transcript(client_id, &pubkey))
         .to_bytes();
 
-    let server_a = test_server_with_lease_vault_id(vault.clone(), tenant_a);
-    assert!(submit_lease_request(&server_a, client_id, pubkey, pop_sig).await);
-
-    let server_b = test_server_with_lease_vault_id(vault.clone(), tenant_b);
-    assert!(submit_lease_request(&server_b, client_id, pubkey, pop_sig).await);
-    assert!(
-        server_b
-            .root_doc
-            .get_map(oneiron::sync::ROOT_LEASES_MAP)
-            .get(&oneiron::sync::client_id_hex(client_id))
-            .is_none(),
-        "production registration must not write the legacy subscriber-only root key"
-    );
-    assert_eq!(
-        root_lease_record(&server_b, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-    assert_eq!(
-        root_lease_record(&server_b, tenant_b, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-    assert_eq!(
-        mirror_lease_record(&vault, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-    assert_eq!(
-        mirror_lease_record(&vault, tenant_b, client_id).status,
-        oneiron::sync::LeaseStatus::Active
-    );
-
-    let server_a_revoke = test_server_with_lease_vault_id(vault.clone(), tenant_a);
-    assert!(
-        server_a_revoke
-            .revoke_lease(client_id)
-            .await
-            .unwrap()
-            .is_some()
-    );
-
-    let server_b_renew = test_server_with_lease_vault_id(vault.clone(), tenant_b);
-    assert!(submit_lease_request(&server_b_renew, client_id, pubkey, pop_sig).await);
-    assert_eq!(
-        root_lease_record(&server_b_renew, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Revoked
-    );
-    assert_eq!(
-        root_lease_record(&server_b_renew, tenant_b, client_id).status,
-        oneiron::sync::LeaseStatus::Active,
-        "tenant A's revocation floor must not block tenant B renewal"
-    );
-
-    let server_a_retry = test_server_with_lease_vault_id(vault.clone(), tenant_a);
-    assert!(!submit_lease_request(&server_a_retry, client_id, pubkey, pop_sig).await);
-    assert_eq!(
-        root_lease_record(&server_a_retry, tenant_a, client_id).status,
-        oneiron::sync::LeaseStatus::Revoked,
-        "tenant A's own revoked row remains terminal"
-    );
+    for tenant in [tenant_a, tenant_b] {
+        let server = test_server_with_lease_vault_id(vault.clone(), tenant);
+        assert!(!submit_lease_request(&server, client_id, pubkey, pop_sig).await);
+        assert!(
+            vault
+                .sync_state_get(&oneiron::sync::lease_key(tenant, client_id))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            server
+                .root_doc
+                .get_map(oneiron::sync::ROOT_LEASES_MAP)
+                .get(&oneiron::sync::lease::lease_registry_key(tenant, client_id))
+                .is_none()
+        );
+    }
 }
 
 #[tokio::test]
@@ -393,7 +369,10 @@ async fn vv_request_sends_delta_and_vv_response() {
         server_all.len()
     );
     client_doc.import(&delta).unwrap();
-    assert_eq!(client_doc.get_deep_value(), server_doc.get_deep_value());
+    assert_eq!(
+        replicated_deep_value(&client_doc),
+        replicated_deep_value(&server_doc)
+    );
 
     // Message 2: the server's VV so the client can push its local diff.
     let (k1, sub1, vv_payload) = expect_window_sync(&direct_rx.try_recv().unwrap());
@@ -478,7 +457,10 @@ async fn vv_response_sends_local_diff_only() {
     assert_eq!(k, key);
     assert_eq!(sub, window_sub_tags::UPDATE);
     client_doc.import(&delta).unwrap();
-    assert_eq!(client_doc.get_deep_value(), server_doc.get_deep_value());
+    assert_eq!(
+        replicated_deep_value(&client_doc),
+        replicated_deep_value(&server_doc)
+    );
 
     assert!(
         direct_rx.try_recv().is_err(),
@@ -603,8 +585,8 @@ async fn imported_update_is_visible_exportable_and_vv_advanced_without_commit() 
         )
         .unwrap();
     assert_eq!(
-        fresh.get_deep_value(),
-        server_doc.get_deep_value(),
+        replicated_deep_value(&fresh),
+        replicated_deep_value(&server_doc),
         "a fresh peer must reconstruct the imported state with no intervening local commit"
     );
 
@@ -775,41 +757,17 @@ async fn selector_vv_request_sends_filtered_update_only() {
         oneiron::registry::ENTITY_TYPE_FACET,
         b"facet-b",
     );
-    let claim_body = |predicate: &str| {
-        let claim = oneiron::claim::ClaimBody::new(
-            predicate,
-            oneiron::claim::ClaimSubject::Entity(person),
-            Value::from("value"),
-            0.8,
-            oneiron::claim::ClaimApprovalStatus::Proposed,
-            oneiron::claim::ClaimLifecycleStatus::Active,
-        );
-        let body = Value::Map(vec![
-            (Value::from("pred"), Value::from(claim.predicate.as_str())),
-            (Value::from("val"), claim.value),
-            (Value::from("conf"), Value::F32(claim.confidence)),
-            (
-                Value::from("subj"),
-                Value::Binary(person.as_bytes().to_vec()),
-            ),
-            (Value::from("appr"), Value::from(claim.approval.as_str())),
-            (Value::from("life"), Value::from(claim.lifecycle.as_str())),
-        ]);
-        let mut encoded = Vec::new();
-        rmpv::encode::write_value(&mut encoded, &body).unwrap();
-        encoded
-    };
     insert_entity(
         &server_doc,
         claim_allowed,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        &claim_body("selector.test"),
+        &selector_claim_body(person, "selector.test"),
     );
     insert_entity(
         &server_doc,
         claim_denied,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        &claim_body("selector.denied"),
+        &selector_claim_body(person, "selector.denied"),
     );
     insert_entity(
         &server_doc,
@@ -842,13 +800,38 @@ async fn selector_vv_request_sends_filtered_update_only() {
         person,
     );
     server_doc.commit();
+    for (id, kind, body) in [
+        (
+            facet_allowed,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            &b"facet-a"[..],
+        ),
+        (
+            facet_denied,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            &b"facet-b"[..],
+        ),
+        (
+            person,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            &b"person"[..],
+        ),
+    ] {
+        server
+            .vault
+            .put_entity(&id, kind, oneiron::TimeRange { start: 1, end: 1 }, 1, body)
+            .unwrap();
+    }
 
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
         member,
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet_allowed],
-        vec![],
+        vec![
+            oneiron::federation::SelectorRange::Semantic,
+            oneiron::federation::SelectorRange::Core,
+        ],
     );
     let client_doc = client_window_doc();
     let payload =
@@ -857,6 +840,7 @@ async fn selector_vv_request_sends_filtered_update_only() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut conn_state, member);
     handle_window_sync(
         &server,
         1,
@@ -884,80 +868,6 @@ async fn selector_vv_request_sends_filtered_update_only() {
     assert!(entities.get(person.to_hex().as_str()).is_some());
     assert!(entities.get(claim_denied.to_hex().as_str()).is_none());
     assert!(entities.get(facet_denied.to_hex().as_str()).is_none());
-}
-
-#[tokio::test]
-async fn federated_selector_window_quota_exceeded_pauses_connection() {
-    let config = SyncServerConfig {
-        max_federation_windows_per_connection: 1,
-        federation_flood_pause_secs: 30,
-        ..Default::default()
-    };
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let server = SyncServer::new(vault, config.clone()).unwrap();
-
-    let member = entity_id(0x45);
-    let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::federation::FederationGrant::new(
-        test_selector_scope(),
-        member,
-        oneiron::federation::FederationGrantRole::Viewer,
-        oneiron::federation::FederationGrantPreset::ReadOnly,
-    );
-    oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
-        .unwrap();
-    let selector = oneiron::sync::SyncSelector::new(
-        grant_id,
-        member,
-        oneiron::sync::SyncSelectorWorld::All,
-        vec![],
-        vec![],
-    );
-    let payload =
-        oneiron::sync::encode_selector_vv_request(&selector, &VersionVector::new().encode())
-            .unwrap();
-
-    let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-    let mut conn_state = test_selector_conn_state_with_config(&config);
-    handle_window_sync(
-        &server,
-        1,
-        "2026-03",
-        window_sub_tags::SELECTOR_VV_REQUEST,
-        &payload,
-        &direct_tx,
-        &mut conn_state,
-    )
-    .await
-    .unwrap();
-    let _ = direct_rx
-        .try_recv()
-        .expect("first selector request replies");
-
-    handle_window_sync(
-        &server,
-        1,
-        "2026-04",
-        window_sub_tags::SELECTOR_VV_REQUEST,
-        &payload,
-        &direct_tx,
-        &mut conn_state,
-    )
-    .await
-    .unwrap();
-
-    assert!(
-        direct_rx.try_recv().is_err(),
-        "paused selector connection must not load or reply for the churned window"
-    );
-    let snapshot = conn_state.federation_quota_snapshot();
-    assert_eq!(
-        snapshot.decision,
-        AllowBlock::Pause(oneiron::sync::FederationPauseReason::FloodPauseActive)
-    );
-    assert_eq!(snapshot.windows_touched, 1);
-    assert!(snapshot.pause_remaining.is_some());
 }
 
 #[tokio::test]
@@ -1088,6 +998,7 @@ async fn selector_connection_rejects_full_window_bypass() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut conn_state, member);
     handle_window_sync(
         &server,
         1,
@@ -1146,11 +1057,12 @@ async fn legacy_selector_protocol_rejects_first_message_full_window_sync() {
 }
 
 #[tokio::test]
-async fn current_protocol_accepts_first_message_full_window_sync() {
+async fn owner_protocol_accepts_first_message_full_window_sync() {
     let (_dir, server) = test_server();
     let key = "2026-10";
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
+    conn_state.protocol_version = protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION;
 
     handle_window_sync(
         &server,
@@ -1236,6 +1148,7 @@ async fn selector_request_authorizes_before_window_creation() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut conn_state, member);
     let result = handle_window_sync(
         &server,
         1,
@@ -1296,7 +1209,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
         &server_doc,
         claim_allowed,
         oneiron::registry::ENTITY_TYPE_CLAIM,
-        b"claim",
+        &selector_claim_body(member, "selector.test"),
     );
     insert_edge(
         &server_doc,
@@ -1305,13 +1218,26 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
         facet_allowed,
     );
     server_doc.commit();
+    server
+        .vault
+        .put_entity(
+            &facet_allowed,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .unwrap();
 
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
         member,
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet_allowed],
-        vec![],
+        vec![
+            oneiron::federation::SelectorRange::Semantic,
+            oneiron::federation::SelectorRange::Core,
+        ],
     );
     let client_doc = client_window_doc();
     let empty_payload =
@@ -1320,6 +1246,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut conn_state, member);
     handle_window_sync(
         &server,
         1,
@@ -2438,11 +2365,15 @@ async fn a_session_without_a_jti_is_unaffected_by_an_unreadable_registry() {
 
 #[test]
 fn protocol_hello_validation_literals() {
-    // Contract literals: v6 is full-window-only, v7 is selector-only, and v9
-    // supports both modes plus entity documents. v8 is not negotiated.
+    // Full-window v6/v10 and selector v7/v8/v9 stay distinct.
+    // Both v9 and v10 carry entity documents; only v10 carries owner chunks.
     assert_eq!(
         validate_protocol_hello(&[3, 6]),
         Ok(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
+    );
+    assert_eq!(
+        validate_protocol_hello(&[3, 8]),
+        Ok(protocol::APP_TIER_PROTOCOL_VERSION_VERSION)
     );
     assert_eq!(
         validate_protocol_hello(&[3, 7]),
@@ -2452,15 +2383,22 @@ fn protocol_hello_validation_literals() {
         validate_protocol_hello(&[3, 9]),
         Ok(protocol::PROTOCOL_VERSION)
     );
+    assert_eq!(
+        validate_protocol_hello(&[3, 10]),
+        Ok(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
+    );
 
+    assert_eq!(
+        validate_protocol_hello(&[3, 7]),
+        Ok(protocol::LEGACY_SELECTOR_PROTOCOL_VERSION)
+    );
     let cases: &[(&str, &[u8])] = &[
         ("v1_peer", &[3, 1]),
         ("old_full_window_v2_peer", &[3, 2]),
         ("old_selector_v3_peer", &[3, 3]),
         ("old_full_window_v4_peer", &[3, 4]),
         ("old_selector_v5_peer", &[3, 5]),
-        ("retired_app_version", &[3, 8]),
-        ("future_version", &[3, 10]),
+        ("future_version", &[3, 11]),
         ("zero_version", &[3, 0]),
         ("wrong_tag", &[2, 7]),
         ("empty", &[]),
@@ -3558,7 +3496,155 @@ async fn a_silent_peer_gets_re_consulted_on_the_tick_during_the_pre_handover_dra
 }
 
 #[tokio::test]
+async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause() {
+    let dir = tempfile::tempdir().unwrap();
+    // The whole burst lands in one store-clock second, however long this
+    // build takes to verify the logged slips.
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = oneiron::store::ports::ManualClock::new(1_772_000_000).bundle();
+    let server = SyncServer::new(
+        Arc::new(oneiron::Vault::open(dir.path(), config).unwrap()),
+        SyncServerConfig {
+            auth_secret: Some("federation-test-root".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let member = entity_id(0x45);
+    let grant_id = oneiron::EntityId::now();
+    let grant = oneiron::federation::FederationGrant::new(
+        test_selector_scope(),
+        member,
+        oneiron::federation::FederationGrantRole::Viewer,
+        oneiron::federation::FederationGrantPreset::ReadOnly,
+    );
+    oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
+        .unwrap();
+    let selector = oneiron::sync::SyncSelector::new(
+        grant_id,
+        member,
+        oneiron::sync::SyncSelectorWorld::All,
+        vec![],
+        vec![],
+    );
+    let payload =
+        oneiron::sync::encode_selector_vv_request(&selector, &VersionVector::new().encode())
+            .unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut state = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut state, member);
+    // Holder proofs are dated by the held store clock but checked against the
+    // authority clock, which keeps real time: bind every connection up front.
+    let mut impostor = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46));
+    let mut reconnected = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut reconnected, member);
+    let mut saw_defer = false;
+    // More than the retired 64-window quota. Every valid request completes,
+    // either immediately or by redeeming its durable response identity.
+    for index in 0..70 {
+        let key = format!("{:04}-{:02}", 2020 + index / 12, 1 + index % 12);
+        handle_window_sync(
+            &server,
+            1,
+            &key,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &payload,
+            &tx,
+            &mut state,
+        )
+        .await
+        .unwrap();
+        let (response_key, tag, bytes) = expect_window_sync(&rx.try_recv().unwrap());
+        assert_eq!(response_key, key);
+        if tag == window_sub_tags::SELECTOR_DEFERRED {
+            saw_defer = true;
+            assert_eq!(&bytes[32..], payload.as_slice());
+            assert!(
+                server
+                    .vault
+                    .sync_state_get(&format!("d:w:{key}"))
+                    .unwrap()
+                    .is_none()
+            );
+            // Same credential can reconnect. A different principal cannot
+            // redeem this ticket even if it knows the request and its id.
+            assert!(matches!(
+                handle_window_sync(
+                    &server,
+                    2,
+                    &key,
+                    window_sub_tags::SELECTOR_RETRY,
+                    &bytes,
+                    &tx,
+                    &mut impostor
+                )
+                .await,
+                Err(ProtocolError::InvalidPayload(_))
+            ));
+            assert!(rx.try_recv().is_err());
+            handle_window_sync(
+                &server,
+                3,
+                &key,
+                window_sub_tags::SELECTOR_RETRY,
+                &bytes,
+                &tx,
+                &mut reconnected,
+            )
+            .await
+            .unwrap();
+            let (replayed_key, replayed_tag, update) = expect_window_sync(&rx.try_recv().unwrap());
+            assert_eq!(replayed_key, key);
+            assert_eq!(replayed_tag, window_sub_tags::UPDATE);
+            client_window_doc().import(&update).unwrap();
+        } else {
+            assert_eq!(tag, window_sub_tags::UPDATE);
+            client_window_doc().import(&bytes).unwrap();
+        }
+    }
+    assert!(saw_defer);
+}
+
+#[tokio::test]
+async fn selector_shared_secret_without_bound_principal_never_creates_a_request() {
+    let (_dir, server) = test_server();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut state = test_selector_conn_state();
+    assert!(matches!(
+        handle_window_sync(
+            &server,
+            1,
+            "2026-01",
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            b"malformed",
+            &tx,
+            &mut state
+        )
+        .await,
+        Err(ProtocolError::RpcNoPrincipal)
+    ));
+    assert!(rx.try_recv().is_err());
+    assert!(
+        server
+            .vault
+            .sync_state_get("d:w:2026-01")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn document_batch_socket_admission_edit_ack_and_revocation() {
+    document_batch_exchange(protocol::PROTOCOL_VERSION).await;
+}
+
+#[tokio::test]
+async fn owner_socket_combines_document_and_chunk_sync_without_selector_downgrade() {
+    document_batch_exchange(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION).await;
+}
+
+async fn document_batch_exchange(version: u8) {
     use oneiron::sync::transport::{
         self, document_sub_tags, encode_document, encode_document_batch,
     };
@@ -3575,6 +3661,7 @@ async fn document_batch_socket_admission_edit_ack_and_revocation() {
         oneiron::sync::SyncClient::new(manager.clone(), oneiron::sync::SyncClientConfig::default())
             .unwrap();
     let id = oneiron::EntityId::now();
+    let facet = oneiron::EntityId::now();
     for vault in [server.vault.as_ref(), client_vault.as_ref()] {
         vault
             .put_entity(
@@ -3584,6 +3671,18 @@ async fn document_batch_socket_admission_edit_ack_and_revocation() {
                 1,
                 b"ledger",
             )
+            .unwrap();
+        vault
+            .put_entity(
+                &facet,
+                oneiron::registry::ENTITY_TYPE_FACET,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"shared document facet",
+            )
+            .unwrap();
+        vault
+            .put_edge(&id, oneiron::EdgeKind::FacetOf, &facet, 1.0)
             .unwrap();
     }
     let member = oneiron::EntityId::now();
@@ -3599,16 +3698,69 @@ async fn document_batch_socket_admission_edit_ack_and_revocation() {
         grant_id,
         member,
         oneiron::sync::SyncSelectorWorld::All,
+        vec![facet],
+        vec![oneiron::federation::SelectorRange::Core],
+    );
+    let source = server.reassert_manager.documents().open(id).unwrap();
+    let notice = source.edit_text(0, 0, "shared").unwrap();
+    for state in [test_legacy_conn_state(), test_selector_conn_state()] {
+        assert!(
+            super::documents::document_delivery(&server, &state, &notice)
+                .unwrap()
+                .is_empty()
+        );
+    }
+    let empty_selector = oneiron::sync::SyncSelector::new(
+        grant_id,
+        member,
+        oneiron::sync::SyncSelectorWorld::All,
         vec![],
         vec![],
     );
-    let source = server.reassert_manager.documents().open(id).unwrap();
-    source.edit_text(0, 0, "shared").unwrap();
+    assert!(
+        server
+            .reassert_manager
+            .export_document(
+                id,
+                test_selector_scope(),
+                &empty_selector,
+                &VersionVector::default().encode(),
+            )
+            .is_ok()
+    );
     manager.documents().subscribe_entity(id, &selector).unwrap();
     let requests = manager.documents().request_frames().unwrap();
     let batch = encode_document_batch(&requests).into_result().unwrap();
     let (direct, mut replies) = mpsc::unbounded_channel();
     let mut state = test_selector_conn_state();
+    state.protocol_version = version;
+    assert!(matches!(
+        handle_sync_message(
+            &server,
+            1,
+            protocol::parse_message(&batch).unwrap(),
+            &direct,
+            &mut state,
+        )
+        .await,
+        Err(ProtocolError::RpcNoPrincipal)
+    ));
+    assert!(replies.try_recv().is_err());
+    let mut impostor = test_selector_conn_state();
+    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46));
+    assert!(matches!(
+        handle_sync_message(
+            &server,
+            1,
+            protocol::parse_message(&batch).unwrap(),
+            &direct,
+            &mut impostor,
+        )
+        .await,
+        Err(ProtocolError::InvalidPayload(_))
+    ));
+    assert!(replies.try_recv().is_err());
+    bind_selector_test_auth(&server, &mut state, member);
     handle_sync_message(
         &server,
         1,
@@ -3638,6 +3790,25 @@ async fn document_batch_socket_admission_edit_ack_and_revocation() {
     assert_eq!(local.text().unwrap(), "shared");
     let edit = local.edit_text(6, 0, " edit").unwrap();
     assert_eq!(local.pending_frames().unwrap().len(), 1);
+    assert!(matches!(
+        handle_sync_message(
+            &server,
+            1,
+            protocol::parse_message(&edit).unwrap(),
+            &direct,
+            &mut state,
+        )
+        .await,
+        Err(ProtocolError::RpcNoPrincipal)
+    ));
+    assert_eq!(source.text().unwrap(), "shared");
+    state.bound_auth = Some(crate::test_credentials::authenticate(
+        &server,
+        &format!(
+            "scope=core:read,core:write;principal_ref={}",
+            member.to_hex()
+        ),
+    ));
     handle_sync_message(
         &server,
         1,
@@ -3651,6 +3822,59 @@ async fn document_batch_socket_admission_edit_ack_and_revocation() {
     client.handle_server_message(&ack).unwrap();
     assert!(local.pending_frames().unwrap().is_empty());
     assert_eq!(source.text().unwrap(), "shared edit");
+
+    // The same socket can carry owner-only chunks without changing the
+    // per-document selector admission or admitting selector window requests.
+    let bytes = b"document and chunk lane coexistence";
+    let oid = oneiron::origin::lfs::LfsOid::digest(bytes);
+    server
+        .vault
+        .put_lfs_object(oid, bytes, oneiron::TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    let request =
+        oneiron::sync::chunks::encode_chunk_request(&oneiron::sync::chunks::ChunkSyncRequest {
+            oid: *oid.as_bytes(),
+            selector: Vec::new(),
+            have: Vec::new(),
+            want: None,
+        })
+        .unwrap();
+    let frame = transport::encode_lfs_chunk_sync(&request)
+        .into_result()
+        .unwrap();
+    let result = handle_sync_message(
+        &server,
+        1,
+        protocol::parse_message(&frame).unwrap(),
+        &direct,
+        &mut state,
+    )
+    .await;
+    if version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION {
+        result.unwrap();
+        let reply = replies.try_recv().unwrap();
+        assert_eq!(reply[0], transport::TAG_LFS_CHUNK_SYNC);
+        assert_eq!(
+            &reply[1..],
+            oneiron::sync::chunks::serve_owner_chunk_request(&server.vault, &request,).unwrap()
+        );
+        assert!(
+            state
+                .bind_window_sync_mode(super::conn_state::WindowSyncMode::Selector)
+                .is_err()
+        );
+        state
+            .bind_window_sync_mode(super::conn_state::WindowSyncMode::FullWindow)
+            .unwrap();
+    } else {
+        assert!(result.is_err());
+        assert!(replies.try_recv().is_err());
+        assert!(
+            state
+                .bind_window_sync_mode(super::conn_state::WindowSyncMode::FullWindow)
+                .is_err()
+        );
+    }
 
     // A queued notice cannot disclose after its grant is gone.
     let notice = source.edit_text(11, 0, "!").unwrap();

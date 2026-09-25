@@ -1,5 +1,6 @@
 //! Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 use xxhash_rust::xxh3::xxh3_128;
 
@@ -232,7 +233,10 @@ fn vad_annotation_claim_matches_subject(
     claim_id: &EntityId,
     annotated_id: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
+    let Some(raw) = store
+        .port_entity_record(rtxn, claim_id)?
+        .map(|row| row.encode())
+    else {
         return Ok(false);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

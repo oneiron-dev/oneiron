@@ -33,8 +33,10 @@ mod conflict;
 mod executor;
 mod extracted_people;
 mod gap;
+mod judge_context;
 mod open_conflict;
 mod partition;
+mod persistence;
 mod provenance;
 pub(crate) mod resources;
 pub mod routing;
@@ -49,6 +51,7 @@ pub use conflict::*;
 pub use executor::*;
 pub use gap::*;
 pub use partition::*;
+pub use persistence::close_persistent_conflict;
 pub use provenance::*;
 pub use resources::ScopedConsolidationWrite;
 pub use support::*;
@@ -59,6 +62,8 @@ pub use watermark::*;
 // seam re-imports them so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
 use crate::Vault;
+#[cfg(test)]
+use crate::batch::EntityMetadataHeader;
 #[cfg(test)]
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 #[cfg(test)]

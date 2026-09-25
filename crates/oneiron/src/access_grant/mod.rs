@@ -6,6 +6,10 @@
 //! unsupported scope/capability/status strings, malformed entity references,
 //! and inconsistent revocation state are rejected.
 
+mod context;
+pub use context::{AccessContext, AccessLimited, GrantedData};
+mod request;
+pub use request::{AccessRequest, AccessRequestStatus};
 mod codec;
 mod record;
 mod vault_doors;

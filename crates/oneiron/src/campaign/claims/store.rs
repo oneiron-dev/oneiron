@@ -1,5 +1,7 @@
 //! Store-aware claim reads: stage CAS, live-head scans, and DNC matching.
 
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
@@ -10,7 +12,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::store::Store;
-use crate::vault::{edge_kind_prefix, parse_edge_record};
 
 use super::{codec::*, types::*};
 
@@ -318,16 +319,14 @@ fn resolve_do_not_contact_subject_in_txn(
     let Ok(id) = EntityId::from_bytes(bytes) else {
         return Ok(None);
     };
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, &id)? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
-    if header.entity_type != ENTITY_TYPE_PERSON {
+
+    if raw.entity_type != ENTITY_TYPE_PERSON {
         return Ok(None);
     }
-    let mut cursor = std::io::Cursor::new(&raw[ENTITY_METADATA_HEADER_LEN..]);
+    let mut cursor = std::io::Cursor::new(&raw.body);
     let Ok(body) = rmpv::decode::read_value(&mut cursor) else {
         return Ok(None);
     };
@@ -381,11 +380,16 @@ fn subject_claim_ids_in_txn(
     txn: &heed::RoTxn<'_>,
     subject: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    let prefix = edge_kind_prefix(subject, EdgeKind::ClaimOf);
     let mut ids = Vec::new();
-    for entry in store.edges_in.prefix_iter(txn, &prefix)? {
-        let (key, value) = entry?;
-        ids.push(parse_edge_record(&key, &value)?.target);
+    for entry in store.port_edges(
+        txn,
+        subject,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::ClaimOf),
+        None,
+    )? {
+        let edge_row = entry?;
+        ids.push(edge_row.target);
     }
     Ok(ids)
 }
@@ -397,7 +401,7 @@ fn claim_body_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<ClaimBody>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {

@@ -15,6 +15,8 @@
 //! - `validate` — cross-cutting validators and the surface compiler.
 
 mod atom;
+mod instrument;
+pub use instrument::{InstrumentAtoms, InstrumentView, LensExecutionRuntime, render_instrument};
 mod generated_ui;
 mod mediation;
 mod self_ui;

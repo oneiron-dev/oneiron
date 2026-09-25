@@ -9,9 +9,5 @@ pub(crate) fn is_archived_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    // Even malformed markers hide rows. Only restore decodes/accepts byte 5.
-    Ok(store
-        .sync_state()
-        .get(txn, crate::deletion::archive_tombstone_key(id).as_str())?
-        .is_some())
+    Ok(crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, id)?.archived)
 }

@@ -9,6 +9,8 @@
 mod enqueue_claim;
 mod mutate;
 mod reads;
+mod redirect;
+mod workflow;
 
 use crate::store::Store;
 
@@ -29,3 +31,9 @@ pub(super) use self::reads::{
     ERR_RETRY_CHAIN_CYCLE, ERR_RETRY_CHAIN_MISMATCH, ERR_RETRY_CHAIN_MISSING_ROW,
     RETRY_CHAIN_DEPTH_LIMIT,
 };
+
+impl<'a> AttemptQueue<'a> {
+    pub(crate) fn from_store(store: &'a Store) -> Self {
+        Self { store }
+    }
+}

@@ -85,6 +85,7 @@ pub(super) fn tournament_evidence(
         acted_on_artifact_ids: triage.acted_on_artifact_ids.clone(),
         hard_veto_artifact_ids: triage.hard_veto_artifact_ids.clone(),
         out_of_scope_artifact_ids: triage.out_of_scope_artifact_ids.clone(),
+        auto_resolved: triage.auto_resolved,
     };
     validate_evidence(&evidence)?;
     Ok(evidence)
@@ -108,6 +109,7 @@ pub(super) fn tournament_weave_evidence(
         acted_on_artifact_ids: Vec::new(),
         hard_veto_artifact_ids: Vec::new(),
         out_of_scope_artifact_ids: Vec::new(),
+        auto_resolved: false,
     };
     validate_evidence(&evidence)?;
     Ok(evidence)

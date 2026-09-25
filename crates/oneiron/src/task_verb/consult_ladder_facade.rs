@@ -1,3 +1,4 @@
+use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
 use crate::claim::ClaimApprovalStatus;
@@ -13,7 +14,6 @@ use crate::memory::{
 };
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::temporal::TimeRange;
-use crate::unix_seconds_now;
 
 use super::consult_result::TaskVerbBody;
 use super::create_spec::{TaskCreateRateLimit, TaskCreateSpec};
@@ -25,7 +25,7 @@ use super::follow_up::peer_handle_key;
 use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::TaskCreateReceipt;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
-use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl, TasksVerb};
+use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 use super::wire_encode::{canonical_bytes, encode_task_verb_body};
 
 impl Memory<'_> {
@@ -113,7 +113,7 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<TaskCreateReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let provenance = facade_provenance(task_verb_contract(TasksVerb::Create));
+        let provenance = facade_provenance(task_verb_contract(AgentVerb::TasksCreate));
         // A counter is a fresh cross-actor consult, so it answers to exactly
         // the same attribution and ownership laws as the original ask.
         let owning_actor_ref = self.resolve_cross_actor_owner(&counter_delta)?;
@@ -131,7 +131,7 @@ impl Memory<'_> {
             })
             .with_ttl(TaskTtl::at(deadline_at));
         let validated = validate_task_create(self.vault(), &spec, now)?;
-        let rate_now = unix_seconds_now();
+        let rate_now = self.vault().store.clock.now_recorded_at();
         let (task_ref, route) = self.with_verified_actor_write_txn(|wtxn| {
             let parent = consult_body_in_txn(self.vault(), &*wtxn, parent_task_ref)?;
             self.require_auto_ceiling_in_txn(&*wtxn)?;
@@ -183,7 +183,7 @@ impl Memory<'_> {
         counter_task_ref: EntityId,
         now: u64,
     ) -> MemoryResult<()> {
-        let result_ref = EntityId::now();
+        let result_ref = self.vault().store.clock.entity_id()?;
         let artifact = canonical_bytes(&counter_lineage_artifact_value(
             parent_ref,
             counter_task_ref,

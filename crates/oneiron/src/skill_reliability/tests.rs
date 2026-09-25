@@ -60,6 +60,9 @@ fn versioned_record(
 
 /// Puts a skill and walks it `candidate → active`.
 fn put_active(vault: &Vault, id: &EntityId, record: SkillRecord) -> SkillRecord {
+    if record.source == ClaimSource::Imported {
+        return crate::skill_hub::test_support::admitted_import(vault, id, record);
+    }
     vault.put_skill_record(id, &record, t(10), 11).expect("put");
     let mut active = record;
     active.lifecycle_status = SkillLifecycle::Active;
@@ -390,11 +393,14 @@ fn a_clean_scan_without_a_hub_alias_is_still_an_unvetted_import() {
     let tree = canonical_skill_tree_hash([("SKILL.md", b"# direct fixture\n".as_slice())])
         .expect("tree hashes");
     let skill = EntityId::now();
-    put_active(
-        &vault,
-        &skill,
-        record("sk05.skill.direct", ClaimSource::Imported, false).with_content_hash(tree),
-    );
+    vault
+        .put_skill_record(
+            &skill,
+            &record("sk05.skill.direct", ClaimSource::Imported, false).with_content_hash(tree),
+            t(10),
+            11,
+        )
+        .expect("candidate without a hub alias");
     ingest_verdict(
         &vault,
         &skill,
@@ -1263,4 +1269,74 @@ fn a_judgment_routed_against_an_earlier_revision_no_longer_grounds() {
         "the receipt names v1 and this entity is v2"
     );
     assert!(active_reliability(&vault, &skill).is_empty());
+}
+
+#[test]
+fn archived_reliability_does_not_seed_a_posterior_cache_or_local_projection() -> crate::Result<()> {
+    let (_source_dir, source) = temp_vault();
+    let (_target_dir, target) = temp_vault();
+    let skill = EntityId::now();
+    put_active(
+        &source,
+        &skill,
+        record("archive.reliability", ClaimSource::UserStated, false),
+    );
+    for at in 20..23 {
+        record_skill_contributing_win(
+            &source,
+            &skill,
+            &stamped_receipt(&source, "archive.reliability"),
+            at,
+        )?;
+    }
+    let native = project_skill_reliability_for(&source, &skill, 30)?;
+    assert_eq!(skill_reliability_posterior(&source, &skill)?, Some(native));
+    let id = source
+        .claims_for_subject(&skill)?
+        .into_iter()
+        .find(|id| {
+            source.get_claim(id).unwrap().is_some_and(|c| {
+                c.predicate == PREDICATE_SKILL_RELIABILITY
+                    && c.lifecycle == ClaimLifecycleStatus::Active
+            })
+        })
+        .unwrap();
+    let original = source.get_claim(&id)?.unwrap();
+    let export = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    target.import_whole_vault_json(export.bytes())?;
+    let imported = target.get_claim(&id)?.unwrap();
+    assert_eq!(imported.value, original.value);
+    assert_eq!(imported.evidence, original.evidence);
+    assert_eq!(imported.source, Some(ClaimSource::Imported));
+    assert_eq!(imported.approval, ClaimApprovalStatus::Proposed);
+    assert_eq!(skill_reliability_posterior(&target, &skill)?, None);
+    let prior = skill_reliability_prior(&target, &skill)?;
+    assert_ne!(prior, native);
+    assert_eq!(
+        rebuild_skill_confidence_cache(&target, &skill, 80)?,
+        prior.mean()
+    );
+    let projected = project_skill_reliability_for(&target, &skill, 81)?;
+    assert_eq!(projected, prior);
+    assert_eq!(target.get_claim(&id)?, Some(imported.clone()));
+    assert_eq!(skill_reliability_posterior(&target, &skill)?, Some(prior));
+    for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Approved] {
+        let mut forged = imported.clone();
+        forged.approval = approval;
+        let bytes = crate::claim::encode_claim_body(&forged)?;
+        assert!(
+            target
+                .batch()
+                .put_replicated(
+                    &EntityId::now(),
+                    crate::registry::ENTITY_TYPE_CLAIM,
+                    t(90),
+                    90,
+                    &bytes
+                )
+                .commit()
+                .is_err()
+        );
+    }
+    Ok(())
 }

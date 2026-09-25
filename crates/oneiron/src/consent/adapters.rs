@@ -1,8 +1,6 @@
 use rmpv::Value;
 
-use crate::access_grant::{
-    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
-};
+use crate::access_grant::{AccessGrant, AccessGrantCapability, AccessGrantScope};
 use crate::disclosure::{DisclosureScope, DisclosureScopeStatus};
 use crate::error::Result;
 use crate::gate::PolicyScopedGrant;
@@ -32,6 +30,9 @@ use super::support::invalid_bound;
 /// which rereads grant status and current recipient/claim scope for each view.
 /// A static disclosure bound cannot enforce that live redaction boundary.
 pub fn disclosure_grant_from_access_grant(grant: &AccessGrant) -> Result<DisclosureGrant> {
+    if !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read") {
+        return Err(invalid_bound("record-aware Scope evaluation required"));
+    }
     // Reject the capability too: an unvalidated legacy scope must not project
     // a shared-brief read class that bypasses the live resolver.
     if grant.capability == AccessGrantCapability::SharedBriefRead {
@@ -47,6 +48,11 @@ pub fn disclosure_grant_from_access_grant(grant: &AccessGrant) -> Result<Disclos
 
 fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>> {
     match scope {
+        AccessGrantScope::Messages { space_ref }
+        | AccessGrantScope::Summaries { space_ref }
+        | AccessGrantScope::RelationshipClaims { space_ref } => {
+            Ok(vec![format!("space:{}", space_ref.to_hex())])
+        }
         AccessGrantScope::CompanionProfile {
             person_ref,
             persona_ref,
@@ -73,10 +79,14 @@ fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>>
 /// only [`crate::Vault::resolve_share_for_view`] can resolve its live view authority.
 #[must_use]
 pub fn access_grant_projection_is_active(grant: &AccessGrant) -> bool {
-    grant.status == AccessGrantStatus::Active
+    crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read")
+        && grant.is_active()
         && matches!(
             grant.capability,
-            AccessGrantCapability::CompanionProfileRead
+            AccessGrantCapability::MessagesRead
+                | AccessGrantCapability::SummariesRead
+                | AccessGrantCapability::RelationshipClaimsRead
+                | AccessGrantCapability::CompanionProfileRead
                 | AccessGrantCapability::CalendarDisclosureRead
         )
 }
@@ -93,6 +103,9 @@ pub fn access_grant_projection_is_active(grant: &AccessGrant) -> bool {
 pub fn action_grant_from_standing_outbound_grant(
     grant: &StandingOutboundGrant,
 ) -> Result<ActionGrant> {
+    if !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "effect") {
+        return Err(invalid_bound("record-aware Scope evaluation required"));
+    }
     if matches!(
         grant.scope,
         StandingOutboundGrantScope::ChannelIdentityEnvelope { .. }

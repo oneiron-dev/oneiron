@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::campaign::CRM_PACK_ID;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{StructuralKindRegistration, TypeByteZone};
+use crate::registry::{StructuralKindRegistration, TypeByteFamily};
 
 // Referenced only by an intra-doc link on `QueryScope::admits`; gated so the
 // name is in scope for rustdoc without being an unused import.
@@ -22,6 +22,7 @@ pub const SAVED_QUERY_SHORT_ID_PREFIX: &str = "sq";
 pub const SAVED_QUERY_SCHEMA_VERSION: u32 = 1;
 
 /// Registers the SAVED_QUERY structural kind for a NEW vault.
+/// The caller explicitly declares the replication family, just as for CAMPAIGN.
 ///
 /// `assigned_type_byte` comes from the byte-space-v3 registration flow run by
 /// the vault/pack initializer; this module never chooses, infers, or hard-codes
@@ -37,11 +38,12 @@ pub const SAVED_QUERY_SCHEMA_VERSION: u32 = 1;
 pub fn register_saved_query_kind(
     vault: &Vault,
     assigned_type_byte: u8,
+    family: TypeByteFamily,
 ) -> Result<StructuralKindRegistration> {
-    vault.register_structural_kind(
+    vault.register_structural_kind_in_family(
         assigned_type_byte,
         SAVED_QUERY_SHORT_ID_PREFIX,
-        TypeByteZone::CompiledProduct,
+        family,
         CRM_PACK_ID,
     )
 }

@@ -43,7 +43,10 @@ impl<'e> RoTxn<'e> {
             ))?
         };
 
-        Ok(RoTxn { txn, env: Cow::Borrowed(env) })
+        Ok(RoTxn {
+            txn,
+            env: Cow::Borrowed(env),
+        })
     }
 
     pub(crate) fn static_read_txn(env: Env) -> Result<RoTxn<'static>> {
@@ -58,7 +61,10 @@ impl<'e> RoTxn<'e> {
             ))?
         };
 
-        Ok(RoTxn { txn, env: Cow::Owned(env) })
+        Ok(RoTxn {
+            txn,
+            env: Cow::Owned(env),
+        })
     }
 
     pub(crate) fn env_mut_ptr(&self) -> *mut ffi::MDB_env {
@@ -124,18 +130,42 @@ impl<'p> RwTxn<'p> {
     pub(crate) fn new(env: &'p Env) -> Result<RwTxn<'p>> {
         let mut txn: *mut ffi::MDB_txn = ptr::null_mut();
 
-        unsafe { mdb_result(ffi::mdb_txn_begin(env.env_mut_ptr(), ptr::null_mut(), 0, &mut txn))? };
+        unsafe {
+            mdb_result(ffi::mdb_txn_begin(
+                env.env_mut_ptr(),
+                ptr::null_mut(),
+                0,
+                &mut txn,
+            ))?
+        };
 
-        Ok(RwTxn { txn: RoTxn { txn, env: Cow::Borrowed(env) } })
+        Ok(RwTxn {
+            txn: RoTxn {
+                txn,
+                env: Cow::Borrowed(env),
+            },
+        })
     }
 
     pub(crate) fn nested(env: &'p Env, parent: &'p mut RwTxn) -> Result<RwTxn<'p>> {
         let mut txn: *mut ffi::MDB_txn = ptr::null_mut();
         let parent_ptr: *mut ffi::MDB_txn = parent.txn.txn;
 
-        unsafe { mdb_result(ffi::mdb_txn_begin(env.env_mut_ptr(), parent_ptr, 0, &mut txn))? };
+        unsafe {
+            mdb_result(ffi::mdb_txn_begin(
+                env.env_mut_ptr(),
+                parent_ptr,
+                0,
+                &mut txn,
+            ))?
+        };
 
-        Ok(RwTxn { txn: RoTxn { txn, env: Cow::Borrowed(env) } })
+        Ok(RwTxn {
+            txn: RoTxn {
+                txn,
+                env: Cow::Borrowed(env),
+            },
+        })
     }
 
     pub(crate) fn env_mut_ptr(&self) -> *mut ffi::MDB_env {

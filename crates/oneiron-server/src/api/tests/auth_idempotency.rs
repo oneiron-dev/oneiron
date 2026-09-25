@@ -91,9 +91,8 @@ async fn v1_core_route_rejects_a_revoked_bearer_and_admits_its_sibling() {
         ..Default::default()
     });
 
-    let (revoked, revoked_jti) =
-        crate::auth::mint_identified_core_token_v2("secret", "scope=core:read");
-    let (sibling, _) = crate::auth::mint_identified_core_token_v2("secret", "scope=core:read");
+    let revoked = "scope=core:read;jti=revoked";
+    let sibling = "scope=core:read;jti=sibling";
     let uri = "/v1/core/turns/annotate?turn_id=not-an-entity";
 
     // Both authenticate before the revocation act (the 400 is the handler
@@ -101,17 +100,17 @@ async fn v1_core_route_rejects_a_revoked_bearer_and_admits_its_sibling() {
     for token in [&revoked, &sibling] {
         let (status, _) = route_json(
             server.clone(),
-            core_request_with_authz("GET", uri, format!("Bearer {token}"), None),
+            core_request_with_authz("GET", uri, test_bearer(token), None),
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "token must authenticate");
     }
 
-    crate::auth::revoke_token_jti(server.vault(), &revoked_jti).expect("revoke");
+    slip_credentials::revoke(&server, revoked);
 
     let (status, body) = route_json(
         server.clone(),
-        core_request_with_authz("GET", uri, format!("Bearer {revoked}"), None),
+        core_request_with_authz("GET", uri, test_bearer(revoked), None),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -119,7 +118,7 @@ async fn v1_core_route_rejects_a_revoked_bearer_and_admits_its_sibling() {
 
     let (status, _) = route_json(
         server,
-        core_request_with_authz("GET", uri, format!("Bearer {sibling}"), None),
+        core_request_with_authz("GET", uri, test_bearer(sibling), None),
     )
     .await;
     assert_eq!(
@@ -138,21 +137,21 @@ async fn legacy_api_route_rejects_a_revoked_owner_grade_bearer() {
         ..Default::default()
     });
 
-    let (token, jti) = crate::auth::mint_identified_core_token_v2("secret", "");
+    let token = "jti=revocable-owner";
     let uri = "/api/core/discover";
 
     let (status, _) = route_json(
         server.clone(),
-        core_request_with_authz("GET", uri, format!("Bearer {token}"), None),
+        core_request_with_authz("GET", uri, test_bearer(token), None),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "an identified owner token is live");
 
-    crate::auth::revoke_token_jti(server.vault(), &jti).expect("revoke");
+    slip_credentials::revoke(&server, token);
 
     let (status, _) = route_json(
         server,
-        core_request_with_authz("GET", uri, format!("Bearer {token}"), None),
+        core_request_with_authz("GET", uri, test_bearer(token), None),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -171,13 +170,20 @@ async fn legacy_api_route_rejects_a_live_scoped_bearer_that_works_on_v1() {
         ..Default::default()
     });
 
-    let (scoped, jti) = crate::auth::mint_identified_core_token_v2("secret", "scope=core:read");
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        format!("Bearer {scoped}").parse().expect("bearer header"),
+    let scoped = "scope=core:read";
+    let request = slip_credentials::bind_request(
+        &server,
+        core_request_with_authz("GET", "/", test_bearer(scoped), None),
     );
-    let auth = CoreAuth::from_headers(&headers, &server.config, server.vault().as_ref())
+    let headers = request.headers();
+    let (slip, _) = slip_credentials::credential(&server, scoped);
+    let jti: String = slip
+        .claims
+        .slip_id
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let auth = CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())
         .expect("scoped bearer authenticates");
     assert!(
         !auth.is_owner_grade(),
@@ -194,7 +200,7 @@ async fn legacy_api_route_rejects_a_live_scoped_bearer_that_works_on_v1() {
         core_request_with_authz(
             "GET",
             "/v1/core/outbound/capabilities",
-            format!("Bearer {scoped}"),
+            test_bearer(scoped),
             None,
         ),
     )
@@ -219,7 +225,7 @@ async fn legacy_api_route_rejects_a_live_scoped_bearer_that_works_on_v1() {
     ] {
         let (status, _) = route_json(
             server.clone(),
-            core_request_with_authz(method, uri, format!("Bearer {scoped}"), body.as_ref()),
+            core_request_with_authz(method, uri, test_bearer(scoped), body.as_ref()),
         )
         .await;
         assert_eq!(

@@ -973,9 +973,7 @@ fn hub_sync_applies_narrowing_and_proposes_widening() -> Result<()> {
         .import_skill_from_hub(&hub_ref(HubPin::None), &invalid, t(2), 3)
         .expect_err("invalid dedup package must be rejected");
     assert_eq!(vault.skill_hub_provenance_count(&entity)?, 1);
-    let mut active = vault.get_skill_record(&entity)?.expect("candidate");
-    active.lifecycle_status = SkillLifecycle::Active;
-    vault.update_skill_record(&entity, &active, t(3), 4)?;
+    // Candidate sync does not borrow admission from publisher bytes.
 
     let mut narrower_record = candidate("fixture.sync");
     narrower_record.version = "1.1.0".to_owned();
@@ -1059,9 +1057,7 @@ fn hub_sync_preserves_owner_marked_governance_tier() -> Result<()> {
     );
     vault.import_skill_from_hub_with_id(&reference, &initial, entity, t(1), 2)?;
 
-    let mut active = vault.get_skill_record(&entity)?.expect("imported record");
-    active.lifecycle_status = SkillLifecycle::Active;
-    vault.update_skill_record(&entity, &active, t(3), 4)?;
+    // Candidate sync does not borrow admission from publisher bytes.
 
     // The owner's act, through the ordinary update door: marking the tier is a
     // state flip, so it lands on imported content with no version bump.

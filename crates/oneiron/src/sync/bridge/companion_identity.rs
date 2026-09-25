@@ -9,9 +9,7 @@ use super::entities::materialize_entity_blob_in_txn;
 
 use crate::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::{
-    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
-};
+use crate::companion::decode_companion_record_body;
 use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, encode_edge_value,
 };
@@ -51,6 +49,7 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
     data: &[u8],
     lease_vault_id: u64,
 ) -> Result<bool> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let byte_identical_replay = vault
         .store
         .entities
@@ -86,7 +85,7 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
         vault,
         wtxn,
         quota::peer_key_from_identity_topology_stream(lease_vault_id),
-        crate::unix_seconds_now(),
+        mutation_recorded_at,
     )?;
     let apply_result = vault
         .batch_in()
@@ -155,7 +154,9 @@ pub(super) fn ensure_companion_register_kind_for_entity_delta(
         let Some(header) = EntityMetadataHeader::parse(blob) else {
             continue;
         };
-        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+        if header.entity_type != crate::registry::ENTITY_TYPE_FACET
+            || !crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
+        {
             continue;
         }
         let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
@@ -173,14 +174,16 @@ pub(super) fn ensure_companion_register_kind_for_entity_delta(
 
 pub(super) fn companion_register_sync_admitted(data: &[u8]) -> Result<bool> {
     let record = decode_companion_record_body(data)?;
-    Ok(record.export_classification != CompanionExportClassification::LocalOnly)
+    Ok(record.sensitivity != crate::federation::Sensitivity::Restricted)
 }
 
 pub(super) fn companion_register_blob_is_local_only(blob: &[u8]) -> Result<bool> {
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Err(Error::CorruptedIndex("entity metadata"));
     };
-    if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+    if header.entity_type != crate::registry::ENTITY_TYPE_FACET
+        || !crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
+    {
         return Ok(false);
     }
     let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
@@ -334,6 +337,14 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     }
 
     if let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+        if EntityMetadataHeader::parse(&raw)
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_NOTE)
+            && crate::sync::quarantine::unproven_remat_marker_exists_in_txn(
+                vault, wtxn, window_key, id,
+            )?
+        {
+            return Ok(EndpointHydration::Deferred);
+        }
         if companion_register_blob_is_local_only(&raw)? {
             return Ok(EndpointHydration::LocalOnly);
         }

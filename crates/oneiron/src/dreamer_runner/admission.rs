@@ -222,6 +222,7 @@ impl DreamerRunnerStore<'_> {
                     },
                 )?;
                 wtxn.commit()?;
+                self.vault.store.notify_attempt_observers();
                 Ok(
                     DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(
                         DreamerClaimAuthoringBudgetTrap {
@@ -238,6 +239,7 @@ impl DreamerRunnerStore<'_> {
             }
             (_, outcome) => {
                 wtxn.commit()?;
+                self.vault.store.notify_attempt_observers();
                 Ok(DreamerConsolidationAdmissionOutcome::Admission(outcome))
             }
         }
@@ -252,6 +254,7 @@ impl DreamerRunnerStore<'_> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let result = self.admit_next_kind_in_txn(&mut wtxn, queue_kind, input)?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(result.outcome)
     }
 

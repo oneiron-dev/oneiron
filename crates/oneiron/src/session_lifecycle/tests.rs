@@ -52,7 +52,7 @@ fn seed_conversation(vault: &Vault, seed: u8) -> EntityId {
             ENTITY_TYPE_CONVERSATION,
             TimeRange { start: 1, end: 1 },
             1,
-            b"conversation",
+            b"\x80",
         )
         .expect("seed conversation");
     id

@@ -5,6 +5,8 @@ use super::*;
 use crate::WriteActor;
 use crate::claim::ClaimSource;
 use crate::error::ClaimError;
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 
 /// Provider identity belongs to the imported relationship's scope. The canonical
 /// provenance wrapper leaves `evid` absent: any value there conflicts with the
@@ -45,11 +47,17 @@ impl Vault {
         }
         self.with_write_txn(|wtxn| {
             let subject = &import.subject;
-            let edge_key = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
-            if let Some(raw) = self.store.edges_out.get(wtxn, &edge_key)? {
-                let reverse =
-                    Store::encode_edge_key(&subject.target, subject.kind, &subject.source);
-                if self.store.edges_in.get(wtxn, &reverse)?.as_deref() != Some(raw.as_ref()) {
+
+            if let Some(edge) =
+                self.store
+                    .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
+            {
+                if !self.store.port_edge_consistent(
+                    wtxn,
+                    &subject.source,
+                    subject.kind,
+                    &subject.target,
+                )? {
                     return Err(Error::CorruptedIndex("imported edge directions disagree"));
                 }
                 let stored = self.load_provenance_claim_in_txn(wtxn, &import.claim_id)?;
@@ -66,12 +74,9 @@ impl Vault {
                 }
                 let actor_raw = self
                     .store
-                    .entities
-                    .get(wtxn, import.actor.entity_ref().as_bytes())?
+                    .port_entity_record(wtxn, &import.actor.entity_ref())?
                     .ok_or(Error::EntityNotFound)?;
-                let actor_header = EntityMetadataHeader::parse(&actor_raw)
-                    .ok_or(Error::CorruptedIndex("entity header"))?;
-                validate_actor_class(actor_header.entity_type, import.actor.actor_class())?;
+                validate_actor_class(actor_raw.entity_type, import.actor.actor_class())?;
                 let live = self.live_edge_provenance_claims_in_txn(wtxn, subject, None)?;
                 let precedence: Vec<_> =
                     live.iter().map(StoredProvenanceClaim::precedence).collect();
@@ -85,9 +90,7 @@ impl Vault {
                                 .any(|claim| claim.id == import.claim_id)
                     }
                 };
-                if !verified
-                    || parse_edge_record(&edge_key, &raw)?.provenance != Some(stored.flags())
-                {
+                if !verified || edge.provenance != Some(stored.flags()) {
                     return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
                         "imported edge provenance is not authoritative",
                     )));

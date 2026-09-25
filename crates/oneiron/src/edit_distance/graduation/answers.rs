@@ -227,7 +227,7 @@ pub fn answer_graduation_offer(
     scope: &RampScope,
     answer: OfferAnswer<'_>,
 ) -> Result<OfferAnswerOutcome> {
-    answer_graduation_offer_at(vault, scope, answer, crate::unix_seconds_now())
+    answer_graduation_offer_at(vault, scope, answer, vault.store.clock.now_recorded_at())
 }
 
 /// [`answer_graduation_offer`] against a caller-supplied clock.
@@ -279,7 +279,7 @@ pub(super) fn answer_graduation_offer_at(
 /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable, plus
 /// storage failures.
 pub fn unpin_scope(vault: &Vault, scope: &RampScope) -> Result<()> {
-    unpin_scope_at(vault, scope, crate::unix_seconds_now())
+    unpin_scope_at(vault, scope, vault.store.clock.now_recorded_at())
 }
 
 /// [`unpin_scope`] against a caller-supplied clock.
@@ -327,9 +327,10 @@ fn append_answer_in_txn(
         at,
     };
     let data = encode_row(&row, ANSWER_ROW_LABEL)?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &answer_key(scope, &EntityId::now()), &data)?;
+    vault.store.vault_meta.put(
+        wtxn,
+        &answer_key(scope, &vault.store.clock.entity_id()?),
+        &data,
+    )?;
     Ok(())
 }

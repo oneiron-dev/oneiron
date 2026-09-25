@@ -62,6 +62,10 @@ async fn context_board_hides_fresh_default_policy_manifest() {
                 Value::from(4)
             ),
             (
+                oneiron::registry::ENTITY_TYPE_ASSET.to_string(),
+                Value::from(4)
+            ),
+            (
                 oneiron::registry::ENTITY_TYPE_CONVERSATION.to_string(),
                 Value::from(1)
             ),
@@ -69,8 +73,16 @@ async fn context_board_hides_fresh_default_policy_manifest() {
                 oneiron::workspace_roster::PROJECT_TYPE_BYTE.to_string(),
                 Value::from(1)
             ),
+            (
+                oneiron::registry::ENTITY_TYPE_PERSON.to_string(),
+                Value::from(1)
+            ),
+            (
+                oneiron::registry::ENTITY_TYPE_FACET.to_string(),
+                Value::from(1)
+            ),
         ]),
-        "a fresh vault exposes its agents, bootstrap skills and root project room"
+        "a fresh vault exposes its agents, bootstrap skills, root project room and owner"
     );
     assert_eq!(body["session"]["last_activity"], Value::from(0));
 }

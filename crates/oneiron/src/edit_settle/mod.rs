@@ -33,12 +33,12 @@
 //! is read inside the same transaction, so it is never stale against a
 //! concurrent append. A discard is the same shape without the append/re-anchor.
 //!
-//! # Stale-proposal refusal (D5)
+//! # Stale proposals (D5)
 //!
-//! A proposal is produced FROM a specific head ([`EditProposal::base_content_hash`](crate::edit_roundtrip::EditProposal::base_content_hash)).
-//! Select refuses ([`ArtifactError::EditProposalStale`](crate::error::ArtifactError::EditProposalStale)) when that base no longer equals
-//! the artifact head — an intervening edit moved the head, so committing these
-//! bytes would clobber it and replay a stale manifest onto newer anchors.
+//! If the proposal's base no longer equals the head, select retains its bytes
+//! and original manifest as a durable [`StrandedEditProposal`]. Its receipt is
+//! `proposed`, not `selected`. No version is appended and no anchor moves.
+//! The old ref is consumed once; explicit reconciliation uses a new ref.
 //!
 //! # Re-anchor on select (D2/D5)
 //!
@@ -84,6 +84,8 @@ mod keys;
 mod receipts;
 mod records;
 mod settle;
+mod stranded;
+pub use stranded::StrandedEditProposal;
 
 pub use self::keys::{
     SETTLE_VERB_CLASS, SETTLED_ANCHOR_KEYS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,

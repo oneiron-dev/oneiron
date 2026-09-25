@@ -43,8 +43,8 @@ fn raw_companion_record_body(
         ),
         (Value::from(KEY_LIFECYCLE), Value::from(lifecycle.as_str())),
         (
-            Value::from(KEY_EXPORT),
-            Value::from(record.export_classification.as_str()),
+            Value::from(KEY_SENSITIVITY),
+            Value::from(record.sensitivity.as_str()),
         ),
         (
             Value::from(KEY_LIFECYCLE_EVENTS),
@@ -98,7 +98,10 @@ fn companion_task_payload_round_trips_all_task_kinds() -> Result<()> {
 
 #[test]
 fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let clock = crate::ports::ManualClock::new(0);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let companion_queue = CompanionQueue::new(&vault);
     let generic_queue = AttemptQueue::new(&vault);
 
@@ -107,7 +110,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
         payload: b"generic".to_vec(),
         dedupe_key: Some("turn:generic".to_owned()),
         run_id: Some("run-generic".to_owned()),
-        now: 5,
+        now: {
+            clock.set(5);
+            5
+        },
     })?
     else {
         panic!("expected generic enqueue");
@@ -123,7 +129,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
         companion_queue.enqueue(EnqueueCompanionTask {
             task: context_task.clone(),
             run_id: Some("run-context".to_owned()),
-            now: 10,
+            now: {
+                clock.set(10);
+                10
+            },
         })?
     else {
         panic!("expected context enqueue");
@@ -140,7 +149,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
         companion_queue.enqueue(EnqueueCompanionTask {
             task: context_task,
             run_id: Some("run-context-duplicate".to_owned()),
-            now: 11,
+            now: {
+                clock.set(11);
+                11
+            },
         })?
     else {
         panic!("expected context dedupe hit");
@@ -150,7 +162,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     let ClaimCompanionTaskOutcome::Claimed(claimed_context) =
         companion_queue.claim(ClaimCompanionTask {
             lease_owner: "companion-worker".to_owned(),
-            now: 20,
+            now: {
+                clock.set(20);
+                20
+            },
         })?
     else {
         panic!("expected context claim");
@@ -172,7 +187,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
             id: claimed_context.attempt.id,
             lease_owner: "companion-worker".to_owned(),
             attempt_count: claimed_context.attempt.attempt_count,
-            now: 21,
+            now: {
+                clock.set(21);
+                21
+            },
         })?
     else {
         panic!("expected context complete");
@@ -195,7 +213,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
         companion_queue.enqueue(EnqueueCompanionTask {
             task: profile_task.clone(),
             run_id: Some("run-profile".to_owned()),
-            now: 30,
+            now: {
+                clock.set(30);
+                30
+            },
         })?
     else {
         panic!("expected profile enqueue");
@@ -203,7 +224,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     let ClaimCompanionTaskOutcome::Claimed(claimed_profile) =
         companion_queue.claim(ClaimCompanionTask {
             lease_owner: "companion-worker".to_owned(),
-            now: 31,
+            now: {
+                clock.set(31);
+                31
+            },
         })?
     else {
         panic!("expected profile claim");
@@ -217,7 +241,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
             attempt_count: claimed_profile.attempt.attempt_count,
             backoff_until: 40,
             last_error: Some("profile model unavailable".to_owned()),
-            now: 32,
+            now: {
+                clock.set(32);
+                32
+            },
         })?;
     // Retry mints a fresh ATTEMPT carrying the same companion task forward; the
     // retryable reason stays on the finalized source try.
@@ -242,7 +269,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     assert_eq!(
         companion_queue.claim(ClaimCompanionTask {
             lease_owner: "too-early".to_owned(),
-            now: 39,
+            now: {
+                clock.set(39);
+                39
+            },
         })?,
         ClaimCompanionTaskOutcome::Empty
     );
@@ -250,7 +280,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     let ClaimCompanionTaskOutcome::Claimed(reclaimed_profile) =
         companion_queue.claim(ClaimCompanionTask {
             lease_owner: "companion-worker".to_owned(),
-            now: 40,
+            now: {
+                clock.set(40);
+                40
+            },
         })?
     else {
         panic!("expected profile reclaim");
@@ -262,7 +295,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
             id: reclaimed_profile.attempt.id,
             lease_owner: "companion-worker".to_owned(),
             attempt_count: reclaimed_profile.attempt.attempt_count,
-            now: 41,
+            now: {
+                clock.set(41);
+                41
+            },
         })?
     else {
         panic!("expected profile complete");
@@ -278,7 +314,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
         companion_queue.enqueue(EnqueueCompanionTask {
             task: memory_task.clone(),
             run_id: Some("run-memory".to_owned()),
-            now: 50,
+            now: {
+                clock.set(50);
+                50
+            },
         })?
     else {
         panic!("expected memory enqueue");
@@ -286,7 +325,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     let ClaimCompanionTaskOutcome::Claimed(claimed_memory) =
         companion_queue.claim(ClaimCompanionTask {
             lease_owner: "companion-worker".to_owned(),
-            now: 51,
+            now: {
+                clock.set(51);
+                51
+            },
         })?
     else {
         panic!("expected memory claim");
@@ -298,7 +340,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
             lease_owner: "companion-worker".to_owned(),
             attempt_count: claimed_memory.attempt.attempt_count,
             reason: "memory task exhausted retries".to_owned(),
-            now: 52,
+            now: {
+                clock.set(52);
+                52
+            },
         })?
     else {
         panic!("expected memory fail");
@@ -317,7 +362,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
 
     let ClaimOutcome::Claimed(claimed_generic) = generic_queue.claim(ClaimAttempt {
         lease_owner: "generic-worker".to_owned(),
-        now: 60,
+        now: {
+            clock.set(60);
+            60
+        },
     })?
     else {
         panic!("expected generic claim after companion work");
@@ -329,7 +377,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
                 id: claimed_generic.id,
                 lease_owner: "generic-worker".to_owned(),
                 attempt_count: claimed_generic.attempt_count,
-                now: 61,
+                now: {
+                    clock.set(61);
+                    61
+                },
             })
             .is_err()
     );
@@ -410,7 +461,7 @@ fn companion_register_creates_and_looks_up_persona_and_relationship() -> Result<
         persona_ref,
         Value::from("neutral persona"),
         provenance(0x5A),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let relationship = CompanionRecord::relationship(
         neutral.clone(),
@@ -418,7 +469,7 @@ fn companion_register_creates_and_looks_up_persona_and_relationship() -> Result<
         target_ref,
         Value::from("neutral relationship"),
         provenance(0x5B),
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
 
     let mut register = CompanionRegister::new();
@@ -451,21 +502,21 @@ fn companion_register_keeps_neutral_personal_and_shared_vault_scopes_separate() 
         persona_ref,
         Value::from("neutral"),
         provenance(0xB1),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     ))?;
     register.register(CompanionRecord::persona(
         personal.clone(),
         persona_ref,
         Value::from("personal"),
         provenance(0xB2),
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     ))?;
     register.register(CompanionRecord::persona(
         shared.clone(),
         persona_ref,
         Value::from("shared"),
         provenance(0xB3),
-        CompanionExportClassification::SharedVault,
+        crate::federation::Sensitivity::Private,
     ))?;
 
     assert_eq!(
@@ -504,7 +555,7 @@ fn companion_scope_resolution_prefers_warm_personal_relationship_boundary() -> R
         persona_ref,
         Value::from("neutral fallback persona"),
         provenance(0xC8),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let private_relationship_note = "private warm relationship note";
     let personal_relationship = CompanionRecord::relationship(
@@ -516,7 +567,7 @@ fn companion_scope_resolution_prefers_warm_personal_relationship_boundary() -> R
             Value::from(private_relationship_note),
         )]),
         provenance(0xC9),
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
     register.register(neutral_persona.clone())?;
     register.register(personal_relationship.clone())?;
@@ -562,7 +613,7 @@ fn companion_scope_resolution_falls_back_to_neutral_persona_and_blocks_orphan_ex
         persona_ref,
         Value::from("neutral @Oneiron"),
         provenance(0xCA),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     register.register(neutral_persona.clone())?;
 
@@ -617,7 +668,7 @@ fn companion_register_body_round_trip_carries_provenance_lifecycle_and_export() 
             ClaimApprovalStatus::Proposed,
             Value::Map(vec![(Value::from("source"), Value::from("test"))]),
         ),
-        CompanionExportClassification::SharedVault,
+        crate::federation::Sensitivity::Private,
     );
     let unstamped_retired = record.retired()?;
     assert_eq!(unstamped_retired.lifecycle, ClaimLifecycleStatus::Retracted);
@@ -637,10 +688,7 @@ fn companion_register_body_round_trip_carries_provenance_lifecycle_and_export() 
         decoded.lifecycle_events,
         vec![CompanionLifecycleEvent::superseded(77)]
     );
-    assert_eq!(
-        decoded.export_classification,
-        CompanionExportClassification::SharedVault
-    );
+    assert_eq!(decoded.sensitivity, crate::federation::Sensitivity::Private);
     assert_eq!(decoded.provenance.actor_class, EdgeActorClass::Human);
     Ok(())
 }
@@ -652,7 +700,7 @@ fn companion_register_body_requires_current_schema_lifecycle_events() -> Result<
         entity(0x36),
         Value::from("eventless v2 persona"),
         provenance(0xD6),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let err = encode_companion_record_body(&record)
         .expect_err("current schema writes require lifecycle events");
@@ -679,8 +727,8 @@ fn companion_register_body_requires_current_schema_lifecycle_events() -> Result<
                 Value::from(ClaimLifecycleStatus::Retracted.as_str()),
             ),
             (
-                Value::from(KEY_EXPORT),
-                Value::from(record.export_classification.as_str()),
+                Value::from(KEY_SENSITIVITY),
+                Value::from(record.sensitivity.as_str()),
             ),
         ]),
     )
@@ -710,8 +758,8 @@ fn companion_register_body_requires_current_schema_lifecycle_events() -> Result<
                 Value::from(ClaimLifecycleStatus::Retracted.as_str()),
             ),
             (
-                Value::from(KEY_EXPORT),
-                Value::from(record.export_classification.as_str()),
+                Value::from(KEY_SENSITIVITY),
+                Value::from(record.sensitivity.as_str()),
             ),
             (Value::from(KEY_LIFECYCLE_EVENTS), Value::Array(Vec::new())),
         ]),
@@ -724,19 +772,16 @@ fn companion_register_body_requires_current_schema_lifecycle_events() -> Result<
 }
 
 #[test]
-fn companion_register_body_decodes_legacy_v1_without_lifecycle_events() -> Result<()> {
+fn companion_register_body_rejects_legacy_v1_outside_open_sweep() -> Result<()> {
     let record = CompanionRecord::persona(
         CompanionScope::neutral(),
         entity(0x37),
         Value::from("legacy v1 persona"),
         provenance(0x5C),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let legacy = Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(COMPANION_RECORD_SCHEMA_VERSION_V1),
-        ),
+        (Value::from(KEY_SCHEMA_VERSION), Value::from(1u64)),
         (Value::from(KEY_KIND), Value::from(record.kind().as_str())),
         (Value::from(KEY_SCOPE), encode_scope(&record.scope)),
         (Value::from(KEY_SUBJECT), encode_subject(&record.subject)),
@@ -750,17 +795,18 @@ fn companion_register_body_decodes_legacy_v1_without_lifecycle_events() -> Resul
             Value::from(record.lifecycle.as_str()),
         ),
         (
-            Value::from(KEY_EXPORT),
-            Value::from(record.export_classification.as_str()),
+            Value::from(KEY_SENSITIVITY),
+            Value::from(record.sensitivity.as_str()),
         ),
     ]);
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, &legacy)
         .map_err(|_| Error::InvariantViolation("legacy companion encode failed"))?;
 
-    let decoded = decode_companion_record_body(&encoded)?;
-    assert_eq!(decoded, record);
-    assert!(decoded.lifecycle_events.is_empty());
+    assert!(matches!(
+        decode_companion_record_body(&encoded),
+        Err(Error::InvalidClaimBody(_))
+    ));
     Ok(())
 }
 
@@ -775,7 +821,7 @@ fn companion_register_create_canonicalizes_caller_lifecycle_history() -> Result<
         entity(0xC3),
         Value::from("canonical create"),
         provenance(0xC4),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     record.lifecycle_events = vec![
         CompanionLifecycleEvent::created(1),
@@ -833,7 +879,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         entity(0xD6),
         Value::from("revived row"),
         provenance(0x5D),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
 
     let mut revived_without_predecessor = record.clone();
@@ -846,7 +892,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         .batch()
         .put(
             &forged_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 12, end: 12 },
             12,
             &encode_companion_record_body(&revived_without_predecessor)?,
@@ -868,7 +914,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         .batch()
         .put(
             &mismatched_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 22, end: 22 },
             22,
             &encode_companion_record_body(&mismatched_revived)?,
@@ -886,7 +932,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         .batch()
         .put(
             &revived_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 22, end: 22 },
             22,
             &encode_companion_record_body(&valid_revived)?,
@@ -899,10 +945,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
     assert_eq!(stored.key(), valid_revived.key());
     assert_eq!(stored.value, valid_revived.value);
     assert_eq!(stored.provenance, valid_revived.provenance);
-    assert_eq!(
-        stored.export_classification,
-        valid_revived.export_classification
-    );
+    assert_eq!(stored.sensitivity, valid_revived.sensitivity);
     assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
     assert_eq!(
         stored
@@ -925,7 +968,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         .batch()
         .put(
             &duplicate_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 23, end: 23 },
             23,
             &encode_companion_record_body(&valid_revived)?,
@@ -950,7 +993,7 @@ fn companion_register_raw_revived_put_accepts_same_batch_retired_history() -> Re
         entity(0xE4),
         Value::from("same batch revived row"),
         provenance(0xE5),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let retired = record.created_at(30)?.retired_at(31)?;
     let revived = retired.revived_at(32)?;
@@ -959,14 +1002,14 @@ fn companion_register_raw_revived_put_accepts_same_batch_retired_history() -> Re
         .batch()
         .put(
             &revived_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 32, end: 32 },
             32,
             &encode_companion_record_body(&revived)?,
         )
         .put(
             &retired_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 31, end: 31 },
             31,
             &encode_companion_record_body(&retired)?,
@@ -1074,7 +1117,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         neutral_persona,
         Value::from("neutral @Oneiron"),
         provenance(0xD1),
-        CompanionExportClassification::Portable,
+        crate::federation::Sensitivity::Public,
     );
     let personal = CompanionRecord::persona(
         personal_scope.clone(),
@@ -1084,7 +1127,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
             Value::from("private-person-note"),
         )]),
         provenance(0xD2),
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
     let shared = CompanionRecord::relationship(
         shared_scope.clone(),
@@ -1095,7 +1138,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
             Value::from("shared-vault-note"),
         )]),
         provenance(0xD3),
-        CompanionExportClassification::SharedVault,
+        crate::federation::Sensitivity::Private,
     );
 
     vault.create_companion_record(&neutral_id, &neutral, 10)?;
@@ -1118,7 +1161,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         assert_eq!(stored.key(), expected.key());
         assert_eq!(stored.value, expected.value);
         assert_eq!(stored.provenance, expected.provenance);
-        assert_eq!(stored.export_classification, expected.export_classification);
+        assert_eq!(stored.sensitivity, expected.sensitivity);
         assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
         assert_eq!(
             stored
@@ -1146,7 +1189,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .batch()
         .put(
             &entity(0x56),
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 13, end: 13 },
             13,
             &encode_companion_record_body(&personal_created)?,
@@ -1175,7 +1218,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .batch()
         .put(
             &personal_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 14, end: 14 },
             14,
             &raw_companion_record_body(
@@ -1194,7 +1237,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .batch()
         .put(
             &personal_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 14, end: 14 },
             14,
             &raw_companion_record_body(
@@ -1215,7 +1258,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .batch()
         .put(
             &personal_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 14, end: 14 },
             14,
             &encode_companion_record_body(&tampered_personal_history)?,
@@ -1259,40 +1302,49 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     expressions.update(neutral.key(), CompanionExpression::Warm)?;
     expressions.update(updated_personal.key(), CompanionExpression::Unrestricted)?;
     expressions.update(shared.key(), CompanionExpression::Professional)?;
-    let export = companion_export_layer(&register, &expressions);
+    let export = companion_export_layer(
+        &register,
+        &expressions,
+        &crate::federation::Scope {
+            sensitivity: crate::federation::SensitivityCeiling::AtMost(
+                crate::federation::Sensitivity::Public,
+            ),
+            ..crate::federation::Scope::top()
+        },
+    );
     assert_eq!(export.len(), 1);
     let exported = export.personas()[0].record();
     assert_eq!(exported.key(), neutral_created.key());
     assert_eq!(exported.value, neutral_created.value);
     assert_eq!(exported.provenance, neutral_created.provenance);
     assert_eq!(exported.lifecycle, ClaimLifecycleStatus::Active);
-    assert_eq!(
-        exported.export_classification,
-        CompanionExportClassification::Portable
-    );
+    assert_eq!(exported.sensitivity, crate::federation::Sensitivity::Public);
     assert_eq!(
         export.personas()[0].expression(),
         Some(CompanionExpression::Warm)
     );
 
     let mut local_only_downgrade = neutral_created;
-    local_only_downgrade.export_classification = CompanionExportClassification::LocalOnly;
-    let downgrade_err = vault
-        .update_companion_record(&neutral_id, &local_only_downgrade, 15)
-        .expect_err("exported companion records must not silently downgrade to local_only");
-    assert!(matches!(downgrade_err, Error::InvalidClaimBody(_)));
-    let raw_downgrade = vault
-        .batch()
-        .put(
-            &neutral_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
-            TimeRange { start: 15, end: 15 },
-            15,
-            &encode_companion_record_body(&local_only_downgrade)?,
-        )
-        .commit()
-        .expect_err("raw batch put must reject export downgrades");
-    assert!(matches!(raw_downgrade, Error::InvalidClaimBody(_)));
+    local_only_downgrade.sensitivity = crate::federation::Sensitivity::Restricted;
+    let narrowed = vault.update_companion_record(&neutral_id, &local_only_downgrade, 15)?;
+    assert_eq!(
+        narrowed.sensitivity,
+        crate::federation::Sensitivity::Restricted
+    );
+    // The dedicated legacy row kind is retired even when its payload is valid.
+    assert!(
+        vault
+            .batch()
+            .put(
+                &neutral_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 15, end: 15 },
+                15,
+                &encode_companion_record_body(&local_only_downgrade)?
+            )
+            .commit()
+            .is_err()
+    );
 
     let retired = vault.retire_companion_record(&neutral_id, 15)?;
     assert_eq!(retired.lifecycle, ClaimLifecycleStatus::Retracted);
@@ -1311,10 +1363,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     assert_eq!(repeated_retire.key(), retired.key());
     assert_eq!(repeated_retire.value, retired.value);
     assert_eq!(repeated_retire.provenance, retired.provenance);
-    assert_eq!(
-        repeated_retire.export_classification,
-        retired.export_classification
-    );
+    assert_eq!(repeated_retire.sensitivity, retired.sensitivity);
     assert_eq!(repeated_retire.lifecycle, ClaimLifecycleStatus::Retracted);
     assert_eq!(
         repeated_retire
@@ -1329,7 +1378,17 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     );
     let register = vault.companion_register()?;
     assert!(
-        companion_export_layer(&register, &expressions).is_empty(),
+        companion_export_layer(
+            &register,
+            &expressions,
+            &crate::federation::Scope {
+                sensitivity: crate::federation::SensitivityCeiling::AtMost(
+                    crate::federation::Sensitivity::Public
+                ),
+                ..crate::federation::Scope::top()
+            }
+        )
+        .is_empty(),
         "retired neutral record and private/shared records must not export"
     );
     assert!(
@@ -1354,7 +1413,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         .batch()
         .put(
             &neutral_id,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            crate::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 16, end: 16 },
             16,
             &encode_companion_record_body(&neutral.created_at(16)?)?,
@@ -1421,7 +1480,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         assert_eq!(stored.key(), revived.key());
         assert_eq!(stored.value, revived.value);
         assert_eq!(stored.provenance, revived.provenance);
-        assert_eq!(stored.export_classification, revived.export_classification);
+        assert_eq!(stored.sensitivity, revived.sensitivity);
         assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
         assert_eq!(
             stored
@@ -1456,7 +1515,7 @@ fn companion_relationship_end_scrubs_private_memory_preserves_data_and_enqueues_
         persona_ref,
         Value::Map(vec![(Value::from("note"), Value::from(private_note))]),
         provenance(0xD6),
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
     vault.create_companion_record(&relationship_id, &record, 10)?;
     vault
@@ -1554,7 +1613,7 @@ fn companion_relationship_end_skips_goodbye_artifact_for_bad_end() -> Result<()>
             Value::from("bad-end-private-note-one1488"),
         )]),
         provenance(0xB4),
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
     vault.create_companion_record(&relationship_id, &record, 30)?;
 
@@ -1601,7 +1660,7 @@ fn companion_relationship_end_scrubs_already_retracted_record() -> Result<()> {
         persona_ref,
         Value::Map(vec![(Value::from("note"), Value::from(private_note))]),
         provenance(0xC4),
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
     vault.create_companion_record(&relationship_id, &record, 50)?;
     vault.retire_companion_record(&relationship_id, 60)?;

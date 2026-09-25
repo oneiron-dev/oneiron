@@ -1,6 +1,7 @@
 //! Reading the selected conversation and the nearest existing skills the refiner must
 //! diff against.
 
+use crate::ports::EntityStoreRead;
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
@@ -109,7 +110,11 @@ fn entity_type(vault: &Vault, id: &EntityId) -> Result<u8> {
 /// or not a map. The one decode prelude every body read in this module shares.
 fn body_entries(vault: &Vault, id: &EntityId) -> Result<Option<Vec<(Value, Value)>>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.entities.get(&rtxn, id.as_bytes())? else {
+    let Some(raw) = vault
+        .store
+        .port_entity_record(&rtxn, id)?
+        .map(|row| row.encode())
+    else {
         return Ok(None);
     };
     let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {

@@ -30,12 +30,9 @@ pub struct SyncClient {
     pub(crate) vault: Arc<Vault>,
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
+    pub(crate) note_session_bound: bool,
     pub(crate) document_updates: tokio::sync::broadcast::Receiver<Vec<u8>>,
     pub(crate) client_id: u64,
-    /// This device's Ed25519 attestation key (ONE-1140, OD-2): signs the
-    /// lease-request proof of possession on every connect. Receipt signing
-    /// happens vault-side at mint, not here.
-    pub(crate) device_signing_key: ed25519_dalek::SigningKey,
     pub(crate) config: SyncClientConfig,
     /// Last server VV observed per window from `VV_REQUEST` / `VV_RESPONSE`
     /// frames. This is the convergence witness (ONE-1128): the offline queue
@@ -44,6 +41,9 @@ pub struct SyncClient {
     pub(crate) server_vvs: HashMap<String, VersionVector>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
+    pub(crate) _message_stream_subscription: Subscription,
+    pub(crate) lfs_download: Option<crate::sync::chunks::ChunkDownload>,
+    pub(crate) last_lfs_download: Option<crate::origin::lfs::LfsPutOutcome>,
     pub(crate) status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -51,12 +51,8 @@ pub struct SyncClient {
 impl SyncClient {
     /// Creates a new sync client over manager-owned windows.
     ///
-    /// Loads persisted client state first (ARCH-0023b startup step 1): the
-    /// device identity — `m:client_id` (minted once if absent) plus the
-    /// `m:device_sk`/`m:device_pk` attestation keypair (ONE-1140, OD-2) —
-    /// then the root doc from `d:root` + pending `u:root:*` replay.
-    /// Malformed identity rows fail closed — silently re-minting would
-    /// change this device's CRDT identity mid-install.
+    /// Loads the stable CRDT client id, then root state. Transport never
+    /// reads or mints a device signing key; capability pairing owns enrollment.
     pub fn new(
         manager: Arc<WindowManager>,
         config: SyncClientConfig,
@@ -69,11 +65,26 @@ impl SyncClient {
             ));
         }
 
+        if config.note_session.is_some() {
+            let uri: tokio_tungstenite::tungstenite::http::Uri =
+                config.server_url.parse().map_err(|_| {
+                    Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied)
+                })?;
+            let loopback = uri.host().is_some_and(|host| {
+                host.trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+            });
+            if uri.scheme_str() != Some("wss") && !(uri.scheme_str() == Some("ws") && loopback) {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::DocumentAdmissionDenied,
+                ));
+            }
+        }
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let vault = Arc::clone(manager.vault());
 
-        let identity = crate::identity::ensure_device_identity(&vault)?;
-        let client_id = identity.client_id;
+        let client_id = crate::identity::load_or_mint_client_id(&vault)?;
         let root_doc = load_root_doc(&vault)?;
         // The client never authors root ops in production (meta.windows is
         // server-write-only), so pinning the stable client id as the root
@@ -102,22 +113,44 @@ impl SyncClient {
                 true
             }));
 
+        let stream_event_tx = event_tx.clone();
+        let message_stream_subscription = vault.message_streams.presence.store.subscribe(Box::new(
+            move |event: &EphemeralStoreEvent| {
+                let _ = stream_event_tx.send(SyncEvent::EphemeralChanged {
+                    origin: match event.by {
+                        EphemeralEventTrigger::Local => EphemeralChangeOrigin::Local,
+                        EphemeralEventTrigger::Import => EphemeralChangeOrigin::Remote,
+                        EphemeralEventTrigger::Timeout => EphemeralChangeOrigin::Timeout,
+                    },
+                    added: event.added.as_ref().clone(),
+                    updated: event.updated.as_ref().clone(),
+                    removed: event.removed.as_ref().clone(),
+                });
+                true
+            },
+        ));
         let document_updates = manager.documents().subscribe();
-        let client = Self {
+        let mut client = Self {
+            note_session_bound: false,
             document_updates,
             vault,
             manager,
             root_doc,
             client_id,
-            device_signing_key: identity.signing_key,
             config,
             server_vvs: HashMap::new(),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
+            _message_stream_subscription: message_stream_subscription,
+            lfs_download: None,
+            last_lfs_download: None,
             status: SyncStatus::Disconnected,
             event_tx,
         };
 
+        client
+            .replay_deferred_federation_update()
+            .map_err(|e| Error::sync_engine(SyncEngineContext::FederationReplayStartup, e))?;
         Ok((client, event_rx))
     }
 
@@ -167,12 +200,21 @@ impl SyncClient {
 
     /// Reads the current non-expired ephemeral value for `key`.
     pub fn ephemeral(&self, key: &str) -> Option<LoroValue> {
-        self.ephemeral_store.get(key)
+        self.vault
+            .message_streams
+            .presence
+            .store
+            .get(key)
+            .or_else(|| self.ephemeral_store.get(key))
     }
 
     /// Returns all currently stored non-deleted ephemeral keys.
     pub fn ephemeral_keys(&self) -> Vec<String> {
-        self.ephemeral_store.keys()
+        let mut keys = self.ephemeral_store.keys();
+        keys.extend(self.vault.message_streams.presence.store.keys());
+        keys.sort();
+        keys.dedup();
+        keys
     }
 
     /// Sets a local ephemeral key and returns the wire frame to send.
@@ -194,6 +236,7 @@ impl SyncClient {
     /// Runs the Rust-side `EphemeralStore` timeout housekeeping tick.
     pub fn remove_outdated_ephemeral(&self) {
         self.ephemeral_store.remove_outdated();
+        self.vault.message_streams.presence.store.remove_outdated();
     }
 
     /// Returns the list of window keys from the root doc (set by server).
@@ -257,17 +300,6 @@ impl SyncClient {
             return Err(err);
         }
         Ok(())
-    }
-
-    /// Builds this device's TAG_LEASE_REQUEST frame (ONE-1140, OD-5/OD-6):
-    /// Ed25519 proof of possession over
-    /// `"oneiron/lease-pop/v1" || client_id:8 BE || pubkey:32`.
-    pub(super) fn lease_request_frame(&self) -> Vec<u8> {
-        use ed25519_dalek::Signer;
-        let pubkey = self.device_signing_key.verifying_key().to_bytes();
-        let transcript = crate::sync::lease::lease_pop_transcript(self.client_id, &pubkey);
-        let pop_sig = self.device_signing_key.sign(&transcript).to_bytes();
-        transport::encode_lease_request(self.client_id, &pubkey, &pop_sig)
     }
 }
 

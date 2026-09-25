@@ -8,9 +8,10 @@ use crate::gate::resolution::PolicyManifestResolution;
 use crate::outbound_consent::{ScopedMcpConsentDecision, evaluate_scoped_mcp_call};
 use crate::outbound_grant::{
     StandingOutboundGrant, decode_standing_outbound_grant_body,
-    encode_standing_outbound_grant_body, standing_outbound_grant_principal_index_entity_id,
+    standing_outbound_grant_principal_index_entity_id,
     standing_outbound_grant_principal_index_prefix,
 };
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
 use crate::store::Store;
 
@@ -48,7 +49,7 @@ pub(super) fn standing_outbound_grant_for_effect(
         }
     }
     for id in candidate_ids {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
             if required_grant_id == Some(id) {
                 return Ok(None);
             }
@@ -170,23 +171,5 @@ pub(super) fn touch_standing_outbound_grant_in_txn(
     grant: StandingOutboundGrant,
     used_at: u64,
 ) -> Result<()> {
-    let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
-        return Err(Error::EntityNotFound);
-    };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Err(Error::CorruptedIndex("outbound grant entity header"));
-    };
-    if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
-        return Err(Error::CorruptedIndex("outbound grant entity type"));
-    }
-    let touched = grant.touched(used_at)?;
-    let body = encode_standing_outbound_grant_body(&touched)?;
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-    payload.push(ENTITY_TYPE_OUTBOUND_GRANT);
-    payload.extend_from_slice(&header.occurred_start.to_be_bytes());
-    payload.extend_from_slice(&header.occurred_end.to_be_bytes());
-    payload.extend_from_slice(&header.learned_at.to_be_bytes());
-    payload.extend_from_slice(&body);
-    store.entities.put(wtxn, id.as_bytes(), &payload)?;
-    Ok(())
+    crate::ports::EntityStoreMaintenance::port_outbound_grant_touch(store, wtxn, id, grant, used_at)
 }

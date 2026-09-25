@@ -51,6 +51,7 @@ pub fn api_error_envelope_schema() -> Value {
         "required": ["error"],
         "additionalProperties": false,
         "properties": {
+            "narrowing": { "$ref": "#/components/schemas/ReadReceiptSchema" },
             "error": {
                 "type": "object",
                 "required": ["code", "message", "requestId", "details", "suggestions"],

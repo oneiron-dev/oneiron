@@ -40,7 +40,7 @@ pub fn create_saved_query(
     };
     validate_definition(&definition)?;
     let record = SavedQueryRecord {
-        query_ref: EntityId::now(),
+        query_ref: vault.store.clock.entity_id()?,
         definition,
         created_at: now,
         updated_at: now,

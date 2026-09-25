@@ -26,14 +26,16 @@ pub(crate) struct SessionRetrievalTelemetry<'session> {
 }
 
 impl SessionRetrievalTelemetry<'_> {
-    /// Whether this assembly's rows stage into the room's overlay rather than
-    /// the base ledger.
-    ///
-    /// The base-only arms of the retrieval path (K6's embed enqueue) key on
-    /// THIS, never on session-boundness: an on-record room's retrieval is an
-    /// ordinary base one and takes the ordinary base arms.
-    pub(crate) fn stages_in_overlay(&self) -> bool {
-        self.route.target() == RouteTarget::Overlay
+    /// Whether the captured route permits ordinary durable retrieval work.
+    /// Only this positive Base check can authorize the embed-enqueue arm.
+    #[cfg(feature = "sync")]
+    pub(crate) fn writes_to_base(&self) -> bool {
+        self.route.target() == RouteTarget::Base
+    }
+
+    /// Anonymous retrievals expose no stored retrieval-run identity.
+    pub(crate) fn discards_writes(&self) -> bool {
+        self.route.target() == RouteTarget::Discard
     }
 
     /// Registers this assembly's retrieval-run row, provisional or published.
@@ -42,55 +44,55 @@ impl SessionRetrievalTelemetry<'_> {
         record: &crate::store::RetrievalRunRecord,
         provisional: bool,
     ) -> Result<()> {
-        if self.stages_in_overlay() {
-            return self.staged(|view, wtxn| {
+        match self.route.target() {
+            RouteTarget::Discard => self.route.revalidate(),
+            RouteTarget::Overlay => self.staged(|view, wtxn| {
                 if provisional {
                     view.record_context_pack_provisional_retrieval_run_in_txn(wtxn, record)
                 } else {
                     view.record_retrieval_run_in_txn(wtxn, record)
                 }
-            });
+            }),
+            RouteTarget::Base => self.published(record.run_id, || {
+                if provisional {
+                    self.vault
+                        .store
+                        .record_context_pack_provisional_retrieval_run(record)
+                } else {
+                    self.vault.store.record_retrieval_run(record)
+                }
+            }),
         }
-        self.published(record.run_id, || {
-            if provisional {
-                self.vault
-                    .store
-                    .record_context_pack_provisional_retrieval_run(record)
-            } else {
-                self.vault.store.record_retrieval_run(record)
-            }
-        })
     }
 
-    /// Clears the provisional marker and publishes the final row, against
-    /// whichever target the provisional registered through.
+    /// Finalizes against the same target as the provisional registration.
     pub(crate) fn finalize_run(
         &self,
         finalize: crate::store::RetrievalRunFinalize<'_>,
     ) -> Result<()> {
-        let run_id = finalize.run_id;
-        if self.stages_in_overlay() {
-            return self.staged(move |view, wtxn| {
+        match self.route.target() {
+            RouteTarget::Discard => self.route.revalidate(),
+            RouteTarget::Overlay => self.staged(move |view, wtxn| {
                 view.finalize_context_pack_retrieval_run_in_txn(wtxn, finalize)
-            });
+            }),
+            RouteTarget::Base => self.published(finalize.run_id, move || {
+                self.vault
+                    .store
+                    .finalize_context_pack_retrieval_run(finalize)
+            }),
         }
-        self.published(run_id, move || {
-            self.vault
-                .store
-                .finalize_context_pack_retrieval_run(finalize)
-        })
     }
 
-    /// Removes a provisional row whose assembly failed.
-    ///
-    /// The base arm takes no route check: a REMOVAL publishes nothing, so
-    /// refusing it under a replaced route would only strand the residue the
-    /// call exists to clear.
+    /// Removes a provisional row whose assembly failed. A stale Base route
+    /// may still clean up its own row, but Discard must not mutate base at all.
     pub(crate) fn discard_run(&self, run_id: crate::store::RetrievalRunId) -> Result<()> {
-        if self.stages_in_overlay() {
-            return self.staged(|view, wtxn| view.delete_retrieval_run_in_txn(wtxn, run_id));
+        match self.route.target() {
+            RouteTarget::Discard => self.route.revalidate(),
+            RouteTarget::Overlay => {
+                self.staged(|view, wtxn| view.delete_retrieval_run_in_txn(wtxn, run_id))
+            }
+            RouteTarget::Base => self.vault.store.delete_retrieval_run(run_id),
         }
-        self.vault.store.delete_retrieval_run(run_id)
     }
 
     /// One staged overlay write, under the captured route, revalidated INSIDE

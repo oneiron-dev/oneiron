@@ -182,9 +182,12 @@ impl<'a> BranchResources<'a> {
         let (_, conversation) = self.source(scope, &self.partition.conversation_ref)?;
         let facts = decode_turn_body(&body);
         let parent = decode_turn_body(&conversation);
-        let edges = self
-            .read
-            .edges_out(id)?
+        let edges = self.read.edges_out(id)?;
+        if edges.receipt.suppressed_count != 0 {
+            return Err(invalid_consolidation("branch turn graph is incomplete"));
+        }
+        let edges = edges
+            .value
             .ok_or_else(|| invalid_consolidation("branch turn is not readable"))?;
         let parents: Vec<_> = edges
             .iter()
@@ -253,6 +256,7 @@ impl<'a> BranchResources<'a> {
                         facts.world,
                         facts.facet,
                         facts.rel,
+                        facts.topic.as_deref(),
                     )
             {
                 return Err(invalid_consolidation("candidate crossed its branch scope"));
@@ -300,8 +304,11 @@ fn read_source(read: &ScopedRead<'_>, id: &EntityId) -> Result<(u8, u64, Vec<u8>
             "branch source is not a turn or conversation",
         ));
     }
-    read.get_entity_parts(id)?
-        .ok_or_else(|| invalid_consolidation("branch source is not readable"))
+    let crate::claim::ScopedReadResult {
+        value,
+        receipt: _receipt,
+    } = read.get_entity_parts_with_receipt(id, None)?;
+    value.ok_or_else(|| invalid_consolidation("branch source is not readable"))
 }
 
 pub(super) fn document_version(document: EntityId, body: &[u8]) -> ScopeResource {

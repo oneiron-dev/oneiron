@@ -7,7 +7,10 @@ use crate::error::{GateError, RegistryError};
 /// rows (mirrors the gate/dispatch test fixture shape).
 fn put_actor_ceiling_manifest(vault: &Vault, seed: u8, actor_rows: Vec<Value>) -> Result<()> {
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("agent-def-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (

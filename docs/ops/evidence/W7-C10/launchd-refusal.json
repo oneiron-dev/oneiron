@@ -1,0 +1,22 @@
+{
+  "reference_sha256": "f6154b0e8b04cb0115c2aacf2e1fec6843813e284665984a16c08e8840503c79",
+  "binary_sha256": "27703b2a34029dee1d9a13c66ac13e87d3d8366885f26320b0acb01f46f137fb",
+  "os_version": "27.0",
+  "deviations": [
+    "temporary label",
+    "owned paths",
+    "KeepAlive=false",
+    "loopback port"
+  ],
+  "passed": false,
+  "label": "com.oneiron.server.w7c10.proof.e7e36ffe30464565ab6b585bc9976c1b",
+  "fixture_sha256": "5f5d51e077e15537d72790f822d8add5bfcc767d5aae950e583df818f503b268",
+  "logs": {},
+  "label_removed": true,
+  "error": "Command '('launchctl', 'bootstrap', 'gui/501', '/Volumes/Cinema/w7-build/wt/W7-C10/.w7/launchd-proof-ggylz6am/fixture.plist')' returned non-zero exit status 5.",
+  "command_stdout": "",
+  "command_stderr": "Bootstrap failed: 5: Input/output error\nTry re-running the command as root for richer errors.\n",
+  "diagnosis": "launchd rejected plist ownership on APFS volume with Owners Disabled; chmod of owned fixture did not change refusal",
+  "mount_evidence": "   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC\n   File System Personality:   APFS\n   Type (Bundle):             apfs\n   Owners:                    Disabled\n   Media Type:                Generic\n   Media Read-Only:           No\n   Volume Read-Only:          No\n501\n0022\n",
+  "launchd_log": "Timestamp               Ty Process[PID:TID]\n2026-09-19 14:06:51.732 E  launchd[1:486bab9] [gui/501/com.oneiron.server.w7c10.proof.53ff60acd3b141ef95237b86cba8fbe5:] Caller specified a plist with bad ownership/permissions: path = /Volumes/Cinema/w7-build/wt/W7-C10/.w7/launchd-proof-8tpw9etd/fixture.plist, caller = launchctl[36017]\n"
+}

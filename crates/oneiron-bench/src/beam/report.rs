@@ -569,9 +569,16 @@ pub(super) fn generated_yaml_scalar(raw: &str) -> String {
 }
 pub(super) fn serialized_context_entity_id(entity: &oneiron::ContextEntity) -> String {
     let short_id = if entity.short_id.is_empty() {
-        entity.id.to_hex()
+        "unresolved".to_owned()
     } else {
         entity.short_id.clone()
     };
-    format!("{}:{:02x}", short_id, entity.content_hash)
+    let reference = format!("{}:{:02x}", short_id, entity.content_hash);
+    match entity.source_revision_ref {
+        Some(revision) => format!(
+            "{reference}@{}",
+            oneiron::memory::RevisionRef(revision).to_hex()
+        ),
+        None => reference,
+    }
 }

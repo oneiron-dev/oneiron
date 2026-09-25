@@ -1,0 +1,21 @@
+{
+  "complete": true,
+  "mode": "ukrainian",
+  "e1_e3_qualified": false,
+  "default_changed": false,
+  "cohort": "public-synthetic-smoke-only",
+  "input_sha256": "f81a518a688171a15f09d759cc39708974f9da118ca9516c21d8593a4f58d938",
+  "pcm_sha256": "13b6ccff034ea5683f9e66891c0d3ab4ad8556bd71cfcabc36736dfe626b3842",
+  "reference": "Привіт. Це перевірка часу слів. Ми зустрінемося біля бібліотеки.",
+  "word_time_truth": null,
+  "speaker_truth": null,
+  "profile_sha256": "0641b9279c1f8e837fa43f27fe17bf2228803deb704a46325a145eebc6538eb5",
+  "code_sha256": {
+    "meeting_audio_process.py": "707ef32d057dbb478889c070119659db4113c80524df684c5bc3af63880f9abb",
+    "meeting-audio-native.py": "b9661ba32cb2a52e1c3db59902bf1dde6a20f403a9c6363ce2d0029c72571133",
+    "meeting-audio-worker.py": "8de86b391dee7d5267ed27bcc6106771fd6de22f544b8d188ff30a6216ba2851",
+    "meeting-audio-e3.py": "c120e184f21a90285f2d191006e729cdda009d10179646155450f940cf982dab",
+    "meeting_audio_ctc.py": "d9a89905d461db38b995c7dac166453452d680cf6ae06be0f106933cbcd295ba",
+    "meeting_audio_runtime.py": "67ea854c9eae412db604a38ccd955d181e179e8ebd573c0d4645ad6aefc60fec"
+  }
+}

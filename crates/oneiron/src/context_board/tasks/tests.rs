@@ -745,3 +745,19 @@ fn run_tree_status_maps_onto_board_status_axis() {
         assert_eq!(run_tree_board_status(status), board_status);
     }
 }
+
+#[test]
+fn board_status_serializes_as_its_token() {
+    for status in [
+        TaskBoardStatus::Running,
+        TaskBoardStatus::Scheduled,
+        TaskBoardStatus::Queued,
+        TaskBoardStatus::Done,
+        TaskBoardStatus::Failed,
+    ] {
+        assert_eq!(
+            serde_json::to_value(status).expect("status JSON"),
+            serde_json::json!(status.as_str())
+        );
+    }
+}

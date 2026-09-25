@@ -51,8 +51,8 @@ mod tests;
 // re-exported above) plus the parent-scope crate/std imports the flat file
 // used to provide. After the directory split the seam re-imports both so
 // `tests.rs` resolves exactly as it did before.
-#[cfg(test)]
-use self::versions::blob_artifact_asset_entity_id;
+pub(crate) use self::store_keys::{blob_artifact_asset_ref_key, blob_artifact_asset_ref_prefix};
+pub(crate) use self::versions::blob_artifact_asset_entity_id;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]

@@ -31,11 +31,17 @@ pub mod cursor_op {
 }
 
 pub fn reserve_size_val(size: usize) -> ffi::MDB_val {
-    ffi::MDB_val { mv_size: size, mv_data: ptr::null_mut() }
+    ffi::MDB_val {
+        mv_size: size,
+        mv_data: ptr::null_mut(),
+    }
 }
 
 pub unsafe fn into_val(value: &[u8]) -> ffi::MDB_val {
-    ffi::MDB_val { mv_data: value.as_ptr() as *mut libc::c_void, mv_size: value.len() }
+    ffi::MDB_val {
+        mv_data: value.as_ptr() as *mut libc::c_void,
+        mv_size: value.len(),
+    }
 }
 
 pub unsafe fn from_val<'a>(value: ffi::MDB_val) -> &'a [u8] {

@@ -49,9 +49,34 @@ impl Store {
         token
     }
 
-    fn pending_marker_is_current(marker: &[u8], epoch: u64, claim_body: &[u8]) -> bool {
-        marker == Self::pending_embedding_marker_token(epoch, claim_body)
-            || (marker.len() == PENDING_EMBEDDING_MARKER_TOKEN_LEN
+    fn scoped_embedding_token(
+        epoch: u64,
+        body: &[u8],
+        owner: Option<crate::federation::derivation::DerivationOwner>,
+    ) -> [u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN] {
+        let Some(owner) = owner else {
+            return Self::pending_embedding_marker_token(epoch, body);
+        };
+        let digest = crate::federation::derivation::sealed_digest(
+            owner,
+            crate::federation::derivation::DerivationKind::Embedding,
+            &epoch.to_be_bytes(),
+            body,
+        );
+        let mut token = [0; PENDING_EMBEDDING_MARKER_TOKEN_LEN];
+        token[0] = 3;
+        token[1..].copy_from_slice(&digest);
+        token
+    }
+    fn pending_marker_is_current(
+        marker: &[u8],
+        epoch: u64,
+        claim_body: &[u8],
+        owner: Option<crate::federation::derivation::DerivationOwner>,
+    ) -> bool {
+        marker == Self::scoped_embedding_token(epoch, claim_body, owner)
+            || (owner.is_none()
+                && marker.len() == PENDING_EMBEDDING_MARKER_TOKEN_LEN
                 && marker[0] == 1
                 && marker == Self::legacy_pending_embedding_marker_token(claim_body))
     }
@@ -64,9 +89,42 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let key = Self::pending_embedding_marker_key(id);
         let epoch = crate::hnsw::read_embedding_model_epoch(self, &*wtxn)?;
-        let token = Self::pending_embedding_marker_token(epoch, claim_body);
+        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
+        let token = Self::scoped_embedding_token(epoch, claim_body, owner);
         self.sync_state.put(wtxn, key.as_str(), token.as_slice())?;
         Ok(token.to_vec())
+    }
+
+    /// Reseal already queued work during the first account binding. Historical
+    /// or stale tokens stay stale; only work current before the binding moves.
+    pub(crate) fn seal_pending_embeddings_for_owner(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        owner: crate::federation::derivation::DerivationOwner,
+    ) -> Result<()> {
+        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let pending = self
+            .sync_state
+            .prefix_iter(&*wtxn, PENDING_EMBEDDING_MARKER_PREFIX)?
+            .map(|row| row.map(|(key, marker)| (key.into_owned(), marker.to_vec())))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        for (key, marker) in pending {
+            let id = EntityId::from_hex(
+                key.strip_prefix(PENDING_EMBEDDING_MARKER_PREFIX)
+                    .ok_or(crate::Error::CorruptedIndex("pending embedding key"))?,
+            )?;
+            let Some(record) = self.entities.get(&*wtxn, id.as_bytes())? else {
+                continue;
+            };
+            let Some(body) = self.embeddable_body_from_record(&record) else {
+                continue;
+            };
+            if Self::pending_marker_is_current(&marker, epoch, body, None) {
+                let token = Self::scoped_embedding_token(epoch, body, Some(owner));
+                self.sync_state.put(wtxn, &key, &token)?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn clear_pending_embedding(
@@ -103,9 +161,10 @@ impl Store {
             return Ok(None);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, rtxn)?;
+        let owner = crate::federation::derivation::owner_in_txn(self, rtxn)?;
         Ok(self
             .embeddable_body_from_record(&record)
-            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body))
+            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body, owner))
             .map(|_| marker.to_vec()))
     }
 
@@ -123,9 +182,10 @@ impl Store {
             return Ok(None);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
         Ok(self
             .embeddable_body_from_record(&record)
-            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body))
+            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body, owner))
             .map(|_| marker.to_vec()))
     }
 
@@ -142,9 +202,10 @@ impl Store {
             return Ok(false);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
         Ok(self
             .embeddable_body_from_record(&record)
-            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body)))
+            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body, owner)))
     }
 
     pub(crate) fn pending_embedding_matches_in_txn(
@@ -164,9 +225,10 @@ impl Store {
             return Ok(false);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
         Ok(self
             .embeddable_body_from_record(&record)
-            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body)))
+            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body, owner)))
     }
 
     /// The embeddable body of a base record, or `None` when the row carries no

@@ -297,7 +297,7 @@ fn local_raw_claim_put_removes_lexical_hint_side_records() -> Result<()> {
         Some(claim)
     );
 
-    let replacement = ClaimBody::new(
+    let mut replacement = ClaimBody::new(
         "profile.preference",
         ClaimSubject::Entity(subject),
         Value::from("gyokuro"),
@@ -305,6 +305,7 @@ fn local_raw_claim_put_removes_lexical_hint_side_records() -> Result<()> {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     );
+    replacement.scope_facet = vault.get_claim(&claim)?.expect("stored claim").scope_facet;
     vault.put_claim(&claim, &replacement, test_time_range(12, 12), 13)?;
 
     assert!(vault.get_claim(&hint)?.is_none());

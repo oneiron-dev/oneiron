@@ -10,6 +10,13 @@ use super::{
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Of360EvalError {
+    #[error("invalid OF-360 corpus: {reason}")]
+    InvalidCorpus { reason: &'static str },
+    #[error("invalid OF-360 QA case `{case_id}`: {reason}")]
+    InvalidQa {
+        case_id: String,
+        reason: &'static str,
+    },
     #[error("invalid OF-360 metric definitions JSON: {0}")]
     InvalidMetricDefinitions(#[source] serde_json::Error),
     #[error("invalid OF-360 gold dataset JSON: {0}")]
@@ -140,6 +147,8 @@ pub struct Of360GoldDataset {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Of360GoldCase {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub qa: Vec<super::qa::Of360GoldQa>,
     pub case_id: String,
     pub title: String,
     pub turns: Vec<Of360ConversationTurn>,
@@ -186,6 +195,8 @@ pub struct Of360ExtractionRun {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Of360CaseExtractionOutput {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub qa_answers: Vec<super::qa::Of360QaAnswer>,
     pub case_id: String,
     pub extracted_claims: Vec<Of360ExtractedClaim>,
 }
@@ -374,6 +385,9 @@ pub struct Of360CaseEvalReport {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Of360ParsedMetrics {
+    pub updating_accuracy: Of360RateMetric,
+    pub qa_accuracy: Of360RateMetric,
+    pub omission_rate: Of360RateMetric,
     pub halumem_recall: Of360RateMetric,
     pub halumem_weighted_recall: Of360RateMetric,
     pub target_precision: Of360RateMetric,
@@ -388,6 +402,9 @@ pub struct Of360ParsedMetrics {
 impl Of360ParsedMetrics {
     fn validate(&self) -> Of360Result<()> {
         for rate in [
+            self.updating_accuracy,
+            self.qa_accuracy,
+            self.omission_rate,
             self.halumem_recall,
             self.halumem_weighted_recall,
             self.target_precision,

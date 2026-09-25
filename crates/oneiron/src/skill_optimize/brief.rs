@@ -43,6 +43,8 @@ pub const SKILL_OPTIMIZE_CALL_PURPOSE_NAME: &str = "skill_optimize_draft";
 #[non_exhaustive]
 pub struct SkillOptimizeBrief {
     pub skill: EntityId,
+    /// Explicit preference audience. Unbound jobs use no personal evidence.
+    pub principal: Option<EntityId>,
     /// The target's `skillId` — the proposal continues it, so a drafted
     /// revision is something the gate can supersede WITH.
     pub skill_id: String,
@@ -120,6 +122,29 @@ pub fn optimize_brief(
     vault: &Vault,
     candidate: &SkillOptimizeCandidate,
 ) -> Result<SkillOptimizeBrief> {
+    optimize_brief_bound_at(vault, candidate, None, crate::unix_seconds_now())
+}
+
+/// Reads a DEV-only brief for an explicitly authenticated principal.
+/// Unknown legacy preference evidence and other principals never influence it.
+pub fn optimize_brief_for_principal_at(
+    vault: &Vault,
+    candidate: &SkillOptimizeCandidate,
+    owner: crate::write_envelope::WriteActor,
+    now: u64,
+) -> Result<SkillOptimizeBrief> {
+    let txn = vault.store.env.read_txn()?;
+    vault.verify_owner_write_actor_in_txn(&txn, &owner)?;
+    drop(txn);
+    optimize_brief_bound_at(vault, candidate, Some(owner.entity_ref()), now)
+}
+
+pub(super) fn optimize_brief_bound_at(
+    vault: &Vault,
+    candidate: &SkillOptimizeCandidate,
+    principal: Option<EntityId>,
+    now: u64,
+) -> Result<SkillOptimizeBrief> {
     let record = vault
         .get_skill_record(&candidate.skill)?
         .ok_or(Error::EntityNotFound)?;
@@ -166,18 +191,27 @@ pub fn optimize_brief(
         })
         .collect();
     truncate_oldest(&mut discovery_proposals);
-    let mut substitution_proposals: Vec<MinedSkillEditProposal> =
-        pending_substitution_skill_edits(vault)?
-            .into_iter()
-            .filter(|proposal| {
-                proposal.skill == candidate.skill
-                    && rests_only_on_dev(&candidate.skill, &proposal.evidence_receipts)
-            })
-            .collect();
+    let mut substitution_proposals = Vec::new();
+    for proposal in pending_substitution_skill_edits(vault)? {
+        if proposal.skill == candidate.skill
+            && proposal.principal == principal
+            && rests_only_on_dev(&candidate.skill, &proposal.evidence_receipts)
+            && crate::claim::preference_evidence_in_force(proposal.at, now)
+            && crate::edit_distance::miner::preference_receipts_in_force(
+                vault,
+                &proposal.evidence_receipts,
+                principal,
+                now,
+            )?
+        {
+            substitution_proposals.push(proposal);
+        }
+    }
     truncate_oldest(&mut substitution_proposals);
 
     Ok(SkillOptimizeBrief {
         skill: candidate.skill,
+        principal,
         skill_id: record.skill_id,
         desc: record.desc,
         version: record.version,
@@ -237,6 +271,8 @@ fn reliability_citations(vault: &Vault, skill: &EntityId) -> Result<Vec<String>>
         };
         if body.predicate != crate::skill_reliability::PREDICATE_SKILL_RELIABILITY
             || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+            || body.source != Some(crate::claim::ClaimSource::Observed)
+            || body.approval != crate::claim::ClaimApprovalStatus::Auto
         {
             continue;
         }

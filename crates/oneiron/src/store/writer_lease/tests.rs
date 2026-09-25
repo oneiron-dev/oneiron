@@ -52,6 +52,80 @@ fn owned_vault_keeps_lease_until_last_arc_and_releases_failed_open() {
     Vault::open_owned(dir.path(), VaultConfig::default()).expect("failed open released lease");
 }
 
+/// A forked child that only waits to be killed. It holds a copy of every
+/// descriptor this process had open at the fork, exactly as a sibling test's
+/// `Command` spawn does between its fork and exec, but for as long as the
+/// test needs. Killed and reaped on drop, panics included.
+#[cfg(unix)]
+struct ParkedChild(libc::pid_t);
+
+#[cfg(unix)]
+impl ParkedChild {
+    fn fork() -> Self {
+        // SAFETY: the child calls only the async-signal-safe `pause` until the
+        // parent kills it. It never allocates, locks, or touches LMDB.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            loop {
+                // SAFETY: `pause` takes no arguments and touches no memory.
+                unsafe { libc::pause() };
+            }
+        }
+        Self(pid)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ParkedChild {
+    fn drop(&mut self) {
+        let mut status = 0;
+        // SAFETY: `self.0` is our own unreaped child and `status` points to a
+        // writable c_int.
+        unsafe {
+            libc::kill(self.0, libc::SIGKILL);
+            libc::waitpid(self.0, &mut status, 0);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn owner_drop_releases_lease_a_forked_child_still_holds_open() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open_owned(dir.path(), VaultConfig::default()).expect("open owner");
+    let child = ParkedChild::fork();
+    drop(vault);
+    VaultWriterLease::acquire(dir.path()).expect("owner drop released lease");
+    drop(child);
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_open_releases_lease_a_forked_child_still_holds_open() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    drop(Vault::open_owned(dir.path(), VaultConfig::default()).expect("create vault"));
+    let canonical = dir.path().canonicalize().expect("canonical root");
+    let (forked, child) = std::sync::mpsc::channel();
+    // Fires after the failing open took its lease and opened LMDB, before the
+    // HNSW shape gate refuses the bad dimensions.
+    crate::store::test_hooks::arm_after_lmdb_open(canonical, move |_| {
+        forked
+            .send(ParkedChild::fork())
+            .expect("hand the child to the test");
+    });
+    let bad = VaultConfig {
+        dimensions: 17,
+        ..VaultConfig::default()
+    };
+    assert!(Vault::open_owned(dir.path(), bad).is_err());
+    let child = child
+        .try_recv()
+        .expect("child forked inside the failed open");
+    Vault::open_owned(dir.path(), VaultConfig::default()).expect("failed open released lease");
+    drop(child);
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn owned_open_binds_lmdb_and_cleanup_to_leased_directory() {

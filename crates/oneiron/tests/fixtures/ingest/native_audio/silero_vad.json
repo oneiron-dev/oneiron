@@ -1,0 +1,37 @@
+{
+  "ok": true,
+  "result": {
+    "spans": [
+      {
+        "start_ms": 1024,
+        "end_ms": 2784
+      },
+      {
+        "start_ms": 3168,
+        "end_ms": 4736
+      },
+      {
+        "start_ms": 6240,
+        "end_ms": 7616
+      },
+      {
+        "start_ms": 7936,
+        "end_ms": 9344
+      }
+    ],
+    "provenance": {
+      "invocation_id": "c1e4fa42-5041-45d5-8df8-08fd88841250",
+      "model_id": "silero-vad",
+      "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+      "execution": "measured",
+      "package_version": "6.2.1",
+      "full_file_samples": 190218,
+      "threshold": 0.5,
+      "speech_pad_ms": 0
+    }
+  },
+  "protocol": "oneiron.meeting_audio.host.v1",
+  "request_id": "58b0711b-42ed-4d19-ad2c-0f764d2f39fa",
+  "body_bytes": 0,
+  "elapsed_seconds": 8.302531542023644
+}

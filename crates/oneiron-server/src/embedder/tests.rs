@@ -158,7 +158,14 @@ enum MockBehaviour {
     UnknownModel,
 }
 
+struct EmbeddingPause {
+    request: usize,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
 struct MockState {
+    pause: Mutex<Option<Arc<EmbeddingPause>>>,
     behaviour: Mutex<MockBehaviour>,
     requests: Mutex<Vec<Value>>,
 }
@@ -189,6 +196,7 @@ impl Drop for MockEndpoint {
 impl MockEndpoint {
     fn start(behaviour: MockBehaviour) -> Self {
         let state = Arc::new(MockState {
+            pause: Mutex::new(None),
             behaviour: Mutex::new(behaviour),
             requests: Mutex::new(Vec::new()),
         });
@@ -257,11 +265,16 @@ async fn mock_embeddings(
     State(state): State<Arc<MockState>>,
     axum::Json(body): axum::Json<Value>,
 ) -> Result<axum::Json<Value>, StatusCode> {
-    state
-        .requests
-        .lock()
-        .expect("mock requests lock")
-        .push(body.clone());
+    let request_number = {
+        let mut requests = state.requests.lock().expect("mock requests lock");
+        requests.push(body.clone());
+        requests.len()
+    };
+    let pause = state.pause.lock().expect("pause lock").clone();
+    if let Some(pause) = pause.filter(|pause| pause.request == request_number) {
+        pause.entered.notify_one();
+        pause.release.notified().await;
+    }
     if state.behaviour() == MockBehaviour::ServerError {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -470,6 +483,11 @@ fn test_vault(dir: &std::path::Path) -> Arc<oneiron::Vault> {
 }
 
 fn claim_body(text: &str) -> Vec<u8> {
+    // Hand-encoded CLAIM bodies must carry the full v2 scope stamp: the
+    // write door rejects a body that misses one of the four scope keys or
+    // the version. The subject's substrate mask is derived exactly as the
+    // typed `ClaimBody::new` constructor derives it.
+    let subject = oneiron::EntityId::from_bytes([0x7d; 16]).expect("subject id");
     let mut body = Vec::new();
     rmpv::encode::write_value(
         &mut body,
@@ -477,12 +495,33 @@ fn claim_body(text: &str) -> Vec<u8> {
             (rmpv::Value::from("pred"), rmpv::Value::from("test.status")),
             (
                 rmpv::Value::from("subj"),
-                rmpv::Value::Binary([0x7d; 16].to_vec()),
+                rmpv::Value::Binary(subject.as_bytes().to_vec()),
             ),
             (rmpv::Value::from("val"), rmpv::Value::from(text)),
             (rmpv::Value::from("conf"), rmpv::Value::F32(0.9)),
             (rmpv::Value::from("appr"), rmpv::Value::from("auto")),
             (rmpv::Value::from("life"), rmpv::Value::from("active")),
+            (
+                rmpv::Value::from("worldId"),
+                rmpv::Value::Binary(oneiron::claim::base_world_id().as_bytes().to_vec()),
+            ),
+            (
+                rmpv::Value::from("scopeRelationshipId"),
+                rmpv::Value::from("all"),
+            ),
+            (
+                rmpv::Value::from("scopeFacetId"),
+                rmpv::Value::Binary(
+                    oneiron::claim::substrate_facet_id(subject)
+                        .as_bytes()
+                        .to_vec(),
+                ),
+            ),
+            (
+                rmpv::Value::from("scopeProjectId"),
+                rmpv::Value::Binary(oneiron::claim::default_project_id().as_bytes().to_vec()),
+            ),
+            (rmpv::Value::from("scopeVersion"), rmpv::Value::from(2u64)),
         ]),
     )
     .expect("encode claim body");
@@ -517,7 +556,31 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
 
     let mock = MockEndpoint::start(MockBehaviour::Ok);
     let dir = tempfile::tempdir().expect("vault dir");
-    let vault = test_vault(dir.path());
+    let config_path = dir.path().join("oneiron.toml");
+    crate::commands::init(crate::cli::InitArgs {
+        path: dir.path().join("vault"),
+        config: Some(config_path.clone()),
+        embedder: Some(EmbedderProvider::Endpoint),
+        embedder_endpoint: Some(mock.base.clone()),
+        embedder_model_id: Some("test/model@rev".into()),
+        embedder_model_key: Some(MODEL_KEY.into()),
+        dimensions: Some(DIMS),
+        map_size: 64 * 1024 * 1024,
+        ..Default::default()
+    })
+    .unwrap();
+    let serve_config = crate::config::resolve_serve_config_with_sources(
+        &crate::config::ServeArgs {
+            config: Some(config_path),
+            ..Default::default()
+        },
+        crate::config::EnvConfig::default(),
+        None,
+    )
+    .unwrap();
+    let vault = Arc::new(
+        oneiron::Vault::open_owned(&serve_config.vault_path, serve_config.vault_config()).unwrap(),
+    );
     let texts = [
         "first claim prose",
         "second claim prose",
@@ -538,14 +601,18 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
         .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
         .expect("claim census")
         .len();
-    let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
+    let slot = EmbedderSlot::from_config(serve_config.embedder.as_ref().unwrap())
         .expect("slot resolves")
         .expect("an endpoint slot exists");
+    // The semantic door is an owner-grade `/api/*` route over a proof-backed
+    // scoped read: it needs the configured host secret on both the server and
+    // the request. The dev hatch authenticates but carries no proof, so its
+    // reads deny.
     let server = Arc::new(
         crate::server::SyncServer::new(
             Arc::clone(&vault),
             crate::config::SyncServerConfig {
-                allow_unauthenticated: true,
+                auth_secret: Some("embedder-fixture-secret".to_owned()),
                 ..Default::default()
             },
         )
@@ -571,6 +638,10 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
                     .method("POST")
                     .uri("/api/search/semantic")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        "Bearer embedder-fixture-secret",
+                    )
                     .body(Body::from(
                         json!({ "text": texts[1], "limit": corpus_size, "view": "standard" })
                             .to_string(),
@@ -634,6 +705,8 @@ fn attaching_a_provider_to_a_populated_vault_backfills_every_row() {
     };
 
     let vault = test_vault(dir.path());
+    assert_eq!(vault.cold_attach_embedder().unwrap(), ids.len());
+    assert_eq!(vault.cold_attach_embedder().unwrap(), 0);
     let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
         .expect("slot resolves")
         .expect("an endpoint slot exists");
@@ -914,4 +987,228 @@ fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
                 .all(|entry| entry.path().is_dir()),
         "a failed fetch leaves no artifact behind"
     );
+}
+
+#[test]
+fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
+    use crate::config::{
+        EmbedderLocality as Locality,
+        remote_embedder::{EgressPolicy, RemoteEmbedderConfig},
+    };
+    use oneiron::embed::{EmbedderLocality, PendingEmbeddingReconciler};
+    for locality in [Locality::OwnerServer, Locality::ThirdParty] {
+        let local = MockEndpoint::start(MockBehaviour::Ok);
+        let remote = MockEndpoint::start(MockBehaviour::Ok);
+        let dir = tempfile::tempdir().unwrap();
+        let vault = test_vault(dir.path());
+        let seeded = vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+            .unwrap()
+            .len();
+        let allow = put_claim(&vault, 0x91, "allow this row");
+        let deny = put_claim(&vault, 0x92, "deny this row");
+        let unknown = put_claim(&vault, 0x93, "no verdict row");
+        let mut late = [0x94; 16];
+        late[0] = 0x7e;
+        let late = oneiron::EntityId::from_bytes(late).unwrap();
+        let mut config = endpoint_config(&local.base);
+        config.remote = Some(RemoteEmbedderConfig {
+            endpoint: remote.base.clone(),
+            model_key: MODEL_KEY.into(),
+            locality,
+            artifact: None,
+            api_key_env: None,
+            lease_ms: 120_000,
+            timeout_ms: 1000,
+            egress: Some(EgressPolicy {
+                allow: vec![allow.to_hex(), late.to_hex()],
+                deny: vec![deny.to_hex()],
+                allow_all: false,
+            }),
+        });
+        let primary = endpoint::HttpEmbedder::from_config(&config).unwrap();
+        let rung = build_remote_rung(&config).unwrap().unwrap();
+        assert_eq!(rung.lease_duration_ms, 120_000);
+        let reconciler = PendingEmbeddingReconciler::new(Arc::clone(&vault), primary)
+            .with_remote_rung(rung)
+            .unwrap();
+        let report = reconciler.reconcile_once().unwrap();
+        assert_eq!(
+            (
+                report.routed_remote,
+                report.egress_denied,
+                report.egress_no_verdict,
+                report.filled
+            ),
+            (1, 1, 1 + seeded, 3 + seeded)
+        );
+        let expected = if locality == Locality::OwnerServer {
+            EmbedderLocality::OwnerServer
+        } else {
+            EmbedderLocality::ThirdParty
+        };
+        assert_eq!(vault.embedding_locality(&allow).unwrap(), Some(expected));
+        assert_eq!(
+            vault.embedding_locality(&deny).unwrap(),
+            Some(EmbedderLocality::OnDevice)
+        );
+        assert_eq!(
+            vault.embedding_locality(&unknown).unwrap(),
+            Some(EmbedderLocality::OnDevice)
+        );
+        remote.set_behaviour(MockBehaviour::ServerError);
+        assert_eq!(
+            put_claim(&vault, 0x94, "row put while remote is down"),
+            late
+        );
+        let report = reconciler.reconcile_once().unwrap();
+        assert_eq!((report.remote_failed_fallback_local, report.filled), (1, 1));
+        assert_eq!(
+            vault.embedding_locality(&late).unwrap(),
+            Some(EmbedderLocality::OnDevice)
+        );
+        assert_eq!(reconciler.reconcile_once().unwrap().filled, 0);
+    }
+}
+
+#[test]
+fn remote_endpoint_init_config_drives_egress_and_semantic_queries_without_manual_edits() {
+    use crate::config::EmbedderLocality;
+    let local = MockEndpoint::start(MockBehaviour::Ok);
+    let remote = MockEndpoint::start(MockBehaviour::Ok);
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("oneiron.toml");
+    let mut bytes = [0xA9; 16];
+    bytes[0] = 0x7e;
+    let id = oneiron::EntityId::from_bytes(bytes).unwrap();
+    crate::commands::init(crate::cli::InitArgs {
+        path: dir.path().join("vault"),
+        config: Some(config_path.clone()),
+        embedder: Some(EmbedderProvider::Endpoint),
+        embedder_endpoint: Some(remote.base.clone()),
+        embedder_locality: Some(EmbedderLocality::ThirdParty),
+        embedder_fallback_endpoint: Some(local.base.clone()),
+        embedder_egress_allow: vec![id.to_hex()],
+        embedder_model_id: Some("test/model@rev".into()),
+        embedder_model_key: Some(MODEL_KEY.into()),
+        dimensions: Some(DIMS),
+        map_size: 64 * 1024 * 1024,
+        ..Default::default()
+    })
+    .unwrap();
+    let config = crate::config::resolve_serve_config_with_sources(
+        &crate::config::ServeArgs {
+            config: Some(config_path),
+            ..Default::default()
+        },
+        crate::config::EnvConfig::default(),
+        None,
+    )
+    .unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open_owned(&config.vault_path, config.vault_config()).unwrap());
+    let seeded = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+        .unwrap()
+        .len();
+    let allowed = put_claim(&vault, 0xA9, "remote onboarding claim");
+    assert_eq!(allowed, id);
+    let unknown = put_claim(&vault, 0xAA, "keep this claim on device");
+    let embedder = config.embedder.as_ref().unwrap();
+    let slot = EmbedderSlot::from_config(embedder).unwrap().unwrap();
+    let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        slot.ensure_ready().unwrap() as Arc<dyn oneiron::embed::Embedder>,
+    )
+    .with_remote_rung(build_remote_rung(embedder).unwrap().unwrap())
+    .unwrap();
+    let report = reconciler.reconcile_once().unwrap();
+    assert_eq!(
+        (
+            report.routed_remote,
+            report.egress_no_verdict,
+            report.filled
+        ),
+        (1, 1 + seeded, 2 + seeded)
+    );
+    assert_eq!(
+        vault.embedding_locality(&id).unwrap(),
+        Some(oneiron::embed::EmbedderLocality::ThirdParty)
+    );
+    assert_eq!(
+        vault.embedding_locality(&unknown).unwrap(),
+        Some(oneiron::embed::EmbedderLocality::OnDevice)
+    );
+    let query = slot.embed_query("remote onboarding claim").unwrap();
+    let hits = vault.search_vector(&query, 2 + seeded).unwrap();
+    assert!(hits.iter().any(|hit| hit.id == id));
+}
+
+#[test]
+fn busy_embedding_worker_publishes_due_staged_revisions_between_passes() {
+    let mock = MockEndpoint::start(MockBehaviour::Ok);
+    let dir = tempfile::tempdir().unwrap();
+    let vault = test_vault(dir.path());
+    let mut config = endpoint_config(&mock.base);
+    config.batch_size = 1;
+    let slot = EmbedderSlot::from_config(&config).unwrap().unwrap();
+    slot.ensure_ready().unwrap();
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let document = oneiron::EntityId::now();
+    let vector = mock_vector("staged revision", DIMS);
+    for content in ["original indexed text", "staged revised text"] {
+        let body = rmp_serde::to_vec_named(&json!({"content": content})).unwrap();
+        vault
+            .batch()
+            .put(
+                &document,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .text(&document, &[("content", content)])
+            .vector(&document, &vector)
+            .commit()
+            .unwrap();
+    }
+    let expected = vault.pin_entity_revision(&document).unwrap();
+    assert_ne!(vault.indexed_revision(&document).unwrap(), Some(expected));
+    let backlog = [
+        put_claim(&vault, 0xD1, "first pending"),
+        put_claim(&vault, 0xD2, "second pending"),
+    ];
+    let pause = Arc::new(EmbeddingPause {
+        request: mock.requests().len() + 2,
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    });
+    *mock.state.pause.lock().unwrap() = Some(pause.clone());
+    let server = Arc::new(
+        crate::server::SyncServer::new(vault.clone(), Default::default())
+            .unwrap()
+            .with_embedder(Some(slot)),
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let worker = server.spawn_embedding_worker().unwrap();
+        let paused =
+            tokio::time::timeout(std::time::Duration::from_secs(10), pause.entered.notified())
+                .await;
+        // Read the public result while the second leased request is paused.
+        let indexed = vault.indexed_revision(&document).unwrap();
+        let pending = backlog
+            .iter()
+            .any(|id| vault.get_vector(id).unwrap().is_none());
+        pause.release.notify_one();
+        worker.abort();
+        let _ = worker.await;
+        assert!(paused.is_ok(), "worker must reach its second nonempty pass");
+        assert!(pending, "the global queue was not empty at publication");
+        assert_eq!(indexed, Some(expected));
+    });
+    runtime.shutdown_background();
 }

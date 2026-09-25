@@ -53,7 +53,10 @@ fn scoped_read_core_read_world_scope_contains_actor_readable_claims() -> Result<
     put_claim_body(&vault, &allowed_id, &allowed)?;
     put_claim_body(&vault, &denied_id, &denied)?;
 
-    assert!(scoped_read_claim_allowed(&policy, &actor_key, &base, &[]));
+    assert!(
+        !scoped_read_claim_allowed(&policy, &actor_key, &base, &[]),
+        "a named world grant excludes base reality; base needs its own grant"
+    );
     assert!(scoped_read_claim_allowed(
         &policy,
         &actor_key,
@@ -83,10 +86,11 @@ fn scoped_read_core_read_world_scope_contains_actor_readable_claims() -> Result<
                 score: 0.8,
             },
         ])?
+        .value
         .into_iter()
         .map(|result| result.id)
         .collect();
-    assert_eq!(ids, vec![base_id, allowed_id]);
+    assert_eq!(ids, vec![allowed_id]);
 
     let other_actor =
         vault.scoped_read(ScopedReadActorKey::new("other-reader").expect("actor key"));
@@ -190,6 +194,18 @@ fn scoped_read_without_core_grants_preserves_claim_surfaceable_gate() -> Result<
     put_claim_body(&vault, &proposed_id, &proposed)?;
     put_claim_body(&vault, &stale_id, &stale)?;
 
+    // Fail-closed: with no grants, even the surfaceable claim is unreadable.
+    let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
+    assert!(scoped_read.get(&live_id)?.is_none());
+    assert!(scoped_read.get(&proposed_id)?.is_none());
+    assert!(scoped_read.get(&stale_id)?.is_none());
+
+    // With an explicit read grant, the surfaceable gate still applies.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x62),
+        &core_read_grants_manifest(vec![core_read_grant_map("reader", Value::Nil)]),
+    )?;
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     assert!(scoped_read.get(&live_id)?.is_some());
     assert!(scoped_read.get(&proposed_id)?.is_none());
@@ -210,6 +226,7 @@ fn scoped_read_without_core_grants_preserves_claim_surfaceable_gate() -> Result<
                 score: 0.8,
             },
         ])?
+        .value
         .into_iter()
         .map(|result| result.id)
         .collect();
@@ -295,6 +312,7 @@ fn scoped_read_core_grant_preserves_claim_surfaceable_gate() -> Result<()> {
                 score: 0.9,
             },
         ])?
+        .value
         .into_iter()
         .map(|result| result.id)
         .collect();
@@ -343,6 +361,7 @@ fn scoped_read_search_filters_before_limit_truncation() -> Result<()> {
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let visible: Vec<_> = scoped_read
         .search_text("scopedslots", 1, None)?
+        .value
         .into_iter()
         .map(|hit| hit.id)
         .collect();
@@ -353,7 +372,11 @@ fn scoped_read_search_filters_before_limit_truncation() -> Result<()> {
 #[test]
 fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0x65), &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x65),
+        &core_read_grants_manifest(vec![core_read_grant_map("reader", Value::Nil)]),
+    )?;
 
     let missing_id = test_id(0xCB);
     put_dangling_short_id(&vault, "cldangling", 0x5A, &missing_id)?;
@@ -361,6 +384,7 @@ fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let hydrated = scoped_read
         .hydrate_short_id("cldangling", 0x5A)?
+        .value
         .expect("dangling short id should surface deletion metadata");
     assert_eq!(hydrated.id, missing_id);
     assert!(hydrated.body.is_none());
@@ -371,13 +395,31 @@ fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
             .source,
         crate::deletion::HydratedShortIdDeletionSource::DanglingShortId
     );
+    for scopes in [
+        vec![],
+        vec![core_read_grant_map(
+            "reader",
+            Value::Map(vec![("world_ref".into(), test_id(0x29).to_hex().into())]),
+        )],
+        vec![nonclaim_entity_types_grant_map(
+            "reader",
+            &[crate::registry::ENTITY_TYPE_CLAIM],
+        )],
+    ] {
+        put_policy_manifest_bytes(&vault, test_id(0x65), &core_read_grants_manifest(scopes))?;
+        assert!(scoped_read.hydrate_short_id("cldangling", 0x5A)?.is_none());
+    }
     Ok(())
 }
 
 #[test]
 fn scoped_read_hydrate_preserves_deleted_claim_short_id_metadata() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0x6F), &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x6F),
+        &core_read_grants_manifest(vec![core_read_grant_map("reader", Value::Nil)]),
+    )?;
 
     let claim_id = test_id(0xD0);
     put_claim_body(
@@ -396,6 +438,7 @@ fn scoped_read_hydrate_preserves_deleted_claim_short_id_metadata() -> Result<()>
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let hydrated = scoped_read
         .hydrate_short_id(short_id, content_hash)?
+        .value
         .expect("deleted claim short id should preserve deletion metadata");
     assert_eq!(hydrated.id, claim_id);
     assert_eq!(hydrated.entity_type, crate::registry::ENTITY_TYPE_CLAIM);
@@ -422,7 +465,22 @@ fn scoped_read_context_pack_scrubs_edges_to_denied_claims() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         test_id(0x66),
-        &core_read_world_grant_manifest("reader", allowed_world),
+        &core_read_grants_manifest(vec![
+            core_read_grant_map(
+                "reader",
+                Value::Map(vec![(
+                    Value::from("world_ref"),
+                    Value::from(allowed_world.to_hex()),
+                )]),
+            ),
+            nonclaim_entity_types_grant_map(
+                "reader",
+                &[
+                    crate::registry::ENTITY_TYPE_TURN,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                ],
+            ),
+        ]),
     )?;
 
     let source = test_id(0xCE);
@@ -506,15 +564,18 @@ fn facet_scoped_read_fixture(vault: &crate::Vault) -> Result<(EntityId, EntityId
     Ok((claim, facet))
 }
 
-/// The `edges_out` key one `FacetOf` edge occupies, and a well-formed value
-/// for it. The facet scan reads the KEY only, so the value just has to be a
-/// parseable edge record.
-fn facet_edge_row(claim: EntityId, facet: EntityId) -> (Vec<u8>, [u8; 12]) {
+/// A session-staged `FacetOf` row uses the same semantic encoding as a stored edge.
+fn facet_edge_row(claim: EntityId, facet: EntityId) -> (Vec<u8>, Vec<u8>) {
     let mut key = crate::vault::edge_kind_prefix(&claim, EdgeKind::FacetOf).to_vec();
     key.extend_from_slice(facet.as_bytes());
-    let mut value = [0_u8; 12];
-    value[0..4].copy_from_slice(&0.7_f32.to_le_bytes());
-    value[4..12].copy_from_slice(&1_u64.to_le_bytes());
+    let value = crate::edge::encode_edge_value(
+        EdgeKind::FacetOf,
+        0.7,
+        1,
+        crate::affect::Vad::NEUTRAL,
+        None,
+    )
+    .expect("valid semantic facet edge");
     (key, value)
 }
 
@@ -679,7 +740,22 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
     put_policy_manifest_bytes(
         &vault,
         test_id(0x75),
-        &core_read_world_grant_manifest("reader", allowed_world),
+        &core_read_grants_manifest(vec![
+            core_read_grant_map(
+                "reader",
+                Value::Map(vec![(
+                    Value::from("world_ref"),
+                    Value::from(allowed_world.to_hex()),
+                )]),
+            ),
+            nonclaim_entity_types_grant_map(
+                "reader",
+                &[
+                    crate::registry::ENTITY_TYPE_TURN,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                ],
+            ),
+        ]),
     )?;
 
     let kept_seed = test_id(0x76);
@@ -705,6 +781,8 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
     vault.put_edge(&kept_seed, EdgeKind::Mentions, &readable_neighbor, 0.9)?;
 
     let entity = |id: EntityId, entity_type: u8, score: f32| ContextEntity {
+        source_revision_ref: None,
+        critical: false,
         id,
         short_id: id.to_hex(),
         content_hash: 0,
@@ -715,6 +793,8 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
         vector: None,
     };
     let mut pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
         retrieval_quality: Default::default(),
         results: vec![
             entity(kept_seed, crate::registry::ENTITY_TYPE_TURN, 1.0),
@@ -726,6 +806,8 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
             0.0,
         )],
         stats: PackStats {
+            critical_over_budget: false,
+            critical_count: 0,
             candidates_considered: 2,
             signals_used: Vec::new(),
             query_time_us: 0,
@@ -859,6 +941,8 @@ fn scoped_read_memory_timeline_prunes_links_to_filtered_records() -> Result<()> 
 
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let timeline = scoped_read.memory_timeline(&new)?;
+    assert_eq!(timeline.receipt.suppressed_count, 1);
+    assert_eq!(timeline.receipt.replan_hint, vec!["row_authority"]);
     assert_eq!(timeline.records.len(), 1);
     let record = &timeline.records[0];
     assert_eq!(record.id, new);
@@ -890,6 +974,7 @@ fn scoped_read_memory_timeline_rejects_unreadable_anchor() -> Result<()> {
 
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let timeline = scoped_read.memory_timeline(&denied_anchor)?;
+    assert_eq!(timeline.receipt.suppressed_count, 1);
     assert!(
         timeline.records.is_empty(),
         "unreadable anchors must not reveal readable chain neighbors"
@@ -905,7 +990,16 @@ fn scoped_read_edges_out_scrubs_denied_sources_and_targets() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         test_id(0x6A),
-        &core_read_world_grant_manifest("reader", allowed_world),
+        &core_read_grants_manifest(vec![
+            core_read_grant_map(
+                "reader",
+                Value::Map(vec![(
+                    Value::from("world_ref"),
+                    Value::from(allowed_world.to_hex()),
+                )]),
+            ),
+            nonclaim_entity_types_grant_map("reader", &[crate::registry::ENTITY_TYPE_TURN]),
+        ]),
     )?;
 
     let source = test_id(0xDD);
@@ -932,13 +1026,15 @@ fn scoped_read_edges_out_scrubs_denied_sources_and_targets() -> Result<()> {
     vault.put_edge(&denied_source, EdgeKind::Supports, &allowed_claim, 0.7)?;
 
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
-    let edges = scoped_read
-        .edges_out(&source)?
+    let result = scoped_read.edges_out(&source)?;
+    assert_eq!(result.receipt.suppressed_count, 1);
+    let edges = result
+        .value
         .expect("readable source should return scoped edges");
     assert_eq!(edges.len(), 1);
     assert_eq!(edges[0].target, allowed_claim);
     assert!(
-        scoped_read.edges_out(&denied_source)?.is_none(),
+        scoped_read.edges_out(&denied_source)?.value.is_none(),
         "denied edge sources must not reveal outgoing relationships"
     );
     Ok(())
@@ -980,5 +1076,185 @@ fn scoped_read_facet_grants_match_facet_of_edges() -> Result<()> {
         scoped_read.get(&unfaceted_claim)?.is_none(),
         "facet grant must not fall through to unfaceted claims"
     );
+    Ok(())
+}
+
+#[test]
+fn l2_prefix_uses_the_scoped_reader_before_cache_lookup() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let subject = test_id(0x21);
+    let world = test_id(0x32);
+    let claim_id = test_id(0x33);
+    put_text_entity(
+        &vault,
+        &subject,
+        ENTITY_TYPE_PERSON,
+        "subject",
+        serde_json::json!({"name":"subject"}),
+    )?;
+    let mut body = source_trust_claim(ClaimSource::UserStated);
+    body.world = Some(world);
+    put_claim_text_body(&vault, &claim_id, "l2scopedneedle", &body)?;
+    vault.put_edge(&claim_id, EdgeKind::ClaimOf, &subject, 1.0)?;
+    let manifest = encode_policy_manifest(vec![core_read_scoped_grant_entry(
+        "l2-reader",
+        Value::Map(vec![(
+            Value::from("world_ref"),
+            Value::from(world.to_hex()),
+        )]),
+    )]);
+    put_policy_manifest_bytes(&vault, test_id(0x61), &manifest)?;
+    let reader = vault.scoped_read(ScopedReadActorKey::new("l2-reader").unwrap());
+    let allowed = vault
+        .context_pack()
+        .l2_summary_subjects(&[subject])
+        .l2_summary_reader(&reader)
+        .search_text("l2scopedneedle", 10)
+        .run()?;
+    assert_eq!(
+        allowed.l2_base.as_ref().unwrap().evidence_ids(),
+        &[claim_id]
+    );
+    let denied = vault.scoped_read(ScopedReadActorKey::new("l2-other-reader").unwrap());
+    let pack = vault
+        .context_pack()
+        .l2_summary_subjects(&[subject])
+        .l2_summary_reader(&denied)
+        .search_text("l2scopedneedle", 10)
+        .run()?;
+    assert!(pack.l2_base.is_none());
+    Ok(())
+}
+
+#[test]
+fn scoped_receipts_include_prefilter_exclusions_and_refresh_point_authority() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let weak_id = test_id(0x51);
+    let strong_id = test_id(0x52);
+    let mut weak = source_trust_claim(ClaimSource::UserStated);
+    weak.confidence = 0.2;
+    let mut strong = source_trust_claim(ClaimSource::UserStated);
+    strong.confidence = 0.95;
+    put_claim_text_body(&vault, &weak_id, "receiptcountneedle", &weak)?;
+    put_claim_text_body(&vault, &strong_id, "receiptcountneedle", &strong)?;
+    let manifest_id = test_id(0x61);
+    put_policy_manifest_bytes(
+        &vault,
+        manifest_id,
+        &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            "reader",
+            Value::Map(vec![(Value::from("min_confidence"), Value::F64(0.8))]),
+        )]),
+    )?;
+    let reader = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
+    let result = reader.search_text("receiptcountneedle", 1, None)?;
+    assert_eq!(
+        result.value.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![strong_id]
+    );
+    assert_eq!(result.receipt.suppressed_count, 1);
+    assert!(
+        result
+            .receipt
+            .replan_hint
+            .iter()
+            .any(|axis| axis == "row_authority")
+    );
+    assert!(
+        reader
+            .get_entity_parts_with_receipt(&strong_id, None)?
+            .value
+            .is_some()
+    );
+    put_policy_manifest_bytes(
+        &vault,
+        manifest_id,
+        &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            "different-reader",
+            Value::Nil,
+        )]),
+    )?;
+    let denied = reader.get_entity_parts_with_receipt(&strong_id, None)?;
+    assert!(denied.value.is_none());
+    assert!(denied.receipt.applied.deny_all);
+    assert_eq!(denied.receipt.suppressed_count, 1);
+    let missing = reader.get_entity_parts_with_receipt(&test_id(0x53), None)?;
+    assert!(missing.value.is_none());
+    assert_eq!(missing.receipt.suppressed_count, 0);
+    Ok(())
+}
+
+#[test]
+fn graph_read_receipts_clamp_nonclaim_types_and_include_unnarrowed_reads() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
+    let (_tmp, vault) = temp_vault();
+    let source = test_id(0x71);
+    let target = test_id(0x72);
+    vault.put_entity(&source, ENTITY_TYPE_TURN, test_time(1), 1, b"source")?;
+    vault.put_entity(&target, ENTITY_TYPE_ASSET, test_time(1), 1, b"target")?;
+    vault.put_edge(&source, EdgeKind::Supports, &target, 0.7)?;
+    let install = |types: &[u8]| {
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0x73),
+            &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+                "graph-reader",
+                Value::Map(vec![(
+                    Value::from("entity_types"),
+                    Value::Array(types.iter().copied().map(Value::from).collect()),
+                )]),
+            )]),
+        )
+    };
+    let read = vault.scoped_read(ScopedReadActorKey::new("graph-reader").unwrap());
+    install(&[ENTITY_TYPE_CLAIM])?;
+    let denied_edges = read.edges_out(&source)?;
+    assert!(denied_edges.value.is_none());
+    assert_eq!(denied_edges.receipt.suppressed_count, 1);
+    let denied_timeline = read.memory_timeline(&source)?;
+    assert!(denied_timeline.records.is_empty());
+    assert_eq!(denied_timeline.receipt.suppressed_count, 1);
+    install(&[ENTITY_TYPE_TURN])?;
+    let narrowed_edges = read.edges_out(&source)?;
+    assert!(narrowed_edges.value.unwrap().is_empty());
+    assert_eq!(narrowed_edges.receipt.suppressed_count, 1);
+    let timeline = read.memory_timeline(&source)?;
+    assert_eq!(timeline.records.len(), 1);
+    assert_eq!(timeline.receipt.suppressed_count, 0);
+    install(&[ENTITY_TYPE_TURN, ENTITY_TYPE_ASSET])?;
+    let complete = read.edges_out(&source)?;
+    assert_eq!(complete.value.unwrap()[0].target, target);
+    assert_eq!(complete.receipt.suppressed_count, 0);
+    assert!(complete.receipt.replan_hint.is_empty());
+    Ok(())
+}
+
+#[test]
+fn stored_six_axis_scope_gates_real_claim_reads_and_preserves_mask_relevance() -> Result<()> {
+    use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xDE);
+    let mut body = source_trust_claim(ClaimSource::UserStated);
+    body.world = Some(test_id(0xDF));
+    put_claim_body(&vault, &id, &body)?;
+    let mut authority = Scope::top();
+    authority.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(test_id(0xDF))]));
+    authority.facets = ScopeAxis::Bottom; // a mask cannot deny authority
+    authority.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Sensitive);
+    let manifest = test_id(0xDD);
+    let data = encode_policy_manifest(vec![core_read_scoped_grant_entry(
+        "reader",
+        crate::federation::scope_codec::encode_scope_value(&authority)?,
+    )]);
+    put_policy_manifest_bytes(&vault, manifest, &data)?;
+    let actor = ScopedReadActorKey::new("reader").expect("fixture");
+    assert!(vault.scoped_read(actor.clone()).get(&id)?.is_some());
+    authority.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Public);
+    let data = encode_policy_manifest(vec![core_read_scoped_grant_entry(
+        "reader",
+        crate::federation::scope_codec::encode_scope_value(&authority)?,
+    )]);
+    put_policy_manifest_bytes(&vault, manifest, &data)?;
+    assert!(vault.scoped_read(actor).get(&id)?.is_none());
     Ok(())
 }

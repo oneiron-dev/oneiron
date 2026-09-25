@@ -211,7 +211,23 @@ fn unrelated_vector_fill_does_not_invalidate_pending_tokens() -> Result<()> {
 
 #[test]
 fn stale_vector_fill_does_not_clear_or_overwrite_newer_claim_marker() -> Result<()> {
+    struct IdleFill {
+        claim: EntityId,
+        body: Vec<u8>,
+    }
+    impl crate::memory::IndexedRevisionEmbedder for IdleFill {
+        fn embed_revision(&self, input: &crate::memory::IndexedRevisionInput) -> Result<Vec<f32>> {
+            assert_eq!(input.entity, self.claim);
+            assert_eq!(input.body, self.body);
+            Ok(vec![0.0, 1.0, 0.0, 0.0])
+        }
+    }
+
     let (_dir, vault) = open_test_vault();
+    // Open seeds bootstrap skills whose revisions wait for idle publication;
+    // publish them first so the idle pass below embeds only this claim.
+    vault.set_indexed_idle_delay_ms(0)?;
+    vault.refresh_staged_indexed_at_idle(u64::MAX)?;
     let claim = EntityId::now();
     commit_claim_candidate_with_value(&vault, claim, "Alice")?;
     let old_token = pending_embedding_token(&vault, &claim)?;
@@ -247,10 +263,18 @@ fn stale_vector_fill_does_not_clear_or_overwrite_newer_claim_marker() -> Result<
         .batch()
         .vector_for_pending_embedding(&claim, &[0.0, 1.0, 0.0, 0.0], &new_token)
         .commit()?;
-    assert!(
-        !has_pending_embedding_marker(&vault, &claim)?,
-        "current-token fill must clear the marker"
+    assert!(has_pending_embedding_marker(&vault, &claim)?);
+    assert_eq!(
+        vault.get_vector(&claim)?.as_deref(),
+        Some([1.0, 0.0, 0.0, 0.0].as_slice())
     );
+    let idle = IdleFill {
+        claim,
+        body: vault.get(&claim)?.unwrap(),
+    };
+    let report = vault.refresh_indexed_at_idle(u64::MAX, &idle)?;
+    assert_eq!(report.refreshed.len(), 1);
+    assert!(!has_pending_embedding_marker(&vault, &claim)?);
     assert_eq!(
         vault.get_vector(&claim)?.as_deref(),
         Some([0.0, 1.0, 0.0, 0.0].as_slice())
@@ -281,6 +305,13 @@ fn plain_vector_fill_does_not_clear_stale_pending_embedding_marker() -> Result<(
 
     assert_eq!(
         vault.get_vector(&claim)?.as_deref(),
+        None,
+        "a per-operation fill cannot advance an indexed revision awaiting idle"
+    );
+    vault.set_indexed_idle_delay_ms(0)?;
+    vault.refresh_staged_indexed_at_idle(u64::MAX)?;
+    assert_eq!(
+        vault.get_vector(&claim)?.as_deref(),
         Some([1.0, 0.0, 0.0, 0.0].as_slice())
     );
     assert_eq!(
@@ -309,8 +340,8 @@ fn plain_vector_fill_after_claim_overwrite_keeps_newer_pending_embedding_marker(
 
     assert_eq!(
         vault.get_vector(&claim)?.as_deref(),
-        Some([1.0, 0.0, 0.0, 0.0].as_slice()),
-        "legacy vector path still writes the row"
+        None,
+        "a bare vector cannot be labelled as the indexed revision after an edit"
     );
     assert_eq!(
         pending_embedding_token(&vault, &claim)?,

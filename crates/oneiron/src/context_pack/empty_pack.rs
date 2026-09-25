@@ -35,7 +35,7 @@ pub(super) fn context_pack_empty_reason(
     pack: &ContextPack,
     surfaced_result_ids: &[[u8; 16]],
 ) -> Option<String> {
-    if !surfaced_result_ids.is_empty() {
+    if !surfaced_result_ids.is_empty() || pack.l2_base.is_some() {
         return None;
     }
     let reason = pack
@@ -49,8 +49,11 @@ pub(super) fn serialized_context_pack_empty_reason(
     pack: &ContextPack,
     telemetry: &SerializedPackTelemetry,
 ) -> Option<String> {
-    if !telemetry.result_ids.is_empty() {
+    if !telemetry.result_ids.is_empty() || telemetry.has_l2_base {
         return None;
+    }
+    if pack.l2_base.is_some() {
+        return Some(format!("{:?}", telemetry.stats.items_dropped.reason));
     }
     if !pack.results.is_empty()
         && telemetry.stats.items_dropped.count > pack.stats.items_dropped.count
@@ -66,7 +69,7 @@ pub(super) fn projected_context_pack_empty_reason(
     pre_projection_had_results: bool,
     surfaced_result_ids: &[[u8; 16]],
 ) -> Option<String> {
-    if !surfaced_result_ids.is_empty() {
+    if !surfaced_result_ids.is_empty() || pack.l2_base.is_some() {
         return None;
     }
     if pre_projection_had_results
@@ -89,7 +92,11 @@ pub(super) fn projected_context_pack_empty_reason(
 /// [`ContextPack::empty`]: crate::ContextPack::empty
 /// [`UnfinalizedContextPack::finish_projected_json`]: crate::context_pack::UnfinalizedContextPack::finish_projected_json
 pub fn refresh_projected_empty_context(pack: &mut ContextPack) {
-    if !pack.results.is_empty() || !pack.neighbors.is_empty() {
+    if !pack.results.is_empty()
+        || !pack.neighbors.is_empty()
+        || pack.l2_base.is_some()
+        || !pack.capabilities.is_empty()
+    {
         pack.empty = None;
         return;
     }

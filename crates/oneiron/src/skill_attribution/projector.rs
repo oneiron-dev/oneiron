@@ -22,15 +22,22 @@ use super::types::{AttributionJudgment, OutcomeEvidence, SkillEditProposal};
 /// posture, and the reason a re-run can be replayed against a fixed judge).
 pub fn record_attribution_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Result<u64> {
     validate_evidence(vault, evidence)?;
-    vault.with_write_txn(|wtxn| {
-        let sequence = next_evidence_sequence_in_txn(vault, wtxn)?;
-        let encoded = encode_value(&encode_evidence(evidence, sequence))?;
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &sequenced_key(EVIDENCE_PREFIX, sequence), &encoded)?;
-        Ok(sequence)
-    })
+    vault.with_write_txn(|txn| record_evidence_in_txn(vault, txn, evidence))
+}
+
+/// The sweep validates first, then commits the evidence and receipt marker together.
+pub(super) fn record_evidence_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    evidence: &OutcomeEvidence,
+) -> Result<u64> {
+    let sequence = next_evidence_sequence_in_txn(vault, txn)?;
+    let encoded = encode_value(&encode_evidence(evidence, sequence))?;
+    vault
+        .store
+        .vault_meta
+        .put(txn, &sequenced_key(EVIDENCE_PREFIX, sequence), &encoded)?;
+    Ok(sequence)
 }
 
 /// Reads the projector cursor: the highest evidence sequence already routed.

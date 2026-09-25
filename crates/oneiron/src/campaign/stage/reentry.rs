@@ -244,7 +244,7 @@ pub(super) fn replace_member_state(
     vault: &Vault,
     change: &MemberStateChange<'_>,
 ) -> Result<EntityId> {
-    let new_id = EntityId::now();
+    let new_id = vault.store.clock.entity_id()?;
     vault.with_write_txn(|wtxn| {
         let value = require_member_head(vault, wtxn, change)?;
         let replacement = CampaignMemberValue {

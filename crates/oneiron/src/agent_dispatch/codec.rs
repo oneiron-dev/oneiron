@@ -28,6 +28,11 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         Value::from(AGENT_DISPATCH_INPUT_SCHEMA_VERSION),
     )];
     match &input.target {
+        AgentDispatchTarget::Workflow(_) => {
+            return Err(super::widen_record::invalid(
+                "workflow requires its own payload",
+            ));
+        }
         AgentDispatchTarget::Custom(id) => {
             entries.push((Value::from(KEY_TARGET), Value::from(TARGET_CUSTOM)));
             entries.push((Value::from(KEY_AGENT_DEF), Value::from(id.to_hex())));
@@ -75,6 +80,12 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         })?;
         entries.push((Value::from(KEY_SCOPE), Value::from(json)));
     }
+    if let Some(case) = &input.healer_case {
+        super::healer_context::validate(case)?;
+        let bytes = rmp_serde::to_vec_named(case)
+            .map_err(|_| Error::InvalidConfig("healer case encode".into()))?;
+        entries.push((Value::from("healer_case"), Value::Binary(bytes)));
+    }
     Ok(Value::Map(entries))
 }
 
@@ -98,6 +109,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut context_from = Vec::new();
     let mut depth_remaining = None;
     let mut scope = None;
+    let mut healer_case = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -222,6 +234,17 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     ))
                 })?);
             }
+            "healer_case" => {
+                let Value::Binary(bytes) = value else {
+                    return Err(Error::InvalidConfig(
+                        "healer case must be named msgpack".into(),
+                    ));
+                };
+                let case = rmp_serde::from_slice(bytes)
+                    .map_err(|_| Error::InvalidConfig("invalid healer case".into()))?;
+                super::healer_context::validate(&case)?;
+                healer_case = Some(case);
+            }
             KEY_DEPTH_REMAINING => {
                 let depth = value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("depth_remaining must be an integer"),
@@ -283,6 +306,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     };
 
     Ok(AgentDispatchInput {
+        healer_case,
         target,
         definition,
         context_spec,
@@ -309,11 +333,11 @@ pub fn agent_dispatch_payload_agent_id(payload: &DreamerAttemptPayload) -> Optio
 /// Derives the dispatched agent's write actor: the AGENT_DEF row id, class
 /// `Agent`. This is the identity the gate's live ceiling resolver and
 /// `actor_ceilings` rows key on.
-#[must_use]
-pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> WriteActor {
-    match &input.target {
-        AgentDispatchTarget::Custom(id) => WriteActor::new(*id, EdgeActorClass::Agent),
-    }
+pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> Result<WriteActor> {
+    Ok(WriteActor::new(
+        input.target.agent_definition_ref()?,
+        EdgeActorClass::Agent,
+    ))
 }
 
 /// A queue row's decoded dispatch input, or `None` when the row is not an

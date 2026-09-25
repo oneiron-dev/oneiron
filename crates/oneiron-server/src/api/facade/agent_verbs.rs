@@ -2,6 +2,20 @@
 use super::*;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
+        .route("/tasks.ack", post(tasks_ack))
+        .route("/tasks.cancel", post(tasks_cancel))
+        .route("/tasks.check", post(tasks_check))
+        .route("/tasks.create", post(tasks_create))
+        .route("/tasks.expand", post(tasks_expand))
+        .route("/witness", post(witness))
+        .route("/claim_upsert", post(claim_upsert))
+        .route("/recall", post(recall))
+        .route("/receipts", post(receipts))
+        .route("/key_value_get", post(key_value_get))
+        .route("/key_value_put", post(key_value_put))
+        .route("/key_value_delete", post(key_value_delete))
+        .route("/key_value_search", post(key_value_search))
+        .route("/key_value_namespaces", post(key_value_namespaces))
         .route("/tasks.ask", post(tasks_ask))
         .route("/tasks.wait", post(tasks_wait))
         .route("/tasks.answer", post(tasks_answer))
@@ -11,13 +25,251 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/rooms.claim", post(rooms_claim))
         .route("/rooms.speak", post(rooms_speak))
 }
+async fn tasks_ack(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("tasks.ack", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "tasks.ack",
+        value,
+    )?))
+}
+async fn tasks_cancel(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("tasks.cancel", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "tasks.cancel",
+        value,
+    )?))
+}
+async fn tasks_check(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("tasks.check", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_readable_task_rows(
+        &server.vault,
+        &auth,
+        oneiron::task_verb::sdk::tasks_check(
+            &server.vault.memory(actor, class),
+            facade_input(value)?,
+        )?,
+    )?))
+}
+async fn tasks_create(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("tasks.create", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "tasks.create",
+        value,
+    )?))
+}
+async fn tasks_expand(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("tasks.expand", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "tasks.expand",
+        value,
+    )?))
+}
+async fn witness(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("witness", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "witness",
+        value,
+    )?))
+}
+async fn claim_upsert(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("claim_upsert", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "claim_upsert",
+        value,
+    )?))
+}
+/// `POST /v1/core/facade/recall` → `Memory::recall`.
+///
+/// The lease argument is `None` and is not a client input: no lease-issuer
+/// exists, and a bearer slip is not one. `Effort::High` therefore returns the
+/// engine's own `LEASE_REQUIRED`, which this projection forwards as that exact
+/// code — the bindings neither mint nor simulate a lease.
+async fn recall(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("recall", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "recall",
+        value,
+    )?))
+}
+async fn receipts(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("receipts", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "receipts",
+        value,
+    )?))
+}
+async fn key_value_get(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("key_value_get", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "key_value_get",
+        value,
+    )?))
+}
+async fn key_value_put(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("key_value_put", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "key_value_put",
+        value,
+    )?))
+}
+async fn key_value_delete(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("key_value_delete", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "key_value_delete",
+        value,
+    )?))
+}
+async fn key_value_search(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("key_value_search", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "key_value_search",
+        value,
+    )?))
+}
+async fn key_value_namespaces(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("key_value_namespaces", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "key_value_namespaces",
+        value,
+    )?))
+}
 async fn tasks_ask(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
+
     let value = facade_json(payload)?;
+
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -31,7 +283,9 @@ async fn tasks_wait(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
+
     let value = facade_json(payload)?;
+
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -45,7 +299,9 @@ async fn tasks_answer(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
+
     let value = facade_json(payload)?;
+
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -59,7 +315,9 @@ async fn tasks_outcomes(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
+
     let value = facade_json(payload)?;
+
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -73,7 +331,9 @@ async fn rooms_list(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
+
     let value = facade_json(payload)?;
+
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -87,7 +347,9 @@ async fn rooms_messages(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
+
     let value = facade_json(payload)?;
+
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -101,7 +363,9 @@ async fn rooms_claim(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
+
     let value = facade_json(payload)?;
+
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
@@ -115,7 +379,9 @@ async fn rooms_speak(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
+
     let value = facade_json(payload)?;
+
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),

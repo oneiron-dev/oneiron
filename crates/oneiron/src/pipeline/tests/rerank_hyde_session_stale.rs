@@ -630,7 +630,7 @@ fn stale_stamped_world_drops_from_all_and_base_but_survives_explicit_scope() -> 
         HashSet::from([claim_base, claim_stale, claim_live]),
         "baseline: with no stamp, All spans every world"
     );
-    let unstamped_world_set = run(Some(WorldScope::WorldSet(scope_key)))?;
+    let unstamped_world_set = run(Some(WorldScope::CodebaseSet(scope_key)))?;
 
     stamp_world_stale(&vault, stale_world, FederationStaleReason::Disconnected)?;
 
@@ -646,16 +646,16 @@ fn stale_stamped_world_drops_from_all_and_base_but_survives_explicit_scope() -> 
     );
     assert_eq!(
         run(Some(WorldScope::World(stale_world)))?,
-        HashSet::from([claim_base, claim_stale]),
+        HashSet::from([claim_stale]),
         "World(stamped): naming a dead world is an explicit request to read it"
     );
     assert_eq!(
         run(Some(WorldScope::World(live_world)))?,
-        HashSet::from([claim_base, claim_live]),
+        HashSet::from([claim_live]),
         "an unstamped world is untouched by the stale filter"
     );
     assert_eq!(
-        run(Some(WorldScope::WorldSet(scope_key)))?,
+        run(Some(WorldScope::CodebaseSet(scope_key)))?,
         unstamped_world_set,
         "WorldSet takes no stale exclusion: identical output either side of the stamp"
     );
@@ -872,4 +872,76 @@ fn hyde_vector_validation_fails_closed() {
                 .is_err()
         );
     }
+}
+
+#[test]
+fn hyde_retry_deadline_forks_the_persisted_trace_after_assessment() -> Result<()> {
+    struct Host<'a> {
+        deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
+    }
+    impl HydeExpander for Host<'_> {
+        fn id(&self) -> &str {
+            "test/late-deadline"
+        }
+        fn expand(&self, request: &HydeRequest) -> Result<HydeExpansion> {
+            Ok(HydeExpansion {
+                grounded_query: request.query.clone(),
+                hypothetical_answer: String::new(),
+                embedding: vec![1.0, 0.0, 0.0, 0.0],
+                subqueries: vec![],
+            })
+        }
+        fn assess_evidence(&self, _: &CompletionRequest) -> Result<EvidenceVerdict> {
+            Ok(if let Some(deadline) = self.deadline {
+                deadline.cancel();
+                EvidenceVerdict::Insufficient { gaps: vec![] }
+            } else {
+                EvidenceVerdict::Sufficient
+            })
+        }
+    }
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0x7a);
+    put_text_and_vector(&vault, id, "late deadline", [1.0, 0.0, 0.0, 0.0])?;
+    let deadline =
+        crate::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_secs(60));
+    let full_host = Host { deadline: None };
+    let partial_host = Host {
+        deadline: Some(&deadline),
+    };
+    let run = |host| {
+        vault
+            .query()
+            .search_text("deadline", 10)
+            .with_temporal_now(100)
+            .hyde(
+                host,
+                GroundingContext::default(),
+                HydeOptions {
+                    channel_limit: 10,
+                    retry_once: true,
+                },
+            )
+            .deadline(&deadline)
+            .capture_retrieval_trace(true)
+            .run_with_telemetry()
+    };
+    let full = run(&full_host)?;
+    assert!(!deadline.was_cut_short());
+    let partial = run(&partial_host)?;
+    assert!(deadline.was_cut_short());
+    assert_eq!(full.value, partial.value);
+    assert!(!partial.value.is_empty());
+    let full_trace = vault
+        .retrieval_run(full.run_id.unwrap())?
+        .unwrap()
+        .trace
+        .unwrap();
+    let partial_trace = vault
+        .retrieval_run(partial.run_id.unwrap())?
+        .unwrap()
+        .trace
+        .unwrap();
+    assert_ne!(full_trace.fork_hash, partial_trace.fork_hash);
+    Ok(())
 }

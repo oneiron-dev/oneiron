@@ -21,7 +21,13 @@ pub(super) fn extraction_response_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "properties": {
-            "candidates": {"type": "array", "items": {"type": "object"}},
+            "candidates": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"topic_key": {}}
+                }
+            },
             "persons": {
                 "type": "array",
                 "items": {

@@ -48,6 +48,10 @@ pub(crate) struct GatedDeletion<'a> {
 }
 
 impl<'a> GatedDeletion<'a> {
+    pub(super) fn actor_principal(&self) -> EntityId {
+        self.context.actor
+    }
+
     pub(crate) fn new(
         context: DeletionGateContext,
         reverify: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>,

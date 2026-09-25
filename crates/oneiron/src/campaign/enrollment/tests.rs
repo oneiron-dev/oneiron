@@ -58,6 +58,13 @@ fn install_send_policy(vault: &Vault, sender_ref: EntityId) {
         ),
         (
             rmpv::Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::effect_preset(),
+            )
+            .expect("scope fixture"),
+        ),
+        (
+            rmpv::Value::from("selectors"),
             rmpv::Value::Map(vec![(
                 rmpv::Value::from("channel"),
                 rmpv::Value::from(CHANNEL),
@@ -67,7 +74,7 @@ fn install_send_policy(vault: &Vault, sender_ref: EntityId) {
     let manifest = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("schema_version"),
-            rmpv::Value::from("1.1"),
+            rmpv::Value::from("1.2"),
         ),
         (
             rmpv::Value::from("pack_id"),

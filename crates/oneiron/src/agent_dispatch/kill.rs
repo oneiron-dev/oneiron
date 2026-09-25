@@ -12,19 +12,18 @@ use crate::error::{Error, Result};
 use super::codec::decode_agent_dispatch_input;
 use super::dispatch::AgentDispatcher;
 use super::types::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, DispatchHealer,
-    HEALER_REFERENCE_CONTEXT_SEAM_ABSENT, HealerSlot, HealerSlotOutcome, KillOutcome, KillProposal,
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, DispatchHealer, HealerSlot,
+    HealerSlotOutcome, KillOutcome, KillProposal,
 };
 use crate::error::ArtifactError;
 
 impl AgentDispatcher<'_> {
     /// Resolves one failure case onto its configured healer slot.
     ///
-    /// `Reserved` mutates NO queue state and is unconditional; it still yields
-    /// a typed outcome that carries immediate surface-card data. `AgentDef`
-    /// parses the ref, enforces the propose-only ceiling against the LIVE
-    /// stored row, and then refuses on this base because the reference-context
-    /// seam it needs is absent (ONE-1887 §5).
+    /// Both slots require an authentic ladder case for a durable failed parent.
+    /// `Reserved` mutates no queue state and yields immediate surface-card data.
+    /// `AgentDef` also enforces the propose-only ceiling against the live row
+    /// and revalidates the case in the enqueue transaction.
     ///
     /// There is deliberately no force-cancel handle here or anywhere on the
     /// healer path. A healer asking a live attempt to land calls ONE-1896's
@@ -34,13 +33,22 @@ impl AgentDispatcher<'_> {
     /// # Errors
     ///
     /// [`ArtifactError::InvalidAgentDispatchInput`](crate::error::ArtifactError::InvalidAgentDispatchInput) when `agent_def_ref` is not a hex
-    /// EntityId or when the reference-context seam is absent;
+    /// EntityId or the case does not match its durable failed-parent binding;
     /// [`ArtifactError::AgentNotDispatchable`](crate::error::ArtifactError::AgentNotDispatchable) when the named row's live ceiling
     /// exceeds propose-only, plus everything the dispatchability predicate
     /// raises for a missing, inactive, unapproved, or disabled row.
     pub fn dispatch_healer_slot(&self, input: DispatchHealer) -> Result<HealerSlotOutcome> {
         match input.slot {
-            HealerSlot::Reserved => Ok(HealerSlotOutcome::Reserved { case: input.case }),
+            HealerSlot::Reserved => {
+                let txn = self.vault.store.env.write_txn()?;
+                crate::failure_ladder::require_healer_case_in_txn(
+                    self.vault,
+                    &txn,
+                    &input.case,
+                    input.run_id.as_deref(),
+                )?;
+                Ok(HealerSlotOutcome::Reserved { case: input.case })
+            }
             HealerSlot::AgentDef { agent_def_ref } => {
                 let healer_ref = EntityId::from_hex(&agent_def_ref).map_err(|_| {
                     Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -57,9 +65,40 @@ impl AgentDispatcher<'_> {
                         "healer agent definition exceeds the propose-only ceiling",
                     )));
                 }
-                Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                    HEALER_REFERENCE_CONTEXT_SEAM_ABSENT,
-                )))
+                let result = self.dispatch_with_context(
+                    super::DispatchAgent {
+                        target: AgentDispatchTarget::Custom(healer_ref),
+                        parent_attempt: Some(input.case.failing_attempt_id),
+                        dedupe_key: Some(format!("healer:{}", input.case.case_ref)),
+                        run_id: input.run_id,
+                        now: input.now,
+                    },
+                    super::AgentSpawnContext {
+                        healer_case: Some(input.case),
+                        // The healer cannot recursively spend the failing task's
+                        // whole depth budget. Repairs remain proposals.
+                        depth_remaining: Some(1),
+                        ..Default::default()
+                    },
+                )?;
+                Ok(match result {
+                    super::AgentDispatchOutcome::Dispatched(status) => {
+                        HealerSlotOutcome::Dispatched(status)
+                    }
+                    super::AgentDispatchOutcome::Existing(status) => {
+                        HealerSlotOutcome::Existing(status)
+                    }
+                    // A healer dispatch targets one Custom agent, so the
+                    // workflow arms are unreachable; a proposed widening is a
+                    // typed refusal, never a silent reuse.
+                    super::AgentDispatchOutcome::ProposedWiden(_)
+                    | super::AgentDispatchOutcome::WorkflowDispatched(_)
+                    | super::AgentDispatchOutcome::WorkflowExisting(_) => {
+                        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "healer dispatch unexpectedly proposed widening",
+                        )));
+                    }
+                })
             }
         }
     }
@@ -201,6 +240,7 @@ impl AgentDispatcher<'_> {
             },
         )?;
         wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
         match outcome.effect {
             AttemptInterventionEffect::Cancelled => Ok(KillOutcome::Killed),
             AttemptInterventionEffect::AlreadyCancelled => Ok(KillOutcome::AlreadyTerminal),

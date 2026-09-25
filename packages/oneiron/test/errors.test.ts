@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test"
 
 import { OneironError, translateNativeError } from "../src/error.js"
+import { Oneiron } from "../src/index.js"
 
 /** Builds what the native boundary actually throws: JSON in a message. */
 function nativeThrow(payload: unknown): Error {
@@ -67,5 +68,15 @@ describe("native error translation", () => {
   test("suggestions are frozen so a caller cannot mutate the contract", () => {
     const error = new OneironError("BAD_REQUEST", "m", ["s"])
     expect(Object.isFrozen(error.suggestions)).toBe(true)
+  })
+
+  test("pair refuses a malformed link before any request", () => {
+    let thrown: unknown
+    try {
+      Oneiron.pair("not a link")
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown instanceof OneironError && thrown.code === "BAD_REQUEST").toBe(true)
   })
 })

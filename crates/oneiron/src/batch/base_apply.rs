@@ -9,6 +9,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_SKILL};
+use crate::secret_custody::validate_replicated_custody_put;
 use crate::store::Store;
 
 /// Materializes the already-authorized CLAIM puts from a session-bundle merge.
@@ -71,6 +72,9 @@ pub(super) fn apply_ops_with_origin(
     gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
+    let hub_admission = gate_mode.hub_admission;
+    let birth_mask = gate_mode.birth_mask;
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
@@ -82,7 +86,6 @@ pub(super) fn apply_ops_with_origin(
         ));
     }
     let mut preflight_gate_decision_ids = gate_mode.preflight_gate_decision_ids;
-    let staged_claim_gate = gate_mode.staged_claim_gate;
 
     secret_scan::scan_batch_ops(&ops)?;
     // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
@@ -136,55 +139,75 @@ pub(super) fn apply_ops_with_origin(
         match op {
             BatchOp::Put {
                 id,
-                entity_type,
+                mut entity_type,
                 occurred,
                 learned_at,
-                data,
+                mut data,
                 allow_maintenance,
                 allow_reserved_predicate,
                 hub_sync_imported,
             } => {
-                if hub_sync_imported
-                    && (entity_type != ENTITY_TYPE_SKILL
-                        || allow_maintenance
-                        || allow_reserved_predicate)
+                (entity_type, data) = validate_put_type(
+                    store,
+                    wtxn,
+                    &id,
+                    (entity_type, data),
+                    allow_maintenance,
+                    allow_reserved_predicate,
+                    hub_sync_imported,
+                )?;
+                let replicated = allow_maintenance && allow_reserved_predicate;
+                if let Some(facet) =
+                    birth_stamp_target(store, wtxn, id, entity_type, replicated, birth_mask)?
                 {
-                    return Err(Error::InvariantViolation(
-                        "hub-sync imported flag is only valid for a local SKILL Put",
-                    ));
-                }
-                // Public writes reject engine-authored system kinds via
-                // the public entity-type gate; the sync rematerialization path
-                // sets `allow_maintenance` so REDACTION_AUDIT receipts
-                // survive CRDT→LMDB replay (registry-only entity-type validation
-                // still rejects genuinely unknown type bytes).
-                if allow_maintenance
-                    && allow_reserved_predicate
-                    && matches!(
-                        entity_type,
-                        crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-                            | ENTITY_TYPE_ACCESS_GRANT
-                            | ENTITY_TYPE_OUTBOUND_GRANT
-                    )
-                {
-                    return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
-                        entity_type,
-                    )));
-                }
-                // Same-vault custody replication is opt-out per credential. A
-                // remote portable body cannot widen a locally narrowed record.
-                if allow_maintenance
-                    && allow_reserved_predicate
-                    && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                {
-                    crate::secret_custody::validate_replicated_custody_put(
-                        store, wtxn, &id, &data,
+                    let owner = crate::vault::embedded_owner_actor_id()?;
+                    if birth_mask.is_none()
+                        && facet == crate::claim::substrate_facet_id(owner)
+                        && stored_entity_type(store, wtxn, &owner)?.is_none()
+                    {
+                        apply_ops_with_origin(
+                            store,
+                            config,
+                            analyzer,
+                            wtxn,
+                            vec![BatchOp::Put {
+                                id: owner,
+                                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                                occurred,
+                                learned_at,
+                                data: crate::vault::encode_embedded_owner_actor_body()?,
+                                allow_maintenance: false,
+                                allow_reserved_predicate: false,
+                                hub_sync_imported: false,
+                            }],
+                            text_index_trusted,
+                            ApplyOpsGateMode::new(
+                                record_gate_decisions,
+                                persist_gate_pending_consent,
+                            ),
+                            origin,
+                        )?;
+                    }
+                    let found = stored_entity_type(store, wtxn, &facet)?;
+                    if found != Some(crate::registry::ENTITY_TYPE_FACET) {
+                        return Err(Error::Registry(RegistryError::InvalidFacet {
+                            facet,
+                            found,
+                        }));
+                    }
+                    apply_edge_with_created_at(
+                        store,
+                        wtxn,
+                        id,
+                        crate::edge::EdgeKind::FacetOf,
+                        facet,
+                        1.0,
+                        learned_at,
+                        crate::affect::Vad::NEUTRAL,
+                        None,
                     )?;
-                }
-                if allow_maintenance {
-                    store.validate_entity_type(entity_type)?;
-                } else {
-                    store.validate_public_entity_type(entity_type)?;
+                    ppr::invalidate_ppr_for_edge(store, wtxn, &id, &facet)?;
+                    had_graph_mutation = true;
                 }
                 let preflight_decision_id = if entity_type == crate::registry::ENTITY_TYPE_CLAIM
                     && !allow_reserved_predicate
@@ -211,11 +234,14 @@ pub(super) fn apply_ops_with_origin(
                     // (`put_replicated` → here). The replicated arm of
                     // `apply_put` deindexes the loser's BM25F postings on a
                     // body-changing overwrite, same-txn (ARCH-0031 amendment).
-                    allow_maintenance && allow_reserved_predicate,
+                    replicated,
                     hub_sync_imported,
+                    hub_admission.as_ref(),
                     later_text_coverage_by_op[op_index],
                     write_policy.as_ref(),
-                    materialization.as_ref().map(ClaimMaterialization::envelope),
+                    materialization
+                        .as_ref()
+                        .and_then(ClaimMaterialization::gate_envelope),
                     false,
                     record_gate_decisions,
                     persist_gate_pending_consent,
@@ -223,17 +249,33 @@ pub(super) fn apply_ops_with_origin(
                     include_source_in_gate_input,
                     claim_gate_prechecked,
                     preflight_decision_id,
-                    preflight_decision_id
-                        .and_then(|decision_id| staged_claim_gate.as_ref()?.get(&decision_id)),
                     Some(&companion_retired_histories),
                     origin,
                 )?;
+                if let Some((source_id, source_bytes)) = applied.portable_agent_source {
+                    apply_ops_with_origin(
+                        store,
+                        config,
+                        analyzer,
+                        wtxn,
+                        vec![BatchOp::Put {
+                            id: source_id,
+                            entity_type: crate::registry::ENTITY_TYPE_ASSET,
+                            occurred,
+                            learned_at,
+                            data: source_bytes,
+                            allow_maintenance: false,
+                            allow_reserved_predicate: false,
+                            hub_sync_imported: false,
+                        }],
+                        text_index_trusted,
+                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
+                        origin,
+                    )?;
+                }
                 if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                    if materialization.is_some() && !allow_reserved_predicate {
-                        claim_materialization::bind_committed_claim(store, wtxn, &id)?;
-                    } else {
-                        claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
-                    }
+                    let authored = materialization.is_some() && !allow_reserved_predicate;
+                    claim_materialization::record_committed_claim(store, wtxn, &id, authored)?;
                 }
                 evicted_shell_sources.extend(applied.evicted_shell_sources);
                 #[cfg(feature = "sync")]
@@ -353,11 +395,9 @@ pub(super) fn apply_ops_with_origin(
                     include_source_in_gate_input,
                     claim_gate_prechecked,
                     preflight_decision_id,
-                    preflight_decision_id
-                        .and_then(|decision_id| staged_claim_gate.as_ref()?.get(&decision_id)),
                 )?;
                 if !internal_lexical_query_hint {
-                    claim_materialization::bind_committed_claim(store, wtxn, &id)?;
+                    claim_materialization::record_committed_claim(store, wtxn, &id, true)?;
                 }
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
@@ -421,103 +461,29 @@ pub(super) fn apply_ops_with_origin(
                     pending_embedding_enqueue_priorities.remove(&id);
                 }
             }
-            BatchOp::Edge {
-                src,
-                kind,
-                tgt,
-                weight,
-                vad,
-            } => {
-                validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
-                apply_edge(store, wtxn, src, kind, tgt, weight, vad)?;
-                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-                had_graph_mutation = true;
-            }
-            BatchOp::PublicEdgeWithCreatedAt {
-                src,
-                kind,
-                tgt,
-                weight,
-                created_at,
-                vad,
-            } => {
-                validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
-                apply_public_edge_with_created_at(
-                    store, wtxn, src, kind, tgt, weight, created_at, vad,
-                )?;
-                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-                had_graph_mutation = true;
-            }
-            // UNGATED by design — this is the replicated/replay shape. A
-            // bare-over-provenanced LWW edge is a legitimate remote winner;
-            // gating here would turn a legitimate remote merge into a
-            // permanent local sync-wedging abort (H2). The public timestamped
-            // builders route through the gated `PublicEdgeWithCreatedAt` arm
-            // instead.
-            //
-            // Ungated is not unvalidated: the ONE-1645 `FacetOf` type table
-            // runs on every path INTO this arm instead, as a
-            // quarantine-and-continue rejection rather than an abort —
-            // `sync::window`'s forward-remat edge write and
-            // `sync::bridge`'s Observer-B edge batch both call
-            // `validate_facet_of_edge` after endpoint readiness, and
-            // `sync::selector`'s federation admission door drops a provably
-            // off-table row before it ever enters the admitted document. A
-            // federation peer therefore cannot replay a facet stamp local
-            // writers may not write.
-            BatchOp::EdgeWithCreatedAt {
-                src,
-                kind,
-                tgt,
-                weight,
-                created_at,
-                vad,
-                provenance,
-            } => {
-                apply_edge_with_created_at(
-                    store, wtxn, src, kind, tgt, weight, created_at, vad, provenance,
-                )?;
-                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-                had_graph_mutation = true;
-            }
-            BatchOp::SetEdgeWeight {
-                src,
-                kind,
-                tgt,
-                weight,
-            } => {
-                apply_set_edge_weight(store, wtxn, src, kind, tgt, weight)?;
-                // The weight at offset 0 is the PPR edge weight — invalidate
-                // and bump exactly like the plain edge-write arms.
-                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-                had_graph_mutation = true;
-            }
-            BatchOp::SetEdgeVad {
-                src,
-                kind,
-                tgt,
-                vad,
-            } => {
-                apply_set_edge_vad(store, wtxn, src, kind, tgt, vad)?;
-                // Mirror the existing edge-write behavior: every edge value
-                // rewrite invalidates the endpoint PPR caches.
-                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-                had_graph_mutation = true;
+            op @ (BatchOp::Edge { .. }
+            | BatchOp::PublicEdgeWithCreatedAt { .. }
+            | BatchOp::EdgeWithCreatedAt { .. }
+            | BatchOp::SetEdgeWeight { .. }
+            | BatchOp::SetEdgeVad { .. }
+            | BatchOp::DeleteEdge { .. }) => {
+                had_graph_mutation |= apply_edge_op(store, wtxn, op)?;
             }
             BatchOp::Text { id, fields } => {
-                if !text_index_trusted {
-                    return Err(Error::CorruptedIndex(
-                        "text index handshake bypassed on populated index",
-                    ));
-                }
-                if !text_manifest_checked {
-                    crate::vault::ensure_text_index_manifest_matches_wtxn(store, wtxn, analyzer)?;
-                    text_manifest_checked = true;
-                }
-                crate::bm25::index_text(store, wtxn, analyzer, &id, &fields)?;
+                apply_text_index_update(
+                    store,
+                    wtxn,
+                    analyzer,
+                    &id,
+                    &fields,
+                    text_index_trusted,
+                    &mut text_manifest_checked,
+                )?;
             }
             BatchOp::Phonetic { id, codes } => {
-                apply_phonetic(store, wtxn, id, &codes)?;
+                if !crate::vault::entity_revision::defer_phonetic(store, wtxn, &id, &codes)? {
+                    apply_phonetic(store, wtxn, id, &codes)?;
+                }
             }
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
@@ -525,11 +491,7 @@ pub(super) fn apply_ops_with_origin(
                     deindex_entity(store, wtxn, &id)?;
                 claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
                 if persist_gate_pending_consent {
-                    store.let_go_pending_gate_consent_in_txn(
-                        wtxn,
-                        &id,
-                        crate::unix_seconds_now(),
-                    )?;
+                    store.let_go_pending_gate_consent_in_txn(wtxn, &id, mutation_recorded_at)?;
                 }
                 pending_embedding_tokens_written.remove(&id);
                 #[cfg(feature = "sync")]
@@ -537,12 +499,6 @@ pub(super) fn apply_ops_with_origin(
                 ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
                 had_graph_mutation |= deleted_graph_state;
                 had_vector_mutation |= had_vector;
-            }
-            BatchOp::DeleteEdge { src, kind, tgt } => {
-                if apply_delete_edge(store, wtxn, src, kind, tgt)? {
-                    ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-                    had_graph_mutation = true;
-                }
             }
             // CMT-4 (ONE-1541). All-or-nothing by construction: the helper
             // grounds every selected instance before staging a single op and
@@ -628,9 +584,18 @@ pub(super) fn apply_ops_with_origin(
         &evicted_shell_sources,
     )?;
 
+    crate::authority::check_materialized_claim_causality(
+        store,
+        wtxn,
+        config.privacy.posture,
+        &materialized_entity_ids,
+    )?;
+
     #[cfg(feature = "sync")]
     for (id, token) in &pending_embedding_tokens_written {
-        if store.pending_embedding_token_in_txn(wtxn, id)?.as_deref() == Some(token.as_slice()) {
+        if config.embedding_model.is_some()
+            && store.pending_embedding_token_in_txn(wtxn, id)?.as_deref() == Some(token.as_slice())
+        {
             let priority = pending_embedding_enqueue_priorities
                 .get(id)
                 .copied()
@@ -674,6 +639,117 @@ fn finalize_batch_indexes(
     Ok(())
 }
 
+/// Applies one op of the edge family and invalidates the PPR caches of both
+/// endpoints when it changes an edge. Returns whether the graph changed: every
+/// edge op changes it except a delete of an edge that is not stored.
+fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) -> Result<bool> {
+    match op {
+        BatchOp::Edge {
+            src,
+            kind,
+            tgt,
+            weight,
+            vad,
+        } => {
+            validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
+            apply_edge(store, wtxn, src, kind, tgt, weight, vad)?;
+            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+            Ok(true)
+        }
+        BatchOp::PublicEdgeWithCreatedAt {
+            src,
+            kind,
+            tgt,
+            weight,
+            created_at,
+            vad,
+        } => {
+            validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
+            apply_public_edge_with_created_at(
+                store, wtxn, src, kind, tgt, weight, created_at, vad,
+            )?;
+            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+            Ok(true)
+        }
+        // UNGATED by design — this is the replicated/replay shape. A
+        // bare-over-provenanced LWW edge is a legitimate remote winner;
+        // gating here would turn a legitimate remote merge into a
+        // permanent local sync-wedging abort (H2). The public timestamped
+        // builders route through the gated `PublicEdgeWithCreatedAt` arm
+        // instead.
+        //
+        // Ungated is not unvalidated: the ONE-1645 `FacetOf` type table
+        // runs on every path INTO this arm instead, as a
+        // quarantine-and-continue rejection rather than an abort —
+        // `sync::window`'s forward-remat edge write and
+        // `sync::bridge`'s Observer-B edge batch both call
+        // `validate_facet_of_edge` after endpoint readiness, and
+        // `sync::selector`'s federation admission door drops a provably
+        // off-table row before it ever enters the admitted document. A
+        // federation peer therefore cannot replay a facet stamp local
+        // writers may not write.
+        BatchOp::EdgeWithCreatedAt {
+            src,
+            kind,
+            tgt,
+            weight,
+            created_at,
+            vad,
+            provenance,
+        } => {
+            apply_edge_with_created_at(
+                store, wtxn, src, kind, tgt, weight, created_at, vad, provenance,
+            )?;
+            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+            Ok(true)
+        }
+        BatchOp::SetEdgeWeight {
+            src,
+            kind,
+            tgt,
+            weight,
+        } => {
+            apply_set_edge_weight(store, wtxn, src, kind, tgt, weight)?;
+            // The weight at offset 0 is the PPR edge weight — invalidate
+            // and bump exactly like the plain edge-write arms.
+            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+            Ok(true)
+        }
+        BatchOp::SetEdgeVad {
+            src,
+            kind,
+            tgt,
+            vad,
+        } => {
+            apply_set_edge_vad(store, wtxn, src, kind, tgt, vad)?;
+            // Mirror the existing edge-write behavior: every edge value
+            // rewrite invalidates the endpoint PPR caches.
+            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+            Ok(true)
+        }
+        BatchOp::DeleteEdge { src, kind, tgt } => {
+            // Deleting or purging the source removes its stamp with it;
+            // a live NOTE or ASSET keeps the one it was born with.
+            if kind == crate::edge::EdgeKind::FacetOf
+                && matches!(
+                    stored_entity_type(store, wtxn, &src)?,
+                    Some(crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET)
+                )
+            {
+                return Err(Error::Registry(RegistryError::FacetStampImmutable { src }));
+            }
+            let deleted = apply_delete_edge(store, wtxn, src, kind, tgt)?;
+            if deleted {
+                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+            }
+            Ok(deleted)
+        }
+        _ => Err(Error::InvariantViolation(
+            "only an edge op reaches the edge applier",
+        )),
+    }
+}
+
 type PreflightDecisionIds = HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>;
 
 fn take_lapse_decisions(
@@ -689,4 +765,125 @@ fn take_lapse_decisions(
         decisions.entry(*id).or_default().push_back(decision_id);
     }
     decisions
+}
+
+fn apply_text_index_update(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    id: &EntityId,
+    fields: &[(String, String)],
+    text_index_trusted: bool,
+    text_manifest_checked: &mut bool,
+) -> Result<()> {
+    if !text_index_trusted {
+        return Err(Error::CorruptedIndex(
+            "text index handshake bypassed on populated index",
+        ));
+    }
+    if !*text_manifest_checked {
+        crate::vault::ensure_text_index_manifest_matches_wtxn(store, wtxn, analyzer)?;
+        *text_manifest_checked = true;
+    }
+    if !crate::vault::entity_revision::defer_index_inputs(
+        store,
+        wtxn,
+        id,
+        Some(fields),
+        None,
+        None,
+    )? {
+        crate::bm25::index_text(store, wtxn, analyzer, id, fields)?;
+    }
+    Ok(())
+}
+
+/// Resolves pack handles and enforces the public/maintenance put-type boundary.
+fn validate_put_type(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    (mut entity_type, mut data): (u8, Vec<u8>),
+    allow_maintenance: bool,
+    allow_reserved_predicate: bool,
+    hub_sync_imported: bool,
+) -> Result<(u8, Vec<u8>)> {
+    // Replay/import resolves GLOBAL identity before local-byte validation.
+    // Foreign byte and generation never select the destination kind.
+    if allow_maintenance
+        && allow_reserved_predicate
+        && crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle
+    {
+        let source = crate::registry::pack_byte_map::PackInstanceEnvelope::from_bytes(&data)?;
+        let (local_handle, local_envelope) = store.remap_pack_instance_in_txn(wtxn, &source)?;
+        entity_type = local_handle;
+        data = local_envelope.to_bytes()?;
+    }
+    if hub_sync_imported
+        && (entity_type != ENTITY_TYPE_SKILL || allow_maintenance || allow_reserved_predicate)
+    {
+        return Err(Error::InvariantViolation(
+            "hub-sync imported flag is only valid for a local SKILL Put",
+        ));
+    }
+    // Public writes reject engine-authored system kinds via
+    // the public entity-type gate; the sync rematerialization path
+    // sets `allow_maintenance` so REDACTION_AUDIT receipts
+    // survive CRDT→LMDB replay (registry-only entity-type validation
+    // still rejects genuinely unknown type bytes).
+    if allow_maintenance
+        && allow_reserved_predicate
+        && matches!(
+            entity_type,
+            ENTITY_TYPE_ACCESS_GRANT | ENTITY_TYPE_OUTBOUND_GRANT
+        )
+    {
+        return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            entity_type,
+        )));
+    }
+    // Same-vault custody replication is opt-out per credential. A
+    // remote portable body cannot widen a locally narrowed record.
+    if allow_maintenance
+        && allow_reserved_predicate
+        && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+    {
+        validate_replicated_custody_put(store, wtxn, id, &data)?;
+    }
+    if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
+        store.validate_pack_handle_in_txn(wtxn, entity_type)?;
+        store.validate_pack_instance_in_txn(wtxn, entity_type, &data)?;
+    } else if allow_maintenance {
+        store.validate_entity_type(entity_type)?;
+    } else {
+        store.validate_public_entity_type(entity_type)?;
+    }
+    Ok((entity_type, data))
+}
+
+/// The FACET a NOTE or ASSET put at `id` is born under: the batch mask, else
+/// the vault default. `None` when the put births nothing that carries a stamp —
+/// a put over a stored row, another kind, or a replicated put, whose origin's
+/// `FacetOf` edge arrives in the same window.
+fn birth_stamp_target(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    replicated: bool,
+    mask: Option<EntityId>,
+) -> Result<Option<EntityId>> {
+    if replicated
+        || !matches!(
+            entity_type,
+            crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
+        )
+        || store.entities.get(txn, id.as_bytes())?.is_some()
+    {
+        return Ok(None);
+    }
+    match mask {
+        Some(mask) => Ok(Some(mask)),
+        None => crate::claim::default_facet_in(store, txn).map(Some),
+    }
 }

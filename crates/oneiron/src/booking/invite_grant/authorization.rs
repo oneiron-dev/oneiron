@@ -14,6 +14,7 @@ use crate::calendar::CALENDAR_INVITE_CHANNEL;
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
 use crate::outbound_grant::StandingOutboundGrantScope;
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 
 /// The page/booker binding one confirmed booking persists.
@@ -178,8 +179,8 @@ pub(in crate::booking) fn booker_identity(
         .map_err(|error| engine_failure("read transaction", error))?;
     let Some(raw) = vault
         .store
-        .entities
-        .get(&rtxn, contact_ref.as_bytes())
+        .port_entity_record(&rtxn, contact_ref)
+        .map(|row| row.map(|row| row.encode()))
         .map_err(|error| engine_failure("booker contact read", error))?
     else {
         return Ok(None);

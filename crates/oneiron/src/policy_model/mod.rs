@@ -83,6 +83,8 @@ mod classify;
 mod concurrent;
 mod contract;
 mod enforce;
+mod hold_queue;
+pub use hold_queue::{HeldPolicyItem, PolicyHoldResolution};
 mod notice;
 mod pattern;
 mod planes;

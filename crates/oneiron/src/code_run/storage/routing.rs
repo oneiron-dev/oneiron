@@ -236,7 +236,7 @@ impl<'a> ExecutorStorage<'a> {
     pub(in crate::code_run) fn off_record_policy_active(&self) -> Result<bool> {
         match self {
             Self::Canonical(_) => Ok(false),
-            Self::Session(binding) => Ok(binding.session.mode()? == OffRecordMode::OffRecord),
+            Self::Session(binding) => Ok(binding.session.mode()? != OffRecordMode::OnRecord),
         }
     }
 
@@ -330,6 +330,26 @@ impl<'a> ExecutorStorage<'a> {
                 actor,
             ),
         }
+    }
+
+    pub(crate) fn witness_blocked_report(
+        &self,
+        run_ref: &str,
+        run_id: Option<EntityId>,
+        call: &crate::code_run::blocked::SelfReportBlockedCall,
+        actor: WriteActor,
+    ) -> Result<EntityId> {
+        let receipt = crate::code_run::blocked::BlockedReceipt::new(call.category, &call.detail)?;
+        self.witness_executor_utterance(
+            run_ref,
+            run_id,
+            ExecutorUtterance::ReportBlocked,
+            &receipt.content()?,
+            call.occurred_at,
+            call.order,
+            actor,
+        )?;
+        executor_speech_message_id_for_run(run_ref, run_id, call.order)
     }
 
     pub(crate) fn get_code_run_replay_record(

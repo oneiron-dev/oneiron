@@ -57,6 +57,37 @@ fn task_creation_is_counted_and_receipted_at_every_rate() {
     assert_eq!(task_entity_census(&vault), 15);
 }
 
+#[test]
+fn create_refuses_a_label_the_board_cannot_render() {
+    let (_dir, vault) = open_vault();
+    let label = "x".repeat(crate::context_board::TASK_LABEL_MAX_BYTES + 1);
+    let refused = vault
+        .memory(own_agent(&vault), EdgeActorClass::Agent)
+        .tasks_create(&TaskCreateSpec::new(
+            Value::from("unit-task"),
+            Some(label),
+            None,
+            Some(120),
+        ))
+        .expect_err("an oversized label is refused");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+}
+
+#[test]
+fn create_refuses_a_blank_label() {
+    let (_dir, vault) = open_vault();
+    let refused = vault
+        .memory(own_agent(&vault), EdgeActorClass::Agent)
+        .tasks_create(&TaskCreateSpec::new(
+            Value::from("unit-task"),
+            Some("   ".to_owned()),
+            None,
+            Some(120),
+        ))
+        .expect_err("a blank label is refused");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+}
+
 /// A STANDARD task with a deadline already past is born expired, so the same
 /// refusal the consult branch gives applies here. A future deadline passes,
 /// and no deadline at all still means no TTL.
@@ -572,4 +603,78 @@ fn caller_time_variation_does_not_bypass_one_engine_rate_window() {
             .all(|result| result.effected && result.proposal_ref.is_none())
     );
     assert_eq!(vault.task_create_count(own, u64::MAX).unwrap(), 4);
+}
+
+#[test]
+fn task_rate_limit_window_rollover_and_actor_isolation() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let other = EntityId::now();
+    put_person(&vault, other);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 0);
+    vault.with_write_txn(|txn| {
+        assert!(consume_create_rate_slot(&vault, txn, actor, 0, rate)?);
+        assert!(!consume_create_rate_slot(&vault, txn, actor, 0, rate)?);
+        assert_eq!(record_task_create(&vault, txn, actor, 0, rate)?, 2);
+        assert!(consume_create_rate_slot(&vault, txn, other, 0, rate)?);
+        Ok(())
+    })?;
+    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 2);
+    assert_eq!(vault.task_create_count(other, rate.window_seconds)?, 1);
+    vault.with_write_txn(|txn| {
+        assert!(consume_create_rate_slot(
+            &vault,
+            txn,
+            actor,
+            u64::MAX,
+            rate
+        )?);
+        assert_eq!(record_task_create(&vault, txn, actor, u64::MAX, rate)?, 2);
+        Ok(())
+    })?;
+    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 0);
+    assert_eq!(vault.task_create_count(other, rate.window_seconds)?, 1);
+    vault.with_write_txn(|txn| {
+        assert_eq!(record_task_create(&vault, txn, actor, 0, rate)?, 1);
+        Ok(())
+    })?;
+    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 1);
+    Ok(())
+}
+
+#[test]
+fn task_rate_limit_corruption_fails_all_readers_closed() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    for len in [0, 8, 15, 17] {
+        vault.with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &task_create_rate_key(actor, rate.window_seconds),
+                &vec![0; len],
+            )?;
+            Ok(())
+        })?;
+        assert!(matches!(
+            vault.task_create_count(actor, rate.window_seconds),
+            Err(crate::Error::CorruptedIndex(_))
+        ));
+        assert!(matches!(
+            vault.with_write_txn(|txn| record_task_create(&vault, txn, actor, 0, rate)),
+            Err(crate::Error::CorruptedIndex(_))
+        ));
+        assert!(matches!(
+            vault.with_write_txn(|txn| consume_create_rate_slot(&vault, txn, actor, 0, rate)),
+            Err(crate::Error::CorruptedIndex(_))
+        ));
+    }
+    Ok(())
 }

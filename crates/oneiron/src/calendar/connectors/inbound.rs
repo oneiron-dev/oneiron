@@ -1,6 +1,6 @@
 //! Pull orchestration: apply, admit, enqueue, and reconcile.
 
-use super::outbound::{CalendarRemoteObjectRow, ingest_error, ingest_reason, write_remote_object};
+use super::outbound::{CalendarRemoteObjectRow, ingest_error, write_remote_object};
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
     RemoteCalendarObject, classify_remote_change, parse_remote_object,
@@ -12,23 +12,11 @@ use super::seat::{
 
 use crate::attempt_queue::{AttemptQueue, EnqueueAttempt};
 use crate::calendar::CalendarError;
-use crate::calendar::claims::{
-    CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence,
-    CalendarPassportValue, CalendarStatus, CalendarStatusBasis, CalendarTimeKind,
-    PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS,
-    PREDICATE_CALENDAR_TIME_KIND, decode_status_value, decode_time_kind_value,
-};
-use crate::calendar::ics::ParsedVEvent;
+use crate::calendar::claims::CalendarPassportPresence;
 use crate::calendar::ingest::admit_calendar_import_claim;
-use crate::calendar::passport::{
-    all_live_inbound_passports_absent, encode_passport_value, index_passport_uid,
-    live_passport_for, resolve_event_by_uid, supersede_calendar_passport,
-};
+use crate::calendar::passport::live_passport_for;
 use crate::calendar::safeguard::{CalendarInboundBody, screen_then_claim};
-use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
-use crate::registry::ENTITY_TYPE_EVENT;
-use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
 /// Runs one connector sync for `seat`.
@@ -116,48 +104,60 @@ fn apply_remote_change(
     let system = seat.config.system.as_str();
     match change {
         RemoteCalendarChange::Upsert(object) => {
-            // ICS truth, not transport truth: UID/SEQUENCE/hash come from the
-            // parse, and every time value crosses the CAL-01 border inside it.
-            let parsed = parse_remote_object(object)?;
-            let normalized = RemoteCalendarChange::Upsert(RemoteCalendarObject {
-                href: object.href.clone(),
-                etag: object.etag.clone(),
-                uid: parsed.uid.clone(),
-                sequence: parsed.sequence,
-                content_hash: parsed.content_hash,
-                ics: object.ics.clone(),
-            });
-            let event_ref = resolve_event_by_uid(vault, &parsed.uid)?;
-            let current = match event_ref {
-                Some(event_ref) => live_passport_for(vault, &event_ref, system, &parsed.uid)?
-                    .map(|(_, value)| value),
-                None => None,
-            };
-            match classify_remote_change(current.as_ref(), &normalized) {
-                EchoDisposition::AcknowledgeEcho => {
-                    // Acknowledgement only: the provider's view of the resource
-                    // is refreshed, no semantic claim is rewritten, and nothing
-                    // is written back.
-                    counters.acknowledged += 1;
-                }
-                EchoDisposition::ApplyInbound | EchoDisposition::ApplyRemoteUpdate => {
-                    apply_inbound_event(vault, seat, provider, event_ref, &parsed, now)?;
-                    counters.applied += 1;
-                }
-                EchoDisposition::ApplyRemoteDeletion => {
-                    return Err(ingest_error("an upsert can never classify as a deletion"));
+            let feed = super::remote::parse_remote_resource(object)?;
+            let primary = feed
+                .events
+                .first()
+                .ok_or_else(|| ingest_error("remote resource has no event"))?;
+            let source = pull_source_record_id(provider, seat, &primary.uid);
+            crate::calendar::ingest::preflight_connector_feed(vault, system, &source, &feed, now)?;
+            for parsed in &feed.events {
+                let normalized = RemoteCalendarChange::Upsert(RemoteCalendarObject {
+                    href: object.href.clone(),
+                    etag: object.etag.clone(),
+                    uid: parsed.uid.clone(),
+                    sequence: parsed.sequence,
+                    content_hash: parsed.content_hash,
+                    ics: object.ics.clone(),
+                });
+                let event_ref = crate::calendar::ingest::connector_event_ref(vault, parsed)?;
+                let current = match event_ref {
+                    Some(id) => {
+                        live_passport_for(vault, &id, system, &parsed.uid)?.map(|(_, value)| value)
+                    }
+                    None => None,
+                };
+                match classify_remote_change(current.as_ref(), &normalized) {
+                    EchoDisposition::AcknowledgeEcho => counters.acknowledged += 1,
+                    EchoDisposition::ApplyInbound | EchoDisposition::ApplyRemoteUpdate => {
+                        crate::calendar::ingest::admit_connector_event(
+                            vault, system, &source, parsed, now,
+                        )?;
+                        counters.applied += 1;
+                    }
+                    EchoDisposition::ApplyRemoteDeletion => {
+                        return Err(ingest_error("an upsert cannot classify as deletion"));
+                    }
                 }
             }
+            crate::calendar::ingest::sweep_connector_resource(
+                vault,
+                system,
+                &source,
+                &feed,
+                &primary.uid,
+                now,
+            )?;
             write_remote_object(
                 vault,
                 &CalendarRemoteObjectRow {
                     system: system.to_owned(),
                     calendar_ref: seat.config.calendar_ref.clone(),
-                    uid: parsed.uid.clone(),
+                    uid: primary.uid.clone(),
                     href: Some(object.href.clone()),
                     etag: object.etag.clone(),
-                    last_sequence: parsed.sequence,
-                    content_hash: parsed.content_hash,
+                    last_sequence: primary.sequence,
+                    content_hash: super::remote::ics_content_hash(&object.ics, &primary.uid)?,
                     last_seen_at: now,
                 },
             )?;
@@ -188,253 +188,70 @@ fn apply_remote_deletion(
     now: u64,
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
-    let system = seat.config.system.as_str();
-    let Some(event_ref) = resolve_event_by_uid(vault, uid)? else {
-        return Ok(());
-    };
-    let Some((_, current)) = live_passport_for(vault, &event_ref, system, uid)? else {
-        return Ok(());
-    };
-    if current.presence == CalendarPassportPresence::Absent {
-        // Applied once: a repeated delete row is idempotent.
-        return Ok(());
-    }
-
-    let mut absent = current;
-    absent.presence = CalendarPassportPresence::Absent;
-    absent.last_seen_at = now;
-    let source_record_id = pull_source_record_id(provider, seat, uid);
-    let new_id = admit_screened(
-        vault,
-        event_ref,
-        &CalendarInboundBody::default(),
-        &source_record_id,
-        PREDICATE_CALENDAR_PASSPORT,
-        encode_passport_value(&absent),
-        now,
-    )?;
-    supersede_calendar_passport(vault, event_ref, system, uid, &new_id, now)?;
-    counters.source_absences += 1;
-
-    if all_live_inbound_passports_absent(vault, &event_ref)?
-        && admit_status_if_changed(
-            vault,
-            event_ref,
-            &source_record_id,
-            CalendarStatus::Cancelled,
-            CalendarStatusBasis::ImportedCancel,
-            now,
-        )?
-    {
-        counters.status_cancellations += 1;
-    }
-    Ok(())
-}
-
-/// Applies one inbound VEVENT: mint-or-rewrite the EVENT, then admit the
-/// `calendar.*` heads through the CAL-02 Gate-backed imported door.
-fn apply_inbound_event(
-    vault: &Vault,
-    seat: &CalendarConnectorSeatState,
-    provider: &'static str,
-    event_ref: Option<EntityId>,
-    parsed: &ParsedVEvent,
-    now: u64,
-) -> Result<(), CalendarConnectorError> {
-    let system = seat.config.system.as_str();
-    let source_record_id = pull_source_record_id(provider, seat, &parsed.uid);
-    let body = inbound_body(parsed);
-    let occurred = parsed_occurred(parsed, now);
-    let event_body = encode_event_body(event_display_name(parsed))?;
-
-    let (event_ref, minted) = match event_ref {
-        Some(event_ref) => {
-            // The update verdict moves the EVENT, not just the passport head.
-            vault.put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, now, &event_body)?;
-            (event_ref, false)
-        }
-        None => {
-            let event_ref = EntityId::now();
-            vault.put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, now, &event_body)?;
-            index_passport_uid(vault, &parsed.uid, &event_ref)?;
-            (event_ref, true)
-        }
-    };
-
-    if minted {
-        admit_screened(
-            vault,
-            event_ref,
-            &body,
-            &source_record_id,
-            PREDICATE_CALENDAR_ORIGIN,
-            rmpv::Value::from(CalendarOrigin::Imported.as_str()),
-            now,
+    let mut absent_count = 0;
+    let mut newly_absent = Vec::new();
+    let mut after = None;
+    loop {
+        let ids = vault.entities_by_type_page(
+            crate::registry::ENTITY_TYPE_EVENT,
+            after.as_ref(),
+            4096,
         )?;
+        if ids.is_empty() {
+            break;
+        }
+        for event in &ids {
+            if crate::calendar::passport::live_passport_for(vault, event, &seat.config.system, uid)?
+                .is_some_and(|(_, value)| {
+                    value.presence == CalendarPassportPresence::Live
+                        && value.direction.is_inbound_bearing()
+                })
+            {
+                absent_count += 1;
+                newly_absent.push((*event, imported_cancellation(vault, *event)?));
+            }
+        }
+        after = ids.last().copied();
     }
-    admit_time_kind_if_changed(
+    crate::calendar::ingest::delete_connector_resource(
         vault,
-        event_ref,
-        &body,
-        &source_record_id,
-        parsed.busy_transparency,
+        &seat.config.system,
+        &pull_source_record_id(provider, seat, uid),
+        uid,
         now,
     )?;
+    counters.source_absences += absent_count;
+    for (event, was_cancelled) in newly_absent {
+        if !was_cancelled && imported_cancellation(vault, event)? {
+            counters.status_cancellations += 1;
+        }
+    }
+    Ok(())
+}
 
-    let current = live_passport_for(vault, &event_ref, system, &parsed.uid)?;
-    let next = CalendarPassportValue {
-        system: system.to_owned(),
-        uid: parsed.uid.clone(),
-        last_sequence: parsed.sequence,
-        content_hash: parsed.content_hash,
-        // A pulled row preserves the seat's established routing and mints
-        // `Inbound` for a source seen for the first time.
-        direction: current
-            .as_ref()
-            .map_or(CalendarPassportDirection::Inbound, |(_, value)| {
-                value.direction
-            }),
-        last_seen_at: now,
-        presence: CalendarPassportPresence::Live,
+fn imported_cancellation(vault: &Vault, event: EntityId) -> Result<bool, CalendarConnectorError> {
+    use crate::calendar::claims::{
+        CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_STATUS, decode_status_value,
     };
-    let new_id = admit_screened(
-        vault,
-        event_ref,
-        &body,
-        &source_record_id,
-        PREDICATE_CALENDAR_PASSPORT,
-        encode_passport_value(&next),
-        now,
-    )?;
-    if current.is_some() {
-        supersede_calendar_passport(vault, event_ref, system, &parsed.uid, &new_id, now)?;
-    }
-
-    if parsed.cancelled {
-        admit_status_if_changed(
-            vault,
-            event_ref,
-            &source_record_id,
-            CalendarStatus::Cancelled,
-            CalendarStatusBasis::ImportedCancel,
-            now,
-        )?;
-    }
-    Ok(())
-}
-
-/// Admits `calendar.time_kind` when its value moved, superseding the prior live
-/// claim. `busy_transparency` is CAL-02's ingest truth carried through unchanged
-/// — the connector invents no second field.
-fn admit_time_kind_if_changed(
-    vault: &Vault,
-    event_ref: EntityId,
-    body: &CalendarInboundBody,
-    source_record_id: &str,
-    transparency: CalendarBusyTransparency,
-    now: u64,
-) -> Result<(), CalendarConnectorError> {
-    let mut prior_live: Option<EntityId> = None;
-    for claim_id in vault.claims_for_subject(&event_ref)? {
-        let Some(claim) = vault.get_claim(&claim_id)? else {
-            continue;
-        };
-        if claim.predicate != PREDICATE_CALENDAR_TIME_KIND
-            || claim.lifecycle != ClaimLifecycleStatus::Active
+    for id in vault.claims_for_subject(&event)? {
+        if let Some(body) = vault.get_claim(&id)?
+            && body.lifecycle == crate::ClaimLifecycleStatus::Active
+            && body.predicate == PREDICATE_CALENDAR_STATUS
         {
-            continue;
+            let status = decode_status_value(&body.value)?;
+            if status.status == CalendarStatus::Cancelled
+                && matches!(
+                    status.basis,
+                    CalendarStatusBasis::ImportedAbsence | CalendarStatusBasis::ImportedCancel
+                )
+            {
+                return Ok(true);
+            }
         }
-        let current = decode_time_kind_value(&claim.value)
-            .map_err(|_| ingest_error("stored time claim did not decode"))?;
-        if current.kind == CalendarTimeKind::Absolute && current.busy_transparency == transparency {
-            return Ok(());
-        }
-        prior_live = Some(claim_id);
     }
-    let value = rmpv::Value::Map(vec![
-        (
-            rmpv::Value::from("kind"),
-            rmpv::Value::from(CalendarTimeKind::Absolute.as_str()),
-        ),
-        (
-            rmpv::Value::from("busy_transparency"),
-            rmpv::Value::from(transparency.as_str()),
-        ),
-    ]);
-    let new_id = admit_screened(
-        vault,
-        event_ref,
-        body,
-        source_record_id,
-        PREDICATE_CALENDAR_TIME_KIND,
-        value,
-        now,
-    )?;
-    if let Some(old_id) = prior_live {
-        vault.supersede_claim(&new_id, &old_id, now)?;
-    }
-    Ok(())
+    Ok(false)
 }
 
-/// Admits one `calendar.status` claim, superseding the prior live one. Returns
-/// whether a claim was actually written.
-fn admit_status_if_changed(
-    vault: &Vault,
-    event_ref: EntityId,
-    source_record_id: &str,
-    status: CalendarStatus,
-    basis: CalendarStatusBasis,
-    now: u64,
-) -> Result<bool, CalendarConnectorError> {
-    let mut prior_live: Option<EntityId> = None;
-    for claim_id in vault.claims_for_subject(&event_ref)? {
-        let Some(claim) = vault.get_claim(&claim_id)? else {
-            continue;
-        };
-        if claim.predicate != PREDICATE_CALENDAR_STATUS
-            || claim.lifecycle != ClaimLifecycleStatus::Active
-        {
-            continue;
-        }
-        let current = decode_status_value(&claim.value)
-            .map_err(|_| ingest_error("stored status claim did not decode"))?;
-        if current.status == status && current.basis == basis {
-            return Ok(false);
-        }
-        prior_live = Some(claim_id);
-    }
-    let value = rmpv::Value::Map(vec![
-        (
-            rmpv::Value::from("status"),
-            rmpv::Value::from(status.as_str()),
-        ),
-        (
-            rmpv::Value::from("basis"),
-            rmpv::Value::from(basis.as_str()),
-        ),
-        (rmpv::Value::from("recorded_at"), rmpv::Value::from(now)),
-    ]);
-    let new_id = admit_screened(
-        vault,
-        event_ref,
-        &CalendarInboundBody::default(),
-        source_record_id,
-        PREDICATE_CALENDAR_STATUS,
-        value,
-        now,
-    )?;
-    if let Some(old_id) = prior_live {
-        vault.supersede_claim(&new_id, &old_id, now)?;
-    }
-    Ok(true)
-}
-
-/// The one admission door for both connectors.
-///
-/// Every semantic candidate crosses CAL-09's ordering hook and then CAL-02's
-/// Gate-backed imported-evidence door — never `put_claim`. The seat surface
-/// wires no screener of its own (CAL-09's dial lives on the feed poll runner),
-/// so the verdict is `Skipped`, which is explicitly not "assume clear".
 pub(super) fn admit_screened(
     vault: &Vault,
     event_ref: EntityId,
@@ -525,49 +342,6 @@ pub(super) fn reconcile_remote_object(
 }
 
 /// The EVENT's stored occurrence from the parsed times.
-fn parsed_occurred(parsed: &ParsedVEvent, now: u64) -> TimeRange {
-    match (parsed.starts_at_utc, parsed.ends_at_utc) {
-        (Some(start), Some(end)) => TimeRange {
-            start,
-            end: end.max(start),
-        },
-        (Some(start), None) => TimeRange { start, end: start },
-        (None, _) => TimeRange {
-            start: now,
-            end: now,
-        },
-    }
-}
-
-/// The EVENT's display name: SUMMARY, with a UID fallback.
-fn event_display_name(parsed: &ParsedVEvent) -> &str {
-    parsed
-        .summary
-        .as_deref()
-        .filter(|summary| !summary.is_empty())
-        .unwrap_or(parsed.uid.as_str())
-}
-
-/// The CAL-09 screen body for one pulled VEVENT.
-fn inbound_body(parsed: &ParsedVEvent) -> CalendarInboundBody {
-    CalendarInboundBody {
-        description: parsed.description.clone().unwrap_or_default(),
-        attachment_text: Vec::new(),
-    }
-}
-
-/// The EVENT body row: a MessagePack map carrying only the name.
-fn encode_event_body(name: &str) -> Result<Vec<u8>, CalendarError> {
-    let mut body = Vec::new();
-    rmpv::encode::write_value(
-        &mut body,
-        &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
-    )
-    .map_err(|_| ingest_reason("event body did not encode"))?;
-    Ok(body)
-}
-
-/// Reads the EVENT body's `name` field, tolerating non-map bodies.
 pub(super) fn read_event_name(body: &[u8]) -> Option<String> {
     let mut cursor = std::io::Cursor::new(body);
     let rmpv::Value::Map(entries) = rmpv::decode::read_value(&mut cursor).ok()? else {

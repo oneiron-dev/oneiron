@@ -20,9 +20,9 @@ use super::{
     ProjectorRule,
 };
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 
 #[derive(Debug, Clone, Copy)]
@@ -33,9 +33,14 @@ pub(super) enum ProjectorAction {
     LeaveThread,
 }
 
-const PROJECTOR_RULES: [ProjectorRule; 4] = [
+const PROJECTOR_RULES: [ProjectorRule; 5] = [
     ProjectorRule {
         event_kind: CommEventKind::SendSucceeded,
+        predicate: PREDICATE_COMM_LAST_TOUCH,
+        action: ProjectorAction::UpsertLastTouch,
+    },
+    ProjectorRule {
+        event_kind: CommEventKind::InboundReply,
         predicate: PREDICATE_COMM_LAST_TOUCH,
         action: ProjectorAction::UpsertLastTouch,
     },
@@ -90,7 +95,7 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
             Err(error) => return Err(error),
         }
     }
-    reconcile_comm_party_twins(vault, crate::unix_seconds_now())?;
+    reconcile_comm_party_twins(vault, vault.store.clock.now_recorded_at())?;
     Ok(())
 }
 
@@ -107,6 +112,24 @@ pub fn record_comm_send_receipt(
         Some(channel_class),
         None,
         CommEventKind::SendSucceeded,
+        occurred_at,
+    )
+}
+
+/// Records an inbound reply receipt. Content remains in TURN/SESSION;
+/// only the standing last-touch state is projected from this event.
+pub fn record_comm_inbound_reply(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+    occurred_at: u64,
+) -> CommResult<()> {
+    record_event(
+        vault,
+        party,
+        Some(channel_class),
+        None,
+        CommEventKind::InboundReply,
         occurred_at,
     )
 }
@@ -136,18 +159,37 @@ pub fn record_comm_thread_event(
     joined: bool,
     occurred_at: u64,
 ) -> CommResult<()> {
-    record_event(
-        vault,
-        party,
-        None,
-        Some(thread_ref),
-        if joined {
+    vault.try_with_write_txn(|txn| {
+        record_comm_thread_event_in_txn(vault, txn, thread_ref, party, joined, occurred_at)
+    })
+}
+
+pub(crate) fn record_comm_thread_event_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    thread_ref: &str,
+    party: &str,
+    joined: bool,
+    occurred_at: u64,
+) -> CommResult<()> {
+    validate_key_string(thread_ref).map_err(|_| CommError::InvalidRecord)?;
+    let thread = crate::thread_passport::canonical_thread_ref_in_txn(vault, txn, thread_ref)?;
+    let party_ref = resolve_or_create_party_in_txn(vault, txn, party)?;
+    let sequence = next_event_sequence_in_txn(vault, txn)?;
+    let record = CommRecord::Event {
+        sequence,
+        kind: if joined {
             CommEventKind::ThreadJoined
         } else {
             CommEventKind::ThreadLeft
         },
+        party_ref,
+        channel_class: None,
+        thread_ref: Some(thread),
         occurred_at,
-    )
+        projected: false,
+    };
+    put_comm_record_in_txn(vault, txn, EntityId::now(), &record)
 }
 
 fn record_event(
@@ -182,7 +224,7 @@ fn record_event(
             occurred_at,
             projected: false,
         };
-        put_comm_record_in_txn(vault, wtxn, EntityId::now(), &record)
+        put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &record)
     })
 }
 
@@ -195,14 +237,14 @@ pub(super) fn project_event(
     index: &CommProjectorIndex,
 ) -> CommResult<ProjectorIndexDelta> {
     vault.try_with_write_txn(|wtxn| {
-        let Some(raw) = vault.store.entities.get(&*wtxn, event_id.as_bytes())? else {
+        let Some(raw) = vault.store.port_entity_record(&*wtxn, &event_id)? else {
             return Ok(ProjectorIndexDelta::default());
         };
-        let header = EntityMetadataHeader::parse(&raw).ok_or(CommError::InvalidRecord)?;
-        if header.entity_type != ENTITY_TYPE_COMM_RECORD {
+
+        if raw.entity_type != ENTITY_TYPE_COMM_RECORD {
             return Err(CommError::InvalidRecord);
         }
-        let record = decode_comm_record(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let record = decode_comm_record(&raw.body)?;
         let CommRecord::Event {
             sequence,
             kind,

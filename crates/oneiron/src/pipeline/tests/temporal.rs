@@ -189,6 +189,7 @@ fn future_events_are_scored() -> Result<()> {
         anchor_mode: TemporalAnchorMode::Auto,
         adaptive: true,
         limit: 10,
+        effort_anchor: false,
     };
     let rtxn = vault.store.env.read_txn()?;
     let mut metadata_cache = EntityMetadataCache::default();
@@ -291,6 +292,7 @@ fn granularity_sigma_ordering() -> Result<()> {
             anchor_mode: TemporalAnchorMode::Occurred,
             adaptive: true,
             limit: 10,
+            effort_anchor: false,
         };
         let cfg_a = TemporalSearchConfig {
             sigma_secs: *sigma_a,

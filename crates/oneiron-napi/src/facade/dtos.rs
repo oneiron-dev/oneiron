@@ -83,6 +83,7 @@ pub struct NapiClaimInput {
     pub source: String,
     /// Optional WORLD ref.
     pub world_ref: Option<String>,
+    pub relationship_ref: Option<String>,
     /// Optional scope map.
     pub scope: Option<serde_json::Value>,
     /// Validity window start (Unix seconds).
@@ -461,6 +462,8 @@ pub struct NapiRetrievalMeta {
     pub claims_returned: i64,
     /// Set when a leased deep call executed as standard.
     pub deep_pending: Option<bool>,
+    /// Retrieval ended before all requested stages completed.
+    pub partial: bool,
 }
 
 /// The S6 memory pack (`packVersion: 1`).
@@ -604,6 +607,7 @@ pub struct NapiCalendarSel {
 /// One projected calendar EVENT.
 #[napi(object)]
 pub struct NapiCalendarEventView {
+    pub origin: String,
     /// Hex EVENT entity id.
     pub event_ref: String,
     /// EVENT display name, when the body carries one.

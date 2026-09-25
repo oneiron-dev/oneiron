@@ -2,10 +2,11 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::entity_id::EntityId;
 
-use super::{ClaimMaterialization, StagedClaimGateOutcome};
+use super::ClaimMaterialization;
 
 #[derive(Debug)]
 pub(crate) struct ApplyOpsGateMode {
+    pub(super) hub_admission: Option<crate::skill_hub::HubAdmissionProof>,
     pub(super) record_decisions: bool,
     pub(super) persist_pending_consent: bool,
     pub(super) include_source_in_gate_input: bool,
@@ -13,23 +14,33 @@ pub(crate) struct ApplyOpsGateMode {
     pub(super) claim_materializations: VecDeque<ClaimMaterialization>,
     pub(super) preflight_gate_decision_ids:
         HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
-    /// The gate verdicts this transaction's preflight already recorded,
-    /// keyed by operation receipt identity.
-    pub(super) staged_claim_gate:
-        Option<HashMap<crate::store::GateDecisionId, StagedClaimGateOutcome>>,
+    /// The caller's active mask: the FACET every NOTE and ASSET born in this
+    /// batch is stamped with. `None` stamps the vault default.
+    pub(super) birth_mask: Option<EntityId>,
 }
 
 impl ApplyOpsGateMode {
     pub(crate) fn new(record_decisions: bool, persist_pending_consent: bool) -> Self {
         Self {
+            hub_admission: None,
             record_decisions,
             persist_pending_consent,
             include_source_in_gate_input: false,
             claim_gate_prechecked: false,
             claim_materializations: VecDeque::new(),
             preflight_gate_decision_ids: HashMap::new(),
-            staged_claim_gate: None,
+            birth_mask: None,
         }
+    }
+
+    pub(super) fn with_birth_mask(mut self, mask: Option<EntityId>) -> Self {
+        self.birth_mask = mask;
+        self
+    }
+
+    pub(crate) fn with_hub_admission(mut self, proof: crate::skill_hub::HubAdmissionProof) -> Self {
+        self.hub_admission = Some(proof);
+        self
     }
 
     pub(super) fn with_claim_materializations(
@@ -65,20 +76,6 @@ impl ApplyOpsGateMode {
         >,
     ) -> Self {
         self.preflight_gate_decision_ids = preflight_gate_decision_ids;
-        self
-    }
-
-    /// Binds the gate verdicts this transaction's preflight already recorded
-    /// for local claims, without a second auto-checker consult.
-    ///
-    /// Not a general gate bypass: the map is crate-private, `BatchBuilder`
-    /// builds it only from decisions IT staged in THIS transaction, and the
-    /// door that consumes it enforces rather than re-evaluates.
-    pub(super) fn with_staged_claim_gate(
-        mut self,
-        staged_claim_gate: HashMap<crate::store::GateDecisionId, StagedClaimGateOutcome>,
-    ) -> Self {
-        self.staged_claim_gate = Some(staged_claim_gate);
         self
     }
 }

@@ -215,6 +215,7 @@ pub(super) fn persist_model_id_if_missing(
                 ));
             }
             hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
+            hnsw_meta.put(&mut wtxn, crate::embed::COLD_ATTACH_PENDING_KEY, b"1")?;
             wtxn.commit()?;
         }
     }

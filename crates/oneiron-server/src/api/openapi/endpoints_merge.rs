@@ -228,7 +228,7 @@ pub(crate) fn retrieval_effort_values() -> Vec<&'static str> {
 fn retrieval_effort_schema() -> Value {
     json!({
         "type": "string",
-        "description": "Retrieval effort tier. `minimal` is one direct channel with no graph expansion, reranker, or host backend; `standard` adds one-hop graph expansion and deterministic subqueries and is still model-free; `deep` requires a host-injected backend under a budget lease.",
+        "description": "Retrieval effort: `light`, `medium`, `high`, `xhigh`, or `max`. Light uses direct retrieval; medium adds seed-specific PPR. High adds two-hop expansion and top-30 reranking; xhigh uses four hops and top-50; max uses ten hops and top-50. Paid tiers require a host backend and budget lease. Retired minimal/standard/deep spellings are rejected. Deadlines stop between stages and partial results identify incomplete work.",
         "enum": retrieval_effort_values(),
     })
 }

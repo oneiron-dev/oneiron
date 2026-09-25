@@ -1229,24 +1229,28 @@ fn run_root_ignores_non_dreamer_attempts_sharing_the_run_id() -> Result<()> {
 
 #[test]
 fn run_root_preserves_creation_order_when_a_run_has_multiple_roots() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let clock = crate::ports::ManualClock::new(10);
+    let (_tmp, vault) = crate::test_util::open_test_vault_with(VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    });
     let run_id = "run-multiple-roots";
-    // The attempt IDs follow enqueue order, but `list_run` has always selected
-    // roots in the persisted creation-time order.  Keep that distinction
-    // visible so the run-id sidecar cannot accidentally choose by key order.
-    let later_root = enqueue_dreamer_attempt(
+    // The root follows storage-recorded creation order. Caller timestamps
+    // cannot backdate a later enqueue and replace the first root.
+    let first_root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
-        Value::Map(vec![(Value::from("intent"), Value::from("Later root"))]),
+        Value::Map(vec![(Value::from("intent"), Value::from("First root"))]),
         run_id,
         20,
     )?;
-    let earlier_root = enqueue_dreamer_attempt(
+    clock.set(20);
+    let second_root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
-        Value::Map(vec![(Value::from("intent"), Value::from("Earlier root"))]),
+        Value::Map(vec![(Value::from("intent"), Value::from("Second root"))]),
         run_id,
         10,
     )?;
@@ -1267,11 +1271,11 @@ fn run_root_preserves_creation_order_when_a_run_has_multiple_roots() -> Result<(
     assert_eq!(groups.len(), 1);
     assert_eq!(
         groups[0].group_key,
-        bytes_to_hex_lower(earlier_root.as_bytes())
+        bytes_to_hex_lower(first_root.as_bytes())
     );
     assert_ne!(
         groups[0].group_key,
-        bytes_to_hex_lower(later_root.as_bytes())
+        bytes_to_hex_lower(second_root.as_bytes())
     );
     Ok(())
 }
@@ -1561,6 +1565,70 @@ fn an_untouched_approval_carries_no_delta() -> Result<()> {
             .approval,
         ClaimApprovalStatus::Approved
     );
+    Ok(())
+}
+
+/// An approval never removes the author, and the approver's write is not
+/// judged against the agent author's own Proposed ceiling. An amended body is
+/// the approver's text, so it keeps no single author.
+#[test]
+fn an_untouched_approval_keeps_the_agent_author_and_an_amended_one_does_not() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let author = |claim_id: EntityId| -> Result<Option<EntityId>> {
+        let body = vault.get_claim(&claim_id)?.expect("claim");
+        let txn = vault.store.env.read_txn()?;
+        Ok(
+            crate::batch::authenticated_claim_author_in_txn(&vault.store, &txn, &claim_id, &body)?
+                .map(WriteActor::entity_ref),
+        )
+    };
+    let untouched = amended_proposal(&vault)?;
+    assert_eq!(author(untouched)?, Some(entity(0xB5)));
+    vault.resolve_inbox_group_at("run-amend", InboxBulkVerb::AcceptAll, None, 20)?;
+    assert_eq!(
+        vault.get_claim(&untouched)?.expect("approved").approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert_eq!(author(untouched)?, Some(entity(0xB5)));
+    {
+        use crate::ports::{ChangeLogStore, ChangeOp};
+        let txn = vault.store.env.read_txn()?;
+        let updates = |records: Vec<crate::ports::ChangeLogRecord>| {
+            records
+                .into_iter()
+                .filter(|record| record.entity == untouched && record.op == ChangeOp::Update)
+                .count()
+        };
+        assert_eq!(
+            updates(vault.port_changelog_list_by_entity(&txn, &untouched, 100)?),
+            1
+        );
+        assert_eq!(
+            updates(vault.port_changelog_list_by_actor(&txn, &entity(0xB5), 100)?),
+            0,
+            "the approval is the approver's write, never the author's"
+        );
+    }
+
+    let edited = entity(0xB7);
+    write_dreamer_proposal(
+        &vault,
+        edited,
+        entity(0xB5),
+        entity(0xB8),
+        "core.role",
+        "draft",
+        "run-edit",
+        30,
+        &[REASON_CHECKER],
+    )?;
+    let amended = edited_body(&vault, edited, "revised by the owner")?;
+    vault.approve_inbox_member_with_edit_at(&edited, &amended, 40)?;
+    assert_eq!(
+        vault.get_claim(&edited)?.expect("approved").approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert_eq!(author(edited)?, None);
     Ok(())
 }
 
@@ -1966,4 +2034,33 @@ mod vad_vetting_tests {
         );
         Ok(())
     }
+}
+
+#[test]
+fn duplicate_hash_ignores_writer_substrate_but_keeps_explicit_scopes() -> Result<()> {
+    let candidate = crate::write_envelope::ClaimCandidate::new(
+        "profile.diet",
+        ClaimSubject::Entity(entity(0xC1)),
+        Value::from("vegan"),
+        0.9,
+    );
+    let first = candidate
+        .clone()
+        .into_claim_body(&dreamer_envelope(entity(0xB1), "first"), entity(0xD0));
+    let second = candidate.into_claim_body(&dreamer_envelope(entity(0xB2), "second"), entity(0xD0));
+    let hash = inbox_claim_hash(&first)?;
+    assert_eq!(hash, inbox_claim_hash(&second)?);
+    let mut named = second.clone();
+    named.scope_facet = entity(0xD1);
+    assert_ne!(hash, inbox_claim_hash(&named)?);
+    let mut relationship = second.clone();
+    relationship.rel = Some(entity(0xD2));
+    assert_ne!(hash, inbox_claim_hash(&relationship)?);
+    let mut project = second.clone();
+    project.scope_project = entity(0xD3);
+    assert_ne!(hash, inbox_claim_hash(&project)?);
+    let mut world = second;
+    world.world = Some(entity(0xD4));
+    assert_ne!(hash, inbox_claim_hash(&world)?);
+    Ok(())
 }

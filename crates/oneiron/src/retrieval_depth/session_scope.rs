@@ -1,9 +1,12 @@
-use crate::claim::{ScopedRead, decode_claim_body};
+use std::collections::HashMap;
+
+use crate::claim::{ScopedRead, ScopedReadReceipt, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::vault::{ReadMode, RevisionRef};
 
 use super::{DepthSearchRequest, short_ref_or_hex};
 
@@ -33,18 +36,27 @@ impl SessionScope {
 }
 
 /// Narrows `hits` to a session scope. See [`SessionScope`]: this can only
-/// remove hits.
+/// remove hits. World membership is evaluated at each hit's ranked revision,
+/// supplied in `revisions`, while current actor and status gates still apply.
 pub fn narrow_to_session_scope(
     scoped: &ScopedRead<'_>,
     hits: Vec<ScoredEntity>,
+    revisions: &HashMap<EntityId, RevisionRef>,
     scope: &SessionScope,
+    receipts: &mut Vec<ScopedReadReceipt>,
 ) -> Result<Vec<ScoredEntity>> {
     if scope.is_empty() {
         return Ok(hits);
     }
     let mut kept = Vec::with_capacity(hits.len());
     for hit in hits {
-        if hit_in_session_scope(scoped, &hit.id, scope)? {
+        if hit_in_session_scope(
+            scoped,
+            &hit.id,
+            revisions.get(&hit.id).copied(),
+            scope,
+            receipts,
+        )? {
             kept.push(hit);
         }
     }
@@ -54,10 +66,12 @@ pub fn narrow_to_session_scope(
 fn hit_in_session_scope(
     scoped: &ScopedRead<'_>,
     id: &EntityId,
+    revision: Option<RevisionRef>,
     scope: &SessionScope,
+    receipts: &mut Vec<ScopedReadReceipt>,
 ) -> Result<bool> {
     if let Some(world) = &scope.world_ref
-        && claim_world(scoped, id)? != Some(*world)
+        && claim_world(scoped, id, revision, receipts)? != Some(*world)
     {
         return Ok(false);
     }
@@ -92,8 +106,19 @@ fn short_ref_matches(stored: &str, requested: &str) -> bool {
 /// The claim's world, read through the actor-keyed door. A non-CLAIM entity,
 /// or one this actor cannot read, has no world and therefore never satisfies
 /// a world narrowing.
-fn claim_world(scoped: &ScopedRead<'_>, id: &EntityId) -> Result<Option<EntityId>> {
-    let Some((entity_type, _, body)) = scoped.get_entity_parts(id)? else {
+fn claim_world(
+    scoped: &ScopedRead<'_>,
+    id: &EntityId,
+    revision: Option<RevisionRef>,
+    receipts: &mut Vec<ScopedReadReceipt>,
+) -> Result<Option<EntityId>> {
+    let Some(revision) = revision else {
+        return Ok(None);
+    };
+    let result =
+        scoped.get_entity_parts_with_mode_with_receipt(id, ReadMode::Pinned(revision), None)?;
+    receipts.push(result.receipt);
+    let Some((entity_type, _, body)) = result.value else {
         return Ok(None);
     };
     if entity_type != ENTITY_TYPE_CLAIM {
@@ -103,7 +128,7 @@ fn claim_world(scoped: &ScopedRead<'_>, id: &EntityId) -> Result<Option<EntityId
 }
 
 fn carries_facet(scoped: &ScopedRead<'_>, id: &EntityId, facet: &EntityId) -> Result<bool> {
-    let Some(edges) = scoped.edges_out(id)? else {
+    let Some(edges) = scoped.edges_out(id)?.value else {
         return Ok(false);
     };
     Ok(edges
@@ -127,9 +152,11 @@ impl DepthSearchRequest<'_> {
         &self,
         scoped: &ScopedRead<'_>,
         hits: Vec<ScoredEntity>,
+        revisions: &HashMap<EntityId, RevisionRef>,
+        receipts: &mut Vec<ScopedReadReceipt>,
     ) -> Result<Vec<ScoredEntity>> {
         let mut hits = match self.session_scope {
-            Some(scope) => narrow_to_session_scope(scoped, hits, scope)?,
+            Some(scope) => narrow_to_session_scope(scoped, hits, revisions, scope, receipts)?,
             None => hits,
         };
         hits.truncate(self.limit);

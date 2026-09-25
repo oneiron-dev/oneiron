@@ -27,22 +27,14 @@ impl DeviceAuthority {
         if (self.roles & !ROLE_DEFINED_MASK) != 0 {
             return Err(invalid_authority());
         }
-        if (self.roles & ROLE_CLOUD) != 0 && (self.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0 {
-            return Err(invalid_authority());
-        }
-        if self.tier == AuthorityTier::CloudCustodial
-            && (self.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
-        {
-            return Err(invalid_authority());
-        }
         self.key.validate()?;
         self.attestation.validate()
     }
 
+    // Structural owner-capable shape only. Posture-specific authorization is
+    // decided by FoldContext, never by the replay codec.
     pub(super) fn can_authority_consent(&self) -> bool {
         (self.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
-            && (self.roles & ROLE_CLOUD) == 0
-            && self.tier != AuthorityTier::CloudCustodial
     }
 }
 
@@ -51,11 +43,6 @@ pub(super) fn folded_device_can_authority_consent(device: &FoldedDevice) -> bool
         && (device.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
         && (device.roles & ROLE_CLOUD) == 0
         && device.tier != AuthorityTier::CloudCustodial
-}
-
-/// Critical confirmations are owner acts; this intentionally has no tier/custody arm.
-pub(super) fn folded_signer_can_critical_write_confirm(device: &FoldedDevice) -> bool {
-    !device.revoked && (device.roles & ROLE_OWNER) != 0 && (device.roles & ROLE_CLOUD) == 0
 }
 
 /// The host-key-premise consent predicate: owner/admin and-not-revoked IS the
@@ -77,4 +64,17 @@ pub(super) fn folded_device_can_owner_veto(device: &FoldedDevice) -> bool {
         && (device.roles & ROLE_OWNER) != 0
         && (device.roles & ROLE_CLOUD) == 0
         && device.tier != AuthorityTier::CloudCustodial
+}
+
+/// Managed hosts are owner roots; this arm is never used by self-host folds.
+pub(super) fn folded_host_device_can_consent(device: &FoldedDevice) -> bool {
+    !device.revoked && (device.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
+}
+
+pub(super) fn tier_meets_floor(tier: AuthorityTier, floor: AuthorityTier) -> bool {
+    match floor {
+        AuthorityTier::Software => true,
+        AuthorityTier::Hardware => tier == AuthorityTier::Hardware,
+        AuthorityTier::CloudCustodial => tier == AuthorityTier::CloudCustodial,
+    }
 }

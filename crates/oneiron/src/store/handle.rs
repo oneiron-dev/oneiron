@@ -122,13 +122,22 @@ pub struct StoreCore {
     /// Serializes reward-to-weight tuning so concurrent callers cannot lose
     /// a gradient step between read, compute, and persist.
     pub(in crate::store) retrieval_blend_tuning_lock: Mutex<()>,
+    /// A telemetry storage failure disables subsequent base-ledger writes for
+    /// this vault handle. No process-global state or cross-vault kill switch.
+    pub(in crate::store) retrieval_writes_disabled: std::sync::atomic::AtomicBool,
     /// This vault's monotonic authority first-seen observation clock. It dies
     /// with the handle: a reopen re-anchors from the persisted floor, so there
     /// is no registry to release from and no cross-vault anchor to share.
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
+    pub(crate) clock: crate::ports::StoreClock,
     /// This vault's content-free diagnostic counters. Per-vault, not
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
+    /// Bounded, content-addressed L2 render cache. Never persisted.
+    pub(crate) l2_base_cache: Mutex<crate::context_pack::L2BaseCache>,
+    /// Content-free local invalidations. Readers always re-read committed rows.
+    #[cfg(feature = "sync")]
+    pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,
     /// Serializes this vault's foreign-import admission window: the receipt
     /// read, the selector admission and the stage-if-absent write are one
     /// logical step, and the durable re-read is the cross-process guard. It was
@@ -390,18 +399,21 @@ macro_rules! manifest_dbs {
             /// over `&impl ManifestDbs` must record into the vault it is
             /// writing, and the write target is the only handle it holds.
             fn diagnostics(&self) -> &Diagnostics;
+            fn clock(&self) -> &crate::ports::StoreClock;
         }
 
         impl ManifestDbs for Store {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
         }
     };
 }
@@ -458,6 +470,7 @@ impl Drop for StoreOwner {
 
 pub(super) fn seed_default_policy_manifest_in_txn(
     entities: &OverlayDb,
+    sync_state: &OverlayStrDb,
     type_index: &OverlayDb,
     temporal_occurred_start: &OverlayDb,
     temporal_learned: &OverlayDb,
@@ -478,6 +491,11 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     payload.extend_from_slice(&timestamp.to_be_bytes());
     payload.extend_from_slice(&body);
     entities.put(wtxn, id.as_bytes(), &payload)?;
+    sync_state.put(
+        wtxn,
+        &crate::gate::trusted_manifest_key(id),
+        blake3::hash(&body).as_bytes(),
+    )?;
     type_index.put(
         wtxn,
         &Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, id),

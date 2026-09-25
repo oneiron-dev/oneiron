@@ -103,7 +103,7 @@ pub struct CodeMemoryPullResult {
 ///
 /// [`ScopedRead::ppr_node_visible`] is the canonical readability predicate —
 /// literally `ScopedRead::is_entity_readable_with_policy_in`, the same
-/// admission [`ScopedRead::get_entity_parts`] applies — and it answers in the
+/// admission `ScopedRead::get_entity_parts_with_receipt` applies — and it answers in the
 /// transaction it is handed. That is what lets this module decide a candidate
 /// and MATERIALIZE it against one coherent view.
 ///
@@ -124,7 +124,10 @@ fn payload_visible_in_txn(
     payload: CodeMemoryPayloadRef,
 ) -> Result<bool> {
     let payload_id = payload.entity_id();
-    if let Some(raw) = store.entities.get(rtxn, payload_id.as_bytes())? {
+    if let Some(raw) = store
+        .port_entity_record(rtxn, &payload_id)?
+        .map(|row| row.encode())
+    {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == ENTITY_TYPE_CLAIM && raw.len() == ENTITY_METADATA_HEADER_LEN {
@@ -255,13 +258,13 @@ fn collect_pull_candidates(
 /// 6. label everything `Data`.
 ///
 /// ONE SNAPSHOT DECIDES ADMISSION AND THE RESULT. There is deliberately no
-/// second, later clamp: re-asking [`ScopedRead::get_entity_parts`] after this
+/// second, later clamp: re-asking `ScopedRead::get_entity_parts_with_receipt` after this
 /// transaction closed would ask a NEWER snapshot, and a candidate that had
 /// already consumed one of the caller's `limit` places could then be dropped
 /// by that newer answer — a concurrent delete or policy change would make the
 /// pull return fewer notes than the snapshot it ranked actually holds, with no
 /// lower-ranked note ever collected to take the empty place. The in-transaction
-/// predicate is the SAME admission `get_entity_parts` applies (see
+/// predicate is the SAME admission `get_entity_parts_with_receipt` applies (see
 /// `payload_visible_in_txn`), so coherence costs no scope.
 pub fn pull_code_memory(
     vault: &Vault,
@@ -408,7 +411,7 @@ pub fn pull_code_memory(
 /// docs contracts outrank the blueprint's stale "no NOTE entity type exists
 /// in v1" rule, so registration enforces the note type rather than the weaker
 /// live-non-CLAIM predicate. The CLAIM clamp inside
-/// `ScopedRead::get_entity_parts` is untouched and still governs reads.
+/// `ScopedRead::get_entity_parts_with_receipt` is untouched and still governs reads.
 pub fn register_always_on_contract(
     store: &Store,
     txn: &mut RwTxn<'_>,

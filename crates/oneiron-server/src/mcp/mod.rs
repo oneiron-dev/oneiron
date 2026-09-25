@@ -11,6 +11,10 @@ mod codec;
 mod endpoint_args;
 mod endpoint_schema;
 mod exec_host;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod quickjs_provider;
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub use self::quickjs_provider::McpQuickJsProvider;
 pub mod oauth_client;
 mod paging;
 pub mod qualification;
@@ -19,6 +23,7 @@ mod results;
 mod schema_parts;
 mod schema_tools;
 mod surface;
+pub(crate) use self::surface::setup_instructions_for;
 mod tool_catalog;
 mod validate;
 mod validators;
@@ -38,9 +43,9 @@ pub use self::args::{
 pub use self::codec::McpToolArguments;
 pub(crate) use self::codec::mcp_raw_call_arguments;
 pub use self::endpoint_args::{
-    MCP_CODE_TASK_MAX_CHARS, MCP_TASK_LABEL_MAX_BYTES, McpCacheHint, McpExecuteCodeToolArgs,
-    McpPageRequest, McpSetupToolArgs, McpSubscriptionScope, McpVerbArguments, McpVerbToolArgs,
-    McpVerbToolPayload, validate_mcp_endpoint_tool_args,
+    MCP_CODE_TASK_MAX_CHARS, McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest,
+    McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload,
+    validate_mcp_endpoint_tool_args,
 };
 pub use self::endpoint_schema::{
     MCP_BOARD_BUDGET_TOK_MAX, MCP_CACHE_TTL_MS_MAX, MCP_FRAME_EPOCH_MAX, MCP_PAGE_LIMIT_MAX,
@@ -67,13 +72,13 @@ pub(crate) use self::schema_tools::{
     booking_reschedule_input_schema,
 };
 pub use self::surface::{
-    MCP_BOARD_BUDGET_TOK, MCP_CODE_RUN_SCHEMA_VERSION, MCP_EXECUTE_CODE_TOOL,
-    MCP_EXECUTE_CODE_UNAVAILABLE_CODE, MCP_MAX_LIVE_PAGE_CONTINUATIONS, MCP_PAGE_ITEM_CAP,
+    MCP_BOARD_BUDGET_TOK, MCP_CODE_HOST_UNBOUND_CODE, MCP_CODE_RUN_SCHEMA_VERSION,
+    MCP_EXECUTE_CODE_TOOL, MCP_MAX_LIVE_PAGE_CONTINUATIONS, MCP_PAGE_ITEM_CAP,
     MCP_RESULT_CACHE_SCOPE, MCP_RESULT_META_SCHEMA_VERSION, MCP_RESULT_TTL_MS,
     MCP_SETUP_INSTRUCTIONS, MCP_SETUP_TOOL, MCP_STREAM_CONNECTION_PREFIX,
     MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool,
-    McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbBinding,
-    McpVerbFamily, exported_verb_rows, generated_verb_tools, project_verb_rows, registered_surface,
+    McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbFamily,
+    exported_verb_rows, generated_verb_tools, project_verb_rows, registered_surface,
 };
 pub use self::tool_catalog::{
     MCP_BOOK_OPERATIONS, MCP_CALENDAR_OPERATIONS, MCP_SERVER_NAME, MCP_TOOL_ARGS_SCHEMA_VERSION,
@@ -85,7 +90,7 @@ pub use self::tool_catalog::{
 mod tests;
 
 #[cfg(test)]
-use self::{codec::*, endpoint_args::*, schema_parts::*, schema_tools::*, tool_catalog::*};
+use self::{codec::*, schema_parts::*, schema_tools::*, tool_catalog::*};
 
 #[cfg(test)]
 use oneiron::context_board::{BoardBlockHeader, BoardBudgetRequest, StreamConnectionId};

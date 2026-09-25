@@ -5,38 +5,25 @@ use crate::store::GateDecisionId;
 #[cfg(test)]
 use crate::error::{Error, Result};
 
-// ONE-1149 race-test rendezvous seam. The deterministic raced-delete harness
-// must order the deleter's lock-free `read_entity_header` read_txn (which does
-// NOT take the single LMDB write lock) BEFORE the eraser's commit, so the
-// headerful gate is forced to win the header read and the partial-residue leg
-// is exercised every run instead of nondeterministically diverting to the
-// headerless path. The only way to inject that ordering across the spawned
-// production call is a `#[cfg(test)]` signal emitted from inside
-// `delete_entity_with_reason` once the header is proven `Some`. It compiles
-// out of production entirely (the `#[cfg(not(test))]` shim is a no-op),
-// mirroring the established sweep-side fault-injection seam idiom.
-//
-// The slot belongs to the VAULT being deleted from
-// (`crate::store::TestHooks::install_after_header_read_signal`), not to the
-// process and not to the deleter thread. A process-global slot let a sibling
-// test overwrite the sender (dropping it, so the eraser's `recv()` failed with
-// `RecvError`) or consume it with an unrelated headerful delete; a per-vault
-// slot is unreachable from every test that opened a different vault, which is
-// every other test.
+// ONE-1149 race-test rendezvous seam. Both deletion branches signal after a
+// lock-free read proves there is a scope to erase, before taking a write lock.
+// The eraser can then commit its staged removal, forcing the deleter to observe
+// a scope that disappears before its purge transaction. The slot belongs to
+// this vault, so sibling tests cannot overwrite or consume its sender.
 
-/// Fires this vault's post-header-read rendezvous signal, if one is armed.
+/// Fires this vault's post-delete-probe rendezvous signal, if one is armed.
 ///
 /// Compiles out of every non-test build via the no-op shim below.
 #[cfg(test)]
-pub(super) fn signal_after_header_read(vault: &Vault) {
-    vault.test_hooks().signal_after_header_read();
+pub(super) fn signal_after_delete_probe(vault: &Vault) {
+    vault.test_hooks().signal_after_delete_probe();
 }
 
 /// Production no-op shim for the race-test rendezvous seam: compiles out the
 /// signal entirely in non-test builds.
 #[cfg(not(test))]
 #[inline(always)]
-pub(super) fn signal_after_header_read(_vault: &Vault) {}
+pub(super) fn signal_after_delete_probe(_vault: &Vault) {}
 
 #[cfg(all(test, feature = "sync"))]
 thread_local! {
@@ -185,7 +172,7 @@ pub(crate) enum DeleteRendezvous {
 /// The slot itself is a field on the vault's
 /// [`crate::store::TestHooks`]; it compiles out of every non-test build, and the
 /// firing side goes through the no-op shim below exactly like
-/// [`signal_after_header_read`].
+/// [`signal_after_delete_probe`].
 #[cfg(test)]
 pub(crate) type DeleteRendezvousChannels = (
     DeleteRendezvous,

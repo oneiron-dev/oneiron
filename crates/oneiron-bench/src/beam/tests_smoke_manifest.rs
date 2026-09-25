@@ -218,6 +218,27 @@ pub(crate) mod tests {
         ));
         assert!(serialized_text.contains("lvl: benchmark-smoke"));
         assert!(serialized_text.contains("at: beam-smoke-t1"));
+        let report = context_pack_report(&pack, &fixture.cases[0]);
+        assert_eq!(report.result_count, pack.raw.results.len());
+        assert_eq!(report.budgeted_text_by_entity_id.len(), report.result_count);
+        let mut wrong_frontier = pack.raw.clone();
+        for entity in wrong_frontier
+            .results
+            .iter_mut()
+            .chain(&mut wrong_frontier.neighbors)
+        {
+            let mut revision = entity.source_revision_ref.expect("captured revision");
+            revision[0] ^= 1;
+            entity.source_revision_ref = Some(revision);
+        }
+        assert!(
+            context_entity_reports_for_ids(&wrong_frontier.results, &pack.serialized_ids.results,)
+                .is_empty()
+        );
+        assert!(
+            budgeted_text_by_entity_id(&wrong_frontier, &pack.serialized_ids.text_by_id,)
+                .is_empty()
+        );
         assert!(
             pack.serialized_ids
                 .results

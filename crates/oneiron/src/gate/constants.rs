@@ -1,7 +1,9 @@
 use crate::entity_id::ENTITY_ID_LEN;
 
 pub(super) const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
-pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";
+/// Schema 1.2 stores six-axis Scope; schema 1.1 is migration input only.
+pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.2";
+pub(super) const LEGACY_POLICY_SCOPE_SCHEMA_VERSION: &str = "1.1";
 pub(super) const POLICY_PACK_ID_KEY: &str = "pack_id";
 pub(super) const POLICY_PACK_VERSION_KEY: &str = "pack_version";
 pub(super) const POLICY_MIN_ENGINE_VERSION_KEY: &str = "min_engine_version";
@@ -117,6 +119,8 @@ pub(super) const SOURCE_TRUST_RECEIPTED_KEY: &str = "receipted";
 pub(super) const SOURCE_TRUST_WARNED_KEY: &str = "warned";
 pub(super) const GRANT_EFFECTOR_KEY: &str = "effector";
 pub(super) const GRANT_SCOPE_KEY: &str = "scope";
+/// Purpose-specific constraints, always conjunctive with the stored Scope.
+pub(super) const GRANT_SELECTORS_KEY: &str = "selectors";
 pub(super) const GRANT_BUDGET_KEY: &str = "budget";
 pub(super) const GRANT_RECEIPT_REQUIRED_KEY: &str = "receipt_required";
 pub(crate) const SCOPED_READ_EFFECTOR_CORE_READ: &str = "core:read";

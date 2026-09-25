@@ -3,6 +3,169 @@ use super::*;
 #[napi]
 impl NativeClient {
     #[napi]
+    pub fn tasks_ack(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.ack", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.cancel", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_check(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.check", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_expand(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.expand", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn witness(&self, turn: NapiWitnessTurnInput) -> napi::Result<NapiWitnessReceipt> {
+        let turn = turn.into_engine()?;
+        let output = self.inner.witness(&turn).map_err(facade_error)?;
+        Ok(witness_receipt_from_engine(output))
+    }
+    #[napi]
+    pub fn claim_upsert(&self, claim: NapiClaimInput) -> napi::Result<NapiCommitReceipt> {
+        let claim = claim_input_to_engine(&claim).map_err(facade_error)?;
+        let output = self.inner.claim_upsert(&claim).map_err(facade_error)?;
+        Ok(commit_receipt_from_engine(output))
+    }
+    #[napi]
+    pub fn recall(
+        &self,
+        query: String,
+        effort: Option<String>,
+        scope: Option<NapiRecallScope>,
+        limit: Option<f64>,
+        format: Option<String>,
+    ) -> napi::Result<NapiMemoryPack> {
+        let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
+            .map_err(facade_error)?;
+        let scope = recall_scope_to_engine(scope);
+        let limit = limit
+            .map(limit_to_engine)
+            .transpose()
+            .map_err(facade_error)?
+            .unwrap_or(10);
+        let output = self
+            .inner
+            .recall(&query, effort, &scope, limit, format.as_deref())
+            .map_err(facade_error)?;
+        memory_pack_from_engine(output).map_err(boundary_error)
+    }
+    #[napi]
+    pub fn receipts(&self, limit: Option<f64>) -> napi::Result<Vec<NapiGateReceipt>> {
+        let limit = limit
+            .map(limit_to_engine)
+            .transpose()
+            .map_err(facade_error)?
+            .unwrap_or(100);
+        let output = self.inner.receipts(limit).map_err(facade_error)?;
+        output
+            .into_iter()
+            .map(|item| gate_receipt_from_engine(item).map_err(boundary_error))
+            .collect()
+    }
+    #[napi]
+    pub fn key_value_get(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("key_value_get", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn key_value_put(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("key_value_put", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn key_value_delete(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("key_value_delete", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn key_value_search(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("key_value_search", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn key_value_namespaces(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("key_value_namespaces", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
     pub fn tasks_ask(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("tasks.ask", input)

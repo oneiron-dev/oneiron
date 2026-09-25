@@ -228,10 +228,14 @@ pub(super) fn is_edge_reserved_predicate(predicate: &str) -> bool {
 /// provenance-derived edge state and therefore stay exclusively edge-owned.
 pub(super) fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
     let namespace = predicate.split('.').next();
-    namespace == Some("esign")
+    namespace == Some("world_access")
+        || namespace == Some("activated")
+        || namespace == Some("esign")
         || namespace == Some(RESERVED_SKILL_PREDICATE_NAMESPACE)
         || namespace == Some(RESERVED_ACTOR_PREDICATE_NAMESPACE)
         || predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE
+        || predicate == super::PREDICATE_VAULT_DEFAULT_FACET
+        || matches!(predicate, "repo.proposed_diff" | "repo.session")
 }
 
 fn valid_predicate_segment(segment: &str) -> bool {

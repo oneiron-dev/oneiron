@@ -5,7 +5,10 @@ use crate::error::ArtifactError;
 
 #[test]
 fn attempt_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let clock = crate::ports::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let queue = AttemptQueue::new(&vault);
 
     assert_eq!(
@@ -19,13 +22,15 @@ fn attempt_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
     let EnqueueOutcome::Enqueued(first) = queue.enqueue(enqueue("first", None, 10))? else {
         panic!("expected first enqueue");
     };
+    clock.set(20);
     let EnqueueOutcome::Enqueued(second) = queue.enqueue(enqueue("second", None, 20))? else {
         panic!("expected second enqueue");
     };
 
+    clock.set(30);
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
-        now: 30,
+        now: 999,
     })?
     else {
         panic!("expected claimed attempt");
@@ -39,9 +44,10 @@ fn attempt_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
     let persisted = queue.get(first.id)?.expect("claimed attempt persisted");
     assert_eq!(persisted, claimed);
 
+    clock.set(40);
     let ClaimOutcome::Claimed(next) = queue.claim(ClaimAttempt {
         lease_owner: "worker-b".to_owned(),
-        now: 40,
+        now: 999,
     })?
     else {
         panic!("expected second claimed attempt");
@@ -161,7 +167,7 @@ fn attempt_queue_claim_kind_preserves_stale_ready_index_for_skipped_kind() -> Re
 
 #[test]
 fn attempt_queue_claim_treats_non_backoff_attempts_as_immediately_ready() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, _clock) = open_queue_at(1);
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(attempt) =
@@ -169,6 +175,11 @@ fn attempt_queue_claim_treats_non_backoff_attempts_as_immediately_ready() -> Res
     else {
         panic!("expected enqueue");
     };
+
+    let mut future = attempt.clone();
+    future.created_at = 1_000;
+    future.updated_at = 1_000;
+    put_raw_attempts(&vault, &[future])?;
 
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
@@ -301,11 +312,14 @@ fn attempt_queue_claim_cleans_malformed_ready_rows_and_continues() -> Result<()>
 
 #[test]
 fn attempt_queue_transitions_complete_is_idempotent_and_rejects_invalid_states() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(attempt) =
-        queue.enqueue(enqueue("claim_extraction", Some("turn:complete"), 10))?
+        queue.enqueue(enqueue("claim_extraction", Some("turn:complete"), {
+            clock.set(10);
+            10
+        }))?
     else {
         panic!("expected enqueue");
     };
@@ -315,14 +329,20 @@ fn attempt_queue_transitions_complete_is_idempotent_and_rejects_invalid_states()
             id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: 0,
-            now: 11,
+            now: {
+                clock.set(11);
+                11
+            },
         })
         .unwrap_err();
     assert_invalid_transition(queued_complete, "complete", "queued");
 
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
-        now: 20,
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("expected claimed attempt");
@@ -334,7 +354,10 @@ fn attempt_queue_transitions_complete_is_idempotent_and_rejects_invalid_states()
             id: attempt.id,
             lease_owner: "worker-b".to_owned(),
             attempt_count: claimed.attempt_count,
-            now: 25,
+            now: {
+                clock.set(25);
+                25
+            },
         })
         .unwrap_err();
     assert_invalid_transition(wrong_owner_complete, "complete", "leased_by_other");
@@ -343,7 +366,10 @@ fn attempt_queue_transitions_complete_is_idempotent_and_rejects_invalid_states()
         id: attempt.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: claimed.attempt_count,
-        now: 30,
+        now: {
+            clock.set(30);
+            30
+        },
     })?
     else {
         panic!("expected complete");
@@ -361,7 +387,10 @@ fn attempt_queue_transitions_complete_is_idempotent_and_rejects_invalid_states()
         id: attempt.id,
         lease_owner: String::new(),
         attempt_count: 0,
-        now: 40,
+        now: {
+            clock.set(40);
+            40
+        },
     })?
     else {
         panic!("expected idempotent complete");
@@ -374,7 +403,10 @@ fn attempt_queue_transitions_complete_is_idempotent_and_rejects_invalid_states()
             lease_owner: "worker-a".to_owned(),
             attempt_count: 0,
             reason: "boom".to_owned(),
-            now: 50,
+            now: {
+                clock.set(50);
+                50
+            },
         })
         .unwrap_err();
     assert_invalid_transition(completed_fail, "fail", "completed");
@@ -386,13 +418,19 @@ fn attempt_queue_transitions_complete_is_idempotent_and_rejects_invalid_states()
             attempt_count: 0,
             backoff_until: 60,
             last_error: Some("retryable".to_owned()),
-            now: 50,
+            now: {
+                clock.set(50);
+                50
+            },
         })
         .unwrap_err();
     assert_invalid_transition(completed_retry, "retry", "completed");
 
     let EnqueueOutcome::Enqueued(replacement) =
-        queue.enqueue(enqueue("claim_extraction", Some("turn:complete"), 60))?
+        queue.enqueue(enqueue("claim_extraction", Some("turn:complete"), {
+            clock.set(60);
+            60
+        }))?
     else {
         panic!("terminal dedupe key should be reusable");
     };
@@ -403,11 +441,14 @@ fn attempt_queue_transitions_complete_is_idempotent_and_rejects_invalid_states()
 
 #[test]
 fn attempt_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(attempt) =
-        queue.enqueue(enqueue("claim_extraction", Some("turn:fail"), 10))?
+        queue.enqueue(enqueue("claim_extraction", Some("turn:fail"), {
+            clock.set(10);
+            10
+        }))?
     else {
         panic!("expected enqueue");
     };
@@ -418,14 +459,20 @@ fn attempt_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> 
             lease_owner: "worker-a".to_owned(),
             attempt_count: 0,
             reason: "boom".to_owned(),
-            now: 11,
+            now: {
+                clock.set(11);
+                11
+            },
         })
         .unwrap_err();
     assert_invalid_transition(queued_fail, "fail", "queued");
 
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
-        now: 20,
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("expected claimed attempt");
@@ -438,7 +485,10 @@ fn attempt_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> 
             lease_owner: "worker-b".to_owned(),
             attempt_count: claimed.attempt_count,
             reason: "fatal".to_owned(),
-            now: 25,
+            now: {
+                clock.set(25);
+                25
+            },
         })
         .unwrap_err();
     assert_invalid_transition(wrong_owner_fail, "fail", "leased_by_other");
@@ -448,7 +498,10 @@ fn attempt_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> 
         lease_owner: "worker-a".to_owned(),
         attempt_count: claimed.attempt_count,
         reason: "fatal".to_owned(),
-        now: 30,
+        now: {
+            clock.set(30);
+            30
+        },
     })?
     else {
         panic!("expected fail");
@@ -466,7 +519,10 @@ fn attempt_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> 
         lease_owner: String::new(),
         attempt_count: 0,
         reason: "x".repeat(MAX_FAILURE_REASON_LEN + 1),
-        now: 40,
+        now: {
+            clock.set(40);
+            40
+        },
     })?
     else {
         panic!("expected idempotent fail");
@@ -479,13 +535,19 @@ fn attempt_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> 
             id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: 0,
-            now: 50,
+            now: {
+                clock.set(50);
+                50
+            },
         })
         .unwrap_err();
     assert_invalid_transition(failed_complete, "complete", "failed");
 
     let EnqueueOutcome::Enqueued(replacement) =
-        queue.enqueue(enqueue("claim_extraction", Some("turn:fail"), 60))?
+        queue.enqueue(enqueue("claim_extraction", Some("turn:fail"), {
+            clock.set(60);
+            60
+        }))?
     else {
         panic!("terminal dedupe key should be reusable");
     };
@@ -632,5 +694,58 @@ fn attempt_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
         ))
     ));
 
+    Ok(())
+}
+
+#[test]
+fn redirect_preserves_the_first_claim_event() -> Result<()> {
+    let (_dir, vault, clock) = open_queue_at(10);
+    let queue = AttemptQueue::new(&vault);
+    let first = enqueued(&queue, 10)?;
+    clock.set(11);
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".into(),
+        now: 11,
+    })?
+    else {
+        panic!("first claim")
+    };
+    let claimed_event = || -> Result<crate::run_tree::RunTreeEvent> {
+        let tree = crate::run_tree::render_run_tree(queue.list_run("run-10")?)?;
+        Ok(tree.roots[0]
+            .events
+            .iter()
+            .find(|event| event.kind == crate::run_tree::RunTreeEventKind::Claimed)
+            .expect("claimed event")
+            .clone())
+    };
+    let original = claimed_event()?;
+    assert_eq!(original.at, 11);
+    clock.set(12);
+    queue.redirect(
+        InterveneAttempt {
+            id: first.id,
+            kind: AttemptInterventionKind::Redirect,
+            actor: "operator".into(),
+            note: None,
+            now: 12,
+        },
+        AttemptPlacement {
+            parent: None,
+            worker: Some("worker-b".into()),
+        },
+    )?;
+    assert_eq!(claimed_event()?, original);
+    clock.set(13);
+    let ClaimOutcome::Claimed(reclaimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-b".into(),
+        now: 13,
+    })?
+    else {
+        panic!("redirected claim")
+    };
+    assert_eq!(reclaimed.id, leased.id);
+    assert!(reclaimed.attempt_count > leased.attempt_count);
+    assert_eq!(claimed_event()?, original);
     Ok(())
 }

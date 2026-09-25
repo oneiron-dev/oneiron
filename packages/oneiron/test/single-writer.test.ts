@@ -61,9 +61,10 @@ describe("single-writer ownership", () => {
     const ownerSource = `
 import { writeFileSync } from "node:fs"
 import { Oneiron } from ${JSON.stringify(join(packageRoot, "src/index.ts"))}
-Oneiron.open(${JSON.stringify(vault)})
+const held = Oneiron.open(${JSON.stringify(vault)})
 writeFileSync(${JSON.stringify(marker)}, "ready")
-setTimeout(() => {}, 60_000)
+// The timer keeps the handle reachable: a collected handle releases the lease.
+setTimeout(() => held, 60_000)
 `
     const ownerPath = join(root, "owner.mjs")
     writeFileSync(ownerPath, ownerSource, "utf8")

@@ -6,7 +6,7 @@ use super::load::{
 };
 use super::model::{ArmKind, BeamFixture, DatasetSource, FixtureCase, RunManifest, SchemaHeader};
 use super::ppr_vad::ppr_vad_sweep_report;
-use super::report::{cost_breakdown, cost_component_from_input};
+use super::report::cost_breakdown;
 use super::report_model::{
     BeamReport, CaseReport, CompetitorReport, ContextPackContractRecord, DatasetLoadReport,
     LoadedDataset,
@@ -41,6 +41,15 @@ pub(super) const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
                          subcommands:\n\
                            smoke    run the built-in BEAM 128K deterministic context-pack smoke fixture\n\
                                     aligned with ONEIRON-ARCH-0042\n\
+                           measure <plan.json>  measured shared-answerer, backbone and cheap-chat arms\n\
+                           judge <run.json>      production three-vote model scorer\n\
+                           score-nuggets <run.json> dual-column replay and commit proof folder\n\
+                           infra <measurement.json> cost-framing-only vector-DB rows\n\
+                           rung-fixture attach and locality-transition conformance\n\
+                           tiers <graduation.json> no-regression scale ladder\n\
+                           fixture-protocol <fixture.json> known-span retrieval evaluation\n\
+                           edit-path-pack <dir>   materialize five edit-task sandboxes\n\
+                           edit-path <attempts.json>   score tests and contracts per arm\n\
                            run <manifest>\n\
                                     run a BEAM manifest; fixture datasets load dataset.path JSON\n\
                                     relative to the manifest; emit declared packs.jsonl outputs\n\
@@ -152,6 +161,7 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
     let mut fixture_description: Option<String> = None;
     let mut cases = Vec::with_capacity(manifest.case_ids.len());
     let mut pack_rows = Vec::new();
+    let mut offline_runs = Vec::new();
 
     for case_id in &manifest.case_ids {
         let tempdir = tempfile::tempdir()?;
@@ -159,6 +169,7 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
         let mut single_case_manifest = manifest.clone();
         single_case_manifest.case_ids = vec![case_id.clone()];
         let loaded = load_dataset(&vault, &single_case_manifest, None)?;
+        offline_runs.push(loaded.offline.clone());
 
         match &mut dataset_report {
             Some(report) => {
@@ -183,6 +194,28 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
             run_loaded_cases(&vault, &single_case_manifest, &loaded)?;
         cases.append(&mut case_reports);
         pack_rows.append(&mut rows);
+    }
+
+    let mut offline = super::model_usage::sum_costs(&offline_runs)?;
+    let n = manifest.case_ids.len().max(1) as u64;
+    offline.input_tokens = offline.input_tokens.div_ceil(n);
+    offline.output_tokens = offline.output_tokens.div_ceil(n);
+    offline.target_tokens = offline.target_tokens.div_ceil(n);
+    offline.elapsed_us = offline.elapsed_us.div_ceil(n);
+    offline.cost_usd /= n as f64;
+    for case in &mut cases {
+        case.offline_amortized_cost = offline.clone();
+        for competitor in case
+            .competitors
+            .iter_mut()
+            .chain(&mut case.appendix)
+            .chain(&mut case.dropped)
+        {
+            competitor.costs.offline = offline.clone();
+            competitor.costs.total_cost_usd = competitor.costs.query.cost_usd
+                + offline.cost_usd
+                + competitor.costs.judge.cost_usd;
+        }
     }
 
     if let Some(outputs) = &manifest.outputs {
@@ -233,6 +266,12 @@ pub(super) fn run_loaded_cases(
                     run_id: manifest.run_id.clone(),
                     competitor_id: competitor.competitor_id.clone(),
                 })?;
+            if card.axes.retrieval_k != case.limit {
+                return Err(invalid_manifest(
+                    manifest,
+                    "card retrieval_k differs from the case runtime limit",
+                ));
+            }
             let arm_report = adapter_for(competitor.arm).run(vault, loaded, case)?;
             if let Some(row) =
                 contract_context_pack_record(manifest, loaded, case, competitor, &arm_report)?
@@ -241,8 +280,12 @@ pub(super) fn run_loaded_cases(
             }
             let scoring = scorer.score(case, competitor, &arm_report);
             arms.push(arm_report);
-            let costs = cost_breakdown(case, arms.last().expect("arm just pushed"));
+            let mut costs = cost_breakdown(case, arms.last().expect("arm just pushed"));
+            costs.offline = amortized_load(loaded, manifest.case_ids.len());
+            costs.total_cost_usd =
+                costs.query.cost_usd + costs.offline.cost_usd + costs.judge.cost_usd;
             competitors.push(CompetitorReport {
+                citation_disposition: card.axes.disposition(),
                 competitor_id: competitor.competitor_id.clone(),
                 arm: competitor.arm,
                 card: card.clone(),
@@ -250,6 +293,7 @@ pub(super) fn run_loaded_cases(
                 scoring,
             });
         }
+        let (competitors, appendix, dropped) = partition_competitors(competitors);
         cases.push(CaseReport {
             case_id: case.case_id.clone(),
             query: case.query.clone(),
@@ -257,11 +301,46 @@ pub(super) fn run_loaded_cases(
             token_budget: case.token_budget,
             expected_min_results: case.expected_min_results,
             fixture_class: case.fixture_class,
-            offline_amortized_cost: cost_component_from_input(&case.offline_amortized_cost),
+            offline_amortized_cost: amortized_load(loaded, manifest.case_ids.len()),
             arms,
             competitors,
+            appendix,
+            dropped,
         });
     }
 
     Ok((cases, pack_rows))
+}
+
+fn partition_competitors(
+    rows: Vec<CompetitorReport>,
+) -> (
+    Vec<CompetitorReport>,
+    Vec<CompetitorReport>,
+    Vec<CompetitorReport>,
+) {
+    use super::comparability::CitationDisposition;
+    let (mut main, mut appendix, mut dropped) = (Vec::new(), Vec::new(), Vec::new());
+    for row in rows {
+        match row.citation_disposition {
+            CitationDisposition::Cite | CitationDisposition::CiteWithCaveat => main.push(row),
+            CitationDisposition::WalledAppendix => appendix.push(row),
+            CitationDisposition::Dropped => dropped.push(row),
+        }
+    }
+    (main, appendix, dropped)
+}
+
+fn amortized_load(
+    loaded: &LoadedDataset,
+    questions: usize,
+) -> super::report_model::CostComponentReport {
+    let mut cost = loaded.offline.clone();
+    let n = questions.max(1) as u64;
+    cost.input_tokens = cost.input_tokens.div_ceil(n);
+    cost.elapsed_us = cost.elapsed_us.div_ceil(n);
+    cost.output_tokens = cost.output_tokens.div_ceil(n);
+    cost.target_tokens = cost.target_tokens.div_ceil(n);
+    cost.cost_usd /= n as f64;
+    cost
 }

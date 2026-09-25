@@ -3,6 +3,7 @@
 //! The orchestrator below pins the pass order (snapshot markers, entities,
 //! edges, tombstones, settle); the three passes live in the child modules.
 
+mod calendar;
 mod edge_pass;
 mod entity_pass;
 mod tombstone_pass;
@@ -46,7 +47,52 @@ pub fn forward_rematerialize(
     materializer: &Materializer,
     window_key: &WindowKey,
 ) -> Result<u32> {
+    forward_with_recovery(vault, doc, materializer, window_key, None)
+}
+
+pub(crate) fn forward_recovery(
+    vault: &Vault,
+    doc: &LoroDoc,
+    materializer: &Materializer,
+    window_key: &WindowKey,
+    snapshot: &crate::recovery::CanonicalSnapshot,
+) -> Result<u32> {
+    snapshot.validate()?;
+    forward_with_recovery(vault, doc, materializer, window_key, Some(snapshot))
+}
+
+fn forward_with_recovery(
+    vault: &Vault,
+    doc: &LoroDoc,
+    materializer: &Materializer,
+    window_key: &WindowKey,
+    trusted: Option<&crate::recovery::CanonicalSnapshot>,
+) -> Result<u32> {
+    let native_notes = crate::sync::note::is_native(doc);
+    let native_documents = native_notes
+        .then(|| crate::sync::note::validate(doc))
+        .transpose()?;
+    if trusted.is_none() && !native_notes {
+        for name in [
+            "documents",
+            "document_heads",
+            "head_move_receipts",
+            "note_forks",
+            "note_proposals",
+        ] {
+            if !doc.get_map(name).is_empty() {
+                return Err(crate::note::documents::invalid(
+                    "peer window cannot authorize NOTE recovery",
+                ));
+            }
+        }
+    }
+    let documents = trusted;
     let _guard = materializer.lock();
+    if let Some(documents) = documents {
+        let txn = vault.store.env.read_txn()?;
+        documents.preflight_note_recovery(vault, &txn)?;
+    }
     let lease_vault_id = materializer.lease_vault_id();
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
@@ -81,6 +127,15 @@ pub fn forward_rematerialize(
     // tombstones, then the marker settle below. The tombstone call has no
     // `?`: its error stays deferred past the marker txn (Trap 2).
     entity_pass::run(&ctx, &mut ledger)?;
+    if let Some(documents) = native_documents {
+        ledger.healed.extend(crate::sync::note::apply(
+            vault,
+            doc,
+            documents,
+            window_key.as_str(),
+        )?);
+    }
+    crate::recovery::materialize_retained_shells(vault, doc)?;
     edge_pass::run(&ctx, &mut ledger)?;
     let tombstone_outcome = tombstone_pass::run(&ctx, &mut ledger);
 
@@ -223,5 +278,9 @@ pub fn forward_rematerialize(
         );
     }
 
+    if let Some(documents) = documents {
+        crate::recovery::materialize_window_documents(vault, doc, documents)?;
+    }
+    calendar::reconcile(&ctx)?;
     Ok(ledger.count)
 }

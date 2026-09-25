@@ -136,7 +136,7 @@ describe("typed refusals", () => {
   }
 
   test("deep recall is lease-gated", () => {
-    const error = refusal(() => memory.recall("window seat", { effort: "deep" }))
+    const error = refusal(() => memory.recall("window seat", { effort: "high" }))
     expect(error.code).toBe("LEASE_REQUIRED")
     expect(error.suggestions.length).toBeGreaterThan(0)
   })

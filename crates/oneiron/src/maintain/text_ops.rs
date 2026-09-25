@@ -53,7 +53,7 @@ pub(super) fn clear_text_index(vault: &Vault) -> Result<ClearTextIndexCounts> {
 
 pub(super) fn cleanup_ppr_cache(vault: &Vault, max_age_secs: u64) -> Result<(u64, u64)> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let now = crate::unix_seconds_now();
+    let now = vault.store.clock.now_recorded_at();
     let counts = ppr::cleanup_ppr_cache(&vault.store, &mut wtxn, max_age_secs, now)?;
     wtxn.commit()?;
     Ok(counts)

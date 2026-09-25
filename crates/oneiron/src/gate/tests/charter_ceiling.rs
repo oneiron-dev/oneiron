@@ -410,6 +410,13 @@ fn ordinary_channels_send_manifest(channels: &[&str]) -> Vec<u8> {
             ),
             (
                 Value::from(GRANT_SCOPE_KEY),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::effect_preset(),
+                )
+                .unwrap(),
+            ),
+            (
+                Value::from(GRANT_SELECTORS_KEY),
                 Value::Map(vec![(
                     Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
                     Value::from(channel),

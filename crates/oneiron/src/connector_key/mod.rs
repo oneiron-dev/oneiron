@@ -95,6 +95,7 @@ use crate::llm::{BudgetSignalDeliveryChannel, BudgetThreshold};
 #[cfg(test)]
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
 
+pub(crate) use self::txn::rebuild_checkpoint_connector_index;
 pub use slate::{
     ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateOwnerOverride,
     SlateRow, SlateToolManifest, draft_connector_slate,

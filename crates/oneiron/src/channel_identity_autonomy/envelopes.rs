@@ -1,5 +1,6 @@
 //! Vault row primitives (owner check, row read/write, content-addressed envelope put) and the owner-only envelope doors plus the identity-actor proof.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
@@ -174,8 +175,8 @@ impl Vault {
     ) -> Result<EntityId> {
         let raw = self
             .store
-            .entities
-            .get(txn, identity.as_bytes())?
+            .port_entity_record(txn, &identity)?
+            .map(|row| row.encode())
             .ok_or_else(invalid_autonomy)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid_autonomy)?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY {

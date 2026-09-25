@@ -13,6 +13,22 @@ pub(crate) enum RouteTarget {
     /// `OnRecord` (post-flip) — rows take the ordinary base apply under the
     /// session's on-record continuation shell.
     Base,
+    /// `Anonymous` — no rows, receipts, or replay state may be retained.
+    Discard,
+}
+
+impl RouteTarget {
+    /// Retaining a write is incompatible with anonymous sessions. Callers
+    /// that promise stored rows or mandatory audit evidence must refuse the
+    /// operation, not silently discard that evidence and execute anyway.
+    pub(crate) fn require_recording(self, session_ref: &str) -> Result<()> {
+        if self == Self::Discard {
+            return Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
+                session_ref: session_ref.to_owned(),
+            }));
+        }
+        Ok(())
+    }
 }
 
 /// The mode-aware write route (ARCH-0052 D5, K10).
@@ -62,6 +78,12 @@ impl SessionWriteRoute {
                 generation: self.mode_generation,
             },
         ))
+    }
+
+    /// Refuses an operation that requires retained content or audit evidence.
+    pub(crate) fn require_recording(&self, session_ref: &str) -> Result<()> {
+        self.revalidate()?;
+        self.target.require_recording(session_ref)
     }
 
     /// Narrow query arm: which store this route resolves to. `batch.rs` may

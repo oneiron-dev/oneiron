@@ -1,0 +1,18 @@
+{
+  "sample_rate": 16000,
+  "channels": 1,
+  "format": "s16le",
+  "samples": 87417,
+  "pcm_sha256": "6487c45b19baa2f9ea3cf8fefa66c1ae072be816397300fb539903bd8125a7e2",
+  "provenance": {
+    "invocation_id": "4d7a88ce-8474-4bb0-8cb0-7aff0b69bb4c",
+    "model_id": "ffmpeg",
+    "input_sha256": "9661da39f83a015b515f5a5704a309618639365b9e76e4375523b2c23c4c09df",
+    "execution": "measured",
+    "runtime_components_sha256": {
+      "meeting_audio_runtime.py": "446f9c57b257fb221aacd30900d6cb22a5355b1f61d4d53030abf9714be65e47",
+      "meeting_audio_process.py": "707ef32d057dbb478889c070119659db4113c80524df684c5bc3af63880f9abb",
+      "meeting_audio_ctc.py": "d9a89905d461db38b995c7dac166453452d680cf6ae06be0f106933cbcd295ba"
+    }
+  }
+}

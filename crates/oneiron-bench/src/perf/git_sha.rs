@@ -327,6 +327,11 @@ fn packed_ref(git_dir: &Path, common: Option<&Path>, reference: &str) -> Option<
 /// Walks up from `start` looking for `.git`. Handles the linked-worktree case
 /// where `.git` is a FILE containing `gitdir: <path>`.
 fn discover_git_dir(start: &Path) -> Option<PathBuf> {
+    // A removed build directory cannot establish source-checkout provenance.
+    // Do not walk its lexical ancestors and borrow an unrelated checkout.
+    if !start.is_dir() {
+        return None;
+    }
     for ancestor in start.ancestors() {
         let candidate = ancestor.join(".git");
         let Ok(metadata) = std::fs::metadata(&candidate) else {
@@ -538,6 +543,8 @@ mod tests {
     #[test]
     fn source_sha_prefers_build_and_executable_provenance_not_caller_state() {
         let root = tempfile::tempdir().expect("tempdir");
+        // Stop discovery at the fixture boundary even when TMPDIR is inside a checkout.
+        std::fs::create_dir(root.path().join(".git")).expect("isolated fixture git dir");
         let build_repo = root.path().join("build-repo");
         let executable_repo = root.path().join("executable-repo");
         for (repo, sha) in [(&build_repo, SHA), (&executable_repo, OTHER_SHA)] {
@@ -561,7 +568,11 @@ mod tests {
         assert_eq!(resolved.sha.as_deref(), Some(SHA));
         assert!(resolved.source.starts_with("build_manifest_dir:"));
 
+        // Make the missing build path sit under a real checkout regardless of
+        // TMPDIR, so lexical ancestor discovery cannot accidentally pass.
+        std::fs::write(root.path().join(".git/HEAD"), format!("{SHA}\n")).expect("ancestor HEAD");
         let missing_build = root.path().join("packaged/no/source");
+        assert!(git_sha_from_provenance(&missing_build, None).sha.is_none());
         let fallback = git_sha_from_provenance(&missing_build, Some(&executable));
         assert_eq!(fallback.sha.as_deref(), Some(OTHER_SHA));
         assert!(fallback.source.starts_with("current_executable:"));

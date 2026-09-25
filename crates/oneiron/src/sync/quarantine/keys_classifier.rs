@@ -142,6 +142,10 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::EntityTypeImmutable
         | ErrorKind::InvalidTimeRange
         | ErrorKind::InvalidClaimBody
+        // Replicated rooms carry only body metadata, not the local ledger.
+        // Invalid incoming codecs are remote rejections, not window failures.
+        | ErrorKind::InvalidConversationBody
+        | ErrorKind::InvalidConversationDag
         | ErrorKind::InvalidPsychProfileBody
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidAgentDefBody
@@ -230,14 +234,19 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // rematerialization pass re-run the door when quota is under budget.
         | ErrorKind::MaintenanceIngestQuotaExceeded
         // ONE-1645: a replayed `FacetOf` edge whose endpoints fall outside
-        // the write-time type table (`CLAIM | TURN | EVENT -> FACET`) is a
-        // rejection of that remote op. The local batch door aborts on it,
+        // the write-time type table (`CLAIM | TURN | EVENT | NOTE | ASSET ->
+        // FACET`) is a rejection of that remote op. The local batch door aborts on it,
         // but the replay arm (`BatchOp::EdgeWithCreatedAt`) is ungated by
         // H2 design, so forward remat runs the table itself and needs the
         // typed reason here — off-table stamp quarantined, window continues.
         // Endpoint types are read AFTER the endpoint-existence check, so a
         // not-yet-arrived endpoint defers instead of reaching this arm.
         | ErrorKind::InvalidFacetOfEdge
+        // A replayed row that would move a record's birth facet — a second
+        // NOTE or ASSET stamp, a removal of a live one, or a CLAIM whose
+        // `scopeFacetId` differs from the stored body — is a rejection of
+        // that remote op: quarantine it and continue the window.
+        | ErrorKind::FacetStampImmutable
         // ONE-1686 (RT-04): a replicated MESSAGE is refused for every author
         // bucket — the sync door carries no verified source actor or peer
         // signer to run the witness ceiling against, so nothing there can bind
@@ -258,6 +267,11 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // through `read_secret_custody_in_txn`), so this arm cannot swallow
         // local corruption.
         | ErrorKind::InvalidSecretCustodyBody
+        // A malformed or divergent immutable NOTE birth is a refusal of the
+        // remote row, not a local failure. Quarantine it and continue the
+        // window. Stored entity-header corruption is CorruptedIndex, not
+        // InvalidNoteBody, and remains local/fail-closed.
+        | ErrorKind::InvalidNoteBody
         | ErrorKind::SecretNameInUse
         // ONE-1394 (GATE-14 layer 1): a replicated DIAGNOSTIC (byte 69) row
         // failing the pinned body grammar, canonical encoding, content-address
@@ -269,7 +283,30 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // never surface this kind on the replay path (a corrupt on-disk row
         // reads as `CorruptedIndex`), so this arm cannot swallow local
         // corruption.
-        | ErrorKind::InvalidDiagnosticBody => Some(reason_code_for(error)),
+        | ErrorKind::InvalidDiagnosticBody
+        // PackByteMap sync rejections: a forged source/schema identity
+        // (`PackKindNameCollision`) is a rejection of that remote row, never
+        // a local failure — quarantine and continue, so one forged pack row
+        // cannot wedge the window. A well-formed remote row for a kind this
+        // vault has not installed (`PackKindNotInstalled`) is likewise
+        // remote data, not local corruption: quarantine it and keep the
+        // `rm:` retry marker pending (see
+        // `pack_sync::pack_rejection_keeps_retry_marker`), so a later local
+        // install heals it via forward rematerialization. The bytes stay in
+        // the CRDT map for OD-10-style lazy re-admission.
+        //
+        // `InvalidPackByteMap` is deliberately
+        // NOT classified here. `InvalidPackByteMap` is ambiguous: it covers
+        // both a malformed REMOTE envelope and LOCAL map corruption (carrier
+        // drift, missing head). The sync entry points pre-validate the
+        // remote envelope statelessly via
+        // `pack_sync::remote_pack_envelope_error` before the remap reads the
+        // local map, so a malformed remote body quarantines without ever
+        // needing this arm — and a later `InvalidPackByteMap` from the remap
+        // is then provably local and fails closed. Blindly mapping it here
+        // would quarantine local disk corruption as if it were a peer fault.
+        | ErrorKind::PackKindNameCollision
+        | ErrorKind::PackKindNotInstalled => Some(reason_code_for(error)),
         _ => None,
     }
 }

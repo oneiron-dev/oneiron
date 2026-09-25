@@ -24,6 +24,8 @@
 //! than faked here.
 
 mod facts;
+mod occurrences;
+pub(in crate::calendar) use occurrences::occurrences;
 mod requests;
 mod service;
 
@@ -33,7 +35,7 @@ pub use self::requests::{
     CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
     MAX_CALENDAR_SEARCH_LIMIT,
 };
-pub(in crate::calendar) use self::service::validate_selectors;
+pub(in crate::calendar) use self::service::{matches_selectors, validate_selectors};
 pub use self::service::{read_event, read_event_scoped, search_events, search_events_scoped};
 
 #[cfg(test)]

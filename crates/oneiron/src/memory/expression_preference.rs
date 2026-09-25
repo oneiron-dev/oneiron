@@ -35,7 +35,7 @@ use crate::claim::{
     ExpressionKeigo, ExpressionPreferenceChange, ExpressionPreferenceKind,
     ExpressionPreferenceOrigin, ExpressionPreferenceValue, ExpressionRegister,
 };
-use crate::entity_id::EntityId;
+
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -88,7 +88,7 @@ pub struct ExpressionPreferenceReceipt {
 
 /// The preferences in force for a subject, in facade vocabulary.
 ///
-/// The engine's own preference set carries raw [`EntityId`] winners;
+/// The engine's own preference set carries raw [``] winners;
 /// this surface promises refs out, and a caller that has to hex-format an id
 /// to feed it back to another verb is holding the wrong currency. The VALUES
 /// are the engine's own — those are the vocabulary, not a wire detail.
@@ -136,7 +136,7 @@ impl Memory<'_> {
         self.verified_actor_class()?;
         let subject = self.resolve_ref(&input.subject_ref)?;
         let actor = WriteActor::new(self.actor, self.actor_class);
-        let claim_id = EntityId::now();
+        let claim_id = self.vault.store.clock.entity_id()?;
         let written = self.vault.set_expression_preference(
             &actor,
             claim_id,
@@ -201,8 +201,11 @@ impl Memory<'_> {
         self.verified_actor_class()?;
         let claim_id = self.resolve_ref(claim_ref)?;
         let actor = WriteActor::new(self.actor, self.actor_class);
-        self.vault
-            .retract_expression_preference(&actor, &claim_id, crate::unix_seconds_now())?;
+        self.vault.retract_expression_preference(
+            &actor,
+            &claim_id,
+            self.vault.store.clock.now_recorded_at(),
+        )?;
         Ok(())
     }
 

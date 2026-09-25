@@ -14,10 +14,12 @@ use serde_json::{Value as JsonValue, json};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
-use crate::auth::{mint_identified_core_token_v2, revoke_token_jti, validate_bearer_claims};
+use crate::auth::revoke_token_jti;
+#[cfg(test)]
+use crate::auth::{mint_identified_core_token_v2, validate_bearer_claims};
 use crate::build_app;
 use crate::cli::{
-    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenMintArgs, TokenRevokeArgs, VaultArgs,
+    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenPairArgs, TokenRevokeArgs, VaultArgs,
 };
 use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
 use crate::managed::{self, ServeListener};
@@ -29,6 +31,10 @@ use crate::skills_pack::{self, OutputMode};
 /// serves — no endpoint, no authority model, and no response interpretation is
 /// added here.
 mod api;
+mod host_init;
+#[cfg(test)]
+mod host_runtime_tests;
+pub use self::host_init::host_init;
 
 pub use self::api::api;
 
@@ -59,10 +65,8 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     serve_with_config(config).await
 }
 
-pub fn init(args: VaultArgs) -> anyhow::Result<()> {
-    let vault = open_vault_for_command(&args)?;
-    print_doctor_report(&vault)
-}
+mod init;
+pub use init::init;
 
 pub fn doctor(args: VaultArgs) -> anyhow::Result<()> {
     let vault = open_vault_for_command(&args)?;
@@ -100,66 +104,39 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Mints a v2 core bearer token and prints it to stdout.
+/// Creates a pairing link on the running server and prints it.
 ///
-/// The secret resolves through the normal serve-config precedence and is
-/// never printed or logged. Claims are validated before minting, so a token
-/// that would 401 is never emitted. Every minted token carries a fresh `jti`
-/// so it can later be revoked individually; the id is printed to stderr so
-/// piping stdout still yields exactly the token.
-pub fn token_mint(args: TokenMintArgs) -> anyhow::Result<()> {
-    let config = resolve_serve_config(&args.serve)?;
-    let auth_secret = config
-        .sync_server_config()
-        .auth_secret
-        .filter(|secret| !secret.is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no auth secret configured; set --auth-secret, ONEIRON_AUTH_SECRET, or auth_secret in the config file"
-            )
-        })?;
-
-    let mint = prepare_token_mint(
-        &auth_secret,
-        args.scope.as_deref(),
-        args.principal_ref.as_deref(),
-        args.actor_class.as_deref(),
-    )?;
-
-    if let Some(warning) = &mint.warning {
-        eprintln!("warning: {warning}");
+/// stdout is exactly one line, the link, so piping it yields nothing else; the
+/// expiry goes to stderr. It opens no vault, so it runs beside a live server,
+/// and the host secret reaches the server only on curl's config channel.
+pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
+    let Ok(secret) = std::env::var(&args.secret_env) else {
+        anyhow::bail!("{} holds no host secret; nothing was sent", args.secret_env);
+    };
+    let mut scope = oneiron::federation::Scope::top();
+    if let Some(verbs) = args.scope {
+        scope.verbs = oneiron::federation::ScopeAxis::Some(verbs.into_iter().collect());
     }
-    eprintln!("token id (jti): {}", mint.jti);
-    println!("{}", mint.token);
+    let principal = oneiron::authority::PairingPrincipal {
+        holder_ref: Some(args.principal_ref.clone()),
+        actor_class: args.actor_class,
+        org_ref: None,
+    };
+    let body = serde_json::to_vec(&json!({
+        "scope": scope,
+        "lifetime_secs": args.lifetime_secs,
+        "principal": principal,
+    }))?;
+    let (origin, link) = api::create_pairing_link(&args.url, &secret, body)?;
+    println!(
+        "{}",
+        oneiron::authority::format_pairing_link(&origin, &link.code, &args.principal_ref)
+    );
+    eprintln!(
+        "the pairing link expires at unix second {}",
+        link.expires_at
+    );
     Ok(())
-}
-
-/// One minted token plus everything the operator must be told about it.
-struct TokenMint {
-    token: String,
-    jti: String,
-    warning: Option<String>,
-}
-
-/// The whole mint decision, with no IO, so what the operator is told is
-/// testable rather than inferred from a `println!`.
-fn prepare_token_mint(
-    auth_secret: &str,
-    scope: Option<&[String]>,
-    principal_ref: Option<&str>,
-    actor_class: Option<&str>,
-) -> anyhow::Result<TokenMint> {
-    let claims = build_token_claims(scope, principal_ref, actor_class);
-    validate_bearer_claims(&claims).map_err(|_| {
-        anyhow::anyhow!("refusing to mint a token the server would reject: {claims}")
-    })?;
-
-    let (token, jti) = mint_identified_core_token_v2(auth_secret, &claims);
-    Ok(TokenMint {
-        token,
-        jti,
-        warning: weak_auth_secret_warning(auth_secret),
-    })
 }
 
 /// Revokes one previously minted token by its id.
@@ -180,7 +157,30 @@ pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
 
-    let revoked = revoke_token_jti(&vault, &args.jti)?;
+    let revoked = if args.jti.len() == 64 {
+        anyhow::ensure!(
+            args.jti
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "invalid slip id"
+        );
+        let secret = config
+            .sync_server_config()
+            .auth_secret
+            .ok_or_else(|| anyhow::anyhow!("host secret required"))?;
+        let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+        let bytes = (0..64)
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&args.jti[index..index + 2], 16))
+            .collect::<Result<Vec<_>, _>>()?;
+        let id: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid slip id"))?;
+        vault.revoke_capability_slip(&issuer, id)?;
+        true
+    } else {
+        revoke_token_jti(&vault, &args.jti)?
+    };
     println!("{}", serde_json::json!({ "revoked": revoked }));
     Ok(())
 }
@@ -213,40 +213,6 @@ fn weak_auth_secret_warning(secret: &str) -> Option<String> {
             "configured auth_secret is shorter than {MIN_RECOMMENDED_AUTH_SECRET_BYTES} bytes; it is the MAC key for every minted bearer token"
         )
     })
-}
-
-/// Assembles a claims string in the bearer grammar. No flags yields an empty
-/// claims string, which mints an owner-grade token.
-///
-/// ONE-1441: `actor_class` appends one `;actor_class=<v>` segment when the
-/// operator asked for one, in the pinned position AFTER `principal_ref`. The
-/// segment order is the wire form, not a detail — the MAC covers these exact
-/// bytes, so reordering them would invalidate every previously minted slip.
-fn build_token_claims(
-    scope: Option<&[String]>,
-    principal_ref: Option<&str>,
-    actor_class: Option<&str>,
-) -> String {
-    let mut claims = String::new();
-    if let Some(scope) = scope.filter(|scope| !scope.is_empty()) {
-        claims.push_str("scope=");
-        claims.push_str(&scope.join(","));
-    }
-    if let Some(principal_ref) = principal_ref {
-        if !claims.is_empty() {
-            claims.push(';');
-        }
-        claims.push_str("principal_ref=");
-        claims.push_str(principal_ref);
-    }
-    if let Some(actor_class) = actor_class {
-        if !claims.is_empty() {
-            claims.push(';');
-        }
-        claims.push_str("actor_class=");
-        claims.push_str(actor_class);
-    }
-    claims
 }
 
 pub fn skills_pack(args: SkillsPackArgs) -> anyhow::Result<()> {
@@ -468,6 +434,8 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
+    use oneiron_vault_contract::host::{Host, HostLimits};
+
     tracing::info!(
         vault_path = %config.vault_path.display(),
         dimensions = config.dimensions,
@@ -541,14 +509,23 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     let managed::BoundServeListener::Tcp(listener) = listener else {
         anyhow::bail!("unmanaged serve requires a TCP listener");
     };
+    let mut host = oneiron_vault_contract::host_adapters::InProcessHost::new(
+        listener.into_std()?,
+        HostLimits::unbounded(),
+        || Ok(()),
+        || Ok(()),
+    );
+    let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let embedding_handle = sync_server.spawn_embedding_worker();
     let app = build_app(sync_server).layer(cors_layer);
+    host.ready()?;
     let result = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await;
+    host.on_stop()?;
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
     if let Some(handle) = embedding_handle {

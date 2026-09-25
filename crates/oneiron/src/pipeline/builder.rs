@@ -1,3 +1,6 @@
+#[path = "builder_effort.rs"]
+mod effort;
+
 use std::collections::HashMap;
 
 use crate::Vault;
@@ -25,6 +28,7 @@ use super::types::{
     ScoredEntity, TemporalSearchConfig, WorldAuthoritySet, WorldScope,
 };
 
+#[derive(Clone)]
 #[must_use = "PipelineBuilder executes no query until a terminal `.run*()` method is called"]
 pub struct PipelineBuilder<'a> {
     pub(super) vault: &'a Vault,
@@ -41,8 +45,11 @@ pub struct PipelineBuilder<'a> {
     pub(super) apply_confidence: bool,
     pub(super) apply_gravity: bool,
     pub(super) apply_contiguity: bool,
+    /// Internal memory allocation mask, not a caller authority predicate.
+    pub(super) memory_category: bool,
     pub(super) candidate_filter: Option<&'a super::CandidateFilter<'a>>,
     pub(super) type_filter: Option<Vec<u8>>,
+    pub(super) criticality: Option<bool>,
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
@@ -54,7 +61,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) world_scope: WorldScope,
     /// The per-turn ActiveSet selection (ONE-1420). A SIDECAR rather than a
     /// payload on [`WorldScope::ActiveSet`], because the selection is in-memory
-    /// turn state that is never stored, while `WorldScope` is a `Copy` scope
+    /// turn state that is never stored, separate from the selected scope
     /// token shared with the context pack and the agent-scope mapping. `None`
     /// under every other scope: [`PipelineBuilder::world`] clears it, so a
     /// stale selection can never leak into another scope's run.
@@ -63,12 +70,16 @@ pub struct PipelineBuilder<'a> {
     /// selection's caller-supplied agent id. Bare `Vault::query` has none.
     pub(super) execution_actor: Option<crate::write_envelope::WriteActor>,
     pub(super) corpus_scope: CorpusScope,
+    pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
     pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
     pub(super) result_limit: usize,
     pub(super) temporal_adaptive_default: bool,
     pub(super) temporal_now: Option<u64>,
     pub(super) telemetry_action: RetrievalAction,
     pub(super) capture_retrieval_trace: bool,
+    pub(super) retrieval_state: Option<crate::store::RetrievalState>,
+    pub(super) retrieval_turn: Option<crate::store::RetrievalTurn>,
+    pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
     pub(super) rerank: Option<(&'a dyn Reranker, RerankOptions)>,
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
@@ -99,8 +110,10 @@ impl<'a> PipelineBuilder<'a> {
             apply_confidence: false,
             apply_gravity: false,
             apply_contiguity: false,
+            memory_category: false,
             candidate_filter: None,
             type_filter: None,
+            criticality: None,
             authority_filter: None,
             since_filter: None,
             occurred_range: None,
@@ -113,18 +126,28 @@ impl<'a> PipelineBuilder<'a> {
             active_world_selection: None,
             execution_actor: None,
             corpus_scope: CorpusScope::All,
+            made_by: crate::provenance::made_by::MadeByPredicate::All,
             context_pack_budget: None,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
             temporal_now: None,
             telemetry_action: RetrievalAction::Pipeline,
             capture_retrieval_trace: false,
+            retrieval_state: None,
+            retrieval_turn: None,
+            deadline: None,
             rerank: None,
             hyde: None,
             access_factor_overrides: None,
             skip_vector_rescore: false,
             session: None,
         }
+    }
+
+    /// Selects stated, concluded, or all claims after admission and before truncation.
+    pub fn made_by(mut self, predicate: crate::provenance::made_by::MadeByPredicate) -> Self {
+        self.made_by = predicate;
+        self
     }
 
     /// Routes this run's retrieval-run registration through a live room's
@@ -164,6 +187,16 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     /// Enables opt-in per-stage retrieval trace capture for this run.
+    /// Supplies the pre-decision bus for iterative or offline replay callers.
+    pub fn retrieval_state(mut self, state: crate::store::RetrievalState) -> Self {
+        self.retrieval_state = Some(state);
+        self
+    }
+    pub fn retrieval_turn(mut self, turn: crate::store::RetrievalTurn) -> Self {
+        self.retrieval_turn = Some(turn);
+        self
+    }
+
     pub fn capture_retrieval_trace(mut self, enabled: bool) -> Self {
         self.capture_retrieval_trace = enabled;
         self
@@ -253,6 +286,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode: TemporalAnchorMode::Auto,
             adaptive: self.temporal_adaptive_default,
             limit,
+            effort_anchor: false,
         });
         self
     }
@@ -275,6 +309,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode,
             adaptive: self.temporal_adaptive_default,
             limit,
+            effort_anchor: false,
         });
         self
     }
@@ -297,6 +332,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode,
             adaptive: self.temporal_adaptive_default,
             limit,
+            effort_anchor: false,
         });
         self
     }
@@ -321,8 +357,20 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode: TemporalAnchorMode::Both,
             adaptive: self.temporal_adaptive_default,
             limit,
+            effort_anchor: false,
         });
         self
+    }
+
+    /// Recency blends when asked for, unless a host-supplied temporal
+    /// window already ranks by time. The effort's default now anchor is
+    /// no such window, so recency still blends under it.
+    pub(super) fn recency_blend_applies(&self) -> bool {
+        self.recency_blend_enabled
+            && self
+                .temporal_search
+                .as_ref()
+                .is_none_or(|config| config.effort_anchor)
     }
 
     pub fn temporal_adaptive(mut self, enabled: bool) -> Self {
@@ -449,6 +497,12 @@ impl<'a> PipelineBuilder<'a> {
 
     pub(crate) fn filter_candidates(mut self, filter: &'a super::CandidateFilter<'a>) -> Self {
         self.candidate_filter = Some(filter);
+        self
+    }
+
+    /// Narrows CLAIM candidates to their manifest tier. No predicate is promoted.
+    pub fn criticality(mut self, critical: bool) -> Self {
+        self.criticality = Some(critical);
         self
     }
 
@@ -664,13 +718,12 @@ impl<'a> PipelineBuilder<'a> {
         // pending vectors to the caller for inline handling and never writes
         // a `pe:` marker or an embed job row — there is no overlay `pe:`
         // keyspace, so redirecting is not an option and skipping is the rule.
-        // The test is whether rows STAGE, not whether a session is attached:
-        // an on-record room's retrieval is an ordinary base one and enqueues
-        // like any other.
+        // Absence of an overlay is not permission to persist: anonymous
+        // routes discard all writes. Only an explicit Base route enqueues.
         #[cfg(feature = "sync")]
-        let enqueue = !self
+        let enqueue = self
             .session
-            .is_some_and(crate::off_record::SessionRetrievalTelemetry::stages_in_overlay);
+            .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base);
         let output = self.run_for_pack()?;
         let pending_vector_ids = pending_vector_ids(&output.pending_vectors);
         #[cfg(feature = "sync")]

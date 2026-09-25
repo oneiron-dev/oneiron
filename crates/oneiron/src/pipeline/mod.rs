@@ -1,18 +1,23 @@
 mod authority;
 mod blend;
 mod budget;
+mod capabilities;
+pub(crate) use capabilities::capability_hit;
 mod builder;
 mod channels;
 mod corpus_filter;
+mod criticality;
 mod execution;
 mod execution_binding;
 mod filters;
 mod scoped_channels;
 pub(crate) use types::CandidateFilter;
+mod l2_evidence;
 mod support;
 mod trace;
 mod types;
 mod world_authority;
+pub(crate) use world_authority::resolve_world_authority;
 
 pub use self::builder::PipelineBuilder;
 pub use self::types::{
@@ -37,6 +42,8 @@ mod tests;
 // its home.
 #[cfg(test)]
 mod decay_tests;
+#[cfg(test)]
+mod made_by_tests;
 
 #[cfg(test)]
 mod authority_tests;

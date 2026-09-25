@@ -448,6 +448,7 @@ impl McpConnectorActorRegistry {
         }
 
         Ok(McpResolvedActor {
+            auth: None,
             actor_ref: record.actor_ref,
             actor_class: record.actor_class,
             gate_actor_class,

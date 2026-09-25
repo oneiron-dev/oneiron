@@ -1,4 +1,5 @@
 use super::*;
+use crate::ports::EntityStoreRead;
 
 pub(super) fn verify_owner_home_in(
     vault: &Vault,
@@ -43,8 +44,8 @@ pub(super) fn persist_content_in(
     };
     if vault
         .store
-        .entities
-        .get(txn, artifact.as_bytes())
+        .port_entity_record(txn, &artifact)
+        .map(|row| row.map(|row| row.encode()))
         .map_err(storage_failure)?
         .is_none()
     {

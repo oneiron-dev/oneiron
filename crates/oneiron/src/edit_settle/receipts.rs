@@ -66,7 +66,7 @@ pub(super) fn settlement_receipt_record(
     }
 
     let trigger_ref = match record.outcome {
-        SettleOutcomeKind::Selected => {
+        SettleOutcomeKind::Selected | SettleOutcomeKind::Proposed => {
             // Fail closed: a Selected ledger row MUST carry its version and the
             // content/manifest hashes. A missing one is a corrupt record, never
             // an artifact@0 receipt.
@@ -94,7 +94,11 @@ pub(super) fn settlement_receipt_record(
             fields.insert(FIELD_ANCHOR_MOVES.to_owned(), moves.to_string());
             fields.insert(FIELD_ANCHOR_DRIFTS.to_owned(), drifts.to_string());
             // The door opens the lens at artifact@version.
-            format!("artifact:{artifact_hex}@{version}")
+            if record.outcome == SettleOutcomeKind::Proposed {
+                format!("proposal:{}", record.proposal_ref)
+            } else {
+                format!("artifact:{artifact_hex}@{version}")
+            }
         }
         SettleOutcomeKind::Discarded => {
             if let Some(reason) = record.reason.as_ref() {

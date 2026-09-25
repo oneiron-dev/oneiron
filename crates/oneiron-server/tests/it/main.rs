@@ -6,5 +6,6 @@ mod campaign_surface_oracle;
 mod core_discover;
 mod mcp_booking;
 mod mcp_oracle;
+mod remote_pairing;
 mod skills_pack;
 mod ws_sync;

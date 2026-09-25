@@ -506,3 +506,55 @@ fn a_partial_overlap_replaces_skips_and_retains_unrescanned_history() {
         assert_eq!(rollup.fields[FIELD_PREFILTER_SKIPPED], count);
     }
 }
+
+#[test]
+fn checkpoint_preserves_prefilter_receipts_and_rescan_membership() {
+    use crate::recovery::checkpoint::RestoreReason;
+
+    let (dir, vault) = open_vault();
+    let conversation = seed_conversation(&vault, 0x56);
+    for second in 10..12 {
+        seed_turn(&vault, &conversation, "user", "ok", second);
+    }
+    let watermark = read_watermark(&vault, MESO).expect("watermark");
+    let turns = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
+    vault
+        .set_prefilter_config(length_policy(0.5))
+        .expect("lossy policy");
+    enqueue_partition_attempts(&vault, MESO, &turns, &watermark, "original", 100)
+        .expect("screened round");
+    let before = extraction_receipts(&vault);
+    assert_eq!(before.len(), 3, "two skip receipts and their round");
+    let image = dir.path().join("checkpoint");
+    vault.snapshot_checkpoint(&image, 110).expect("checkpoint");
+    let (restored, _) = Vault::restore_checkpoint(
+        &image,
+        &dir.path().join("restored"),
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    )
+    .expect("restore");
+    assert_eq!(extraction_receipts(&restored), before);
+
+    // Restored membership must still retire just the overlapping decision,
+    // not retain its old skip or discard the unrescanned turn's audit.
+    restored
+        .set_prefilter_config(length_policy(0.0))
+        .expect("rescue policy");
+    enqueue_partition_attempts(&restored, MESO, &turns[..1], &watermark, "rescan", 200)
+        .expect("rescan after restore");
+    let after = extraction_receipts(&restored);
+    assert_eq!(
+        skip_ids(&after),
+        BTreeSet::from([turns[1].turn_id.to_hex()])
+    );
+    assert_eq!(after.len(), 2);
+    let rollup = after
+        .iter()
+        .find(|row| row.outcome == PREFILTER_OUTCOME_SCREENED)
+        .expect("residual round");
+    assert_eq!(rollup.fields[FIELD_PREFILTER_SCANNED], "1");
+    assert_eq!(rollup.fields[FIELD_PREFILTER_SKIPPED], "1");
+    assert_eq!(rollup.fields[FIELD_PREFILTER_PASSED], "0");
+}

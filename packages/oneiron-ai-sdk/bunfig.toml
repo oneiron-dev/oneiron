@@ -1,0 +1,8 @@
+# No peer auto-install here: devDependencies supply every peer this package's
+# tests load (ai, zod for ai, and oneiron from file:../oneiron). With it on,
+# bun 1.2.22 installs oneiron from bun.lock through the ^1.0.0 peer record,
+# loses the folder path, and links each file to itself (package.json ->
+# package.json), so Node cannot resolve "oneiron". Consumers still get the
+# peerDependencies from package.json; this file does not ship.
+[install]
+peer = false

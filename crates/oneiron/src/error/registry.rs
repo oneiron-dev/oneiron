@@ -14,6 +14,16 @@ use super::ErrorKind;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RegistryError {
+    /// Names are global identity. Another owner, source or schema cannot replace one.
+    #[error("pack kind name collision: {0}")]
+    PackKindNameCollision(String),
+    /// Only a locally installed exact identity may admit instances.
+    #[error("pack kind is not installed locally: {0}")]
+    PackKindNotInstalled(String),
+    /// Malformed, corrupted, or stale map/instance identity.
+    #[error("invalid pack byte map: {0}")]
+    InvalidPackByteMap(&'static str),
+
     /// The active facet supplied to the retrieval pipeline does not resolve to
     /// an EXISTING FACET entity (type byte 13, per contracts.ts §1). Rejected
     /// fail-closed at query setup: a bogus id (`found = None`, no such entity)
@@ -36,19 +46,19 @@ pub enum RegistryError {
         found: Option<u8>,
     },
     /// A public `FacetOf` (u8 17) edge write failed the ONE-1645 write-time
-    /// type table: the source must be an existing CLAIM, TURN, or EVENT and
-    /// the target an existing FACET. A missing endpoint row is unknowable-typed
-    /// (`None`) and rejected on the same footing as a wrong type — a facet
-    /// stamp's endpoints must be established facts before the stamp. The batch
-    /// aborts atomically; nothing was written.
+    /// type table: the source must be an existing CLAIM, TURN, EVENT, NOTE or
+    /// ASSET and the target an existing FACET. A missing endpoint row is
+    /// unknowable-typed (`None`) and rejected on the same footing as a wrong
+    /// type — a facet stamp's endpoints must be established facts before the
+    /// stamp. The batch aborts atomically; nothing was written.
     ///
     /// Every admitted source type is disclosure-effective on at least one door:
     /// CLAIM on the local query filter (`apply_facet_filter`), and CLAIM | TURN
-    /// | EVENT alike on the federation selector, which mirrors this same table
-    /// on its read side. `batch::validate_facet_of_edge` holds the full
+    /// | EVENT | NOTE | ASSET alike on the federation selector, which mirrors
+    /// this same table on its read side. `batch::validate_facet_of_edge` holds the full
     /// two-door reading.
     #[error(
-        "invalid FacetOf edge {} (type {src_type:?}) -> {} (type {tgt_type:?}): expected CLAIM/TURN/EVENT -> FACET",
+        "invalid FacetOf edge {} (type {src_type:?}) -> {} (type {tgt_type:?}): expected CLAIM/TURN/EVENT/NOTE/ASSET -> FACET",
         src.to_hex(),
         tgt.to_hex()
     )]
@@ -58,6 +68,12 @@ pub enum RegistryError {
         tgt: EntityId,
         tgt_type: Option<u8>,
     },
+    /// A write would move a record's facet stamp. A record's facet is set at
+    /// birth and never moves: a second `FacetOf` stamp on a NOTE or ASSET, a
+    /// delete of a live NOTE's or ASSET's stamp, or a CLAIM put that changes
+    /// its `scopeFacetId`. Moving a record to another facet is a fork.
+    #[error("facet stamp of {} is immutable; fork the record instead", src.to_hex())]
+    FacetStampImmutable { src: EntityId },
     /// Registered maintenance-band entity kind (type bytes 120+, e.g.
     /// REDACTION_AUDIT) rejected on a public write path. Maintenance records
     /// are engine-authored only; this is distinct from
@@ -157,6 +173,9 @@ impl RegistryError {
     #[must_use]
     pub(crate) fn kind(&self) -> ErrorKind {
         match self {
+            Self::PackKindNameCollision(_) => ErrorKind::PackKindNameCollision,
+            Self::PackKindNotInstalled(_) => ErrorKind::PackKindNotInstalled,
+            Self::InvalidPackByteMap(_) => ErrorKind::InvalidPackByteMap,
             // The structural ChildOf tree rejections are coarse-mapped onto
             // the existing TASK-body kind on purpose: remote replay already
             // classifies it quarantine-and-continue, so a new tree check adds
@@ -167,6 +186,7 @@ impl RegistryError {
             Self::InvalidFacet { .. } => ErrorKind::InvalidFacet,
             Self::InvalidRelationship { .. } => ErrorKind::InvalidRelationship,
             Self::InvalidFacetOfEdge { .. } => ErrorKind::InvalidFacetOfEdge,
+            Self::FacetStampImmutable { .. } => ErrorKind::FacetStampImmutable,
             Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
             Self::StructuralKindZoneViolation { .. } => ErrorKind::StructuralKindZoneViolation,
             Self::StructuralKindTypeByteCollision(_) | Self::StructuralKindPrefixCollision(_) => {

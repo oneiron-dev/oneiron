@@ -43,15 +43,13 @@ fn policy_manifest_valid_fixture_resolves_gate_inputs() -> Result<()> {
         policy.sensitivity_for_predicate("health.allergy"),
         PolicySensitivity::Sensitive
     );
+    let effect_preset = crate::federation::scope_codec::effect_preset();
     assert!(policy.scoped_grants().iter().any(|grant| {
         grant.actor_ref.as_deref() == Some("dreamer")
             && grant.effector == "channel_send"
             && grant.receipt_required
-            && grant.scope.as_ref()
-                == Some(&Value::Map(vec![(
-                    Value::from("audience"),
-                    Value::from("cold"),
-                )]))
+            && grant.authority_scope == effect_preset
+            && grant.scope.is_none()
     }));
     assert!(policy.signatures().iter().any(|signature| {
         signature.alg == "ed25519"

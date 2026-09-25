@@ -62,6 +62,8 @@ pub struct CampaignCost {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct CampaignSplitReport {
+    /// Evaluated authoring behavior pin, preserved across report joins.
+    pub authoring_strategy: super::beam_promotion::AuthoringStrategyPin,
     /// Arm this report belongs to.
     pub arm: CampaignExecutableArm,
     /// Split this report belongs to.
@@ -86,6 +88,7 @@ impl CampaignSplitReport {
     /// Refuses inconsistent metric evidence or a score that does not follow its inputs.
     /// This checks internal consistency, not authenticity without the raw OF-360 inputs.
     pub fn validate(&self) -> CampaignResult<()> {
+        self.authoring_strategy.validate()?;
         self.of360.validate()?;
         if self.dataset.dataset_id.is_empty() || self.dataset.revision.is_empty() {
             return Err(CampaignError::ReportMismatch {
@@ -166,6 +169,7 @@ pub fn build_campaign_split_report(
         .clone();
     let effective = effective_taste_score(&smoke, &taste);
     let report = CampaignSplitReport {
+        authoring_strategy: super::beam_promotion::AuthoringStrategyPin::from_campaign(config)?,
         arm,
         split,
         dataset: dataset_ref.clone(),
@@ -199,6 +203,11 @@ pub fn merge_campaign_arm_report(
 ) -> CampaignResult<CampaignArmReport> {
     search.validate()?;
     held_out.validate()?;
+    if search.authoring_strategy != held_out.authoring_strategy {
+        return Err(CampaignError::ReportMismatch {
+            reason: "split authoring strategies differ",
+        });
+    }
     if search.arm != held_out.arm {
         return Err(CampaignError::ReportMismatch {
             reason: "search and held-out reports belong to different arms",
@@ -232,6 +241,11 @@ pub(super) fn validate_arm_pairing(
 ) -> CampaignResult<()> {
     validate_arm_report(single_pass, CampaignExecutableArm::SinglePass)?;
     validate_arm_report(tournament, CampaignExecutableArm::Tournament)?;
+    if single_pass.held_out.authoring_strategy != tournament.held_out.authoring_strategy {
+        return Err(CampaignError::ReportMismatch {
+            reason: "arms use different campaign configurations",
+        });
+    }
     if single_pass.held_out.metric_definition_digest != tournament.held_out.metric_definition_digest
     {
         return Err(CampaignError::ReportMismatch {
@@ -259,6 +273,11 @@ fn validate_arm_report(
     }
     report.search.validate()?;
     report.held_out.validate()?;
+    if report.search.authoring_strategy != report.held_out.authoring_strategy {
+        return Err(CampaignError::ReportMismatch {
+            reason: "split authoring strategies differ",
+        });
+    }
     if report.search.arm != report.arm || report.held_out.arm != report.arm {
         return Err(CampaignError::ReportMismatch {
             reason: "split report arm differs from the arm report",

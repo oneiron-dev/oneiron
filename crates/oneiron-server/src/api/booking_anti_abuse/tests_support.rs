@@ -35,11 +35,12 @@ pub(crate) mod tests {
         let vault = Arc::new(
             oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).expect("open vault"),
         );
-        let server = Arc::new(
-            SyncServer::new(vault, crate::config::SyncServerConfig::default())
-                .expect("sync server"),
-        );
-        (dir, server)
+        let mut server = SyncServer::new(vault, crate::config::SyncServerConfig::default())
+            .expect("sync server");
+        // Exhaustion assertions describe one fixed minute, independent of
+        // scheduler load and of sibling tests in ordinary cargo test --lib.
+        server.booking_test_now_secs = Some(10_799);
+        (dir, Arc::new(server))
     }
 
     pub(crate) fn page() -> EntityId {

@@ -34,7 +34,8 @@ fn expand_ppr_clamps_internal_seed_growth() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
     for i in 0..=crate::ppr::MAX_PPR_SEEDS {
-        let id = EntityId::from_bytes((i as u128 + 1).to_be_bytes())?;
+        // Skip the two reserved scope members (base world 1, default project 2).
+        let id = EntityId::from_bytes((i as u128 + 3).to_be_bytes())?;
         vault
             .batch()
             .put(

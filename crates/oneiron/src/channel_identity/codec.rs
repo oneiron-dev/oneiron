@@ -32,6 +32,8 @@ use super::keys::{
 
 use super::lifecycle::ChannelIdentityState;
 
+use super::auth_mode::ChannelAuthMode;
+use super::keys::PREDICATE_CHANNEL_IDENTITY_AUTH_MODE;
 use super::record::ChannelIdentity;
 
 use super::shape::ChannelIdentityShape;
@@ -93,6 +95,10 @@ pub fn encode_channel_identity_body(identity: &ChannelIdentity) -> Result<Vec<u8
         (
             Value::from(KEY_BINDING_FACET_REF),
             encode_optional_entity_ref(identity.binding.facet_ref()),
+        ),
+        (
+            Value::from("auth_mode"),
+            Value::from(identity.auth_mode.as_str()),
         ),
     ];
 
@@ -167,6 +173,12 @@ pub(crate) fn validate_channel_identity_claim_structure(body: &ClaimBody) -> Res
     }
 
     match body.predicate.as_str() {
+        PREDICATE_CHANNEL_IDENTITY_AUTH_MODE => body
+            .value
+            .as_str()
+            .ok_or_else(invalid_identity)?
+            .parse::<ChannelAuthMode>()
+            .map(|_| ()),
         PREDICATE_CHANNEL_IDENTITY_CHANNEL => validate_claim_string(
             &body.value,
             MAX_CHANNEL_BYTES,
@@ -311,6 +323,7 @@ pub(super) fn decode_channel_identity_value(value: &Value) -> Result<ChannelIden
     let manifest_ref = decode_optional_entity_ref(required_value(entries, KEY_MANIFEST_REF)?)?;
 
     let identity = ChannelIdentity {
+        auth_mode: required_string(entries, "auth_mode")?.parse()?,
         channel,
         address_or_handle,
         shape,

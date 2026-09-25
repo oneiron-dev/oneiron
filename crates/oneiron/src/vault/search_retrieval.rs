@@ -11,7 +11,7 @@ use crate::store::{
     RetrievalOutcomeRecord, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
     RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
 };
-use crate::{BatchBuilder, ContextPackBuilder, PipelineBuilder, bm25, unix_seconds_now};
+use crate::{BatchBuilder, ContextPackBuilder, PipelineBuilder, bm25};
 use std::time::Instant;
 
 /// One scored search plus the timing its telemetry row is built from.
@@ -146,7 +146,20 @@ impl Vault {
         limit: usize,
         profile: &crate::config::Bm25RankProfile,
     ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
-        let results = self.search_text_scored(&self.store, query, limit, profile)?;
+        let results = if profile == &crate::config::Bm25RankProfile::default() {
+            let started_at = self.store.clock.now_recorded_at();
+            let started = Instant::now();
+            let txn = self.store.env.read_txn()?;
+            let scores =
+                crate::ports::RetrievalIndex::port_retrieval_text_search(self, &txn, query, limit)?;
+            TimedSearch {
+                scores,
+                started_at,
+                started,
+            }
+        } else {
+            self.search_text_scored(&self.store, query, limit, profile)?
+        };
         let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Text,
             results.started_at,
@@ -183,11 +196,21 @@ impl Vault {
     ) -> Result<TimedSearch> {
         let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;
-        let started_at = unix_seconds_now();
+        let started_at = self.store.clock.now_recorded_at();
         let started = Instant::now();
         let scores = {
             let rtxn = self.store.env.read_txn()?;
-            bm25::search_text(target, &rtxn, &self.analyzer, &config, query, limit)?
+            crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
+                &crate::ports::text_index(target, &self.analyzer),
+                &rtxn,
+                crate::ports::TextQuery {
+                    query,
+                    limit,
+                    rank: &config,
+                    filter_all: false,
+                    matches_scope: &mut |_| Ok(true),
+                },
+            )?
         };
         Ok(TimedSearch {
             scores,
@@ -201,6 +224,7 @@ impl Vault {
     /// Shared with the session path so an in-room search's row carries the
     /// identical shape; only where it LANDS differs (K10).
     pub(crate) fn vault_search_retrieval_run_record(
+        run_id: RetrievalRunId,
         signal: RetrievalSignal,
         started_at: u64,
         started: Instant,
@@ -208,7 +232,7 @@ impl Vault {
         limit: usize,
     ) -> RetrievalRunRecord {
         RetrievalRunRecord::new(
-            RetrievalRunId::now(),
+            run_id,
             RetrievalAction::VaultSearch,
             started_at,
             started.elapsed().as_micros().min(u64::MAX as u128) as u64,
@@ -228,8 +252,10 @@ impl Vault {
         results: &[ScoredEntity],
         limit: usize,
     ) -> Option<RetrievalRunId> {
-        let record =
-            Self::vault_search_retrieval_run_record(signal, started_at, started, results, limit);
+        let run_id = RetrievalRunId::from_bytes(self.store.clock.ulid().ok()?);
+        let record = Self::vault_search_retrieval_run_record(
+            run_id, signal, started_at, started, results, limit,
+        );
         let run_id = record.run_id;
         if let Err(error) = self.store.record_retrieval_run(&record) {
             tracing::warn!(

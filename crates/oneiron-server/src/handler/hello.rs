@@ -60,7 +60,9 @@ where
 pub(super) fn validate_protocol_hello(frame: &[u8]) -> Result<u8, u16> {
     match protocol::decode_protocol_hello(frame) {
         Ok(version)
-            if version == protocol::PROTOCOL_VERSION
+            if version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION
+                || version == protocol::PROTOCOL_VERSION
+                || version == protocol::APP_TIER_PROTOCOL_VERSION_VERSION
                 || version == protocol::LEGACY_SELECTOR_PROTOCOL_VERSION
                 || version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION =>
         {
@@ -74,11 +76,12 @@ pub(super) fn validate_protocol_hello(frame: &[u8]) -> Result<u8, u16> {
 mod document_version_tests {
     use super::*;
     #[test]
-    fn v9_document_protocol_is_accepted_and_v8_is_not() {
+    fn document_and_app_tier_protocols_are_negotiated() {
         assert_eq!(validate_protocol_hello(&[3, 9]), Ok(9));
+        assert_eq!(validate_protocol_hello(&[3, 10]), Ok(10));
         assert_eq!(
             validate_protocol_hello(&[3, 8]),
-            Err(close_codes::VERSION_MISMATCH)
+            Ok(protocol::APP_TIER_PROTOCOL_VERSION_VERSION)
         );
     }
 }

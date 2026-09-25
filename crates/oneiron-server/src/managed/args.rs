@@ -4,6 +4,7 @@ use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use oneiron::federation::derivation::DerivationOwner;
 use oneiron_vault_contract::{CONTRACT_VERSION, valid_vault_name};
 
 use crate::config::{ServeArgs, ServeConfig};
@@ -38,6 +39,12 @@ pub enum ManagedError {
     #[error("--vault-name {name:?} is not a DNS label")]
     InvalidVaultName { name: String },
 
+    #[error("--derivation-owner must be a 32-byte account or organization id in hexadecimal")]
+    InvalidDerivationOwner,
+
+    #[error("managed vault {vault:?} rejected its derivation owner: {reason}")]
+    DerivationOwnerRejected { vault: String, reason: String },
+
     #[error("--{flag} must be a non-negative file descriptor, got {value}")]
     InvalidFd { flag: &'static str, value: i32 },
 
@@ -65,7 +72,7 @@ pub enum ManagedError {
     CredentialsRejected { reason: String },
 
     #[error(
-        "refusing to open vault {vault:?} in managed mode: vault_meta carries no `{marker}` marker, and the hardened real-tenant preconditions are absent (managed mode would need an fscrypt policy on the data directory AND a dedicated per-vault UID owning it, neither of which this build can probe). Contract v1 serves synthetic canary vaults only; this refusal is the real-tenant tripwire."
+        "refusing to open vault {vault:?} in managed mode: vault_meta carries no `{marker}` marker, and the hardened real-tenant preconditions are absent (managed mode requires a probed fscrypt policy AND a dedicated non-root UID owning the data directory). Without both, only explicitly marked synthetic canaries are admitted; this refusal is the real-tenant tripwire."
     )]
     ManagedRealTenantRefused { vault: String, marker: &'static str },
 
@@ -99,6 +106,7 @@ pub enum ManagedError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedArgs {
     pub vault_name: String,
+    pub derivation_owner: DerivationOwner,
     pub data_dir: PathBuf,
     pub http_socket: PathBuf,
     pub ctl_socket: PathBuf,
@@ -133,8 +141,16 @@ impl ManagedArgs {
             return Err(ManagedError::InvalidVaultName { name: vault_name });
         }
 
+        let owner_text = require(args.derivation_owner.as_deref(), "derivation-owner")?;
+        if !owner_text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(ManagedError::InvalidDerivationOwner);
+        }
+        let owner = crate::server::vault_binding::decode_hex(owner_text)
+            .ok_or(ManagedError::InvalidDerivationOwner)?;
+
         let managed = Self {
             vault_name,
+            derivation_owner: DerivationOwner(owner),
             // `--vault-path` stays the alias for the same directory.
             data_dir: require(
                 args.data_dir.clone().or_else(|| args.vault_path.clone()),
@@ -301,6 +317,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.vault_name.is_some(),
         ArgvUse::Read,
     ),
+    (
+        "derivation-owner",
+        |args| args.derivation_owner.is_some(),
+        ArgvUse::Read,
+    ),
     ("data-dir", |args| args.data_dir.is_some(), ArgvUse::Read),
     (
         "http-socket",
@@ -364,6 +385,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         "allowed-origins",
         |args| args.allowed_origins.is_some(),
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+    ),
+    (
+        "failure-signal-export",
+        |args| args.failure_signal_export.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
     // Contract v1 has no managed privacy override: refuse instead of dropping it.
     (
@@ -432,16 +458,6 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "max-windows-per-connection",
         |args| args.max_windows_per_connection.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
-    ),
-    (
-        "max-federation-windows-per-connection",
-        |args| args.max_federation_windows_per_connection.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
-    ),
-    (
-        "federation-flood-pause-secs",
-        |args| args.federation_flood_pause_secs.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
     (
@@ -554,6 +570,8 @@ fn reject_unmanaged_layers(args: &ServeArgs) -> Result<(), ManagedError> {
         "ONEIRON_PRIVACY_POSTURE",
         "ONEIRON_HOSTED_KMS_KEY_REF",
         "ONEIRON_CONFIG",
+        "ONEIRON_FAILURE_SIGNAL_EXPORT",
+        "ONEIRON_FAILURE_SIGNAL_TRAINING",
     ] {
         if std::env::var_os(env).is_some() {
             return Err(ManagedError::ConflictingEnvironment {

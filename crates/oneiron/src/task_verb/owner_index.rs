@@ -30,6 +30,12 @@ pub(crate) fn index_owner_fact(
     if crate::habit::task_role_from_body_bytes(body)? != crate::habit::TaskRole::AuthorityFact {
         return Ok(());
     }
+    // AuthorityFact is a shared role byte: it also carries C02 ask group,
+    // member and answer rows. Only the canonical authority-fact subkind feeds
+    // the by-owner index; other subkinds are not authority facts.
+    if !task_body_has_subkind(body, crate::task_authority::TASK_AUTHORITY_FACT_SUBKIND)? {
+        return Ok(());
+    }
     let fact = decode_task_authority_fact_body(body)?;
     if fact.kind == TaskAuthorityFactKind::Owner {
         let key = [
@@ -43,6 +49,39 @@ pub(crate) fn index_owner_fact(
         store.vault_meta.put(txn, &reverse, &key)?;
     }
     Ok(())
+}
+
+/// True when the body's `subkind` key equals `want`. Reads the exact key set
+/// with the same strict map decode the role check uses; a missing or
+/// duplicated subkind key is not a match, never an error.
+fn task_body_has_subkind(body: &[u8], want: &str) -> Result<bool> {
+    let mut cursor = body;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        crate::error::Error::Record(crate::error::RecordError::InvalidTaskBody(
+            "body is not valid MessagePack",
+        ))
+    })?;
+    if !cursor.is_empty() {
+        return Err(crate::error::Error::Record(
+            crate::error::RecordError::InvalidTaskBody("trailing bytes after body map"),
+        ));
+    }
+    let Some(entries) = value.as_map() else {
+        return Err(crate::error::Error::Record(
+            crate::error::RecordError::InvalidTaskBody("body must be a MessagePack map"),
+        ));
+    };
+    let mut seen = None;
+    for (key, val) in entries {
+        if key.as_str() != Some("subkind") {
+            continue;
+        }
+        if seen.is_some() {
+            return Ok(false);
+        }
+        seen = Some(val);
+    }
+    Ok(seen.is_some_and(|val| val.as_str() == Some(want)))
 }
 
 impl Vault {

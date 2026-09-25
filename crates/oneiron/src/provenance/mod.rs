@@ -132,11 +132,16 @@
 //! `resolve_persisted_actor_class`.
 
 mod actor_substrate;
+mod archive;
+pub(crate) use archive::archived_provenance_body;
 mod codec;
 mod edge_ref;
+mod entity_ref_wire;
 mod imported;
 mod lifecycle;
+pub mod made_by;
 mod queries;
+pub mod text_commit;
 mod writes;
 pub(crate) use writes::EdgeProvenanceWrite;
 
@@ -172,12 +177,11 @@ use self::lifecycle::{
 pub(crate) use imported::ImportedEdgeProvenance;
 
 use crate::Vault;
-use crate::batch::EntityMetadataHeader;
+
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::Store;
-use crate::vault::parse_edge_record;
+
 use rmpv::Value;
 
 #[cfg(test)]

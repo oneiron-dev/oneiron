@@ -178,3 +178,16 @@ fn decayed_access_factor(aging_class: ClaimAgingClass, learned_at: u64, now: u64
     let decayed = 2.0_f64.powf(-age_secs / policy.half_life_secs) as f32;
     decayed.max(policy.floor)
 }
+
+/// Learned preferences stop influencing after one durable half-life. This is
+/// read-side only: evidence and decisions remain available for audit.
+pub(crate) fn preference_evidence_in_force(at: u64, now: u64) -> bool {
+    at <= now && decayed_access_factor(ClaimAgingClass::Durable, at, now) >= 0.5
+}
+
+pub(crate) fn preference_in_force(body: &ClaimBody, learned_at: u64, now: u64) -> Result<bool> {
+    Ok(super::claim_surfaceable(body)
+        && body.valid_from.is_none_or(|at| at <= now)
+        && claim_access_factor(body, learned_at, now, None)?.access_factor > 0.0
+        && preference_evidence_in_force(learned_at, now))
+}

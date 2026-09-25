@@ -1,14 +1,14 @@
 //! Canonical MessagePack codec for companion records, scope, subject, and provenance.
 
 use super::keys::{
-    COMPANION_RECORD_BODY_KEYS, COMPANION_RECORD_SCHEMA_VERSION,
-    COMPANION_RECORD_SCHEMA_VERSION_V1, KEY_EXPORT, KEY_KIND, KEY_LIFECYCLE, KEY_LIFECYCLE_EVENTS,
-    KEY_PROVENANCE, KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SUBJECT, KEY_VALUE, LIFECYCLE_EVENT_KEYS,
-    PROVENANCE_KEYS, RELATIONSHIP_REF_KEYS, SCOPE_KEYS, SUBJECT_KEYS,
+    COMPANION_RECORD_BODY_KEYS, COMPANION_RECORD_SCHEMA_VERSION, KEY_KIND, KEY_LIFECYCLE,
+    KEY_LIFECYCLE_EVENTS, KEY_PROVENANCE, KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SENSITIVITY,
+    KEY_SUBJECT, KEY_VALUE, LIFECYCLE_EVENT_KEYS, PROVENANCE_KEYS, RELATIONSHIP_REF_KEYS,
+    SCOPE_KEYS, SUBJECT_KEYS,
 };
 use super::model::{
-    CompanionExportClassification, CompanionLifecycleEvent, CompanionLifecycleEventKind,
-    CompanionProvenance, CompanionRecord, CompanionRecordKind, CompanionScope, CompanionSubject,
+    CompanionLifecycleEvent, CompanionLifecycleEventKind, CompanionProvenance, CompanionRecord,
+    CompanionRecordKind, CompanionScope, CompanionSubject,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
@@ -39,8 +39,8 @@ pub fn encode_companion_record_body(record: &CompanionRecord) -> Result<Vec<u8>>
             Value::from(record.lifecycle.as_str()),
         ),
         (
-            Value::from(KEY_EXPORT),
-            Value::from(record.export_classification.as_str()),
+            Value::from(KEY_SENSITIVITY),
+            Value::from(record.sensitivity.as_str()),
         ),
         (
             Value::from(KEY_LIFECYCLE_EVENTS),
@@ -134,7 +134,7 @@ fn decode_companion_record_value(value: &Value) -> Result<CompanionRecord> {
     let mut record_value: Option<Value> = None;
     let mut provenance: Option<CompanionProvenance> = None;
     let mut lifecycle: Option<ClaimLifecycleStatus> = None;
-    let mut export_classification: Option<CompanionExportClassification> = None;
+    let mut sensitivity: Option<crate::federation::Sensitivity> = None;
     let mut lifecycle_events: Option<Vec<CompanionLifecycleEvent>> = None;
     let mut seen = [false; COMPANION_RECORD_BODY_KEYS.len()];
 
@@ -180,14 +180,14 @@ fn decode_companion_record_value(value: &Value) -> Result<CompanionRecord> {
                 )?;
                 lifecycle = Some(parsed);
             }
-            KEY_EXPORT => {
+            KEY_SENSITIVITY => {
                 let parsed = value
                     .as_str()
-                    .and_then(CompanionExportClassification::parse)
+                    .and_then(crate::federation::Sensitivity::parse)
                     .ok_or(invalid_companion(
                         "export must be local_only|portable|shared_vault",
                     ))?;
-                export_classification = Some(parsed);
+                sensitivity = Some(parsed);
             }
             KEY_LIFECYCLE_EVENTS => {
                 lifecycle_events = Some(decode_lifecycle_events(value)?);
@@ -198,10 +198,7 @@ fn decode_companion_record_value(value: &Value) -> Result<CompanionRecord> {
 
     let schema_version =
         schema_version.ok_or(invalid_companion("missing required field schema_version"))?;
-    if !matches!(
-        Some(schema_version),
-        Some(COMPANION_RECORD_SCHEMA_VERSION_V1 | COMPANION_RECORD_SCHEMA_VERSION)
-    ) {
+    if schema_version != COMPANION_RECORD_SCHEMA_VERSION {
         return Err(invalid_companion(
             "unsupported companion record schema_version",
         ));
@@ -213,7 +210,7 @@ fn decode_companion_record_value(value: &Value) -> Result<CompanionRecord> {
         record_value.ok_or(invalid_companion("missing required field value"))?,
         provenance.ok_or(invalid_companion("missing required field provenance"))?,
         lifecycle.ok_or(invalid_companion("missing required field lifecycle"))?,
-        export_classification.ok_or(invalid_companion("missing required field export"))?,
+        sensitivity.ok_or(invalid_companion("missing required field export"))?,
     );
     let mut record = record;
     record.lifecycle_events = match (schema_version, lifecycle_events) {

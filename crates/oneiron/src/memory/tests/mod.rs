@@ -8,6 +8,7 @@
 mod authority_revocation;
 mod commit_claims;
 mod delete_tombstone;
+mod self_grant;
 mod session_witness;
 mod support;
 mod takes_notes;
@@ -108,6 +109,7 @@ pub(super) fn claim_input(
         confidence: 1.0,
         source: source.to_owned(),
         world_ref: None,
+        relationship_ref: None,
         scope: None,
         valid_from: None,
         valid_to: None,
@@ -204,16 +206,8 @@ pub(super) fn witness_conversations(vault: &crate::Vault) -> crate::Result<Vec<E
 }
 
 pub(super) fn witness_edge_count(vault: &crate::Vault) -> u64 {
-    (0..=u8::MAX)
-        .map(|kind| {
-            vault
-                .entities_by_type(kind)
-                .expect("entity census")
-                .into_iter()
-                .map(|id| vault.edges_out(&id).expect("public edge query").len() as u64)
-                .sum::<u64>()
-        })
-        .sum()
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    vault.store.edges_out.len(&rtxn).expect("edge count")
 }
 
 pub(super) fn assert_witness_left_nothing(
@@ -242,6 +236,20 @@ pub(super) fn assert_witness_left_nothing(
         expected_edge_count,
         "a refused witness left an edge behind"
     );
+    let persons = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_PERSON)
+        .expect("persons");
+    for person in &persons {
+        assert!(
+            vault
+                .edge_exists(
+                    person,
+                    crate::EdgeKind::HasFacet,
+                    &crate::claim::substrate_facet_id(*person)
+                )
+                .expect("substrate edge")
+        );
+    }
     assert!(
         vault
             .search_text(refused_text, 10)
@@ -348,6 +356,7 @@ pub(super) fn authority_root(
                 roles: ROLE_OWNER | ROLE_ADMIN,
             },
             genesis_nonce: [seed.wrapping_add(10); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },

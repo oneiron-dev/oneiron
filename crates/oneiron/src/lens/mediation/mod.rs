@@ -9,6 +9,8 @@ mod mediation_backing;
 mod mediation_frame_read;
 mod mediation_frame_write;
 mod mediation_principal;
+mod mediation_scope;
+mod surface_dispatch;
 
 pub use self::mediation_backing::{
     GeneratedUiResultSetScope, GeneratedUiResultSetWritePlan, LensAtomSelectionRequest,

@@ -5,7 +5,7 @@ use super::super::{DecisionAnswer, DecisionDial, DecisionQuestion, TypedDecision
 use crate::{EntityId, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OutcomeSource {
     Claim { predicate: String },
@@ -14,7 +14,7 @@ pub enum OutcomeSource {
     Event { predicate: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutcomeBinding {
     pub source: OutcomeSource,

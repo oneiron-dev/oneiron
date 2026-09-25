@@ -90,7 +90,7 @@ fn deep_recall_returns_lease_required() {
     let error = client
         .recall(
             "window seat",
-            Effort::Deep,
+            Effort::High,
             &RecallScope::default(),
             10,
             None,
@@ -117,5 +117,29 @@ fn embedded_errors_keep_the_engine_payload() {
     assert!(
         !error.suggestions.is_empty(),
         "the contract says suggestions is never empty"
+    );
+}
+
+#[test]
+fn connect_refuses_a_malformed_credential_without_echoing_it() {
+    let seed = "5a".repeat(32);
+    let error = OneironClient::connect("http://127.0.0.1:9/", &format!("v2.cred.zz.{seed}"))
+        .expect_err("a malformed credential is refused");
+    assert!(
+        error.code == MEMORY_CODE_BAD_REQUEST
+            && !error.message.contains(&seed)
+            && !error.suggestions.iter().any(|line| line.contains(&seed))
+    );
+}
+
+#[test]
+fn pair_refuses_a_malformed_link_without_echoing_it() {
+    let code = "K7M2Q9X";
+    let link = format!("http://127.0.0.1:9/pair#{code}.{}", "ab".repeat(16));
+    let error = OneironClient::pair(&link).expect_err("a malformed link is refused");
+    assert!(
+        error.code == MEMORY_CODE_BAD_REQUEST
+            && !error.message.contains(code)
+            && !error.suggestions.iter().any(|line| line.contains(code))
     );
 }

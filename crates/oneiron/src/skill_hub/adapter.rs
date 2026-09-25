@@ -14,6 +14,12 @@ pub trait SkillHubAdapter {
     /// Adapter kind compatible with the hub record.
     fn kind(&self) -> SkillHubKind;
 
+    /// Configured network/repository origin, when this is a real transport.
+    /// Offline fixture sources return None and cannot claim marketplace transport provenance.
+    fn endpoint(&self) -> Option<&str> {
+        None
+    }
+
     /// Fetches a package for a structured ref.
     fn fetch_package(&self, hub_ref: &HubRef) -> Result<HubPackage>;
 

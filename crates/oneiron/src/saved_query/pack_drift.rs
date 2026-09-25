@@ -258,7 +258,7 @@ fn record_repair_in_txn(
     summary: &str,
     now: u64,
 ) -> Result<EntityId> {
-    let repair_ref = EntityId::now();
+    let repair_ref = vault.store.clock.entity_id()?;
     let mut row = JsonMap::new();
     row.insert("query_ref".to_owned(), Value::String(query_ref.to_hex()));
     row.insert("summary".to_owned(), Value::String(summary.to_owned()));

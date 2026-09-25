@@ -115,6 +115,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &GateDecisionRecord,
     ) -> Result<()> {
+        crate::ports::recorded_at_in_txn(self, wtxn)?;
         append_gate_decision_row_in_txn(self, wtxn, record)
     }
 

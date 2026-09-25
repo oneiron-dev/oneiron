@@ -4,7 +4,8 @@
 //! stale VV, then wire notice). There is no Observer B: text never overwrites
 //! entity bodies in LMDB. Reads and socket imports use short-lived sessions.
 
-mod storage;
+mod note_requests;
+pub(crate) mod storage;
 #[cfg(test)]
 mod tests;
 
@@ -84,8 +85,11 @@ impl DocumentRegistry {
                 SyncProtocolValidation::DocumentAdmissionDenied,
             ));
         }
-        self.open(id)?
-            .export(&super::selector::encode_sync_selector(selector)?, remote_vv)
+        self.open(id)?.export(
+            &super::selector::encode_sync_selector(selector)?,
+            remote_vv,
+            scope,
+        )
     }
 
     /// Register a document on the existing sync socket, including reconnects.
@@ -108,6 +112,47 @@ impl DocumentRegistry {
         Ok(())
     }
 
+    /// Subscribe an own device to a NOTE on the owner lane: a `ds:e:{id}` row
+    /// with an empty value, replayed as an owner REQUEST on every connect.
+    pub fn subscribe_owner(&self, id: EntityId) -> Result<()> {
+        self.vault.with_write_txn(|txn| {
+            owner_note_admission(&self.vault, txn, id)?;
+            self.vault
+                .store
+                .sync_state
+                .put(txn, &format!("ds:e:{}", id.to_hex()), &[])?;
+            Ok(())
+        })?;
+        let frame = self.owner_request_frame(id)?;
+        let _ = self.notices.send(frame);
+        Ok(())
+    }
+
+    /// Owner subscriptions for every NOTE row this device holds without one;
+    /// returns their REQUEST frames.
+    pub(crate) fn subscribe_owner_notes(&self) -> Result<Vec<Vec<u8>>> {
+        let mut out = Vec::new();
+        for id in self
+            .vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_NOTE)?
+        {
+            let subscribed = self.vault.with_write_txn(|txn| {
+                let key = format!("ds:e:{}", id.to_hex());
+                if self.vault.store.sync_state.get(txn, &key)?.is_some()
+                    || owner_note_admission(&self.vault, txn, id).is_err()
+                {
+                    return Ok(false);
+                }
+                self.vault.store.sync_state.put(txn, &key, &[])?;
+                Ok(true)
+            })?;
+            if subscribed {
+                out.push(self.owner_request_frame(id)?);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn request_frames(&self) -> Result<Vec<Vec<u8>>> {
         let rows: Vec<_> = {
             let txn = self.vault.store.env.read_txn()?;
@@ -121,9 +166,14 @@ impl DocumentRegistry {
         let mut out = Vec::new();
         for (key, bytes) in rows {
             let id = EntityId::from_hex(&key[5..])?;
-            let selector = super::selector::decode_sync_selector(&bytes)?;
             // A deleted/unshared entity never gets resurrected by reconnect.
-            if self.vault.get_raw(&id)?.is_some() {
+            if self.vault.get_raw(&id)?.is_none() {
+                continue;
+            }
+            if bytes.is_empty() {
+                out.push(self.owner_request_frame(id)?);
+            } else {
+                let selector = super::selector::decode_sync_selector(&bytes)?;
                 out.push(self.request_frame(id, &selector)?);
             }
         }
@@ -142,11 +192,29 @@ impl DocumentRegistry {
             .map_err(|_| Error::InvariantViolation("document request exceeds wire limit"))
     }
 
+    /// An owner REQUEST: a zero selector length, then the device's VV. The
+    /// selector decoder refuses that length, so neither request passes for
+    /// the other.
+    fn owner_request_frame(&self, id: EntityId) -> Result<Vec<u8>> {
+        let vv = self.open(id)?.version_vector()?;
+        let payload = [0u32.to_be_bytes().as_slice(), &vv].concat();
+        encode_document(id, document_sub_tags::REQUEST, &payload)
+            .into_result()
+            .map_err(|_| Error::InvariantViolation("document request exceeds wire limit"))
+    }
+
     /// Invalidation frames only after a local edit is durable. Lag requires VV resync.
     pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
         self.notices.subscribe()
     }
 
+    pub(crate) fn notify_note(&self, id: EntityId) {
+        // This is an invalidation, never an export. Every socket recipient
+        // reconstructs its own selector-admitted state before sending.
+        if let Ok(frame) = encode_document(id, document_sub_tags::UPDATE, &[]).into_result() {
+            let _ = self.notices.send(frame);
+        }
+    }
     pub fn resident_count(&self) -> usize {
         self.residents.lock().map_or(MAX_RESIDENTS, |r| {
             r.values().filter(|v| v.strong_count() > 0).count()
@@ -177,15 +245,34 @@ pub struct EntityDocument {
 
 impl EntityDocument {
     pub fn text(&self) -> Result<String> {
+        let txn = self.vault.store.env.read_txn()?;
+        eligible(&self.vault, &txn, self.id)?;
+        if self.vault.get_entity_type_in_txn(&txn, &self.id)?
+            == Some(crate::registry::ENTITY_TYPE_NOTE)
+        {
+            return Ok(storage::load(&self.vault, &txn, self.id)?
+                .get_text("body")
+                .to_string());
+        }
         Ok(self.lock()?.get_text("body").to_string())
     }
 
     pub fn version_vector(&self) -> Result<Vec<u8>> {
+        let txn = self.vault.store.env.read_txn()?;
+        eligible(&self.vault, &txn, self.id)?;
+        if self.vault.get_entity_type_in_txn(&txn, &self.id)?
+            == Some(crate::registry::ENTITY_TYPE_NOTE)
+        {
+            return Ok(storage::load(&self.vault, &txn, self.id)?
+                .oplog_vv()
+                .encode());
+        }
         Ok(self.lock()?.oplog_vv().encode())
     }
 
     /// Edit a Unicode-scalar range. The update is durable before return or notice.
     pub fn edit_text(&self, start: usize, delete: usize, insert: &str) -> Result<Vec<u8>> {
+        self.refuse_raw_note()?;
         let mut resident = self.lock()?;
         let staged = clone_doc(&resident)?;
         let before = staged.oplog_vv();
@@ -216,8 +303,40 @@ impl EntityDocument {
         Ok(frame)
     }
 
-    /// Import is staged before persistence. STATE replaces, never merges a shallow copy.
+    /// Privileged embedding/authority import, without peer grant admission.
+    /// STATE replaces, never merges a shallow copy. NOTE still refuses raw bytes.
+    /// Socket writes must use [`Self::import_from_peer`] instead.
     pub fn import(&self, kind: u8, bytes: &[u8]) -> Result<()> {
+        self.import_admitted(kind, bytes, |_| Ok(()))
+    }
+
+    /// Append a peer update only if its grant and live ledger selector still
+    /// permit writing this document in the SAME transaction as the append.
+    /// This door never lets an upstream peer replace state or import raw NOTE.
+    pub fn import_from_peer(
+        &self,
+        kind: u8,
+        bytes: &[u8],
+        scope: crate::FederationGrantScope,
+        selector: &super::selector::SyncSelector,
+    ) -> Result<()> {
+        if kind != document_sub_tags::UPDATE {
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::DocumentAdmissionDenied,
+            ));
+        }
+        self.import_admitted(kind, bytes, |txn| {
+            super::selector::admit_document_write_in_txn(&self.vault, txn, self.id, scope, selector)
+        })
+    }
+
+    fn import_admitted(
+        &self,
+        kind: u8,
+        bytes: &[u8],
+        admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.refuse_raw_note()?;
         let mut resident = self.lock()?;
         let staged = match kind {
             document_sub_tags::STATE => LoroDoc::new(),
@@ -244,6 +363,14 @@ impl EntityDocument {
         }
         self.vault.with_write_txn(|txn| {
             eligible(&self.vault, txn, self.id)?;
+            if self.vault.get_entity_type_in_txn(txn, &self.id)?
+                == Some(crate::registry::ENTITY_TYPE_NOTE)
+            {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::DocumentAdmissionDenied,
+                ));
+            }
+            admit(txn)?;
             if kind == document_sub_tags::STATE {
                 storage::snapshot(&self.vault, txn, self.id, &staged, true)
             } else {
@@ -256,26 +383,83 @@ impl EntityDocument {
 
     /// Export after the selector has admitted this entity. `admission_key` is the
     /// canonical selector encoding, not peer-controlled claims about prior admission.
-    fn export(&self, admission_key: &[u8], remote_vv: &[u8]) -> Result<Vec<u8>> {
+    fn export(
+        &self,
+        admission_key: &[u8],
+        remote_vv: &[u8],
+        scope: crate::FederationGrantScope,
+    ) -> Result<Vec<u8>> {
+        self.export_admitted(admission_key, remote_vv, |txn| {
+            let selector = super::selector::decode_sync_selector(admission_key)?;
+            crate::note::validate_note_export(&self.vault, txn, self.id, scope, &selector)
+        })
+    }
+
+    /// The owner lane's export: NOTE documents only, under one owner admission
+    /// key and the owner export's refusals.
+    pub(crate) fn export_owner(&self, remote_vv: &[u8]) -> Result<Vec<u8>> {
+        if !self.is_note()? {
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::DocumentAdmissionDenied,
+            ));
+        }
+        self.export_admitted(OWNER_ADMISSION_KEY, remote_vv, |txn| {
+            owner_note_admission(&self.vault, txn, self.id)
+        })
+    }
+
+    fn export_admitted(
+        &self,
+        admission_key: &[u8],
+        remote_vv: &[u8],
+        admit_note: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<Vec<u8>> {
         let peer = storage::decode_vv(remote_vv)?;
-        let doc = self.lock()?;
-        let key = format!(
-            "ad:e:{}:{}",
-            self.id.to_hex(),
-            blake3::hash(admission_key).to_hex()
-        );
+        let resident = self.lock()?;
         self.vault.with_write_txn(|txn| {
             eligible(&self.vault, txn, self.id)?;
+            let note_doc;
+            let mut note_head = None;
+            let doc = if self.vault.get_entity_type_in_txn(txn, &self.id)?
+                == Some(crate::registry::ENTITY_TYPE_NOTE)
+            {
+                admit_note(txn)?;
+                note_head = Some(crate::note::documents::head_in(
+                    &self.vault.store,
+                    txn,
+                    self.id,
+                )?);
+                note_doc = storage::load(&self.vault, txn, self.id)?;
+                &note_doc
+            } else {
+                &*resident
+            };
+            // A NOTE's floor names its head, so a head move reaches every
+            // peer as a state-only copy.
+            let key = match note_head {
+                Some((head, _)) => format!(
+                    "ad:e:{}:{}:{}",
+                    self.id.to_hex(),
+                    head.to_hex(),
+                    blake3::hash(admission_key).to_hex()
+                ),
+                None => format!(
+                    "ad:e:{}:{}",
+                    self.id.to_hex(),
+                    blake3::hash(admission_key).to_hex()
+                ),
+            };
             let admitted = self.vault.store.sync_state.get(txn, &key)?;
             let mut state_copy = match admitted {
                 Some(bytes) => !covers(&peer, &storage::decode_vv(&bytes)?),
                 None => true,
             };
+            let slot = note_head.map_or(self.id, |(head, _)| head);
             if let Some(bytes) = self
                 .vault
                 .store
                 .sync_state
-                .get(txn, &format!("ssv:e:{}", self.id.to_hex()))?
+                .get(txn, &format!("ssv:e:{}", slot.to_hex()))?
             {
                 state_copy |= !covers(&peer, &storage::decode_vv(&bytes)?);
             }
@@ -286,7 +470,7 @@ impl EntityDocument {
                     .store
                     .sync_state
                     .put(txn, &key, &doc.oplog_vv().encode())?;
-                (document_sub_tags::STATE, storage::state_copy(&doc)?)
+                (document_sub_tags::STATE, storage::state_copy(doc)?)
             } else {
                 (
                     document_sub_tags::UPDATE,
@@ -294,7 +478,14 @@ impl EntityDocument {
                         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?,
                 )
             };
-            encode_document(self.id, kind, &bytes)
+            // A NOTE's frames name their head and head sequence.
+            let payload = match note_head {
+                Some((head, seq)) => {
+                    [head.as_bytes().as_slice(), &seq.to_be_bytes(), &bytes].concat()
+                }
+                None => bytes,
+            };
+            encode_document(self.id, kind, &payload)
                 .into_result()
                 .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))
         })
@@ -334,11 +525,49 @@ impl EntityDocument {
         })
     }
 
+    pub(crate) fn is_note(&self) -> Result<bool> {
+        Ok(self.vault.get_entity_type(&self.id)? == Some(crate::registry::ENTITY_TYPE_NOTE))
+    }
+
+    fn refuse_raw_note(&self) -> Result<()> {
+        if self.is_note()? {
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::DocumentAdmissionDenied,
+            ));
+        }
+        Ok(())
+    }
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, LoroDoc>> {
         self.doc
             .lock()
             .map_err(|_| Error::InvariantViolation("entity document poisoned"))
     }
+}
+
+/// The owner lane's admission floor label. No selector encodes to it: an
+/// encoded selector is a MessagePack map.
+const OWNER_ADMISSION_KEY: &[u8] = b"owner";
+
+/// What an own device may never receive on the text plane.
+pub(crate) fn owner_note_admission(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<()> {
+    eligible(vault, txn, id)?;
+    if vault.get_entity_type_in_txn(txn, &id)? != Some(crate::registry::ENTITY_TYPE_NOTE)
+        || crate::settings::device_only_withholds(
+            &vault.store,
+            txn,
+            &crate::settings::device_only_worlds_in(&vault.store, txn)?,
+            &id,
+        )?
+    {
+        return Err(Error::sync_protocol(
+            SyncProtocolValidation::DocumentAdmissionDenied,
+        ));
+    }
+    Ok(())
 }
 
 fn covers(peer: &VersionVector, floor: &VersionVector) -> bool {
@@ -356,6 +585,7 @@ fn clone_doc(doc: &LoroDoc) -> Result<LoroDoc> {
 }
 
 fn eligible(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<()> {
+    crate::note::ensure_citations_ready(&vault.store, txn, id)?;
     let raw = vault
         .store
         .entities
@@ -365,6 +595,9 @@ fn eligible(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<()> {
         .ok_or_else(|| Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied))?;
     // Credentials never own editable text, including portable credentials.
     if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+        || vault.local_hard_delete_marker_exists_in_txn(txn, &id)?
+        || (header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+            && raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN)
         || vault.store.off_record_sessions.contains_entity(&id)?
     {
         return Err(Error::sync_protocol(

@@ -8,19 +8,25 @@ mod builder;
 mod edge_walk;
 mod empty_pack;
 mod hydration;
+mod l2_base;
 mod mcp_ref;
 mod psych_mirror;
 mod quarantine;
+pub mod source_ranking;
 mod telemetry;
 mod types;
 mod validation;
 mod world_partition;
 
 #[cfg(test)]
+mod capability_tests;
+#[cfg(test)]
 mod tests;
 
 pub use builder::{ContextPackBuilder, SerializedContextPack, UnfinalizedContextPack};
 pub use empty_pack::{EmptyContext, EmptyReason, refresh_projected_empty_context};
+pub(crate) use l2_base::L2BaseCache;
+pub use l2_base::L2BaseSummary;
 pub use mcp_ref::{MCP_CONTEXT_PACK_REF_SCHEMA_VERSION, McpContextPackRef, McpContextPackRefError};
 pub use psych_mirror::{
     PsychProfilePackSection, PsychProfilePackStaleReason, psych_mirror_source_candidate_from_claim,
@@ -33,3 +39,5 @@ pub use types::{
     PackStats, PackTokenStats, TokenAllocation,
 };
 pub use world_partition::WORLD_STALE_FIELD;
+
+pub(crate) use hydration::context_entity_matches_read_snapshot;

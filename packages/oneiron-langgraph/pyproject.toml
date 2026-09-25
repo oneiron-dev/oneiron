@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oneiron-langgraph"
+version = "1.0.0"
+description = "Thin LangGraph BaseStore adapter for actor-bound Oneiron keyed memory"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["oneiron>=1.0.0,<2", "langgraph-checkpoint>=4.1.1,<5"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.23", "langgraph>=1,<2"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

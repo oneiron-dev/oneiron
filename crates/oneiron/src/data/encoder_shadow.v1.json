@@ -1,0 +1,34 @@
+{
+  "model": "fixture/multitask@v1",
+  "input_hash": "fa44825aeead39496f7c5f100ef8449b5221092e55e0434ef70f58f5df2b9374",
+  "output": {
+    "spans": [
+      {
+        "message": 0,
+        "start": 0,
+        "end": 5,
+        "label": "PERSON",
+        "confidence": 0.9
+      },
+      {
+        "message": 0,
+        "start": 7,
+        "end": 10,
+        "label": "PERSON",
+        "confidence": 0.8
+      }
+    ],
+    "links": [
+      {
+        "span": 1,
+        "antecedent": 0
+      }
+    ],
+    "vad": {
+      "valence": 0.5,
+      "arousal": 0.6,
+      "dominance": 0.4
+    }
+  },
+  "failure": null
+}

@@ -3,10 +3,6 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::error::SyncError;
 
-fn key(value: &str) -> WindowKey {
-    WindowKey::new(value)
-}
-
 fn test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
@@ -36,73 +32,6 @@ fn set_maintenance_quota(vault: &Vault, max_ops: u32, window_secs: u64) -> Resul
             quota_window_secs: window_secs,
         },
     )
-}
-
-#[test]
-fn federation_quota_allows_known_windows_after_quota_is_reached() {
-    let now = Instant::now();
-    let mut quota = FederationConnectionQuota::new(FederationQuotaConfig::new(1, 30));
-
-    assert_eq!(quota.allow_window(&key("2026-03"), now), AllowBlock::Allow);
-    assert_eq!(quota.allow_window(&key("2026-03"), now), AllowBlock::Allow);
-    assert_eq!(quota.snapshot(now).windows_touched, 1);
-}
-
-#[test]
-fn federation_quota_exceeded_enters_observable_pause() {
-    let now = Instant::now();
-    let mut quota = FederationConnectionQuota::new(FederationQuotaConfig::new(1, 30));
-
-    assert_eq!(quota.allow_window(&key("2026-03"), now), AllowBlock::Allow);
-    assert_eq!(
-        quota.allow_window(&key("2026-04"), now),
-        AllowBlock::Pause(FederationPauseReason::WindowQuotaExceeded)
-    );
-
-    let snapshot = quota.snapshot(now);
-    assert_eq!(
-        snapshot.decision,
-        AllowBlock::Pause(FederationPauseReason::FloodPauseActive)
-    );
-    assert_eq!(snapshot.pause_remaining, Some(Duration::from_secs(30)));
-    assert_eq!(snapshot.windows_touched, 1);
-}
-
-#[test]
-fn federation_pause_resumes_after_pause_duration() {
-    let now = Instant::now();
-    let mut quota = FederationConnectionQuota::new(FederationQuotaConfig::new(1, 1));
-
-    assert_eq!(quota.allow_window(&key("2026-03"), now), AllowBlock::Allow);
-    assert_eq!(
-        quota.allow_window(&key("2026-04"), now),
-        AllowBlock::Pause(FederationPauseReason::WindowQuotaExceeded)
-    );
-    assert_eq!(
-        quota.allow_window(&key("2026-03"), now),
-        AllowBlock::Pause(FederationPauseReason::FloodPauseActive)
-    );
-
-    let resumed = now + Duration::from_secs(1);
-    assert_eq!(
-        quota.allow_window(&key("2026-03"), resumed),
-        AllowBlock::Allow
-    );
-}
-
-#[test]
-fn zero_federation_quota_blocks_connection() {
-    let now = Instant::now();
-    let mut quota = FederationConnectionQuota::new(FederationQuotaConfig::new(0, 30));
-
-    assert_eq!(
-        quota.allow_window(&key("2026-03"), now),
-        AllowBlock::Block(FederationBlockReason::WindowQuotaDisabled)
-    );
-    assert_eq!(
-        quota.snapshot(now).decision,
-        AllowBlock::Block(FederationBlockReason::WindowQuotaDisabled)
-    );
 }
 
 #[test]

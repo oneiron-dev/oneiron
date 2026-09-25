@@ -1,0 +1,5 @@
+{"stage": "setup", "status": "complete", "unix_time": 1789838870.176191, "e1_e3_qualified": false, "mode": "english", "profile_sha256": "8e40caaa33020b874d94aee05a2ecc301d9b82217aa81c5d3ebd5e5c1e531e6f", "model_execution": false}
+{"stage": "decode", "status": "started", "unix_time": 1789838870.179032, "e1_e3_qualified": false, "input_sha256": "0401d5626fa0a5e6401da721f62479033358d9b3dc2db6a19c889913d4c0d089"}
+{"stage": "decode", "status": "complete", "unix_time": 1789838870.310545, "e1_e3_qualified": false, "pcm_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d", "samples": 190218}
+{"stage": "native-model", "status": "started", "unix_time": 1789838870.3106089, "e1_e3_qualified": false, "mode": "english", "fixture": "public-synthetic-no-timing-or-speaker-truth"}
+{"stage": "native-model", "status": "complete", "unix_time": 1789838891.3772988, "e1_e3_qualified": false, "output_sha256": "a3f2a6a85f5204875bdf8f96333ef4076431112f381e8e3915c92de9f2f27dba", "native_execution_completed": true}

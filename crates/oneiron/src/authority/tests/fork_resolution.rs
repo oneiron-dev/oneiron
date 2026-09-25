@@ -713,7 +713,7 @@ fn quarantined_keys_do_not_count_as_revoke_survivors() {
         &owner,
     );
     let fork_restrict = cosign_ed(
-        set_tier_floor_entry(vault_id, &enroll_third, &owner, 2, AuthorityTier::Hardware),
+        set_tier_floor_entry(vault_id, &enroll_third, &owner, 2, AuthorityTier::Software),
         &owner,
         &second,
     );
@@ -898,7 +898,7 @@ fn winning_self_revoke_marks_authority_fork_resolved() {
 }
 
 #[test]
-fn recovery_reboot_resolves_inherited_authority_fork() {
+fn re_root_resolves_inherited_authority_fork() {
     let owner = ed_key(100);
     let second = ed_key(101);
     let third = ed_key(102);
@@ -934,7 +934,7 @@ fn recovery_reboot_resolves_inherited_authority_fork() {
         &second,
     );
     let fork_restrict = cosign_ed(
-        set_tier_floor_entry(vault_id, &enroll_third, &owner, 3, AuthorityTier::Hardware),
+        set_tier_floor_entry(vault_id, &enroll_third, &owner, 3, AuthorityTier::Software),
         &owner,
         &second,
     );
@@ -959,7 +959,7 @@ fn recovery_reboot_resolves_inherited_authority_fork() {
         fork_ceiling.clone()
     };
     let recovery = cosign_ed(
-        recovery_reboot_entry(vault_id, &winner, &second, 103, 0),
+        re_root_entry(vault_id, &winner, &second, 103, 0),
         &second,
         &third,
     );
@@ -1037,7 +1037,7 @@ fn independent_recovery_equivocation_groups_resolve_without_deadlock() {
         &second,
     );
     let owner_recovery = cosign_ed(
-        recovery_reboot_entry(vault_id, &enroll_fourth, &owner, 137, 4),
+        re_root_entry(vault_id, &enroll_fourth, &owner, 137, 4),
         &owner,
         &third,
     );
@@ -1047,7 +1047,7 @@ fn independent_recovery_equivocation_groups_resolve_without_deadlock() {
         &third,
     );
     let second_recovery = cosign_ed(
-        recovery_reboot_entry(vault_id, &enroll_fourth, &second, 138, 0),
+        re_root_entry(vault_id, &enroll_fourth, &second, 138, 0),
         &second,
         &fourth,
     );
@@ -1110,7 +1110,7 @@ fn same_signer_recovery_fork_does_not_wait_on_higher_sequence_fork() {
         },
     );
     let recovery = cosign_ed(
-        recovery_reboot_entry(vault_id, &enroll_second, &owner, 144, 2),
+        re_root_entry(vault_id, &enroll_second, &owner, 144, 2),
         &owner,
         &second,
     );

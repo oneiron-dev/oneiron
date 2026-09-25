@@ -16,6 +16,7 @@ use super::codec::{
     decode_code_revision, decode_code_revision_fork, encode_code_revision,
     encode_code_revision_fork, validate_code_revision_fork_shape, validate_code_revision_shape,
 };
+use super::frontier::FrontierUpdate;
 use super::frontier::{
     delete_code_revision_frontier_for_revision_in_txn, encode_code_revision_frontier_record,
     get_code_revision_frontier_in_txn, validate_code_revision_frontier_update,
@@ -39,11 +40,16 @@ use super::keys::{
     code_revision_parent_index_prefix, code_revision_record_key, code_revision_session_index_key,
     code_revision_session_index_prefix, id_from_index_key,
 };
+use super::proposals::CodeRevisionWriteOutcome;
+
 use super::types::{CodeRevision, CodeRevisionFork, CodeRevisionFrontierRecord, CodeRevisionKind};
 use crate::error::ArtifactError;
 
 impl Vault {
-    pub fn commit_code_revision(&self, revision: &CodeRevision) -> Result<()> {
+    pub fn commit_code_revision(
+        &self,
+        revision: &CodeRevision,
+    ) -> Result<CodeRevisionWriteOutcome> {
         if revision.kind != CodeRevisionKind::Commit {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "commit_code_revision requires kind commit",
@@ -52,7 +58,10 @@ impl Vault {
         write_code_revision(&self.store, revision)
     }
 
-    pub fn revert_code_revision(&self, revision: &CodeRevision) -> Result<()> {
+    pub fn revert_code_revision(
+        &self,
+        revision: &CodeRevision,
+    ) -> Result<CodeRevisionWriteOutcome> {
         if revision.kind != CodeRevisionKind::Revert {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "revert_code_revision requires kind revert",
@@ -222,12 +231,23 @@ pub(crate) fn has_finalized_code_revision_in_txn(
         .is_some())
 }
 
-fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<()> {
+fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRevisionWriteOutcome> {
     validate_code_revision_shape(revision)?;
     let encoded = encode_code_revision(revision)?;
     let mut wtxn = store.env.write_txn()?;
     backfill_code_revision_integrity_for_session_in_txn(store, &mut wtxn, &revision.session_id)?;
     let artifact_body = require_code_artifact_body(store, &wtxn, &revision.revision_id)?;
+    // A retained proposal stays retained even if its old parent later becomes
+    // the head. Resolution must submit a new revision identity explicitly.
+    if let Some(existing) = super::proposals::load(store, &wtxn, &revision.revision_id)? {
+        if existing.revision != *revision || existing.artifact_body != artifact_body {
+            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                "stranded revision identity reused",
+            )));
+        }
+        return Ok(CodeRevisionWriteOutcome::Proposed(Box::new(existing)));
+    }
+
     require_entity_type(
         store,
         &wtxn,
@@ -280,7 +300,22 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<()> {
     }
     let integrity = build_code_revision_integrity_record(store, &wtxn, revision, &artifact_body)?;
     let update_frontier =
-        validate_code_revision_frontier_update(store, &wtxn, revision, &integrity)?;
+        match validate_code_revision_frontier_update(store, &wtxn, revision, &integrity)? {
+            FrontierUpdate::Advance => true,
+            FrontierUpdate::Converged => false,
+            FrontierUpdate::Diverged(head) => {
+                let proposal = super::proposals::retain(
+                    store,
+                    &mut wtxn,
+                    revision,
+                    &head,
+                    &integrity,
+                    &artifact_body,
+                )?;
+                wtxn.commit()?;
+                return Ok(CodeRevisionWriteOutcome::Proposed(Box::new(proposal)));
+            }
+        };
     let encoded_integrity = encode_code_revision_integrity_record(&integrity)?;
     let frontier = CodeRevisionFrontierRecord {
         session_id: revision.session_id,
@@ -352,7 +387,7 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<()> {
         ppr::increment_graph_version(store, &mut wtxn)?;
     }
     wtxn.commit()?;
-    Ok(())
+    Ok(CodeRevisionWriteOutcome::Finalized)
 }
 
 pub(super) fn get_code_revision_in_txn(
@@ -395,7 +430,7 @@ fn get_code_revision_fork_in_txn(
     decode_code_revision_fork(&raw).map(Some)
 }
 
-fn collect_code_revisions_by_index_prefix(
+pub(super) fn collect_code_revisions_by_index_prefix(
     store: &Store,
     rtxn: &RoTxn<'_>,
     prefix: &[u8],

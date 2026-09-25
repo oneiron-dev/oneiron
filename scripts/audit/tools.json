@@ -1,0 +1,5 @@
+{
+  "sccache": "0.15.0",
+  "cargo-mutants": "27.1.0",
+  "cargo-llvm-cov": "0.8.7"
+}

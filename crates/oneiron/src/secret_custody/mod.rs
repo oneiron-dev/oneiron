@@ -82,9 +82,7 @@ pub(crate) use self::doors::{
 // unused in non-test builds, so the seam provides it under `cfg(test)`.
 #[cfg(test)]
 pub(crate) use self::doors::decode_secret_custody_admission_body;
-pub(crate) use self::floor::{
-    PolicyManifestWalkError, policy_manifest_bodies_strict, policy_manifest_body_map,
-};
+pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 pub(crate) use self::replication::{
     plan_replicated_name_index, stage_replicated_name_index, validate_replicated_custody_put,
 };

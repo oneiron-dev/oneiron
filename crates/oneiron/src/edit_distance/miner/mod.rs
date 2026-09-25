@@ -83,17 +83,25 @@
 
 mod config;
 mod emission;
+mod feedback;
+mod influence;
 mod mining;
 mod model;
 mod store;
+mod target;
+mod win;
 
 pub use self::config::{
     MINER_K_DEFAULT, MINER_K_SETTINGS_KEY, MINER_REJECTION_COOLDOWN_SECS,
     PREDICATE_PREFERENCE_PHRASING,
 };
+pub use self::feedback::bind_amendment_preference_principal;
+pub(crate) use self::feedback::record_inbox_learning_in_txn;
+pub use self::influence::mined_preferences_for_principal;
+pub(crate) use self::influence::{is_mined_preference, preference_receipts_in_force};
 pub use self::mining::{
     classify_substitution, mine_substitution_clusters, miner_attempt_input, miner_k, miner_run_id,
-    miner_session_from_input, run_substitution_miner, set_miner_k,
+    miner_session_from_input, run_substitution_miner, run_substitution_miner_at, set_miner_k,
 };
 pub use self::model::{
     MinedOutcome, MinedSkillEditDecision, MinedSkillEditProposal, MinedSkillEditVerdict, MinerRun,
@@ -102,6 +110,8 @@ pub use self::model::{
 pub use self::store::{
     mined_skill_edit, miner_watermark, pending_substitution_skill_edits, resolve_mined_skill_edit,
 };
+pub use self::target::CompilationTarget;
+pub(crate) use self::target::{is_compiled_preference, validate_compiled_preference};
 
 // The flat miner.rs module used to provide these names to the sibling test
 // module through `use super::*`: every miner-internal item the tests name
@@ -129,3 +139,5 @@ use rmpv::Value;
 
 #[cfg(test)]
 mod tests;
+
+mod stored_fields;

@@ -1,0 +1,18 @@
+[package]
+name = "oneiron-llm-own-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+[lib]
+doctest = false
+[dependencies]
+oneiron = { path = "../oneiron" }
+oneiron-remote = { path = "../oneiron-remote" }
+futures-core = { workspace = true }
+[dev-dependencies]
+tempfile = "3"
+oneiron = { path = "../oneiron", features = ["test-hooks"] }
+serde_json = { workspace = true }
+[lints]
+workspace = true

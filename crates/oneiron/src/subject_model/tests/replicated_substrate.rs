@@ -170,13 +170,15 @@ fn substrate_sync_edge_outcomes_cannot_discharge_a_missing_person_retry() -> Res
         let missing = entity(0x98);
         let id = set_person_substrate(&vault, person, PersonSubstrate::Meat, writer(), 100)?;
         let before = vault.get(&id)?;
-        let body = subject_fact(
+        let mut body = subject_fact(
             PREDICATE_PERSON_SUBSTRATE,
             missing,
             Value::from("model"),
             writer(),
             100,
         );
+        // A claim's facet is set at birth; the replayed body keeps it.
+        body.scope_facet = vault.get_claim(&id)?.expect("stored claim").scope_facet;
         let doc = LoroDoc::new();
         let materializer = Materializer::new();
         map_insert_bytes(

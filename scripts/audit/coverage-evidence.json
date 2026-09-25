@@ -1,0 +1,70 @@
+{
+  "lanes": [
+    {
+      "lane": 0,
+      "files": 1609,
+      "lines": 289252,
+      "covered_lines": 260200,
+      "sha256": "b8b8cce4a498e1f40cd6b161b7e88836cc6b5af6d171bf8ef74407cae5219a10",
+      "name": "full-tier nextest"
+    },
+    {
+      "lane": 1,
+      "files": 1609,
+      "lines": 289309,
+      "covered_lines": 195117,
+      "sha256": "fdc80e113ecaf559ba8c76c571c0f35ccbc2309c2fcb9f7e15e01285bb1aed77",
+      "name": "featureless core libtest"
+    },
+    {
+      "lane": 2,
+      "files": 1609,
+      "lines": 289309,
+      "covered_lines": 44,
+      "sha256": "8d599f372f830636019bba602b5ed3b3da23e60c68d9792daa37cc32fc34eaaf",
+      "name": "workspace doctests"
+    }
+  ],
+  "merged": {
+    "files": 1609,
+    "lines": 289309,
+    "covered_lines": 260278,
+    "sha256": "3a12ca654d3da59a32d7ec80282e6ce1fe2aa81072b247cf6644e3abe0b34d29"
+  },
+  "overlapping_line_occurrences_removed": 578561,
+  "dedupe": "canonical source path + line; maximum hit count; exact union verified",
+  "collector": "cargo-llvm-cov 0.8.7",
+  "rust_toolchain": "1.96",
+  "llvm_major": 22,
+  "measured": true,
+  "source": {
+    "base_commit": "7f40b9f8",
+    "changes": [
+      "reviewed OF-060 test pin",
+      "short private coverage temporary directory"
+    ],
+    "scope": "Immutable recovery snapshot. Later managed-owner server changes and the GPU integration test have separate exact-source cargo test, Clippy and rustdoc evidence. Production core sources match the final worktree.",
+    "manifest_sha256": "20b090c40a5f8f5867f7bfe724d94e9342f253c16f9743d40ec26a0b3c80be26",
+    "collector_sha256": "db2257fb2b7827f939cf740c59c46727c39ff76401c4ddcd758650c2f0f8a70b"
+  },
+  "validation": {
+    "nextest": {
+      "full_tier_tests": 9312,
+      "original_passes": 9297,
+      "original_failures": 15,
+      "repair_checks_passed": 42,
+      "remaining_failures": 0,
+      "full_profile_flaky_then_passed": 1,
+      "exclusions": "oneiron-napi and the seven named macOS UnsupportedPlatform bench cases already excluded by CI"
+    },
+    "featureless_libtest": {
+      "passed": 6534,
+      "ignored": 4
+    },
+    "workspace_doctests": {
+      "passed": 7,
+      "failed": 0
+    },
+    "merge_check": "Every merged file/line appears once and its hit count equals the maximum across the three lanes."
+  }
+}

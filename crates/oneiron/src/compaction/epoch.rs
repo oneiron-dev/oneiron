@@ -1,8 +1,8 @@
 //! Epoch-summary codec and transactional lineage mint.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -335,14 +335,12 @@ pub(super) fn prior_epoch_in_txn(
 ) -> Result<Option<PriorEpoch>> {
     let mut best: Option<EpochSummaryBody> = None;
     let mut conflicting = false;
-    for row in store.entities.iter(rtxn)? {
-        let (_, raw) = row?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_SUMMARY || raw.len() <= ENTITY_METADATA_HEADER_LEN {
+    for row in store.port_entity_records(rtxn)? {
+        let (_, row) = row?;
+        if row.entity_type != ENTITY_TYPE_SUMMARY || row.body.is_empty() {
             continue;
         }
-        let bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let bytes = &row.body;
         let body = match decode_epoch_summary_body(bytes) {
             Ok(body) => body,
             Err(error) if is_epoch_candidate_for_session(bytes, session_ref) => return Err(error),
@@ -455,7 +453,7 @@ pub(super) fn mint_epoch_summary(
     // watermark. Wall-clock would make an otherwise byte-stable row depend on
     // when it happened to be minted.
     let at = request.watermark.learned_at;
-    let summary_id = EntityId::now();
+    let summary_id = vault.store.clock.entity_id()?;
 
     let epoch = vault.with_write_txn(|wtxn| {
         refuse_overlay_derived_mint(&vault.store, &request.window)?;

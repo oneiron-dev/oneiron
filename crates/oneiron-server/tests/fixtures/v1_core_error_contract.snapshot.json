@@ -141,6 +141,35 @@
         },
         "entity_type": 1,
         "id": "7e00000000000000000000001221dead",
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "applied": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "narrowed_axes": [],
+          "replan_hint": [],
+          "requested": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "suppressed_count": 0
+        },
         "short_id": "tn1",
         "status": "deleted"
       },

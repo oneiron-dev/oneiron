@@ -12,11 +12,12 @@
 //!
 //! # The verb catalog is DECLARED, not implied
 //!
-//! [`FACADE_VERB_CATALOG`] is the ordered, authoritative list of verbs this
+//! [`oneiron::task_verb::sdk::AgentVerb`] is the ordered, authoritative list of verbs this
 //! SDK ships, and it is the same list the server's `/v1/core/facade` nest
 //! routes and the same list both language export censuses assert against. It
-//! holds the four calls of the canonical quickstart — `witness`,
-//! `claim_upsert`, `recall`, `receipts` — matching the projection L1 landed.
+//! holds four quickstart calls, five exact actor-owned keyed-memory calls,
+//! four tasks.* calls and four rooms.* calls. Every catalog row is implemented
+//! on both backends and bindings.
 //!
 //! The remaining §HEAD-CONTRACT verbs are ABSENT rather than stubbed, for the
 //! reason `oneiron-server`'s `api/facade.rs` header already gives: a `501` stub
@@ -28,10 +29,12 @@
 //!
 //! # What this crate never does
 //!
-//! It does not mint, split, parse, or validate authority. The `OF-452` slip
-//! crosses verbatim and every authority decision is the server's. It does not
+//! It does not mint, split, or validate authority, and it never reads a
+//! slip's claims. A slip crosses verbatim beside a fresh holder proof signed
+//! with its connection key; the slip is parsed once, at connect, only to hash
+//! it into that proof, and every authority decision is the server's. It does not
 //! emulate a facade verb out of lower-level storage routes. It does not mint
-//! or simulate a retrieval lease, so `Effort::Deep` returns the engine's own
+//! or simulate a retrieval lease, so `Effort::High` returns the engine's own
 //! `LEASE_REQUIRED`.
 
 #![forbid(unsafe_code)]
@@ -40,16 +43,13 @@ mod agent_verbs;
 mod caps;
 mod embedded;
 mod error;
+pub mod llm;
 mod remote;
 
 use std::fmt;
 use std::path::Path;
 
-use oneiron::memory::{
-    ClaimInput, CommitReceipt, Effort, MemoryError, MemoryPack, MemoryReceipt, RecallScope,
-    WitnessReceipt, WitnessTurn,
-};
-use serde::Serialize;
+use oneiron::memory::{Effort, MemoryError};
 
 pub use crate::caps::{
     MAX_BATCH_ENTITIES, MAX_BLOB_BASE64_LEN, MAX_BLOB_CONTENT_BYTES, MAX_CODEBASE_FILES,
@@ -57,7 +57,6 @@ pub use crate::caps::{
     MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len, check_dimensions, check_limit,
     check_payload_bytes, check_query, check_unix_seconds,
 };
-use crate::caps::{check_claim_input, check_witness_turn};
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::store_open_count;
 use crate::error::forbidden;
@@ -68,15 +67,6 @@ pub const DEFAULT_RECALL_LIMIT: usize = 10;
 
 /// `receipts`'s default row count, per §HEAD-CONTRACT.
 pub const DEFAULT_RECEIPTS_LIMIT: usize = 100;
-
-/// The ordered public verb catalog this SDK ships.
-///
-/// Load-bearing as an ORDER and as a SET: the server route census, the npm
-/// export census, and the Python stub census are all compared against this
-/// exact slice, so a verb cannot appear in one surface and be forgotten in
-/// another. Every entry is also the wire path segment, which is why the
-/// spelling is the engine's snake_case verb name and not the JavaScript one.
-pub use agent_verbs::FACADE_VERB_CATALOG;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
 ///
@@ -121,7 +111,7 @@ pub fn parse_effort(value: &str) -> Result<Effort, MemoryError> {
     Effort::parse(value).ok_or_else(|| {
         crate::error::bad_request(
             format!("unknown recall effort {value:?}"),
-            &["Use one of: minimal, standard, deep."],
+            &["Use one of: light, medium, high, xhigh, max."],
         )
     })
 }
@@ -142,8 +132,8 @@ enum Backend {
 /// `Debug` is required rather than decorative: the contract tests assert a
 /// refusal with `expect_err` on a `Result<Self, _>`, and that panic message
 /// formats the `Ok` type. It is HAND-WRITTEN because a derive would walk into
-/// the backend and print what a handle holds — a remote handle holds the
-/// bearer slip verbatim, and a credential must not reach a panic message, a
+/// the backend and print what a handle holds — a remote handle holds a slip
+/// and its connection key, and a credential must not reach a panic message, a
 /// test log, or a caller's crash report. The kind is the only thing a
 /// diagnostic needs to know about a handle.
 impl fmt::Debug for OneironClient {
@@ -154,23 +144,6 @@ impl fmt::Debug for OneironClient {
         };
         write!(formatter, "OneironClient {{ backend: {backend} }}")
     }
-}
-
-/// `recall`'s wire request, matching the server handler's body exactly.
-#[derive(Serialize)]
-struct RecallRequest<'a> {
-    query: &'a str,
-    effort: Effort,
-    scope: &'a RecallScope,
-    limit: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    format: Option<&'a str>,
-}
-
-/// `receipts`'s wire request.
-#[derive(Serialize)]
-struct ReceiptsRequest {
-    limit: usize,
 }
 
 impl OneironClient {
@@ -188,14 +161,25 @@ impl OneironClient {
 
     /// Binds a remote `oneiron-server` through the facade projection.
     ///
-    /// Validates URL configuration and nothing else. Authority arrives with
-    /// the slip and is decided server-side from the MAC-verified
-    /// `principal_ref` and `actor_class` claims; this call neither claims it
-    /// nor mints an actor locally.
+    /// `key` is the credential [`OneironClient::pair`] returned. This call
+    /// validates configuration and makes no request; every request after it
+    /// is signed with the credential's connection key, and write identity is
+    /// the server's to decide from the slip it verifies. This call neither
+    /// claims authority nor mints an actor locally.
     pub fn connect(url: &str, key: &str) -> Result<Self, MemoryError> {
+        let (bearer, holder) = remote::parse_credential(key)?;
         Ok(Self {
-            backend: Backend::Remote(RemoteClient::connect(url, key)?),
+            backend: Backend::Remote(RemoteClient::connect(url, &bearer, holder)?),
         })
+    }
+
+    /// Redeems a pairing link once and returns `(url, credential)`.
+    ///
+    /// It generates the connection key, proves it to the server, and builds
+    /// no handle: connect with the pair it returns, and store the credential
+    /// as one secret.
+    pub fn pair(link: &str) -> Result<(String, String), MemoryError> {
+        remote::pair(link)
     }
 
     /// Rebinds to another actor, or refuses.
@@ -216,7 +200,7 @@ impl OneironClient {
             Backend::Remote(_) => Err(forbidden(
                 "a connected handle cannot rebind its actor",
                 &[
-                    "Reconnect with a slip minted for the actor you want to act as.",
+                    "Reconnect with a credential paired for the actor you want to act as.",
                     "The slip's principal_ref and actor_class bind write identity server-side.",
                 ],
             )),
@@ -287,76 +271,4 @@ impl OneironClient {
 
     // ── the declared catalog ────────────────────────────────────────────
     //
-    // One method per FACADE_VERB_CATALOG entry, in catalog order. Each one
-    // gates the PID, validates its own caps, and then makes exactly one
-    // dispatch: an engine facade call or one HTTP round trip to the verb of
-    // the same name. There is no composition and no second code path.
-
-    /// Witnesses one conversational turn.
-    ///
-    /// `turn.occurred_at` is already stamped by the caller through
-    /// [`stamp_occurred_at`], because the engine DTO's field is required and a
-    /// backend cannot tell an omitted `0` from a deliberate one.
-    pub fn witness(&self, turn: &WitnessTurn) -> Result<WitnessReceipt, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        check_witness_turn(turn)?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().witness(turn),
-            Backend::Remote(remote) => remote.call("witness", turn),
-        }
-    }
-
-    /// Upserts one claim through the gated claim-candidate path.
-    pub fn claim_upsert(&self, claim: &ClaimInput) -> Result<CommitReceipt, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        check_claim_input(claim)?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().claim_upsert(claim),
-            Backend::Remote(remote) => remote.call("claim_upsert", claim),
-        }
-    }
-
-    /// Recalls a memory pack.
-    ///
-    /// The lease argument the engine takes is `None` and is NOT a client
-    /// input: no lease issuer exists, and a bearer slip is not one. An
-    /// `Effort::Deep` call therefore returns the engine's `LEASE_REQUIRED`
-    /// through both backends, spelled identically.
-    pub fn recall(
-        &self,
-        query: &str,
-        effort: Effort,
-        scope: &RecallScope,
-        limit: usize,
-        format: Option<&str>,
-    ) -> Result<MemoryPack, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        check_query(query)?;
-        check_limit(limit)?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded
-                .memory()
-                .recall(query, effort, scope, limit, format, None),
-            Backend::Remote(remote) => remote.call(
-                "recall",
-                &RecallRequest {
-                    query,
-                    effort,
-                    scope,
-                    limit,
-                    format,
-                },
-            ),
-        }
-    }
-
-    /// Lists governance receipts, newest first.
-    pub fn receipts(&self, limit: usize) -> Result<Vec<MemoryReceipt>, MemoryError> {
-        self.ensure_dispatch_pid()?;
-        check_limit(limit)?;
-        match &self.backend {
-            Backend::Embedded(embedded) => embedded.memory().receipts(limit),
-            Backend::Remote(remote) => remote.call("receipts", &ReceiptsRequest { limit }),
-        }
-    }
 }

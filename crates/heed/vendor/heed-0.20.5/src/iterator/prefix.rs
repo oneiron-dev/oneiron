@@ -73,7 +73,12 @@ pub struct RoPrefix<'txn, KC, DC, C = DefaultComparator, IM = MoveThroughDuplica
 
 impl<'txn, KC, DC, C, IM> RoPrefix<'txn, KC, DC, C, IM> {
     pub(crate) fn new(cursor: RoCursor<'txn>, prefix: Vec<u8>) -> RoPrefix<'txn, KC, DC, C, IM> {
-        RoPrefix { cursor, prefix, move_on_first: true, _phantom: marker::PhantomData }
+        RoPrefix {
+            cursor,
+            prefix,
+            move_on_first: true,
+            _phantom: marker::PhantomData,
+        }
     }
 
     /// Move on the first value of keys, ignoring duplicate values.
@@ -140,7 +145,8 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let result = if self.move_on_first {
             self.move_on_first = false;
-            self.cursor.move_on_key_greater_than_or_equal_to(&self.prefix)
+            self.cursor
+                .move_on_key_greater_than_or_equal_to(&self.prefix)
         } else {
             self.cursor.move_on_next(IM::MOVE_OPERATION)
         };
@@ -213,7 +219,12 @@ pub struct RwPrefix<'txn, KC, DC, C = DefaultComparator, IM = MoveThroughDuplica
 
 impl<'txn, KC, DC, C, IM> RwPrefix<'txn, KC, DC, C, IM> {
     pub(crate) fn new(cursor: RwCursor<'txn>, prefix: Vec<u8>) -> RwPrefix<'txn, KC, DC, C, IM> {
-        RwPrefix { cursor, prefix, move_on_first: true, _phantom: marker::PhantomData }
+        RwPrefix {
+            cursor,
+            prefix,
+            move_on_first: true,
+            _phantom: marker::PhantomData,
+        }
     }
 
     /// Delete the entry the cursor is currently pointing to.
@@ -295,7 +306,8 @@ impl<'txn, KC, DC, C, IM> RwPrefix<'txn, KC, DC, C, IM> {
         F: FnOnce(&mut ReservedSpace) -> io::Result<()>,
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
-        self.cursor.put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
+        self.cursor
+            .put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
     }
 
     /// Insert a key-value pair in this database. The entry is written with the specified flags and data codec.
@@ -327,7 +339,8 @@ impl<'txn, KC, DC, C, IM> RwPrefix<'txn, KC, DC, C, IM> {
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
         let data_bytes: Cow<[u8]> = NDC::bytes_encode(data).map_err(Error::Encoding)?;
-        self.cursor.put_current_with_flags(flags, &key_bytes, &data_bytes)
+        self.cursor
+            .put_current_with_flags(flags, &key_bytes, &data_bytes)
     }
 
     /// Move on the first value of keys, ignoring duplicate values.
@@ -394,7 +407,8 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let result = if self.move_on_first {
             self.move_on_first = false;
-            self.cursor.move_on_key_greater_than_or_equal_to(&self.prefix)
+            self.cursor
+                .move_on_key_greater_than_or_equal_to(&self.prefix)
         } else {
             self.cursor.move_on_next(IM::MOVE_OPERATION)
         };
@@ -464,7 +478,12 @@ pub struct RoRevPrefix<'txn, KC, DC, C = DefaultComparator, IM = MoveThroughDupl
 
 impl<'txn, KC, DC, C, IM> RoRevPrefix<'txn, KC, DC, C, IM> {
     pub(crate) fn new(cursor: RoCursor<'txn>, prefix: Vec<u8>) -> RoRevPrefix<'txn, KC, DC, C, IM> {
-        RoRevPrefix { cursor, prefix, move_on_last: true, _phantom: marker::PhantomData }
+        RoRevPrefix {
+            cursor,
+            prefix,
+            move_on_last: true,
+            _phantom: marker::PhantomData,
+        }
     }
 
     /// Move on the first value of keys, ignoring duplicate values.
@@ -554,10 +573,13 @@ where
 
     fn last(mut self) -> Option<Self::Item> {
         let result = if self.move_on_last {
-            self.cursor.move_on_key_greater_than_or_equal_to(&self.prefix)
+            self.cursor
+                .move_on_key_greater_than_or_equal_to(&self.prefix)
         } else {
             let current = self.cursor.current();
-            let start = self.cursor.move_on_key_greater_than_or_equal_to(&self.prefix);
+            let start = self
+                .cursor
+                .move_on_key_greater_than_or_equal_to(&self.prefix);
             match (current, start) {
                 (Ok(Some((ckey, _))), Ok(Some((key, data)))) if ckey != key => {
                     Ok(Some((key, data)))
@@ -603,7 +625,12 @@ pub struct RwRevPrefix<'txn, KC, DC, C = DefaultComparator, IM = MoveThroughDupl
 
 impl<'txn, KC, DC, C, IM> RwRevPrefix<'txn, KC, DC, C, IM> {
     pub(crate) fn new(cursor: RwCursor<'txn>, prefix: Vec<u8>) -> RwRevPrefix<'txn, KC, DC, C, IM> {
-        RwRevPrefix { cursor, prefix, move_on_last: true, _phantom: marker::PhantomData }
+        RwRevPrefix {
+            cursor,
+            prefix,
+            move_on_last: true,
+            _phantom: marker::PhantomData,
+        }
     }
 
     /// Delete the entry the cursor is currently pointing to.
@@ -685,7 +712,8 @@ impl<'txn, KC, DC, C, IM> RwRevPrefix<'txn, KC, DC, C, IM> {
         F: FnOnce(&mut ReservedSpace) -> io::Result<()>,
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
-        self.cursor.put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
+        self.cursor
+            .put_current_reserved_with_flags(flags, &key_bytes, data_size, write_func)
     }
 
     /// Insert a key-value pair in this database. The entry is written with the specified flags and data codec.
@@ -717,7 +745,8 @@ impl<'txn, KC, DC, C, IM> RwRevPrefix<'txn, KC, DC, C, IM> {
     {
         let key_bytes: Cow<[u8]> = KC::bytes_encode(key).map_err(Error::Encoding)?;
         let data_bytes: Cow<[u8]> = NDC::bytes_encode(data).map_err(Error::Encoding)?;
-        self.cursor.put_current_with_flags(flags, &key_bytes, &data_bytes)
+        self.cursor
+            .put_current_with_flags(flags, &key_bytes, &data_bytes)
     }
 
     /// Move on the first value of keys, ignoring duplicate values.
@@ -807,10 +836,13 @@ where
 
     fn last(mut self) -> Option<Self::Item> {
         let result = if self.move_on_last {
-            self.cursor.move_on_key_greater_than_or_equal_to(&self.prefix)
+            self.cursor
+                .move_on_key_greater_than_or_equal_to(&self.prefix)
         } else {
             let current = self.cursor.current();
-            let start = self.cursor.move_on_key_greater_than_or_equal_to(&self.prefix);
+            let start = self
+                .cursor
+                .move_on_key_greater_than_or_equal_to(&self.prefix);
             match (current, start) {
                 (Ok(Some((ckey, _))), Ok(Some((key, data)))) if ckey != key => {
                     Ok(Some((key, data)))

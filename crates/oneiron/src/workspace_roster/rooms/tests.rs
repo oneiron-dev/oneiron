@@ -155,6 +155,13 @@ fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
             999,
         ))
         .expect("other room");
+    let page = memory.rooms_messages_page(room, None, 256).expect("page");
+    assert_eq!(page.next_after, Some(turns[255].to_hex()));
+    let exact = memory
+        .rooms_messages_page(room, Some(turns[0]), 256)
+        .expect("exact page");
+    assert_eq!(exact.rows.len(), 256);
+    assert_eq!(exact.next_after, None);
     let first = memory.rooms_messages(room).expect("first page");
     assert_eq!(first.len(), 256);
     assert_eq!(first[0].turn_id, turns[0].to_hex());
@@ -162,12 +169,14 @@ fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
     let last = memory
         .rooms_messages_page(room, Some(turns[255]), 1)
         .expect("last page");
-    assert_eq!(last.len(), 1);
-    assert_eq!(last[0].turn_id, turns[256].to_hex());
+    assert_eq!(last.rows.len(), 1);
+    assert_eq!(last.next_after, None);
+    assert_eq!(last.rows[0].turn_id, turns[256].to_hex());
     assert!(
         memory
             .rooms_messages_page(room, Some(turns[256]), 256)
             .unwrap()
+            .rows
             .is_empty()
     );
     assert!(

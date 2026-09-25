@@ -53,12 +53,13 @@ impl BranchResources<'_> {
                     "resolved supersession crossed its prior question",
                 ));
             }
-            if matches.len() > 1 {
+            if matches.len() > 1 && prior.is_some() {
                 return Err(invalid_consolidation(
                     "multiple admitted prior heads for one question",
                 ));
             }
-            if let Some((id, true)) = matches.first().copied() {
+            if let [(id, true)] = matches.as_slice() {
+                let id = *id;
                 self.require_prior_write(scope, id)?;
                 attachments.push((id, candidate));
             } else {
@@ -180,11 +181,15 @@ impl ConsolidationFence {
         // This branch admits native user/assistant TURNs only. Imported histories
         // are RECORDs, not TURNs. Generated is the existing evidence-meet floor;
         // a prior is context, never corroboration or a source upgrade.
-        if candidate.evidence_meet != ClaimSource::Generated {
+        if crate::dreamer_consolidation::provenance::source_meet(
+            ClaimSource::Generated,
+            candidate.evidence_meet,
+        ) != candidate.evidence_meet
+        {
             return Err(invalid_consolidation(
                 "native branch evidence source mismatch",
             ));
         }
-        Ok(ClaimSource::Generated)
+        Ok(candidate.evidence_meet)
     }
 }

@@ -1,0 +1,38 @@
+{
+  "fixture": "feedback-intake-chat-v1",
+  "submitted": 4,
+  "distinct_bundles": 3,
+  "open_items": [
+    {
+      "id": "0dc1c9366a39510d1e3ced38a3038d19",
+      "category": "bug",
+      "open": true,
+      "received_at": 10,
+      "sources": [
+        {
+          "id": "0dc1c9366a39510d1e3ced38a3038d19",
+          "user_note": "Recall omitted the recent note after an edit.",
+          "bytes_blake3": "9e3074a3e0d31b52f90fb3d36cf44b17374de2b6ea0e703e3f650a3199bf4a63"
+        },
+        {
+          "id": "8eb4dc7f436580675dfa49a1a4faee29",
+          "user_note": "After editing a note, recall still shows its older content.",
+          "bytes_blake3": "3b5718db51c72ebf9c6e401d716320fd7d9ec59639df2bb7706fec4fcbe08969"
+        }
+      ]
+    },
+    {
+      "id": "3b9437786a1694f0eacaf34f12eccd28",
+      "category": "confusion",
+      "open": true,
+      "received_at": 13,
+      "sources": [
+        {
+          "id": "3b9437786a1694f0eacaf34f12eccd28",
+          "user_note": "The documentation does not explain when indexed reads catch up with live reads.",
+          "bytes_blake3": "3d11ae6034c9661de04969c2b2bc8a64802181390d99f1ad483a2d1ea47d23b0"
+        }
+      ]
+    }
+  ]
+}

@@ -37,7 +37,7 @@ impl PublicBookingAuthority {
             vault,
             txn,
             self.page_ref,
-            now.max(crate::unix_seconds_now()),
+            now.max(vault.store.clock.now_recorded_at()),
         )
         .map_err(|_| {
             BookingError::InvalidConstraint("public booking authority unavailable".to_owned())

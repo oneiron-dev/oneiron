@@ -83,6 +83,7 @@ mod cb_t {
         };
         let legend = BoardLegend::canonical();
         let frame = BoardFrame {
+            changes: None,
             header: &header,
             legend: &legend,
             sections: &sections,
@@ -219,6 +220,7 @@ mod one_1797 {
         let header = header();
         let legend = BoardLegend::canonical();
         let frame = BoardFrame {
+            changes: None,
             header: &header,
             legend: &legend,
             sections,
@@ -404,6 +406,7 @@ mod one_1797 {
         let header = header();
         let legend = BoardLegend::canonical();
         let frame = BoardFrame {
+            changes: None,
             header: &header,
             legend: &legend,
             sections: &sections,
@@ -524,11 +527,13 @@ mod one_1797 {
         let legend = BoardLegend::canonical();
 
         let hostile_frame = BoardFrame {
+            changes: None,
             header: &hostile_header,
             legend: &legend,
             sections: &hostile_sections,
         };
         let benign_frame = BoardFrame {
+            changes: None,
             header: &benign_header,
             legend: &legend,
             sections: &benign_sections,

@@ -402,7 +402,7 @@ fn soft_request_without_standing_changes_nothing() -> Result<()> {
 /// Proof 5: the hard rung is authority-only, runtime-authored, and unforgeable.
 #[test]
 fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     // Standing is the SOFT rung's currency and buys nothing here: there is no
@@ -445,7 +445,10 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
         id: owned.id,
         authority: ForceCancelAuthority::owner("owner-1").expect("verified owner"),
         reason: Some("owner reclaimed the machine".to_owned()),
-        now: 20,
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("authority forces");
@@ -476,7 +479,10 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
                 id: owned.id,
                 lease_owner: "worker-a".to_owned(),
                 attempt_count: owned.attempt_count,
-                now: 21,
+                now: {
+                    clock.set(21);
+                    21
+                },
             })
             .expect_err("completion after a force is refused"),
         "complete",
@@ -486,7 +492,10 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
         id: owned.id,
         authority: ForceCancelAuthority::criticality(),
         reason: None,
-        now: 22,
+        now: {
+            clock.set(22);
+            22
+        },
     })?
     else {
         panic!("a second force is an idempotent replay");
@@ -503,7 +512,10 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
         id: critical.id,
         authority: ForceCancelAuthority::criticality(),
         reason: None,
-        now: 23,
+        now: {
+            clock.set(23);
+            23
+        },
     })?
     else {
         panic!("criticality forces");
@@ -521,11 +533,15 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
     // cleanup, not requeued as ordinary work, and the warning rung is a
     // DIFFERENT, non-terminal thing.
     let expiring = leased_attempt(&queue, "turn:force-expiry")?;
+    let lease_at = expiring.updated_at;
     assert!(matches!(
         queue.warn_lease_expiry(WarnAttemptLeaseExpiry {
             id: expiring.id,
             lease_timeout_secs: 100,
-            now: 12,
+            now: {
+                clock.set(12);
+                12
+            },
         })?,
         LeaseWarningOutcome::NotDue(_)
     ));
@@ -533,7 +549,10 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
         queue.warn_lease_expiry(WarnAttemptLeaseExpiry {
             id: expiring.id,
             lease_timeout_secs: 100,
-            now: 100,
+            now: {
+                clock.set(lease_at + 90);
+                lease_at + 90
+            },
         })?
     else {
         panic!("inside the warning window the runtime asks");
@@ -547,17 +566,26 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
             queue.warn_lease_expiry(WarnAttemptLeaseExpiry {
                 id: expiring.id,
                 lease_timeout_secs: 100,
-                now: 101,
+                now: {
+                    clock.set(lease_at + 91);
+                    lease_at + 91
+                },
             })?,
             LeaseWarningOutcome::AlreadyRequested(_)
         ),
         "polling the warning records one row, not a hundred"
     );
 
-    let landing = accept_landing_at(&queue, &expiring, LandingTrigger::LeaseWarning, 102)?;
+    let landing = accept_landing_at(
+        &queue,
+        &expiring,
+        LandingTrigger::LeaseWarning,
+        lease_at + 92,
+    )?;
     assert_eq!(landing.state, AttemptState::Landing);
     assert_eq!(
-        landing.updated_at, 102,
+        landing.updated_at,
+        lease_at + 92,
         "accepting buys ONE fresh bounded window"
     );
     queue
@@ -565,7 +593,10 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
             id: expiring.id,
             limit_units: 100,
             reserve_percent: None,
-            now: 103,
+            now: {
+                clock.set(lease_at + 93);
+                lease_at + 93
+            },
         })
         .expect_err("a landing row is not re-dialed");
     let busy = queue.record_resume_point(RecordAttemptResumePoint {
@@ -573,14 +604,21 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
         lease_owner: "worker-a".to_owned(),
         attempt_count: expiring.attempt_count,
         resume_point: AttemptResumePoint::new("still-going", 300),
-        now: 300,
+        now: {
+            clock.set(300);
+            300
+        },
     })?;
     assert_eq!(
-        busy.updated_at, 102,
+        busy.updated_at,
+        lease_at + 92,
         "landing work does not extend the window by looking busy"
     );
     let report = queue.cleanup_leases(CleanupAttemptLeases {
-        now: 400,
+        now: {
+            clock.set(400);
+            400
+        },
         lease_timeout_secs: 100,
     })?;
     assert_eq!(report.landing_force_cancelled, 1);

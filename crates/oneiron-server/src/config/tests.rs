@@ -192,34 +192,26 @@ fn env_allowed_origins_are_split_and_trimmed() {
 }
 
 #[test]
-fn federation_quota_config_merges_into_sync_server_config() {
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("oneiron.toml");
-    std::fs::write(
-        &config_path,
-        r#"
-max_federation_windows_per_connection = 5
-federation_flood_pause_secs = 20
-"#,
-    )
-    .unwrap();
-    let env = EnvConfig::from_pairs([
-        ("ONEIRON_CONFIG", config_path.to_str().unwrap()),
-        ("ONEIRON_MAX_FEDERATION_WINDOWS_PER_CONNECTION", "6"),
-    ])
-    .unwrap();
-    let flags = ServeArgs {
-        federation_flood_pause_secs: Some(7),
-        ..Default::default()
-    };
-
-    let resolved = resolve_serve_config_with_sources(&flags, env, None).unwrap();
-    let sync = resolved.sync_server_config();
-
-    assert_eq!(resolved.max_federation_windows_per_connection, 6);
-    assert_eq!(resolved.federation_flood_pause_secs, 7);
-    assert_eq!(sync.max_federation_windows_per_connection, 6);
-    assert_eq!(sync.federation_flood_pause_secs, 7);
+fn retired_federation_quota_flags_and_file_keys_fail_closed() {
+    for flag in [
+        "--max-federation-windows-per-connection",
+        "--federation-flood-pause-secs",
+    ] {
+        assert!(TestCli::try_parse_from(["oneiron-server", flag, "0"]).is_err());
+    }
+    for key in [
+        "max_federation_windows_per_connection",
+        "federation_flood_pause_secs",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oneiron.toml");
+        std::fs::write(&path, format!("{key} = 0\n")).unwrap();
+        let args = ServeArgs {
+            config: Some(path),
+            ..Default::default()
+        };
+        assert!(resolve_serve_config_with_sources(&args, EnvConfig::default(), None).is_err());
+    }
 }
 
 #[test]
@@ -459,7 +451,7 @@ fn privacy_posture_flags_parse_as_serve_args() {
     let cli = TestCli::try_parse_from([
         "oneiron-server",
         "--privacy-posture",
-        "hosted",
+        "managed",
         "--hosted-kms-key-ref",
         "kms://example/flag-ref",
     ])
@@ -474,8 +466,8 @@ fn privacy_posture_flags_parse_as_serve_args() {
         Some("kms://example/flag-ref")
     );
 
-    let cli = TestCli::try_parse_from(["oneiron-server", "--privacy-posture", "self_host_local"])
-        .unwrap();
+    let cli =
+        TestCli::try_parse_from(["oneiron-server", "--privacy-posture", "self-host"]).unwrap();
 
     assert_eq!(
         cli.serve.privacy_posture,
@@ -490,7 +482,7 @@ fn hosted_privacy_posture_merges_file_env_and_flags_in_precedence_order() {
     std::fs::write(
         &config_path,
         r#"
-privacy_posture = "hosted"
+privacy_posture = "managed"
 hosted_kms_key_ref = "kms://example/file-ref"
 "#,
     )
@@ -533,7 +525,7 @@ hosted_kms_key_ref = "kms://example/file-ref"
 #[test]
 fn privacy_posture_resolves_from_the_environment() {
     let env = EnvConfig::from_pairs([
-        ("ONEIRON_PRIVACY_POSTURE", "hosted"),
+        ("ONEIRON_PRIVACY_POSTURE", "managed"),
         ("ONEIRON_HOSTED_KMS_KEY_REF", "kms://example/env-ref"),
     ])
     .unwrap();
@@ -608,7 +600,7 @@ fn self_host_local_override_clears_an_inherited_kms_key_reference() {
     std::fs::write(
         &config_path,
         r#"
-privacy_posture = "hosted"
+privacy_posture = "managed"
 hosted_kms_key_ref = "kms://example/file-ref"
 "#,
     )
@@ -620,7 +612,7 @@ hosted_kms_key_ref = "kms://example/file-ref"
     // the same way.
     let from_env = EnvConfig::from_pairs([
         ("ONEIRON_CONFIG", config_path.to_str().unwrap()),
-        ("ONEIRON_PRIVACY_POSTURE", "self_host_local"),
+        ("ONEIRON_PRIVACY_POSTURE", "self-host"),
     ])
     .unwrap();
     let env_resolved =
@@ -686,7 +678,7 @@ hosted_kms_key_ref = "kms://example/file-ref"
 #[test]
 fn env_config_debug_redacts_hosted_kms_key_ref() {
     let env = EnvConfig::from_pairs([
-        ("ONEIRON_PRIVACY_POSTURE", "hosted"),
+        ("ONEIRON_PRIVACY_POSTURE", "managed"),
         ("ONEIRON_HOSTED_KMS_KEY_REF", "kms://example/secret-ref"),
         ("ONEIRON_AUTH_SECRET", "super-secret-value"),
     ])
@@ -701,11 +693,15 @@ fn env_config_debug_redacts_hosted_kms_key_ref() {
 #[test]
 fn unknown_privacy_posture_values_are_rejected() {
     for raw in [
+        "hosted",
+        "self_host_local",
+        "host_blind",
         "private_hosted",
         "e2e_hosted",
         "encrypted_hosted",
         "unreadable_hosted",
         "Hosted",
+        "MANAGED",
         "cloud",
         "",
     ] {
@@ -746,8 +742,10 @@ fn serve_config_debug_redacts_hosted_kms_key_ref() {
 }
 
 #[test]
-fn privacy_posture_has_exactly_two_variants_and_no_unreadable_hosted_tier() {
-    const LEGACY_TOKENS: [&str; 5] = [
+fn privacy_posture_has_exactly_three_variants_with_blind_relay() {
+    const LEGACY_TOKENS: [&str; 7] = [
+        "hosted",
+        "self_host_local",
         "unreadable",
         "private_hosted",
         "e2e_hosted",
@@ -756,14 +754,15 @@ fn privacy_posture_has_exactly_two_variants_and_no_unreadable_hosted_tier() {
     ];
 
     for posture in [
+        HostingPrivacyPosture::Relay,
         HostingPrivacyPosture::Hosted,
         HostingPrivacyPosture::SelfHostLocal,
     ] {
-        // Wildcard-free exhaustive match: a third posture variant — an
-        // "unreadable hosted" tier included — stops compiling right here.
+        // Wildcard-free exhaustive match pins the three supported postures.
         let wire = match posture {
-            HostingPrivacyPosture::Hosted => "hosted",
-            HostingPrivacyPosture::SelfHostLocal => "self_host_local",
+            HostingPrivacyPosture::Hosted => "managed",
+            HostingPrivacyPosture::Relay => "relay",
+            HostingPrivacyPosture::SelfHostLocal => "self-host",
         };
         assert_eq!(
             serde_json::to_string(&posture).unwrap(),
@@ -789,14 +788,17 @@ fn privacy_posture_has_exactly_two_variants_and_no_unreadable_hosted_tier() {
 
     for (config, serialized) in [(hosted, hosted_privacy), (self_host, self_host_privacy)] {
         let debug = format!("{config:?}");
+        // The `hosted_kms_key_ref` FIELD name is not a tier name; strip it so
+        // the legacy-tier scan only sees values and variant names.
+        let debug_tiers = debug.replace("hosted_kms_key_ref", "");
         for token in LEGACY_TOKENS {
             assert!(
                 !serialized.contains(token),
                 "resolved privacy config must not name a {token:?} tier: {serialized}"
             );
             assert!(
-                !debug.contains(token),
-                "resolved serve config must not name a {token:?} tier"
+                !debug_tiers.contains(token),
+                "resolved serve config must not name a {token:?} tier: {debug}"
             );
         }
     }

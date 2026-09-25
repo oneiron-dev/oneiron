@@ -2,11 +2,10 @@
 use super::super::frame::BudgetPolicyRef;
 use super::errors::PluginResult;
 use super::install::PluginInstallTarget;
-use crate::board_verb::BOARD_VERBS;
 use crate::entity_id::EntityId;
 use crate::skill::SkillRecord;
 use crate::skill_hub::{HubPackage, HubRef};
-use crate::task_verb::TASKS_VERBS;
+use crate::task_verb::sdk::AgentVerb;
 use crate::vault::Vault;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -77,7 +76,7 @@ pub struct SectionManifestProvenance {
 // ---------------------------------------------------------------------------
 // §2 — the closed verb chokepoint
 // ---------------------------------------------------------------------------
-/// The exact exported engine verb surface: `BOARD_VERBS ∪ TASKS_VERBS`.
+/// The section-advertisable subset of the exported engine verb catalog.
 ///
 /// Built from the exported constants at admission rather than from a caller
 /// resolver — an injectable resolver could bless a string the engine does not
@@ -91,10 +90,10 @@ impl SectionVerbAllowlist {
     #[must_use]
     pub fn from_exported_verbs() -> Self {
         Self(
-            BOARD_VERBS
+            AgentVerb::ALL
                 .iter()
-                .chain(TASKS_VERBS.iter())
-                .map(|verb| SectionVerbRef((*verb).to_owned()))
+                .filter(|verb| verb.is_section())
+                .map(|verb| SectionVerbRef(verb.as_str().to_owned()))
                 .collect(),
         )
     }

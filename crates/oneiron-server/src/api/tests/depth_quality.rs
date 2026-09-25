@@ -63,7 +63,7 @@ pub(super) fn extend_depth_error_contract(value: &mut Value) {
 #[tokio::test]
 async fn retrieval_quality_depth_search_and_reason_keep_empty_minimal_healthy() {
     let (_dir, server) = test_server();
-    for depth in ["minimal", "standard"] {
+    for depth in ["light", "medium"] {
         let (status, reason) = route_json(
             server.clone(),
             json_request(
@@ -81,7 +81,7 @@ async fn retrieval_quality_depth_search_and_reason_keep_empty_minimal_healthy() 
         assert!(!reason["gaps"].as_array().unwrap().is_empty());
         assert_eq!(reason["confidence"], 0.0);
         assert_eq!(reason["tokensUsed"], 0);
-        assert_eq!(reason.get("reasoning").is_none(), depth == "minimal");
+        assert_eq!(reason.get("reasoning").is_none(), depth == "light");
         let (status, search) = route_json(
             server.clone(),
             Request::builder()
@@ -104,14 +104,14 @@ async fn retrieval_quality_depth_search_and_reason_keep_empty_minimal_healthy() 
 
 #[tokio::test]
 async fn retrieval_quality_depth_standard_projects_disabled_ppr_without_changing_confidence() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     seed_text_turn(&server, "qualitydepth retained evidence");
-    let (status, reason) = route_json(
+    let (status, reason) = route_json_auth(
         server.clone(),
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({"query": "qualitydepth", "depth": "standard"}),
+            json!({"query": "qualitydepth", "depth": "medium"}),
         ),
     )
     .await;
@@ -128,7 +128,8 @@ async fn retrieval_quality_depth_standard_projects_disabled_ppr_without_changing
     let (status, search) = route_json(
         server,
         Request::builder()
-            .uri("/api/search/text?query=qualitydepth&depth=standard&view=standard")
+            .uri("/api/search/text?query=qualitydepth&depth=medium&view=standard")
+            .header(AUTHORIZATION, owner_bearer())
             .body(Body::empty())
             .unwrap(),
     )
@@ -144,16 +145,17 @@ async fn retrieval_quality_depth_minimal_search_keeps_existing_ranked_items() {
     let (_dir, server) = test_server();
     seed_text_turn(&server, "qualitydepth qualitydepth");
     seed_text_turn(&server, "qualitydepth other");
-    let scoped = scoped_read_for_legacy_api(&server.vault).unwrap();
+    let scoped = scoped_read_for_legacy_api(&server).unwrap();
     let expected = scoped.search_text("qualitydepth", 11, None).unwrap();
-    let expected = search_response(&scoped, expected, View::Standard, 10).unwrap();
+    let expected = search_response(&scoped, expected.value, View::Standard, 10).unwrap();
     // Apply the same JSON wire roundtrip as route_json before comparing
     // ordered IDs and scores exactly.
-    let expected: Value = serde_json::from_slice(&serde_json::to_vec(&expected).unwrap()).unwrap();
+    let expected: Value =
+        serde_json::from_slice(&serde_json::to_vec(&expected.value).unwrap()).unwrap();
     let (status, response) = route_json(
         server.clone(),
         Request::builder()
-            .uri("/api/search/text?query=qualitydepth&depth=minimal&view=standard")
+            .uri("/api/search/text?query=qualitydepth&depth=light&view=standard")
             .body(Body::empty())
             .unwrap(),
     )
@@ -222,7 +224,7 @@ impl MemoryReasonBackend for DecliningBackend {
 
 #[tokio::test]
 async fn retrieval_quality_depth_composition_fallback_keeps_report_and_actual_spend() {
-    let (_dir, mut server) = test_server();
+    let (_dir, mut server) = auth_test_server();
     seed_text_turn(&server, "qualitydepth retained evidence");
     let guard = BudgetGuard::with_reserve_units(
         "reason-quality",
@@ -238,12 +240,12 @@ async fn retrieval_quality_depth_composition_fallback_keeps_report_and_actual_sp
         guard.clone(),
     )));
     for _ in 0..2 {
-        let (status, response) = route_json(
+        let (status, response) = route_json_auth(
             server.clone(),
             json_request(
                 "POST",
                 "/v1/companion/memory/reason",
-                json!({"query": "qualitydepth", "depth": "deep", "format": "plaintext"}),
+                json!({"query": "qualitydepth", "depth": "max", "format": "plaintext"}),
             ),
         )
         .await;
@@ -283,7 +285,7 @@ async fn retrieval_quality_depth_unavailable_and_ungrounded_requests_still_refus
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({"query": "qualitydepth", "depth": "deep"}),
+            json!({"query": "qualitydepth", "depth": "max"}),
         ),
     )
     .await;
@@ -293,7 +295,7 @@ async fn retrieval_quality_depth_unavailable_and_ungrounded_requests_still_refus
     let (status, response) = route_json(
         server.clone(),
         Request::builder()
-            .uri("/api/search/text?query=qualitydepth&depth=deep")
+            .uri("/api/search/text?query=qualitydepth&depth=max")
             .body(Body::empty())
             .unwrap(),
     )
@@ -303,7 +305,7 @@ async fn retrieval_quality_depth_unavailable_and_ungrounded_requests_still_refus
     let (status, response) = route_json(
         server,
         Request::builder()
-            .uri("/api/search/vector?query=1,0,0,0&depth=deep&queryText=%20")
+            .uri("/api/search/vector?query=1,0,0,0&depth=max&queryText=%20")
             .body(Body::empty())
             .unwrap(),
     )
@@ -355,7 +357,7 @@ async fn retrieval_quality_depth_reason_requires_read_auth_before_admission() {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
-    let body = json!({"query": "qualitydepth", "depth": "deep"});
+    let body = json!({"query": "qualitydepth", "depth": "max"});
     let (status, response) = route_json(
         server.clone(),
         json_request("POST", "/v1/companion/memory/reason", body.clone()),
@@ -410,7 +412,7 @@ async fn retrieval_quality_depth_budget_refusal_does_not_run_backend() {
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({"query": "qualitydepth", "depth": "deep"}),
+            json!({"query": "qualitydepth", "depth": "max"}),
         ),
     )
     .await;

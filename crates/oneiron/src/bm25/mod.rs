@@ -62,7 +62,9 @@ use crate::error::Result;
 use crate::pipeline::ScoredEntity;
 use crate::store::ManifestDbs;
 use heed::RoTxn;
-pub(crate) use scoped::search_text_filtered_with_recency;
+pub(crate) use scoped::{
+    Bm25CategorySearchOptions, search_text_category_with_recency, search_text_filtered_with_recency,
+};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 

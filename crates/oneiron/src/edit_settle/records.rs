@@ -1,6 +1,6 @@
 //! Consent, outcome and settlement records.
 
-use super::keys::{OUTCOME_DISCARDED, OUTCOME_SELECTED};
+use super::keys::{OUTCOME_DISCARDED, OUTCOME_PROPOSED, OUTCOME_SELECTED};
 use crate::anchored_annotation::{Locator, ReanchorSummary};
 use crate::blob_artifact::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BlobArtifactVersion};
 use crate::entity_id::EntityId;
@@ -47,6 +47,8 @@ pub enum SettleOutcomeKind {
     Selected,
     /// The proposal was dropped.
     Discarded,
+    /// Stale output was retained, without changing the head or anchors.
+    Proposed,
 }
 
 impl SettleOutcomeKind {
@@ -56,6 +58,7 @@ impl SettleOutcomeKind {
         match self {
             Self::Selected => OUTCOME_SELECTED,
             Self::Discarded => OUTCOME_DISCARDED,
+            Self::Proposed => OUTCOME_PROPOSED,
         }
     }
 
@@ -63,6 +66,7 @@ impl SettleOutcomeKind {
         match value {
             OUTCOME_SELECTED => Some(Self::Selected),
             OUTCOME_DISCARDED => Some(Self::Discarded),
+            OUTCOME_PROPOSED => Some(Self::Proposed),
             _ => None,
         }
     }
@@ -132,6 +136,8 @@ pub struct SettleReceiptDoor {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SettleSelectOutcome {
+    /// Present when the old base lost the race. `version` remains the current head.
+    pub stranded_proposal: Option<super::stranded::StrandedEditProposal>,
     /// The version the proposal became.
     pub version: BlobArtifactVersion,
     /// The threads that remapped or drifted.

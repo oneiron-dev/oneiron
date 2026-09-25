@@ -6,7 +6,7 @@ use super::*;
 /// data in `content`, not only through the `structuredContent` side channel.
 #[tokio::test]
 async fn mcp_results_carry_usable_data_in_negotiated_content() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0105);
     let credential = "one-1704-negotiated-content";
     register_mcp_actor(
@@ -78,7 +78,11 @@ async fn mcp_results_carry_usable_data_in_negotiated_content() {
     let connection = {
         let registry = server.mcp_registry.lock().await;
         registry
-            .resolve(credential, 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection
     };
@@ -130,9 +134,6 @@ async fn mcp_results_carry_usable_data_in_negotiated_content() {
 /// section was.
 #[test]
 fn mcp_board_page_omissions_count_requested_scope_only() {
-    let expand = crate::mcp::McpVerbBinding::BoardExpand;
-    let refresh = crate::mcp::McpVerbBinding::BoardRefresh;
-    let subscribe = crate::mcp::McpVerbBinding::BoardSubscribe;
     let healthy = crate::mcp::McpRetrievalHealth::Healthy;
     let omissions = McpBoardOmissions {
         scope_omitted: 3,
@@ -140,8 +141,11 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
         source_exhausted: true,
     };
 
-    let tasks = json!({ "kind": "expanded", "key": "TASKS", "lines": ["a", "b"] });
-    let source = mcp_board_verb_page_source(expand, &tasks, omissions);
+    let tasks = oneiron::board_verb::BoardVerbOutput::Expanded {
+        key: "TASKS".into(),
+        lines: vec!["a".into(), "b".into()],
+    };
+    let source = mcp_board_verb_page_source(&tasks, omissions);
     assert_eq!(source.produced, 2);
     assert_eq!(source.scope_omitted, 3);
     assert_eq!(source.window_truncated, 2);
@@ -150,16 +154,23 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
 
     // Another section's page is not partial because a TASKS row was outside
     // the credential's ceiling.
-    let verbs = json!({ "kind": "expanded", "key": "VERBS", "lines": ["board.expand"] });
-    let source = mcp_board_verb_page_source(expand, &verbs, omissions);
+    let verbs = oneiron::board_verb::BoardVerbOutput::Expanded {
+        key: "VERBS".into(),
+        lines: vec!["board.expand".into()],
+    };
+    let source = mcp_board_verb_page_source(&verbs, omissions);
     assert_eq!(source.produced, 1);
     assert_eq!(source.scope_omitted, 0);
     assert_eq!(source.window_truncated, 0);
     assert_eq!(source.health(), healthy);
 
     // A refresh renders the whole board, so both axes ride it — apart.
-    let frame = json!({ "kind": "frame", "frame": { "epoch": 1 } });
-    let source = mcp_board_verb_page_source(refresh, &frame, omissions);
+    let frame =
+        oneiron::board_verb::BoardVerbOutput::Frame(oneiron::context_board::BoardStreamFrame {
+            epoch: 1,
+            kind: oneiron::context_board::FrameKind::Keyframe("board".into()),
+        });
+    let source = mcp_board_verb_page_source(&frame, omissions);
     assert_eq!(source.produced, 1);
     assert_eq!(source.scope_omitted, 3);
     assert_eq!(source.window_truncated, 2);
@@ -170,14 +181,19 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
         window_truncated: 4,
         source_exhausted: false,
     };
-    let capped = mcp_board_verb_page_source(refresh, &frame, capped_scan);
+    let capped = mcp_board_verb_page_source(&frame, capped_scan);
     assert_eq!(capped.scope_omitted, 0);
     assert_eq!(capped.window_truncated, 4);
     assert_eq!(capped.health(), crate::mcp::McpRetrievalHealth::Degraded);
 
     // A subscription receipt states itself completely on both axes.
-    let receipt = json!({ "kind": "subscription", "active": [] });
-    let source = mcp_board_verb_page_source(subscribe, &receipt, omissions);
+    let receipt = oneiron::board_verb::BoardVerbOutput::Subscription(
+        oneiron::context_board::SubscriptionReceipt {
+            connection: oneiron::context_board::StreamConnectionId("test".into()),
+            active: Default::default(),
+        },
+    );
+    let source = mcp_board_verb_page_source(&receipt, omissions);
     assert_eq!(source.scope_omitted, 0);
     assert_eq!(source.window_truncated, 0);
     assert_eq!(source.health(), healthy);
@@ -252,9 +268,10 @@ fn mcp_setup_health_reads_every_board_omission_axis() {
 /// The capability vocabulary used to be derived from the retired plain-verb
 /// catalog alone, so discovery advertised names both endpoints answer
 /// `unknown_tool` for and advertised none of the names they do accept.
-#[test]
-fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
-    let flags = serde_json::to_value(feature_flags()).expect("feature flags serialize");
+#[tokio::test]
+async fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
+    let (_dir, server) = test_server();
+    let flags = serde_json::to_value(feature_flags(&server)).expect("feature flags serialize");
     let capabilities = flags["capabilities"]
         .as_array()
         .expect("capabilities is an array")
@@ -322,7 +339,7 @@ fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
         "a tool one endpoint registers is not advertised on the other",
     );
 
-    // `execute_code` is registered on neither endpoint in this release, so no
+    // `execute_code` is registered on neither endpoint without a host, so no
     // endpoint token names it.
     for mode in crate::mcp::McpSurfaceMode::ALL {
         assert!(
@@ -339,14 +356,14 @@ fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
 
     // Discovery stays deterministic: the same registrations, the same bytes.
     assert_eq!(
-        serde_json::to_value(feature_flags()).expect("feature flags serialize"),
+        serde_json::to_value(feature_flags(&server)).expect("feature flags serialize"),
         flags,
     );
 }
 
 #[tokio::test]
 async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_00c1);
     let credential = "one-1704-carrier-credential";
     register_mcp_actor(
@@ -360,7 +377,11 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
     let connection = {
         let registry = server.mcp_registry.lock().await;
         registry
-            .resolve(credential, 1, |_, _| true)
+            .resolve(
+                &mcp_registered_credential(&server, credential),
+                1,
+                |_, _| true,
+            )
             .expect("credential resolves")
             .stream_connection
     };
@@ -427,9 +448,13 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
     let payload = frame["kind"]["payload"]
         .as_array()
         .expect("the continuation delta carries rows");
-    assert_eq!(payload.len(), 1);
-    assert_eq!(payload[0]["key"], Value::from("TASKS:continuation"));
-    assert_eq!(payload[0]["line"], Value::from("queued after page one"));
+    assert_eq!(payload[0]["key"], "changed");
+    assert_eq!(payload[0]["line"], "");
+    let task = payload
+        .iter()
+        .find(|row| row["key"] == "TASKS:continuation")
+        .expect("the pending task row survives the session rider");
+    assert_eq!(task["line"], "queued after page one");
 
     {
         let mut registry = server.mcp_registry.lock().await;
@@ -505,16 +530,15 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
         Value::from("delta"),
         "result two carries the same-epoch delta: {second:?}"
     );
-    assert_eq!(
-        second_frame["kind"]["payload"][0]["key"],
-        Value::from("TASKS:0"),
-        "{second:?}"
-    );
-    assert_eq!(
-        second_frame["kind"]["payload"][0]["line"],
-        Value::from("queued"),
-        "{second:?}"
-    );
+    let rows = second_frame["kind"]["payload"]
+        .as_array()
+        .expect("delta rows");
+    assert_eq!(rows[0]["key"], "changed");
+    let task = rows
+        .iter()
+        .find(|row| row["key"] == "TASKS:0")
+        .expect("the pending task row survives the session rider");
+    assert_eq!(task["line"], "queued");
 
     // And the call after THAT carries none: nothing is replayed.
     let (_, third) = route_json(server.clone(), check("carrier-3a")).await;

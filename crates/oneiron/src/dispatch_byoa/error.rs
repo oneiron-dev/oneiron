@@ -99,6 +99,12 @@ pub(super) const ERR_LEASE_ID_ZERO: &str = "egress lease carries no lease id";
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ByoaError {
+    #[error("user BYOA login refused on cloud node")]
+    CloudLoginRefused,
+    #[error("duplicate Dreamer provider adapter: {0}")]
+    DuplicateProvider(String),
+    #[error("unknown Dreamer provider adapter: {0}")]
+    UnknownProvider(String),
     /// Network was attempted without a lease that admits it. This is the
     /// refusal a direct-socket attempt lands on: there is no other door.
     #[error("byoa egress denied for profile {profile_ref}: {reason}")]

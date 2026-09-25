@@ -5,6 +5,14 @@
 //! root predeclares none of them: each downstream change adds its own single
 //! additive `pub mod ...;` line when its file exists.
 
+mod document_ingress;
+pub use document_ingress::ReceivedFileOperation;
 pub mod lfs;
 pub mod publication;
 pub mod smart_http;
+
+pub mod change_index;
+pub mod conflict_tree;
+pub mod export;
+pub mod residence;
+pub mod tree;

@@ -82,14 +82,14 @@ impl Memory<'_> {
     /// First bounded page in chronological order. Continue with the last turn's
     /// id through `rooms_messages_page`; room membership is rechecked per page.
     pub fn rooms_messages(&self, room: EntityId) -> MemoryResult<Vec<RoomTurn>> {
-        self.rooms_messages_page(room, None, PAGE_LIMIT)
+        Ok(self.rooms_messages_page(room, None, PAGE_LIMIT)?.rows)
     }
     pub fn rooms_messages_page(
         &self,
         room: EntityId,
         after: Option<EntityId>,
         limit: usize,
-    ) -> MemoryResult<Vec<RoomTurn>> {
+    ) -> MemoryResult<RoomPage> {
         if limit == 0 || limit > PAGE_LIMIT {
             return Err(MemoryError::from(invalid()));
         }
@@ -105,7 +105,8 @@ impl Memory<'_> {
             key(HISTORY, room)
         };
         let end = [key(HISTORY, room).as_slice(), &[u8::MAX; 24]].concat();
-        self.vault()
+        let mut rows = self
+            .vault()
             .store
             .vault_meta
             .range(
@@ -115,12 +116,20 @@ impl Memory<'_> {
                     Bound::Included(end.as_slice()),
                 ),
             )?
-            .take(limit)
+            .take(limit + 1)
             .map(|row| {
                 let (_, raw) = row?;
                 Ok(turn_in(self.vault(), &txn, stored_id(&raw)?)?)
             })
-            .collect()
+            .collect::<MemoryResult<Vec<_>>>()?;
+        let has_more = rows.len() > limit;
+        rows.truncate(limit);
+        let next_after = if has_more {
+            rows.last().map(|turn| turn.turn_id.clone())
+        } else {
+            None
+        };
+        Ok(RoomPage { rows, next_after })
     }
     /// Canonical HEAD is a room-local indexed read; branch turns are excluded.
     pub fn room_head(&self, room: EntityId) -> MemoryResult<Option<RoomTurn>> {

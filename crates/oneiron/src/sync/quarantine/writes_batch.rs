@@ -92,6 +92,7 @@ pub(in crate::sync) fn quarantine_rejected_op_in_txn(
     error: &Error,
     payload: &[u8],
 ) -> Result<u64> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let (crdt_key_hash, crdt_key_len) = crdt_key_metadata(crdt_key);
     let seq = record_in_txn(
         vault,
@@ -103,7 +104,7 @@ pub(in crate::sync) fn quarantine_rejected_op_in_txn(
             crdt_key_len,
             reason_code: reason_code_for(error),
             payload_hash: payload_hash(payload),
-            quarantined_at: crate::unix_seconds_now(),
+            quarantined_at: mutation_recorded_at,
         },
     )?;
     set_remat_marker_for_quarantine_in_txn(vault, wtxn, window_key, container, crdt_key)?;
@@ -205,7 +206,7 @@ impl TerminalRejectionBatch {
         if self.rows.is_empty() && self.over_cap == 0 {
             return Ok(());
         }
-        let quarantined_at = crate::unix_seconds_now();
+        let quarantined_at = vault.store.clock.now_recorded_at();
         vault.with_write_txn(|wtxn| {
             for row in &self.rows {
                 record_in_txn(

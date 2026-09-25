@@ -601,7 +601,7 @@ fn world_set_scope_keeps_codebase_semantics_without_consulting_authority() -> Re
 
     let before = world_access_ids(
         &world_access_query(&vault, WORLD_ACCESS_NOW)
-            .world(WorldScope::WorldSet(scope_key))
+            .world(WorldScope::CodebaseSet(scope_key))
             .run()?,
     );
     WorldAccessRowSpec::owner_grant(
@@ -613,7 +613,7 @@ fn world_set_scope_keeps_codebase_semantics_without_consulting_authority() -> Re
     .put(&vault)?;
     let after = world_access_ids(
         &world_access_query(&vault, WORLD_ACCESS_NOW)
-            .world(WorldScope::WorldSet(scope_key))
+            .world(WorldScope::CodebaseSet(scope_key))
             .run()?,
     );
 
@@ -625,15 +625,16 @@ fn world_set_scope_keeps_codebase_semantics_without_consulting_authority() -> Re
         before, after,
         "the world-access grant does not reach the WorldSet branch at all"
     );
-    // World(W) is likewise byte-for-byte what it always was.
+    // World(W) is W only: base reality and non-claim entities are explicit
+    // members, never implicit in a named world.
     assert_eq!(
         world_access_ids(
             &world_access_query(&vault, WORLD_ACCESS_NOW)
                 .world(WorldScope::World(fixture.world_w))
                 .run()?
         ),
-        HashSet::from([fixture.claim_base, fixture.claim_w, fixture.plain]),
-        "World(W) still means W plus base reality"
+        HashSet::from([fixture.claim_w]),
+        "World(W) means W only"
     );
     Ok(())
 }
@@ -1011,7 +1012,7 @@ fn malformed_older_active_default_fails_closed_until_superseded() -> Result<()> 
                 &mut scores,
                 &vault.store,
                 &rtxn,
-                WorldScope::ActiveSet,
+                &WorldScope::ActiveSet,
                 None,
             ),
             Err(Error::InvalidConfig(_))

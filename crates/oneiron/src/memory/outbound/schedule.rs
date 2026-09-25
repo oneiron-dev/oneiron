@@ -8,7 +8,7 @@ use super::errors::{
 };
 use super::types::{OutboundDraftInput, OutboundIntentReceipt, OutboundScheduleContext};
 use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
-use crate::entity_id::EntityId;
+
 use crate::error::Error;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
@@ -86,7 +86,9 @@ impl Memory<'_> {
         };
         let originating_session_ref =
             (draft.trigger == "agent_immediate").then(|| draft.trigger_ref.clone());
-        let now = draft.occurred_at.unwrap_or_else(crate::unix_seconds_now);
+        let now = draft
+            .occurred_at
+            .unwrap_or_else(|| self.vault.store.clock.now_recorded_at());
 
         // A completed attempt no longer owns the generic queue dedupe row.
         // Consult the additive delivered-only index before any new gate or
@@ -165,7 +167,7 @@ impl Memory<'_> {
         let intent = OutboundIntent::from_trigger(intent_draft, trigger);
 
         let queue = AttemptQueue::new(self.vault);
-        let task_ref = EntityId::now();
+        let task_ref = self.vault.store.clock.entity_id()?;
         let payload = connector_send_attempt_payload(task_ref)?;
         // The queue's live-schedule dedupe is scoped by the BOUND EFFECT ACTOR
         // — never `on_behalf_of`, the target, the trigger, the TASK, or any

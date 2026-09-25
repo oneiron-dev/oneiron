@@ -109,6 +109,10 @@ pub struct ConsultFanOutSpec {
 pub struct ConsultFanOutReceipt {
     pub correlation_ref: EntityId,
     pub task_refs: Vec<EntityId>,
+    pub meter: super::consult_fanout_types::ConsultFanOutMeter,
+    pub paused: Option<super::consult_fanout_types::ConsultFanOutPause>,
+    /// Unified Gate receipt of the last human ruling, if any.
+    pub choice_receipt_ref: Option<String>,
 }
 
 /// Host-supplied addressing for the ARCH-0046 expiry digest, plus the typed

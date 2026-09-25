@@ -94,6 +94,7 @@ impl Memory<'_> {
         summary: Option<&str>,
         host_turn_ref: Option<EntityId>,
     ) -> MemoryResult<WitnessReceipt> {
+        super::validate_witness_origin(turn, host_turn_ref.is_some())?;
         if turn.messages.is_empty() {
             return Err(MemoryError::bad_request("witness turn carries no messages"));
         }
@@ -105,6 +106,10 @@ impl Memory<'_> {
         }
         distinct_message_orders(&turn.messages)?;
         let route = session.write_route()?;
+        // WitnessReceipt promises materialized turns and messages. Anonymous
+        // sessions cannot fulfill that promise, so refuse before shell
+        // reservation, transaction acquisition, or policy receipt creation.
+        route.require_recording(session.session_ref())?;
         if route.target() == RouteTarget::Base {
             // Post-flip: the room is on record, so the witness takes the
             // ordinary base apply under the continuation shell. It never
@@ -121,7 +126,11 @@ impl Memory<'_> {
             if let Some(host_turn_ref) = host_turn_ref {
                 base_turn.turn_ref = Some(host_turn_ref.to_hex());
             }
-            return self.witness_with_route(&base_turn, Some(&route));
+            return if host_turn_ref.is_some() {
+                self.witness_host_executor(&base_turn, Some(&route))
+            } else {
+                self.witness_with_route(&base_turn, Some(&route))
+            };
         }
 
         let occurred = TimeRange {
@@ -131,7 +140,10 @@ impl Memory<'_> {
         let learned_at = turn.occurred_at;
         let overlay = session.overlay();
         let conversation_id = session.overlay_conversation_shell()?;
-        let turn_id = host_turn_ref.unwrap_or_else(EntityId::now);
+        let turn_id = match host_turn_ref {
+            Some(id) => id,
+            None => self.vault.store.clock.entity_id()?,
+        };
         let container_body = encode_rmpv(&Value::Map(Vec::new()))?;
 
         // ONE-1767's mint contract binds this door exactly as it binds the
@@ -199,7 +211,7 @@ impl Memory<'_> {
         // `body`, so authorizing this vector authorizes exactly what lands.
         let mut staged = Vec::with_capacity(turn.messages.len());
         for message in &turn.messages {
-            let id = id_from_optional_hex(message.id.as_deref())?;
+            let id = id_from_optional_hex(self.vault, message.id.as_deref())?;
             let envelope = witness_message_envelope(message);
             let body = envelope.encode_body()?;
             message_ids.push(id);
@@ -235,7 +247,7 @@ impl Memory<'_> {
 
         let summary_id = match summary {
             Some(text) => {
-                let id = EntityId::now();
+                let id = self.vault.store.clock.entity_id()?;
                 let body = encode_rmpv(&Value::Map(vec![(
                     Value::from("content"),
                     Value::from(text),

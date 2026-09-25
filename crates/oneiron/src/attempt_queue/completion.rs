@@ -12,7 +12,7 @@ impl AttemptQueue<'_> {
     /// Completes an attempt, retires its dedupe entry, and stamps its pack
     /// receipt in the caller's transaction. The caller must abort on error.
     /// Already-completed attempts are idempotent, as in [`Self::complete`].
-    pub(crate) fn complete_in_txn(
+    pub(crate) fn complete_storage_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: CompleteAttempt,
@@ -51,5 +51,15 @@ impl AttemptQueue<'_> {
             }
             state => Err(invalid_transition("complete", state.as_str())),
         }
+    }
+}
+
+impl AttemptQueue<'_> {
+    pub(crate) fn complete_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: CompleteAttempt,
+    ) -> Result<CompleteOutcome> {
+        crate::ports::JobQueue::port_job_complete(self, txn, input)
     }
 }

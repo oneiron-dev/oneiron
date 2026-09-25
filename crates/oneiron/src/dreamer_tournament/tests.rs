@@ -299,7 +299,13 @@ fn fixture_corpus_tournament_writes_winner_through_normal_claim_path() -> Result
                 DreamerTournamentBordaBallot::new("judge-b", vec![1, 0])?,
             ],
         )?],
-        Vec::new(),
+        catalog
+            .lenses
+            .iter()
+            .map(|lens| {
+                crate::critic::CriticReliability::new(&lens.id, &lens.domain, 99.0, 1.0, 98)
+            })
+            .collect::<Result<_>>()?,
         envelope,
         occurred(20),
         21,
@@ -309,6 +315,18 @@ fn fixture_corpus_tournament_writes_winner_through_normal_claim_path() -> Result
     assert_eq!(result.winner.claim_id, winner_id);
     assert_eq!(result.stop_reason, DreamerTournamentStopReason::Consensus);
     assert_eq!(result.rounds_executed, 1);
+    assert!(
+        result
+            .branch_evidence
+            .iter()
+            .all(|evidence| evidence.auto_resolved)
+    );
+    assert!(
+        DreamerTournamentEvidenceStore::new(&vault)
+            .list_run("run-fixture")?
+            .iter()
+            .all(|evidence| evidence.auto_resolved)
+    );
 
     let stored = vault.get_claim(&winner_id)?.expect("winner claim stored");
     assert_eq!(stored.predicate, "pattern.sleep");

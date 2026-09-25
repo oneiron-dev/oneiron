@@ -174,7 +174,8 @@ fn receive_pack_measured_partial_outcome_survives_recovery() {
         ref_update("refs/heads/published", None, Some(&second)),
         ref_update("refs/heads/declined", None, Some(&first)),
     ];
-    let stamp = DoorAdmissionStamp::from_principal(&EntityId::now().to_hex(), now_secs());
+    let stamp =
+        DoorAdmissionStamp::from_principal(EntityId::now(), &EntityId::now().to_hex(), now_secs());
     vault
         .record_receive_pack_admission(&root, &stamp, DoorSeam::Landed)
         .expect("admission");
@@ -302,7 +303,11 @@ fn receive_pack_hook_requires_durable_intent_before_releasing_the_backend() {
         (DoorSeam::Landed, false),
     ] {
         let (_hook_root, hooks) = hooks_dir();
-        let stamp = DoorAdmissionStamp::from_principal(&EntityId::now().to_hex(), now_secs());
+        let stamp = DoorAdmissionStamp::from_principal(
+            EntityId::now(),
+            &EntityId::now().to_hex(),
+            now_secs(),
+        );
         if admitted {
             vault
                 .record_receive_pack_admission(&root, &stamp, seam)

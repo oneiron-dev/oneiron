@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use witness::admit_witness;
 
-include!("verb_catalog.rs");
 const TURNS: &[u8] = b"rooms.turn.v1/";
 const HANDLES: &[u8] = b"rooms.platform_handle.v1/";
 const CLAIMS: &[u8] = b"rooms.claim.v1/";
@@ -77,6 +76,12 @@ pub struct RoomTurn {
     pub reply_to: Option<String>,
     pub thread_of: Option<String>,
     pub at: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomPage {
+    pub rows: Vec<RoomTurn>,
+    pub next_after: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -159,7 +164,10 @@ impl Memory<'_> {
                 room_id: room.to_hex(),
                 turn_id: turn.to_hex(),
                 actor: self.actor().to_hex(),
-                receipt_ref: format!("rooms.claim:{}", EntityId::now().to_hex()),
+                receipt_ref: format!(
+                    "rooms.claim:{}",
+                    self.vault().store.clock.entity_id()?.to_hex()
+                ),
                 at: now,
             };
             self.vault()

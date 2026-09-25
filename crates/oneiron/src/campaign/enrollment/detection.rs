@@ -172,7 +172,7 @@ pub async fn detect_enrollment(
         return Ok(EnrollmentDetection::NoTransition);
     }
     let event = CampaignEnrollmentEvent {
-        event_ref: EntityId::now(),
+        event_ref: vault.store.clock.entity_id()?,
         query_ref: input.query_ref,
         campaign_ref: input.campaign_ref,
         entity_ref: input.entity_ref,

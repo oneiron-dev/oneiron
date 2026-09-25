@@ -221,6 +221,7 @@ fn commitment_due_deadline_merges_with_attempt_queue_min() {
 #[tokio::test(start_paused = true)]
 async fn due_commitment_phase_enqueues_then_returns_attempt_deadline() {
     let (_dir, vault) = open_vault();
+    vault.clock.set(3);
     seed_project_row_at(&vault, 3);
     let local = vault_client_node_id(&vault);
     let (_clock, now) = movable_clock(3_000);

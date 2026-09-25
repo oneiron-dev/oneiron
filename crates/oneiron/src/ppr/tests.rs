@@ -179,7 +179,7 @@ fn legacy_dep_key(
 
 /// Cache identity hashes `sorted seeds ‖ depth ‖ teleport_alpha ‖ ppr_vad_alpha ‖
 /// FORMULA_VERSION ‖ weighting byte` with the LITERAL pinned values:
-/// version 5 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
+/// version 6 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
 /// here, NOT read from the constants, so a wrong bump fails). The two
 /// weighting modes must never collide — `search_ppr` rows are not
 /// servable to `expand_ppr` and vice versa.
@@ -198,7 +198,7 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
     bytes.extend_from_slice(&depth.to_le_bytes());
     bytes.extend_from_slice(&alpha.to_le_bytes());
     bytes.extend_from_slice(&0.0_f32.to_le_bytes());
-    bytes.extend_from_slice(&5_u32.to_le_bytes());
+    bytes.extend_from_slice(&6_u32.to_le_bytes());
 
     let mut uniform_bytes = bytes.clone();
     uniform_bytes.push(0_u8);
@@ -209,8 +209,8 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
     let expected_specificity = xxh3_128(&specificity_bytes).to_le_bytes();
 
     assert_eq!(
-        PPR_FORMULA_VERSION, 5,
-        "ONE-215 VAD propagation must pin version 5"
+        PPR_FORMULA_VERSION, 6,
+        "residual Forward-Push propagation must pin version 6"
     );
     assert_eq!(
         hash_seeds(&[a, b], depth, alpha, 0.0, SeedWeighting::Uniform),
@@ -359,11 +359,11 @@ fn child_of_and_assigned_to_are_never_traversed() -> Result<()> {
     let task = entity(72);
     let machine = entity(73);
 
-    // ONE-1376: a ChildOf parent must be a real row. PERSON keeps the pair
+    // ONE-1376: a ChildOf parent must be a real row. ASSET_TEXT keeps the pair
     // outside the TASK role matrix, which is not what this test is about.
     vault.put_entity(
         &parent,
-        crate::registry::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_ASSET_TEXT,
         TimeRange { start: 1, end: 1 },
         1,
         b"tree node",
@@ -740,6 +740,8 @@ fn ppr_query_rejects_state_cache_hit_with_mismatched_completed_depth() -> Result
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let seed = entity(18);
     let state = PprCacheState {
+        residual: Vec::new(),
+        push_threshold: super::walk::SCORE_EPSILON,
         completed_depth: 1,
         scores: sentinel_scores(),
         frontier: Vec::new(),
@@ -1553,6 +1555,8 @@ fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()
     wtxn.commit()?;
 
     let state = PprCacheState {
+        residual: Vec::new(),
+        push_threshold: super::walk::SCORE_EPSILON,
         completed_depth: 3,
         scores: vec![ScoredEntity { id: b, score: 1.0 }],
         frontier: Vec::new(),
@@ -1576,6 +1580,82 @@ fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()
 }
 
 #[test]
+fn fresh_cache_inserts_keep_each_seeds_dependencies() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
+    let seeds = [entity(81), entity(82)];
+    let hashes = seeds.map(|seed| hash_seeds(&[seed], 3, 0.15, 0.0, SeedWeighting::Uniform));
+    let version = graph_version(&vault)?;
+    for (seed, hash) in seeds.iter().zip(&hashes) {
+        let state = PprCacheState {
+            residual: Vec::new(),
+            push_threshold: super::walk::SCORE_EPSILON,
+            completed_depth: 3,
+            scores: vec![ScoredEntity {
+                id: *seed,
+                score: 1.0,
+            }],
+            frontier: Vec::new(),
+            dependencies: vec![*seed],
+        };
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert!(store_cache_entry(
+            &vault.store,
+            &mut wtxn,
+            hash,
+            crate::unix_seconds_now(),
+            version,
+            &state,
+        )?);
+        wtxn.commit()?;
+    }
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 2);
+    assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 2);
+    for (seed, hash) in seeds.iter().zip(&hashes) {
+        assert!(dep_exists(&vault, *seed, hash)?);
+    }
+    assert!(!dep_exists(&vault, seeds[0], &hashes[1])?);
+    assert!(!dep_exists(&vault, seeds[1], &hashes[0])?);
+    Ok(())
+}
+
+#[test]
+fn invalidation_removes_all_dependencies_of_a_malformed_cache_row() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
+    let seed = entity(81);
+    let other = entity(82);
+    let hash = hash_seeds(&[seed], 3, 0.15, 0.0, SeedWeighting::Uniform);
+    let version = graph_version(&vault)?;
+    let state = PprCacheState {
+        residual: Vec::new(),
+        push_threshold: super::walk::SCORE_EPSILON,
+        completed_depth: 3,
+        scores: vec![ScoredEntity {
+            id: seed,
+            score: 1.0,
+        }],
+        frontier: Vec::new(),
+        dependencies: vec![seed, other],
+    };
+    let mut wtxn = vault.store.env.write_txn()?;
+    assert!(store_cache_entry(
+        &vault.store,
+        &mut wtxn,
+        &hash,
+        crate::unix_seconds_now(),
+        version,
+        &state,
+    )?);
+    vault.store.ppr_cache.put(&mut wtxn, &hash, b"broken")?;
+    super::cache_store::invalidate_ppr_for_delete(&vault.store, &mut wtxn, &seed, &[])?;
+    wtxn.commit()?;
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 0);
+    assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 0);
+    Ok(())
+}
+
+#[test]
 fn store_cache_entry_replaces_dependency_rows_for_same_hash() -> Result<()> {
     let temp_dir = tempdir()?;
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
@@ -1584,6 +1664,8 @@ fn store_cache_entry_replaces_dependency_rows_for_same_hash() -> Result<()> {
     let seed_hash = hash_seeds(&[seed], 3, 0.15, 0.0, SeedWeighting::Uniform);
     let graph_version = graph_version(&vault)?;
     let first_state = PprCacheState {
+        residual: Vec::new(),
+        push_threshold: super::walk::SCORE_EPSILON,
         completed_depth: 3,
         scores: vec![ScoredEntity {
             id: stale_dep,
@@ -1593,6 +1675,8 @@ fn store_cache_entry_replaces_dependency_rows_for_same_hash() -> Result<()> {
         dependencies: vec![seed, stale_dep],
     };
     let second_state = PprCacheState {
+        residual: Vec::new(),
+        push_threshold: super::walk::SCORE_EPSILON,
         completed_depth: 3,
         scores: vec![ScoredEntity {
             id: seed,
@@ -2447,17 +2531,25 @@ fn single_reader_policy_manifest(actor_ref: &str) -> Vec<u8> {
     let grant = Value::Map(vec![
         (Value::from("actor_ref"), Value::from(actor_ref)),
         (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .unwrap(),
+        ),
         (Value::from("receipt_required"), Value::Boolean(false)),
     ]);
+    let grants = vec![grant];
     let manifest = Value::Map(vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("code-memory-scoped")),
         (Value::from("pack_version"), Value::from("1")),
         (Value::from("min_engine_version"), Value::from("0.0.0")),
         (Value::from("defaults"), Value::Map(Vec::new())),
         (Value::from("rules"), Value::Array(Vec::new())),
         (Value::from("actor_ceilings"), Value::Array(Vec::new())),
-        (Value::from("scoped_grants"), Value::Array(vec![grant])),
+        (Value::from("scoped_grants"), Value::Array(grants)),
     ]);
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("manifest encodes");
@@ -2604,6 +2696,34 @@ fn pull_code_memory_does_not_rank_across_a_denied_claim_bridge() -> Result<()> {
     // Installed LAST: every fixture write above predates the manifest, so this
     // grant governs reads only.
     let manifest = single_reader_policy_manifest("code-memory-reader");
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut manifest.as_slice()).expect("manifest")
+    else {
+        panic!("map");
+    };
+    let (_, Value::Array(grants)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("scoped_grants"))
+        .expect("grants")
+    else {
+        panic!("grants");
+    };
+    let mut metadata = crate::federation::scope_codec::read_preset();
+    metadata.bands = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        crate::registry::ENTITY_TYPE_CODE_SYMBOL,
+        crate::registry::ENTITY_TYPE_NOTE,
+    ]));
+    grants.push(Value::Map(vec![
+        ("actor_ref".into(), "code-memory-intruder".into()),
+        ("effector".into(), "core:read".into()),
+        (
+            "scope".into(),
+            crate::federation::scope_codec::encode_scope_value(&metadata)?,
+        ),
+        ("receipt_required".into(), Value::Boolean(false)),
+    ]));
+    let mut manifest = Vec::new();
+    rmpv::encode::write_value(&mut manifest, &Value::Map(entries)).expect("manifest");
     put_policy_manifest_bytes(&vault, entity(0x69), &manifest)?;
 
     let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;
@@ -3145,6 +3265,11 @@ fn pull_code_memory_threads_vad_alpha_and_rejects_invalid_config() -> Result<()>
             arousal: 1.0,
             dominance: 0.0,
         },
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x79),
+        &single_reader_policy_manifest("vad-reader"),
     )?;
     let mut request = CodeMemoryPullRequest::new(vec![seed]);
     request.minimum_relevance = 0.35;
@@ -4544,3 +4669,187 @@ fn retrieval_quality_cached_empty_ppr_yields_full_no_data_context() -> Result<()
 }
 
 mod quality_integration;
+
+#[test]
+fn residual_cache_resume_matches_fresh_bits_on_branching_graph() -> Result<()> {
+    let temp = tempdir()?;
+    let vault = Vault::open(temp.path(), embedding_test_config())?;
+    let seeds = [entity(101), entity(102)];
+    for index in 101..110 {
+        vault.put_edge(&entity(index), EdgeKind::Mentions, &entity(index + 1), 0.7)?;
+        vault.put_edge(&entity(index), EdgeKind::Supports, &entity(index + 2), 0.3)?;
+    }
+    let _ = ppr_query(&vault.store, &vault.config, &seeds, 2, 0.15)?;
+    for depth in [4, 6, 10] {
+        let resumed = ppr_query(&vault.store, &vault.config, &seeds, depth, 0.15)?;
+        let txn = vault.store.env.read_txn()?;
+        let fresh = ppr_compute(&vault.store, &txn, &seeds, depth, 0.15)?;
+        assert_eq!(resumed, fresh);
+    }
+    Ok(())
+}
+
+#[test]
+fn residual_survives_codec_below_canonical_threshold() -> Result<()> {
+    let temp = tempdir()?;
+    let vault = Vault::open(temp.path(), embedding_test_config())?;
+    let a = entity(121);
+    let b = entity(122);
+    vault.put_edge(&a, EdgeKind::Mentions, &b, 1.0)?;
+    let txn = vault.store.env.read_txn()?;
+    let mass = SCORE_EPSILON / 2.0;
+    let initial = PprCacheState {
+        completed_depth: 0,
+        scores: vec![ScoredEntity { id: a, score: 0.1 }],
+        frontier: Vec::new(),
+        dependencies: vec![a],
+        residual: vec![super::walk::PprFrontierEntry {
+            id: a,
+            structural_hops: 0,
+            score: mass,
+        }],
+        push_threshold: SCORE_EPSILON,
+    };
+    let bytes = encode_cache_value_with_state(1, 1, 0, &initial)?;
+    let roundtrip = decode_cache_state(&bytes[CACHE_HEADER_LEN..])?;
+    let result = super::walk::ppr_resume_state_weighted(
+        &vault.store,
+        &txn,
+        &[a],
+        SeedWeighting::Uniform,
+        2,
+        PprAlphas::default_vad(0.15),
+        roundtrip,
+    )?;
+    assert_eq!(result.scores, vec![ScoredEntity { id: a, score: 0.1 }]);
+    let bytes = encode_cache_value_with_state(1, 1, 0, &result)?;
+    let mut corrupt = bytes[CACHE_HEADER_LEN..].to_vec();
+    corrupt[25..29].copy_from_slice(&f32::NAN.to_le_bytes());
+    assert!(matches!(
+        decode_cache_state(&corrupt),
+        Err(Error::CorruptedIndex(_))
+    ));
+    Ok(())
+}
+
+#[test]
+fn cache_decoder_refuses_duplicate_scores_and_frontier_residual_keys() -> Result<()> {
+    let id = entity(123);
+    let entry = super::walk::PprFrontierEntry {
+        id,
+        structural_hops: 0,
+        score: 0.5,
+    };
+    for duplicate in 0..4 {
+        let mut state = PprCacheState {
+            completed_depth: 1,
+            scores: vec![ScoredEntity { id, score: 1.0 }],
+            frontier: vec![entry.clone()],
+            dependencies: vec![id],
+            residual: vec![],
+            push_threshold: SCORE_EPSILON,
+        };
+        match duplicate {
+            0 => state.scores.push(ScoredEntity { id, score: 1.0 }),
+            1 => state.frontier.push(entry.clone()),
+            2 => state.residual.push(super::walk::PprFrontierEntry {
+                score: SCORE_EPSILON / 2.0,
+                ..entry.clone()
+            }),
+            _ => {
+                state.frontier.clear();
+                state.residual = vec![
+                    super::walk::PprFrontierEntry {
+                        score: SCORE_EPSILON / 2.0,
+                        ..entry.clone()
+                    };
+                    2
+                ];
+            }
+        }
+        let bytes = encode_cache_value_with_state(1, 1, 0, &state)?;
+        assert!(matches!(
+            decode_cache_state(&bytes[CACHE_HEADER_LEN..]),
+            Err(Error::CorruptedIndex(_))
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn cache_state_threshold_is_pinned_to_writer_value() -> Result<()> {
+    let id = entity(124);
+    let mut state = PprCacheState {
+        completed_depth: 0,
+        scores: vec![ScoredEntity { id, score: 1.0 }],
+        frontier: Vec::new(),
+        dependencies: vec![id],
+        residual: vec![super::walk::PprFrontierEntry {
+            id,
+            structural_hops: 0,
+            score: SCORE_EPSILON / 2.0,
+        }],
+        push_threshold: SCORE_EPSILON,
+    };
+    let bytes = encode_cache_value_with_state(1, 1, 0, &state)?;
+    assert!(decode_cache_state(&bytes[CACHE_HEADER_LEN..]).is_ok());
+    for threshold in [
+        0.0,
+        -0.0,
+        1.0,
+        f32::from_bits(SCORE_EPSILON.to_bits() + 1),
+        f32::INFINITY,
+        f32::NAN,
+    ] {
+        let mut payload = bytes[CACHE_HEADER_LEN..].to_vec();
+        payload[25..29].copy_from_slice(&threshold.to_le_bytes());
+        assert!(matches!(
+            decode_cache_state(&payload),
+            Err(Error::CorruptedIndex(_))
+        ));
+        state.push_threshold = threshold;
+        assert!(matches!(
+            encode_cache_value_with_state(1, 1, 0, &state),
+            Err(Error::CorruptedIndex(_))
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn cache_scores_refuse_negative_mass_at_both_codec_doors() -> Result<()> {
+    let id = entity(125);
+    let mut state = PprCacheState {
+        completed_depth: 0,
+        scores: vec![ScoredEntity { id, score: 1.0 }],
+        frontier: Vec::new(),
+        dependencies: vec![id],
+        residual: Vec::new(),
+        push_threshold: SCORE_EPSILON,
+    };
+    let bytes = encode_cache_value_with_state(1, 1, 0, &state)?;
+    for score in [-1.0, -f32::MIN_POSITIVE, -f32::from_bits(1)] {
+        let mut payload = bytes[CACHE_HEADER_LEN..].to_vec();
+        payload[45..49].copy_from_slice(&score.to_le_bytes());
+        assert!(matches!(
+            decode_cache_state(&payload),
+            Err(Error::CorruptedIndex(_))
+        ));
+        state.scores[0].score = score;
+        assert!(matches!(
+            encode_cache_value_with_state(1, 1, 0, &state),
+            Err(Error::CorruptedIndex(_))
+        ));
+    }
+    for score in [0.0, 1.0] {
+        state.scores[0].score = score;
+        let bytes = encode_cache_value_with_state(1, 1, 0, &state)?;
+        assert_eq!(
+            decode_cache_state(&bytes[CACHE_HEADER_LEN..])?.scores[0]
+                .score
+                .to_bits(),
+            score.to_bits()
+        );
+    }
+    Ok(())
+}

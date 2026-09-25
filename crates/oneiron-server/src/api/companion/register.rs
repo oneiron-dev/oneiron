@@ -123,7 +123,7 @@ pub(crate) struct CompanionRegisterProvenancePayload {
         "value": { "source": "settings" }
     },
     "lifecycle": "active",
-    "export": "local_only"
+    "sensitivity": "restricted"
 }))]
 pub(crate) struct CompanionRegisterRecordPayload {
     /// Record discriminator: `persona` or `relationship`.
@@ -141,9 +141,8 @@ pub(crate) struct CompanionRegisterRecordPayload {
     #[schema(example = "active")]
     pub(super) lifecycle: Option<String>,
     /// Export classification: `local_only`, `portable`, or `shared_vault`.
-    #[serde(rename = "export")]
     #[schema(example = "local_only")]
-    pub(super) export_classification: String,
+    pub(super) sensitivity: String,
 }
 
 /// Create companion register record request.
@@ -163,7 +162,7 @@ pub(crate) struct CompanionRegisterRecordPayload {
             "approval": "approved",
             "value": { "source": "settings" }
         },
-        "export": "portable"
+        "sensitivity": "public"
     }
 }))]
 pub(crate) struct CompanionRegisterCreateRecordRequest {
@@ -193,7 +192,7 @@ pub(crate) struct CompanionRegisterCreateRecordRequest {
             "approval": "approved",
             "value": { "source": "settings" }
         },
-        "export": "local_only"
+        "sensitivity": "restricted"
     }
 }))]
 pub(crate) struct CompanionRegisterUpdateRecordRequest {
@@ -457,9 +456,7 @@ pub(crate) fn companion_register_record_from_payload(
             Some("record.lifecycle"),
         ));
     }
-    let export_classification =
-        companion_register_export_from_wire(&payload.export_classification)?;
-    validate_companion_register_scope_export(&scope, export_classification)?;
+    let sensitivity = companion_register_export_from_wire(&payload.sensitivity)?;
 
     Ok(oneiron::CompanionRecord::new(
         scope,
@@ -467,29 +464,8 @@ pub(crate) fn companion_register_record_from_payload(
         value,
         provenance,
         lifecycle,
-        export_classification,
+        sensitivity,
     ))
-}
-
-pub(crate) fn validate_companion_register_scope_export(
-    scope: &oneiron::CompanionScope,
-    export: oneiron::CompanionExportClassification,
-) -> Result<(), ApiError> {
-    match (scope, export) {
-        (
-            oneiron::CompanionScope::SharedVault { .. },
-            oneiron::CompanionExportClassification::SharedVault,
-        ) => Ok(()),
-        (oneiron::CompanionScope::SharedVault { .. }, _) => Err(ApiError::bad_request(
-            "shared_vault scope requires shared_vault export",
-            Some("record.export"),
-        )),
-        (_, oneiron::CompanionExportClassification::SharedVault) => Err(ApiError::bad_request(
-            "shared_vault export requires shared_vault scope",
-            Some("record.export"),
-        )),
-        _ => Ok(()),
-    }
 }
 
 pub(crate) fn companion_register_scope_from_payload(

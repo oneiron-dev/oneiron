@@ -324,6 +324,7 @@ fn napi_witness_ingress_cannot_smuggle_a_system_row_past_the_engine_ceiling() {
 #[test]
 fn calendar_bridge_dtos_mirror_the_engine_surface() {
     let engine = CalendarEventView {
+        origin: "native".to_owned(),
         event_ref: "44444444444444444444444444444444".to_owned(),
         name: Some("Design review".to_owned()),
         start_utc: Some(1_000),
@@ -332,6 +333,7 @@ fn calendar_bridge_dtos_mirror_the_engine_surface() {
         blocks_time: true,
     };
     let bridged = calendar_event_from_engine(engine.clone()).expect("event crosses");
+    assert_eq!(bridged.origin, "native");
     assert_eq!(bridged.event_ref, engine.event_ref);
     assert_eq!(bridged.name, engine.name);
     assert_eq!(bridged.start_utc, Some(1_000));
@@ -341,11 +343,13 @@ fn calendar_bridge_dtos_mirror_the_engine_surface() {
 
     // An unanchored EVENT stays unanchored rather than becoming epoch zero.
     let unanchored = calendar_event_from_engine(CalendarEventView {
+        origin: "dreamer".to_owned(),
         start_utc: None,
         end_utc: None,
         ..engine
     })
     .expect("unanchored event crosses");
+    assert_eq!(unanchored.origin, "dreamer");
     assert_eq!(unanchored.start_utc, None);
     assert_eq!(unanchored.end_utc, None);
 
@@ -449,6 +453,7 @@ fn forget_drains_all_active_matches_beyond_one_page() {
                     confidence: 1.0,
                     source: "user_stated".to_owned(),
                     world_ref: None,
+                    relationship_ref: None,
                     scope: Some(serde_json::json!({ "idx": i })),
                     valid_from: None,
                     valid_to: None,

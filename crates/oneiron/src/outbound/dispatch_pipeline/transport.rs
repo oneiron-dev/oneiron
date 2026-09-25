@@ -66,6 +66,11 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         } else {
             None
         };
+        let Ok(space_posting) =
+            crate::channel_identity_autonomy::frozen_space_posting(call.payload())
+        else {
+            return invalid_frozen_call();
+        };
         let execution_request = OutboundExecutionRequest {
             intent_ref: &self.request.intent_ref,
             intent: &self.request.intent,
@@ -84,6 +89,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             hygiene_headers,
             apns_interruption_level: self.request.delivery_window_apns_interruption_level,
             calendar_invite,
+            space_posting,
         };
         let mut execution = self.sink.execute(&execution_request);
         // Only the pipeline may author the normalized re-arm authority, even

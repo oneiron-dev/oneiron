@@ -5,18 +5,24 @@ use crate::error::ArtifactError;
 
 #[test]
 fn attempt_queue_retry_mints_a_new_row_and_leaves_the_source_terminal() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(attempt) =
-        queue.enqueue(enqueue("claim_extraction", Some("turn:retry"), 10))?
+        queue.enqueue(enqueue("claim_extraction", Some("turn:retry"), {
+            clock.set(10);
+            10
+        }))?
     else {
         panic!("expected enqueue");
     };
 
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
-        now: 20,
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("expected claimed attempt");
@@ -31,7 +37,10 @@ fn attempt_queue_retry_mints_a_new_row_and_leaves_the_source_terminal() -> Resul
             attempt_count: claimed.attempt_count,
             backoff_until: 100,
             last_error: Some("rate limited".to_owned()),
-            now: 25,
+            now: {
+                clock.set(25);
+                25
+            },
         })
         .unwrap_err();
     assert_invalid_transition(wrong_owner_retry, "retry", "leased_by_other");
@@ -42,7 +51,10 @@ fn attempt_queue_retry_mints_a_new_row_and_leaves_the_source_terminal() -> Resul
         attempt_count: claimed.attempt_count,
         backoff_until: 100,
         last_error: Some("rate limited".to_owned()),
-        now: 30,
+        now: {
+            clock.set(30);
+            30
+        },
     })?;
 
     // The retry is a DIFFERENT row that carries the immutable payload and
@@ -76,7 +88,10 @@ fn attempt_queue_retry_mints_a_new_row_and_leaves_the_source_terminal() -> Resul
 
     // The advisory dedupe index followed the newest pending member.
     let EnqueueOutcome::Existing(duplicate_pending) =
-        queue.enqueue(enqueue("claim_extraction", Some("turn:retry"), 40))?
+        queue.enqueue(enqueue("claim_extraction", Some("turn:retry"), {
+            clock.set(40);
+            40
+        }))?
     else {
         panic!("pending dedupe key should coalesce onto the scheduled retry");
     };
@@ -86,14 +101,20 @@ fn attempt_queue_retry_mints_a_new_row_and_leaves_the_source_terminal() -> Resul
     assert_eq!(
         queue.claim(ClaimAttempt {
             lease_owner: "worker-b".to_owned(),
-            now: 99,
+            now: {
+                clock.set(99);
+                99
+            },
         })?,
         ClaimOutcome::Empty
     );
 
     let ClaimOutcome::Claimed(second_attempt) = queue.claim(ClaimAttempt {
         lease_owner: "worker-b".to_owned(),
-        now: 100,
+        now: {
+            clock.set(100);
+            100
+        },
     })?
     else {
         panic!("expected claim at the scheduled instant");
@@ -111,7 +132,10 @@ fn attempt_queue_retry_mints_a_new_row_and_leaves_the_source_terminal() -> Resul
     assert_eq!(
         queue.claim(ClaimAttempt {
             lease_owner: "worker-c".to_owned(),
-            now: 1_000,
+            now: {
+                clock.set(1_000);
+                1_000
+            },
         })?,
         ClaimOutcome::Empty
     );
@@ -513,17 +537,23 @@ fn attempt_queue_retry_omitting_a_reason_stamps_a_stable_token() -> Result<()> {
 
 #[test]
 fn attempt_queue_retry_of_a_missing_lease_writes_nothing() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(attempt) =
-        queue.enqueue(enqueue("claim_extraction", Some("turn:atomic"), 10))?
+        queue.enqueue(enqueue("claim_extraction", Some("turn:atomic"), {
+            clock.set(10);
+            10
+        }))?
     else {
         panic!("expected enqueue");
     };
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
-        now: 20,
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("expected claim");
@@ -538,7 +568,10 @@ fn attempt_queue_retry_of_a_missing_lease_writes_nothing() -> Result<()> {
             attempt_count: claimed.attempt_count + 1,
             backoff_until: 40,
             last_error: Some("retryable".to_owned()),
-            now: 30,
+            now: {
+                clock.set(30);
+                30
+            },
         })
         .unwrap_err();
     assert_invalid_transition(stale, "retry", "stale_attempt");

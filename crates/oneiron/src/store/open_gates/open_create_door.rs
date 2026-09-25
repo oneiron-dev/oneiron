@@ -9,24 +9,20 @@ use crate::error::{Error, Result};
 use crate::overlay_db::OverlayDb;
 #[cfg(test)]
 use crate::store::test_hooks;
-use crate::store::{
-    RawDatabases, Store, TYPE_BYTE_REKEY_V3, VaultWriterLease, rekey_type_bytes_v3_in_txn,
-    seed_default_policy_manifest_in_txn,
-};
+use crate::store::{RawDatabases, Store, VaultWriterLease, seed_default_policy_manifest_in_txn};
 
 use super::hnsw_model_gates::{
     migrate_temporal_long_intervals_if_needed, persist_hnsw_config_if_missing,
     persist_model_id_if_missing, preflight_embedding_model, preflight_hnsw_config,
 };
 use super::manifest_storage_gates::{
-    OwnedEnv, RegisteredPath, StorageAbiGate, TornCreationCleanup, create_manifest_db,
-    create_manifest_dupsort_db, create_manifest_str_db, gate_storage_versions,
-    lmdb_database_open_guard, rekey_short_ids_if_needed_in_txn, validate_db_manifest_set,
-    validate_fast_dims, vault_root_open_guard,
+    OwnedEnv, RegisteredPath, TornCreationCleanup, create_manifest_db, create_manifest_dupsort_db,
+    create_manifest_str_db, gate_storage_versions, lmdb_database_open_guard,
+    rekey_short_ids_if_needed_in_txn, validate_db_manifest_set, validate_fast_dims,
+    vault_root_open_guard,
 };
 use super::open_version_keys::{
-    DefaultPolicySeedMode, MAX_DBS, STORAGE_ABI_VERSION, STORAGE_ABI_VERSION_KEY,
-    STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR, VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE,
+    DefaultPolicySeedMode, MAX_DBS, STORAGE_ABI_VERSION, VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE,
 };
 use super::vault_root_bind::{preflight_rejected_aliased_root, preflight_vault_root};
 
@@ -203,7 +199,7 @@ impl Store {
         let mut wtxn = env.write_txn()?;
         let vault_meta = create_manifest_db(&env, &mut wtxn, 4)?;
         let vault_meta_view = OverlayDb::canonical(vault_meta);
-        let abi_gate = gate_storage_versions(
+        gate_storage_versions(
             &vault_meta_view,
             &mut wtxn,
             is_new_vault,
@@ -275,45 +271,8 @@ impl Store {
             attempt_dedupe,
         };
 
-        // ONE-1754: the one sanctioned migration branch. It runs in THIS
-        // transaction, after every database exists and before the commit, so a
-        // failure aborts the whole open — old bytes and the predecessor stamp
-        // both survive, and the vault stays openable by the previous engine.
-        // The new stamp is written only once the re-key's own count and id-set
-        // assertions have passed.
-        if abi_gate == StorageAbiGate::RekeyByteSpaceV3 {
-            let edges_out_before = raw.edges_out.len(&wtxn)?;
-            let edges_in_before = raw.edges_in.len(&wtxn)?;
-            let counts = rekey_type_bytes_v3_in_txn(&raw, &mut wtxn, TYPE_BYTE_REKEY_V3)?;
-            // Edges carry entity ids and edge data, never endpoint type bytes.
-            // Asserting the totals is how "we did not touch them" stops being
-            // a claim in a comment and becomes a checked fact.
-            if raw.edges_out.len(&wtxn)? != edges_out_before
-                || raw.edges_in.len(&wtxn)? != edges_in_before
-            {
-                return Err(Error::CorruptedIndex("byte-space v3 edge total changed"));
-            }
-            tracing::info!(
-                entities = counts.entities,
-                type_index = counts.type_index,
-                short_id_counters = counts.short_id_counters,
-                kind_registrations = counts.kind_registrations,
-                kind_registrations_rezoned = counts.kind_registrations_rezoned,
-                from = STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR,
-                to = storage_abi_version,
-                "byte-space v3 type-byte re-key applied"
-            );
-            vault_meta_view.put(
-                &mut wtxn,
-                STORAGE_ABI_VERSION_KEY,
-                &storage_abi_version.to_le_bytes(),
-            )?;
-        }
-
-        // ONE-1930: the presentation-prefix re-key. Runs in THIS transaction,
-        // after the byte-space pass above so entity envelopes and
-        // `sid_counter:<byte>` keys are already at their final v3 bytes — this
-        // pass changes prefixes, never type bytes.
+        // ONE-1930: the presentation-prefix re-key. Runs in THIS transaction;
+        // this pass changes prefixes, never type bytes.
         rekey_short_ids_if_needed_in_txn(&raw, &vault_meta_view, &mut wtxn)?;
 
         if is_new_vault && matches!(seed_mode, DefaultPolicySeedMode::Required) {
@@ -324,6 +283,7 @@ impl Store {
             let temporal_learned = OverlayDb::canonical(raw.temporal_learned);
             seed_default_policy_manifest_in_txn(
                 &entities,
+                &crate::overlay_db::OverlayStrDb::canonical(raw.sync_state),
                 &type_index,
                 &temporal_occurred_start,
                 &temporal_learned,
@@ -346,7 +306,7 @@ impl Store {
         torn_creation_cleanup.disarm();
         drop(db_open_guard);
 
-        let store = Self::assemble(env, raw, registered_path)?;
+        let store = Self::assemble(env, raw, registered_path, &config.store_clock)?;
 
         // EMB-2 preflight: an out-of-range fast_dims is a caller bug and
         // fails closed before the HNSW compat check below can compare it.

@@ -142,6 +142,8 @@ impl SurfaceEventAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SurfaceEventDispatchRoute {
+    /// A CC intake hands the thread to coordination proposal/confirmation, not execution.
+    ProposeConfirm,
     ActorSelf,
     ObservedSourceEnrichment,
 }

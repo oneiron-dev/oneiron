@@ -1,9 +1,10 @@
 //! CHAT lane: session-end distill jobs, turn readers, and the distill run.
 
+use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
@@ -24,7 +25,6 @@ use super::write::{ground_actor_claim, require_session_entity, write_actor_claim
 /// is not representable; consumed by [`run_session_end_actor_distill`].
 const DISTILL_PENDING_PREFIX: &[u8] = b"actor_claims:distill_pending:v1:";
 /// `temporal_learned` key layout: `learned_at` (8 BE) + entity id.
-const TEMPORAL_LEARNED_KEY_LEN: usize = 8 + ENTITY_ID_LEN;
 // ---------------------------------------------------------------------------
 // CHAT lane — SessionEnd distillation
 // ---------------------------------------------------------------------------
@@ -261,27 +261,13 @@ pub(super) fn session_turns(
     let mut turn_ids = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        let mut lower = [0_u8; TEMPORAL_LEARNED_KEY_LEN];
-        lower[..8].copy_from_slice(&window.started_at.to_be_bytes());
-        let mut upper = [u8::MAX; TEMPORAL_LEARNED_KEY_LEN];
-        upper[..8].copy_from_slice(&window.ended_at.to_be_bytes());
-        for entry in vault.store.temporal_learned.range(
-            &rtxn,
-            &(
-                std::ops::Bound::Included(&lower[..]),
-                std::ops::Bound::Included(&upper[..]),
-            ),
-        )? {
-            let (key, _) = entry?;
-            let Some(raw) = key.get(8..TEMPORAL_LEARNED_KEY_LEN) else {
-                continue;
-            };
-            let Ok(bytes) = <[u8; ENTITY_ID_LEN]>::try_from(raw) else {
-                continue;
-            };
-            let Ok(id) = EntityId::from_bytes(bytes) else {
-                continue;
-            };
+        let query = crate::ports::TimelineQuery {
+            start: std::ops::Bound::Included(window.started_at),
+            end: std::ops::Bound::Included(window.ended_at),
+            ..Default::default()
+        };
+        for entry in vault.store.port_entity_timeline(&rtxn, query)? {
+            let id = entry?.id;
             if vault.get_entity_type_in_txn(&rtxn, &id)? == Some(ENTITY_TYPE_TURN) {
                 turn_ids.push(id);
             }
@@ -305,7 +291,11 @@ pub(super) fn session_turns(
 /// it has only the witness door's speaker stamp and its words are children.
 fn turn_utterance(vault: &Vault, turn: &EntityId) -> Result<Option<SessionDistillUtterance>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.entities.get(&rtxn, turn.as_bytes())? else {
+    let Some(raw) = vault
+        .store
+        .port_entity_record(&rtxn, turn)?
+        .map(|row| row.encode())
+    else {
         return Ok(None);
     };
     let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
@@ -328,16 +318,14 @@ fn turn_message_utterances(vault: &Vault, turn: &EntityId) -> Result<Vec<Session
     let rtxn = vault.store.env.read_txn()?;
     let mut said: Vec<(u64, EntityId, SessionDistillUtterance)> = Vec::new();
     for message in messages {
-        let Some(raw) = vault.store.entities.get(&rtxn, message.as_bytes())? else {
+        let Some(raw) = vault.store.port_entity_record(&rtxn, &message)? else {
             continue;
         };
-        let Some(header) = EntityMetadataHeader::parse(&raw) else {
-            continue;
-        };
-        if header.entity_type != ENTITY_TYPE_MESSAGE {
+
+        if raw.entity_type != ENTITY_TYPE_MESSAGE {
             continue;
         }
-        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let body = &raw.body;
         said.push((
             message_order(body),
             message,

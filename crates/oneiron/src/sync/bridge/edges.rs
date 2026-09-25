@@ -526,6 +526,7 @@ pub(super) fn quarantine_edge_apply_failure(
     meta: &EdgeOpMeta,
     error: &Error,
 ) -> Result<()> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     quarantine::record_in_txn(
         vault,
         wtxn,
@@ -536,7 +537,7 @@ pub(super) fn quarantine_edge_apply_failure(
             crdt_key_len: meta.crdt_key_len,
             reason_code: quarantine::reason_code_for(error),
             payload_hash: meta.payload_hash,
-            quarantined_at: crate::unix_seconds_now(),
+            quarantined_at: mutation_recorded_at,
         },
     )?;
     if let Some(id) = meta.remat_marker_entity {

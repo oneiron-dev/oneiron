@@ -12,18 +12,16 @@ use super::wire::{
 use crate::error::ApiError;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
-use axum::http::header::CONTENT_TYPE;
+use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::response::IntoResponse;
 use axum::response::Response;
-use oneiron::TimeRange;
 use oneiron::origin::lfs::LFS_BASIC_TRANSFER;
 use oneiron::origin::lfs::LfsOid;
-use oneiron::origin::lfs::check_lfs_expectation;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -136,29 +134,19 @@ pub(crate) async fn lfs_upload(
     State(server): State<Arc<SyncServer>>,
     Path((_repo, oid)): Path<(String, String)>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> Result<Response, EnvelopedApiError> {
     authorize(&headers, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
     let oid = LfsOid::parse_hex(&oid)
         .map_err(|error| lfs_engine_error("lfs oid is not a 64-character sha256", &error))?;
-    // The negotiated length when the client stated one. Both halves of the
-    // expectation run before the engine is called, so a mismatch writes
-    // nothing at all rather than writing and then repenting.
-    check_lfs_expectation(oid, declared_size(&headers), &body)
-        .map_err(|error| lfs_engine_error("lfs upload did not match its declaration", &error))?;
-    let now = now_secs()?;
-    let outcome = server
-        .vault
-        .put_lfs_object(
-            oid,
-            &body,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
-        )
-        .map_err(|error| lfs_engine_error("lfs object store failed", &error))?;
+    let outcome = super::streaming::upload(
+        Arc::clone(&server.vault),
+        oid,
+        declared_size(&headers),
+        body,
+        now_secs()?,
+    )
+    .await?;
     lfs_json_response(
         StatusCode::OK,
         &LfsUploadResponse {
@@ -177,21 +165,34 @@ pub(crate) async fn lfs_download(
     authorize(&headers, &server, LfsAccess::Read).map_err(EnvelopedApiError::from)?;
     let oid = LfsOid::parse_hex(&oid)
         .map_err(|error| lfs_engine_error("lfs oid is not a 64-character sha256", &error))?;
-    // Re-checks length and re-hashes the body inside the engine. A corrupt
-    // stored body raises here instead of being served as a success.
-    let Some(bytes) = server
+    let Some(record) = server
         .vault
-        .get_lfs_object(oid)
-        .map_err(|error| lfs_engine_error("lfs object read failed", &error))?
+        .lfs_object(oid)
+        .map_err(|error| lfs_engine_error("lfs object lookup failed", &error))?
     else {
         return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
     };
-    Ok((
-        StatusCode::OK,
-        [(CONTENT_TYPE, LFS_OBJECT_MEDIA_TYPE)],
-        bytes,
-    )
-        .into_response())
+    // Preflight in the blocking pool preserves the old fail-before-200 contract
+    // without ever buffering the object. The stream verifies each chunk again;
+    // a deletion/corruption racing preflight terminates the HTTP body with error.
+    let vault = Arc::clone(&server.vault);
+    let verified =
+        tokio::task::spawn_blocking(move || vault.verify_lfs_object(oid, record.size_bytes))
+            .await
+            .map_err(|_| ApiError::internal_server_error("lfs verify worker failed"))?
+            .map_err(|error| lfs_engine_error("lfs object read failed", &error))?;
+    if !verified {
+        return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
+    }
+    let mut response = super::streaming::download(Arc::clone(&server.vault), oid).into_response();
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        LFS_OBJECT_MEDIA_TYPE.parse().expect("static media type"),
+    );
+    response
+        .headers_mut()
+        .insert(CONTENT_LENGTH, record.size_bytes.into());
+    Ok(response)
 }
 
 /// `POST /git/{repo}/info/lfs/objects/{oid}/verify` — the stored-bytes verdict.
@@ -215,9 +216,11 @@ pub(crate) async fn lfs_verify(
         )
         .into());
     }
-    let ok = server
-        .vault
-        .verify_lfs_object(oid, request.size)
+    let vault = Arc::clone(&server.vault);
+    let size = request.size;
+    let ok = tokio::task::spawn_blocking(move || vault.verify_lfs_object(oid, size))
+        .await
+        .map_err(|_| ApiError::internal_server_error("lfs verify worker failed"))?
         .map_err(|error| lfs_engine_error("lfs object verification failed", &error))?;
     lfs_json_response(
         StatusCode::OK,

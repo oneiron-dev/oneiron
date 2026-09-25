@@ -7,40 +7,7 @@ pub const SANDBOX_WIT_WORLD_NAME: &str = "oneiron:code-run/guest@1.0.0";
 
 pub const SANDBOX_JS_COMPONENT_NAME: &str = "oneiron.plain-js.quickjs-component";
 
-pub const PLAIN_JS_HOST_VERB_DTS: &str = r#"declare namespace self {
-  namespace memory {
-    function search(input: { query: string; limit?: number }): Promise<{ results: unknown[] }>;
-    function put_claim(input: {
-      id: string;
-      predicate: string;
-      subject: unknown;
-      value: unknown;
-      confidence?: number;
-      occurred?: { start: number; end: number };
-      learnedAt?: number;
-    }): Promise<{ id: string }>;
-    function supersede_claim(input: { newId: string; oldId: string; now: number }): Promise<{ id: string }>;
-    function put_edge(input: { src: string; kind: string; tgt: string; weight?: number }): Promise<{ src: string; kind: string; tgt: string }>;
-  }
-
-  function askHuman(input: { prompt: string }): Promise<{ waitId: string }>;
-  function ask_human(input: { prompt: string }): Promise<{ waitId: string }>;
-
-  function speak(input: { text: string }): Promise<{ order: number; isVisible: boolean }>;
-  function think(input: { text: string }): Promise<{ order: number; isVisible: boolean }>;
-  function express(input: { text: string }): Promise<{ order: number; isVisible: boolean }>;
-}
-
-declare namespace oneiron {
-  namespace clock {
-    function now_unix_ms(): number;
-  }
-
-  namespace random {
-    function bytes(length: number): Uint8Array;
-  }
-}
-"#;
+pub const PLAIN_JS_HOST_VERB_DTS: &str = include_str!("../../wit/generated/code-run.d.ts");
 
 /// Trust tier selected by the host before linking a guest program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

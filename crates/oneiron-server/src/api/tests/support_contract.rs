@@ -203,7 +203,18 @@ pub(super) fn retrieval_quality_openapi_snapshot() -> String {
     let mut expected: Value =
         serde_json::from_str(V1_CORE_OPENAPI_CONTRACT_SNAPSHOT).expect("OpenAPI fixture");
     for name in ["ResponseMeta", "CoreContextPackResponse"] {
-        let properties = expected["components"]["schemas"][name]["properties"]
+        let schema = &mut expected["components"]["schemas"][name];
+        let schema = if schema["allOf"].is_array() {
+            schema["allOf"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|part| part["properties"].get("results").is_some())
+                .expect("context-pack object in flattened schema")
+        } else {
+            schema
+        };
+        let properties = schema["properties"]
             .as_object_mut()
             .expect("schema properties");
         properties.extend(

@@ -58,11 +58,11 @@ fn validate_time_range(range: TimeRange, field: &'static str) -> Result<()> {
 }
 
 fn entity_type_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    Ok(Some(header.entity_type))
+
+    Ok(Some(raw.entity_type))
 }
 
 /// The symbol anchor is the identity anchor. No path may be supplied in its

@@ -74,6 +74,16 @@ pub(super) fn park_open_conflict(
                     .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
             ),
             (
+                Value::from("prior_heads"),
+                Value::Array(
+                    conflict
+                        .prior_heads
+                        .iter()
+                        .map(|id| Value::Binary(id.as_bytes().to_vec()))
+                        .collect(),
+                ),
+            ),
+            (
                 Value::from("candidates"),
                 Value::Array(
                     members
@@ -92,12 +102,7 @@ pub(super) fn park_open_conflict(
     if let Some(rel) = conflict.identity.rel {
         candidate = candidate.with_relationship(rel);
     }
-    if let Some(facet) = conflict.identity.facet {
-        candidate = candidate.with_scope(Value::Map(vec![(
-            Value::from("facet_ref"),
-            Value::Binary(facet.as_bytes().to_vec()),
-        )]));
-    }
+    candidate = candidate.with_scope(super::persistence::identity_scope(&conflict.identity)?);
     vault.with_write_txn(|txn| {
         fence.validate_in_txn(vault, txn)?;
         vault

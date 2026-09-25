@@ -482,3 +482,20 @@ impl Store {
         Ok(())
     }
 }
+
+impl Store {
+    pub(crate) fn rebuild_commitment_due_sidecars(&self, txn: &mut RwTxn<'_>) -> Result<()> {
+        let entries: Vec<_> = self
+            .vault_meta
+            .prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)?
+            .map(|row| {
+                let (key, value) = row?;
+                decode_commitment_due_row(&key, &value)
+            })
+            .collect::<Result<_>>()?;
+        for entry in entries {
+            self.commitment_due_put_in_txn(txn, &entry)?;
+        }
+        Ok(())
+    }
+}

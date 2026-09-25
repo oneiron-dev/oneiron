@@ -678,6 +678,10 @@ fn agent_def_route_is_idempotent_by_task_ref() {
     assert_eq!(
         match replayed {
             AgentDispatchOutcome::Existing(status) => status.attempt.id,
+            AgentDispatchOutcome::ProposedWiden(_)
+            | AgentDispatchOutcome::WorkflowDispatched(_)
+            | AgentDispatchOutcome::WorkflowExisting(_) =>
+                panic!("ordinary dispatch unexpectedly proposed widening"),
             AgentDispatchOutcome::Dispatched(_) => panic!("a replayed route must dedupe"),
         },
         first[0].id

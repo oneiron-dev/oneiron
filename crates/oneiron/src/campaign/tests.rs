@@ -40,12 +40,17 @@ fn campaign_kind_registers_runtime_assigned_crm_byte() -> crate::Result<()> {
     let (_dir, vault) = open_test_vault();
     let assigned = crm_band_byte(&vault, 0);
 
-    let registration = register_campaign_kind(&vault, assigned)?;
+    let registration = register_campaign_kind(
+        &vault,
+        assigned,
+        crate::registry::TypeByteFamily::Productivity,
+    )?;
 
     assert_eq!(registration.type_byte, assigned);
     assert_eq!(registration.zone, TypeByteZone::CompiledProduct);
     assert_eq!(registration.short_id_prefix, CAMPAIGN_SHORT_ID_PREFIX);
     assert_eq!(registration.pack, CRM_PACK_ID);
+    assert_eq!(registration.family, Some(TypeByteFamily::Productivity));
 
     let persisted = vault
         .structural_kind_registration(assigned)
@@ -54,6 +59,7 @@ fn campaign_kind_registers_runtime_assigned_crm_byte() -> crate::Result<()> {
     assert_eq!(persisted.zone, TypeByteZone::CompiledProduct);
     assert_eq!(persisted.short_id_prefix, CAMPAIGN_SHORT_ID_PREFIX);
     assert_eq!(persisted.pack, CRM_PACK_ID);
+    assert_eq!(persisted.family, Some(TypeByteFamily::Productivity));
     Ok(())
 }
 
@@ -64,7 +70,11 @@ fn campaign_kind_registration_persists_across_reopen() -> crate::Result<()> {
     {
         let vault = Vault::open(dir.path(), VaultConfig::device())?;
         assigned = crm_band_byte(&vault, 0);
-        register_campaign_kind(&vault, assigned)?;
+        register_campaign_kind(
+            &vault,
+            assigned,
+            crate::registry::TypeByteFamily::Productivity,
+        )?;
     }
 
     let reopened = Vault::open(dir.path(), VaultConfig::device())?;
@@ -76,6 +86,7 @@ fn campaign_kind_registration_persists_across_reopen() -> crate::Result<()> {
     assert_eq!(persisted.zone, TypeByteZone::CompiledProduct);
     assert_eq!(persisted.short_id_prefix, CAMPAIGN_SHORT_ID_PREFIX);
     assert_eq!(persisted.pack, CRM_PACK_ID);
+    assert_eq!(persisted.family, Some(TypeByteFamily::Productivity));
     assert!(
         reopened
             .structural_kind_registrations()
@@ -100,8 +111,12 @@ fn campaign_kind_rejects_non_crm_assignment() {
     let out_of_band = TYPE_BYTE_ZONE_SYSTEM_START;
     assert_ne!(zone_of(out_of_band), TypeByteZone::CompiledProduct);
 
-    let error = register_campaign_kind(&vault, out_of_band)
-        .expect_err("a byte outside the CRM band must be refused");
+    let error = register_campaign_kind(
+        &vault,
+        out_of_band,
+        crate::registry::TypeByteFamily::Productivity,
+    )
+    .expect_err("a byte outside the CRM band must be refused");
 
     assert_eq!(error.kind(), ErrorKind::StructuralKindZoneViolation);
     match error {
@@ -137,8 +152,12 @@ fn campaign_kind_rejects_prefix_or_byte_collision() -> crate::Result<()> {
         TypeByteZone::CompiledProduct,
         "other-pack",
     )?;
-    let byte_error = register_campaign_kind(&vault, campaign_byte)
-        .expect_err("a taken byte must be refused by the existing registration path");
+    let byte_error = register_campaign_kind(
+        &vault,
+        campaign_byte,
+        crate::registry::TypeByteFamily::Productivity,
+    )
+    .expect_err("a taken byte must be refused by the existing registration path");
     assert_eq!(byte_error.kind(), ErrorKind::StructuralKindCollision);
     assert!(
         matches!(byte_error, Error::Registry(RegistryError::StructuralKindTypeByteCollision(byte)) if byte == campaign_byte),
@@ -153,8 +172,12 @@ fn campaign_kind_rejects_prefix_or_byte_collision() -> crate::Result<()> {
         TypeByteZone::CompiledProduct,
         "other-pack",
     )?;
-    let prefix_error = register_campaign_kind(&prefix_vault, free_byte)
-        .expect_err("a taken short-id prefix must be refused");
+    let prefix_error = register_campaign_kind(
+        &prefix_vault,
+        free_byte,
+        crate::registry::TypeByteFamily::Productivity,
+    )
+    .expect_err("a taken short-id prefix must be refused");
     assert_eq!(prefix_error.kind(), ErrorKind::StructuralKindCollision);
     assert!(
         matches!(
@@ -170,7 +193,11 @@ fn campaign_kind_rejects_prefix_or_byte_collision() -> crate::Result<()> {
 fn campaign_short_id_uses_ca_prefix() -> crate::Result<()> {
     let (_dir, vault) = open_test_vault();
     let assigned = crm_band_byte(&vault, 0);
-    register_campaign_kind(&vault, assigned)?;
+    register_campaign_kind(
+        &vault,
+        assigned,
+        crate::registry::TypeByteFamily::Productivity,
+    )?;
 
     let id = crate::test_util::entity(0x5C);
     vault.put_entity(
@@ -198,5 +225,28 @@ fn campaign_short_id_uses_ca_prefix() -> crate::Result<()> {
         format!("{CAMPAIGN_SHORT_ID_PREFIX}1"),
         "the first CAMPAIGN entity must take counter 1 in the `ca` namespace"
     );
+    Ok(())
+}
+
+#[test]
+fn crm_pack_refuses_to_reuse_a_slot_without_its_declared_family() -> crate::Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let campaign_byte = crm_band_byte(&vault, 0);
+    let query_byte = crm_band_byte(&vault, 1);
+    vault.register_structural_kind(
+        campaign_byte,
+        CAMPAIGN_SHORT_ID_PREFIX,
+        TypeByteZone::CompiledProduct,
+        CRM_PACK_ID,
+    )?;
+    let error = register_crm_pack(
+        &vault,
+        campaign_byte,
+        query_byte,
+        crate::registry::TypeByteFamily::Productivity,
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::StructuralKindCollision);
+    assert!(vault.structural_kind_registration(query_byte).is_none());
     Ok(())
 }

@@ -135,8 +135,7 @@ jobs:
     # rust-relevant diff (always on dispatch: a manual run is the full gate;
     # fail-open if the detector broke). Navigation/tool tests, typos and deny
     # always run, so a docs-only PR reports checks it really ran. Inside
-    # always(): dispatch is the deny gate's unconditional route (ONE-335,
-    # pinned by scripts/advisory-policy/test_policy.py), so a broken
+    # always(): dispatch is the deny gate's unconditional route (ONE-335), so a broken
     # `changes` job must not skip it; the pause/draft guard still applies.
     if: >-
       always()
@@ -146,12 +145,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
           cargo --version
           cargo fmt --version
           cargo clippy --version
+      - name: Secret blocklist is a policy superset
+        run: python3 scripts/check-secret-blocklist.py
       - name: Code map is current
         if: ${{ !cancelled() }}
         run: scripts/codemap/check.sh
@@ -189,22 +197,12 @@ jobs:
           cargo install --locked typos-cli@1.45.1 --root "$HOME/ci/tools"
           "$HOME/ci/tools/bin/typos" --version
           "$HOME/ci/tools/bin/typos"
-      # The policy wrapper (scripts/advisory-policy/check.py) requires the
-      # exact cargo-deny version it was validated against, and the host's
-      # own cargo-deny is whatever the developer keeps. So the pinned copy
-      # lives under ~/ci/tools: `cargo install` is a no-op once that exact
-      # version is there (one compile per host).
       - name: cargo-deny 0.19.4 (host-local pin under ~/ci/tools)
         if: ${{ !cancelled() }}
         run: |
           cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
-          echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
-      - name: Test exact maintenance-risk policy (offline fixtures)
-        if: ${{ !cancelled() }}
-        run: python3 -m unittest discover -s scripts/advisory-policy -p 'test_*.py' -v
-      - name: Check dependencies with expiring accepted-risk policy
-        if: ${{ !cancelled() }}
-        run: python3 scripts/advisory-policy/check.py
+          "$HOME/ci/tools/bin/cargo-deny" --version
+          "$HOME/ci/tools/bin/cargo-deny" --locked check
 
       - name: Test build and navigation tools (no live cache changes)
         if: ${{ !cancelled() }}
@@ -214,9 +212,18 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_verify.py' -v
           python3 scripts/sdk/generate.py --check
           python3 -m unittest discover -s scripts/tests -p 'test_agent_sdk.py' -v
+          python3 scripts/code-sandbox/generate.py --check
+          python3 -m unittest discover -s scripts/tests -p 'test_sandbox_wit.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_microvm_artifacts.py' -v
+          python3 -m unittest discover -s scripts/audit -p 'test_*.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_quickjs_build.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_federation_burst_audit.py' -v
 
       # Keep dependency artifacts when workspace cleanup is enough to meet
       # the unchanged cap. Runs after a failure too; never changes the verdict.
+      - name: Compiler cache statistics
+        if: always()
+        run: '"$HOME/ci/tools/bin/sccache" --show-stats'
       - name: Cap the build cache
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
@@ -253,6 +260,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -301,7 +315,23 @@ jobs:
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
+      # Rust libtests do not exercise Node-API calls. Build the ordinary addon
+      # separately so dev-only napi features cannot replace the production graph.
+      - name: Node.js for the production addon test
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Production addon in a real Node host
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: |
+          cargo build -p oneiron-napi --lib
+          node crates/oneiron-napi/tests/node_host.cjs "${CARGO_TARGET_DIR:-target}/debug/liboneiron_napi.dylib"
+
       # Bound the host's persistent build cache (see ci.yml `checks`).
+      - name: Compiler cache statistics
+        if: always()
+        run: '"$HOME/ci/tools/bin/sccache" --show-stats'
       - name: Cap the build cache
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
@@ -334,6 +364,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -381,6 +418,13 @@ jobs:
         with:
           persist-credentials: false
           clean: true
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
@@ -395,3 +439,53 @@ jobs:
           package_manifest="$(find "${package_dir}" -mindepth 2 -maxdepth 2 -path "${package_dir}/oneiron-server-*/Cargo.toml" -print -quit)"
           test -n "${package_manifest}"
           cargo test --manifest-path "${package_manifest}" --all-features --config "${LOCAL_ONEIRON_PATCH}"
+
+  mutation-audit:
+    name: Mutation audit
+    permissions:
+      contents: read
+    runs-on: [self-hosted, macos, arm64]
+    timeout-minutes: 180
+    needs: changes
+    if: >-
+      always()
+      && vars.CI_PAUSED != 'true'
+      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
+      - name: Pinned mutant runner
+        run: |
+          cargo install --locked cargo-mutants@27.1.0 --root "$HOME/ci/tools"
+          echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
+      - name: Enforce touched-engine mutation baseline
+        env:
+          AUDIT_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          AUDIT_EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$AUDIT_EVENT" = workflow_dispatch ]; then
+            python3 scripts/audit/mutation.py --all-engine
+          else
+            python3 scripts/audit/mutation.py --base "$AUDIT_BASE" --allow-no-changes
+          fi
+      - name: Compiler cache statistics
+        if: always()
+        run: '"$HOME/ci/tools/bin/sccache" --show-stats'
+      - name: Mutation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-audit-${{ github.sha }}
+          path: target/mutation-audit/outcomes.json
+          if-no-files-found: ignore

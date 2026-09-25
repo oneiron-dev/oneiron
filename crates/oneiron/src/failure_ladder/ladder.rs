@@ -14,8 +14,8 @@ use super::lineage::{
 };
 use super::scope::{FailureEscalationMode, FailureScopePolicy};
 use super::transitions::{
-    fail_once, require_dispatch_scope, require_evidence_ref, retry_once, validated_evidence_ref,
-    verified_blocked_reports,
+    fail_once, fail_once_in_txn, require_dispatch_scope, require_evidence_ref, retry_once,
+    validated_evidence_ref, verified_blocked_reports,
 };
 use crate::error::ArtifactError;
 
@@ -27,8 +27,8 @@ const FAILURE_CARD_REF_DOMAIN: &[u8] = b"oneiron.failure-card.v1\0";
 
 /// The deterministic `case_ref` correlation key for one failing attempt.
 ///
-/// A correlation key, NOT an entity ref: it resolves through no store, and any
-/// party can re-derive it from `failing_attempt_id` without a registry.
+/// A correlation key, not an entity ref or authority. Any party can re-derive
+/// it; healer admission checks the private case minted by the failure ladder.
 #[must_use]
 pub fn failure_case_ref(failing_attempt_id: AttemptId) -> String {
     correlation_ref(FAILURE_CASE_REF_DOMAIN, failing_attempt_id)
@@ -171,9 +171,8 @@ impl<'a> FailureLadder<'a> {
             FailureClass::Permanent => {
                 // The intact-lineage ordinal is discarded by policy: permanent
                 // failures are stamped 0 rather than counted.
-                let failed_attempt = fail_once(&queue, &input)?;
                 self.route_healer(
-                    failed_attempt,
+                    &queue,
                     &input,
                     &policy,
                     &context,
@@ -207,31 +206,29 @@ impl<'a> FailureLadder<'a> {
     ) -> Result<FailureLadderOutcome> {
         match walk {
             RetryOrdinal::BelowLimit(ordinal) => retry_once(queue, input, ordinal),
-            RetryOrdinal::AtLimit(ordinal) => {
-                let failed_attempt = fail_once(queue, &input)?;
-                match policy.escalation_mode {
-                    FailureEscalationMode::Auto => self.route_healer(
+            RetryOrdinal::AtLimit(ordinal) => match policy.escalation_mode {
+                FailureEscalationMode::Auto => self.route_healer(
+                    queue,
+                    &input,
+                    policy,
+                    context,
+                    HealerRouting {
+                        failure_class: FailureClass::Transient,
+                        consecutive_transients: ordinal.get(),
+                        evidence_ref: context.evidence_ref,
+                    },
+                ),
+                FailureEscalationMode::Human => {
+                    let failed_attempt = fail_once(queue, &input)?;
+                    Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                         failed_attempt,
-                        &input,
-                        policy,
-                        context,
-                        HealerRouting {
-                            failure_class: FailureClass::Transient,
-                            consecutive_transients: ordinal.get(),
-                            evidence_ref: context.evidence_ref,
-                        },
-                    ),
-                    FailureEscalationMode::Human => {
-                        Ok(FailureLadderOutcome::Human(Box::new(context.surface(
-                            failed_attempt,
-                            FailureClass::Transient,
-                            ordinal.get(),
-                            None,
-                            None,
-                        ))))
-                    }
+                        FailureClass::Transient,
+                        ordinal.get(),
+                        None,
+                        None,
+                    ))))
                 }
-            }
+            },
             RetryOrdinal::Pathology(_) => {
                 unreachable!("a lineage pathology is routed before the class match")
             }
@@ -240,12 +237,14 @@ impl<'a> FailureLadder<'a> {
 
     fn route_healer(
         &self,
-        failed_attempt: AttemptRecord,
+        queue: &AttemptQueue<'_>,
         input: &HandleAttemptFailure,
         policy: &FailureScopePolicy,
         context: &FailureSurfaceContext,
         routing: HealerRouting,
     ) -> Result<FailureLadderOutcome> {
+        let mut txn = self.vault.store.env.write_txn()?;
+        let failed_attempt = fail_once_in_txn(queue, &mut txn, input)?;
         let case = HealerCase {
             case_ref: failure_case_ref(failed_attempt.id),
             scope: policy.scope.clone(),
@@ -258,6 +257,8 @@ impl<'a> FailureLadder<'a> {
             qa_thread_ref: context.qa_thread_ref.to_hex(),
             consecutive_transients: routing.consecutive_transients,
         };
+        super::healer_case::record_in_txn(self.vault, &mut txn, &case)?;
+        txn.commit()?;
         let dispatched = AgentDispatcher::new(self.vault).dispatch_healer_slot(DispatchHealer {
             slot: policy.healer_slot.clone(),
             case: case.clone(),

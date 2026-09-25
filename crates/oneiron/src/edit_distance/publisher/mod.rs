@@ -73,7 +73,7 @@ pub use self::interview::{
     InterviewSession, InterviewState, interview_session, submit_interview_for_review,
 };
 #[cfg(feature = "sync")]
-pub use self::interview::{open_interview, settle_interview_digest};
+pub use self::interview::{open_generated_interview, open_interview, settle_interview_digest};
 pub use self::signature::{CONTENT_HASH_LEN, IssueSignature, tally_judged_outcomes};
 pub use self::signature_store::{emit_issue_signature, issue_signature};
 pub use self::transport::{
@@ -81,9 +81,6 @@ pub use self::transport::{
     send_signatures_if_enabled, signature_send_state,
 };
 pub use self::vocab::{CountKey, IssueCategory};
-
-#[cfg(feature = "sync")]
-use crate::edit_distance::register_peer_actor;
 
 #[cfg(test)]
 mod tests;

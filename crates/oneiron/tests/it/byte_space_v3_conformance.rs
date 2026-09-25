@@ -33,12 +33,21 @@ struct Payload {
     storage_abi_version: u16,
     #[serde(rename = "typeByteZones")]
     type_byte_zones: Vec<CanonZone>,
+    #[serde(rename = "typeByteFamilies")]
+    type_byte_families: Vec<CanonFamily>,
     #[serde(rename = "entityKinds")]
     entity_kinds: Vec<CanonKind>,
     #[serde(rename = "systemBandAllocation")]
     system_band_allocation: Vec<CanonAllocation>,
-    #[serde(rename = "byteMigrationV3")]
-    byte_migration_v3: Vec<CanonMigration>,
+    #[serde(rename = "byteMigrationV31")]
+    byte_migration_v31: Vec<CanonMigration>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CanonFamily {
+    family: String,
+    range: String,
+    kinds: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +61,7 @@ struct CanonZone {
 struct CanonKind {
     id: String,
     classification: String,
+    family: String,
     #[serde(rename = "typeByte")]
     type_byte: Option<u8>,
     #[serde(rename = "shortIdPrefix")]
@@ -68,7 +78,7 @@ struct CanonAllocation {
 #[derive(Debug, Deserialize)]
 struct CanonMigration {
     kind: String,
-    #[serde(rename = "newByte")]
+    #[serde(rename = "v31Byte")]
     new_byte: u8,
 }
 
@@ -78,13 +88,13 @@ struct CanonMigration {
 /// in conformance as "reserved, engine-pending" instead of quietly vanishing
 /// from the census the moment nobody implements it.
 const CANON_RESERVED_UNREGISTERED: &[(u8, &str)] = &[
-    // DIAGNOSTIC (69) was here until ONE-1394 built its substrate. Canon still
+    // DIAGNOSTIC (73) was here until ONE-1394 built its substrate. Canon still
     // records that row's state as `ratified/registration-in-flight`; the engine
     // registering it is what that state was in flight TOWARDS, so the reserve
     // is dropped rather than the registration being hidden from conformance.
-    (72, "SUSPICIOUS_WAKE"),
-    (74, "CLAIM_CLASS_DESCRIPTOR"),
-    (75, "SKILL_HUB"),
+    // SKILL_HUB (92) now has C02's live substrate; it is no longer unregistered.
+    (75, "SUSPICIOUS_WAKE"),
+    (91, "CLAIM_CLASS_DESCRIPTOR"),
 ];
 
 fn fixture_path() -> PathBuf {
@@ -168,6 +178,24 @@ fn byte_space_v3_matches_vendored_canon() {
         }
     }
 
+    assert_eq!(
+        payload.type_byte_families.len(),
+        oneiron::registry::TYPE_BYTE_FAMILIES.len()
+    );
+    for (canon, engine) in payload
+        .type_byte_families
+        .iter()
+        .zip(oneiron::registry::TYPE_BYTE_FAMILIES)
+    {
+        assert_eq!(canon.family, engine.name);
+        assert_eq!(canon.range, format!("{}–{}", engine.start, engine.end));
+        for kind in &canon.kinds {
+            if let Some(entry) = ENTITY_TYPE_REGISTRY.iter().find(|entry| entry.kind == kind) {
+                assert_eq!(entry.family, Some(engine.family));
+            }
+        }
+    }
+
     // ── every canon row with a byte is either registered identically or an
     //    explicitly declared reserve ──
     let reserved: BTreeMap<u8, &str> = CANON_RESERVED_UNREGISTERED.iter().copied().collect();
@@ -212,6 +240,13 @@ fn byte_space_v3_matches_vendored_canon() {
         });
         assert_eq!(entry.kind, kind.id, "byte {byte} names a different kind");
         assert_eq!(
+            entry
+                .family
+                .map_or("semantic", |family| family.allocation().name),
+            kind.family
+        );
+
+        assert_eq!(
             entry.short_id_prefix,
             kind.short_id_prefix.as_deref(),
             "{} short-id prefix disagrees with canon",
@@ -231,6 +266,20 @@ fn byte_space_v3_matches_vendored_canon() {
             kind.id
         );
     }
+
+    // ONE-2060 explicitly adds WORKFLOW in this cluster. The read-only docs
+    // snapshot predates that contract. Keep its provenance/hash intact and pin
+    // this one allocation separately until canon incorporates it; never accept
+    // arbitrary extra registry rows. See impl-notes/W7-C02.md.
+    assert!(
+        canon_bytes.insert(18, "WORKFLOW").is_none(),
+        "canon now owns WORKFLOW; remove the ticket overlay"
+    );
+    let workflow = entity_type_registry_entry(18).expect("WORKFLOW registration");
+    assert_eq!(workflow.kind, "WORKFLOW");
+    assert_eq!(workflow.short_id_prefix, Some("wf"));
+    assert_eq!(workflow.classification, EntityClassification::Core);
+    assert_eq!(workflow.zone, TypeByteZone::Core);
 
     // Every reserve named above must actually appear in canon — a reserve that
     // canon dropped would otherwise sit here forever unnoticed.
@@ -282,10 +331,10 @@ fn byte_space_v3_matches_vendored_canon() {
 
     // ── the migration's DESTINATIONS are canon; sources are engine history ──
     let mut destinations = BTreeSet::new();
-    for migration in &payload.byte_migration_v3 {
+    for migration in &payload.byte_migration_v31 {
         assert!(
             destinations.insert(migration.new_byte),
-            "byteMigrationV3 assigns destination {} twice",
+            "byteMigrationV31 assigns destination {} twice",
             migration.new_byte
         );
         assert_eq!(
@@ -403,5 +452,24 @@ fn classification_matches(engine: EntityClassification, canon: &str) -> bool {
         EntityClassification::Core => canon == "core",
         EntityClassification::Pack => canon == "pack",
         EntityClassification::Maintenance => canon == "maintenance" || canon == "system",
+    }
+}
+
+/// Conversation topology appends edge bytes without moving the entity ABI.
+#[test]
+fn conversation_dag_edge_byte_census() {
+    use oneiron::EdgeKind;
+    for (byte, kind) in [
+        (27, EdgeKind::Parent),
+        (28, EdgeKind::SpawnedBy),
+        (29, EdgeKind::AddressedTo),
+        (30, EdgeKind::RepliesTo),
+    ] {
+        assert_eq!(kind as u8, byte);
+        assert_eq!(EdgeKind::try_from_u8(byte), Some(kind));
+        assert_eq!(kind.default_weight(), None);
+    }
+    for byte in 31..=u8::MAX {
+        assert!(EdgeKind::try_from_u8(byte).is_none());
     }
 }

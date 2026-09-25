@@ -332,6 +332,8 @@ pub struct OutboundExecutionRequest<'a> {
     pub idempotency_key: Option<&'a str>,
     pub verb_contract: &'static OutboundVerbContract,
     pub channel_identity_ref: Option<EntityId>,
+    /// Presentation from the immutable send payload, never a live caller dial.
+    pub space_posting: Option<crate::channel_identity_autonomy::FrozenSpacePosting>,
     pub counterparty_ref: Option<&'a str>,
     /// CA-05 send-hygiene headers, replayed from the FROZEN payload rather than
     /// re-derived, so an adapter cannot invent a different unsubscribe target

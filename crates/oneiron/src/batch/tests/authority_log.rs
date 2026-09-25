@@ -38,6 +38,7 @@ fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
         op: crate::authority::AuthorityOp::Genesis {
             device: authority_test_device(key.clone()),
             genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: crate::authority::AuthorityTier::Software,
             pending_widen_delay_secs: 86_400,
         },
@@ -639,7 +640,12 @@ fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Resu
         "the evicted event's induced shell edge must be unwound, not left dangling"
     );
     assert!(
-        vault.edges_out(&loser)?.is_empty() && vault.edges_in(&survivor)?.is_empty(),
+        vault
+            .edges_out(&loser)?
+            .iter()
+            .all(|edge| edge.kind == EdgeKind::HasFacet
+                && edge.target == crate::claim::substrate_facet_id(loser))
+            && vault.edges_in(&survivor)?.is_empty(),
         "no half of the shell pair may survive its ledger justification"
     );
     assert_eq!(
@@ -1002,9 +1008,13 @@ fn authority_log_first_seen_ignores_future_learned_at_metadata() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
     // Make wall/authority clock skew deterministic without sleeps. This local
     // time is still past learned_at (2) + the 86_400-second widening delay.
+    let dir = tempfile::tempdir()?;
+    let mut config = embedding_test_config();
+    config.store_clock = crate::ports::ManualClock::new(1_000_000).bundle();
+    let vault = Vault::open(dir.path(), config)?;
+    clear_default_policy_manifest_for_test(&vault);
     assert_eq!(
         crate::authority::authority_observation_secs(&vault.store, 0, 1_000_000),
         1_000_000
@@ -1040,7 +1050,7 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
     let observed_before = crate::authority::authority_observation_secs(
         &vault.store,
         previous_floor,
-        crate::unix_seconds_now(),
+        vault.store.clock.now_recorded_at(),
     );
     let backfilled_fold = vault.authority_fold()?;
     let observed_after = authority_first_seen_for_test(&vault, clock_key)?

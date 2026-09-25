@@ -4,7 +4,6 @@ use super::model::JudgeMetadata;
 use super::util::hex_lower;
 use super::{BeamError, BeamResult};
 
-#[allow(dead_code)]
 pub(super) mod majority_judge {
     use serde::{Deserialize, Serialize};
     use sha2::{Digest, Sha256};

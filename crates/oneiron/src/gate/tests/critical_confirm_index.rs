@@ -205,7 +205,10 @@ fn ordinary_pending_from_local_gate_survives_direct_and_rematerialized_marker_re
         "the local gate must create ordinary Pending, not a disguised attachment"
     );
     assert_eq!(ordinary.dreamer_run_id.as_deref(), Some(run_id));
-    let semantic_hash = crate::inbox::inbox_claim_hash(&ordinary_body)?;
+    // Materialization stamps the actual writer's substrate and provenance.
+    // The pending index names that committed body, not the pre-write candidate.
+    let committed_body = vault.get_claim(&claim)?.expect("ordinary pending claim");
+    let semantic_hash = crate::inbox::inbox_claim_hash(&committed_body)?;
     let assert_indexes = |expected: &PendingGateConsentRecord| -> Result<()> {
         assert_eq!(
             vault.store.pending_gate_consents_for_run(run_id)?,

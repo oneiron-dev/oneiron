@@ -38,7 +38,10 @@ pub(super) fn temp_vault() -> (TempDir, Vault) {
 
 pub(super) fn base_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
     let mut entries = vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Value::from("pack_id"), Value::from("policy-model-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (

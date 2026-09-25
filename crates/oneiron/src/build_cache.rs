@@ -1,4 +1,4 @@
-//! Vault-scoped immutable build results. Bytes stay in BLOB_ARTIFACT; this
+//! Explicit account-scoped immutable build results. Bytes stay in BLOB_ARTIFACT; this
 //! index stores exact version refs and admits only artifact-level `Clean`.
 //! No eviction or repair exists: tainted and dangling rows remain tombstones.
 
@@ -13,10 +13,10 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::secret_rotation::ArtifactTaintState;
 
-pub const BUILD_CACHE_SCHEMA_VERSION_V1: u8 = 1;
+pub const BUILD_CACHE_SCHEMA_VERSION_V1: u8 = 2;
 pub const BUILD_CACHE_ACTION_SCHEMA_VERSION_V1: u8 = 1;
 pub const BUILD_CACHE_ACTION_DOMAIN_V1: &[u8] = b"oneiron:build-cache:action:v1";
-pub const BUILD_CACHE_KEY_PREFIX_V1: &[u8] = b"build_cache:v1:";
+pub const BUILD_CACHE_KEY_PREFIX_V1: &[u8] = b"build_cache:reapi:v2:";
 pub const BUILD_CACHE_ACTION_KEY_LEN: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -24,10 +24,7 @@ pub struct ActionKey([u8; BUILD_CACHE_ACTION_KEY_LEN]);
 
 impl ActionKey {
     pub fn derive(action: &BuildAction) -> BuildCacheResult<Self> {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(BUILD_CACHE_ACTION_DOMAIN_V1);
-        encode_action_v1(&mut hasher, action)?;
-        Ok(Self(*hasher.finalize().as_bytes()))
+        Ok(Self(action.reapi_digest()?.hash))
     }
 
     pub const fn as_bytes(&self) -> &[u8; BUILD_CACHE_ACTION_KEY_LEN] {
@@ -159,6 +156,7 @@ pub struct BuildAction {
     pub input_root: BuildInputRoot,
     pub platform: BuildPlatform,
     declared_outputs: Vec<DeclaredOutputPath>,
+    reapi_input_root: Option<ReapiDigest>,
 }
 
 impl BuildAction {
@@ -178,6 +176,7 @@ impl BuildAction {
             input_root,
             platform,
             declared_outputs,
+            reapi_input_root: None,
         })
     }
 
@@ -298,6 +297,10 @@ pub type BuildCacheResult<T> = Result<T, BuildCacheError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BuildCacheError {
+    #[error("account cache tenant mismatch")]
+    AccountMismatch,
+    #[error("action is already running or requires recovery: {action_key}")]
+    ActionInFlight { action_key: String },
     #[error("invalid build action: {0}")]
     InvalidAction(&'static str),
     #[error("invalid declared output path: {0}")]
@@ -399,94 +402,6 @@ impl<'a> BuildCache<'a> {
         admit_result_for_hit(self.vault, &record.result)?;
         Ok(record)
     }
-}
-
-trait ActionEncodeSink {
-    fn put(&mut self, bytes: &[u8]);
-}
-
-impl ActionEncodeSink for blake3::Hasher {
-    fn put(&mut self, bytes: &[u8]) {
-        self.update(bytes);
-    }
-}
-
-impl ActionEncodeSink for Vec<u8> {
-    fn put(&mut self, bytes: &[u8]) {
-        self.extend_from_slice(bytes);
-    }
-}
-
-struct ActionEncoder<'a, S>(&'a mut S);
-
-impl<S: ActionEncodeSink> ActionEncoder<'_, S> {
-    fn tag(&mut self, tag: u8) {
-        self.bytes(&[tag]);
-    }
-
-    fn count(&mut self, count: usize) -> BuildCacheResult<()> {
-        let count = u32::try_from(count)
-            .map_err(|_| BuildCacheError::InvalidAction("action length exceeds u32"))?;
-        self.bytes(&count.to_be_bytes());
-        Ok(())
-    }
-
-    fn bytes(&mut self, bytes: &[u8]) {
-        self.0.put(bytes);
-    }
-
-    fn string(&mut self, value: &str) -> BuildCacheResult<()> {
-        self.count(value.len())?;
-        self.bytes(value.as_bytes());
-        Ok(())
-    }
-
-    fn digest(&mut self, digest: &[u8; 32]) {
-        self.bytes(digest);
-    }
-}
-
-fn encode_action_v1(
-    sink: &mut impl ActionEncodeSink,
-    action: &BuildAction,
-) -> BuildCacheResult<()> {
-    // Public input_root fields can change after BuildAction::new.
-    validate_repo_ref(&action.input_root.repo_ref)?;
-    let mut encoder = ActionEncoder(sink);
-    encoder.tag(0x01);
-    encoder.bytes(&[BUILD_CACHE_ACTION_SCHEMA_VERSION_V1]);
-    encoder.tag(0x02);
-    encoder.count(action.command.argv().len())?;
-    for arg in action.command.argv() {
-        encoder.string(arg)?;
-    }
-    encoder.tag(0x03);
-    encoder.count(action.command.env_allowlist().len())?;
-    for (key, value) in action.command.env_allowlist() {
-        encoder.string(key)?;
-        encoder.string(value)?;
-    }
-    encoder.tag(0x04);
-    encoder.string(&action.input_root.repo_ref.canonical())?;
-    encoder.tag(0x05);
-    encoder.digest(&action.input_root.fork_hash);
-    encoder.tag(0x06);
-    encoder.count(action.input_root.extra_inputs.len())?;
-    for digest in &action.input_root.extra_inputs {
-        encoder.digest(digest.as_bytes());
-    }
-    encoder.tag(0x07);
-    encoder.count(action.platform.properties().len())?;
-    for (key, value) in action.platform.properties() {
-        encoder.string(key)?;
-        encoder.string(value)?;
-    }
-    encoder.tag(0x08);
-    encoder.count(action.declared_outputs().len())?;
-    for path in action.declared_outputs() {
-        encoder.string(path.as_str())?;
-    }
-    Ok(())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -656,5 +571,17 @@ fn admit_result_for_hit(vault: &Vault, result: &ActionResult) -> BuildCacheResul
     Ok(())
 }
 
+mod account;
+mod leg;
+mod reapi;
+pub use leg::{BuildLegReceipt, CachedBuildLeg};
+pub use reapi::ReapiDigest;
+
 #[cfg(test)]
 mod tests;
+
+impl From<std::io::Error> for BuildCacheError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Store(Error::from(error))
+    }
+}

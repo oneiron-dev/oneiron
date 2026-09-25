@@ -66,3 +66,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 #[cfg(test)]
 use rmpv::Value;
+
+mod sweep;
+pub use sweep::{
+    AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
+    run_task_attribution_sweep, run_task_attribution_sweep_with_judge,
+};

@@ -41,9 +41,15 @@ The primary OF-360 parsed metrics are:
 - `overreach_rate`
 - `temporal_correctness`
 - `redundancy_rate`
+- `updating_accuracy` (matched gold points whose stored `is_update` flag is true)
+- `qa_accuracy` (answers matched against each QA item's accepted answers)
+- `omission_rate`
 
 The report also carries HaluMem scaffold metrics: recall, weighted recall,
 target precision, and F1.
+
+QA outputs use `Of360QaAnswer { question_id, answer }`. Unknown or duplicate
+question IDs refuse the run. Missing answers remain in the denominator.
 
 ## Gold Dataset Status
 
@@ -54,3 +60,14 @@ ONE-1524. The fixture metadata keeps `owner_corpus_missing = true` and
 
 `generate_of360_seeded_gold_subset` performs deterministic subset selection from
 the bundled seed rows. It does not synthesize replacement gold labels.
+
+`crates/oneiron/tests/fixtures/of360_gold.v1.json` supplies the full v1 fixture,
+read by `crates/oneiron/tests/it/of360_extraction_eval.rs`; the library has no
+full loader. It holds 500 memory points across 50 scenarios, plus grounded QA
+items. It was authored for this ticket and is explicitly synthetic, not private
+owner data. The full fixture carries `owner_corpus_missing = false` and no seed
+warning. The original subset and its warning remain available for smoke tests.
+
+The 500-point integration fixture supplies exact extraction matches and QA
+answers to test the scorer. Its perfect score validates accounting, not a model's
+extraction quality. Live systems must provide their own predictions.

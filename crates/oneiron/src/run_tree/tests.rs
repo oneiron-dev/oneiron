@@ -96,22 +96,33 @@ fn run_tree_renders_nested_subagent_attempts_deterministically() -> Result<()> {
 
 #[test]
 fn run_tree_event_stream_reports_lifecycle_statuses() -> Result<()> {
-    let (_dir, vault) = open_vault();
+    let clock = crate::ports::ManualClock::new(10);
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::device()
+    });
     let runner = DreamerRunnerStore::new(&vault);
     let running = enqueue(&runner, "running-subagent", None, 10, "run-lifecycle")?;
+    clock.set(20);
     let completed = enqueue(&runner, "completed-subagent", None, 20, "run-lifecycle")?;
+    clock.set(30);
     let failed = enqueue(&runner, "failed-subagent", None, 30, "run-lifecycle")?;
     let queue = crate::AttemptQueue::new(&vault);
 
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "stream-worker".to_owned(),
-        now: 40,
+        now: {
+            clock.set(40);
+            40
+        },
     })?
     else {
         panic!("expected running claim");
     };
     assert_eq!(claimed.id, running.attempt.id);
+    clock.set(50);
     complete_next(&vault, completed.attempt.id, 50)?;
+    clock.set(60);
     fail_next(&vault, failed.attempt.id, 60, "terminal failure")?;
 
     let tree = RunTreeAdapter::new(&vault).read_run("run-lifecycle")?;
@@ -159,14 +170,21 @@ fn run_tree_event_stream_reports_lifecycle_statuses() -> Result<()> {
 
 #[test]
 fn run_tree_orders_claimed_before_running_interrupts() -> Result<()> {
-    let (_dir, vault) = open_vault();
+    let clock = crate::ports::ManualClock::new(10);
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::device()
+    });
     let runner = DreamerRunnerStore::new(&vault);
     let running = enqueue(&runner, "interruptible-subagent", None, 10, "run-interrupt")?;
     let queue = crate::AttemptQueue::new(&vault);
 
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "stream-worker".to_owned(),
-        now: 20,
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("expected claim");
@@ -177,7 +195,10 @@ fn run_tree_orders_claimed_before_running_interrupts() -> Result<()> {
         kind: AttemptInterventionKind::Interrupt,
         actor: "dashboard".to_owned(),
         note: Some("stop current tool call".to_owned()),
-        now: 30,
+        now: {
+            clock.set(30);
+            30
+        },
     })?;
 
     let tree = RunTreeAdapter::new(&vault).read_run("run-interrupt")?;
@@ -201,14 +222,21 @@ fn run_tree_orders_claimed_before_running_interrupts() -> Result<()> {
 
 #[test]
 fn run_tree_preserves_claimed_event_after_terminal_transition() -> Result<()> {
-    let (_dir, vault) = open_vault();
+    let clock = crate::ports::ManualClock::new(10);
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::device()
+    });
     let runner = DreamerRunnerStore::new(&vault);
     let attempt = enqueue(&runner, "terminal-subagent", None, 10, "run-terminal")?;
     let queue = crate::AttemptQueue::new(&vault);
 
     let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "stream-worker".to_owned(),
-        now: 20,
+        now: {
+            clock.set(20);
+            20
+        },
     })?
     else {
         panic!("expected claim");
@@ -222,7 +250,10 @@ fn run_tree_preserves_claimed_event_after_terminal_transition() -> Result<()> {
         id: attempt.attempt.id,
         lease_owner: "stream-worker".to_owned(),
         attempt_count: claimed.attempt_count,
-        now: 30,
+        now: {
+            clock.set(30);
+            30
+        },
     })?
     else {
         panic!("expected completion");
@@ -699,6 +730,7 @@ fn dreamer_record(
         events: Vec::new(),
         manifest: Vec::new(),
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        placement: None,
         result_ref: None,
     })
 }
@@ -828,6 +860,7 @@ fn abandoned_record(seed: u8, kind: &str, result_ref: &str) -> AttemptRecord {
         events: Vec::new(),
         manifest: Vec::new(),
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        placement: None,
         result_ref: Some(
             crate::attempt_queue::AttemptResultRef::new(result_ref).expect("valid result ref"),
         ),
@@ -862,6 +895,7 @@ fn legacy_queued_record(seed: u8, created_at: u64, backoff_until: Option<u64>) -
         events: Vec::new(),
         manifest: Vec::new(),
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        placement: None,
         result_ref: None,
     }
 }
@@ -1206,4 +1240,30 @@ fn failure_marker_does_not_change_status_or_events() {
         serde_json::to_string(&RunTreeStatus::Paused).expect("status serializes"),
         "\"paused\"",
     );
+}
+
+#[test]
+fn run_projection_serializes_only_attempt_state_not_write_velocity() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let root = enqueue(&runner, "root", None, 10, "rate-input-run")?;
+    enqueue(
+        &runner,
+        "child",
+        Some(root.attempt.id),
+        20,
+        "rate-input-run",
+    )?;
+    let tree = RunTreeAdapter::new(&vault).read_run("rate-input-run")?;
+    let wire = serde_json::to_value(&tree).expect("serialize tree");
+    assert_eq!(wire["roots"][0]["status"], "queued");
+    assert!(wire["roots"][0].get("gate_breaker_paused").is_none());
+    assert!(
+        wire["roots"][0]["children"][0]
+            .get("gate_breaker_paused")
+            .is_none()
+    );
+    let round_trip: crate::run_tree::RunTree = serde_json::from_value(wire).expect("decode tree");
+    assert_eq!(round_trip, tree);
+    Ok(())
 }

@@ -6,7 +6,7 @@ use super::codec::deserialize_optional_u64;
 use super::codec::{McpToolArguments, schema_normalized_arguments};
 use super::surface::{
     MCP_BOARD_BUDGET_TOK, MCP_EXECUTE_CODE_TOOL, MCP_SETUP_TOOL, McpEndpointTool,
-    McpGeneratedVerbTool, McpVerbBinding,
+    McpGeneratedVerbTool,
 };
 use super::tool_catalog::{McpToolValidationError, McpValidatedToolArgs};
 use super::validators::{
@@ -174,35 +174,6 @@ impl McpExecuteCodeToolArgs {
     }
 }
 
-/// A subscription scope on the wire. Mirrors the engine enum one-for-one so a
-/// scope cannot be minted here.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum McpSubscriptionScope {
-    MyTasks,
-    MyChildren,
-    ConsultsToMe,
-    Memories,
-    Worlds,
-    Presence,
-    Counts,
-}
-
-impl McpSubscriptionScope {
-    #[must_use]
-    pub const fn engine(self) -> SubscriptionScope {
-        match self {
-            Self::MyTasks => SubscriptionScope::MyTasks,
-            Self::MyChildren => SubscriptionScope::MyChildren,
-            Self::ConsultsToMe => SubscriptionScope::ConsultsToMe,
-            Self::Memories => SubscriptionScope::Memories,
-            Self::Worlds => SubscriptionScope::Worlds,
-            Self::Presence => SubscriptionScope::Presence,
-            Self::Counts => SubscriptionScope::Counts,
-        }
-    }
-}
-
 /// The closed argument envelope every generated verb tool shares.
 ///
 /// One struct, per-binding admission: a field that belongs to another verb is
@@ -216,7 +187,7 @@ pub struct McpVerbArguments {
     #[serde(default, deserialize_with = "deserialize_optional_u64")]
     pub frame_epoch: Option<u64>,
     #[serde(default)]
-    pub scopes: Option<Vec<McpSubscriptionScope>>,
+    pub scopes: Option<Vec<SubscriptionScope>>,
     #[serde(default)]
     pub task_ref: Option<String>,
     #[serde(default)]
@@ -225,74 +196,16 @@ pub struct McpVerbArguments {
     pub turn_ref: Option<String>,
     #[serde(default)]
     pub spec: Option<Value>,
+    /// One native request. A present JSON null is distinct from omission for
+    /// the runtime-reserved methods, whose native payload is opaque JSON.
+    #[serde(default, deserialize_with = "deserialize_present_request")]
+    pub request: Option<Value>,
     #[serde(default)]
     pub label: Option<String>,
 }
 
-/// Bytes of one rendered TASKS intent row that belong to tokens the WRITER does
-/// not supply.
-///
-/// The engine's `intent_row` joins, with single spaces, the task's 32-byte hex
-/// id, the caller's label, an optional resolved `assignee=<handle>` token, the
-/// status token (at most `scheduled`, nine bytes), any cause/ladder tokens, a
-/// `jobs=<count>` token, and the `cancel-refused=<n>/<m>` pathology token —
-/// then hands the line to the board renderer, which refuses ANY row over
-/// [`oneiron::context_board::MAX_BOARD_ROW_BYTES`]. Every one of those tokens
-/// is bounded far inside a kibibyte, so reserving one keeps the writer's label
-/// from being the reason the whole TASKS section is rejected at render time.
-pub(super) const MCP_TASK_ROW_FIXED_TOKEN_BYTES: usize = 1_024;
-
-/// Hard ceiling on one `tasks.create` label, in BYTES (ONE-1704 repair).
-///
-/// The engine's row ceiling is the ONE limit system here: this is that ceiling
-/// less the row's own fixed tokens, not a second budget. Enforcing it at the
-/// writer is what keeps an oversized label from being persisted and then making
-/// the rendered row — and with it the whole TASKS section — unrenderable for
-/// every later reader of that board.
-///
-/// The bound is on BYTES because [`oneiron::context_board::MAX_BOARD_ROW_BYTES`]
-/// is; the advertised closed schema states the same number as a Draft 2020-12
-/// `maxLength`, which is the closest a code-point keyword comes to it. A
-/// multi-byte label inside that code-point ceiling is still refused here, with
-/// the established typed argument error, before anything is written.
-pub const MCP_TASK_LABEL_MAX_BYTES: usize =
-    oneiron::context_board::MAX_BOARD_ROW_BYTES - MCP_TASK_ROW_FIXED_TOKEN_BYTES;
-
-pub(super) const fn verb_argument_fields(binding: McpVerbBinding) -> &'static [&'static str] {
-    if let Some(fields) = super::surface::agent_argument_fields(binding) {
-        return fields;
-    }
-    match binding {
-        McpVerbBinding::BoardExpand => &["key", "frame_epoch"],
-        McpVerbBinding::BoardRefresh => &["frame_epoch"],
-        McpVerbBinding::BoardSubscribe | McpVerbBinding::BoardUnsubscribe => &["scopes"],
-        McpVerbBinding::TasksAck | McpVerbBinding::TasksCancel | McpVerbBinding::TasksExpand => {
-            &["task_ref"]
-        }
-        McpVerbBinding::TasksCheck => &[],
-        McpVerbBinding::TasksCreate => &["spec", "label"],
-        _ => &[],
-    }
-}
-
-pub(super) const fn verb_required_fields(binding: McpVerbBinding) -> &'static [&'static str] {
-    if let Some(fields) = super::surface::agent_required_fields(binding) {
-        return fields;
-    }
-    match binding {
-        McpVerbBinding::BoardExpand => &["key"],
-        McpVerbBinding::BoardRefresh | McpVerbBinding::TasksCheck => &[],
-        McpVerbBinding::BoardSubscribe | McpVerbBinding::BoardUnsubscribe => &["scopes"],
-        McpVerbBinding::TasksAck | McpVerbBinding::TasksCancel | McpVerbBinding::TasksExpand => {
-            &["task_ref"]
-        }
-        McpVerbBinding::TasksCreate => &["spec"],
-        _ => &[],
-    }
-}
-
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 8] {
+    fn present_fields(&self) -> [(&'static str, bool); 9] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
@@ -301,6 +214,7 @@ impl McpVerbArguments {
             ("room_ref", self.room_ref.is_some()),
             ("turn_ref", self.turn_ref.is_some()),
             ("spec", self.spec.is_some()),
+            ("request", self.request.is_some()),
             ("label", self.label.is_some()),
         ]
     }
@@ -308,9 +222,9 @@ impl McpVerbArguments {
     fn validate(
         &self,
         tool: &'static str,
-        binding: McpVerbBinding,
+        verb: McpGeneratedVerbTool,
     ) -> Result<(), McpToolValidationError> {
-        let allowed = verb_argument_fields(binding);
+        let allowed = verb.argument_fields();
         for (field, present) in self.present_fields() {
             if present && !allowed.contains(&field) {
                 return Err(McpToolValidationError::field(
@@ -321,26 +235,19 @@ impl McpVerbArguments {
             }
         }
         for (field, present) in self.present_fields() {
-            if !present && verb_required_fields(binding).contains(&field) {
+            if !present && verb.required_fields().contains(&field) {
                 return Err(McpToolValidationError::field(tool, field, "is required"));
             }
         }
         validate_optional_nonblank(tool, "arguments.key", self.key.as_deref())?;
-        validate_optional_nonblank(tool, "arguments.label", self.label.as_deref())?;
         // The WRITER's bound, applied before any persistence: a label the
         // engine's board row ceiling cannot render is refused here rather than
         // stored and then made to reject the whole TASKS section on every later
         // render (ONE-1704 repair).
-        if self
-            .label
-            .as_deref()
-            .is_some_and(|label| label.len() > MCP_TASK_LABEL_MAX_BYTES)
-        {
-            return Err(McpToolValidationError::field(
-                tool,
-                "arguments.label",
-                format!("must be at most {MCP_TASK_LABEL_MAX_BYTES} bytes"),
-            ));
+        if let Some(label) = self.label.as_deref() {
+            oneiron::task_verb::check_task_label(label).map_err(|error| {
+                McpToolValidationError::field(tool, "arguments.label", error.message)
+            })?;
         }
         validate_optional_entity_ref(tool, "arguments.task_ref", self.task_ref.as_deref())?;
         validate_optional_entity_ref(tool, "arguments.room_ref", self.room_ref.as_deref())?;
@@ -414,7 +321,7 @@ pub fn validate_mcp_endpoint_tool_args(
             validate_schema_version(tool.name, &payload.schema_version)?;
             payload.actor.validate(tool.name)?;
             payload.consent.validate(tool.name)?;
-            payload.arguments.validate(tool.name, tool.binding)?;
+            payload.arguments.validate(tool.name, tool)?;
             McpPageRequest::validate_optional(payload.page.as_ref(), tool.name)?;
             Ok(McpValidatedToolArgs::Verb(Box::new(McpVerbToolArgs {
                 tool,
@@ -435,4 +342,10 @@ fn decode_endpoint_args<T: DeserializeOwned>(
         tool,
         message: error.to_string(),
     })
+}
+
+fn deserialize_present_request<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }

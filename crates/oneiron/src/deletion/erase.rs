@@ -32,7 +32,6 @@ use crate::provenance::restamp_edge_flags;
 use crate::provenance::winner_index;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT};
 use crate::store::{GateDecisionId, Store};
-use crate::unix_seconds_now;
 
 use super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::sweep_queue::HardEraseSweepExtras;
@@ -290,6 +289,7 @@ impl Vault {
             // Same pre-scrub capture every SoftErase door pays: the subject
             // EdgeRef is only readable while the body is.
             let captured = self.capture_provenance_delete_in_txn(&*wtxn, shell)?;
+            crate::note::erase_citations_in_txn(self, wtxn, shell)?;
             let (existed, shell_had_vector) = self.soft_erase_active_store_in_txn(wtxn, shell)?;
             had_vector |= shell_had_vector;
             // D16 in the SAME transaction as the scrub, exactly as the local
@@ -359,6 +359,8 @@ impl Vault {
             scrubbed.push((event_id, record));
         }
         for (event_id, record) in &scrubbed {
+            // Erasure must remove the old author stamp from retained history too.
+            crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, event_id)?;
             self.store.entities.put(wtxn, event_id.as_bytes(), record)?;
         }
         Ok(())
@@ -370,6 +372,8 @@ impl Vault {
         id: &EntityId,
     ) -> Result<bool> {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        #[cfg(feature = "sync")]
+        crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
         // ONE-1741 removed the verdict relocation that this hook also carried.
         //
@@ -377,9 +381,13 @@ impl Vault {
         // CITED this id, not this id's own rows, and both acts belong to the
         // one transaction that destroys the evidence.
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
+        crate::note::erase_citations_in_txn(self, wtxn, id)?;
+        crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
+        crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
+        let note_removed = crate::note::erase::purge(self, wtxn, id)?;
         ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
         if had_graph_mutation {
             ppr::increment_graph_version(&self.store, wtxn)?;
@@ -387,7 +395,7 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
-        Ok(existed)
+        Ok(existed || note_removed)
     }
 
     pub(super) fn soft_erase_active_store_in_txn(
@@ -395,22 +403,38 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<(bool, bool)> {
+        crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        #[cfg(feature = "sync")]
+        crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
+        self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let (room_had_vector, room_had_graph, room_neighbors) =
             crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;
         if room_had_graph {
             ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &room_neighbors)?;
             ppr::increment_graph_version(&self.store, wtxn)?;
         }
+        self.store
+            .l2_base_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .erase(id, self.store.env.info().last_txn_id);
+        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+        crate::ports::invalidate_source_in_txn(&self.store, wtxn, id)?;
+        crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
             deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
         if hint_had_graph_mutation {
             ppr::increment_graph_version(&self.store, wtxn)?;
         }
+        crate::note::erase::purge(self, wtxn, id)?;
         bm25::deindex_text(&self.store, wtxn, id)?;
+        crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, id)?;
         delete_from_phonetic_postings(&self.store, wtxn, id)?;
         crate::code_revision::delete_code_revision_lifecycle_in_txn(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
+        crate::origin::lfs::delete_lfs_lifecycle_in_txn(&self.store, wtxn, id)?;
+        crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
         let blob_cleanup =
             crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(&self.store, wtxn, id)?;
         if blob_cleanup.had_graph_mutation {
@@ -422,6 +446,8 @@ impl Vault {
             hint_had_vector | entity_had_vector | blob_cleanup.had_vector | room_had_vector;
         crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
 
+        crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
+        crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
         let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
             let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
             had_vector |= cleanup.had_vector;
@@ -434,12 +460,14 @@ impl Vault {
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
         let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        let changed = entity_record.len() > ENTITY_METADATA_HEADER_LEN;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the
         // content bytes, so nothing to relocate). The maintenance helper no-ops for
         // kinds that keep no content-hash index, so the generic delete engine needs
         // no entity-kind branch of its own.
+
         self.maintain_skill_content_hash_index_on_delete_in_txn(wtxn, id)?;
         // ONE-1447, the other half of the same question: this id may be the
         // conversation a SKILL was converted from, and a skill whose evidence
@@ -465,6 +493,20 @@ impl Vault {
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+        if changed {
+            crate::ports::audit_mutation_in_txn(
+                &self.store,
+                wtxn,
+                crate::ports::MutationAudit {
+                    entity: *id,
+                    op: crate::ports::ChangeOp::Redact,
+                    actor_principal: None,
+                    occurred_at: mutation_recorded_at,
+                    input: id.as_bytes(),
+                    reason: None,
+                },
+            )?;
+        }
         Ok((true, had_vector))
     }
 
@@ -508,6 +550,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
         wtxn.commit()?;
+        while self.collect_lfs_garbage(32)? != 0 {}
         Ok(outcome)
     }
 
@@ -528,7 +571,11 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
+        crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
+        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+        self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let decoded = decode_tombstone_value(raw_value);
         // Cleanup is local visibility, never a replicated deletion intent.
         // Accepting byte 5 here would irreversibly scrub a retained archive
@@ -550,6 +597,15 @@ impl Vault {
         let captured = self.capture_provenance_delete_in_txn(wtxn, id)?;
 
         if !decoded.is_hard() {
+            let had_sources =
+                crate::skill_hub::source_custody_exists_in_txn(&self.store, wtxn, id)?;
+            crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
+            let had_receipt_sources =
+                crate::receipt::receipt_archive_custody_exists(&self.store, wtxn, id)?;
+            let had_birth_sources =
+                crate::agent_def::birth_custody_exists_in_txn(&self.store, wtxn, id)?;
+            crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
+            crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
             let had_body = self
                 .store
                 .entities
@@ -565,7 +621,11 @@ impl Vault {
                 self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
             }
             return Ok(ReplayedTombstoneOutcome::SoftErased {
-                changed: had_body || had_vector,
+                changed: had_body
+                    || had_vector
+                    || had_birth_sources
+                    || had_sources
+                    || had_receipt_sources,
             });
         }
 
@@ -576,6 +636,9 @@ impl Vault {
         // counts as local state to erase, mirroring the local
         // `delete_entity_without_header` semantics.
         if !self.active_delete_scope_exists_in_txn(wtxn, id)? {
+            crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
+            crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
+            crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
             // Hard-once-seen is durable LOCAL truth even when nothing local
             // was erased (never-materialized id): the permanent `dt:` marker
             // still gates a future re-put after hostile tombstone-map
@@ -643,8 +706,8 @@ impl Vault {
                 );
             }
         }
-        let applied_at = unix_seconds_now();
-        let receipt_id = EntityId::now();
+        let applied_at = mutation_recorded_at;
+        let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
         scope
             .entity_ids
@@ -653,6 +716,7 @@ impl Vault {
             wtxn,
             &receipt_id,
             RedactionReceiptInput {
+                actor_principal: None,
                 request_id: decoded.receipt_request_id(),
                 scope,
                 reason: decoded.receipt_hard_reason(),
@@ -744,7 +808,11 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
-        if self.store.entities.get(txn, id.as_bytes())?.is_some()
+        if crate::note::citation_delete_scope_exists(&self.store, txn, id)?
+            || crate::skill_hub::source_custody_exists_in_txn(&self.store, txn, id)?
+            || crate::agent_def::birth_custody_exists_in_txn(&self.store, txn, id)?
+            || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
+            || self.store.entities.get(txn, id.as_bytes())?.is_some()
             || self.store.vectors.get(txn, id.as_bytes())?.is_some()
             || self.store.text_forward.get(txn, id.as_bytes())?.is_some()
             || self.store.text_meta.get(txn, id.as_bytes())?.is_some()
@@ -776,6 +844,9 @@ impl Vault {
             return Ok(true);
         }
 
+        if crate::note::erase::scope_exists(self, txn, id)? {
+            return Ok(true);
+        }
         vad_annotation_delete_scope_exists_in_txn(&self.store, txn, id)
     }
 }

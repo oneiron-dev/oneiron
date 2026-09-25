@@ -449,39 +449,43 @@ fn gate_chokepoint_replicated_claim_stays_trust_blind() -> Result<()> {
 
 #[cfg(feature = "sync")]
 #[test]
-fn replicated_policy_manifest_is_rejected_and_cannot_relax_source_trust() -> Result<()> {
+fn replicated_policy_manifest_is_restrict_only_on_both_batch_doors() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::ToolOutput, 0)]);
     let occurred = test_time(1);
-
     let batch_id = test_id(0x82);
-    let err = vault
+    vault
         .batch()
         .put_replicated(&batch_id, ENTITY_TYPE_POLICY_MANIFEST, occurred, 1, &data)
-        .commit()
-        .expect_err("replicated policy manifests must be rejected");
-    assert!(
-        matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(kind)) if kind == ENTITY_TYPE_POLICY_MANIFEST),
-        "expected policy manifest maintenance rejection, got {err:?}"
-    );
-    assert!(vault.get_raw(&batch_id)?.is_none());
-
+        .commit()?;
     let txn_id = test_id(0x83);
-    let err = vault
-        .with_write_txn(|wtxn| {
+    vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .put_replicated(&txn_id, ENTITY_TYPE_POLICY_MANIFEST, occurred, 1, &data)
+            .apply(wtxn)
+    })?;
+    assert!(vault.get_raw(&batch_id)?.is_some());
+    assert!(vault.get_raw(&txn_id)?.is_some());
+    for id in [batch_id, txn_id] {
+        assert!(
             vault
-                .batch_in()
-                .put_replicated(&txn_id, ENTITY_TYPE_POLICY_MANIFEST, occurred, 1, &data)
-                .apply(wtxn)
-        })
-        .expect_err("txn replicated policy manifests must be rejected");
-    assert!(
-        matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(kind)) if kind == ENTITY_TYPE_POLICY_MANIFEST),
-        "expected policy manifest maintenance rejection, got {err:?}"
-    );
-    assert!(vault.get_raw(&txn_id)?.is_none());
-
-    assert_auto_source_rejected(&vault, 0x84, ClaimSource::ToolOutput)
+                .manifest_contributions()?
+                .iter()
+                .any(|row| row.id == id.to_hex() && row.restrict_only)
+        );
+    }
+    assert_auto_source_gate_rejected(
+        &vault,
+        0x84,
+        ClaimSource::ToolOutput,
+        "pending",
+        &[
+            "gate.pending.actor_ceiling",
+            "gate.pending.source_trust",
+            "gate.pending.criticality_floor",
+        ],
+    )
 }
 
 #[cfg(feature = "sync")]
@@ -536,10 +540,9 @@ fn replicated_access_grant_is_rejected_and_cannot_mint_local_grant() -> Result<(
 
 #[cfg(feature = "sync")]
 #[test]
-fn forward_rematerialize_quarantines_replicated_policy_manifest() -> Result<()> {
+fn forward_rematerialize_stores_untrusted_manifest_without_permits() -> Result<()> {
     use crate::sync::bridge::Materializer;
     use crate::sync::loro_support::map_insert_bytes;
-    use crate::sync::quarantine::{QuarantineContainer, quarantined_records};
     use crate::sync::schema::create_window_doc;
     use crate::sync::types::WindowKey;
     use crate::sync::window::forward_rematerialize;
@@ -555,18 +558,26 @@ fn forward_rematerialize_quarantines_replicated_policy_manifest() -> Result<()> 
     doc.commit();
 
     let materialized = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
-    assert_eq!(materialized, 0);
-    assert!(vault.get_raw(&id)?.is_none());
-    let records = quarantined_records(&vault)?;
+    assert_eq!(materialized, 1);
+    assert!(vault.get_raw(&id)?.is_some());
     assert!(
-        records.iter().any(|(_, record)| {
-            record.container == QuarantineContainer::Entities
-                && record.reason_code == "MaintenanceKindNotWritable"
-        }),
-        "rejected policy manifest replay should be quarantined, got {records:?}"
+        vault
+            .manifest_contributions()?
+            .iter()
+            .any(|row| row.id == id.to_hex() && row.restrict_only)
     );
 
-    assert_auto_source_rejected(&vault, 0x86, ClaimSource::ToolOutput)
+    assert_auto_source_gate_rejected(
+        &vault,
+        0x86,
+        ClaimSource::ToolOutput,
+        "pending",
+        &[
+            "gate.pending.actor_ceiling",
+            "gate.pending.source_trust",
+            "gate.pending.criticality_floor",
+        ],
+    )
 }
 
 #[cfg(feature = "sync")]

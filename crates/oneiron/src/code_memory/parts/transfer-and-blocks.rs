@@ -328,7 +328,7 @@ pub(crate) fn blocks_path_exists(
     while let Some(current) = frontier.pop_front() {
         let peers = vault.filtered_edge_peers(
             txn,
-            &vault.store.edges_out,
+            crate::ports::EdgeDirection::Out,
             &current,
             EdgeKind::Blocks,
             None,
@@ -369,6 +369,32 @@ pub(crate) fn insert_blocks_edge(
     to: EntityId,
     context: BlocksWriteContext<'_>,
 ) -> Result<()> {
+    crate::ports::EdgeStoreReadiness::port_blocks_insert(vault, txn, from, to, context)
+}
+
+/// The ONLY `blocks` retirement door. Same authority steps, both index rows
+/// deleted, same in-transaction side effects. Generic `Vault::delete_edge`
+/// stays reserved-rejecting for this kind.
+pub(crate) fn remove_blocks_edge(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    from: EntityId,
+    to: EntityId,
+    context: BlocksWriteContext<'_>,
+) -> Result<bool> {
+    crate::ports::EdgeStoreReadiness::port_blocks_remove(vault, txn, from, to, context)
+}
+
+// ---------------------------------------------------------------------------
+
+/// Complete authorization proof used by the typed edge adapter, in the same transaction.
+pub(crate) fn validate_blocks_insert(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    from: EntityId,
+    to: EntityId,
+    context: BlocksWriteContext<'_>,
+) -> Result<()> {
     authorize_blocks_write(&vault.store, txn, context)?;
     if from == to {
         return Err(Error::Code(CodeError::CodeMemoryBlocksCycle { from, to }));
@@ -384,49 +410,12 @@ pub(crate) fn insert_blocks_edge(
         return Err(Error::Code(CodeError::CodeMemoryBlocksCycle { from, to }));
     }
 
-    let weight = EdgeKind::Blocks
-        .default_weight()
-        .expect("Blocks has a canonical structural weight");
-    let value = encode_edge_value(
-        EdgeKind::Blocks,
-        weight,
-        crate::unix_seconds_now(),
-        Vad::NEUTRAL,
-        None,
-    )?;
-    // Identical bytes into both directions, mirroring `batch::edge_apply`.
-    let key_out = Store::encode_edge_key(&from, EdgeKind::Blocks, &to);
-    let key_in = Store::encode_edge_key(&to, EdgeKind::Blocks, &from);
-    vault.store.edges_out.put(txn, &key_out, &value)?;
-    vault.store.edges_in.put(txn, &key_in, &value)?;
-
-    ppr::invalidate_ppr_for_edge(&vault.store, txn, &from, &to)?;
-    ppr::increment_graph_version(&vault.store, txn)?;
     Ok(())
 }
-
-/// The ONLY `blocks` retirement door. Same authority steps, both index rows
-/// deleted, same in-transaction side effects. Generic `Vault::delete_edge`
-/// stays reserved-rejecting for this kind.
-pub(crate) fn remove_blocks_edge(
+pub(crate) fn validate_blocks_retirement(
     vault: &Vault,
-    txn: &mut RwTxn<'_>,
-    from: EntityId,
-    to: EntityId,
+    txn: &RoTxn<'_>,
     context: BlocksWriteContext<'_>,
-) -> Result<bool> {
-    authorize_blocks_write(&vault.store, txn, context)?;
-    let key_out = Store::encode_edge_key(&from, EdgeKind::Blocks, &to);
-    let key_in = Store::encode_edge_key(&to, EdgeKind::Blocks, &from);
-    let existed_out = vault.store.edges_out.delete(txn, &key_out)?;
-    let deleted_in = vault.store.edges_in.delete(txn, &key_in)?;
-    if !existed_out {
-        let _ = deleted_in;
-        return Ok(false);
-    }
-    ppr::invalidate_ppr_for_edge(&vault.store, txn, &from, &to)?;
-    ppr::increment_graph_version(&vault.store, txn)?;
-    Ok(true)
+) -> Result<()> {
+    authorize_blocks_write(&vault.store, txn, context)
 }
-
-// ---------------------------------------------------------------------------

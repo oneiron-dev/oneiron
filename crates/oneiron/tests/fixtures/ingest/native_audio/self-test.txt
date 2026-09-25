@@ -1,0 +1,1 @@
+native-host protocol self-test: 11 cases passed (no models invoked)

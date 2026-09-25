@@ -148,7 +148,7 @@ pub(super) fn validate_public_raw_put(
 }
 
 pub(super) fn validate_authored_note_body(author: &EntityId, data: &[u8]) -> Result<()> {
-    let body = crate::note::decode_note_body(data)?;
+    let body = crate::note::decode_note_body_using(data, crate::note::NoteKind::wire)?;
     if body.author_ref != *author {
         return Err(Error::Record(RecordError::InvalidNoteBody(
             "NOTE author_ref must be the verified bound actor",

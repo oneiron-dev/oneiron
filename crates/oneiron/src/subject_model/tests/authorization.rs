@@ -36,6 +36,7 @@ pub(crate) fn root_owner(vault: &Vault, owner: WriteActor, seed: u8) -> Result<A
                 roles: ROLE_OWNER | ROLE_ADMIN,
             },
             genesis_nonce: [seed; 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
@@ -186,7 +187,7 @@ fn public_reanchor_observes_revocation_committed_after_preflight() -> Result<()>
     });
     assert_eq!(
         result.expect_err("revoked owner").kind(),
-        ErrorKind::ActorLacksClaimAuthority
+        ErrorKind::WriteConcurrentWithRevocation
     );
     assert_eq!(vault.get_claim(&claim)?, before);
     assert_eq!(actor_subject_anchor(&vault, &actor, 103)?, Some(first));

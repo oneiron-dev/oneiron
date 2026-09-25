@@ -5,6 +5,7 @@
 //! walk is a lazy query through [`crate::claim::ScopedRead`], bounded by a
 //! cumulative byte cap and stable cursor order.
 
+mod claim_grep;
 mod coreutils;
 mod model;
 mod paging;

@@ -12,10 +12,10 @@ use super::companion_identity::{
 use super::tombstones::quarantine_and_neutralize_protected_tombstone_in_txn;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::sync::loro_support::tombstone_map_contains_id;
+use crate::sync::pack_sync;
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
 };
@@ -115,6 +115,7 @@ pub(super) fn materialize_entities_from_delta(
                     // tombstone key still names this id). Presence is
                     // value-agnostic (a non-binary tombstone decodes HARD
                     // downstream).
+
                     let delete_protected =
                         crate::registry::is_delete_protected_engine_record(header.entity_type);
                     if !delete_protected && tombstone_map_contains_id(&tombstones_map, &id) {
@@ -288,7 +289,7 @@ pub(super) fn committed_entity_state_matches(vault: &Vault, id: &EntityId, blob:
     };
     matches!(
         vault.store.entities.get(&rtxn, id.as_bytes()),
-        Ok(Some(existing)) if *existing == *blob
+        Ok(Some(existing)) if *existing == *blob || pack_sync::pack_echo_equal(&existing, blob)
     )
 }
 
@@ -348,10 +349,23 @@ pub(super) fn materialize_entity_blob_in_txn(
     blob: &[u8],
     lease_vault_id: u64,
 ) -> Result<bool> {
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
+    if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, wtxn, &id)?
+        || crate::origin::lfs::is_lfs_chunk_blob(&id, blob)
+    {
+        return Ok(false);
+    }
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Err(crate::Error::CorruptedIndex("entity metadata"));
     };
+    // NOTE replay may not discharge or outlive an unproven purge retry.
+    // Shared by entity deltas and edge endpoint hydration, in the writer.
+    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+        && quarantine::unproven_remat_marker_exists_in_txn(vault, wtxn, window_key, &id)?
+    {
+        return Ok(false);
+    }
     let delete_protected = crate::registry::is_delete_protected_engine_record(header.entity_type);
 
     // Tombstone gate — fires BEFORE the put, never heals after (ARCH-0023b:
@@ -391,7 +405,8 @@ pub(super) fn materialize_entity_blob_in_txn(
         &[]
     };
 
-    if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER
+    if header.entity_type == crate::registry::ENTITY_TYPE_FACET
+        && crate::companion::is_identity_facet_body(data)
         && !companion_register_sync_admitted(data)?
     {
         tracing::warn!(
@@ -402,13 +417,8 @@ pub(super) fn materialize_entity_blob_in_txn(
     }
 
     if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
-        return super::diagnostic_ingest::ingest_diagnostic_in_txn(
-            vault,
-            wtxn,
-            &id,
-            blob,
-            lease_vault_id,
-        );
+        // T1 observations and eligibility receipts are local to their account.
+        return Ok(false);
     }
 
     // ONE-1134 + ONE-1140: REDACTION_AUDIT replay door. Receipts
@@ -473,7 +483,7 @@ pub(super) fn materialize_entity_blob_in_txn(
             vault,
             wtxn,
             quota::peer_key_from_redaction_pubkey(&pubkey),
-            crate::unix_seconds_now(),
+            mutation_recorded_at,
         )?
     } else if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
         if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())?
@@ -489,23 +499,13 @@ pub(super) fn materialize_entity_blob_in_txn(
             )?;
             return Ok(false);
         }
-        let validation = crate::batch::validate_replicated_authority_log_for_local_vault(
+        crate::batch::validate_replicated_authority_log_for_local_vault(
             &vault.store,
             wtxn,
             &id,
             data,
         )?;
-        let peer_key = if validation.signer_known {
-            quota::peer_key_from_authority_key(&validation.signer_key)
-        } else {
-            quota::peer_key_from_unknown_authority_signer(validation.local_vault_id)
-        };
-        quota::try_accept_maintenance_ingest_peer_in_txn(
-            vault,
-            wtxn,
-            peer_key,
-            crate::unix_seconds_now(),
-        )?
+        None
     } else if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         // ARCH-0055 identity-topology ledger events route through the ONE
         // shared fail-closed ingest door (validation, per-stream quota,
@@ -534,6 +534,31 @@ pub(super) fn materialize_entity_blob_in_txn(
         None
     };
 
+    // Pack remote preflight: a malformed REMOTE envelope is a typed remote
+    // rejection here, before the name-based remap reads the local map. The
+    // caller quarantines it via `remote_rejection_reason`; a later
+    // `InvalidPackByteMap` from the remap is LOCAL corruption and fails
+    // closed (the classifier never remote-maps it).
+    if pack_sync::is_pack_handle(header.entity_type)
+        && let Some(remote_err) = pack_sync::remote_pack_envelope_error(data)
+    {
+        quarantine_rejected_op_in_txn(
+            vault,
+            wtxn,
+            window_key,
+            QuarantineContainer::Entities,
+            key,
+            &remote_err,
+            blob,
+        )?;
+        return Ok(false);
+    }
+    if pack_sync::is_pack_handle(header.entity_type)
+        && let Some(existing) = vault.store.entities.get(wtxn, id.as_bytes())?
+        && pack_sync::pack_echo_equal(&existing, blob)
+    {
+        return Ok(false);
+    }
     // Replicated put: Observer B mirrors whatever the unfiltered CRDT
     // entities map holds, including the engine-authored maintenance band
     // (REDACTION_AUDIT = 120) and reserved-predicate `edge.provenance`

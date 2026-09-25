@@ -67,6 +67,7 @@ pub(super) fn repair_gate_input(
         },
         external_effect: None,
         agent_definition_ceiling: invocation.agent_definition_ceiling(),
+        foreign_agent_ceiling: None,
         // No consent/grant supplied by a healer can dissolve the criticality floor.
         consent: None,
     }

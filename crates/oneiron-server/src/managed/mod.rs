@@ -29,8 +29,13 @@
 //! refusal is the tripwire that keeps the gap visible.
 
 mod args;
+#[cfg(test)]
+mod ctl_shed_tests;
+mod host;
+mod isolation;
 mod ledger;
 mod listener;
+mod shed;
 mod state_serve;
 mod vault_gates;
 

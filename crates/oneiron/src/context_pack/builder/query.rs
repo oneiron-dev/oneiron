@@ -21,6 +21,9 @@ pub struct ContextPackBuilder<'a> {
     pub(super) pipeline: PipelineBuilder<'a>,
     pub(super) vault: &'a Vault,
     pub(super) hydrate: bool,
+    pub(super) read_mode: crate::vault::ReadMode,
+    pub(super) criticality: Option<bool>,
+    pub(super) source_ranking: super::super::source_ranking::SourceRankingPolicy,
     pub(super) include_edges: bool,
     pub(in crate::context_pack) edge_hop: u32,
     pub(in crate::context_pack) selected_edge_budget: usize,
@@ -45,14 +48,54 @@ pub struct ContextPackBuilder<'a> {
     /// context-pack run cannot land on different targets.
     pub(super) session: Option<&'a crate::off_record::SessionRetrievalTelemetry<'a>>,
     pub(super) psych_profile_key: Option<PsychProfileKey>,
+    pub(super) l2_summary_subjects: Vec<EntityId>,
+    pub(super) l2_summary_reader: Option<&'a crate::claim::ScopedRead<'a>>,
 }
 
 impl<'a> ContextPackBuilder<'a> {
+    pub fn retrieval_effort(mut self, effort: crate::memory::Effort, seeds: &[EntityId]) -> Self {
+        self.pipeline = self.pipeline.retrieval_effort(effort, seeds);
+        self
+    }
+    pub fn deadline(mut self, deadline: &'a crate::retrieval_depth::RetrievalDeadline) -> Self {
+        self.pipeline = self.pipeline.deadline(deadline);
+        self
+    }
+    pub fn rerank(
+        mut self,
+        reranker: &'a dyn crate::rerank::Reranker,
+        options: crate::rerank::RerankOptions,
+    ) -> Self {
+        self.pipeline = self.pipeline.rerank(reranker, options);
+        self
+    }
+
+    /// Narrows claims to the manifest's critical (`true`) or normal (`false`)
+    /// tier. It never promotes a predicate or bypasses visibility checks.
+    pub fn criticality(mut self, critical: bool) -> Self {
+        self.criticality = Some(critical);
+        self.pipeline = self.pipeline.criticality(critical);
+        self
+    }
+
+    /// Overrides provenance ranking with explicit PACK data. This never changes
+    /// the D19 gate, world/facet scope, supersession law, or token budgets.
+    pub fn source_ranking(
+        mut self,
+        policy: super::super::source_ranking::SourceRankingPolicy,
+    ) -> Self {
+        self.source_ranking = policy;
+        self
+    }
+
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
             pipeline: vault.query().telemetry_action(RetrievalAction::ContextPack),
             vault,
             hydrate: true,
+            read_mode: crate::vault::ReadMode::Indexed,
+            criticality: None,
+            source_ranking: Default::default(),
             include_edges: false,
             edge_hop: 0,
             selected_edge_budget: DEFAULT_MAX_NEIGHBORS,
@@ -72,6 +115,8 @@ impl<'a> ContextPackBuilder<'a> {
             disclosure: None,
             session: None,
             psych_profile_key: None,
+            l2_summary_subjects: Vec::new(),
+            l2_summary_reader: None,
         }
     }
 
@@ -109,6 +154,35 @@ impl<'a> ContextPackBuilder<'a> {
     /// is never silently omitted from the returned pack.
     pub fn psych_profile_key(mut self, key: PsychProfileKey) -> Self {
         self.psych_profile_key = Some(key);
+        if !self.l2_summary_subjects.contains(&key.person) {
+            self.l2_summary_subjects.push(key.person);
+        }
+        self
+    }
+
+    /// Adds the content-addressed L2 prefix for these explicit person/persona
+    /// subjects. Uses their ClaimOf ledger, never ranked query hits. At most
+    /// eight subjects are accepted. New non-subject hits remain in the delta.
+    pub fn l2_summary_subjects(mut self, subjects: &[EntityId]) -> Self {
+        self.l2_summary_subjects = subjects
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if let Some(key) = self.psych_profile_key
+            && !self.l2_summary_subjects.contains(&key.person)
+        {
+            self.l2_summary_subjects.push(key.person);
+        }
+        self
+    }
+
+    /// Narrows L2 evidence to the same actor's scoped-read and retrieval floor.
+    /// The reader must belong to this vault. Hosts using ScopedRead must attach
+    /// it before assembly, not only filter the rendered response afterwards.
+    pub fn l2_summary_reader(mut self, reader: &'a crate::claim::ScopedRead<'a>) -> Self {
+        self.l2_summary_reader = Some(reader);
         self
     }
 
@@ -302,6 +376,22 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Filters provenance after admission and before result truncation.
+    /// Supplies per-claim OF-095 access-factor overrides. Closed claims remain
+    /// closed; the query door validates every override before retrieval.
+    pub fn with_access_factor_overrides(
+        mut self,
+        overrides: &'a std::collections::HashMap<crate::EntityId, f32>,
+    ) -> Self {
+        self.pipeline = self.pipeline.with_access_factor_overrides(overrides);
+        self
+    }
+
+    pub fn made_by(mut self, predicate: crate::provenance::made_by::MadeByPredicate) -> Self {
+        self.pipeline = self.pipeline.made_by(predicate);
+        self
+    }
+
     pub fn limit(mut self, n: usize) -> Self {
         self.pipeline = self.pipeline.limit(n);
         self
@@ -312,7 +402,7 @@ impl<'a> ContextPackBuilder<'a> {
     /// additionally groups surviving claims by world (base section first). For
     /// [`WorldScope::Base`] / [`WorldScope::World`] the pack stays flat.
     pub fn world(mut self, scope: WorldScope) -> Self {
-        self.pipeline = self.pipeline.world(scope);
+        self.pipeline = self.pipeline.world(scope.clone());
         self.world_scope = scope;
         self
     }
@@ -324,6 +414,14 @@ impl<'a> ContextPackBuilder<'a> {
     /// consulted for `All` scope with surviving non-base claims.
     pub fn non_base_world_claim_fraction(mut self, fraction: f32) -> Self {
         self.non_base_world_fraction = fraction;
+        self
+    }
+
+    /// Selects the hydration frontier. Retrieval defaults to INDEXED.
+    /// An explicit entity-bound pin selects only its owning result/neighbor;
+    /// unrelated entities are omitted and no history is approximated.
+    pub fn read_mode(mut self, mode: crate::vault::ReadMode) -> Self {
+        self.read_mode = mode;
         self
     }
 

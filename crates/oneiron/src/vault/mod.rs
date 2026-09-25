@@ -6,7 +6,16 @@ mod actors_memory;
 mod doctor_manifest;
 mod edges;
 mod entities;
+pub(crate) mod entity_revision;
+pub use entity_revision::{
+    IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
+    ResolvedCitation, RevisionRef,
+};
 mod open;
+mod places;
+
+#[cfg(feature = "test-support")]
+mod read_fixture;
 mod search_retrieval;
 mod transactions;
 
@@ -36,9 +45,13 @@ pub(crate) use self::entities::MAX_TYPE_QUERY_RESULTS;
 pub(crate) use self::entities::{
     LiveEntityRow, entity_id_from_type_index_key, live_entity_row_in_txn, require_key_len,
 };
+pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
+    pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    #[cfg(feature = "sync")]
+    pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     pub(crate) analyzer: MultilingualAnalyzer,
@@ -64,6 +77,8 @@ pub struct Vault {
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
     /// outbound callback, no timer handle and no second connection owner.
     pub(crate) slim: crate::slim::SlimController,
+    pub(crate) conversation_presence:
+        std::sync::Mutex<std::collections::BTreeMap<crate::EntityId, Vec<crate::EntityId>>>,
     /// Live-window delete-routing seam (M4-10 / ONE-1135): a `Weak` to the
     /// production [`crate::sync::manager::WindowManager`], set by
     /// [`crate::sync::manager::WindowManager::attach_to_vault`]. When a

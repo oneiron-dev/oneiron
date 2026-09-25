@@ -56,7 +56,8 @@ pub(crate) fn load_or_mint_client_id_in_txn(
         Some(raw) if raw.len() == 8 => decode_client_id_row(&raw),
         Some(_) => Err(Error::CorruptedIndex("sync client_id row")),
         None => {
-            let minted = mint_client_id();
+            let minted = mint_client_id(&vault.store.clock)?;
+            crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
             vault
                 .store
                 .sync_state
@@ -160,17 +161,20 @@ pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {
 
 /// Mints a random nonzero u64 from the random tail of a UUID (bytes 8..16
 /// of a v7 UUID are the random section — the head is a timestamp).
-fn mint_client_id() -> u64 {
-    loop {
-        let uuid = uuid::Uuid::now_v7();
-        let tail: [u8; 8] = uuid.as_bytes()[8..16]
-            .try_into()
-            .expect("uuid tail is 8 bytes");
+fn mint_client_id(clock: &crate::ports::StoreClock) -> Result<u64> {
+    // The public device id is not a signing key. Keys retain the OS CSPRNG.
+    // Take the source's nonzero random tail, preserving its existing wire shape.
+    for _ in 0..16 {
+        let bytes = clock.ulid()?;
+        let tail: [u8; 8] = bytes[8..16].try_into().expect("id tail is 8 bytes");
         let candidate = u64::from_le_bytes(tail);
         if candidate != 0 {
-            return candidate;
+            return Ok(candidate);
         }
     }
+    Err(Error::InvariantViolation(
+        "id source produced zero device ids",
+    ))
 }
 
 fn decode_client_id_row(raw: &[u8]) -> Result<u64> {

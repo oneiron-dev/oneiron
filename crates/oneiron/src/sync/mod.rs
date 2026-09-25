@@ -12,6 +12,7 @@
 //! # Modules
 //!
 //! - `loro_support` — internal Loro-native byte map and encoding helpers
+//! - `pack_sync` — PackByteMap canonical wire form, echo mapping, and remote validation
 //! - `types` — Sync configuration, window keys
 //! - `schema` — CRDT Doc schema creation (root + window)
 //! - `bridge` — Observer-based CRDT ↔ LMDB materialization
@@ -22,20 +23,24 @@
 //!   + `ra:` tombstone re-assertion markers (ONE-1156)
 //! - `lease` — device-lease registry + receipt origin attestation (ONE-1140)
 //! - `selector` — grant-backed closed-subgraph window export selectors
-//! - `quota` — per-federated-connection quota plus local maintenance-ingest quota
+//! - `quota` — local maintenance-ingest security bounds
+//! - `federation_burst` — authenticated peer observations and durable defer/replay
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
 pub mod bridge;
+pub mod chunks;
 pub mod client;
 pub mod connection;
 #[cfg(test)]
 mod convergence_props_internal;
-mod diagnostic_ingest;
 pub mod documents;
+pub mod federation_burst;
 pub mod lease;
 mod local_claims;
 pub(crate) mod loro_support;
 pub mod manager;
+pub(crate) mod note;
+pub(crate) mod pack_sync;
 pub mod quarantine;
 pub mod queue;
 pub mod quota;
@@ -67,19 +72,16 @@ pub use quarantine::{
 };
 pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
 pub use quota::{
-    AllowBlock, DEFAULT_FEDERATION_FLOOD_PAUSE_SECS,
     DEFAULT_MAINTENANCE_INGEST_MAX_OPS_PER_PEER_WINDOW,
-    DEFAULT_MAINTENANCE_INGEST_QUOTA_WINDOW_SECS, DEFAULT_MAX_FEDERATION_WINDOWS_PER_CONNECTION,
-    FederationBlockReason, FederationConnectionQuota, FederationPauseReason, FederationQuotaConfig,
-    FederationQuotaSnapshot, MaintenanceIngestQuotaConfig, MaintenanceIngestQuotaSnapshot,
-    maintenance_ingest_quota_config, maintenance_ingest_quota_snapshots,
-    set_maintenance_ingest_quota_config,
+    DEFAULT_MAINTENANCE_INGEST_QUOTA_WINDOW_SECS, MaintenanceIngestQuotaConfig,
+    MaintenanceIngestQuotaSnapshot, maintenance_ingest_quota_config,
+    maintenance_ingest_quota_snapshots, set_maintenance_ingest_quota_config,
 };
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{
-    FederationAdmissionRole, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
-    SyncSelectorWorld, admit_federated_window_update, authorize_sync_selector,
+    FederationAdmissionRole, RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest,
+    SyncSelector, SyncSelectorWorld, admit_federated_window_update, authorize_sync_selector,
     decode_selector_vv_request, decode_sync_selector, encode_selector_vv_request,
     encode_sync_selector, filtered_window_doc,
 };

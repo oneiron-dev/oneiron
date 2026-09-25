@@ -1006,7 +1006,7 @@ fn schedule_denial_is_not_enqueued_and_does_not_block_allowed_task() -> crate::R
 #[test]
 fn off_record_schedule_is_rejected_before_task_or_attempt_persistence() -> crate::Result<()> {
     use crate::attempt_queue::AttemptQueue;
-    use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, MEMORY_CODE_BAD_REQUEST};
+    use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, MEMORY_CODE_FORBIDDEN};
     use crate::off_record::{OffRecordBackendClass, OffRecordMode};
     use crate::receipt::{ReceiptKind, ReceiptQuery};
 
@@ -1025,7 +1025,7 @@ fn off_record_schedule_is_rejected_before_task_or_attempt_persistence() -> crate
         .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
         .expect_err("off-record outbound is talk-only");
-    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
 
     let tasks = vault.connector_send_tasks()?;
     assert_eq!(tasks.len(), 0);

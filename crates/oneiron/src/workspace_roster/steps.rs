@@ -1,10 +1,8 @@
 //! Ordered onboarding writes and idempotent primitives.
 
 use super::*;
-
-// ---------------------------------------------------------------------------
-// Authority
-// ---------------------------------------------------------------------------
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
 
 /// Requires the writer to hold an administrative federation grant over
 /// `vault_id`.
@@ -35,11 +33,9 @@ pub(super) fn require_workspace_authority_in_txn(
     let fold = vault.verify_write_actor_in_txn(txn, writer)?;
     for entry in vault
         .store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_FEDERATION_GRANT])?
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
     {
-        let (key, _) = entry?;
-        let id = entity_id_from_type_index_key(&key)?;
+        let id = entry?;
         let Some(grant) = read_federation_grant_in_txn(vault, txn, &id)? else {
             continue;
         };
@@ -70,10 +66,6 @@ pub(super) fn with_workspace_authority<T>(
         write(txn)
     })
 }
-
-// ---------------------------------------------------------------------------
-// Steps
-// ---------------------------------------------------------------------------
 
 /// Step 1: check every referenced entity kind, anchor the house mind to the
 /// workspace `ORG`, and settle the preset row.
@@ -146,10 +138,7 @@ pub(super) fn validate_workspace_references(
         minted.extend([
             (companion.person_ref, ENTITY_TYPE_PERSON),
             (companion.actor_ref, ENTITY_TYPE_AGENT_DEF),
-            (
-                companion.companion_record_ref,
-                crate::companion::ENTITY_TYPE_COMPANION_REGISTER,
-            ),
+            (companion.companion_record_ref, ENTITY_TYPE_FACET),
             (
                 companion.profile_grant_ref,
                 crate::registry::ENTITY_TYPE_ACCESS_GRANT,
@@ -348,7 +337,7 @@ pub(super) fn read_onboarding_mailbox_in_txn(
     intent: &MemberOnboardingIntent,
     mailbox: &DelegatedMailboxOnboarding,
 ) -> Result<Option<crate::channel_identity::ChannelIdentity>> {
-    let now = crate::unix_seconds_now();
+    let now = vault.store.clock.now_recorded_at();
     if intent.occurred_at > now {
         return Err(invalid("mailbox onboarding cannot use a future event time"));
     }
@@ -366,8 +355,8 @@ pub(super) fn read_onboarding_mailbox_in_txn(
     }
     let Some(raw) = vault
         .store
-        .entities
-        .get(txn, mailbox.identity_ref.as_bytes())?
+        .port_entity_record(txn, &mailbox.identity_ref)?
+        .map(|row| row.encode())
     else {
         return Ok(None);
     };
@@ -446,10 +435,6 @@ pub(super) fn record_roster_member(
     })
 }
 
-// ---------------------------------------------------------------------------
-// Idempotent primitives
-// ---------------------------------------------------------------------------
-
 /// Anchors `actor_ref` to `subject_ref` unless it is already anchored there.
 ///
 /// A DIFFERENT live anchor is a typed refusal, not a silent re-anchor: the
@@ -489,7 +474,11 @@ pub(super) fn ensure_agent_definition(
     let at = intent.occurred_at;
     let data = encode_agent_definition(definition)?;
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
-        if let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? {
+        if let Some(raw) = vault
+            .store
+            .port_entity_record(txn, id)?
+            .map(|row| row.encode())
+        {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_AGENT_DEF {
@@ -536,8 +525,8 @@ pub(super) fn ensure_companion_person(
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         if let Some(raw) = vault
             .store
-            .entities
-            .get(txn, companion.person_ref.as_bytes())?
+            .port_entity_record(txn, &companion.person_ref)?
+            .map(|row| row.encode())
         {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -592,8 +581,11 @@ pub(super) fn ensure_work_facet_edge(
     writer: &WriteActor,
 ) -> Result<()> {
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
-        let key = crate::store::Store::encode_edge_key(&person_ref, EdgeKind::HasFacet, &facet_ref);
-        if vault.store.edges_out.get(txn, &key)?.is_some() {
+        if vault
+            .store
+            .port_edge_get(txn, &person_ref, EdgeKind::HasFacet, &facet_ref)?
+            .is_some()
+        {
             return Ok(());
         }
         vault
@@ -628,7 +620,7 @@ pub(super) fn ensure_companion_record(
     );
     let record = CompanionRecord::persona(
         CompanionScope::personal(intent.person_ref),
-        companion.actor_ref,
+        companion.person_ref,
         Value::Map(vec![
             (
                 Value::from("schema_version"),
@@ -644,26 +636,22 @@ pub(super) fn ensure_companion_record(
             ),
         ]),
         provenance,
-        CompanionExportClassification::LocalOnly,
+        crate::federation::Sensitivity::Restricted,
     );
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         if let Some(raw) = vault
             .store
-            .entities
-            .get(txn, companion.companion_record_ref.as_bytes())?
+            .port_entity_record(txn, &companion.companion_record_ref)?
         {
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("companion entity header"))?;
-            if header.entity_type != crate::companion::ENTITY_TYPE_COMPANION_REGISTER {
-                return Err(Error::InvalidEntityType(header.entity_type));
+            if raw.entity_type != ENTITY_TYPE_FACET {
+                return Err(Error::InvalidEntityType(raw.entity_type));
             }
-            let existing =
-                crate::companion::decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let existing = crate::companion::decode_companion_record_body(&raw.body)?;
             if existing.scope != record.scope
                 || existing.subject != record.subject
                 || existing.value != record.value
                 || existing.lifecycle != record.lifecycle
-                || existing.export_classification != record.export_classification
+                || existing.sensitivity != record.sensitivity
             {
                 return Err(invalid(
                     "companion_record_ref is already bound to a different companion",
@@ -694,13 +682,17 @@ pub(super) fn ensure_companion_profile_grant(
     let expected = AccessGrant::companion_profile_read(
         intent.person_ref,
         intent.person_ref,
-        companion.actor_ref,
+        companion.person_ref,
         intent.occurred_at,
     );
     let id = companion.profile_grant_ref;
     let data = crate::access_grant::encode_access_grant_body(&expected)?;
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
-        if let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? {
+        if let Some(raw) = vault
+            .store
+            .port_entity_record(txn, &id)?
+            .map(|row| row.encode())
+        {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {

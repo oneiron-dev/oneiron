@@ -2,6 +2,7 @@
 //! pair key, its claim wire value and structural validator, the apply/promote
 //! doors, and the suppression reads that consume them.
 
+use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
 
 use rmpv::Value;
@@ -140,7 +141,7 @@ impl Vault {
             return Ok(row.claim);
         }
 
-        let claim = EntityId::now();
+        let claim = self.store.clock.entity_id()?;
         let mut body = ClaimBody::new(
             PREDICATE_ENTITY_DISTINCT_FROM,
             ClaimSubject::Entity(pair.0),
@@ -187,8 +188,8 @@ impl Vault {
         let (mut body, occurred, learned_at) = {
             let raw = self
                 .store
-                .entities
-                .get(wtxn, claim.as_bytes())?
+                .port_entity_record(wtxn, claim)?
+                .map(|row| row.encode())
                 .ok_or(Error::EntityNotFound)?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

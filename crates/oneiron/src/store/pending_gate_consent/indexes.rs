@@ -10,15 +10,18 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use super::ENTITY_BODY_OFFSET;
 use super::Store;
 use super::keys::{
-    critical_confirm_index_key, index_suffix_id, pending_gate_consent_group_index_key,
-    pending_gate_consent_group_index_prefix, pending_gate_consent_hash_index_key,
-    pending_gate_consent_hash_index_prefix, pending_gate_consent_index_state_key,
-    pending_gate_consent_run_index_key, pending_gate_consent_run_index_prefix,
+    PENDING_GATE_CONSENT_KEY_PREFIX, critical_confirm_index_key, index_suffix_id,
+    pending_gate_consent_group_index_key, pending_gate_consent_group_index_prefix,
+    pending_gate_consent_hash_index_key, pending_gate_consent_hash_index_prefix,
+    pending_gate_consent_index_state_key, pending_gate_consent_run_index_key,
+    pending_gate_consent_run_index_prefix, pending_gate_consent_sequence_index_key,
+    pending_gate_consent_sequence_key,
 };
 use super::records::{
     PENDING_GATE_CONSENT_INDEX_STATE_VERSION, PendingGateConsentIndexState,
-    PendingGateConsentRecord, decode_pending_gate_consent_index_state,
-    encode_pending_gate_consent_index_state, sort_pending_gate_consents,
+    PendingGateConsentRecord, decode_pending_gate_consent, decode_pending_gate_consent_index_state,
+    decode_pending_gate_consent_sequence, encode_pending_gate_consent_index_state,
+    sort_pending_gate_consents,
 };
 
 impl Store {
@@ -75,6 +78,15 @@ impl Store {
         else {
             return Ok(());
         };
+        self.put_pending_gate_consent_index_state_in_txn(wtxn, record, &state)
+    }
+
+    fn put_pending_gate_consent_index_state_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &PendingGateConsentRecord,
+        state: &PendingGateConsentIndexState,
+    ) -> Result<()> {
         self.vault_meta.put(
             wtxn,
             &pending_gate_consent_run_index_key(&state.run_id, &record.claim_id),
@@ -92,12 +104,51 @@ impl Store {
                 b"1",
             )?;
         }
-        let encoded = encode_pending_gate_consent_index_state(&state)?;
+        let encoded = encode_pending_gate_consent_index_state(state)?;
         self.vault_meta.put(
             wtxn,
             &pending_gate_consent_index_state_key(&record.claim_id),
             &encoded,
         )?;
+        Ok(())
+    }
+
+    /// Rebuild checkpoint sidecars from pending rows and their historical
+    /// index-state/sequence witnesses, never from a possibly changed claim.
+    pub(crate) fn rebuild_pending_gate_consent_sidecars(&self, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        let records = self
+            .vault_meta
+            .prefix_iter(&*wtxn, PENDING_GATE_CONSENT_KEY_PREFIX)?
+            .map(|row| {
+                let (key, raw) = row?;
+                let record = decode_pending_gate_consent(&raw)?;
+                if key.strip_prefix(PENDING_GATE_CONSENT_KEY_PREFIX)
+                    != Some(record.claim_id.as_slice())
+                {
+                    return Err(Error::CorruptedIndex("pending gate consent"));
+                }
+                Ok(record)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for record in records {
+            if record.dreamer_run_id.is_some() {
+                let state = self
+                    .pending_gate_consent_index_state_in_txn(wtxn, &record)?
+                    .ok_or(Error::CorruptedIndex("pending gate consent index state"))?;
+                self.put_pending_gate_consent_index_state_in_txn(wtxn, &record, &state)?;
+            }
+            self.put_pending_gate_consent_critical_confirm_index_in_txn(wtxn, &record)?;
+            let raw = self
+                .vault_meta
+                .get(&*wtxn, &pending_gate_consent_sequence_key(&record.claim_id))?
+                .ok_or(Error::CorruptedIndex("pending gate consent sequence"))?;
+            let sequence = decode_pending_gate_consent_sequence(&raw)?;
+            let key = pending_gate_consent_sequence_index_key(sequence);
+            if sequence == 0 || self.vault_meta.get(&*wtxn, &key)?.is_some() {
+                return Err(Error::CorruptedIndex("pending gate consent sequence index"));
+            }
+            self.vault_meta.put(wtxn, &key, &record.claim_id)?;
+        }
         Ok(())
     }
 

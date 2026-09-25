@@ -10,7 +10,9 @@ use crate::error::Result;
 use crate::git_wire::GitWireProcessEnv;
 
 /// One CGI request, as typed fields. Every environment value the child sees
-/// beyond the closed baseline is built from exactly these.
+/// beyond the closed baseline is built from exactly these. Host authority is
+/// deliberately not a request field: trusted hosts use [`super::serve_with_authority`]
+/// with a separately obtained lease; neither `remote_user` nor headers mint one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServeRequest {
     /// `GET` or `POST`.

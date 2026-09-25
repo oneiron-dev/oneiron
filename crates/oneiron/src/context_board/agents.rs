@@ -9,6 +9,8 @@ use crate::run_tree::RunTreeNode;
 pub enum AgentLane {
     Child,
     Peer,
+    Cand,
+    Fanout,
 }
 
 impl AgentLane {
@@ -18,6 +20,8 @@ impl AgentLane {
         match self {
             Self::Child => "child",
             Self::Peer => "peer",
+            Self::Cand => "cand",
+            Self::Fanout => "fanout",
         }
     }
 }
@@ -234,7 +238,6 @@ mod tests {
             run_id: Some("agent-run".to_owned()),
             envelope_actor: WriteActor::new(subject, EdgeActorClass::Agent),
             subject,
-            pinned_config: None,
             deadline: None,
             now_ms: 1,
         };

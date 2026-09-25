@@ -1,79 +1,151 @@
-//! Firecracker microVM backend (Linux only, feature `microvm-firecracker`).
+//! Host-configured jailer execution with a bounded vsock guest-agent protocol.
 //!
-//! This is the isolating backend the foreign/untrusted lane is meant to run on.
-//! It is compiled only behind its feature, and `FirecrackerBackend::detect`
-//! returns `None` unless the host actually has the VMM binary — so a build with
-//! the feature on but no VMM present still fails closed through
-//! `super::microvm::select_backend_for_tier` rather than running unisolated.
-//!
-//! The boundary halves that are host-side (overlay diff, credential proxy) are
-//! shared verbatim with the other backends; what is Firecracker-specific is
-//! booting the guest, which requires a configured jailer root and image set.
+//! No binary or guest image is downloaded. Absence of configuration, jailer,
+//! KVM, pinned images, cgroups or a compatible guest agent refuses execution.
+//! There is no process-backend fallback. See `guest-protocol.md` for the
+//! externally built guest contract and the real-boot acceptance requirements.
 
-use std::{fmt, path::PathBuf};
+mod config;
+#[cfg(target_os = "linux")]
+mod launch;
+#[cfg(target_os = "linux")]
+mod protocol;
+#[cfg(target_os = "linux")]
+mod snapshot;
+#[cfg(test)]
+mod tests;
 
-use super::{
-    SandboxBoundaryContract, SandboxMount, SandboxMountTable, SandboxProposalWrite,
-    microvm::{
-        CredentialResolver, ExecutionBudget, GuestImage, MicroVmBackend, MicroVmExit,
-        MicroVmHandle, collect_overlay_writes, prepare_overlay_handle,
-    },
+use super::microvm::{
+    CredentialEgressProxy, CredentialReadTransport, CredentialResolver, ExecutionBudget,
+    GuestImage, MicroVmBackend, MicroVmExit, MicroVmHandle, prepare_overlay_handle,
 };
+use super::{SandboxBoundaryContract, SandboxMountTable, SandboxProposalWrite};
 use crate::error::CodeError;
 use crate::{Error, Result};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
-/// Stable backend label.
+pub use config::{FirecrackerHostConfig, GuestArtifactPins};
+
 pub const FIRECRACKER_BACKEND_NAME: &str = "firecracker";
-
-/// Host environment key naming the VMM binary.
 pub const FIRECRACKER_BIN_ENV: &str = "ONEIRON_MICROVM_FIRECRACKER_BIN";
-/// Host environment key naming the jailer/scratch root for VM state.
 pub const FIRECRACKER_ROOT_ENV: &str = "ONEIRON_MICROVM_ROOT";
+/// JSON host profile. Paths, uid/gid, cgroups and image pins are HOST authority.
+pub const FIRECRACKER_CONFIG_ENV: &str = "ONEIRON_MICROVM_CONFIG";
 
-const DEFAULT_BINARY: &str = "/usr/bin/firecracker";
-
-/// Firecracker-backed microVM lane.
+/// Prepared handles are capabilities belonging to this backend, not path inputs.
 pub struct FirecrackerBackend {
-    binary: PathBuf,
     root: PathBuf,
+    config: Option<FirecrackerHostConfig>,
+    transport: Option<Arc<dyn CredentialReadTransport>>,
+    state: Mutex<BTreeMap<String, VmState>>,
+}
+
+struct VmState {
+    handle: MicroVmHandle,
+    phase: Phase,
+}
+enum Phase {
+    Prepared,
+    Armed,
+    Running,
+    Failed,
+    Complete(Vec<SandboxProposalWrite>),
+    Collected,
 }
 
 impl FirecrackerBackend {
-    /// Creates a backend against an explicit VMM binary and state root.
+    /// An unconfigured backend always refuses to run. Use `configured` for boot.
+    /// The binary-only constructor cannot authorize jailer identity or images.
     #[must_use]
-    pub fn new(binary: impl Into<PathBuf>, root: impl Into<PathBuf>) -> Self {
+    pub fn new(_binary: impl Into<PathBuf>, root: impl Into<PathBuf>) -> Self {
         Self {
-            binary: binary.into(),
             root: root.into(),
+            config: None,
+            transport: None,
+            state: Mutex::new(BTreeMap::new()),
         }
     }
 
-    /// Detects a usable Firecracker install, or `None`.
-    ///
-    /// `None` is the fail-closed answer: the caller then has no isolating
-    /// backend and refuses the run instead of downgrading it.
+    pub fn configured(config: FirecrackerHostConfig) -> Result<Self> {
+        config.validate()?;
+        Ok(Self {
+            root: config.scratch_root.clone(),
+            config: Some(config),
+            transport: None,
+            state: Mutex::new(BTreeMap::new()),
+        })
+    }
+
+    /// Egress is denied unless the host explicitly installs a read transport.
+    #[must_use]
+    pub fn with_read_transport(mut self, transport: Arc<dyn CredentialReadTransport>) -> Self {
+        self.transport = Some(transport);
+        self
+    }
+
+    /// Detects a fully configured profile, never just the presence of a binary.
     #[must_use]
     pub fn detect() -> Option<Self> {
-        if !cfg!(target_os = "linux") {
-            return None;
-        }
-        let binary = std::env::var_os(FIRECRACKER_BIN_ENV)
-            .map_or_else(|| PathBuf::from(DEFAULT_BINARY), PathBuf::from);
-        if !binary.is_file() {
-            return None;
-        }
-        let root = std::env::var_os(FIRECRACKER_ROOT_ENV).map_or_else(
-            || std::env::temp_dir().join("oneiron-microvm"),
-            PathBuf::from,
-        );
-        Some(Self::new(binary, root))
+        let path = std::env::var_os(FIRECRACKER_CONFIG_ENV)?;
+        let bytes = config::read_regular_bounded(std::path::Path::new(&path), 64 * 1024).ok()?;
+        let config: FirecrackerHostConfig = serde_json::from_slice(&bytes).ok()?;
+        Self::configured(config).ok()
     }
 
-    fn not_configured(detail: &'static str) -> Error {
-        Error::Code(CodeError::MicroVmBackendError {
-            backend: FIRECRACKER_BACKEND_NAME,
-            detail: detail.to_owned(),
-        })
+    fn boot(
+        &self,
+        vm: &MicroVmHandle,
+        image: &GuestImage,
+        budget: ExecutionBudget,
+        proxy: &CredentialEgressProxy,
+    ) -> Result<MicroVmExit> {
+        validate_guest_budget(&budget)?;
+        let config = self
+            .config
+            .as_ref()
+            .ok_or_else(|| refused("jailer host profile unavailable"))?;
+        config.validate()?;
+        config.pins.verify(image)?;
+        {
+            let mut states = self
+                .state
+                .lock()
+                .map_err(|_| refused("backend state poisoned"))?;
+            let state = states
+                .get_mut(vm.id())
+                .ok_or_else(|| refused("unknown VM handle"))?;
+            if state.handle != *vm || !matches!(state.phase, Phase::Armed) || !proxy.is_armed() {
+                return Err(refused("VM not armed or already consumed"));
+            }
+            state.phase = Phase::Running;
+        }
+        #[cfg(target_os = "linux")]
+        let result = launch::run(config, vm, image, budget, proxy, self.transport.as_deref());
+        #[cfg(not(target_os = "linux"))]
+        let result: Result<(MicroVmExit, Vec<SandboxProposalWrite>)> =
+            Err(refused("Firecracker requires Linux"));
+        let mut states = self
+            .state
+            .lock()
+            .map_err(|_| refused("backend state poisoned"))?;
+        let state = states
+            .get_mut(vm.id())
+            .ok_or_else(|| refused("VM state disappeared"))?;
+        match result {
+            Ok((exit, proposals)) => {
+                state.phase = Phase::Complete(proposals);
+                Ok(exit)
+            }
+            Err(error) => {
+                state.phase = Phase::Failed;
+                Err(error)
+            }
+        }
     }
 }
 
@@ -87,37 +159,62 @@ impl MicroVmBackend for FirecrackerBackend {
         contract: &SandboxBoundaryContract,
         mounts: &SandboxMountTable,
     ) -> Result<MicroVmHandle> {
-        prepare_overlay_handle(&self.root, FIRECRACKER_BACKEND_NAME, contract, mounts)
+        let config = self
+            .config
+            .as_ref()
+            .ok_or_else(|| refused("jailer host profile unavailable"))?;
+        config.validate()?;
+        let handle = prepare_overlay_handle(&self.root, self.name(), contract, mounts)?;
+        self.state
+            .lock()
+            .map_err(|_| refused("backend state poisoned"))?
+            .insert(
+                handle.id().to_owned(),
+                VmState {
+                    handle: handle.clone(),
+                    phase: Phase::Prepared,
+                },
+            );
+        Ok(handle)
     }
 
     fn run(
         &self,
         _vm: &MicroVmHandle,
+        _image: &GuestImage,
+        _budget: ExecutionBudget,
+    ) -> Result<MicroVmExit> {
+        Err(refused("VM run requires its host-bound credential policy"))
+    }
+
+    fn run_with_proxy(
+        &self,
+        vm: &MicroVmHandle,
         image: &GuestImage,
         budget: ExecutionBudget,
+        proxy: &CredentialEgressProxy,
     ) -> Result<MicroVmExit> {
-        if !budget.is_bounded() {
-            return Err(Self::not_configured(
-                "execution budget must bound wall clock, memory and pids",
-            ));
-        }
-        if !self.binary.is_file() {
-            return Err(Error::Code(CodeError::MicroVmBackendUnavailable {
-                tier: "foreign_or_untrusted",
-            }));
-        }
-        image.ensure_present(FIRECRACKER_BACKEND_NAME)?;
-
-        // Booting the guest needs a jailer profile and a machine-config the
-        // host supplies; until that arrives the lane refuses the run rather
-        // than executing foreign code outside a VM.
-        Err(Self::not_configured(
-            "guest boot is not configured for this host",
-        ))
+        self.boot(vm, image, budget, proxy)
     }
 
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>> {
-        collect_overlay_writes(vm.overlay_upper(), SandboxMount::Workspace)
+        let mut states = self
+            .state
+            .lock()
+            .map_err(|_| refused("backend state poisoned"))?;
+        let state = states
+            .get_mut(vm.id())
+            .ok_or_else(|| refused("unknown VM handle"))?;
+        if state.handle != *vm {
+            return Err(refused("VM handle mismatch"));
+        }
+        if !matches!(state.phase, Phase::Complete(_)) {
+            return Err(refused("no completed VM delta"));
+        }
+        let Phase::Complete(writes) = std::mem::replace(&mut state.phase, Phase::Collected) else {
+            unreachable!()
+        };
+        Ok(writes)
     }
 
     fn proxy_credentials(
@@ -125,17 +222,19 @@ impl MicroVmBackend for FirecrackerBackend {
         vm: &MicroVmHandle,
         _resolver: &dyn CredentialResolver,
     ) -> Result<()> {
-        // The vsock endpoint lives beside the VM's overlay state; the resolver
-        // itself is consulted host-side by `CredentialEgressProxy`, which is
-        // backend-independent on purpose.
-        let Some(parent) = vm.egress_socket().parent() else {
-            return Err(Self::not_configured(
-                "egress endpoint has no host directory",
-            ));
-        };
-        if !parent.is_dir() {
-            return Err(Self::not_configured("egress endpoint directory is missing"));
+        let mut states = self
+            .state
+            .lock()
+            .map_err(|_| refused("backend state poisoned"))?;
+        let state = states
+            .get_mut(vm.id())
+            .ok_or_else(|| refused("unknown VM handle"))?;
+        if state.handle != *vm || !matches!(state.phase, Phase::Prepared) {
+            return Err(refused("VM handle mismatch or already armed"));
         }
+        // No resolver is retained from this borrowed call. The actual armed
+        // policy is passed by the owning adapter to run_with_proxy.
+        state.phase = Phase::Armed;
         Ok(())
     }
 }
@@ -143,8 +242,28 @@ impl MicroVmBackend for FirecrackerBackend {
 impl fmt::Debug for FirecrackerBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FirecrackerBackend")
-            .field("name", &FIRECRACKER_BACKEND_NAME)
+            .field("configured", &self.config.is_some())
             .field("host_paths", &"<host-only>")
-            .finish()
+            .finish_non_exhaustive()
     }
+}
+
+fn refused(detail: &'static str) -> Error {
+    Error::Code(CodeError::MicroVmBackendError {
+        backend: FIRECRACKER_BACKEND_NAME,
+        detail: detail.to_owned(),
+    })
+}
+
+fn validate_guest_budget(budget: &ExecutionBudget) -> Result<()> {
+    // Protocol v1 and the provisioned guest cgroup door both cap pids at 4096.
+    // Refuse an unsupported request before boot, not at the first guest frame.
+    if !budget.is_bounded()
+        || budget.wall_clock_secs > 86_400
+        || budget.mem_mib > 65_536
+        || budget.pids > 4096
+    {
+        return Err(refused("execution budget outside supported bounds"));
+    }
+    Ok(())
 }

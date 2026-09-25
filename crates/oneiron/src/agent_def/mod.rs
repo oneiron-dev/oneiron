@@ -15,6 +15,7 @@ mod decode;
 mod doors;
 mod manifest;
 mod types;
+pub mod workflow;
 
 pub use self::codec::{decode_agent_definition, encode_agent_definition};
 pub use self::types::{
@@ -110,3 +111,28 @@ mod one_1698_tests {
         Ok(())
     }
 }
+
+mod portable;
+mod portable_binding;
+pub(crate) use portable::{agent_pack_files, resolve_agent_skill_refs, select_agent_knowledge};
+pub(crate) use portable_binding::{
+    agent_fork_hash_in_txn, bind_agent_birth_in_txn, import_agent_fork_hash_in_txn,
+};
+
+mod portable_source;
+pub(crate) use portable_source::{
+    birth_source_exportable, read_birth_source, validate_birth_source_put,
+};
+
+mod birth_custody;
+mod birth_dependencies;
+pub(crate) use birth_custody::{
+    birth_custody_exists_in_txn, remove_birth_custody_in_txn, stage_birth_custody_put,
+};
+pub(crate) use birth_dependencies::{
+    birth_carriers_for_erased_entity_in_txn, retire_birth_sources_for_entity_in_txn,
+};
+#[cfg(feature = "sync")]
+pub(crate) use portable_source::{birth_source_holder, birth_source_matches_id};
+
+pub(crate) use portable_source::{archived_birth_source_matches, birth_source_id};

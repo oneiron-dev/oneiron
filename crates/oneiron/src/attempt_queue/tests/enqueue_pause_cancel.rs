@@ -4,11 +4,14 @@ use super::*;
 
 #[test]
 fn attempt_queue_enqueue_persists_required_fields() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(attempt) =
-        queue.enqueue(enqueue("claim_extraction", Some("turn:1"), 10))?
+        queue.enqueue(enqueue("claim_extraction", Some("turn:1"), {
+            clock.set(10);
+            10
+        }))?
     else {
         panic!("expected new attempt");
     };
@@ -32,7 +35,7 @@ fn attempt_queue_enqueue_persists_required_fields() -> Result<()> {
 
 #[test]
 fn run_index_scopes_list_run_and_run_tree_without_returning_other_runs() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, _clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     let mut later_input = enqueue("indexed-worker", None, 30);
@@ -47,6 +50,8 @@ fn run_index_scopes_list_run_and_run_tree_without_returning_other_runs() -> Resu
         panic!("expected earlier indexed attempt");
     };
     assert!(matches!(other, EnqueueOutcome::Enqueued(_)));
+    assert_eq!(later.created_at, 10);
+    assert_eq!(earlier.created_at, 10);
 
     let indexed = queue.list_run("run-indexed")?;
     let baseline: Vec<AttemptRecord> = queue
@@ -57,7 +62,7 @@ fn run_index_scopes_list_run_and_run_tree_without_returning_other_runs() -> Resu
     assert_eq!(indexed, baseline);
     assert_eq!(
         indexed.iter().map(|record| record.id).collect::<Vec<_>>(),
-        vec![earlier.id, later.id]
+        vec![later.id, earlier.id]
     );
 
     let tree = crate::RunTreeAdapter::new(&vault).read_run("run-indexed")?;
@@ -68,8 +73,8 @@ fn run_index_scopes_list_run_and_run_tree_without_returning_other_runs() -> Resu
             .map(|root| root.attempt_id.clone())
             .collect::<Vec<_>>(),
         vec![
-            crate::entity_id::bytes_to_hex_lower(earlier.id.as_bytes()),
             crate::entity_id::bytes_to_hex_lower(later.id.as_bytes()),
+            crate::entity_id::bytes_to_hex_lower(earlier.id.as_bytes()),
         ]
     );
     Ok(())
@@ -103,16 +108,22 @@ fn list_run_rejects_a_dangling_run_index_row() -> Result<()> {
 
 #[test]
 fn attempt_queue_enqueue_is_idempotent_for_dedupe_key() -> Result<()> {
-    let (_dir, vault) = open_queue();
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(first) =
-        queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
+        queue.enqueue(enqueue("claim_extraction", Some("same"), {
+            clock.set(10);
+            10
+        }))?
     else {
         panic!("expected first enqueue");
     };
     let EnqueueOutcome::Existing(second) =
-        queue.enqueue(enqueue("claim_extraction", Some("same"), 20))?
+        queue.enqueue(enqueue("claim_extraction", Some("same"), {
+            clock.set(20);
+            20
+        }))?
     else {
         panic!("expected existing enqueue");
     };

@@ -86,3 +86,43 @@ fn ppr_community_validation_rejects_nonfinite_and_relaxed_safety_bounds() {
         assert!(validate_ppr_community(&config).is_err());
     }
 }
+
+#[test]
+fn three_postures_have_exact_wire_values_and_key_pairings() {
+    use HostingPrivacyPosture::{Hosted, Relay, SelfHostLocal};
+    let mut labels = std::collections::BTreeSet::new();
+    for (posture, wire) in [
+        (Hosted, "managed"),
+        (Relay, "relay"),
+        (SelfHostLocal, "self-host"),
+    ] {
+        assert_eq!(posture.as_str(), wire);
+        assert_eq!(wire.parse::<HostingPrivacyPosture>(), Ok(posture));
+        assert_eq!(
+            serde_json::to_value(posture).unwrap(),
+            serde_json::json!(wire)
+        );
+        for custody in [
+            VaultDataKeyCustody::OwnerHeldLocal,
+            VaultDataKeyCustody::HostManagedKms {
+                key_ref: "kms://vault".into(),
+            },
+        ] {
+            let owner = matches!(custody, VaultDataKeyCustody::OwnerHeldLocal);
+            let config = VaultPrivacyConfig {
+                posture,
+                data_key_custody: custody,
+            };
+            assert_eq!(config.validate().is_ok(), owner != (posture == Hosted));
+            assert_eq!(config.host_readable(), posture == Hosted);
+            labels.insert(config.honest_label());
+        }
+    }
+    assert_eq!(labels.len(), 3);
+    for legacy in ["hosted", "self_host_local", "MANAGED", "", "host_blind"] {
+        assert!(legacy.parse::<HostingPrivacyPosture>().is_err());
+        assert!(
+            serde_json::from_value::<HostingPrivacyPosture>(serde_json::json!(legacy)).is_err()
+        );
+    }
+}

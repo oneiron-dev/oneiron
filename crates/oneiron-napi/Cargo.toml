@@ -26,6 +26,10 @@ serde_json = { workspace = true }
 # symbol loader only for Rust tests; the production addon still resolves
 # its Node-API symbols from the real importing host. These Rust tests cover
 # conversion/engine logic; JS ABI coverage remains in the Node-host tests.
+# (C07: Linux libtest has no Node host. Resolve symbols dynamically only in
+# its dev dependency graph; the production addon is unchanged. Rust tests
+# exercise conversions/engine calls, not Node-API calls; tests/node_host.cjs
+# covers the real Node-host boundary separately.)
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 napi = { version = "3", default-features = false, features = ["dyn-symbols"] }
 

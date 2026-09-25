@@ -86,6 +86,8 @@ pub struct McpEditToolArgs {
     #[serde(default)]
     pub world: Option<String>,
     #[serde(default)]
+    pub relationship: Option<String>,
+    #[serde(default)]
     pub scope: Option<Value>,
     #[serde(default)]
     pub old_claim_id: Option<String>,

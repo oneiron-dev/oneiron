@@ -61,7 +61,7 @@ const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
 /// variant bits so the value is a well-formed UUID like every other
 /// [`EntityId`] — which also guarantees it can never collide with the
 /// all-zero/all-`0xFF` reserved sentinels [`EntityId::from_bytes`] rejects.
-pub(super) fn embedded_owner_actor_id() -> Result<EntityId> {
+pub(crate) fn embedded_owner_actor_id() -> Result<EntityId> {
     let digest = blake3::hash(EMBEDDED_OWNER_ACTOR_NAMESPACE);
     let mut bytes = [0u8; ENTITY_ID_LEN];
     bytes.copy_from_slice(&digest.as_bytes()[..ENTITY_ID_LEN]);
@@ -71,7 +71,7 @@ pub(super) fn embedded_owner_actor_id() -> Result<EntityId> {
 }
 
 /// Encodes the minimal PERSON body the bootstrap writes.
-pub(super) fn encode_embedded_owner_actor_body() -> Result<Vec<u8>> {
+pub(crate) fn encode_embedded_owner_actor_body() -> Result<Vec<u8>> {
     let value = rmpv::Value::Map(vec![(
         rmpv::Value::from("name"),
         rmpv::Value::from(EMBEDDED_OWNER_ACTOR_NAME),
@@ -324,6 +324,20 @@ impl Vault {
     #[cfg(feature = "test-support")]
     #[doc(hidden)]
     pub fn install_generated_source_permit_for_test(&self, actor: EntityId) -> Result<()> {
+        self.install_fixture_source_permits(actor, false)
+    }
+
+    /// TEST-SUPPORT ONLY: bind Generated and ToolOutput to one fixture actor
+    /// at the unstamped peer-evidence floor (band 2). Refuses customized policy;
+    /// all other policy axes and the normal write/confirmation gates stay intact.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn install_peer_source_permits_for_test(&self, actor: EntityId) -> Result<()> {
+        self.install_fixture_source_permits(actor, true)
+    }
+
+    #[cfg(feature = "test-support")]
+    fn install_fixture_source_permits(&self, actor: EntityId, peer_sources: bool) -> Result<()> {
         use crate::batch::{BatchOp, apply_ops};
         use crate::claim::ClaimSource;
         use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
@@ -362,6 +376,24 @@ impl Vault {
             ));
         };
         *actor_ref = Value::from(actor.to_hex());
+        if peer_sources {
+            for source in [ClaimSource::Generated, ClaimSource::ToolOutput] {
+                let row = rows
+                    .iter_mut()
+                    .find_map(|(key, value)| {
+                        (key.as_str() == Some(source.as_str())).then_some(value)
+                    })
+                    .ok_or(Error::InvariantViolation(
+                        "default test policy has no peer source",
+                    ))?;
+                *row = Value::Map(vec![
+                    (Value::from("actor_ref"), Value::from(actor.to_hex())),
+                    (Value::from("max_auto_sensitivity"), Value::from(2_u8)),
+                    (Value::from("receipted"), Value::Boolean(true)),
+                    (Value::from("warned"), Value::Boolean(true)),
+                ]);
+            }
+        }
         let mut data = Vec::new();
         rmpv::encode::write_value(&mut data, &manifest)
             .map_err(|_| Error::InvariantViolation("encode Generated test policy"))?;
@@ -494,6 +526,25 @@ impl Vault {
         text_index_trusted: bool,
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
+        // The document runtime is optional, but its ownership of stored bodies is
+        // not. A featureless handle must never overwrite a pointer or delete its
+        // row while leaving document history, forks and citation quotes behind.
+        #[cfg(not(feature = "sync"))]
+        {
+            let txn = store.env.read_txn()?;
+            if store
+                .vault_meta
+                .prefix_iter(&txn, b"entity_doc:v1:head:")?
+                .next()
+                .transpose()?
+                .is_some()
+            {
+                return Err(Error::InvalidConfig(
+                    "this vault contains entity documents and requires the sync feature".to_owned(),
+                ));
+            }
+        }
+        crate::batch::sweep_scope_stamps(&store)?;
         // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
         // open, fresh and existing, in its own write transaction before any
         // caller holds the handle. Missing rows are created with pinned
@@ -525,6 +576,10 @@ impl Vault {
             // Every vault opens FULL; only an explicit ctl-driven shed parks
             // it, and only an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
+            conversation_presence: Default::default(),
+            message_streams: Default::default(),
+            #[cfg(feature = "sync")]
+            entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
             #[cfg(feature = "sync")]
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
@@ -536,9 +591,33 @@ impl Vault {
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
+            // The seeded births below stamp the owner's `substrate` FACET,
+            // which the owner PERSON put mints. Pinned at 0 like the bootstrap
+            // skills: the owner id is the same in every vault, so its seeded
+            // row is too, and a whole-vault import between vaults finds it
+            // unchanged.
+            // An erased owner stays erased.
+            vault.with_write_txn(|wtxn| {
+                let owner = embedded_owner_actor_id()?;
+                if !vault.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
+                    vault.stage_embedded_owner_actor_in_txn(wtxn, 0)?;
+                }
+                Ok(())
+            })?;
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::workspace_roster::seed_root_project(&vault)?;
         }
+        vault.lfs_chunk_parameters()?;
+        let lfs_recovery_cutoff = crate::unix_seconds_now().saturating_sub(24 * 60 * 60);
+        while vault.recover_lfs_uploads_before(lfs_recovery_cutoff)? != 0 {}
+        while vault.collect_lfs_garbage(32)? != 0 {}
+        vault.recover_message_streams().map_err(|error| {
+            crate::error::Error::Record(crate::error::RecordError::MessageStreamRecoveryFailed(
+                error.to_string(),
+            ))
+        })?;
+        // Carrier data must still match the local installation head on reopen.
+        let _ = vault.pack_byte_map_snapshot()?;
         Ok(vault)
     }
 
@@ -649,12 +728,27 @@ impl Vault {
             .collect()
     }
 
-    /// Whether `key` is currently unsafe for sweep compaction: registered in
-    /// an attached manager OR still retained by an outstanding orphaned
-    /// `Arc<LoadedWindow>` after deregistration. A live doc holds the full op
-    /// history in memory, and its next full-snapshot persist would rewrite
-    /// that history over a shallow-compacted `d:w:` row, so the sweep must
-    /// never compact while such a handle may persist.
+    /// Invalidate live document subscribers for `id` after a committed NOTE
+    /// write. Content-free and best effort: with no attached manager there is
+    /// no live document to refresh, and a poisoned attachment lock drops the
+    /// notification rather than failing an already committed write. Recipients
+    /// always re-read committed rows.
+    #[cfg(feature = "sync")]
+    pub(crate) fn notify_note_document(&self, id: crate::EntityId) {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .ok()
+            .and_then(|manager| manager.upgrade());
+        if let Some(manager) = manager {
+            manager.notify_note(id);
+        }
+    }
+
+    /// Shallow-compact `id`'s document row during a sweep. Returns whether the
+    /// compaction ran: an attached manager decides for its own live handles,
+    /// and an attached-but-dropped manager defers rather than rewriting a row a
+    /// live document may still persist over.
     #[cfg(feature = "sync")]
     pub(crate) fn compact_document_for_sweep(
         &self,
@@ -679,6 +773,12 @@ impl Vault {
         }
     }
 
+    /// Whether `key` is currently unsafe for sweep compaction: registered in
+    /// an attached manager OR still retained by an outstanding orphaned
+    /// `Arc<LoadedWindow>` after deregistration. A live doc holds the full op
+    /// history in memory, and its next full-snapshot persist would rewrite
+    /// that history over a shallow-compacted `d:w:` row, so the sweep must
+    /// never compact while such a handle may persist.
     #[cfg(feature = "sync")]
     pub(crate) fn live_window_for_sweep(&self, key: &crate::sync::WindowKey) -> bool {
         let attached = self

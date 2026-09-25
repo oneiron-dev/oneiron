@@ -73,7 +73,7 @@ impl OutboundDispatchPipeline {
         // floor below still classifies every real egress.
         if let Some(session_ref) = request.originating_session_ref.as_deref()
             && let Some(session) = vault.off_record_session(session_ref)?
-            && session.mode == crate::off_record::OffRecordMode::OffRecord
+            && session.mode != crate::off_record::OffRecordMode::OnRecord
         {
             return Err(OutboundDispatchError::Engine(Error::OffRecord(
                 OffRecordError::OffRecordTalkOnly {
@@ -101,36 +101,29 @@ impl OutboundDispatchPipeline {
             let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
             read_intent_for_attempt_in_txn(vault, &rtxn, attempt_id, 0)?
         };
-        let invalid_replay = || {
-            OutboundDispatchError::Chokepoint(IntentLedgerError::InvalidRecord(
-                "outbound dispatch replay does not match its admitted binding",
-            ))
-        };
-        request.channel_identity_ref = if let Some(record) = replay.as_ref() {
-            let frozen: serde_json::Value =
-                serde_json::from_slice(record.payload()).map_err(|_| invalid_replay())?;
-            let sender = match frozen.get("channel_identity_ref") {
-                Some(serde_json::Value::Null) => None,
-                Some(serde_json::Value::String(value)) => {
-                    Some(EntityId::from_hex(value).map_err(|_| invalid_replay())?)
-                }
-                _ => return Err(invalid_replay()),
-            };
-            if request.channel_identity_ref.is_some() && request.channel_identity_ref != sender {
-                return Err(invalid_replay());
-            }
-            sender
-        } else {
-            let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-            enrich_dispatch_channel_identity(
-                &vault.store,
-                &rtxn,
-                &request.intent.channel,
-                request.actor.actor_entity_ref.as_ref(),
+        request.channel_identity_ref = resolve_dispatch_sender(
+            vault,
+            &request,
+            replay
+                .as_ref()
+                .map(crate::outbound_intent_ledger::IntentLedgerRecord::payload),
+        )?;
+        let space_posting = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            vault.outbound_space_posting_in_txn(
+                &txn,
                 request.channel_identity_ref,
+                &request.intent.target,
             )?
         };
-        let policy_risk = outbound_dispatch_policy_risk(request.gate, verb_contract);
+        let policy_risk = if space_posting
+            .as_ref()
+            .is_some_and(crate::channel_identity_autonomy::FrozenSpacePosting::policy_risk)
+        {
+            ExternalEffectPolicyRisk::HoldToProposal
+        } else {
+            outbound_dispatch_policy_risk(request.gate, verb_contract)
+        };
         // The live claims are read once, here, at execute time. No schedule-time
         // window verdict is persisted or replayed.
         let window_resolution =
@@ -139,15 +132,7 @@ impl OutboundDispatchPipeline {
             outbound_delivery_window_decision_at_door(&request, &window_resolution);
         // Carry the policy's effective APNs ceiling all the way to the sink;
         // receipts alone must never be the only enforcement surface.
-        if let OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { to, .. } = &window_decision {
-            request.delivery_window_apns_interruption_level = match to.as_str() {
-                "push:passive" => Some(DeliveryWindowApnsInterruptionLevel::Passive),
-                "push:active" => Some(DeliveryWindowApnsInterruptionLevel::Active),
-                "push:time_sensitive" => Some(DeliveryWindowApnsInterruptionLevel::TimeSensitive),
-                "push:critical" => Some(DeliveryWindowApnsInterruptionLevel::Critical),
-                _ => request.delivery_window_apns_interruption_level,
-            };
-        }
+        apply_apns_window_cap(&mut request, &window_decision);
         let effect = ExternalEffectGateInput {
             actor: request.actor.gate_actor(),
             provenance: request.actor.provenance(),
@@ -209,6 +194,7 @@ impl OutboundDispatchPipeline {
                 intent: &request.intent,
                 hygiene_headers,
                 calendar_invite: request.calendar_invite.as_ref(),
+                space_posting: space_posting.as_ref(),
                 actor_class: &request.actor.actor_class,
                 actor_ref: request.actor.actor_ref.as_deref(),
                 actor_entity_ref: request.actor.actor_entity_ref.map(|id| id.to_hex()),
@@ -256,6 +242,20 @@ impl OutboundDispatchPipeline {
 
         let mut engine_receipt_fields = BTreeMap::new();
         let mut engine_policy_trace = Vec::new();
+        if let Some(posting) = &space_posting {
+            engine_receipt_fields.insert(
+                "space_posting".to_owned(),
+                posting.preset_token().to_owned(),
+            );
+            engine_receipt_fields.insert(
+                "space_posting_setting_ref".to_owned(),
+                posting.setting_ref().to_owned(),
+            );
+            engine_receipt_fields.insert(
+                "space_posting_policy_risk".to_owned(),
+                posting.policy_risk().to_string(),
+            );
+        }
         let linkedin_action = linkedin_decision.take().map(|decision| {
             engine_receipt_fields.extend(decision.receipt_fields);
             engine_policy_trace.extend(decision.policy_trace);
@@ -360,6 +360,17 @@ impl OutboundDispatchPipeline {
                     .ok_or(OutboundDispatchError::InvalidBoundActor)?;
                 crate::provenance::validate_actor_class(entity_type, actor_class)?;
             }
+            let mut held_value = serde_json::json!({
+                "actor_class": request.actor.actor_class, "channel_identity_ref": request.channel_identity_ref.map(|id| id.to_hex()),
+                "target": request.intent.target,
+            });
+            if let Some(posting) = &space_posting {
+                held_value["space_posting"] = serde_json::to_value(posting)
+                    .map_err(|_| Error::InvariantViolation("posting gate payload"))?;
+            }
+            let held_bytes = serde_json::to_vec(&held_value)
+                .map_err(|_| Error::InvariantViolation("posting gate payload"))?;
+            let effect = vault.space_posting_gate_in_txn(&wtxn, &held_bytes, &effect)?;
             let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
             let (gate_decision_id, gate_decision, _) = gate::check_external_effect_policy(
                 &vault.store,
@@ -369,6 +380,7 @@ impl OutboundDispatchPipeline {
                 false,
             )?;
             wtxn.commit().map_err(Error::from)?;
+            vault.store.notify_attempt_observers();
             let gate_outcome_kind = gate_decision.outcome();
             let outcome = match gate_outcome_kind {
                 GateOutcome::Pending => OutboundDispatchOutcome::Held,
@@ -594,5 +606,58 @@ impl OutboundDispatchPipeline {
             effector_budget,
             budget_ladder_events,
         })
+    }
+}
+
+fn apply_apns_window_cap(
+    request: &mut OutboundDispatchRequest,
+    decision: &OutboundDeliveryWindowDecision,
+) {
+    if let OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { to, .. } = decision {
+        request.delivery_window_apns_interruption_level = match to.as_str() {
+            "push:passive" => Some(DeliveryWindowApnsInterruptionLevel::Passive),
+            "push:active" => Some(DeliveryWindowApnsInterruptionLevel::Active),
+            "push:time_sensitive" => Some(DeliveryWindowApnsInterruptionLevel::TimeSensitive),
+            "push:critical" => Some(DeliveryWindowApnsInterruptionLevel::Critical),
+            _ => request.delivery_window_apns_interruption_level,
+        };
+    }
+}
+
+fn invalid_replay() -> OutboundDispatchError {
+    OutboundDispatchError::Chokepoint(IntentLedgerError::InvalidRecord(
+        "outbound dispatch replay does not match its admitted binding",
+    ))
+}
+
+fn resolve_dispatch_sender(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    replay_payload: Option<&[u8]>,
+) -> std::result::Result<Option<EntityId>, OutboundDispatchError> {
+    if let Some(payload) = replay_payload {
+        let frozen: serde_json::Value =
+            serde_json::from_slice(payload).map_err(|_| invalid_replay())?;
+        let sender = match frozen.get("channel_identity_ref") {
+            Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(value)) => {
+                Some(EntityId::from_hex(value).map_err(|_| invalid_replay())?)
+            }
+            _ => return Err(invalid_replay()),
+        };
+        if request.channel_identity_ref.is_some() && request.channel_identity_ref != sender {
+            return Err(invalid_replay());
+        }
+        Ok(sender)
+    } else {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        enrich_dispatch_channel_identity(
+            &vault.store,
+            &txn,
+            &request.intent.channel,
+            request.actor.actor_entity_ref.as_ref(),
+            request.channel_identity_ref,
+        )
+        .map_err(Into::into)
     }
 }

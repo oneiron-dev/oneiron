@@ -1,0 +1,26 @@
+{
+  "dataset": "w7-c05-nugget-conformance",
+  "judgments": [
+    {
+      "ability": "temporal",
+      "wedge_bucket": "temporal",
+      "value": 0.5
+    },
+    {
+      "ability": "contradiction",
+      "wedge_bucket": "contradiction",
+      "value": 0.5
+    },
+    {
+      "ability": "event_ordering",
+      "wedge_bucket": "event_ordering",
+      "value": 0.5
+    },
+    {
+      "ability": "knowledge_update",
+      "wedge_bucket": "knowledge_update",
+      "value": 0.5
+    }
+  ],
+  "output_dir": "eval-results"
+}

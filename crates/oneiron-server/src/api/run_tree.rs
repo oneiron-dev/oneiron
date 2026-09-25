@@ -14,8 +14,11 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
 use axum::response::Json;
+use axum::response::sse::{Event, KeepAlive, Sse};
+use futures_util::{Stream, stream};
 use serde::Deserialize;
 use serde::Serialize;
+use std::convert::Infallible;
 use std::sync::Arc;
 use utoipa::IntoParams;
 use utoipa::ToSchema;
@@ -52,6 +55,17 @@ pub(crate) struct CoreRunTreeInterventionRequest {
     #[serde(default)]
     #[schema(example = "operator requested a checkpoint")]
     note: Option<String>,
+    /// Required for redirect and forbidden for other interventions.
+    #[serde(default)]
+    placement: Option<CoreAttemptPlacement>,
+}
+
+/// Operator-selected worker and parent. Null parent means a root.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CoreAttemptPlacement {
+    worker: Option<String>,
+    parent: Option<String>,
 }
 
 /// Intervention primitive for a runtime attempt.
@@ -62,6 +76,7 @@ pub(crate) enum CoreRunTreeInterventionKind {
     Pause,
     Resume,
     Cancel,
+    Redirect,
 }
 
 /// Response from a run-tree intervention.
@@ -94,6 +109,8 @@ pub(crate) enum CoreRunTreeInterventionEffect {
     AlreadyResumed,
     Cancelled,
     AlreadyCancelled,
+    Redirected,
+    AlreadyRedirected,
 }
 
 /// Runtime attempt tree response.
@@ -124,6 +141,8 @@ pub(crate) struct CoreRunTreeNode {
     #[serde(rename = "worker_kind")]
     #[schema(example = "orchestrator")]
     worker_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worker: Option<String>,
     /// The dispatched agent's label for `agent.dispatch` attempts, when the
     /// payload snapshot decodes. Elided when absent.
     #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
@@ -213,6 +232,7 @@ pub(crate) enum CoreRunTreeEventKind {
     Failed,
     Cancelled,
     Interrupted,
+    Redirected,
     Abandoned,
     ResultAttached,
 }
@@ -262,6 +282,7 @@ pub(crate) async fn core_run_tree(
     query: Result<Query<CoreRunTreeQuery>, QueryRejection>,
 ) -> Result<Json<CoreRunTreeResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let params = query_params(query)?;
     validate_core_run_tree_query(&params)?;
 
@@ -281,7 +302,7 @@ pub(crate) async fn core_run_tree(
     path = "/v1/core/run-tree/observe",
     params(CoreRunTreeQuery),
     responses(
-        (status = 200, description = "Runtime attempt queue rendered as a deterministic run tree.", body = CoreRunTreeResponse, content_type = "application/json"),
+        (status = 200, description = "Initial and changed run-scoped snapshots as server-sent events.", body = CoreRunTreeResponse, content_type = "text/event-stream"),
         (status = 400, description = "Invalid run-tree query.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -292,19 +313,61 @@ pub(crate) async fn core_run_tree_observe(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<CoreRunTreeQuery>, QueryRejection>,
-) -> Result<Json<CoreRunTreeResponse>, EnvelopedApiError> {
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let params = query_params(query)?;
     validate_core_run_tree_query(&params)?;
-
-    let adapter = oneiron::RunTreeAdapter::new(&server.vault);
-    let run_id = params.run_id.as_deref().expect("run_id validated");
-    let tree = adapter.read_run(run_id).map_err(|error| {
-        tracing::error!(error = %error, "core run tree observe failed");
-        core_engine_error("core run tree observe failed", error)
-    })?;
-
-    Ok(Json(core_run_tree_response(tree)))
+    let run_id = params.run_id.expect("run_id validated");
+    // Subscribe first: a commit during the initial read is either reflected in
+    // that snapshot or queued for the next read. No polling timer is involved.
+    let receiver = oneiron::AttemptQueue::new(&server.vault).subscribe();
+    let initial = oneiron::RunTreeAdapter::new(&server.vault)
+        .read_run(&run_id)
+        .map_err(|e| core_engine_error("core run tree observe failed", e))?;
+    let initial = serde_json::to_string(&core_run_tree_response(initial))
+        .map_err(|_| ApiError::internal_server_error("run tree serialization failed"))?;
+    let updates = stream::unfold(
+        (server, receiver, run_id, initial, true, false),
+        |(server, mut receiver, run_id, mut previous, first, done)| async move {
+            if done {
+                return None;
+            }
+            if first {
+                let event = Event::default().event("run-tree").data(previous.clone());
+                return Some((
+                    Ok(event),
+                    (server, receiver, run_id, previous, false, false),
+                ));
+            }
+            loop {
+                match receiver.recv().await {
+                    Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                }
+                let tree = oneiron::RunTreeAdapter::new(&server.vault).read_run(&run_id);
+                let current = tree
+                    .ok()
+                    .and_then(|tree| serde_json::to_string(&core_run_tree_response(tree)).ok());
+                let Some(current) = current else {
+                    let event = Event::default().event("error").data("run_tree_read_failed");
+                    return Some((Ok(event), (server, receiver, run_id, previous, false, true)));
+                };
+                // Co-commits and other runs carry only invalidations. They do
+                // not expose names, counts or a frame for unrelated work.
+                if current == previous {
+                    continue;
+                }
+                previous = current;
+                let event = Event::default().event("run-tree").data(previous.clone());
+                return Some((
+                    Ok(event),
+                    (server, receiver, run_id, previous, false, false),
+                ));
+            }
+        },
+    );
+    Ok(Sse::new(updates).keep_alive(KeepAlive::default()))
 }
 
 /// Intervene on a runtime attempt and return a fresh run-tree snapshot.
@@ -329,14 +392,42 @@ pub(crate) async fn core_run_tree_intervene(
     let req = json_payload(payload)?;
     let attempt_id = parse_attempt_id_param(&req.attempt_id, "job_id")?;
     let kind = attempt_intervention_kind(req.kind);
-    let outcome = oneiron::AttemptQueue::new(&server.vault)
-        .intervene(oneiron::InterveneAttempt {
-            id: attempt_id,
-            kind,
-            actor: auth.principal().to_owned(),
-            note: req.note,
-            now: unix_seconds_now(),
-        })
+    let input = oneiron::InterveneAttempt {
+        id: attempt_id,
+        kind,
+        actor: auth.principal().to_owned(),
+        note: req.note,
+        now: unix_seconds_now(),
+    };
+    let queue = oneiron::AttemptQueue::new(&server.vault);
+    let result = match (kind, req.placement) {
+        (oneiron::AttemptInterventionKind::Redirect, Some(placement)) => {
+            let parent = placement
+                .parent
+                .as_deref()
+                .map(|id| parse_attempt_id_param(id, "placement.parent"))
+                .transpose()?;
+            queue.redirect(
+                input,
+                oneiron::attempt_queue::AttemptPlacement {
+                    worker: placement.worker,
+                    parent,
+                },
+            )
+        }
+        (oneiron::AttemptInterventionKind::Redirect, None) => {
+            return Err(
+                ApiError::bad_request("redirect requires placement", Some("placement")).into(),
+            );
+        }
+        (_, Some(_)) => {
+            return Err(
+                ApiError::bad_request("placement requires redirect", Some("placement")).into(),
+            );
+        }
+        (_, None) => queue.intervene(input),
+    };
+    let outcome = result
         .map_err(|error| {
             tracing::error!(error = %error, attempt_id = %req.attempt_id, "core run tree intervene failed");
             core_engine_error("core run tree intervene failed", error)
@@ -400,6 +491,7 @@ pub(crate) fn core_run_tree_node(node: oneiron::RunTreeNode) -> CoreRunTreeNode 
         run_id: node.run_id,
         parent_id: node.parent_id,
         worker_kind: node.worker_kind,
+        worker: node.worker,
         agent_id: node.agent_id,
         status: core_run_tree_status(node.status),
         result_ref: node.result_ref,
@@ -449,6 +541,7 @@ pub(crate) fn core_run_tree_event_kind(kind: oneiron::RunTreeEventKind) -> CoreR
         oneiron::RunTreeEventKind::Interrupted => CoreRunTreeEventKind::Interrupted,
         oneiron::RunTreeEventKind::Abandoned => CoreRunTreeEventKind::Abandoned,
         oneiron::RunTreeEventKind::ResultAttached => CoreRunTreeEventKind::ResultAttached,
+        oneiron::RunTreeEventKind::Redirected => CoreRunTreeEventKind::Redirected,
     }
 }
 
@@ -460,6 +553,7 @@ pub(crate) fn attempt_intervention_kind(
         CoreRunTreeInterventionKind::Pause => oneiron::AttemptInterventionKind::Pause,
         CoreRunTreeInterventionKind::Resume => oneiron::AttemptInterventionKind::Resume,
         CoreRunTreeInterventionKind::Cancel => oneiron::AttemptInterventionKind::Cancel,
+        CoreRunTreeInterventionKind::Redirect => oneiron::AttemptInterventionKind::Redirect,
     }
 }
 
@@ -467,6 +561,10 @@ pub(crate) fn core_run_tree_intervention_effect(
     effect: oneiron::AttemptInterventionEffect,
 ) -> CoreRunTreeInterventionEffect {
     match effect {
+        oneiron::AttemptInterventionEffect::Redirected => CoreRunTreeInterventionEffect::Redirected,
+        oneiron::AttemptInterventionEffect::AlreadyRedirected => {
+            CoreRunTreeInterventionEffect::AlreadyRedirected
+        }
         oneiron::AttemptInterventionEffect::Interrupted => {
             CoreRunTreeInterventionEffect::Interrupted
         }
@@ -531,3 +629,7 @@ pub(crate) fn parse_attempt_id_param(
         )
     })
 }
+
+#[cfg(test)]
+#[path = "run_tree/rate_projection_tests.rs"]
+mod rate_projection_tests;

@@ -378,7 +378,7 @@ impl Vault {
         timestamp: SessionHintTimestamp,
     ) -> Result<SessionMintOutcome> {
         let now = timestamp.effective_ms / 1_000;
-        let id = EntityId::now();
+        let id = self.store.clock.entity_id()?;
         if let Some(raw) = self
             .store
             .vault_meta

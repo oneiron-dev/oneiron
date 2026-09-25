@@ -15,9 +15,11 @@
 //! the implementation in `code_run::vault_read`'s in-module suite, where the
 //! manifest door is reachable.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use oneiron::claim::ScopedReadActorKey;
+use oneiron::authority::{HostSlipIssuer, SlipCaveat};
+use oneiron::claim::{ScopedReadActorKey, base_world_id};
 use oneiron::code_run::vault_read::{
     AskRequest, CloudVaultReadAdapter, CodeExecuteRequest, CodeSearchRequest,
     ContextPackBudgetControls, ContextPackDepthControls, ContextPackRetrievalBudgetControls,
@@ -28,6 +30,7 @@ use oneiron::code_run::vault_read::{
     VaultReadResponse, VaultReadResult, VaultReadWireOp, View, WireTransport,
     WireTransportVaultReadAdapter,
 };
+use oneiron::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
@@ -37,7 +40,6 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
-const ACTOR_REF: &str = "lens-reader";
 const ADMITTED_TEXT: &str = "alpha hallway note";
 const DENIED_TEXT: &str = "bravo hidden note";
 const SEED_VECTOR: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
@@ -161,6 +163,42 @@ fn execute(
     }
 }
 
+/// Explicit base-world read proof for positives: the host root slip
+/// attenuated to base `read` only. The status-gated denied claim stays
+/// denied through `claim_surfaceable`, exactly as before; the grant gap is
+/// closed by the proof instead of a manifest the public API cannot install.
+fn base_read_scope() -> Scope {
+    Scope {
+        worlds: ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())])),
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
+        audience: ScopeAxis::All,
+        verbs: ScopeAxis::Some(BTreeSet::from(["read".to_owned()])),
+        sensitivity: SensitivityCeiling::AtMost(Sensitivity::Restricted),
+    }
+}
+
+fn base_read_key(vault: &Vault) -> ScopedReadActorKey {
+    let issuer =
+        HostSlipIssuer::from_secret(b"vault-read-parity-test-host-secret").expect("host issuer");
+    let mut slip = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root slip");
+    slip.attenuate(SlipCaveat {
+        scope: Some(base_read_scope()),
+        ..Default::default()
+    })
+    .expect("narrow root to base read");
+    let challenge = b"vault-read-parity";
+    let proof_bytes = issuer
+        .binding_proof(&slip, challenge)
+        .expect("binding proof");
+    let verified = vault
+        .verify_capability_slip(&issuer, &slip, challenge, &proof_bytes)
+        .expect("verified base-read slip");
+    ScopedReadActorKey::from_verified_slip(&verified).expect("read key")
+}
+
 struct Fixture {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
@@ -226,7 +264,7 @@ impl Fixture {
             .commit()
             .expect("fixture vectors");
 
-        let actor = ScopedReadActorKey::new(ACTOR_REF).expect("actor key");
+        let actor = base_read_key(&vault);
         let admitted_ref = probe_short_ref(&vault, &admitted_id);
         let denied_ref = probe_short_ref(&vault, &denied_id);
         let transport = Arc::new(FakeWireTransport {
@@ -485,7 +523,7 @@ fn structured_success_parity() {
 // ─── 2. Denial is absence ────────────────────────────────────────────────────
 
 #[test]
-fn scope_denial_is_indistinguishable_from_absence() {
+fn scope_denial_preserves_not_found_and_reports_withholding() {
     let fixture = Fixture::new();
     let in_process = fixture.in_process();
     let wire = fixture.wire();
@@ -509,8 +547,24 @@ fn scope_denial_is_indistinguishable_from_absence() {
             format!("engine:{:?}:NOT_FOUND", VaultReadMethod::Hydrate)
         );
     }
-    assert_eq!(denied_direct, missing_direct);
-    assert_eq!(denied_wire, missing_wire);
+    assert_eq!(denied_direct, denied_wire);
+    assert_eq!(missing_direct, missing_wire);
+    // Both adapters keep NOT_FOUND; mandatory receipts distinguish policy
+    // exclusions from refs which never resolved, without returning row data.
+    for (error, expected) in [(&denied_direct, 1), (&missing_direct, 0)] {
+        let VaultReadError::Engine {
+            narrowing: Some(receipt),
+            ..
+        } = error
+        else {
+            panic!("every resolved read needs a narrowing receipt")
+        };
+        assert_eq!(receipt.suppressed_count, expected);
+        assert_eq!(
+            receipt.replan_hint.contains(&"row_authority".to_owned()),
+            expected > 0
+        );
+    }
 
     let batch = |reference: &str| CoreBatchShortIdHydrateRequest {
         refs: vec![reference.to_owned()],
@@ -769,7 +823,10 @@ fn cloud_structured_read_contract() {
 
 #[test]
 fn in_process_is_not_privileged() {
-    let fixture = Fixture::new();
+    // As in structured_success_parity, pin age to zero without masking scores.
+    // Compare authority at a neutral age: separate adapter calls must not
+    // compare different wall-clock decay.
+    let fixture = Fixture::with_claim_learned_at(u64::MAX);
     let wire = fixture.wire();
     // Wire FIRST, in-process second: proximity to `Vault` is never authority.
     let wire_hydrate = wire.hydrate(hydrate_request(&fixture.admitted_ref));
@@ -796,10 +853,22 @@ fn in_process_is_not_privileged() {
     normalize_pack(&mut wire_pack);
     normalize_pack(&mut direct_pack);
     assert_eq!(encode(&wire_pack), encode(&direct_pack));
+    assert_eq!(direct_pack.0.results.len(), 1, "parity is not vacuous");
+    assert_eq!(direct_pack.0.results[0].id, fixture.admitted_id.to_hex());
+    assert_eq!(
+        direct_pack.0.results[0].score, 1.0,
+        "fixture decay is neutral"
+    );
     assert_eq!(
         direct_pack.0.results.len(),
         wire_pack.0.results.len(),
         "in-process never returns more than the wire path"
+    );
+    assert_eq!(direct_pack.0.results.len(), 1, "only the admitted claim");
+    assert_eq!(direct_pack.0.results[0].id, fixture.admitted_id.to_hex());
+    assert_eq!(
+        direct_pack.0.results[0].score, 1.0,
+        "fixture decay is neutral"
     );
 }
 
@@ -863,6 +932,7 @@ fn serialization_round_trip() {
     let envelope = VaultReadResponse::Query(query_response);
     assert_eq!(round_trip(&envelope), envelope);
     let error = VaultReadError::Engine {
+        narrowing: None,
         method: VaultReadMethod::Hydrate,
         engine_code: "NOT_FOUND".to_owned(),
         message: "short_id was not found".to_owned(),
@@ -974,11 +1044,12 @@ fn golden_wire_shapes() {
         serde_json::from_str(canonical_timeline).expect("timeline literal");
     assert_eq!(encode(&request), canonical_timeline);
 
-    // Unknown fields are ignored, exactly like the accepted route DTOs.
-    let tolerant: CoreQueryRequest =
-        serde_json::from_str(r#"{"query":"blue hallway","unknown":true}"#)
-            .expect("unknown fields are ignored");
-    assert_eq!(tolerant.query.as_deref(), Some("blue hallway"));
+    // Native requests are closed, matching the advertised tool schemas.
+    // The aliases/defaults above remain accepted, but undeclared fields do not.
+    assert!(
+        serde_json::from_str::<CoreQueryRequest>(r#"{"query":"blue hallway","unknown":true}"#)
+            .is_err()
+    );
 
     // The tagged request envelope carries the pinned wire op.
     let tagged = VaultReadRequest::MemoryTimeline(request);

@@ -64,13 +64,27 @@ fn movable_clock(now_ms: u64) -> (Arc<AtomicU64>, NowMillis) {
     (cell, Arc::new(move || reader.load(Ordering::SeqCst)))
 }
 
-fn open_vault() -> (tempfile::TempDir, Vault) {
+struct TimedVault {
+    vault: Vault,
+    clock: Arc<oneiron::store::ports::ManualClock>,
+}
+impl std::ops::Deref for TimedVault {
+    type Target = Vault;
+    fn deref(&self) -> &Vault {
+        &self.vault
+    }
+}
+fn open_vault() -> (tempfile::TempDir, TimedVault) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
-    (dir, vault)
+    let clock = oneiron::store::ports::ManualClock::new(0);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config).expect("vault");
+    (dir, TimedVault { vault, clock })
 }
 
-fn enqueue(vault: &Vault, scope: DreamerConsolidationScope, tag: &str, now: u64) {
+fn enqueue(vault: &TimedVault, scope: DreamerConsolidationScope, tag: &str, now: u64) {
+    vault.clock.set(now);
     DreamerRunnerStore::new(vault)
         .enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
             scope,

@@ -21,9 +21,9 @@ RUSTSEC-2024-0436 ("no longer maintained"). There is no vulnerability. The crate
 zero bytes in any binary; it runs inside the compiler only.
 
 The embedder lane (ONE-1979 / ONE-1980, candle 0.11) pulls it in transitively through
-`gemm-c32`, `gemm-c64`, `gemm-common`, `gemm-f16`, `gemm-f32`, `gemm-f64`, `gemm`, `metal`, `pulp`, `tokenizers`. The repository's advisory policy
-(`scripts/advisory-policy/`, ONE-335) accepts maintenance risks only as exact, expiring,
-owner-named entries. The owner's ruling (2026-09-12) is to own the crate instead: the
+`gemm-c32`, `gemm-c64`, `gemm-common`, `gemm-f16`, `gemm-f32`, `gemm-f64`, `gemm`, `metal`, `pulp`, `tokenizers`. The repository's advisory check
+is `cargo-deny`, which accepts a maintenance risk only as an `ignore` entry in `deny.toml`
+(ONE-335). The owner's ruling (2026-09-12) is to own the crate instead: the
 vendored copy is maintained here, so the "unmaintained" status no longer describes it,
 and the advisory scanner (which matches registry-sourced crates only) stops reporting it.
 

@@ -5,7 +5,6 @@
 use super::connection::Hub;
 use super::subscriptions::*;
 use super::*;
-use crate::auth::mint_core_token_v2;
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
 use futures_util::{SinkExt, StreamExt};
@@ -73,7 +72,13 @@ impl Drop for Fixture {
 }
 
 fn token(actor: &str) -> String {
-    mint_core_token_v2(SECRET, &format!("scope=core:read;principal_ref={actor}"))
+    format!("scope=core:read;principal_ref={actor};actor_class=human")
+}
+
+/// Classless variant: the credential authenticates but carries no verified
+/// actor class, so facade-bound controls refuse it without a human fallback.
+fn token_classless(actor: &str) -> String {
+    format!("scope=core:read;principal_ref={actor}")
 }
 
 async fn fixture() -> Fixture {
@@ -91,8 +96,19 @@ async fn fixture() -> Fixture {
         .unwrap(),
     );
     let hub = Hub::for_server(&server);
-    let auth =
-        CoreAuth::from_bind_token(&token(ACTOR), &server.config, server.vault().as_ref()).unwrap();
+    for actor in [ACTOR, OTHER] {
+        server
+            .vault()
+            .put_entity(
+                &oneiron::EntityId::from_hex(actor).unwrap(),
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"socket actor",
+            )
+            .unwrap();
+    }
+    let auth = crate::test_credentials::authenticate(&server, &token(ACTOR));
     let source = Arc::new(Source {
         doc: LoroDoc::new(),
         values: Mutex::new(BTreeMap::new()),
@@ -162,7 +178,36 @@ async fn connect(f: &Fixture, actor: &str) -> Socket {
     send(
         &mut socket,
         TAG_RPC,
-        json!({"method":"auth.bind","requestId":7,"params":{"token":token(actor)}}),
+        json!({"method":"auth.bind","requestId":7,"params":crate::test_credentials::bind_payload(&f._server,&token(actor))}),
+    )
+    .await;
+    assert_eq!(
+        app(&mut socket, TAG_RPC).await,
+        json!({"requestId":7,"result":null,"last":true})
+    );
+    socket
+}
+async fn connect_classless(f: &Fixture, actor: &str) -> Socket {
+    let mut request = f.url.as_str().into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert("authorization", format!("Bearer {SECRET}").parse().unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    socket
+        .send(Message::Binary(
+            vec![
+                oneiron::sync::transport::TAG_PROTOCOL_HELLO,
+                oneiron::sync::transport::PROTOCOL_VERSION,
+            ]
+            .into(),
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(next(&mut socket).await, Message::Binary(ref bytes) if bytes[0] == 0));
+    send(
+        &mut socket,
+        TAG_RPC,
+        json!({"method":"auth.bind","requestId":7,"params":crate::test_credentials::bind_payload(&f._server,&token_classless(actor))}),
     )
     .await;
     assert_eq!(
@@ -295,7 +340,7 @@ async fn socket_reconnect_cannot_reuse_another_bound_authoritys_cursor() {
 #[tokio::test]
 async fn production_sub_control_refuses_a_missing_verified_class() {
     let f = fixture().await;
-    let mut socket = connect(&f, OTHER).await;
+    let mut socket = connect_classless(&f, OTHER).await;
     send(
         &mut socket,
         TAG_SUB,

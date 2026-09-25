@@ -16,6 +16,8 @@ mod cancel;
 mod completion;
 mod encoding;
 mod engine;
+mod observe;
+mod ports;
 mod result;
 mod settlement;
 mod telemetry;
@@ -44,7 +46,7 @@ pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
 pub use types::{
     AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect,
-    AttemptInterventionKind, AttemptQueueCleanupReport, AttemptQueueRetryReason,
+    AttemptInterventionKind, AttemptPlacement, AttemptQueueCleanupReport, AttemptQueueRetryReason,
     AttemptQueueRetryReasonCount, AttemptRecord, AttemptResultRef, AttemptState, ClaimAttempt,
     ClaimOutcome, CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
     EnqueueOutcome, FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome,
@@ -52,7 +54,7 @@ pub use types::{
     SetAttemptResult,
 };
 
-pub(crate) use encoding::decode_record;
+pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use engine::dreamer_run_root_id_in_txn;
 /// Storage-ABI pin re-exported for `crate::store`; its only consumer outside
 /// this module is `store`'s row-header test.

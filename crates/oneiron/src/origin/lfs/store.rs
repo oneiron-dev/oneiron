@@ -4,15 +4,13 @@ use super::{
     LfsAdmission, LfsAssetClass, LfsOid, LfsPathPolicy, LfsPointerIntent, VAULT_LFS_OID_LEN,
 };
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, Error, Result};
-use crate::registry::ENTITY_TYPE_ASSET;
 use crate::temporal::TimeRange;
 
 /// Schema version of both `vault_meta` row families below.
-pub const VAULT_LFS_SCHEMA_VERSION: u8 = 1;
+pub const VAULT_LFS_SCHEMA_VERSION: u8 = 2;
 
 /// Object family: `prefix ++ 32 raw OID bytes`.
 ///
@@ -37,7 +35,7 @@ pub const LFS_BASIC_TRANSFER: &str = "basic";
 pub const LFS_JSON_MEDIA_TYPE: &str = "application/vnd.git-lfs+json";
 
 /// `asset_id(16) ++ size u64 LE(8) ++ created_at u64 LE(8)`.
-const LFS_OBJECT_RECORD_LEN: usize = ENTITY_ID_LEN + 16;
+const LFS_OBJECT_RECORD_LEN: usize = ENTITY_ID_LEN * 2 + 16;
 
 /// The key separator inside an attachment key. A git ref name can never carry
 /// a NUL, so the repo_id/ref_name/OID fields stay unambiguously framed.
@@ -58,6 +56,7 @@ pub struct VaultLfsObject {
     pub size_bytes: u64,
     /// When this vault first learned these bytes.
     pub created_at: u64,
+    pub(super) ref_owner: EntityId,
 }
 
 /// What one upload did.
@@ -85,14 +84,26 @@ pub fn check_lfs_expectation(
 ) -> Result<()> {
     let actual_size = u64::try_from(bytes.len())
         .map_err(|_| Error::ArithmeticOverflow("lfs object length exceeds u64"))?;
-    if let Some(expected_size) = expected_size
-        && expected_size != actual_size
-    {
+    check_lfs_digest(
+        expected_oid,
+        expected_size,
+        LfsOid::digest(bytes),
+        actual_size,
+    )
+}
+
+pub(super) fn check_lfs_digest(
+    expected_oid: LfsOid,
+    expected_size: Option<u64>,
+    actual_oid: LfsOid,
+    actual_size: u64,
+) -> Result<()> {
+    if expected_size.is_some_and(|expected| expected != actual_size) {
         return Err(Error::Artifact(ArtifactError::InvalidLfsObject(
             "declared lfs size does not match the body length",
         )));
     }
-    if LfsOid::digest(bytes) != expected_oid {
+    if actual_oid != expected_oid {
         return Err(Error::Artifact(ArtifactError::InvalidLfsObject(
             "body sha256 does not match the declared lfs oid",
         )));
@@ -109,115 +120,93 @@ pub fn lfs_repo_id(repo_identity: &str) -> Result<EntityId> {
     entity_id_from_hash_material(VAULT_LFS_REPO_ID_DOMAIN, &[repo_identity.as_bytes()])
 }
 
-// ---------------------------------------------------------------------------
-// The adapter
-// ---------------------------------------------------------------------------
 impl Vault {
-    /// Stores one LFS object, or recognizes bytes this vault already holds.
-    ///
-    /// Crate-local inherent impl in the feature module: `vault.rs` is never
-    /// edited to add a feature's entry points (the blob-artifact precedent).
-    ///
-    /// The expectation check runs FIRST and outside the transaction, so a body
-    /// that disagrees with its declared object id leaves no ASSET entity and no
-    /// lookup row behind — the mismatch costs a hash, not a write.
-    ///
-    /// The bytes then enter the ordinary batch pipeline as an
-    /// [`ENTITY_TYPE_ASSET`] put, which means the standing credential scan runs
-    /// over them. That is deliberate and fail-closed: LFS is not a carve-out.
+    /// Convenience upload for in-memory callers; streaming callers use `put_lfs_object_stream`.
     pub fn put_lfs_object(
         &self,
-        expected_oid: LfsOid,
+        oid: LfsOid,
         bytes: &[u8],
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<LfsPutOutcome> {
-        check_lfs_expectation(expected_oid, None, bytes)?;
-        let size_bytes = u64::try_from(bytes.len())
-            .map_err(|_| Error::ArithmeticOverflow("lfs object length exceeds u64"))?;
-        let key = lfs_object_key(&expected_oid);
-        self.with_write_txn(|wtxn| {
-            let existing = self
-                .store
-                .vault_meta
-                .get(wtxn, &key)?
-                .map(|raw| decode_lfs_object_record(expected_oid, &raw))
-                .transpose()?;
-            if let Some(object) = existing {
-                // Byte-identical content is ONE object. The second upload
-                // writes no ASSET entity and no second row.
-                return Ok(LfsPutOutcome {
-                    object,
-                    deduplicated: true,
-                });
-            }
-            let asset_id = lfs_asset_entity_id(&expected_oid)?;
-            self.batch_in()
-                .put(&asset_id, ENTITY_TYPE_ASSET, occurred, learned_at, bytes)
-                .apply(wtxn)?;
-            let object = VaultLfsObject {
-                oid: expected_oid,
-                asset_id,
-                size_bytes,
-                created_at: learned_at,
-            };
-            self.store
-                .vault_meta
-                .put(wtxn, &key, &encode_lfs_object_record(&object))?;
-            Ok(LfsPutOutcome {
-                object,
-                deduplicated: false,
-            })
-        })
+        self.put_lfs_object_stream(
+            oid,
+            Some(bytes.len() as u64),
+            std::io::Cursor::new(bytes),
+            occurred,
+            learned_at,
+        )
     }
 
-    /// The durable record for one object id, without reading its bytes.
+    /// The live object record. Deleted OIDs never resolve even during deferred byte reclamation.
     pub fn lfs_object(&self, oid: LfsOid) -> Result<Option<VaultLfsObject>> {
-        let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.vault_meta.get(&rtxn, &lfs_object_key(&oid))? else {
+        let txn = self.store.env.read_txn()?;
+        if self
+            .store
+            .vault_meta
+            .get(
+                &txn,
+                &super::chunks::key(super::lifecycle::DELETED, oid.as_bytes()),
+            )?
+            .is_some()
+        {
             return Ok(None);
-        };
-        decode_lfs_object_record(oid, &raw).map(Some)
+        }
+        self.store
+            .vault_meta
+            .get(&txn, &lfs_object_key(&oid))?
+            .map(|raw| decode_lfs_object_record(oid, &raw))
+            .transpose()
     }
 
-    /// The publication gate primitive: are these exact bytes stored here?
-    ///
-    /// `Ok(true)` only when the row exists AND the stored length is the length
-    /// the pointer declares. A pointer whose object is absent — or whose size
-    /// disagrees with the stored object — is not publishable, because a ref
-    /// that advertises it would fail checkout.
-    pub fn has_lfs_object(&self, oid: LfsOid, expected_size: u64) -> Result<bool> {
-        Ok(self
-            .lfs_object(oid)?
-            .is_some_and(|object| object.size_bytes == expected_size))
+    /// Whether a live object has this exact declared size.
+    pub fn has_lfs_object(&self, oid: LfsOid, size: u64) -> Result<bool> {
+        Ok(self.lfs_object(oid)?.is_some_and(|o| o.size_bytes == size))
     }
 
-    /// Reads one object's bytes, re-checking length AND digest on the way out.
-    ///
-    /// Fails closed: a stored body that disagrees with its record is
-    /// [`Error::CorruptedIndex`], never `Ok(bytes)`. Serving the wrong bytes as
-    /// a success is the one outcome an object store must never produce.
+    /// Convenience buffered read. Servers use `write_lfs_object_to` instead.
     pub fn get_lfs_object(&self, oid: LfsOid) -> Result<Option<Vec<u8>>> {
-        let Some(record) = self.lfs_object(oid)? else {
+        let mut bytes = Vec::new();
+        if !self.write_lfs_object_to(oid, &mut bytes)? {
             return Ok(None);
-        };
-        read_lfs_asset(self, &record).map(Some)
+        }
+        Ok(Some(bytes))
     }
 
-    /// The verify verdict for one `(oid, size)` pair.
-    ///
-    /// `Ok(false)` means "this vault does not hold that object at that size" —
-    /// an honest negative. Corruption of a body this vault DOES claim to hold
-    /// is an error, not a `false`: the two facts are different and a client
-    /// must be able to tell them apart.
-    pub fn verify_lfs_object(&self, oid: LfsOid, expected_size: u64) -> Result<bool> {
-        let Some(record) = self.lfs_object(oid)? else {
-            return Ok(false);
-        };
-        if record.size_bytes != expected_size {
+    /// Verifies all chunks and the Git-LFS pointer without collecting the object.
+    pub fn verify_lfs_object(&self, oid: LfsOid, size: u64) -> Result<bool> {
+        if !self.has_lfs_object(oid, size)? {
             return Ok(false);
         }
-        read_lfs_asset(self, &record).map(|_| true)
+        self.write_lfs_object_to(oid, &mut std::io::sink())
+    }
+
+    /// Streams verified chunks to a writer with at most one chunk resident.
+    /// A corrupt chunk is rejected before its bytes are passed to the writer.
+    pub fn write_lfs_object_to<W: std::io::Write>(
+        &self,
+        oid: LfsOid,
+        writer: &mut W,
+    ) -> Result<bool> {
+        use sha2::{Digest, Sha256};
+        let Some(manifest) = self.lfs_manifest(oid)? else {
+            return Ok(false);
+        };
+        let mut sha = Sha256::new();
+        for chunk in &manifest.chunks {
+            // No long-lived LMDB reader: deletion remains visible between chunks.
+            if self.lfs_object(oid)?.is_none() {
+                return Err(super::chunks::invalid("lfs object deleted during read"));
+            }
+            let bytes = super::chunks::read_chunk(self, chunk)?;
+            sha.update(&bytes);
+            writer.write_all(&bytes)?;
+        }
+        let digest: [u8; 32] = sha.finalize().into();
+        if digest != *oid.as_bytes() {
+            return Err(Error::CorruptedIndex("lfs pointer digest"));
+        }
+        Ok(true)
     }
 
     /// Records that one git ref references one LFS object.
@@ -230,6 +219,24 @@ impl Vault {
     ) -> Result<()> {
         let key = lfs_ref_key(&repo_id, ref_name, &oid);
         self.with_write_txn(|wtxn| {
+            if self
+                .store
+                .vault_meta
+                .get(
+                    wtxn,
+                    &super::chunks::key(super::lifecycle::DELETED, oid.as_bytes()),
+                )?
+                .is_some()
+                || self
+                    .store
+                    .vault_meta
+                    .get(wtxn, &lfs_object_key(&oid))?
+                    .is_none()
+            {
+                return Err(super::chunks::invalid(
+                    "cannot attach missing or deleted lfs object",
+                ));
+            }
             self.store
                 .vault_meta
                 .put(wtxn, &key, &learned_at.to_le_bytes())?;
@@ -274,7 +281,14 @@ impl Vault {
                 .get(key.len().saturating_sub(VAULT_LFS_OID_LEN)..)
                 .and_then(|tail| tail.try_into().ok())
                 .ok_or(Error::CorruptedIndex("vault lfs ref key"))?;
-            oids.push(LfsOid::from_bytes(raw));
+            if self
+                .store
+                .vault_meta
+                .get(&rtxn, &super::chunks::key(super::lifecycle::DELETED, &raw))?
+                .is_none()
+            {
+                oids.push(LfsOid::from_bytes(raw));
+            }
         }
         Ok(oids)
     }
@@ -296,34 +310,7 @@ impl Vault {
     }
 }
 
-/// Reads and re-verifies one record's ASSET body.
-fn read_lfs_asset(vault: &Vault, record: &VaultLfsObject) -> Result<Vec<u8>> {
-    let Some(raw) = vault.get_raw(&record.asset_id)? else {
-        // The row asserts bytes this vault cannot produce. That is corruption,
-        // not a miss: the miss is answered by the absent row.
-        return Err(Error::CorruptedIndex("vault lfs object asset"));
-    };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_ASSET {
-        return Err(Error::CorruptedIndex("vault lfs object asset type"));
-    }
-    let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-    let stored_size = u64::try_from(body.len())
-        .map_err(|_| Error::ArithmeticOverflow("lfs object length exceeds u64"))?;
-    if stored_size != record.size_bytes {
-        return Err(Error::CorruptedIndex("vault lfs object length"));
-    }
-    if LfsOid::digest(&body) != record.oid {
-        return Err(Error::CorruptedIndex("vault lfs object bytes"));
-    }
-    Ok(body)
-}
-
-pub(super) fn lfs_asset_entity_id(oid: &LfsOid) -> Result<EntityId> {
-    entity_id_from_hash_material(VAULT_LFS_ASSET_ID_DOMAIN, &[oid.as_bytes()])
-}
-
-fn lfs_object_key(oid: &LfsOid) -> Vec<u8> {
+pub(super) fn lfs_object_key(oid: &LfsOid) -> Vec<u8> {
     let mut key = Vec::with_capacity(VAULT_LFS_OBJECT_KEY_PREFIX.len() + VAULT_LFS_OID_LEN);
     key.extend_from_slice(VAULT_LFS_OBJECT_KEY_PREFIX);
     key.extend_from_slice(oid.as_bytes());
@@ -348,15 +335,16 @@ fn lfs_ref_key(repo_id: &EntityId, ref_name: &str, oid: &LfsOid) -> Vec<u8> {
     key
 }
 
-fn encode_lfs_object_record(object: &VaultLfsObject) -> [u8; LFS_OBJECT_RECORD_LEN] {
+pub(super) fn encode_lfs_object_record(object: &VaultLfsObject) -> [u8; LFS_OBJECT_RECORD_LEN] {
     let mut value = [0_u8; LFS_OBJECT_RECORD_LEN];
     value[..ENTITY_ID_LEN].copy_from_slice(object.asset_id.as_bytes());
     value[ENTITY_ID_LEN..ENTITY_ID_LEN + 8].copy_from_slice(&object.size_bytes.to_le_bytes());
-    value[ENTITY_ID_LEN + 8..].copy_from_slice(&object.created_at.to_le_bytes());
+    value[ENTITY_ID_LEN + 8..ENTITY_ID_LEN + 16].copy_from_slice(&object.created_at.to_le_bytes());
+    value[ENTITY_ID_LEN + 16..].copy_from_slice(object.ref_owner.as_bytes());
     value
 }
 
-fn decode_lfs_object_record(oid: LfsOid, raw: &[u8]) -> Result<VaultLfsObject> {
+pub(super) fn decode_lfs_object_record(oid: LfsOid, raw: &[u8]) -> Result<VaultLfsObject> {
     if raw.len() != LFS_OBJECT_RECORD_LEN {
         return Err(Error::CorruptedIndex("vault lfs object record"));
     }
@@ -365,12 +353,17 @@ fn decode_lfs_object_record(oid: LfsOid, raw: &[u8]) -> Result<VaultLfsObject> {
     let mut size = [0_u8; 8];
     size.copy_from_slice(&raw[ENTITY_ID_LEN..ENTITY_ID_LEN + 8]);
     let mut created = [0_u8; 8];
-    created.copy_from_slice(&raw[ENTITY_ID_LEN + 8..]);
+    created.copy_from_slice(&raw[ENTITY_ID_LEN + 8..ENTITY_ID_LEN + 16]);
+    let owner = raw[ENTITY_ID_LEN + 16..]
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("lfs ref owner"))?;
     Ok(VaultLfsObject {
         oid,
         asset_id: EntityId::from_bytes(id)
             .map_err(|_| Error::CorruptedIndex("vault lfs object asset id"))?,
         size_bytes: u64::from_le_bytes(size),
         created_at: u64::from_le_bytes(created),
+        ref_owner: EntityId::from_bytes(owner)
+            .map_err(|_| Error::CorruptedIndex("lfs ref owner"))?,
     })
 }

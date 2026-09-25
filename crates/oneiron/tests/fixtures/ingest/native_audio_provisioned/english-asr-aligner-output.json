@@ -1,0 +1,170 @@
+{
+  "words": [
+    {
+      "start_ms": 1040,
+      "end_ms": 1120,
+      "text": "The",
+      "confidence": null
+    },
+    {
+      "start_ms": 1120,
+      "end_ms": 1680,
+      "text": "library",
+      "confidence": null
+    },
+    {
+      "start_ms": 1680,
+      "end_ms": 2080,
+      "text": "opens",
+      "confidence": null
+    },
+    {
+      "start_ms": 2080,
+      "end_ms": 2240,
+      "text": "at",
+      "confidence": null
+    },
+    {
+      "start_ms": 2240,
+      "end_ms": 2720,
+      "text": "nine.",
+      "confidence": null
+    },
+    {
+      "start_ms": 3120,
+      "end_ms": 3440,
+      "text": "Please",
+      "confidence": null
+    },
+    {
+      "start_ms": 3440,
+      "end_ms": 3760,
+      "text": "bring",
+      "confidence": null
+    },
+    {
+      "start_ms": 3760,
+      "end_ms": 3840,
+      "text": "a",
+      "confidence": null
+    },
+    {
+      "start_ms": 3840,
+      "end_ms": 4080,
+      "text": "blue",
+      "confidence": null
+    },
+    {
+      "start_ms": 4080,
+      "end_ms": 4480,
+      "text": "notebook.",
+      "confidence": null
+    },
+    {
+      "start_ms": 6240,
+      "end_ms": 6320,
+      "text": "The",
+      "confidence": null
+    },
+    {
+      "start_ms": 6400,
+      "end_ms": 6720,
+      "text": "train",
+      "confidence": null
+    },
+    {
+      "start_ms": 6720,
+      "end_ms": 6960,
+      "text": "leaves",
+      "confidence": null
+    },
+    {
+      "start_ms": 7040,
+      "end_ms": 7120,
+      "text": "at",
+      "confidence": null
+    },
+    {
+      "start_ms": 7120,
+      "end_ms": 7520,
+      "text": "noon.",
+      "confidence": null
+    },
+    {
+      "start_ms": 7920,
+      "end_ms": 8080,
+      "text": "We",
+      "confidence": null
+    },
+    {
+      "start_ms": 8080,
+      "end_ms": 8160,
+      "text": "will",
+      "confidence": null
+    },
+    {
+      "start_ms": 8160,
+      "end_ms": 8400,
+      "text": "meet",
+      "confidence": null
+    },
+    {
+      "start_ms": 8480,
+      "end_ms": 8640,
+      "text": "by",
+      "confidence": null
+    },
+    {
+      "start_ms": 8640,
+      "end_ms": 8720,
+      "text": "the",
+      "confidence": null
+    },
+    {
+      "start_ms": 8720,
+      "end_ms": 9280,
+      "text": "station.",
+      "confidence": null
+    }
+  ],
+  "aligner_model": "Qwen/Qwen3-ForcedAligner-0.6B",
+  "provenance": {
+    "invocation_id": "61b13412-b366-4768-a3ed-ddb9113552df",
+    "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
+    "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+    "execution": "measured",
+    "runtime_components_sha256": {
+      "meeting_audio_runtime.py": "446f9c57b257fb221aacd30900d6cb22a5355b1f61d4d53030abf9714be65e47",
+      "meeting_audio_process.py": "707ef32d057dbb478889c070119659db4113c80524df684c5bc3af63880f9abb",
+      "meeting_audio_ctc.py": "d9a89905d461db38b995c7dac166453452d680cf6ae06be0f106933cbcd295ba"
+    },
+    "runtime_profile_sha256": "8e40caaa33020b874d94aee05a2ecc301d9b82217aa81c5d3ebd5e5c1e531e6f",
+    "runtime_helper_sha256": "446f9c57b257fb221aacd30900d6cb22a5355b1f61d4d53030abf9714be65e47",
+    "alignment_runtime": {
+      "runtime_binding": {
+        "profile_sha256": "511f0bc747fc43a89600fcd8050df828a4c4a7ee9c2b7a7e7c0ff745a162352d",
+        "python_version": "3.13.5",
+        "code_sha256": {
+          "meeting_audio_runtime.py": "446f9c57b257fb221aacd30900d6cb22a5355b1f61d4d53030abf9714be65e47",
+          "meeting-audio-worker.py": "8de86b391dee7d5267ed27bcc6106771fd6de22f544b8d188ff30a6216ba2851",
+          "meeting_audio_ctc.py": "d9a89905d461db38b995c7dac166453452d680cf6ae06be0f106933cbcd295ba",
+          "meeting_audio_process.py": "707ef32d057dbb478889c070119659db4113c80524df684c5bc3af63880f9abb",
+          "meeting-audio-native.py": "b9661ba32cb2a52e1c3db59902bf1dde6a20f403a9c6363ce2d0029c72571133"
+        }
+      },
+      "provenance": {
+        "invocation_id": "ab924101-8c33-4def-b760-de9d4a5f1eae",
+        "model_id": "Qwen/Qwen3-ForcedAligner-0.6B",
+        "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
+        "execution": "measured",
+        "runtime_components_sha256": {
+          "meeting_audio_runtime.py": "446f9c57b257fb221aacd30900d6cb22a5355b1f61d4d53030abf9714be65e47",
+          "meeting_audio_process.py": "707ef32d057dbb478889c070119659db4113c80524df684c5bc3af63880f9abb",
+          "meeting_audio_ctc.py": "d9a89905d461db38b995c7dac166453452d680cf6ae06be0f106933cbcd295ba"
+        },
+        "transcript_sha256": "eac815ffcf5c7a0fc411a9df02003a4becd890a542f80ad43a49ee4559cb7298",
+        "language": "English"
+      }
+    }
+  }
+}

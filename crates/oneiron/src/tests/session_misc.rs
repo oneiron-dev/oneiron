@@ -246,6 +246,7 @@ fn blake3_vault_identity_algorithm_unchanged() -> Result<()> {
                 roles: ROLE_OWNER | ROLE_ADMIN,
             },
             genesis_nonce: [0x41; 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             tier_floor: AuthorityTier::Software,
             pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },

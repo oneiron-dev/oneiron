@@ -27,8 +27,8 @@ const VALUE_V2: &[u8] = b"wave5-lease-test-value-v2";
 const EFFECTOR: &str = "connector:test";
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
-    // macOS exposes its temp root through /var. The fixture must start on a
-    // real path so the T2 door can still reject symlinks introduced by tests.
+    // Resolve the OS temp root (macOS /var is a symlink), not the declared
+    // targets: tests deliberately plant symlinks here to exercise no-follow.
     let temp_root = std::env::temp_dir().canonicalize().expect("real temp root");
     let tmp = tempfile::tempdir_in(temp_root).expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
@@ -635,19 +635,6 @@ fn a_bounded_materialization_is_clamped_by_the_clock_that_stamps_it() {
 
 #[test]
 fn the_typed_instant_path_stamps_from_the_vault_clock_and_honours_its_bound() {
-    // The witnessed-instant half of the bounded materialization, exercised
-    // through the module-private raw entry. Both entries — this one and the
-    // credential door's `materialize_admitted_lease` — funnel through the ONE
-    // stamping body, so what is asserted here is that body's contract: the
-    // instant handed in dates `granted_at`, dates the receipt, and answers the
-    // bound. `VaultInstant` has no `From<u64>` and no public constructor, so an
-    // instant arriving here can only have come from `Vault::instant_in_txn`.
-    //
-    // The door no longer reaches this entry at all (it is private to this
-    // module now): it carries its whole admission into
-    // `Vault::materialize_admitted_lease`, which re-checks the door dial under
-    // the stamping transaction before calling the same body. The door-side
-    // regressions for that live in `credential_door::tests`.
     let (_tmp, vault) = temp_vault();
     register(
         &vault,
@@ -668,7 +655,7 @@ fn the_typed_instant_path_stamps_from_the_vault_clock_and_honours_its_bound() {
     drop(rtxn);
     assert!(again >= now, "the observation clock ran backwards");
 
-    let bound = now.after(60);
+    let bound = VaultInstant(now.secs().saturating_add(60));
     let materialization = vault
         .materialize_secret_lease_at("typed", EFFECTOR, 3600, now, Some(bound))
         .expect("a live bound admits");
@@ -842,7 +829,14 @@ fn expire_secret_leases_sweeps_past_due_leases() {
 // ---------------------------------------------------------------------------
 
 fn declared_target(tmp: &tempfile::TempDir) -> (String, PathBuf) {
-    let path = tmp.path().join(".secrets").join("api.key");
+    // macOS temp roots can contain /var -> /private/var. Resolve only the
+    // fixture root; the production door must still refuse target symlinks.
+    let path = tmp
+        .path()
+        .canonicalize()
+        .expect("canonical temp root")
+        .join(".secrets")
+        .join("api.key");
     (path.to_string_lossy().into_owned(), path)
 }
 
@@ -996,8 +990,9 @@ fn register_local_requires_a_live_lease() {
 #[test]
 fn register_local_second_declared_path_conflicts() {
     let (tmp, vault) = temp_vault();
-    let path_a = tmp.path().join(".secrets").join("a.key");
-    let path_b = tmp.path().join(".secrets").join("b.key");
+    let root = tmp.path().canonicalize().expect("canonical temp root");
+    let path_a = root.join(".secrets").join("a.key");
+    let path_b = root.join(".secrets").join("b.key");
     std::fs::create_dir_all(path_a.parent().expect("parent")).expect("mkdir");
     let declared_a = path_a.to_string_lossy().into_owned();
     let declared_b = path_b.to_string_lossy().into_owned();
@@ -1149,7 +1144,12 @@ fn register_local_open_failure_leaves_no_file_and_no_row() {
     let (tmp, vault) = temp_vault();
     // A declared path whose parent directory does not exist: the create
     // fails, nothing lands, no row persists (SOL-1920-03).
-    let path = tmp.path().join("missing-parent").join("api.key");
+    let path = tmp
+        .path()
+        .canonicalize()
+        .expect("canonical temp root")
+        .join("missing-parent")
+        .join("api.key");
     let declared = path.to_string_lossy().into_owned();
     register(
         &vault,

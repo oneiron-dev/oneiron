@@ -239,12 +239,18 @@ pub fn compare_campaign(
         reason: "absent",
     })?;
     validate_arm_pairing(&single_pass, &tournament)?;
+    let strategy = super::beam_promotion::AuthoringStrategyPin::from_campaign(config)?;
     for split in [
         &single_pass.search,
         &single_pass.held_out,
         &tournament.search,
         &tournament.held_out,
     ] {
+        if split.authoring_strategy != strategy {
+            return Err(CampaignError::ReportMismatch {
+                reason: "split strategy differs from the evaluated configuration",
+            });
+        }
         check_metric_pin(&config.metric_pin, &split.of360.metric_definitions)?;
         if &split.dataset != campaign_split_dataset_ref(config, split.split) {
             return Err(CampaignError::ReportMismatch {

@@ -11,6 +11,7 @@ use crate::credential_door::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::origin::residence::OriginAuthorityStamp;
 
 /// A derived admission record — NOT an identity type and NOT a credential
 /// store.
@@ -26,26 +27,37 @@ pub struct DoorAdmissionStamp {
     pub(super) method: &'static str,
     pub(super) admitted_at: u64,
     pub(super) operation_id: EntityId,
+    pub(super) origin_authority: Option<OriginAuthorityStamp>,
 }
 
 impl DoorAdmissionStamp {
     /// The admission a transport-proved principal carries when Phase A presents
     /// no capability slip (Edge #2: the serving plane mints no origin
     /// credential and gates on nothing in the secret stack).
-    pub(super) fn from_principal(principal_ref: &str, admitted_at: u64) -> Self {
+    pub(super) fn from_principal(
+        operation_id: EntityId,
+        principal_ref: &str,
+        admitted_at: u64,
+    ) -> Self {
         Self {
             principal_ref: principal_ref.to_owned(),
             credential_fingerprint: None,
             method: "bearer+registered-principal",
             admitted_at,
-            operation_id: EntityId::now(),
+            operation_id,
+            origin_authority: None,
         }
     }
 
     /// The admission a presented slip carries, fingerprinted from the canonical
     /// credential's own identifiers. The fingerprint is a digest, never the
     /// slip: `DoorCredential` holds no token material to begin with.
-    fn from_credential(credential: &DoorCredential, principal_ref: &str, admitted_at: u64) -> Self {
+    fn from_credential(
+        operation_id: EntityId,
+        credential: &DoorCredential,
+        principal_ref: &str,
+        admitted_at: u64,
+    ) -> Self {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"oneiron:origin:door-admission:v1");
         hasher.update(credential.slip_id().as_bytes());
@@ -56,7 +68,8 @@ impl DoorAdmissionStamp {
             credential_fingerprint: Some(hasher.finalize().to_hex().to_string()),
             method: "door-credential+registered-principal",
             admitted_at,
-            operation_id: EntityId::now(),
+            operation_id,
+            origin_authority: None,
         }
     }
 
@@ -106,6 +119,7 @@ pub(super) trait DoorHook: Send + Sync {
     /// exactly like any other push.
     fn admit_receive_pack(
         &self,
+        operation_id: EntityId,
         presented: Option<&DoorCredential>,
         principal_ref: &str,
         repo: &RepoRef,
@@ -126,6 +140,7 @@ pub(super) struct NoopDoorHook;
 impl DoorHook for NoopDoorHook {
     fn admit_receive_pack(
         &self,
+        operation_id: EntityId,
         presented: Option<&DoorCredential>,
         principal_ref: &str,
         _repo: &RepoRef,
@@ -133,8 +148,10 @@ impl DoorHook for NoopDoorHook {
         now: u64,
     ) -> Result<DoorAdmissionStamp> {
         Ok(match presented {
-            Some(credential) => DoorAdmissionStamp::from_credential(credential, principal_ref, now),
-            None => DoorAdmissionStamp::from_principal(principal_ref, now),
+            Some(credential) => {
+                DoorAdmissionStamp::from_credential(operation_id, credential, principal_ref, now)
+            }
+            None => DoorAdmissionStamp::from_principal(operation_id, principal_ref, now),
         })
     }
 
@@ -152,6 +169,7 @@ impl DoorHook for NoopDoorHook {
 impl DoorHook for CredentialDoorService {
     fn admit_receive_pack(
         &self,
+        operation_id: EntityId,
         presented: Option<&DoorCredential>,
         principal_ref: &str,
         repo: &RepoRef,
@@ -173,11 +191,19 @@ impl DoorHook for CredentialDoorService {
             // then close every lease and injection downstream while leaving the
             // push door itself wide open.
             admit_receive_pack_effector(self)?;
-            return Ok(DoorAdmissionStamp::from_principal(principal_ref, now));
+            return Ok(DoorAdmissionStamp::from_principal(
+                operation_id,
+                principal_ref,
+                now,
+            ));
         };
+        if credential.holder_ref() != principal_ref {
+            return Err(door_refused(&CredentialDoorError::AuthorityRejected));
+        }
         self.authenticate_receive_pack(Some(credential), repo, peer_addr)
             .map_err(|error| door_refused(&error))?;
         Ok(DoorAdmissionStamp::from_credential(
+            operation_id,
             credential,
             principal_ref,
             now,

@@ -1,8 +1,6 @@
 //! JSON schemas for endpoint tools: setup, execute-code, paging, and verbs.
 
-use super::endpoint_args::{
-    MCP_CODE_TASK_MAX_CHARS, MCP_TASK_LABEL_MAX_BYTES, verb_argument_fields, verb_required_fields,
-};
+use super::endpoint_args::MCP_CODE_TASK_MAX_CHARS;
 use super::schema_parts::{
     actor_schema, closed_object_schema, consent_schema, entity_id_schema, nonblank_string_schema,
     schema_version_property, tool_schema_root,
@@ -116,18 +114,39 @@ pub(super) fn execute_code_tool_schema() -> Value {
 /// admission then accept exactly the same payloads, instead of the schema
 /// admitting an omission the runtime rejects.
 pub(super) fn verb_tool_schema(tool: McpGeneratedVerbTool) -> Value {
-    let allowed = verb_argument_fields(tool.binding);
+    let allowed = tool.argument_fields();
+    let typed = oneiron::task_verb::sdk::mcp_arguments_schema(tool.name);
     let mut properties = serde_json::Map::new();
     for field in allowed {
-        properties.insert((*field).to_owned(), verb_argument_field_schema(field));
+        let schema = match (tool.memory_method(), *field) {
+            (Some(method), "request") => method.request_schema(),
+            _ => verb_argument_field_schema(field),
+        };
+        let schema = match typed
+            .as_ref()
+            .and_then(|typed| typed.get("properties"))
+            .and_then(|properties| properties.get(*field))
+        {
+            Some(input) => {
+                let mut input = input.clone();
+                if let (Some(input), Some(constraints)) =
+                    (input.as_object_mut(), schema.as_object())
+                {
+                    input.extend(constraints.clone());
+                }
+                input
+            }
+            None => schema,
+        };
+        properties.insert((*field).to_owned(), schema);
     }
     let arguments = json!({
         "type": "object",
         "additionalProperties": false,
-        "required": verb_required_fields(tool.binding),
+        "required": tool.required_fields(),
         "properties": Value::Object(properties),
     });
-    let required: &[&'static str] = if verb_required_fields(tool.binding).is_empty() {
+    let required: &[&'static str] = if tool.required_fields().is_empty() {
         &["schema_version", "actor", "consent"]
     } else {
         &["schema_version", "actor", "consent", "arguments"]
@@ -160,13 +179,7 @@ fn verb_argument_field_schema(field: &str) -> Value {
         "scopes" => json!({
             "type": "array",
             "minItems": 1,
-            "items": {
-                "type": "string",
-                "enum": [
-                    "my_tasks", "my_children", "consults_to_me",
-                    "memories", "worlds", "presence", "counts",
-                ],
-            },
+
         }),
         "task_ref" | "room_ref" | "turn_ref" => entity_id_schema(),
         // The advertised ceiling IS the writer's ceiling, stated in the closed
@@ -177,7 +190,7 @@ fn verb_argument_field_schema(field: &str) -> Value {
             "type": "string",
             "minLength": 1,
             "pattern": "\\S",
-            "maxLength": MCP_TASK_LABEL_MAX_BYTES,
+            "maxLength": oneiron::context_board::TASK_LABEL_MAX_BYTES,
         }),
         _ => json!({}),
     }

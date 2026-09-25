@@ -31,6 +31,8 @@ fn window_subtag_literals() {
     assert_eq!(window_sub_tags::VV_REQUEST, 2);
     assert_eq!(window_sub_tags::VV_RESPONSE, 3);
     assert_eq!(window_sub_tags::SELECTOR_VV_REQUEST, 4);
+    assert_eq!(window_sub_tags::SELECTOR_DEFERRED, 5);
+    assert_eq!(window_sub_tags::SELECTOR_RETRY, 6);
 }
 
 #[test]

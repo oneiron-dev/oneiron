@@ -1,9 +1,12 @@
-//! Revocable brief read grants. Documents and rendered content stay outside the vault.
+//! Revocable brief read grants. NOTE documents live in the vault; rendered views are ephemeral.
 
+use crate::ports::EdgeStoreRead;
+use crate::ports::EntityStoreRead;
+use sha2::Digest;
 use std::collections::BTreeSet;
 
 use rmpv::Value;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::Vault;
 use crate::access_grant::{
@@ -26,7 +29,7 @@ use crate::write_envelope::WriteActor;
 pub struct Share {
     /// Authenticated recipient identity required at every resolution.
     pub recipient_ref: EntityId,
-    /// Opaque rendering-layer document handle.
+    /// Vault NOTE document reference for a stored brief.
     pub brief_ref: String,
     /// Maximum permitted WORLD refs.
     pub world_refs: BTreeSet<EntityId>,
@@ -40,6 +43,8 @@ pub struct Share {
     pub created_at: u64,
     /// Revocation time in Unix seconds.
     pub revoked_at: Option<u64>,
+    /// Exclusive expiry in Unix seconds.
+    pub expires_at: Option<u64>,
 }
 
 /// Optional request narrowing, never evidence of the recipient's current authority.
@@ -58,7 +63,7 @@ pub struct ShareViewerScope {
 pub struct ResolvedShare {
     /// AccessGrant entity id.
     pub share_id: EntityId,
-    /// Opaque rendering-layer document handle.
+    /// Vault NOTE document reference for a stored brief.
     pub brief_ref: String,
     /// Current, surfaceable claims permitted by the maximum and live read policy.
     pub visible_claim_refs: Vec<EntityId>,
@@ -67,6 +72,7 @@ pub struct ResolvedShare {
 impl Share {
     pub(crate) fn grant(&self) -> AccessGrant {
         AccessGrant {
+            authority_scope: crate::federation::scope_codec::read_preset(),
             principal_ref: self.recipient_ref,
             scope: AccessGrantScope::SharedBrief {
                 brief_ref: self.brief_ref.clone(),
@@ -78,10 +84,14 @@ impl Share {
             status: self.status,
             created_at: self.created_at,
             revoked_at: self.revoked_at,
+            expires_at: self.expires_at,
         }
     }
 
     pub(crate) fn from_grant(grant: &AccessGrant) -> Option<Self> {
+        if !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read") {
+            return None;
+        }
         let AccessGrantScope::SharedBrief {
             brief_ref,
             world_refs,
@@ -100,6 +110,7 @@ impl Share {
             status: grant.status,
             created_at: grant.created_at,
             revoked_at: grant.revoked_at,
+            expires_at: grant.expires_at,
         })
     }
 
@@ -225,7 +236,10 @@ pub(crate) fn check_generic_grant_write(
             "shared briefs require the share door",
         )));
     }
-    if let Some(raw) = vault.store.entities.get(txn, id.as_bytes())?
+    if let Some(raw) = vault
+        .store
+        .port_entity_record(txn, id)?
+        .map(|row| row.encode())
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_ACCESS_GRANT)
     {
@@ -324,15 +338,16 @@ fn read_admitted_share_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<(Share, ShareAdmission)>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
-        return Ok(None);
+    let raw = match store.port_entity_record(txn, id) {
+        Ok(Some(raw)) => raw,
+        // A malformed share proves no grant. Storage failures still propagate.
+        Ok(None) | Err(Error::CorruptedIndex("entity header")) => return Ok(None),
+        Err(error) => return Err(error),
     };
-    if EntityMetadataHeader::parse(&raw)
-        .is_none_or(|header| header.entity_type != ENTITY_TYPE_ACCESS_GRANT)
-    {
+    if raw.entity_type != ENTITY_TYPE_ACCESS_GRANT {
         return Ok(None);
     }
-    let Ok(grant) = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]) else {
+    let Ok(grant) = decode_access_grant_body(&raw.body) else {
         return Ok(None);
     };
     let Some(share) = Share::from_grant(&grant) else {
@@ -376,11 +391,9 @@ pub(crate) fn read_share_in_txn(
 
 fn verify_share_actor(store: &Store, txn: &heed::RoTxn<'_>, actor: &WriteActor) -> Result<()> {
     let raw = store
-        .entities
-        .get(txn, actor.entity_ref().as_bytes())?
+        .port_entity_record(txn, &actor.entity_ref())?
         .ok_or(Error::EntityNotFound)?;
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("share actor"))?;
-    crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
+    crate::provenance::validate_actor_class(raw.entity_type, actor.actor_class())
 }
 
 // PERSON admits both human and agent. Only a live, verified authority binding
@@ -390,12 +403,14 @@ fn share_viewer_actor_in_txn(
     txn: &heed::RoTxn<'_>,
     viewer: &EntityId,
 ) -> Result<Option<ScopedReadActorKey>> {
-    let Some(raw) = vault.store.entities.get(txn, viewer.as_bytes())? else {
-        return Ok(None);
+    let raw = match vault.store.port_entity_record(txn, viewer) {
+        Ok(Some(raw)) => raw,
+        // Invalid identity envelopes cannot supply a read actor. Do not hide
+        // storage failures or unverifiable authority bindings in the fold below.
+        Ok(None) | Err(Error::CorruptedIndex("entity header")) => return Ok(None),
+        Err(error) => return Err(error),
     };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Ok(None);
-    };
+
     let classes = [
         EdgeActorClass::Human,
         EdgeActorClass::Agent,
@@ -403,7 +418,7 @@ fn share_viewer_actor_in_txn(
     ];
     if !classes
         .iter()
-        .any(|class| crate::provenance::validate_actor_class(header.entity_type, *class).is_ok())
+        .any(|class| crate::provenance::validate_actor_class(raw.entity_type, *class).is_ok())
     {
         return Ok(None);
     }
@@ -416,7 +431,7 @@ fn share_viewer_actor_in_txn(
         if !crate::authority::actor_binding_is_active(&fold, viewer, class.gate_actor_class()) {
             continue;
         }
-        if crate::provenance::validate_actor_class(header.entity_type, class).is_err()
+        if crate::provenance::validate_actor_class(raw.entity_type, class).is_err()
             || actor_class.replace(class).is_some()
         {
             return Ok(None);
@@ -433,6 +448,12 @@ fn share_viewer_actor_in_txn(
 }
 
 impl Vault {
+    /// Reads a receipted share, without granting permission to view its body.
+    pub fn get_share(&self, id: &EntityId) -> Result<Option<Share>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(read_share_in_txn(&self.store, &txn, id)?.map(|(share, _)| share))
+    }
+
     /// Creates an active share only after recording an allowing external-effect decision.
     /// The transport must derive `issuer` from the authenticated principal, not request data.
     /// Pending and denied decisions are durable but never create a grant.
@@ -448,11 +469,7 @@ impl Vault {
             return Err(invalid_grant());
         }
         let mut txn = self.store.env.write_txn()?;
-        if self
-            .store
-            .entities
-            .get(&txn, share_id.as_bytes())?
-            .is_some()
+        if self.store.port_entity_record(&txn, share_id)?.is_some()
             || self
                 .store
                 .vault_meta
@@ -551,7 +568,7 @@ impl Vault {
         let Some((share, _)) = read_share_in_txn(&self.store, &txn, share_id)? else {
             return Ok(None);
         };
-        if share.status != AccessGrantStatus::Active || share.recipient_ref != *viewer {
+        if !share.grant().is_active() || share.recipient_ref != *viewer {
             return Ok(None);
         }
         let Some(actor) = share_viewer_actor_in_txn(self, &txn, viewer)? else {
@@ -578,7 +595,11 @@ impl Vault {
             if !seen.insert(*id) {
                 continue;
             }
-            let Some(raw) = self.store.entities.get(&txn, id.as_bytes())? else {
+            let Some(raw) = self
+                .store
+                .port_entity_record(&txn, id)?
+                .map(|row| row.encode())
+            else {
                 continue;
             };
             if EntityMetadataHeader::parse(&raw)
@@ -638,14 +659,19 @@ fn share_claim_facets(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<Option<Vec<EntityId>>> {
-    let prefix = [id.as_bytes().as_slice(), &[EdgeKind::FacetOf as u8]].concat();
     let mut facets = Vec::new();
-    for entry in store.edges_out.prefix_iter(txn, &prefix)? {
+    for entry in store.port_edges(
+        txn,
+        id,
+        crate::ports::EdgeDirection::Out,
+        Some(EdgeKind::FacetOf),
+        None,
+    )? {
         if facets.len() >= crate::vault::MAX_EDGE_QUERY_RESULTS {
             return Err(Error::IndexOverflow("share claim facets"));
         }
-        let (key, value) = entry?;
-        facets.push(crate::vault::parse_edge_record(&key, &value)?.target);
+        let edge_row = entry?;
+        facets.push(edge_row.target);
     }
     // Match the existing read lane's edge-first, scope-map fallback convention.
     if facets.is_empty()

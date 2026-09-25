@@ -104,7 +104,7 @@ fn convergence_round_propagates_invalid_window_key_without_frame() {
 // ONE-1128 — convergence protocol + real re-bootstrap (socket-free)
 // ───────────────────────────────────────────────────────────────────────
 
-use crate::sync::loro_support::export_updates_since;
+use crate::sync::loro_support::{export_updates_since, replicated_deep_value};
 use crate::sync::transport::{TAG_PROTOCOL_HELLO, TAG_VERSION_VECTOR, TAG_WINDOW_SYNC};
 use loro::{ExportMode, LoroDoc, VersionVector};
 use std::collections::HashMap;
@@ -369,8 +369,8 @@ fn convergence_clears_queue_only_after_all_windows_vv_confirm() {
     // Deep convergence on both windows, including the tombstone.
     for key in ["2026-03", "2026-04"] {
         assert_eq!(
-            client.window(key).unwrap().doc.get_deep_value(),
-            server.doc(key).get_deep_value(),
+            replicated_deep_value(&client.window(key).unwrap().doc),
+            replicated_deep_value(server.doc(key)),
             "window {key} must deep-converge"
         );
     }

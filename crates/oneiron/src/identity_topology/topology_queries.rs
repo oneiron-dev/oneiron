@@ -51,7 +51,7 @@ impl Vault {
         )?;
         claims.extend(self.filtered_edge_peers(
             &rtxn,
-            &self.store.edges_in,
+            crate::ports::EdgeDirection::In,
             target,
             EdgeKind::FacetOf,
             Some(ENTITY_TYPE_CLAIM),

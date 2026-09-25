@@ -114,6 +114,7 @@ pub(in crate::gate) fn claim_gate_input(
         provenance,
         external_effect: None,
         agent_definition_ceiling,
+        foreign_agent_ceiling: None,
         consent,
     }
 }

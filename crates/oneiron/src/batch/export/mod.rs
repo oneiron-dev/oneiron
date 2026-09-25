@@ -1,3 +1,5 @@
+mod credential_filter;
+pub use credential_filter::{redact_credentials, redacted_memory_body, redacted_memory_payload};
 mod export_authority;
 mod export_companion;
 mod export_egress;
@@ -27,8 +29,8 @@ mod tests;
 use crate::claim::ClaimLifecycleStatus;
 #[cfg(test)]
 use crate::companion::{
-    CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
-    CompanionRecord, CompanionRegister, CompanionScope,
+    CompanionExpression, CompanionExpressionRegister, CompanionRecord, CompanionRegister,
+    CompanionScope,
 };
 #[cfg(test)]
 use crate::entity_id::EntityId;
@@ -40,3 +42,30 @@ use crate::serialize::WHOLE_VAULT_EXPORT_SERIALIZER;
 use crate::store::{STORAGE_ABI_VERSION, STORAGE_SCHEMA_VERSION};
 #[cfg(test)]
 use std::collections::BTreeSet;
+
+mod document_import;
+mod document_snapshot;
+mod document_types;
+mod document_validation;
+mod expression_import;
+#[cfg(test)]
+mod expression_import_tests;
+mod provenance_import;
+pub(crate) use document_snapshot::ExportSnapshot;
+pub use document_types::*;
+#[cfg(test)]
+mod document_tests;
+
+mod bundle_types;
+mod bundle_validation;
+pub use bundle_types::*;
+#[cfg(test)]
+mod bundle_tests;
+
+mod receipt_sources;
+pub use receipt_sources::{ExportReceiptSource, ReceiptSourceOmission, ReceiptSourceOrigin};
+
+pub(crate) use receipt_sources::{receipt_sources_for_body, task_receipt_refs};
+
+#[cfg(test)]
+mod receipt_source_tests;

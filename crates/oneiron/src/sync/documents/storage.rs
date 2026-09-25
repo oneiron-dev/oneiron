@@ -1,46 +1,14 @@
 //! Snapshot-then-update recovery and transactional text-plane persistence.
 
-use crate::error::{Error, Result, SyncEngineContext, SyncProtocolValidation};
-use crate::sync::loro_support::doc_from_snapshot;
+use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::{EntityId, Vault};
-use loro::{ExportMode, LoroDoc, VersionVector};
+use loro::VersionVector;
 
-pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<LoroDoc> {
-    let hex = id.to_hex();
-    let doc = match vault.store.sync_state.get(txn, &format!("d:e:{hex}"))? {
-        Some(bytes) => doc_from_snapshot(&bytes)?,
-        None => LoroDoc::new(),
-    };
-    let prefix = format!("u:e:{hex}:");
-    for row in vault.store.sync_state.prefix_iter(txn, &prefix)? {
-        let (key, bytes) = row?;
-        let seq = &key[prefix.len()..];
-        if seq.len() != 8 || u32::from_str_radix(seq, 16).is_err() {
-            return Err(Error::sync_protocol(
-                SyncProtocolValidation::InvalidDocumentKey,
-            ));
-        }
-        import_complete(&doc, &bytes)?;
-    }
-    Ok(doc)
-}
+pub(crate) use crate::note::storage::{
+    import_complete, load, load_for_erasure, snapshot, state_copy,
+};
 
-pub(super) fn import_complete(doc: &LoroDoc, bytes: &[u8]) -> Result<()> {
-    let status = doc.import(bytes).map_err(|source| {
-        crate::error::Error::Sync(crate::error::SyncError::CrdtDecodeError {
-            context: "entity document import",
-            source,
-        })
-    })?;
-    if status.pending.is_some() {
-        return Err(Error::sync_protocol(
-            SyncProtocolValidation::DocumentPendingUpdate,
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn append(
+pub(crate) fn append(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
@@ -71,53 +39,7 @@ pub(super) fn append(
     Ok(seq)
 }
 
-pub(super) fn snapshot(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    id: EntityId,
-    doc: &LoroDoc,
-    shallow: bool,
-) -> Result<()> {
-    let hex = id.to_hex();
-    let bytes = if shallow {
-        state_copy(doc)?
-    } else {
-        doc.export(ExportMode::Snapshot)
-            .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportSnapshot, e))?
-    };
-    vault
-        .store
-        .sync_state
-        .put(txn, &format!("d:e:{hex}"), &bytes)?;
-    vault
-        .store
-        .sync_state
-        .put(txn, &format!("sv:e:{hex}"), &doc.oplog_vv().encode())?;
-    if shallow {
-        vault
-            .store
-            .sync_state
-            .put(txn, &format!("ssv:e:{hex}"), &doc.oplog_vv().encode())?;
-    }
-    let prefix = format!("u:e:{hex}:");
-    let keys = vault
-        .store
-        .sync_state
-        .prefix_iter(txn, &prefix)?
-        .map(|r| r.map(|(k, _)| k.to_string()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for key in keys {
-        vault.store.sync_state.delete(txn, &key)?;
-    }
-    Ok(())
-}
-
-pub(super) fn state_copy(doc: &LoroDoc) -> Result<Vec<u8>> {
-    doc.export(ExportMode::StateOnly(None))
-        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportShallowSnapshot, e))
-}
-
-pub(super) fn decode_vv(bytes: &[u8]) -> Result<VersionVector> {
+pub(crate) fn decode_vv(bytes: &[u8]) -> Result<VersionVector> {
     VersionVector::decode(bytes).map_err(|source| {
         Error::Sync(crate::error::SyncError::CrdtDecodeError {
             context: "entity document version vector",
@@ -129,23 +51,16 @@ pub(super) fn decode_vv(bytes: &[u8]) -> Result<VersionVector> {
 /// A closed document is compacted under the write lock, so no stale read can overwrite an append.
 pub(crate) fn compact(vault: &Vault, id: EntityId, erased: bool) -> Result<()> {
     vault.with_write_txn(|txn| {
+        if !erased
+            && vault.get_entity_type_in_txn(txn, &id)? == Some(crate::registry::ENTITY_TYPE_NOTE)
+        {
+            // The NOTE-specific purge door owns cited-frontier retention.
+            return Ok(());
+        }
+        if erased {
+            return crate::note::delete_document_in_txn(&vault.store, txn, &id);
+        }
         let doc = load(vault, txn, id)?;
-        // An erased entity has no editable state. Drop every container, including
-        // unknown peer-authored containers, rather than scrubbing two known names.
-        let doc = if erased {
-            let keys: Vec<_> = vault
-                .store
-                .sync_state
-                .prefix_iter(txn, &format!("qd:e:{}:", id.to_hex()))?
-                .map(|row| row.map(|(key, _)| key.to_string()))
-                .collect::<std::result::Result<_, _>>()?;
-            for key in keys {
-                vault.store.sync_state.delete(txn, &key)?;
-            }
-            LoroDoc::new()
-        } else {
-            doc
-        };
         snapshot(vault, txn, id, &doc, true)
     })
 }

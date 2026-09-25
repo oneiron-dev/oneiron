@@ -19,6 +19,7 @@ fn types(values: &[u8]) -> Value {
 
 fn grant(scope: Value) -> PolicyScopedGrant {
     PolicyScopedGrant {
+        authority_scope: crate::federation::scope_codec::read_preset(),
         actor_class: Some("agent".to_owned()),
         actor_ref: Some("agent:reader".to_owned()),
         effector: "core:read".to_owned(),
@@ -172,7 +173,8 @@ fn matching_rows_union_order_independently() {
         vec![first.clone(), second, first],
     ] {
         assert_eq!(
-            RetrievalPolicyFloor::from_scoped_grants(&rows, &actor()),
+            RetrievalPolicyFloor::from_scoped_grants(&rows, &actor())
+                .unwrap_or_else(RetrievalPolicyFloor::deny_all),
             expected
         );
     }
@@ -181,7 +183,8 @@ fn matching_rows_union_order_independently() {
 #[test]
 fn disjoint_grants_union_but_empty_grant_types_deny_all() {
     let empty = grant(scope(vec![("entity_types", types(&[]))]));
-    let denied = RetrievalPolicyFloor::from_scoped_grants(std::slice::from_ref(&empty), &actor());
+    let denied = RetrievalPolicyFloor::from_scoped_grants(std::slice::from_ref(&empty), &actor())
+        .unwrap_or_else(RetrievalPolicyFloor::deny_all);
     assert!(denied.deny_all);
     assert_eq!(denied.allowed_entity_types, Some(BTreeSet::new()));
     let rows = [
@@ -189,7 +192,8 @@ fn disjoint_grants_union_but_empty_grant_types_deny_all() {
         grant(scope(vec![("entity_types", types(&[0]))])),
         grant(scope(vec![("entity_types", types(&[3]))])),
     ];
-    let floor = RetrievalPolicyFloor::from_scoped_grants(&rows, &actor());
+    let floor = RetrievalPolicyFloor::from_scoped_grants(&rows, &actor())
+        .unwrap_or_else(RetrievalPolicyFloor::deny_all);
     assert!(!floor.deny_all);
     assert_eq!(floor.allowed_entity_types, Some(BTreeSet::from([0, 3])));
 }
@@ -202,15 +206,18 @@ fn absent_grant_fields_use_legacy_defaults_but_explicit_stale_can_be_authorized(
             ..grant(Value::Nil)
         };
         assert_eq!(
-            RetrievalPolicyFloor::from_scoped_grants(&[row], &actor()),
+            RetrievalPolicyFloor::from_scoped_grants(&[row], &actor())
+                .unwrap_or_else(RetrievalPolicyFloor::deny_all),
             RetrievalPolicyFloor::legacy()
         );
     }
     let row = grant(scope(vec![("include_stale", Value::Boolean(true))]));
-    let floor = RetrievalPolicyFloor::from_scoped_grants(std::slice::from_ref(&row), &actor());
+    let floor = RetrievalPolicyFloor::from_scoped_grants(std::slice::from_ref(&row), &actor())
+        .unwrap_or_else(RetrievalPolicyFloor::deny_all);
     assert!(floor.include_stale);
     assert_resolves_to_floor(&floor, None);
-    let floor = RetrievalPolicyFloor::from_scoped_grants(&[row, grant(Value::Nil)], &actor());
+    let floor = RetrievalPolicyFloor::from_scoped_grants(&[row, grant(Value::Nil)], &actor())
+        .unwrap_or_else(RetrievalPolicyFloor::deny_all);
     assert!(floor.include_stale);
 }
 
@@ -222,7 +229,11 @@ fn actor_and_read_effector_selection_reuses_existing_rules() {
             effector: effector.to_owned(),
             ..valid.clone()
         };
-        assert!(RetrievalPolicyFloor::from_scoped_grants(&[row], &actor()).include_stale);
+        assert!(
+            RetrievalPolicyFloor::from_scoped_grants(&[row], &actor())
+                .unwrap_or_else(RetrievalPolicyFloor::deny_all)
+                .include_stale
+        );
     }
     let excluded = [
         PolicyScopedGrant {
@@ -256,11 +267,16 @@ fn actor_and_read_effector_selection_reuses_existing_rules() {
             actor_ref: Some("agent:other".to_owned()),
             ..valid.clone()
         };
-        assert!(RetrievalPolicyFloor::from_scoped_grants(&[row, unmatched], &actor()).deny_all);
+        assert!(
+            RetrievalPolicyFloor::from_scoped_grants(&[row, unmatched], &actor())
+                .unwrap_or_else(RetrievalPolicyFloor::deny_all)
+                .deny_all
+        );
     }
     let unclassified = ScopedReadActorKey::new("agent:reader").unwrap();
     assert!(
         RetrievalPolicyFloor::from_scoped_grants(std::slice::from_ref(&valid), &unclassified)
+            .unwrap_or_else(RetrievalPolicyFloor::deny_all)
             .deny_all
     );
     let wildcard = PolicyScopedGrant {
@@ -268,15 +284,19 @@ fn actor_and_read_effector_selection_reuses_existing_rules() {
         actor_ref: None,
         ..valid
     };
-    assert!(RetrievalPolicyFloor::from_scoped_grants(&[wildcard], &unclassified).include_stale);
+    assert!(
+        RetrievalPolicyFloor::from_scoped_grants(&[wildcard], &unclassified)
+            .unwrap_or_else(RetrievalPolicyFloor::deny_all)
+            .include_stale
+    );
 }
 
 #[test]
-fn missing_manifest_preserves_scoped_and_owner_default_floor() {
+fn missing_manifest_denies_plain_scoped_actor_but_preserves_trusted_owner_default() {
     let policy = PolicyManifestResolution::default();
     assert_eq!(
         policy.retrieval_floor_for_actor(Some(&actor())),
-        RetrievalPolicyFloor::legacy()
+        RetrievalPolicyFloor::deny_all()
     );
     assert_eq!(
         policy.retrieval_floor_for_actor(None),
@@ -294,14 +314,19 @@ fn floor_uses_resolved_manifest_projection_and_its_fail_closed_diagnostics() -> 
         panic!("manifest must be a map");
     };
     entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
+    let authority = crate::federation::scope_codec::encode_scope_value(
+        &crate::federation::scope_codec::read_preset(),
+    )
+    .expect("read preset encodes");
     entries.push((
         Value::from("scoped_grants"),
         Value::Array(vec![scope(vec![
             ("actor_ref", Value::from("agent:reader")),
             ("effector", Value::from("core:read")),
             ("receipt_required", Value::Boolean(false)),
+            ("scope", authority),
             (
-                "scope",
+                "selectors",
                 scope(vec![("include_stale", Value::Boolean(true))]),
             ),
         ])]),
@@ -395,7 +420,8 @@ fn malformed_grant_values_fail_closed() {
         )]));
     }
     for value in malformed {
-        let floor = RetrievalPolicyFloor::from_scoped_grants(&[grant(value)], &actor());
+        let floor = RetrievalPolicyFloor::from_scoped_grants(&[grant(value)], &actor())
+            .unwrap_or_else(RetrievalPolicyFloor::deny_all);
         assert_eq!(floor, RetrievalPolicyFloor::deny_all());
     }
 }
@@ -410,7 +436,11 @@ fn duplicate_filter_keys_fail_closed() {
         ("min_salience", Value::F32(0.5)),
     ] {
         let row = grant(scope(vec![(key, value.clone()), (key, value)]));
-        assert!(RetrievalPolicyFloor::from_scoped_grants(&[row], &actor()).deny_all);
+        assert!(
+            RetrievalPolicyFloor::from_scoped_grants(&[row], &actor())
+                .unwrap_or_else(RetrievalPolicyFloor::deny_all)
+                .deny_all
+        );
     }
 }
 
@@ -490,7 +520,8 @@ fn other_scope_fields_are_not_reinterpreted_by_filter_projection() {
         ..RetrievalPolicyFloor::legacy()
     };
     assert_eq!(
-        RetrievalPolicyFloor::from_scoped_grants(&[row], &actor()),
+        RetrievalPolicyFloor::from_scoped_grants(&[row], &actor())
+            .unwrap_or_else(RetrievalPolicyFloor::deny_all),
         expected
     );
 }

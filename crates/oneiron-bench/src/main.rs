@@ -23,6 +23,9 @@
 //!   real-traffic cache hit rates and a descriptive NVMe fsync row, each
 //!   reported on its own axis. Accuracy and cost stay BEAM-owned.
 //!
+//! * `fleet` — authenticated fleet writes, recall and real held sockets, plus
+//!   paired full/resumed PPR measurements and receipt-derived regression floors.
+//!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
 //! matrix is not shipped here; this binary only ships the bench skeleton,
 //! cheap in-workspace checks, and the ONE-1311 trace export seam.
@@ -35,6 +38,7 @@ use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 mod beam;
 mod eval;
+mod fleet;
 mod interface_bench;
 mod perf;
 mod retrieval_trace_export;
@@ -70,6 +74,7 @@ fn main() -> ExitCode {
         [cmd, rest @ ..] if cmd == "vector" => vector::run(rest),
         [cmd, rest @ ..] if cmd == "eval" => eval::run(rest),
         [cmd, rest @ ..] if cmd == "perf" => perf::run(rest),
+        [cmd, rest @ ..] if cmd == "fleet" => fleet::run(rest),
         _ => {
             eprintln!("unknown invocation: {args:?}");
             print_help();
@@ -131,6 +136,7 @@ fn print_help() {
                                        emits every axis and is always marked\n\
                                        synthetic_smoke and never a publication\n\
                                        candidate (see `perf --help`)\n\
+          fleet --help                authenticated fleet load and PPR pair receipts\n\
           vector                      ARCH-0019 vector perf/recall harness\n\
                                        [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                                        [--queries N] [--churn none|refresh|delete|both]\n\

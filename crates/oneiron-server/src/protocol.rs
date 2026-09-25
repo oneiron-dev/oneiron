@@ -11,10 +11,11 @@ pub(crate) use oneiron::sync::{
 
 // Re-export tag constants from shared transport (avoid redefinition).
 pub(crate) use oneiron::sync::transport::{
-    APP_TIER_PROTOCOL_VERSION_VERSION, LEASE_STATUS_GRANTED, LEASE_STATUS_REJECTED,
-    LEGACY_FULL_WINDOW_PROTOCOL_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION, PROTOCOL_VERSION,
-    TAG_EPHEMERAL, TAG_LEASE_REQUEST, TAG_RPC, TAG_SUB, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
-    decode_lease_request, decode_protocol_hello, encode_ephemeral, encode_lease_granted,
+    APP_TIER_PROTOCOL_VERSION_VERSION, CHUNK_FULL_WINDOW_PROTOCOL_VERSION, LEASE_STATUS_GRANTED,
+    LEASE_STATUS_REJECTED, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION,
+    PROTOCOL_VERSION, TAG_EPHEMERAL, TAG_LEASE_REQUEST, TAG_LFS_CHUNK_SYNC, TAG_RPC, TAG_SUB,
+    TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, decode_lease_request, decode_protocol_hello,
+    encode_ephemeral, encode_lease_granted,
 };
 
 /// Sub-tags within WindowSync messages.
@@ -142,6 +143,8 @@ impl<T> PaginatedResponse<T> {
 /// Parsed top-level message from the wire.
 #[derive(Debug)]
 pub(crate) enum SyncMessage {
+    /// V9 binary chunk request outside CRDT history.
+    LfsChunks(Vec<u8>),
     /// Kept raw until the version/binding gate has run, including malformed JSON.
     Rpc(Vec<u8>),
     /// A separate id space from RPC requests and WindowSync.
@@ -189,7 +192,7 @@ pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
 
     let max = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
     // App-tier limits count payload bytes; document/batch limits include framing.
-    let size = if matches!(tag, TAG_RPC | TAG_SUB) {
+    let size = if matches!(tag, TAG_RPC | TAG_SUB | TAG_LFS_CHUNK_SYNC) {
         payload.len()
     } else {
         data.len()
@@ -198,6 +201,7 @@ pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
         return Err(ProtocolError::FrameTooLarge { size, max });
     }
     match tag {
+        TAG_LFS_CHUNK_SYNC => Ok(SyncMessage::LfsChunks(payload.to_vec())),
         TAG_DOCUMENT => {
             let doc = decode_document(payload)
                 .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;

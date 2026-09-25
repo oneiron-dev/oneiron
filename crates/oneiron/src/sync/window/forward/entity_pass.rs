@@ -5,9 +5,9 @@ use std::collections::{HashMap, HashSet};
 use loro::CommitOptions;
 
 use super::super::bridge::{self, BRIDGE_ORIGIN};
-use super::super::diagnostic_ingest;
 use super::super::egress::push_terminal_quarantine_marker;
 use super::super::loro_support::{map_delete, map_for_each_value_bytes, tombstone_map_contains_id};
+use super::super::pack_sync;
 use super::super::quarantine::{self, QuarantineContainer};
 use super::super::quota;
 use super::super::reverse::delete_edges_touching_entities;
@@ -16,9 +16,7 @@ use super::super::test_hooks;
 use super::{RematCtx, RematLedger};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::{
-    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
-};
+use crate::companion::decode_companion_record_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -116,6 +114,20 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 return;
             }
 
+            // Observer-B parity: internal chunk bytes never materialize from
+            // Loro, including after GC retired the row but kept its reservation.
+            match crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, &id) {
+                Ok(true) => return,
+                Err(err) => {
+                    entity_error = Some(err);
+                    return;
+                }
+                Ok(false) => {}
+            }
+            if crate::origin::lfs::is_lfs_chunk_blob(&id, blob) {
+                return;
+            }
+
             // Decode the envelope before deletion gates so a concurrent
             // protected engine record (notably type-76) cannot be hidden by
             // a hostile tombstone or a pre-fix `dt:` poison marker.
@@ -137,6 +149,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     return;
                 }
             };
+
             let delete_protected =
                 crate::registry::is_delete_protected_engine_record(header.entity_type);
 
@@ -196,7 +209,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             );
             if !byte_compare_in_door {
                 if let Some(latest) = materialized_blobs.get(&id) {
-                    if latest.as_slice() == blob {
+                    if latest.as_slice() == blob || pack_sync::pack_echo_equal(latest, blob) {
                         return;
                     }
                 } else {
@@ -208,6 +221,16 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         }
                     };
                     if lmdb_blob.as_deref() == Some(blob) {
+                        return;
+                    }
+                    // Pack echo: the local row holds receiver-local bytes
+                    // (local handle/generation) while the CRDT carrier holds
+                    // canonical origin bytes. Byte-equality never holds after
+                    // a name-based remap; canonical/local mapping decides, and
+                    // an echo skips without a repeated healing write.
+                    if let Some(local) = &lmdb_blob
+                        && pack_sync::pack_echo_equal(local, blob)
+                    {
                         return;
                     }
                     // SoftErase shell guard: `user_delete` truncates the
@@ -238,11 +261,12 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             } else {
                 &[]
             };
-            if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+            if header.entity_type == crate::registry::ENTITY_TYPE_FACET
+                && crate::companion::is_identity_facet_body(data)
+            {
                 match decode_companion_record_body(data) {
                     Ok(record)
-                        if record.export_classification
-                            == CompanionExportClassification::LocalOnly =>
+                        if record.sensitivity == crate::federation::Sensitivity::Restricted =>
                     {
                         local_only_companion_entity_keys.push(key.to_owned());
                         local_only_companion_entity_ids.insert(id);
@@ -291,6 +315,27 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
                 return;
             }
+            // Pack remote preflight: a malformed REMOTE envelope quarantines
+            // here, before the name-based remap reads the local map. A later
+            // `InvalidPackByteMap` from the remap is then LOCAL corruption
+            // and fails closed via the classifier (never quarantined).
+            if pack_sync::is_pack_handle(header.entity_type)
+                && let Some(remote_err) = pack_sync::remote_pack_envelope_error(data)
+            {
+                if let Err(q_err) = quarantine::quarantine_rejected_op(
+                    vault,
+                    window_key.as_str(),
+                    QuarantineContainer::Entities,
+                    key,
+                    &remote_err,
+                    blob,
+                ) {
+                    entity_error = Some(q_err);
+                } else {
+                    terminal_quarantines.push(id);
+                }
+                return;
+            }
             // Replicated put: the CRDT mirror is unfiltered, so the
             // system zone (REDACTION_AUDIT) and reserved-predicate
             // `edge.provenance` truth-Claims reach here on the way back into
@@ -300,15 +345,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // validation (unknown type bytes, ungrammatical predicates, and
             // malformed CLAIM bodies all still fail typed).
             let result = if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
-                vault.with_write_txn(|wtxn| {
-                    diagnostic_ingest::ingest_diagnostic_in_txn(
-                        vault,
-                        wtxn,
-                        &id,
-                        blob,
-                        lease_vault_id,
-                    )
-                })
+                // Replay may not revive a remote detector's local observations.
+                Ok(false)
             } else if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
                 #[cfg(any(test, feature = "test-hooks"))]
                 if let Err(err) = test_hooks::run_receipt_revocation_race(vault) {
@@ -359,7 +397,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         vault,
                         wtxn,
                         quota::peer_key_from_redaction_pubkey(&pubkey),
-                        crate::unix_seconds_now(),
+                        vault.store.clock.now_recorded_at(),
                     )?;
                     vault
                         .batch_in()
@@ -398,23 +436,11 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         // so parity alone must not discharge an `rm:` marker.
                         return Ok(false);
                     }
-                    let validation =
-                        crate::batch::validate_replicated_authority_log_for_local_vault(
-                            &vault.store,
-                            wtxn,
-                            &id,
-                            data,
-                        )?;
-                    let peer_key = if validation.signer_known {
-                        quota::peer_key_from_authority_key(&validation.signer_key)
-                    } else {
-                        quota::peer_key_from_unknown_authority_signer(validation.local_vault_id)
-                    };
-                    let _quota_debit = quota::try_accept_maintenance_ingest_peer_in_txn(
-                        vault,
+                    crate::batch::validate_replicated_authority_log_for_local_vault(
+                        &vault.store,
                         wtxn,
-                        peer_key,
-                        crate::unix_seconds_now(),
+                        &id,
+                        data,
                     )?;
                     vault
                         .batch_in()
@@ -464,6 +490,18 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 })
             } else {
                 vault.with_write_txn(|wtxn| {
+                    // Moving NOTE cores onto the canonical entity pass must
+                    // retain the old native lane's pending-delete fence.
+                    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                        && quarantine::unproven_remat_marker_exists_in_txn(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            &id,
+                        )?
+                    {
+                        return Ok(false);
+                    }
                     vault
                         .batch_in()
                         .put_replicated(
@@ -504,7 +542,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         || matches!(
                             err,
                             Error::Sync(SyncError::MaintenanceIngestQuotaExceeded { .. })
-                        );
+                        )
+                        || pack_sync::pack_rejection_keeps_retry_marker(&err);
                     if let Err(q_err) = quarantine::quarantine_rejected_op(
                         vault,
                         window_key.as_str(),

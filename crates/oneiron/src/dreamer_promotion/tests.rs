@@ -45,7 +45,10 @@ fn auto_permitting_manifest() -> Vec<u8> {
         ])
     };
     let manifest = Mp::Map(vec![
-        (Mp::from("schema_version"), Mp::from("1.1")),
+        (
+            Mp::from("schema_version"),
+            Mp::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
         (Mp::from("pack_id"), Mp::from("dreamer-promotion-test")),
         (Mp::from("pack_version"), Mp::from("v1")),
         (
@@ -370,30 +373,32 @@ fn promotion_cannot_supersede_user_stated() -> Result<()> {
 
     let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![superseding, clean])?;
 
-    // GATE-007 surfaced per-candidate; nothing written for the rejected one
-    // (the one-wtxn contract rolled the claim back with the supersession).
-    assert_eq!(outcome.rejected.len(), 1);
-    assert_eq!(outcome.rejected[0].0, superseding_id);
-    assert!(vault.get_claim(&superseding_id)?.is_none(), "rolled back");
-    let superseding_receipts = vault
-        .store
-        .gate_decisions(1_000)?
-        .into_iter()
-        .filter(|decision| decision.claim_id == Some(*superseding_id.as_bytes()))
-        .count();
+    assert!(outcome.rejected.is_empty());
+    assert_eq!(outcome.pended, vec![superseding_id]);
     assert_eq!(
-        superseding_receipts, 0,
-        "failed supersession must roll back its same-transaction gate decision"
+        vault.get_claim(&superseding_id)?.expect("staged").approval,
+        ClaimApprovalStatus::Proposed
     );
-    let superseding_consents = vault
-        .store
-        .pending_gate_consents(1_000)?
-        .into_iter()
-        .filter(|consent| consent.claim_id == *superseding_id.as_bytes())
-        .count();
-    assert_eq!(
-        superseding_consents, 0,
-        "failed supersession must roll back its same-transaction pending consent"
+    assert!(
+        vault
+            .store
+            .pending_gate_consents(1_000)?
+            .iter()
+            .any(|pending| pending.claim_id == *superseding_id.as_bytes())
+    );
+    assert!(
+        vault
+            .claims_for_subject(&fixture.subject)?
+            .into_iter()
+            .any(|id| vault
+                .get_claim(&id)
+                .expect("read")
+                .is_some_and(|body| body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN))
+    );
+    assert!(
+        vault
+            .supersede_claim(&superseding_id, &head, fixture.run.now_ms)
+            .is_err()
     );
 
     // The UserStated head is untouched and the other candidate landed.
@@ -403,7 +408,6 @@ fn promotion_cannot_supersede_user_stated() -> Result<()> {
         crate::claim::ClaimLifecycleStatus::Active
     );
     assert_eq!(outcome.landed, vec![clean_id]);
-    assert!(outcome.pended.is_empty());
     Ok(())
 }
 
@@ -508,6 +512,65 @@ fn tainted_head_clean_candidate_folds_taint() -> Result<()> {
         Some(ClaimSource::ToolOutput),
         "an otherwise-Generated candidate stays source-bounded by the head it supersedes"
     );
+    let companions: Vec<_> = vault
+        .claims_for_subject(&clean_id)?
+        .into_iter()
+        .filter_map(|id| {
+            vault
+                .get_claim(&id)
+                .transpose()
+                .map(|result| result.map(|body| (id, body)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let (companion_id, companion) = companions
+        .iter()
+        .find(|(_, body)| body.predicate == "core.supersession.provenance")
+        .expect("runner companion");
+    assert_eq!(
+        claim_evidence_taint(companion),
+        Some(ClaimSource::ToolOutput)
+    );
+    let rmpv::Value::Map(refs) = &companion.value else {
+        panic!("companion refs")
+    };
+    for (key, expected) in [("new", clean_id), ("old", head_id)] {
+        assert!(refs.iter().any(|(name, value)| name.as_str() == Some(key)
+            && *value == rmpv::Value::Binary(expected.as_bytes().to_vec())));
+    }
+    let (_replica_dir, replica) = open_auto_vault();
+    let bytes = crate::claim::encode_claim_body(companion)?;
+    replica
+        .batch()
+        .put_replicated(
+            companion_id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            &bytes,
+        )
+        .commit()?;
+    assert_eq!(replica.get_claim(companion_id)?.as_ref(), Some(companion));
+    let mut forged = companion.clone();
+    forged.scope = None;
+    assert!(
+        crate::claim::validate_claim_body_bytes(&crate::claim::encode_claim_body(&forged)?, false)
+            .is_err()
+    );
+    let forged_id = EntityId::now();
+    assert!(
+        replica
+            .batch()
+            .put_replicated(
+                &forged_id,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                crate::TimeRange { start: 2, end: 2 },
+                2,
+                &crate::claim::encode_claim_body(&forged)?
+            )
+            .commit()
+            .is_err()
+    );
+    assert!(replica.get_claim(&forged_id)?.is_none());
     let old_head = vault.get_claim(&head_id)?.expect("old head");
     assert_eq!(
         old_head.lifecycle,
@@ -1240,7 +1303,15 @@ fn assert_checker_rejection_receipt(
     let record = records.pop().expect("rejection receipt");
     assert_eq!(record.outcome, "pending");
     assert_eq!(record.reason_codes, [reason]);
-    assert_eq!(record.receipt_reasons, receipt_reasons);
+    // Tripwire baseline observations share this receipt but do not describe
+    // checker rejection. Keep the checker contract exact within its namespace.
+    let checker_reasons: Vec<_> = record
+        .receipt_reasons
+        .iter()
+        .filter(|reason| !reason.starts_with("tripwire_normal_"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(checker_reasons, receipt_reasons);
     assert_eq!(record.actor_class, "agent");
     assert!(vault.get_claim(claim_id)?.is_none());
     assert!(vault.pending_gate_consents(10)?.is_empty());
@@ -1484,12 +1555,11 @@ fn promotion_bounds_repeated_blocked_checker_calls_and_records_each_refusal() ->
 }
 
 #[test]
-fn checked_promotion_rolls_back_claim_and_receipt_when_supersession_fails() -> Result<()> {
+fn checked_promotion_cannot_override_attributed_proposal_hold() -> Result<()> {
     let (_dir, vault) = open_auto_checker_vault();
     let fixture = fixture(&vault)?;
     let head = user_stated_head(&vault, &fixture, "profile.name")?;
     let head_before = vault.get_raw(&head)?.expect("existing head");
-    let receipts_before = vault.store.gate_decisions(1_000)?;
     let mut promoted = candidate(&fixture, "profile.name", "Different", vec![fixture.turn]);
     promoted.supersedes = Some(head);
     let claim_id = promoted.claim_id;
@@ -1504,12 +1574,21 @@ fn checked_promotion_rolls_back_claim_and_receipt_when_supersession_fails() -> R
     )?;
 
     assert!(outcome.landed.is_empty());
-    assert_eq!(outcome.rejected.len(), 1);
-    assert_eq!(host.calls(), 1);
-    assert!(vault.get_raw(&claim_id)?.is_none());
+    assert!(outcome.rejected.is_empty());
+    assert_eq!(outcome.pended, vec![claim_id]);
+    // Even an allowing host checker cannot bypass a named human-review hold.
+    assert_eq!(host.calls(), 0);
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("held proposal").approval,
+        ClaimApprovalStatus::Proposed
+    );
     assert_eq!(vault.get_raw(&head)?.expect("unchanged head"), head_before);
-    assert_eq!(vault.store.gate_decisions(1_000)?, receipts_before);
-    assert!(vault.pending_gate_consents(10)?.is_empty());
+    assert!(
+        vault
+            .pending_gate_consents(10)?
+            .iter()
+            .any(|pending| pending.claim_id == *claim_id.as_bytes())
+    );
     Ok(())
 }
 

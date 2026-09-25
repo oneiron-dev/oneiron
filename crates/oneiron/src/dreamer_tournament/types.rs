@@ -392,6 +392,9 @@ pub struct DreamerTournamentBranchEvidence {
     pub acted_on_artifact_ids: Vec<String>,
     pub hard_veto_artifact_ids: Vec<String>,
     pub out_of_scope_artifact_ids: Vec<String>,
+    /// Shared review consolidator confidence decision, preserved with branch provenance.
+    #[serde(default)]
+    pub auto_resolved: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

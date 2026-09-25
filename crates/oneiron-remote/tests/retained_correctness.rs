@@ -40,6 +40,7 @@ fn both_backends_refuse_complete_claim_payload_before_dispatch() {
         confidence: 1.0,
         source: "user_stated".to_owned(),
         world_ref: None,
+        relationship_ref: None,
         scope: Some(serde_json::json!({"opaque": "x".repeat(MAX_ENTITY_PAYLOAD_BYTES)})),
         valid_from: None,
         valid_to: None,
@@ -57,6 +58,17 @@ fn both_backends_refuse_complete_claim_payload_before_dispatch() {
     for client in [&embedded, &remote] {
         assert_eq!(
             client.claim_upsert(&claim).expect_err("over-cap ref").code,
+            MEMORY_CODE_BAD_REQUEST,
+        );
+    }
+    claim.world_ref = None;
+    claim.relationship_ref = Some("x".repeat(MAX_ENTITY_PAYLOAD_BYTES));
+    for client in [&embedded, &remote] {
+        assert_eq!(
+            client
+                .claim_upsert(&claim)
+                .expect_err("over-cap relationship ref")
+                .code,
             MEMORY_CODE_BAD_REQUEST,
         );
     }

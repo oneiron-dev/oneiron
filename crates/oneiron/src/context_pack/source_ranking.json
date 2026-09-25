@@ -1,0 +1,11 @@
+{
+  "pack": "core.claim_ranking",
+  "multipliers": {
+    "user_stated": 1.0,
+    "observed": 1.0,
+    "inferred": 1.0,
+    "generated": 1.0,
+    "tool_output": 1.0,
+    "imported": 1.0
+  }
+}

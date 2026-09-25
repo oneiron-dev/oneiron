@@ -17,6 +17,7 @@ pub enum PolicyClassifyDecision {
     Warn,
     Block,
     RouteToHelp,
+    Hold,
 }
 
 impl PolicyClassifyDecision {
@@ -26,6 +27,7 @@ impl PolicyClassifyDecision {
             Self::Allow => "allow",
             Self::Warn => "warn",
             Self::Block => "block",
+            Self::Hold => "hold",
             Self::RouteToHelp => "route-to-help",
         }
     }
@@ -38,6 +40,7 @@ impl PolicyClassifyDecision {
             Self::Allow => "allow",
             Self::Warn => "warn",
             Self::Block => "block",
+            Self::Hold => "hold",
             Self::RouteToHelp => "route_to_help",
         }
     }

@@ -2,12 +2,22 @@
 class TasksVerbs:
     def __init__(self, call):
         self._call = call
+    def ack(self, spec):
+        return self._call("tasks_ack", spec)
+    def cancel(self, spec):
+        return self._call("tasks_cancel", spec)
+    def check(self):
+        return self._call("tasks_check", {})
+    def create(self, spec):
+        return self._call("tasks_create", spec)
+    def expand(self, spec):
+        return self._call("tasks_expand", spec)
     def ask(self, spec):
         return self._call("tasks_ask", spec)
     def wait(self, handle, step_key="sdk.wait"):
         return self._call("tasks_wait", {"handle": handle, "step_key": step_key})
-    def answer(self, handle, result_ref):
-        return self._call("tasks_answer", {"handle": handle, "result_ref": result_ref})
+    def answer(self, handle, word):
+        return self._call("tasks_answer", {"handle": handle, "word": word})
     def outcomes(self, handle):
         return self._call("tasks_outcomes", handle)
 class RoomsVerbs:

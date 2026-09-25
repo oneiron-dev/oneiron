@@ -42,6 +42,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.finish_landing_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -69,7 +70,12 @@ impl AttemptQueue<'_> {
         }
 
         let successor = if input.hand_off {
-            Some(landing_successor(&record, input.scheduled_at, input.now))
+            Some(landing_successor(
+                &record,
+                AttemptId::from_bytes(&self.store.clock.ulid()?)?,
+                input.scheduled_at,
+                input.now,
+            ))
         } else {
             None
         };
@@ -130,6 +136,15 @@ impl AttemptQueue<'_> {
             return Ok(FinishLandingOutcome::Landed(record));
         };
 
+        if self
+            .store
+            .attempt_records
+            .get(wtxn, successor.id.as_bytes())?
+            .is_some()
+        {
+            return Err(Error::InvariantViolation("attempt id collision"));
+        }
+        crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         let encoded_successor = encode_record(&successor)?;
         self.store
             .attempt_records
@@ -174,6 +189,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.force_cancel_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -243,6 +259,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.warn_budget_pressure_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -338,6 +355,7 @@ impl AttemptQueue<'_> {
             }
         }
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(report)
     }
 
@@ -381,6 +399,7 @@ impl AttemptQueue<'_> {
             input.now,
         )?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(LeaseWarningOutcome::LandingRequested(record))
     }
 }
@@ -509,9 +528,14 @@ pub(in crate::attempt_queue) fn force_cancel_record(
 /// every existing surface that reduces a chain to its live HEAD — run-tree
 /// parenting, `tasks.cancel` membership, terminal-status folding — treats the
 /// landed row as superseded history without a second lineage concept.
-fn landing_successor(source: &AttemptRecord, scheduled_at: Option<u64>, now: u64) -> AttemptRecord {
+fn landing_successor(
+    source: &AttemptRecord,
+    id: AttemptId,
+    scheduled_at: Option<u64>,
+    now: u64,
+) -> AttemptRecord {
     AttemptRecord {
-        id: AttemptId::now(),
+        id,
         kind: source.kind.clone(),
         payload: source.payload.clone(),
         state: if scheduled_at.is_some() {
@@ -549,6 +573,14 @@ fn landing_successor(source: &AttemptRecord, scheduled_at: Option<u64>, now: u64
             },
             ..AttemptCancelState::default()
         },
+        placement: source.placement.as_ref().map(|placement| {
+            crate::attempt_queue::AttemptPlacement {
+                worker: placement.worker.clone(),
+                // Keep the new try below its predecessor, not beside it. A later
+                // explicit redirect can still select another effective parent.
+                parent: Some(source.id),
+            }
+        }),
         result_ref: None,
     }
 }

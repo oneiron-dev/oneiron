@@ -13,19 +13,9 @@ use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
 
-/// `execute_code`: ONE durable REPL run, through the INJECTED host.
-///
-/// UNREACHABLE FROM THE WIRE in this release (ONE-1704 B1/B2). `execute_code`
-/// is registered on neither endpoint and a direct call is refused at
-/// [`mcp_execute_code_unavailable`] before this body could be entered, so no run
-/// is created and the `resume` handle below never reaches a caller. The body is
-/// kept as the private adapter over the injected host seam — the same shape M1
-/// left the retired plain-verb adapters in — and NOT as a second catalog.
-///
-/// The gateway evaluates nothing and owns no dispatch loop. The bound host
-/// constructs `HostSelfDispatcher`/`GatedActorWrite` and enters the existing
-/// sandbox/REPL provider through `EngineNativeExecutor`, which owns every step,
-/// replay row, and terminal marker. With no host bound this fails CLOSED.
+/// One durable REPL run under the authenticated connector actor. This door
+/// becomes wire-reachable only after the host verifies its QuickJS component.
+/// The engine owns all bridge calls, replay checkpoints and terminal markers.
 pub(crate) async fn execute_mcp_execute_code(
     server: &Arc<SyncServer>,
     args: crate::mcp::McpExecuteCodeToolArgs,
@@ -37,7 +27,8 @@ pub(crate) async fn execute_mcp_execute_code(
         ));
     }
 
-    let host = crate::mcp::mcp_code_execution_host()
+    let host = server
+        .code_execution_host()
         .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
     let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
     let outcome = host
@@ -112,7 +103,8 @@ pub(crate) async fn execute_mcp_execute_code(
 
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {
     let code = match error {
-        crate::mcp::McpCodeExecutionError::HostUnbound => -32020,
+        crate::mcp::McpCodeExecutionError::HostUnbound
+        | crate::mcp::McpCodeExecutionError::RunBusy => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_) => -32603,
     };
@@ -252,7 +244,7 @@ fn mcp_bridge_outcome_value(outcome: &rmpv::Value) -> Value {
 /// The live board one board verb reads, assembled from the same sections the
 /// primary keyframe renders. The engine's `dispatch_board_verb` owns every
 /// board semantic; this only supplies the current view.
-struct McpLiveBoard {
+pub(super) struct McpLiveBoard {
     /// The world this view was BUILT for, taken from the registered credential
     /// scope. `read_current` refuses any other, so the scope argument is
     /// enforced rather than ignored.
@@ -329,38 +321,6 @@ fn mcp_live_board(
     })
 }
 
-fn mcp_board_verb_call(
-    args: &crate::mcp::McpVerbToolArgs,
-) -> Result<oneiron::board_verb::BoardVerbCall, McpGatewayError> {
-    let arguments = &args.payload.arguments;
-    let scopes = || {
-        arguments
-            .scopes
-            .iter()
-            .flatten()
-            .map(|scope| scope.engine())
-            .collect::<std::collections::BTreeSet<_>>()
-    };
-    match args.tool.binding {
-        crate::mcp::McpVerbBinding::BoardExpand => Ok(oneiron::board_verb::BoardVerbCall::Expand {
-            key: arguments.key.clone().unwrap_or_default(),
-            frame_epoch: arguments.frame_epoch,
-        }),
-        crate::mcp::McpVerbBinding::BoardRefresh => {
-            Ok(oneiron::board_verb::BoardVerbCall::Refresh {
-                frame_epoch: arguments.frame_epoch,
-            })
-        }
-        crate::mcp::McpVerbBinding::BoardSubscribe => {
-            Ok(oneiron::board_verb::BoardVerbCall::Subscribe { scopes: scopes() })
-        }
-        crate::mcp::McpVerbBinding::BoardUnsubscribe => {
-            Ok(oneiron::board_verb::BoardVerbCall::Unsubscribe { scopes: scopes() })
-        }
-        _ => Err(mcp_verb_family_error(args)),
-    }
-}
-
 pub(super) fn mcp_verb_family_error(args: &crate::mcp::McpVerbToolArgs) -> McpGatewayError {
     McpGatewayError::new(
         -32603,
@@ -396,16 +356,26 @@ fn mcp_board_verb_output_value(output: &oneiron::board_verb::BoardVerbOutput) ->
 /// connector's process-local STREAM state and the STATE-fenced board snapshot.
 pub(super) async fn execute_mcp_board_verb(
     server: &Arc<SyncServer>,
-    args: &crate::mcp::McpVerbToolArgs,
     actor: &McpCallContext,
-) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, u64), McpGatewayError> {
+    call: impl FnOnce(
+        &mut oneiron::board_verb::BoardVerbContext<'_, McpLiveBoard>,
+    ) -> Result<
+        oneiron::board_verb::BoardVerbOutput,
+        oneiron::board_verb::BoardVerbError,
+    >,
+) -> Result<
+    (
+        Value,
+        crate::mcp::McpPageSource,
+        McpCarrierPolicy,
+        Option<u64>,
+    ),
+    McpGatewayError,
+> {
     let board = mcp_current_board(server, actor).await?;
     let omissions = board.omissions();
     let source = mcp_live_board(actor, &board)?;
     let scope = oneiron::board_verb::BoardWorldScope::single(mcp_board_world(actor));
-    let call = mcp_board_verb_call(args)?;
-    let mints_keyframe = matches!(args.tool.binding, crate::mcp::McpVerbBinding::BoardRefresh);
-
     let output = {
         let mut registry = server.mcp_registry.lock().await;
         let mut context = oneiron::board_verb::BoardVerbContext {
@@ -419,21 +389,35 @@ pub(super) async fn execute_mcp_board_verb(
                 explicit_override_tok: None,
             },
         };
-        oneiron::board_verb::dispatch_board_verb(&mut context, call)
+        call(&mut context)
     }
     .map_err(mcp_board_verb_error)?;
 
+    let output = match output {
+        oneiron::board_verb::BoardVerbOutput::Frame(frame) => {
+            oneiron::board_verb::BoardVerbOutput::Frame(
+                board
+                    .changes
+                    .ride(Some(frame))
+                    .expect("rider preserves an existing frame"),
+            )
+        }
+        other => other,
+    };
+    // The present board producer serves TASKS, presence and loaded metadata.
+    // None are new CLAIM/SKILL/AGENT_DEF body observations. An expansion has no
+    // typed entity mapping, so its renderer strings are never parsed for ids.
     let value = mcp_board_verb_output_value(&output);
-    let page_source = mcp_board_verb_page_source(args.tool.binding, &value, omissions);
+    let page_source = mcp_board_verb_page_source(&output, omissions);
     // A verb that just minted a fresh keyframe returns it as the RESULT; the
     // central chokepoint supersedes and drains the queue behind it, so it is
     // never also attached as a carrier beside itself and nothing is stranded.
-    let carrier = if mints_keyframe {
+    let carrier = if matches!(output, oneiron::board_verb::BoardVerbOutput::Frame(_)) {
         McpCarrierPolicy::FreshKeyframe(None)
     } else {
         McpCarrierPolicy::Drain
     };
-    Ok((value, page_source, carrier, board.epoch))
+    Ok((value, page_source, carrier, Some(board.epoch)))
 }
 
 /// What this board verb actually produced, what the REQUESTED SCOPE removed,
@@ -444,17 +428,13 @@ pub(super) async fn execute_mcp_board_verb(
 /// because a TASKS row was outside the credential's ceiling, and rows the render
 /// row cap dropped are a window fact rather than a scope one.
 pub(crate) fn mcp_board_verb_page_source(
-    binding: crate::mcp::McpVerbBinding,
-    output: &Value,
+    output: &oneiron::board_verb::BoardVerbOutput,
     omissions: McpBoardOmissions,
 ) -> crate::mcp::McpPageSource {
-    match binding {
-        crate::mcp::McpVerbBinding::BoardExpand => {
-            let produced = output
-                .get("lines")
-                .and_then(Value::as_array)
-                .map_or(0, Vec::len);
-            if output.get("key").and_then(Value::as_str) == Some(MCP_BOARD_TASKS_SECTION) {
+    match output {
+        oneiron::board_verb::BoardVerbOutput::Expanded { key, lines } => {
+            let produced = lines.len();
+            if key == MCP_BOARD_TASKS_SECTION {
                 crate::mcp::McpPageSource::scoped_window(
                     produced,
                     omissions.scope_omitted,
@@ -466,14 +446,16 @@ pub(crate) fn mcp_board_verb_page_source(
             }
         }
         // A refresh renders the WHOLE board, so both axes apply to it.
-        crate::mcp::McpVerbBinding::BoardRefresh => crate::mcp::McpPageSource::scoped_window(
+        oneiron::board_verb::BoardVerbOutput::Frame(_) => crate::mcp::McpPageSource::scoped_window(
             1,
             omissions.scope_omitted,
             omissions.window_truncated,
             omissions.source_exhausted,
         ),
         // A subscription receipt is one row and states itself completely.
-        _ => crate::mcp::McpPageSource::complete(1),
+        oneiron::board_verb::BoardVerbOutput::Subscription(_) => {
+            crate::mcp::McpPageSource::complete(1)
+        }
     }
 }
 

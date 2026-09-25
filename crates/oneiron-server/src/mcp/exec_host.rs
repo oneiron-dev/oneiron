@@ -6,11 +6,12 @@ use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
 };
 use oneiron::{BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
+use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// The ONE place an MCP-derived durable id is minted (ONE-1704 M3).
 ///
@@ -104,6 +105,8 @@ impl fmt::Debug for McpCodeExecutionRequest<'_> {
 pub enum McpCodeExecutionError {
     #[error("no execute_code host is bound on this server")]
     HostUnbound,
+    #[error("execute_code run is already active; retry the same run_ref")]
+    RunBusy,
     #[error("execute_code run binding failed: {0}")]
     RunBinding(String),
     #[error("execute_code run failed: {0}")]
@@ -115,7 +118,8 @@ impl McpCodeExecutionError {
     #[must_use]
     pub const fn error_code(&self) -> &'static str {
         match self {
-            Self::HostUnbound => "code_host_unbound",
+            Self::HostUnbound => super::MCP_CODE_HOST_UNBOUND_CODE,
+            Self::RunBusy => "code_run_busy",
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",
         }
@@ -129,6 +133,11 @@ impl McpCodeExecutionError {
 /// own. With no host bound, `execute_code` fails CLOSED — it does not fall back
 /// to a gateway-local loop.
 pub trait McpCodeExecutionHost: Send + Sync {
+    /// Only a host with a verified production interpreter may enter tools/list.
+    fn production_runtime_available(&self) -> bool {
+        false
+    }
+
     fn execute<'a>(
         &'a self,
         request: McpCodeExecutionRequest<'a>,
@@ -139,11 +148,16 @@ pub trait McpCodeExecutionHost: Send + Sync {
 
 /// The engine-native pieces one durable run needs, bound by the HOST.
 ///
-/// The core crate ships no production `JsCodeModeRuntime` and this server owns
-/// no LLM backend or budget lease, so all three are injected. The ADAPTER below
+/// The server owns no LLM backend or budget lease, so the provider binds
+/// these to the engine runtime. The shipped QuickJS provider verifies its artifact. The ADAPTER below
 /// — not the provider — is what constructs `HostSelfDispatcher`/`GatedActorWrite`
 /// and enters the sandbox/REPL through `EngineNativeExecutor`.
 pub trait McpCodeModeProvider: Send + Sync {
+    /// Defaults closed for fixture and custom providers.
+    fn production_runtime_available(&self) -> bool {
+        false
+    }
+
     /// The backend the durable REPL generates each step against.
     fn backend(&self) -> &dyn LlmBackend;
     /// The admission lease every generated step is charged to.
@@ -158,6 +172,7 @@ pub trait McpCodeModeProvider: Send + Sync {
 /// own durable executor.
 pub struct McpEngineNativeCodeHost {
     provider: Arc<dyn McpCodeModeProvider>,
+    active: Arc<Mutex<HashSet<EntityId>>>,
 }
 
 impl fmt::Debug for McpEngineNativeCodeHost {
@@ -169,11 +184,18 @@ impl fmt::Debug for McpEngineNativeCodeHost {
 impl McpEngineNativeCodeHost {
     #[must_use]
     pub fn new(provider: Arc<dyn McpCodeModeProvider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            active: Arc::new(Mutex::new(HashSet::new())),
+        }
     }
 }
 
 impl McpCodeExecutionHost for McpEngineNativeCodeHost {
+    fn production_runtime_available(&self) -> bool {
+        self.provider.production_runtime_available()
+    }
+
     fn execute<'a>(
         &'a self,
         request: McpCodeExecutionRequest<'a>,
@@ -182,12 +204,22 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
     > {
         let vault = Arc::clone(&request.vault);
         let provider = Arc::clone(&self.provider);
+        let active = Arc::clone(&self.active);
         let write_actor = request.actor.write_actor();
         // The gated run source is HOST-derived: the caller's handle is a label
         // inside it, never the WHO.
         let run_ref = format!("mcp.execute_code:{}", request.run_ref);
         let config = provider.executor_config(request.run_id, request.task);
         Box::pin(async move {
+            if request.run_id != mcp_code_run_id(request.run_ref, request.actor)
+                || config.run_id != request.run_id
+                || config.task != request.task
+            {
+                return Err(McpCodeExecutionError::RunBinding(
+                    "provider changed scoped run identity".into(),
+                ));
+            }
+            let guard = ActiveRun::acquire(active, config.run_id)?;
             let (sender, receiver) = tokio::sync::oneshot::channel();
             // The engine REPL driver holds `&mut dyn JsCodeModeRuntime` across
             // its own awaits, so its future is deliberately not `Send`. It runs
@@ -197,6 +229,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             let worker = std::thread::Builder::new()
                 .name("mcp-execute-code".to_owned())
                 .spawn(move || {
+                    let _guard = guard;
                     let outcome = run_engine_native_code_mode(
                         &vault,
                         provider.as_ref(),
@@ -248,6 +281,35 @@ fn run_engine_native_code_mode(
     reactor
         .block_on(executor.run(config))
         .map_err(|error| McpCodeExecutionError::Run(error.to_string()))
+}
+
+/// A disconnected caller cannot release single-flight while its worker writes.
+struct ActiveRun {
+    active: Arc<Mutex<HashSet<EntityId>>>,
+    run_id: EntityId,
+}
+impl ActiveRun {
+    fn acquire(
+        active: Arc<Mutex<HashSet<EntityId>>>,
+        run_id: EntityId,
+    ) -> Result<Self, McpCodeExecutionError> {
+        {
+            let mut runs = active
+                .lock()
+                .map_err(|_| McpCodeExecutionError::RunBinding("run registry poisoned".into()))?;
+            if !runs.insert(run_id) {
+                return Err(McpCodeExecutionError::RunBusy);
+            }
+        }
+        Ok(Self { active, run_id })
+    }
+}
+impl Drop for ActiveRun {
+    fn drop(&mut self) {
+        if let Ok(mut runs) = self.active.lock() {
+            runs.remove(&self.run_id);
+        }
+    }
 }
 
 static MCP_CODE_EXECUTION_HOST: OnceLock<Arc<dyn McpCodeExecutionHost>> = OnceLock::new();

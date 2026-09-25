@@ -139,7 +139,7 @@ impl OffRecordSession<'_> {
         route: &SessionWriteRoute,
         actor: crate::WriteActor,
     ) -> Result<crate::memory::WitnessReceipt> {
-        route.revalidate()?;
+        route.require_recording(&self.session_ref)?;
         let memory = self.vault.memory(actor.entity_ref(), actor.actor_class());
         let turn = crate::memory::WitnessTurn {
             conversation_ref: container.to_hex(),
@@ -191,7 +191,7 @@ impl OffRecordSession<'_> {
     /// it, never mints it.
     pub(crate) fn routed_conversation_shell(&self, route: &SessionWriteRoute) -> Result<EntityId> {
         match route.target() {
-            RouteTarget::Overlay => self.overlay_conversation_shell(),
+            RouteTarget::Overlay | RouteTarget::Discard => self.overlay_conversation_shell(),
             RouteTarget::Base => self.on_record_continuation_shell(),
         }
     }
@@ -207,9 +207,11 @@ impl OffRecordSession<'_> {
         route.revalidate()?;
         match route.target() {
             RouteTarget::Base => Ok(self.vault),
-            RouteTarget::Overlay => Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
-                session_ref: self.session_ref.clone(),
-            })),
+            RouteTarget::Overlay | RouteTarget::Discard => {
+                Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
+                    session_ref: self.session_ref.clone(),
+                }))
+            }
         }
     }
 
@@ -242,10 +244,14 @@ impl OffRecordSession<'_> {
         occurred: crate::TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        self.base_write_vault(route)?
+        let vault = self.base_write_vault(route)?;
+        let predicate = candidate.predicate().to_owned();
+        vault
             .batch()
             .claim_candidate(id, candidate, envelope, occurred, learned_at)
-            .commit()
+            .commit_with_target_guard(|txn| {
+                vault.validate_code_run_claim_target_in_txn(txn, id, Some(&predicate))
+            })
     }
 
     /// `self.memory.put_claim` on a session-bound run.

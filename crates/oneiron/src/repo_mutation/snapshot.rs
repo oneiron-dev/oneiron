@@ -70,7 +70,7 @@ pub(super) fn capture_repo_snapshot(repo_root: &Path) -> Result<(RepoForkHash, V
         entries,
     };
     let encoded = encode_snapshot(&snapshot)?;
-    let hash = sha256_bytes(&encoded);
+    let hash = *blake3::hash(&encoded).as_bytes();
     Ok((hash, encoded))
 }
 
@@ -149,7 +149,7 @@ pub(super) fn restore_repo_snapshot(
         )))?
         .to_vec();
     drop(rtxn);
-    if sha256_bytes(&raw) != fork_hash {
+    if *blake3::hash(&raw).as_bytes() != fork_hash && sha256_bytes(&raw) != fork_hash {
         return Err(Error::CorruptedIndex(
             "repo mutation snapshot hash mismatch",
         ));
@@ -229,7 +229,7 @@ fn record_snapshot_entry_size(stats: &mut SnapshotStats, bytes: u64) -> Result<(
     Ok(())
 }
 
-fn snapshot_recorded_for_repo(
+pub(super) fn snapshot_recorded_for_repo(
     vault: &Vault,
     repo_ref: &RepoRef,
     fork_hash: RepoForkHash,
@@ -237,7 +237,8 @@ fn snapshot_recorded_for_repo(
     Ok(vault
         .repo_mutation_oplog_for_canonical(repo_ref)?
         .iter()
-        .any(|entry| entry.pre_action_fork_hash == fork_hash))
+        .any(|entry| entry.pre_action_fork_hash == fork_hash)
+        || super::proposal::proposal_snapshot_recorded(vault, repo_ref, fork_hash)?)
 }
 
 fn collect_restore_inventory(

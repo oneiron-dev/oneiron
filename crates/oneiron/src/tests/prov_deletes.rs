@@ -142,7 +142,13 @@ fn delete_of_provenance_claim_with_survivors_restamps_from_winner() -> Result<()
     let vault = &fx.vault;
     let subject = fx.subject;
     let person2 = EntityId::now();
-    vault.put_entity(&person2, 4, test_time_range(1, 1), 1, b"person2")?;
+    vault.put_entity(
+        &person2,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person2",
+    )?;
 
     // A live learned_at-tie cohort (t = 2000) so survivors exist after the
     // delete: `winner` (conf 0.6, confirmed/system) outranks `runner_up`
@@ -705,7 +711,7 @@ fn ensure_model_substrate_get_or_create_pins_model_kind() -> Result<()> {
     // CREATE on first appearance: engine-authored MODEL entity, type 65.
     let kimi = vault.ensure_model_substrate("kimi-k2.6", "2026-05", 1_000)?;
     assert_eq!(vault.get_entity_type(&kimi)?, Some(ENTITY_TYPE_MODEL));
-    assert_eq!(ENTITY_TYPE_MODEL, 65, "ratified type byte");
+    assert_eq!(ENTITY_TYPE_MODEL, 90, "ratified type byte");
 
     // The body dedups name + version ON the entity (never inline in
     // provenance records).

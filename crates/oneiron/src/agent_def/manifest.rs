@@ -11,6 +11,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::ModelTierRef;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::skill::SkillDependency;
 use crate::temporal::TimeRange;
@@ -350,7 +351,7 @@ pub(super) fn reconcile_system_agent_definitions_in(
     for seed in &manifest.definitions {
         let id = seed.entity_id.0;
         let legacy_enabled = take_legacy_system_agent_toggle(store, wtxn, &seed.logical_id)?;
-        match store.entities.get(wtxn, id.as_bytes())? {
+        match store.port_entity_record(wtxn, &id)?.map(|row| row.encode()) {
             Some(raw) => {
                 let header = EntityMetadataHeader::parse(&raw).ok_or(Error::Artifact(
                     ArtifactError::SeededAgentDefinitionConflict { id },

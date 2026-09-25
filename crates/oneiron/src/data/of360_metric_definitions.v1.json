@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "set_id": "of360-halumem-extraction-quality.v1",
-  "revision": "2026-07-07.one-1524",
+  "revision": "2026-09-19.one-2190",
   "source_refs": [
     "Linear ONE-1524",
     "Linear ONE-198",
@@ -9,9 +9,9 @@
     "HaluMem arXiv:2511.03506"
   ],
   "derivation_envelope": {
-    "content_hash": "sha256:of360-halumem-extraction-quality-v1",
+    "content_hash": "sha256:20c062abc125f9fecc4932c4a0b3dfac4b3454e973cd17b69f520a5ad21f6966",
     "model_id": "of360-offline-parsed-harness",
-    "version": "1",
+    "version": "2026-09-19.one-2190",
     "params_hash": "sha256:no-runtime-judge-params"
   },
   "metrics": [
@@ -84,6 +84,30 @@
       "label": "Redundancy rate",
       "definition": "Share of extracted claims that repeat a prior extracted claim under the same deduplication key.",
       "formula": "count(redundant_extracted_claims_after_first_key_occurrence) / count(extracted_claims)",
+      "direction": "lower_is_better",
+      "primary": true
+    },
+    {
+      "metric_id": "updating_accuracy",
+      "label": "Updating accuracy",
+      "definition": "Best extraction score over gold memories marked is_update.",
+      "formula": "sum(best_score(update_memory)) / count(update_memory)",
+      "direction": "higher_is_better",
+      "primary": true
+    },
+    {
+      "metric_id": "qa_accuracy",
+      "label": "QA accuracy",
+      "definition": "Correct normalized answers over all gold questions, including unanswered questions.",
+      "formula": "correct_answers / gold_questions",
+      "direction": "higher_is_better",
+      "primary": true
+    },
+    {
+      "metric_id": "omission_rate",
+      "label": "Omission rate",
+      "definition": "Gold memories with zero matching score over all gold memories.",
+      "formula": "omitted_gold_memories / gold_memories",
       "direction": "lower_is_better",
       "primary": true
     }

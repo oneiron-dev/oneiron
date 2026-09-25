@@ -1,0 +1,224 @@
+{
+  "version": 2,
+  "repo": "quote-fixture",
+  "tasks": [
+    {
+      "id": "small_edit",
+      "shape": "small_edit",
+      "instruction": "Change the displayed currency from USD to EUR. Keep quote behavior.",
+      "files": {
+        "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"USD\" }\n",
+        "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+      },
+      "tests": [
+        {
+          "args": [
+            "total",
+            "2",
+            "10"
+          ],
+          "expected": "Some(25)\n"
+        },
+        {
+          "args": [
+            "currency"
+          ],
+          "expected": "EUR\n"
+        }
+      ],
+      "contracts": [
+        {
+          "args": [
+            "total",
+            "0",
+            "10"
+          ],
+          "expected": "Some(0)\n"
+        },
+        {
+          "args": [
+            "total",
+            "18446744073709551615",
+            "2"
+          ],
+          "expected": "None\n"
+        }
+      ],
+      "driver": "fn main() {\n    let args: Vec<String> = std::env::args().skip(1).collect();\n    match args[0].as_str() {\n        \"total\" => println!(\"{:?}\", subject::quote(args[1].parse().unwrap(), args[2].parse().unwrap())),\n        \"currency\" => println!(\"{}\", subject::currency()),\n        _ => std::process::exit(2),\n    }\n}\n"
+    },
+    {
+      "id": "cross_file_refactor",
+      "shape": "cross_file_refactor",
+      "instruction": "Rename math::subtotal to math::items_total and update every caller.",
+      "files": {
+        "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"USD\" }\n",
+        "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+      },
+      "tests": [
+        {
+          "args": [
+            "total",
+            "2",
+            "10"
+          ],
+          "expected": "Some(25)\n"
+        },
+        {
+          "args": [
+            "items_total",
+            "2",
+            "10"
+          ],
+          "expected": "Some(20)\n"
+        }
+      ],
+      "contracts": [
+        {
+          "args": [
+            "total",
+            "0",
+            "10"
+          ],
+          "expected": "Some(0)\n"
+        },
+        {
+          "args": [
+            "total",
+            "18446744073709551615",
+            "2"
+          ],
+          "expected": "None\n"
+        }
+      ],
+      "driver": "fn main() {\n    let args: Vec<String> = std::env::args().skip(1).collect();\n    match args[0].as_str() {\n        \"total\" => println!(\"{:?}\", subject::quote(args[1].parse().unwrap(), args[2].parse().unwrap())),\n        \"currency\" => println!(\"{}\", subject::currency()),\n        \"items_total\" => println!(\"{:?}\", subject::math::items_total(args[1].parse().unwrap(), args[2].parse().unwrap())),\n        _ => std::process::exit(2),\n    }\n}\n"
+    },
+    {
+      "id": "rename",
+      "shape": "rename",
+      "instruction": "Rename quote to price, including public callers.",
+      "files": {
+        "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"USD\" }\n",
+        "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+      },
+      "tests": [
+        {
+          "args": [
+            "total",
+            "2",
+            "10"
+          ],
+          "expected": "Some(25)\n"
+        }
+      ],
+      "contracts": [
+        {
+          "args": [
+            "total",
+            "0",
+            "10"
+          ],
+          "expected": "Some(0)\n"
+        },
+        {
+          "args": [
+            "total",
+            "18446744073709551615",
+            "2"
+          ],
+          "expected": "None\n"
+        }
+      ],
+      "driver": "fn main() {\n    let args: Vec<String> = std::env::args().skip(1).collect();\n    match args[0].as_str() {\n        \"total\" => println!(\"{:?}\", subject::price(args[1].parse().unwrap(), args[2].parse().unwrap())),\n        \"currency\" => println!(\"{}\", subject::currency()),\n        _ => std::process::exit(2),\n    }\n}\n"
+    },
+    {
+      "id": "concurrent_merge",
+      "shape": "concurrent_merge",
+      "instruction": "Merge a bulk discount: subtract 1 from subtotal for quantity at least 10. Keep the concurrent currency change to EUR.",
+      "files": {
+        "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"EUR\" }\n",
+        "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+      },
+      "tests": [
+        {
+          "args": [
+            "total",
+            "2",
+            "10"
+          ],
+          "expected": "Some(25)\n"
+        },
+        {
+          "args": [
+            "total",
+            "10",
+            "10"
+          ],
+          "expected": "Some(104)\n"
+        }
+      ],
+      "contracts": [
+        {
+          "args": [
+            "total",
+            "0",
+            "10"
+          ],
+          "expected": "Some(0)\n"
+        },
+        {
+          "args": [
+            "total",
+            "18446744073709551615",
+            "2"
+          ],
+          "expected": "None\n"
+        },
+        {
+          "args": [
+            "currency"
+          ],
+          "expected": "EUR\n"
+        }
+      ],
+      "driver": "fn main() {\n    let args: Vec<String> = std::env::args().skip(1).collect();\n    match args[0].as_str() {\n        \"total\" => println!(\"{:?}\", subject::quote(args[1].parse().unwrap(), args[2].parse().unwrap())),\n        \"currency\" => println!(\"{}\", subject::currency()),\n        _ => std::process::exit(2),\n    }\n}\n"
+    },
+    {
+      "id": "contract_cleanup",
+      "shape": "contract_preserving_cleanup",
+      "instruction": "Simplify shipping to a single expression without changing zero-quantity behavior or overflow handling.",
+      "files": {
+        "src/lib.rs": "pub mod math;\npub fn quote(quantity: u64, unit_price: u64) -> Option<u64> {\n    math::subtotal(quantity, unit_price)?.checked_add(math::shipping(quantity))\n}\npub fn currency() -> &'static str { \"USD\" }\n",
+        "src/math.rs": "pub fn subtotal(quantity: u64, unit_price: u64) -> Option<u64> { quantity.checked_mul(unit_price) }\npub fn shipping(quantity: u64) -> u64 { if quantity == 0 { 0 } else { 5 } }\n"
+      },
+      "tests": [
+        {
+          "args": [
+            "total",
+            "2",
+            "10"
+          ],
+          "expected": "Some(25)\n"
+        }
+      ],
+      "contracts": [
+        {
+          "args": [
+            "total",
+            "0",
+            "10"
+          ],
+          "expected": "Some(0)\n"
+        },
+        {
+          "args": [
+            "total",
+            "18446744073709551615",
+            "2"
+          ],
+          "expected": "None\n"
+        }
+      ],
+      "driver": "fn main() {\n    let args: Vec<String> = std::env::args().skip(1).collect();\n    match args[0].as_str() {\n        \"total\" => println!(\"{:?}\", subject::quote(args[1].parse().unwrap(), args[2].parse().unwrap())),\n        \"currency\" => println!(\"{}\", subject::currency()),\n        _ => std::process::exit(2),\n    }\n}\n"
+    }
+  ]
+}

@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 
 /// Preferred slot in an otherwise empty compiled-pack registry. Existing
 /// vaults can assign another slot; use Vault::project_type_byte for the binding.
-pub const PROJECT_TYPE_BYTE: u8 = 107;
+pub const PROJECT_TYPE_BYTE: u8 = 103;
 const PACK: &str = "oneiron.project";
 const ROOT: &[u8] = b"project.root.v1";
 pub(super) const ROOM_PROJECT: &[u8] = b"project.room_owner.v1/";

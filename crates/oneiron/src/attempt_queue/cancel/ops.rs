@@ -59,6 +59,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = self.request_cancel_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -238,6 +239,7 @@ impl AttemptQueue<'_> {
             .attempt_records
             .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(LandingOutcome::Landing(record))
     }
 
@@ -297,6 +299,7 @@ impl AttemptQueue<'_> {
             .attempt_records
             .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
 
         let pressure = record.cancel_state.pressure;
         Ok(CancelRejectionOutcome {
@@ -351,6 +354,7 @@ impl AttemptQueue<'_> {
             .attempt_records
             .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(record)
     }
 
@@ -362,6 +366,7 @@ impl AttemptQueue<'_> {
         let mut wtxn = self.store.env.write_txn()?;
         let record = self.dial_landing_reserve_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
         Ok(record)
     }
 
@@ -486,6 +491,7 @@ impl AttemptQueue<'_> {
             .attempt_records
             .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
         wtxn.commit()?;
+        self.store.notify_attempt_observers();
 
         let remaining_units = record.cancel_state.reserve.remaining_units();
         Ok(LandingReserveSpendOutcome::Spent {

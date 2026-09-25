@@ -17,11 +17,11 @@ use crate::temporal::TimeRange;
 
 use super::brief::{
     SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,
-    optimize_brief,
+    optimize_brief, optimize_brief_bound_at,
 };
 use super::dials::{invalid, validate_text};
 use super::gate::SkillEditCycle;
-use super::selection::optimize_candidates;
+use super::selection::{affirm_candidates, optimize_candidates};
 use super::tier::{SkillTierVerdict, tier_verdict_in_txn};
 
 /// The [`PROVENANCE_BIRTH_KEY`] value stamped on a drafted proposal.
@@ -82,6 +82,8 @@ pub struct SkillOptimizeOutcome {
     /// Why this attempt did what it did, in the words of whoever decided:
     /// the selector's, or the author's own.
     pub rationale: String,
+    /// DEV-only win receipts supporting an explicit keep/no-op.
+    pub affirmed_receipts: Vec<String>,
 }
 
 /// Runs ONE `skill_optimize` attempt.
@@ -113,14 +115,43 @@ pub fn run_skill_optimize(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<SkillOptimizeOutcome> {
+    run_skill_optimize_bound(vault, attempt, author, occurred, learned_at, None)
+}
+
+/// An optimizer job with an explicit host-authenticated preference audience.
+/// The owner identity is checked before reading and again when landing a
+/// proposal. It grants no exception to the normal skill admission gate.
+pub fn run_skill_optimize_as(
+    vault: &Vault,
+    attempt: AttemptId,
+    author: &dyn SkillOptimizeAuthor,
+    occurred: TimeRange,
+    learned_at: u64,
+    owner: crate::write_envelope::WriteActor,
+) -> Result<SkillOptimizeOutcome> {
+    let txn = vault.store.env.read_txn()?;
+    vault.verify_owner_write_actor_in_txn(&txn, &owner)?;
+    drop(txn);
+    run_skill_optimize_bound(vault, attempt, author, occurred, learned_at, Some(owner))
+}
+
+fn run_skill_optimize_bound(
+    vault: &Vault,
+    attempt: AttemptId,
+    author: &dyn SkillOptimizeAuthor,
+    occurred: TimeRange,
+    learned_at: u64,
+    owner: Option<crate::write_envelope::WriteActor>,
+) -> Result<SkillOptimizeOutcome> {
     let Some(candidate) = optimize_candidates(vault)?.into_iter().next() else {
-        return Ok(SkillOptimizeOutcome {
-            skill: None,
-            proposal: None,
-            rationale: "no active skill is both optimizable and losing".to_owned(),
-        });
+        return affirm_healthy_skill(vault);
     };
-    let brief = optimize_brief(vault, &candidate)?;
+    let brief = optimize_brief_bound_at(
+        vault,
+        &candidate,
+        owner.map(crate::write_envelope::WriteActor::entity_ref),
+        learned_at,
+    )?;
     let (desc, rationale) = match author.draft(&brief)? {
         SkillEditDraft::Decline { rationale } => {
             validate_text(
@@ -132,6 +163,7 @@ pub fn run_skill_optimize(
                 skill: Some(candidate.skill),
                 proposal: None,
                 rationale,
+                affirmed_receipts: Vec::new(),
             });
         }
         SkillEditDraft::Edit { desc, rationale } => (desc, rationale),
@@ -169,8 +201,11 @@ pub fn run_skill_optimize(
     // all — a private label is exactly the free budget the cap exists to deny.
     let drafted_in = proven_cycle(vault, attempt)?;
     let authority = vault.dreamer_actor_for_attempt(attempt)?;
-    let proposal_id = EntityId::now();
+    let proposal_id = vault.store.clock.entity_id()?;
     vault.with_write_txn(|wtxn| {
+        if let Some(owner) = owner {
+            vault.verify_owner_write_actor_in_txn(wtxn, &owner)?;
+        }
         // Resolved at the WRITE door, not carried from the ranking: the
         // author ran outside this transaction, so the target may have been
         // superseded, quarantined or re-proposed in that window. A proposal
@@ -210,6 +245,12 @@ pub fn run_skill_optimize(
                 Value::from(crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND),
             ),
         ]);
+        if let Some(owner) = owner {
+            provenance.push((
+                Value::from("preferencePrincipal"),
+                Value::from(owner.entity_ref().to_hex()),
+            ));
+        }
         vault.put_skill_record_in_txn(wtxn, &proposal_id, &record, occurred, learned_at)?;
         Ok(())
     })?;
@@ -218,6 +259,34 @@ pub fn run_skill_optimize(
         skill: Some(candidate.skill),
         proposal: Some(proposal_id),
         rationale,
+        affirmed_receipts: Vec::new(),
+    })
+}
+
+/// Healthy skills do not buy an LLM call or a revision. They still produce a
+/// named no-op with the receipts that support keeping the current instructions.
+fn affirm_healthy_skill(vault: &Vault) -> Result<SkillOptimizeOutcome> {
+    let Some(candidate) = affirm_candidates(vault)?.into_iter().next() else {
+        return Ok(SkillOptimizeOutcome {
+            skill: None,
+            proposal: None,
+            rationale: "skill_optimize.no_eligible_evidence".into(),
+            affirmed_receipts: Vec::new(),
+        });
+    };
+    let brief = optimize_brief(vault, &candidate)?;
+    let txn = vault.store.env.read_txn()?;
+    let affirmed_receipts =
+        crate::skill_reliability::attributed_outcome_results(vault, &txn, &candidate.skill)?
+            .into_iter()
+            .filter(|(receipt, win)| *win && brief.cited_receipts.contains(receipt))
+            .map(|(receipt, _)| receipt)
+            .collect();
+    Ok(SkillOptimizeOutcome {
+        skill: Some(candidate.skill),
+        proposal: None,
+        rationale: "skill_optimize.keep_healthy".into(),
+        affirmed_receipts,
     })
 }
 

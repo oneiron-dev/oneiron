@@ -355,11 +355,14 @@ fn artifact_ref_round_trip_is_canonical() {
 fn row_starts_with_schema_version() {
     let record = sample_record();
     let bytes = encode_build_cache_row(&record).expect("encode");
-    assert_eq!(bytes[0], 1);
+    assert_eq!(bytes[0], 2);
     let decoded = decode_build_cache_row(&record.action_key, &bytes).expect("decode");
     assert_eq!(decoded, record);
     let key = build_cache_key(&record.action_key);
-    assert_eq!(&key[..BUILD_CACHE_KEY_PREFIX_V1.len()], b"build_cache:v1:");
+    assert_eq!(
+        &key[..BUILD_CACHE_KEY_PREFIX_V1.len()],
+        b"build_cache:reapi:v2:"
+    );
     assert_eq!(
         &key[BUILD_CACHE_KEY_PREFIX_V1.len()..],
         record.action_key.as_bytes()
@@ -370,10 +373,10 @@ fn row_starts_with_schema_version() {
 fn unknown_schema_version_is_typed() {
     let record = sample_record();
     let mut bytes = encode_build_cache_row(&record).expect("encode");
-    bytes[0] = 2;
+    bytes[0] = 3;
     assert!(matches!(
         decode_build_cache_row(&record.action_key, &bytes),
-        Err(BuildCacheError::UnknownSchemaVersion { found: 2 })
+        Err(BuildCacheError::UnknownSchemaVersion { found: 3 })
     ));
 }
 
@@ -522,40 +525,16 @@ fn taint_after_insert_tombstones_get_and_put() {
 
 #[test]
 fn action_key_encoding_golden_vector() {
-    let action = BuildAction::new(
-        FrozenBuildCommand::new(vec!["x".into()], [("A", "b")]).expect("command"),
-        BuildInputRoot {
-            repo_ref: RepoRef::LocalFolder {
-                path: "r".into(),
-                commit: "0".repeat(40),
-            },
-            fork_hash: [0x11; 32],
-            extra_inputs: vec![ExtraInputDigest::new([0x22; 32])],
-        },
-        BuildPlatform::new([("p", "v")]).expect("platform"),
-        vec![path("o")],
-    )
-    .expect("action");
-    // Hand-derived grammar, not encoder-captured bytes. RepoRef is 48 bytes.
-    let expected = [
-        0x01, 0x01, 0x02, 0, 0, 0, 1, 0, 0, 0, 1, b'x', 0x03, 0, 0, 0, 1, 0, 0, 0, 1, b'A', 0, 0,
-        0, 1, b'b', 0x04, 0, 0, 0, 48, b'l', b'o', b'c', b'a', b'l', b':', b'r', b'#', b'0', b'0',
-        b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0',
-        b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0',
-        b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', 0x05, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
-        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
-        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x06, 0, 0, 0, 1, 0x22,
-        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
-        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
-        0x22, 0x07, 0, 0, 0, 1, 0, 0, 0, 1, b'p', 0, 0, 0, 1, b'v', 0x08, 0, 0, 0, 1, 0, 0, 0, 1,
-        b'o',
-    ];
-    let mut bytes = Vec::new();
-    encode_action_v1(&mut bytes, &action).expect("encode");
-    assert_eq!(bytes, expected);
+    let mut action = action();
+    action.command =
+        FrozenBuildCommand::new(vec!["true".into()], BTreeMap::<String, String>::new()).unwrap();
+    action.platform = BuildPlatform::new(BTreeMap::<String, String>::new()).unwrap();
+    action.declared_outputs.clear();
+    action = action.with_reapi_input_root(ReapiDigest::of(b""));
+    assert_eq!(action.reapi_command_bytes(), b"\x0a\x04true");
     assert_eq!(
-        ActionKey::derive(&action).expect("key").to_hex(),
-        "ddefb27ce842230e9d925d84b4e07252e74d57f59c8b2d2b4d8800b012568745"
+        action.action_key().unwrap().to_hex(),
+        "054435d0a7573cc13cb737477406ab0e34801a7563531631746e21edead1a3e8"
     );
 }
 
@@ -664,7 +643,7 @@ fn malformed_rows_fail_typed_including_integer_overflow() {
     let valid = encode_build_cache_row(&record).expect("encode");
     let mut trailing = valid.clone();
     trailing.push(0);
-    let mut malformed = vec![vec![], vec![1], vec![1, 0xc1], trailing];
+    let mut malformed = vec![vec![], vec![2], vec![2, 0xc1], trailing];
     for end in 2..valid.len() {
         malformed.push(valid[..end].to_vec());
     }
@@ -690,7 +669,7 @@ fn malformed_rows_fail_typed_including_integer_overflow() {
             panic!("array");
         };
         fields[index] = value;
-        let mut bytes = vec![1];
+        let mut bytes = vec![2];
         rmpv::encode::write_value(&mut bytes, &body).expect("encode malformed integer");
         malformed.push(bytes);
     }
@@ -728,4 +707,51 @@ fn deleted_artifact_tombstones_get_and_put_without_changing_row() {
         Err(BuildCacheError::ArtifactUnavailable { .. })
     ));
     assert_eq!(raw_row(&vault, &key).expect("row"), before);
+}
+
+#[test]
+fn account_members_share_hits_with_provenance_but_other_tenants_refuse() {
+    let (_a, a) = temp_vault();
+    let (_b, b) = temp_vault();
+    let (_c, account) = temp_vault();
+    for vault in [&a, &b, &account] {
+        BuildCache::bind_account(vault, "account-A").unwrap();
+    }
+    let first = BuildCache::for_account(&a, &account, "account-A").unwrap();
+    let second = BuildCache::for_account(&b, &account, "account-A").unwrap();
+    let output = result(artifact(first.artifact_vault(), b"shared"));
+    first.put(&action(), output.clone()).unwrap();
+    assert_eq!(second.get(&key(&action())).unwrap().unwrap().result, output);
+    assert!(matches!(
+        BuildCache::for_account(&b, &account, "account-B"),
+        Err(BuildCacheError::AccountMismatch)
+    ));
+    assert!(matches!(
+        BuildCache::bind_account(&b, "account-B"),
+        Err(BuildCacheError::AccountMismatch)
+    ));
+}
+#[test]
+fn repeated_build_and_verify_legs_do_not_execute_again() {
+    use crate::checkout::CheckoutTaskClass;
+    let (_d, vault) = temp_vault();
+    let cache = BuildCache::new(&vault);
+    let first = cache
+        .run_leg(CheckoutTaskClass::Build, &action(), |store| {
+            Ok(result(artifact(store, b"built")))
+        })
+        .unwrap();
+    assert!(!first.receipt.cache_hit);
+    let again = cache
+        .run_leg(CheckoutTaskClass::Verify, &action(), |_| panic!("must hit"))
+        .unwrap();
+    assert!(again.receipt.cache_hit);
+    assert_eq!(again.cached, first.cached);
+    assert!(
+        cache
+            .run_leg(CheckoutTaskClass::Effect, &action(), |_| panic!(
+                "not idempotent"
+            ))
+            .is_err()
+    );
 }

@@ -14,7 +14,7 @@ fn onboarding_replay_is_idempotent() -> Result<()> {
         type_count(&vault, ENTITY_TYPE_AGENT_DEF),
         type_count(&vault, ENTITY_TYPE_PERSON),
         type_count(&vault, ENTITY_TYPE_FEDERATION_GRANT),
-        type_count(&vault, ENTITY_TYPE_COMPANION_REGISTER),
+        type_count(&vault, ENTITY_TYPE_FACET),
         type_count(&vault, ENTITY_TYPE_ACCESS_GRANT),
         type_count(&vault, ENTITY_TYPE_CHANNEL_IDENTITY),
     ];
@@ -27,7 +27,7 @@ fn onboarding_replay_is_idempotent() -> Result<()> {
             type_count(&vault, ENTITY_TYPE_AGENT_DEF),
             type_count(&vault, ENTITY_TYPE_PERSON),
             type_count(&vault, ENTITY_TYPE_FEDERATION_GRANT),
-            type_count(&vault, ENTITY_TYPE_COMPANION_REGISTER),
+            type_count(&vault, ENTITY_TYPE_FACET),
             type_count(&vault, ENTITY_TYPE_ACCESS_GRANT),
             type_count(&vault, ENTITY_TYPE_CHANNEL_IDENTITY),
         ]
@@ -52,7 +52,7 @@ fn crash_resume_finishes_without_duplicates() -> Result<()> {
             type_count(vault, ENTITY_TYPE_AGENT_DEF),
             type_count(vault, ENTITY_TYPE_PERSON),
             type_count(vault, ENTITY_TYPE_FEDERATION_GRANT),
-            type_count(vault, ENTITY_TYPE_COMPANION_REGISTER),
+            type_count(vault, ENTITY_TYPE_FACET),
             type_count(vault, ENTITY_TYPE_ACCESS_GRANT),
             type_count(vault, ENTITY_TYPE_CHANNEL_IDENTITY),
         ]
@@ -126,7 +126,7 @@ fn mailbox_replay_is_incomplete_without_duplicates_and_pins_starting_mode() -> R
             ENTITY_TYPE_PERSON,
             ENTITY_TYPE_AGENT_DEF,
             ENTITY_TYPE_FEDERATION_GRANT,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             ENTITY_TYPE_ACCESS_GRANT,
             ENTITY_TYPE_CHANNEL_IDENTITY,
             crate::registry::ENTITY_TYPE_CLAIM,
@@ -191,7 +191,7 @@ fn every_completed_step_resumes_with_identical_stable_refs() -> Result<()> {
             ENTITY_TYPE_PERSON,
             ENTITY_TYPE_AGENT_DEF,
             ENTITY_TYPE_FEDERATION_GRANT,
-            ENTITY_TYPE_COMPANION_REGISTER,
+            ENTITY_TYPE_FACET,
             ENTITY_TYPE_ACCESS_GRANT,
             crate::registry::ENTITY_TYPE_CLAIM,
         ]
@@ -206,7 +206,7 @@ fn every_completed_step_resumes_with_identical_stable_refs() -> Result<()> {
                 ENTITY_TYPE_PERSON,
                 ENTITY_TYPE_AGENT_DEF,
                 ENTITY_TYPE_FEDERATION_GRANT,
-                ENTITY_TYPE_COMPANION_REGISTER,
+                ENTITY_TYPE_FACET,
                 ENTITY_TYPE_ACCESS_GRANT,
                 crate::registry::ENTITY_TYPE_CLAIM
             ]

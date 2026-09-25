@@ -11,11 +11,16 @@ mod conn_state;
 mod connection;
 mod documents;
 mod ephemeral;
+mod federation;
 mod hello;
+mod lfs_chunks;
+#[cfg(test)]
+mod note_socket_tests;
 mod transport;
 mod window_sync;
 
 pub(crate) use self::connection::ws_routes;
+pub(crate) use self::window_sync::selector_grant_scope;
 
 #[cfg(test)]
 mod tests;
@@ -45,8 +50,11 @@ use futures_util::StreamExt;
 #[cfg(test)]
 use loro::VersionVector;
 #[cfg(test)]
-use oneiron::sync::{AllowBlock, FederationQuotaConfig, WindowKey};
+use oneiron::sync::WindowKey;
 #[cfg(test)]
 use std::sync::Arc;
 #[cfg(test)]
 use std::task::Poll;
+
+#[cfg(test)]
+mod message_stream_tests;

@@ -782,3 +782,85 @@ fn session_apply_validates_claim_bodies_before_staging() -> Result<()> {
     session.close()?;
     Ok(())
 }
+
+fn note_under_default(vault: &Vault) -> Result<(EntityId, EntityId)> {
+    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
+    let note = vault
+        .create_note(
+            "research",
+            "born",
+            WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .expect("NOTE birth");
+    Ok((note, vault.default_facet()?))
+}
+
+#[test]
+fn a_second_facet_stamp_on_a_live_note_is_refused() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let (note, _) = note_under_default(&vault)?;
+    let facet = EntityId::now();
+    put_typed(&vault, &facet, ENTITY_TYPE_FACET)?;
+    let err = vault
+        .batch()
+        .edge(&note, EdgeKind::FacetOf, &facet, 1.0)
+        .commit()
+        .expect_err("a restamp moves the NOTE's facet");
+
+    assert_eq!(err.kind(), ErrorKind::FacetStampImmutable);
+    Ok(())
+}
+
+#[test]
+fn deleting_a_live_notes_facet_stamp_is_refused() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let (note, default) = note_under_default(&vault)?;
+    let err = vault
+        .batch()
+        .delete_edge(&note, EdgeKind::FacetOf, &default)
+        .commit()
+        .expect_err("a live NOTE keeps its stamp");
+
+    assert_eq!(err.kind(), ErrorKind::FacetStampImmutable);
+    Ok(())
+}
+
+#[test]
+fn a_claim_put_that_changes_its_facet_is_refused() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let default = vault.default_facet()?;
+    let facet = EntityId::now();
+    put_typed(&vault, &facet, ENTITY_TYPE_FACET)?;
+    let claim = EntityId::now();
+    let subject = EntityId::now();
+    put_typed(&vault, &subject, ENTITY_TYPE_PERSON)?;
+    let mut body = ClaimBody::new(
+        "facet.restamp_probe",
+        ClaimSubject::Entity(subject),
+        Value::from("v"),
+        0.9,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    body.scope_facet = default;
+    vault.put_entity(
+        &claim,
+        ENTITY_TYPE_CLAIM,
+        test_time_range(1, 1),
+        1,
+        &crate::claim::encode_claim_body(&body)?,
+    )?;
+    body.scope_facet = facet;
+    let err = vault
+        .put_entity(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            1,
+            &crate::claim::encode_claim_body(&body)?,
+        )
+        .expect_err("a claim's facet is set at birth");
+
+    assert_eq!(err.kind(), ErrorKind::FacetStampImmutable);
+    Ok(())
+}

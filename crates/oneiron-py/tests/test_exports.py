@@ -6,23 +6,19 @@ promising to keep it working.
 """
 
 import inspect
+import pathlib
+import json
 
 import oneiron
 
 PUBLIC_EXPORTS = {"Oneiron", "OneironError"}
 
-# The four calls of the canonical quickstart, plus the two constructors and the
-# actor rebind. Compared as a SET so an accidental extra public method is a
-# failing test rather than a silent surface expansion.
-PUBLIC_METHODS = {
-    "open",
-    "connect",
-    "as_actor",
-    "witness",
-    "claim_upsert",
-    "recall",
-    "receipts",
-}
+# The facade catalog has top-level verbs and generated tasks/rooms families.
+# Check both projections exactly, without flattening away dotted names.
+_manifest = json.loads((pathlib.Path(__file__).resolve().parents[3] / "scripts/sdk/agent-verbs.json").read_text())
+_VERBS = [row["name"] for row in _manifest["verbs"] if row.get("context", "memory") == "memory"]
+assert _VERBS, "SDK manifest is empty"
+PUBLIC_METHODS = {"open", "connect", "pair", "as_actor", *(verb for verb in _VERBS if "." not in verb)}
 
 
 def test_all_is_the_closed_catalog() -> None:
@@ -44,6 +40,17 @@ def test_oneiron_has_exactly_the_declared_verbs() -> None:
         if not name.startswith("_")
     }
     assert public == PUBLIC_METHODS
+    # Construction wraps a handle but does not touch the native backend.
+    instance = oneiron.Oneiron(object())
+    families = {verb.split(".")[0] for verb in _VERBS if "." in verb}
+    assert {name for name in vars(instance) if not name.startswith("_")} == families
+    for family in families:
+        methods = {
+            name
+            for name, _ in inspect.getmembers(getattr(instance, family), callable)
+            if not name.startswith("_")
+        }
+        assert methods == {verb.split(".")[1] for verb in _VERBS if verb.startswith(family + ".")}
 
 
 def test_error_carries_the_contract_fields() -> None:

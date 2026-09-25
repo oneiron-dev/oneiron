@@ -892,7 +892,7 @@ fn put_raw_claim(vault: &Vault, id: EntityId, body: &ClaimBody) {
 
 fn voice_send_manifest(actor_ref: &str) -> Vec<u8> {
     let entries = vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("cmt3-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (
@@ -925,6 +925,13 @@ fn voice_send_manifest(actor_ref: &str) -> Vec<u8> {
                 ),
                 (
                     Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::effect_preset(),
+                    )
+                    .expect("scope fixture"),
+                ),
+                (
+                    Value::from("selectors"),
                     Value::Map(vec![(Value::from("channel"), Value::from(VOICE_CHANNEL))]),
                 ),
             ])]),

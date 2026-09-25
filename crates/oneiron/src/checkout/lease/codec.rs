@@ -45,9 +45,9 @@ pub(super) fn load_tombstone_in_txn(
         None => Ok(None),
     }
 }
-pub(super) fn load_act_in_txn(
+pub(crate) fn load_act_in_txn(
     vault: &Vault,
-    t: &mut heed::RwTxn<'_>,
+    t: &heed::RoTxn<'_>,
     id: CheckoutId,
 ) -> CheckoutResult<Option<CheckoutLeaseAct>> {
     match vault.store.vault_meta.get(t, &lease_key(id))? {

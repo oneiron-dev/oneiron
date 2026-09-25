@@ -5,7 +5,6 @@ use uuid::Uuid;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::unix_seconds_now;
 
 use super::super::erase::sweep_extras;
 use super::super::gate::{
@@ -14,7 +13,7 @@ use super::super::gate::{
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::rendezvous::{
-    DeleteRendezvous, maybe_fail_after_tombstone_before_purge, signal_after_header_read,
+    DeleteRendezvous, maybe_fail_after_tombstone_before_purge, signal_after_delete_probe,
     signal_delete_rendezvous,
 };
 use super::super::tombstone::{
@@ -38,7 +37,9 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        self.delete_entity_with_reason_impl(id, reason, None)
+        let outcome = self.delete_entity_with_reason_impl(id, reason, None)?;
+        while self.collect_lfs_garbage(32)? != 0 {}
+        Ok(outcome)
     }
 
     /// Facade delete seam carrying an owner gate evaluated before TXN1.
@@ -53,7 +54,9 @@ impl Vault {
         reason: DeleteReason,
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
-        self.delete_entity_with_reason_impl(id, reason, Some(gate))
+        let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate))?;
+        while self.collect_lfs_garbage(32)? != 0 {}
+        Ok(outcome)
     }
 
     fn delete_entity_with_reason_impl(
@@ -62,6 +65,10 @@ impl Vault {
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
     ) -> Result<DeleteEntityOutcome> {
+        {
+            let rtxn = self.store.env.read_txn()?;
+            crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
+        }
         if reason == DeleteReason::ArchivedByCleanup {
             return Err(Error::InvariantViolation(
                 "cleanup archives require the cleanup proposal/decision door",
@@ -72,7 +79,12 @@ impl Vault {
             &self.store.env.read_txn()?,
             id,
         )?;
-        let requested_at = unix_seconds_now();
+        {
+            let txn = self.store.env.read_txn()?;
+            crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
+            self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
+        }
+        let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());
         };
@@ -87,13 +99,13 @@ impl Vault {
         // raced-delete harness recv()s here so the eraser commits AFTER this
         // header read, forcing the headerful leg every run. No-op in
         // production.
-        signal_after_header_read(self);
+        signal_after_delete_probe(self);
         // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
         // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
         // ONE-1149: minted only AFTER the header read proves there is
         // something to erase — a delete that finds nothing must never mint a
         // request id (the headerless leg mints after its own scope probe).
-        let request_uuid = Uuid::now_v7();
+        let request_uuid = Uuid::from_bytes(self.store.clock.ulid()?);
 
         let tombstone = TombstoneValueV2 {
             reason: reason.into(),
@@ -230,7 +242,7 @@ impl Vault {
             id,
             gate_decision.as_ref().map(|decision| decision.decision_id),
         );
-        let tombstone_complete_at = unix_seconds_now();
+        let tombstone_complete_at = self.store.clock.now_recorded_at();
 
         // Is there a linearization point BEHIND us? `crdt_persisted` says a
         // publish commit happened; when it did not (the sync-disabled build's
@@ -268,6 +280,7 @@ impl Vault {
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
             let scrub_is_the_linearization_point = !authority_settled;
+            crate::note::erase_citations_in_txn(self, &mut wtxn, id)?;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
@@ -325,7 +338,7 @@ impl Vault {
                 authority_settled = true;
             }
             wtxn.commit()?;
-            unix_seconds_now()
+            self.store.clock.now_recorded_at()
         } else {
             tombstone_complete_at
         };
@@ -338,7 +351,7 @@ impl Vault {
             gate_decision.as_ref().map(|decision| decision.decision_id),
         );
 
-        let receipt_id = EntityId::now();
+        let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
         // The purge txn: the one that actually tears. It re-checks authority
@@ -437,11 +450,14 @@ impl Vault {
             tombstone.reason,
         )?;
 
-        let hard_purge_complete_at = unix_seconds_now();
+        let hard_purge_complete_at = self.store.clock.now_recorded_at();
         let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
             &mut wtxn,
             &receipt_id,
             RedactionReceiptInput {
+                actor_principal: gate
+                    .as_ref()
+                    .map(super::super::gate::GatedDeletion::actor_principal),
                 request_id: request_uuid.to_string(),
                 scope,
                 reason,

@@ -75,13 +75,20 @@ fn policy_manifest(actor_ref: &str, channel: &str, verbs: &[&str]) -> Vec<u8> {
                 ),
                 (
                     Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::effect_preset(),
+                    )
+                    .expect("scope fixture"),
+                ),
+                (
+                    Value::from("selectors"),
                     Value::Map(vec![(Value::from("channel"), Value::from(channel))]),
                 ),
             ])
         })
         .collect::<Vec<_>>();
     let entries = vec![
-        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("schema_version"), Value::from("1.2")),
         (Value::from("pack_id"), Value::from("one-1814-test")),
         (Value::from("pack_version"), Value::from("v1")),
         (
@@ -425,6 +432,7 @@ fn context<'a>(
 
 fn grant_with(scope: StandingOutboundGrantScope) -> StandingOutboundGrant {
     StandingOutboundGrant {
+        authority_scope: crate::federation::scope_codec::effect_preset(),
         principal_ref: "owner".to_owned(),
         origin_component_id: "one-1814".to_owned(),
         origin_action_id: "publish_booking_page".to_owned(),

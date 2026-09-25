@@ -95,7 +95,7 @@ pub(super) fn restore_marker_is_fold_admissible(
     let Some(entry) = by_hash.get(&hash) else {
         return false;
     };
-    if !matches!(entry.op, AuthorityOp::RecoveryReboot { .. }) {
+    if !matches!(entry.op, AuthorityOp::ReRoot { .. }) {
         return false;
     }
     entry_folds_on_available_ancestry(hash, by_hash, ancestors, context)

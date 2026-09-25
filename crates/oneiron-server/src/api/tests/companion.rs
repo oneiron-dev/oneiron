@@ -805,7 +805,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         "subject": { "kind": "persona", "persona_ref": persona_ref },
         "value": { "style": "neutral @Oneiron" },
         "provenance": provenance.clone(),
-        "export": "portable"
+        "sensitivity": "public"
     });
     let personal_record = json!({
         "kind": "persona",
@@ -813,7 +813,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         "subject": { "kind": "persona", "persona_ref": persona_ref },
         "value": { "note": "private per-person companion note" },
         "provenance": provenance.clone(),
-        "export": "local_only"
+        "sensitivity": "restricted"
     });
     let shared_record = json!({
         "kind": "relationship",
@@ -827,7 +827,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         },
         "value": { "note": "shared-vault boundary note" },
         "provenance": provenance.clone(),
-        "export": "shared_vault"
+        "sensitivity": "private"
     });
 
     let (status, body) = route_json(
@@ -871,8 +871,10 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         assert_eq!(body["record"]["lifecycle"], Value::from("active"));
     }
 
-    let mut shared_scope_portable_export = shared_record.clone();
-    shared_scope_portable_export["export"] = Value::from("portable");
+    // The retired export-classification spellings are not sensitivity rungs:
+    // they fail closed on the sensitivity door, never resolving to a rung.
+    let mut shared_scope_bad_sensitivity = shared_record.clone();
+    shared_scope_bad_sensitivity["sensitivity"] = Value::from("portable");
     let (status, body) = route_json(
         server.clone(),
         core_request(
@@ -881,7 +883,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
             "companion:register:write",
             Some(&json!({
                 "id": seeded_test_entity_id(0x1219_0009).to_hex(),
-                "record": shared_scope_portable_export
+                "record": shared_scope_bad_sensitivity
             })),
         ),
     )
@@ -890,11 +892,11 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
     assert_error_envelope(&body, "BAD_REQUEST");
     assert_eq!(
         error_envelope(&body)["details"]["field"],
-        Value::from("record.export")
+        Value::from("record.sensitivity")
     );
 
-    let mut neutral_scope_shared_export = neutral_record.clone();
-    neutral_scope_shared_export["export"] = Value::from("shared_vault");
+    let mut neutral_scope_bad_sensitivity = neutral_record.clone();
+    neutral_scope_bad_sensitivity["sensitivity"] = Value::from("shared_vault");
     let (status, body) = route_json(
         server.clone(),
         core_request(
@@ -903,7 +905,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
             "companion:register:write",
             Some(&json!({
                 "id": seeded_test_entity_id(0x1219_000A).to_hex(),
-                "record": neutral_scope_shared_export
+                "record": neutral_scope_bad_sensitivity
             })),
         ),
     )
@@ -912,7 +914,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
     assert_error_envelope(&body, "BAD_REQUEST");
     assert_eq!(
         error_envelope(&body)["details"]["field"],
-        Value::from("record.export")
+        Value::from("record.sensitivity")
     );
 
     let mut retired_create_record = personal_record.clone();
@@ -1006,7 +1008,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         "subject": { "kind": "persona", "persona_ref": persona_ref },
         "value": { "note": "updated private per-person companion note" },
         "provenance": body["record"]["provenance"].clone(),
-        "export": "local_only"
+        "sensitivity": "restricted"
     });
     let update_request = json!({ "learned_at": 34_u64, "record": updated_record });
     let (status, body) = route_json(
@@ -1071,7 +1073,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
             "subject": { "kind": "persona", "persona_ref": persona_ref },
             "value": { "note": "reactivated private note" },
             "provenance": body["record"]["provenance"].clone(),
-            "export": "local_only"
+            "sensitivity": "restricted"
         }
     });
     let (status, body) = route_json(
@@ -1121,7 +1123,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         },
         "value": { "note": ending_private_note },
         "provenance": provenance.clone(),
-        "export": "local_only"
+        "sensitivity": "restricted"
     });
     let (status, _body) = route_json(
         server.clone(),

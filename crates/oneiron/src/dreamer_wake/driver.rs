@@ -115,6 +115,10 @@ pub struct DreamerWakeDriver<'a> {
     pub(super) wrap_notice_fired: bool,
     pub(super) finalize_entered: bool,
     pub(super) steering: Vec<BudgetSteeringSignal>,
+    tournament_candidate: Option<(
+        crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin,
+        DreamerClaimAuthoringAdmission,
+    )>,
     #[cfg(feature = "sync")]
     pub(super) progress: Option<WakeProgressLane<'a>>,
 }
@@ -133,9 +137,48 @@ impl<'a> DreamerWakeDriver<'a> {
             wrap_notice_fired: false,
             finalize_entered: false,
             steering: Vec::new(),
+            tournament_candidate: None,
             #[cfg(feature = "sync")]
             progress: None,
         }
+    }
+
+    /// Loads the evaluated configuration and fresh per-claim metadata. The
+    /// configuration derives both the pin and admission axes; a caller cannot
+    /// attach an unrelated admission policy to a promoted pin.
+    pub fn with_tournament_candidate(
+        mut self,
+        config: &crate::autoreason_campaign::CampaignConfig,
+        claim: crate::dreamer_runner::DreamerTournamentClaim,
+    ) -> Result<Self> {
+        let strategy =
+            crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin::from_campaign(config)
+                .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+        let admission = config
+            .tournament_admission(claim)
+            .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+        self.tournament_candidate = Some((strategy, admission));
+        self.selected_claim_authoring()?;
+        Ok(self)
+    }
+
+    fn selected_claim_authoring(&self) -> Result<DreamerClaimAuthoringAdmission> {
+        let Some(default) =
+            crate::autoreason_campaign::beam_promotion::default_strategy(self.vault)?
+        else {
+            return Ok(DreamerClaimAuthoringAdmission::single_pass());
+        };
+        let Some((pin, candidate)) = &self.tournament_candidate else {
+            return Err(crate::Error::InvalidConfig(
+                "promoted authoring strategy is not loaded by this wake driver".into(),
+            ));
+        };
+        if *pin != default {
+            return Err(crate::Error::InvalidConfig(
+                "loaded authoring candidate does not match the promoted default".into(),
+            ));
+        }
+        Ok(candidate.clone())
     }
 
     /// Configures the wake-budget counter for legibility and the 80% wrap
@@ -212,6 +255,7 @@ impl<'a> DreamerWakeDriver<'a> {
         // no queue row to be admitted from. It rides the wake pass itself —
         // ordinary Dreamer maintenance over the synced TASK fact, before any
         // attempt is admitted and outside the budget/lease loop entirely.
+        crate::llm::resume_peer_result_steps(self.vault, input.now.saturating_mul(1_000))?;
         crate::human_task::run_human_followups_on_wake(self.vault, input.now)?;
 
         let mut report = WakePassReport {
@@ -269,7 +313,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     budget_total_units: input.budget_total_units,
                     reserve_units: input.reserve_units,
                     started_milestone: self
-                        .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                        .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
                 })?
             } else {
                 DreamerAdmissionOutcome::Empty
@@ -283,7 +327,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         budget_total_units: input.budget_total_units,
                         reserve_units: input.reserve_units,
                         started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
                     })?
                 }
                 outcome => outcome,
@@ -297,7 +341,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         budget_total_units: input.budget_total_units,
                         reserve_units: input.reserve_units,
                         started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
                     })?
                 }
                 outcome => outcome,
@@ -314,7 +358,7 @@ impl<'a> DreamerWakeDriver<'a> {
                             scope: input.scope,
                             local_node_id: input.local_node_id,
                             claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
-                            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+                            claim_authoring: self.selected_claim_authoring()?,
                             admission: AdmitDreamerAttempt {
                                 lease_owner: input.lease_owner.clone(),
                                 now: input.now,
@@ -322,7 +366,7 @@ impl<'a> DreamerWakeDriver<'a> {
                                 budget_total_units: input.budget_total_units,
                                 reserve_units: input.reserve_units,
                                 started_milestone: self
-                                    .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                                    .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
                             },
                         },
                     )? {

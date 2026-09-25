@@ -67,6 +67,7 @@ pub(super) fn claim_input_to_engine(input: &NapiClaimInput) -> Result<ClaimInput
         confidence: input.confidence as f32,
         source: input.source.clone(),
         world_ref: input.world_ref.clone(),
+        relationship_ref: input.relationship_ref.clone(),
         scope: input.scope.clone(),
         valid_from: claim_timestamp(input.valid_from, "valid_from")?,
         valid_to: claim_timestamp(input.valid_to, "valid_to")?,
@@ -89,6 +90,7 @@ mod tests {
             confidence: 1.0,
             source: "user_stated".to_owned(),
             world_ref: None,
+            relationship_ref: None,
             scope: None,
             valid_from: timestamps[0],
             valid_to: timestamps[1],
@@ -154,6 +156,19 @@ mod tests {
         let boundary = limit_to_engine(1_001.0).expect_err("shared cap preserved");
         assert_eq!(boundary.message, shared.message);
         assert_eq!(boundary.suggestions, shared.suggestions);
+    }
+
+    #[test]
+    fn claim_relationship_scope_survives_napi_conversion() {
+        for relationship_ref in [None, Some("22222222222222222222222222222222".to_owned())] {
+            let mut input = claim([None; 4]);
+            input.relationship_ref = relationship_ref.clone();
+            input.world_ref = Some("33333333333333333333333333333333".to_owned());
+            let converted = claim_input_to_engine(&input).expect("claim converts");
+            assert_eq!(converted.relationship_ref, relationship_ref);
+            assert_eq!(converted.world_ref, input.world_ref);
+            assert_eq!(converted.subject_ref, input.subject_ref);
+        }
     }
 
     #[test]

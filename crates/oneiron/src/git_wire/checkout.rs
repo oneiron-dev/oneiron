@@ -80,10 +80,14 @@ impl CheckoutRepoOps for GitWire<'_> {
     fn materialize(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<()> {
         let repo = self.checkout_repo(lease)?;
         let commit = repo.pinned_commit()?;
+        self.preflight_checkout_remote(&repo)?;
         let handle = checkout_handle_dir_for(&self.process_env, &repo, lease);
         let tree = handle.join("tree");
         if !self.claim_checkout_handle(&repo, &handle)? {
-            return verify_checkout_head(self, &repo, &tree, &commit);
+            verify_checkout_head(self, &repo, &tree, &commit)?;
+            return self
+                .configure_checkout_remote(&repo, &tree, lease)
+                .map_err(CheckoutError::from);
         }
         // The handle was created exclusively by this call, so it is ours to
         // withdraw if the checkout itself fails; leaving it behind would turn a
@@ -92,7 +96,9 @@ impl CheckoutRepoOps for GitWire<'_> {
             let _ = fs::remove_dir_all(&handle);
             return Err(CheckoutError::from(error));
         }
-        verify_checkout_head(self, &repo, &tree, &commit)
+        verify_checkout_head(self, &repo, &tree, &commit)?;
+        self.configure_checkout_remote(&repo, &tree, lease)
+            .map_err(CheckoutError::from)
     }
 
     /// Observes the checkout without mutating it: registration is proven, no

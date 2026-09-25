@@ -31,15 +31,12 @@ pub(in crate::authority) fn entry_waits_on_unresolved_equivocation(
                     .any(|signature| signature.public_key == *fork_key)
                 || matches!(&entry.op, AuthorityOp::RevokeDevice { revoked_key } if revoked_key == fork_key)
                 || (*fork_seq < entry.seq
-                    && recovery_reboot_is_entangled_with_fork(entry, fork_key))
+                    && re_root_is_entangled_with_fork(entry, fork_key))
         })
 }
 
-fn recovery_reboot_is_entangled_with_fork(
-    entry: &AuthorityLogEntry,
-    fork_key: &AuthorityKey,
-) -> bool {
-    if !matches!(&entry.op, AuthorityOp::RecoveryReboot { .. }) {
+fn re_root_is_entangled_with_fork(entry: &AuthorityLogEntry, fork_key: &AuthorityKey) -> bool {
+    if !matches!(&entry.op, AuthorityOp::ReRoot { .. }) {
         return false;
     }
     // Resolve earlier groups involving a reboot participant first so
@@ -118,7 +115,12 @@ pub(in crate::authority) fn revocation_bypass_states(
     pending: &BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
 ) -> Option<BTreeMap<AuthorityEntryHash, FoldState>> {
-    if !matches!(entry.op, AuthorityOp::RevokeActor { .. }) {
+    if !matches!(
+        entry.op,
+        AuthorityOp::RevokeActor { .. }
+            | AuthorityOp::SlipRevoke { .. }
+            | AuthorityOp::SlipConsume { .. }
+    ) {
         return None;
     }
     let mut substitutes = BTreeMap::new();

@@ -158,7 +158,11 @@ fn generic_predicate_cannot_disguise_an_owned_claim_id_overwrite() -> Result<()>
             let err = generic_write(&vault, door, &id, &body).expect_err("old id is owned");
             assert_eq!(
                 err.kind(),
-                ErrorKind::ReservedPredicate,
+                if matches!(door, Door::CodeRunCandidate) {
+                    ErrorKind::ActorLacksClaimAuthority
+                } else {
+                    ErrorKind::ReservedPredicate
+                },
                 "{door:?} {predicate}"
             );
             assert_eq!(vault.get(&id)?, before);

@@ -313,7 +313,13 @@ fn plain_edge_reput_on_provenanced_edge_rejects_and_routes() -> Result<()> {
     let orphan = EntityId::now();
     let err = vault
         .batch()
-        .put(&orphan, 4, test_time_range(1, 1), 1, b"rider")
+        .put(
+            &orphan,
+            crate::registry::ENTITY_TYPE_PERSON,
+            test_time_range(1, 1),
+            1,
+            b"rider",
+        )
         .edge(&a, EdgeKind::Mentions, &b, 0.5)
         .commit()
         .expect_err("mixed batch must reject");
@@ -348,7 +354,13 @@ fn plain_edge_reput_on_provenanced_edge_rejects_and_routes() -> Result<()> {
     // is unchanged — absence of provenance is itself the anonymous
     // representation. Re-put a bare edge and a structural edge freely.
     let c = EntityId::now();
-    vault.put_entity(&c, 4, test_time_range(1, 1), 1, b"c")?;
+    vault.put_entity(
+        &c,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"c",
+    )?;
     vault.put_edge(&a, EdgeKind::About, &c, 0.25)?;
     vault.put_edge(&a, EdgeKind::About, &c, 0.75)?;
     let bare = EdgeRef::new(a, EdgeKind::About, c);
@@ -604,9 +616,27 @@ fn batch_set_edge_weight_and_vad_forms_apply_atomically() -> Result<()> {
     let a = EntityId::now();
     let b = EntityId::now();
     let c = EntityId::now();
-    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
-    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
-    vault.put_entity(&c, 4, test_time_range(1, 1), 1, b"c")?;
+    vault.put_entity(
+        &a,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"a",
+    )?;
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"b",
+    )?;
+    vault.put_entity(
+        &c,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"c",
+    )?;
     vault.put_edge(&a, EdgeKind::Mentions, &b, 0.875)?;
     vault.put_edge(&a, EdgeKind::About, &c, 0.5)?;
 
@@ -735,7 +765,13 @@ fn multi_claim_winner_and_retract_refresh_to_runner_up() -> Result<()> {
     // Distinct actor entity (PERSON) for the runner-up so the actor_class
     // refresh is observable on byte 25.
     let person2 = EntityId::now();
-    vault.put_entity(&person2, 4, test_time_range(1, 1), 1, b"person2")?;
+    vault.put_entity(
+        &person2,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person2",
+    )?;
 
     // c1 @ t1 — auto-superseded once the t2 cohort lands.
     let c1 = EntityId::now();
@@ -897,7 +933,13 @@ fn provenance_lifecycle_negative_paths_fail_closed() -> Result<()> {
     // SUBJECT MISMATCH (AC3): the prior names a DIFFERENT EdgeRef than the
     // supersede call → typed; nothing written, prior untouched.
     let c = EntityId::now();
-    vault.put_entity(&c, 4, test_time_range(1, 1), 1, b"c")?;
+    vault.put_entity(
+        &c,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"c",
+    )?;
     vault.put_edge(&subject.source, EdgeKind::About, &c, 0.5)?;
     let other_subject = EdgeRef::new(subject.source, EdgeKind::About, c);
     let (other_before, _) = raw_edge_values(vault, &other_subject)?;

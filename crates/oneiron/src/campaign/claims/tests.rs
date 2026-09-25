@@ -1041,6 +1041,13 @@ fn allow_external_effect_manifest() -> Vec<u8> {
                 (Value::from("effector"), Value::from(GATE_VERB)),
                 (
                     Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::effect_preset(),
+                    )
+                    .expect("scope fixture"),
+                ),
+                (
+                    Value::from("selectors"),
                     Value::Map(vec![(Value::from("channel"), Value::from(GATE_CHANNEL))]),
                 ),
             ])]),

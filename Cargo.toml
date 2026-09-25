@@ -6,7 +6,7 @@ members = ["crates/*", "apps/macos/src-tauri"]
 # it must not be reformatted, relinted, or test-run as if it were our code.
 # See the `[patch.crates-io]` entry at the bottom of this file and
 # `crates/heed/PROVENANCE.md`.
-exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15"]
+exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15", "crates/oneiron/vendor/sudachi-0.6.11"]
 
 # Limited debug information keeps file/line backtraces while reducing build CPU,
 # peak memory and target size. Tests inherit this profile. For debugger locals:

@@ -117,9 +117,10 @@ pub enum RefineVerdict {
 ///
 /// The tree is `HubFile`s because the engine has exactly one representation of
 /// a skill file tree, and the identity function ([`canonical_skill_tree_hash`](crate::skill::canonical_skill_tree_hash))
-/// is defined over it. The bytes stay the host's to write to disk — the engine
-/// persists the record and the tree's HASH, the same boundary the hub import
-/// door draws.
+/// is defined over it. The engine persists these exact bytes with the record
+/// in one transaction. Native metadata is stored separately: a content-derived
+/// version is not inserted into the bytes it names. No normalization can change
+/// the hash used by the mechanical dedup tier.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefinedSkill {
     /// Frontmatter `name` (ARCH-0017): lowercase, hyphenated.
