@@ -236,7 +236,8 @@ pub(super) fn fold_entry_state(
         AuthorityOp::SlipMint(_) | AuthorityOp::SlipRevoke { .. } | AuthorityOp::SlipConsume { .. }
     ) {
         // A consent cosigner cannot launder an agent primary into a mint issuer.
-        if state.slips.apply(entry, hash).is_err() {
+        if !roster_has_live_owner(&state.roster, &signer) || state.slips.apply(entry, hash).is_err()
+        {
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
         }
         state.seqs.insert(signer, entry.seq);
