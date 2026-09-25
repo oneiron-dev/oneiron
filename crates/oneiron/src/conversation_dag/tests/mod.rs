@@ -62,6 +62,29 @@ fn dag_test_policy_refuses_a_manifest_id_owned_by_an_actor() {
 }
 
 #[test]
+fn dag_test_policy_refuses_undecodable_policy_before_writing() {
+    let (_dir, vault, _conv, actor) = fixture();
+    let id = EntityId::now();
+    assert!(
+        crate::conversation_dag::test_support::put_test_policy_manifest(
+            &vault,
+            actor,
+            id,
+            &serde_json::Value::Null,
+        )
+        .is_err()
+    );
+    assert_eq!(vault.get_entity_type(&id).unwrap(), None);
+    assert!(
+        !vault
+            .manifest_contributions()
+            .unwrap()
+            .iter()
+            .any(|row| row.id == id.to_hex())
+    );
+}
+
+#[test]
 fn forks_rewrite_canonical_and_preserve_old_branch_and_pages() {
     let (_dir, vault, conv, actor) = fixture();
     let root = vault

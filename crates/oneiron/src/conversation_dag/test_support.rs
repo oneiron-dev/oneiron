@@ -58,35 +58,6 @@ pub fn put_test_policy_manifest(
             return Err(crate::Error::EntityNotFound);
         };
         crate::provenance::validate_actor_class(entity_type, actor.actor_class())?;
-        if let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? {
-            let header = crate::batch::EntityMetadataHeader::parse(&raw)
-                .ok_or(crate::Error::CorruptedIndex("test policy manifest header"))?;
-            if header.entity_type != crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
-                return Err(crate::Error::InvalidConfig(
-                    "test policy id belongs to another entity".into(),
-                ));
-            }
-        }
-        crate::batch::apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            txn,
-            vec![crate::batch::BatchOp::Put {
-                id,
-                entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
-                occurred: crate::TimeRange { start: 1, end: 1 },
-                learned_at: 1,
-                data: bytes,
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            true,
-            true,
-        )
+        vault.write_owner_policy_manifest_in_txn(&owner, txn, id, bytes, 1)
     })
 }
