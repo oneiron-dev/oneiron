@@ -218,6 +218,7 @@ jobs:
           python3 -m unittest discover -s scripts/audit -p 'test_*.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_quickjs_build.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_federation_burst_audit.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_fleet_regression.py' -v
 
       # Keep dependency artifacts when workspace cleanup is enough to meet
       # the unchanged cap. Runs after a failure too; never changes the verdict.

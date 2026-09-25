@@ -1,6 +1,7 @@
 """Contract-only receipt fixtures, not measured benchmark evidence."""
 import copy
 import importlib.util
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,6 +10,9 @@ PATH = Path(__file__).resolve().parents[1] / "fleet-regression.py"
 SPEC = importlib.util.spec_from_file_location("fleet_regression", PATH)
 fleet = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(fleet)
+REPO = PATH.parents[1]
+ARCHIVE = os.environ.get("ONEIRON_FLEET_ARCHIVE", "")
+BENCH = os.environ.get("ONEIRON_BENCH", "")
 
 
 def fixture():
@@ -209,6 +213,47 @@ class FleetRegressionTests(unittest.TestCase):
                                  "--candidate", str(base / "run.json"), "--out", str(base / "comparison.json")])
             self.assertEqual(result, 2)
             self.assertFalse((base / "run.json").exists())
+
+    def test_verify_floor_refuses_a_floor_whose_digest_does_not_match_its_receipt(self):
+        blake3 = "e" * 64
+        zeros = copy.deepcopy(self.floor)
+        zeros["baseline_sha256"] = "0" * 64
+        doubled = copy.deepcopy(self.floor)
+        for metric in doubled["baseline_receipt"]["metrics"].values():
+            metric["p99_ms"] *= 2
+        cases = [(zeros, blake3, "baseline digest differs"),
+                 (doubled, blake3, "floor differs from the one its archived receipt makes"),
+                 (self.floor, "f" * 64, "BLAKE3 differs from its pointer")]
+        for floor, pointer_blake3, refusal in cases:
+            with self.subTest(refusal=refusal), self.assertRaisesRegex(ValueError, refusal):
+                fleet.verify_floor(floor, self.receipt, blake3, pointer_blake3)
+        fleet.verify_floor(self.floor, self.receipt, blake3, blake3)
+
+    def test_pointer_table_names_a_receipt_and_blake3_for_each_committed_floor(self):
+        for host in ("macbook", "arch"):
+            with self.subTest(host=host):
+                receipt, _ = fleet.pointer(REPO / f"docs/ops/evidence/W7-C10/fleet-{host}-floor.json")
+                self.assertEqual(receipt, f"fleet-{host}-before.json")
+        with self.assertRaises(ValueError):
+            fleet.pointer("fleet-unknown-floor.json")
+
+    def test_verify_floor_refuses_with_exit_2_when_the_archived_receipt_is_absent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            floor = REPO / "docs/ops/evidence/W7-C10/fleet-arch-floor.json"
+            result = fleet.main(["verify-floor", "--floor", str(floor), "--archive", directory,
+                                 "--bench", "/binary-must-not-be-started"])
+            self.assertEqual(result, 2)
+
+    @unittest.skipUnless(ARCHIVE and Path(ARCHIVE).is_dir() and BENCH and os.access(BENCH, os.X_OK)
+                         and Path(BENCH).is_file(),
+                         "ONEIRON_FLEET_ARCHIVE and ONEIRON_BENCH must name the W7-C10 archive "
+                         "directory and an oneiron-bench binary")
+    def test_verify_floor_passes_the_committed_floors(self):
+        for host in ("macbook", "arch"):
+            with self.subTest(host=host):
+                floor = REPO / f"docs/ops/evidence/W7-C10/fleet-{host}-floor.json"
+                self.assertEqual(fleet.main(["verify-floor", "--floor", str(floor),
+                                             "--archive", ARCHIVE, "--bench", BENCH]), 0)
 
 
 if __name__ == "__main__":
