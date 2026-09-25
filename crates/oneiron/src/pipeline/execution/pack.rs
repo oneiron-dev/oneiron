@@ -24,7 +24,7 @@ impl PipelineBuilder<'_> {
     /// Executes the pipeline and returns the detailed [`PipelineOutput`]
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
-    pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
+    pub(crate) fn run_for_pack(mut self) -> Result<PipelineOutput> {
         // Scoped search already denies before counting candidates. Also stop
         // resolved-deny builders before index trust checks, host expansion,
         // or telemetry work; the gate has already validated their request.
@@ -64,6 +64,23 @@ impl PipelineBuilder<'_> {
         let started_at = self.vault.store.clock.now_recorded_at();
         let temporal_now = self.temporal_now.unwrap_or(started_at);
         let occurred_range = self.resolved_occurred_range(temporal_now)?;
+        // A parsed query range replaces the effort's default now anchor for
+        // the temporal scan. Keep the effort flag: it is not a host window,
+        // so the independent recency blend still applies.
+        if self.occurred_range.is_none()
+            && let Some(config) = self.temporal_search.as_mut()
+            && config.effort_anchor
+            && let Some((start, end)) = occurred_range
+        {
+            config.anchor_start = start;
+            config.anchor_end = end;
+            config.learned_start = None;
+            config.learned_end = None;
+            config.anchor_mode = crate::temporal::TemporalAnchorMode::Auto;
+            config.sigma_secs = end
+                .saturating_sub(start)
+                .max(crate::pipeline::types::DEFAULT_SIGMA_SECS);
+        }
         let telemetry_action = self.telemetry_action;
         let mut telemetry_signals = self.telemetry_signals();
         if occurred_range.is_some() && !telemetry_signals.contains(&RetrievalSignal::Temporal) {
@@ -538,7 +555,12 @@ impl PipelineBuilder<'_> {
     }
 
     fn resolved_occurred_range(&self, now: u64) -> Result<Option<(u64, u64)>> {
-        if self.occurred_range.is_some() || self.temporal_search.is_some() {
+        if self.occurred_range.is_some()
+            || self
+                .temporal_search
+                .as_ref()
+                .is_some_and(|config| !config.effort_anchor)
+        {
             return Ok(self.occurred_range);
         }
 

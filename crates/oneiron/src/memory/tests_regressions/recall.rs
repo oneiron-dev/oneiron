@@ -779,6 +779,95 @@ fn recall_sparse_reports_completed_vector_execution_in_both_paths() {
     }
 }
 
+// Two identical lexical hits: only the occurred time should decide the window.
+fn witness_query_window_pair(facade: &Memory<'_>, now: u64) -> [String; 2] {
+    let mut refs = Vec::new();
+    for (seed, days_ago) in [(0x67, 40), (0x68, 3)] {
+        let receipt = facade
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::from_bytes([seed; 16]).unwrap().to_hex(),
+                turn_ref: None,
+                messages: vec![witness_message(
+                    0,
+                    WitnessAuthor::User,
+                    "I prefer a window seat when I fly.",
+                )],
+                occurred_at: now - days_ago * 86_400,
+            })
+            .expect("witness");
+        refs.push(receipt.message_short_ids[0].clone());
+    }
+    refs.try_into().expect("two messages")
+}
+
+#[test]
+fn recall_default_effort_reads_last_week_from_the_query() {
+    let (_dir, vault) = open_vault();
+    let facade = facade_for(&vault, put_person(&vault, 0x69));
+    let [older, newer] = witness_query_window_pair(&facade, crate::unix_seconds_now());
+
+    let pack = facade
+        .recall(
+            "window seat last week",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("recall");
+    let refs: Vec<&str> = pack
+        .items
+        .iter()
+        .map(|item| item.short_id.split('@').next().unwrap_or_default())
+        .collect();
+    assert!(
+        refs.contains(&newer.as_str()),
+        "last-week message: {refs:?}"
+    );
+    assert!(!refs.contains(&older.as_str()), "outside window: {refs:?}");
+
+    assert!(matches!(
+        vault
+            .query()
+            .search_text("window seat next week", 10)
+            .retrieval_effort(Effort::Medium, &[])
+            .run(),
+        Err(crate::Error::InvalidTemporalExpression(_))
+    ));
+}
+
+#[test]
+fn recall_with_a_host_window_ignores_the_query_range() {
+    let (_dir, vault) = open_vault();
+    let facade = facade_for(&vault, put_person(&vault, 0x6a));
+    let now = crate::unix_seconds_now();
+    let [older, newer] = witness_query_window_pair(&facade, now);
+
+    // The facade does not expose host temporal windows; use its underlying
+    // context-pack builder with the same Medium effort preset and two messages.
+    let pack = vault
+        .context_pack()
+        .search_text("window seat last week", 10)
+        .search_temporal(now - 41 * 86_400, now - 39 * 86_400, 10)
+        .filter_occurred_range(now - 41 * 86_400, now - 39 * 86_400)
+        .limit(10)
+        .retrieval_effort(Effort::Medium, &[])
+        .run()
+        .expect("host-window pack");
+    let older_id = facade.get_entity(&older).unwrap().unwrap().id_hex;
+    let newer_id = facade.get_entity(&newer).unwrap().unwrap().id_hex;
+    let ids: Vec<String> = pack.results.iter().map(|item| item.id.to_hex()).collect();
+    assert!(
+        ids.contains(&older_id),
+        "host-window message: {ids:?}, older={older_id}"
+    );
+    assert!(
+        !ids.contains(&newer_id),
+        "outside host window: {ids:?}, newer={newer_id}"
+    );
+}
+
 /// ARCH-0004: the blend over recency, salience, confidence and gravity is
 /// constant at every effort level. The effort's default now anchor is no
 /// host window, so it must not switch recency off. Two identical messages
