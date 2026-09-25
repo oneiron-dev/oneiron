@@ -1,21 +1,6 @@
 [files]
 extend-exclude = [
     "docs/**/*.svg",
-    # Pinned Sudachi 0.6.11: preserve these upstream comments/fixtures and test
-    # identifiers byte-for-byte (see impl-notes/W7-C11.md, CI spelling repair).
-    # Exact files only: the rest of this vendor tree is still checked. Typos
-    # 1.45.1 file-type globs match basenames, not paths, so per-path token rules
-    # cannot be expressed. Do not replace this list with a vendor-wide glob.
-    "crates/oneiron/vendor/sudachi-0.6.11/CHANGELOG.md",
-    "crates/oneiron/vendor/sudachi-0.6.11/resources/char.def",
-    "crates/oneiron/vendor/sudachi-0.6.11/sudachi/src/dic/read/word_info.rs",
-    "crates/oneiron/vendor/sudachi-0.6.11/sudachi/src/error.rs",
-    "crates/oneiron/vendor/sudachi-0.6.11/sudachi/src/plugin/path_rewrite/join_katakana_oov/test_char.def",
-    "crates/oneiron/vendor/sudachi-0.6.11/sudachi/src/plugin/path_rewrite/join_numeric/test_char.def",
-    "crates/oneiron/vendor/sudachi-0.6.11/sudachi/src/sentence_detector.rs",
-    "crates/oneiron/vendor/sudachi-0.6.11/sudachi/src/util/fxhash.rs",
-    "crates/oneiron/vendor/sudachi-0.6.11/sudachi/tests/resources/char.def",
-    "crates/oneiron/vendor/sudachi-0.6.11/sudachi/tests/stateful_tokenizer.rs",
     # Pinned upstream vendor of heed 0.20.5 — never edited here (crates/heed/PROVENANCE.md).
     "crates/heed/vendor/**",
     # Pinned upstream vendor of paste 1.0.15 — never edited here (crates/paste/PROVENANCE.md).
