@@ -234,7 +234,7 @@ fn stored_grant_scope_roundtrip_and_bottom_deny_at_existing_doors() -> Result<()
     let bytes = crate::access_grant::encode_access_grant_body(&access)?;
     let decoded = crate::access_grant::decode_access_grant_body(&bytes)?;
     assert_eq!(decoded.authority_scope, Scope::default());
-    assert!(!decoded.allows_companion_profile_read(&entity(40), &entity(41), &entity(42)));
+    assert!(!decoded.allows_companion_profile_read(&entity(40), &entity(41), &entity(42), 43));
     let mut federation = crate::federation::FederationGrant::new(
         crate::federation::FederationGrantScope::vault(7),
         entity(40),

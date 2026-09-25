@@ -376,16 +376,19 @@ fn companion_birth_is_full_person() -> Result<()> {
         &entity(MEMBER_PERSON),
         &entity(MEMBER_PERSON),
         &birth.person_ref,
+        43
     ));
     assert!(!grant.allows_companion_profile_read(
         &entity(OUTSIDER),
         &entity(MEMBER_PERSON),
         &birth.person_ref,
+        43
     ));
     assert!(!grant.allows_companion_profile_read(
         &entity(MEMBER_PERSON),
         &entity(MEMBER_PERSON),
         &entity(MEMBER_ACTOR),
+        43
     ));
     assert_eq!(type_count(&vault, ENTITY_TYPE_ACCESS_GRANT), 1);
 

@@ -95,7 +95,7 @@
      "purpose": "AccessGrant record and scope, capability, and status enums",
      "surface": {
       "enum": 3,
-      "fn": 19,
+      "fn": 18,
       "struct": 2
      }
     },
@@ -27411,7 +27411,7 @@
      "path": "src/share/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
