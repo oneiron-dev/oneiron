@@ -158,14 +158,18 @@ fn copy_tree(source: &Path, destination: &Path) {
     }
 }
 
+/// Stage a stand-in executable without executing a freshly written inode.
 #[cfg(unix)]
 fn write_executable(path: &Path, body: &str) {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::write(path, body).expect("write script");
-    let mut permissions = fs::metadata(path).expect("script metadata").permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).expect("script mode");
+    // A concurrent fork can briefly inherit the script writer despite CLOEXEC,
+    // and exec of that inode then fails with ETXTBSY. Execute an immutable
+    // launcher and read the per-test body (`<path>.sh`) as data instead.
+    let mut data = path.as_os_str().to_owned();
+    data.push(".sh");
+    fs::write(data, body).expect("write script");
+    let launcher =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/git_wire/tests/fake-git-launcher.sh");
+    std::os::unix::fs::symlink(launcher, path).expect("link launcher");
 }
 
 // ---------------------------------------------------------------------------
