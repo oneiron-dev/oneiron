@@ -9,7 +9,7 @@ use std::collections::HashSet;
 impl ScopedRead<'_> {
     /// Edges and both endpoints share one authority snapshot and a mandatory receipt.
     pub fn edges_out(&self, id: &EntityId) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let mut suppressed = 0;
         let value = if self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, id)? {
@@ -40,7 +40,7 @@ impl ScopedRead<'_> {
     /// Timeline metadata is rechecked against both the initial and final authority.
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<ScopedReadResult<MemoryTimeline>> {
         let (filter, policy) = {
-            let txn = self.vault.store.env.read_txn()?;
+            let txn = self.grant_read_txn()?;
             let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
             if !self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)? {
                 let suppressed = usize::from(self.entity_record_in(&txn, anchor)?.is_some());
@@ -55,7 +55,7 @@ impl ScopedRead<'_> {
             (filter, policy)
         };
         let mut timeline = self.vault.memory_timeline(anchor)?;
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let anchor_allowed = self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
             && self.timeline_anchor_allowed_in(&txn, &fresh_policy, &fresh_filter, anchor)?;

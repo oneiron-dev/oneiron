@@ -115,6 +115,9 @@ pub(super) fn produce_l2_base(
             "L2 reader belongs to another vault".into(),
         ));
     }
+    if let Some(reader) = reader {
+        reader.persist_grant_clock()?;
+    }
     // Capture before opening the snapshot. A later erasure invalidates any
     // producer with this revision, even if it finishes after that write.
     let revision = vault.store.env.info().last_txn_id;

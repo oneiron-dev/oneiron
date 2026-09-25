@@ -175,6 +175,9 @@ impl<'a> ContextPackBuilder<'a> {
             let mut claims_suppressed = pipeline_output.claims_suppressed;
             let cosine_ghosts_dampened = pipeline_output.cosine_ghosts_dampened;
 
+            if let Some(reader) = self.l2_summary_reader {
+                reader.persist_grant_clock()?;
+            }
             let rtxn = self.vault.store.env.read_txn()?;
             let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
             let hydrate_result_edges = self.include_edges && self.edge_hop == 0;

@@ -446,6 +446,67 @@ impl Memory<'_> {
             None => WorldScope::All,
         };
         let pack_format = format.map(parse_pack_format).transpose()?;
+        // An actor-bound facade may use the trusted floor only when its bound
+        // human is verified as the vault owner. A missing owner binding is an
+        // ordinary scoped caller; every other verification failure is a refusal.
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        self.vault.store.authorization_now()?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        let owner = if self.actor_class == crate::EdgeActorClass::Human {
+            // The seeded embedded owner is the local trusted host lane. Other
+            // humans in a rooted vault require their live authority binding.
+            if self.actor == crate::vault::embedded_owner_actor_id()? {
+                true
+            } else {
+                match self.verify_owner_in_txn(&txn) {
+                    Ok(()) => true,
+                    Err(err) if err.code == super::MEMORY_CODE_OWNER_BINDING_REQUIRED => false,
+                    Err(err) => return Err(err),
+                }
+            }
+        } else {
+            false
+        };
+        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
+        let actor_key = (!owner).then(|| {
+            crate::claim::ScopedReadActorKey::with_actor_class(
+                self.actor.to_hex(),
+                self.actor_class.gate_actor_class(),
+            )
+            .expect("verified actor has a nonempty id and class")
+        });
+        let authority = crate::gate::narrow_retrieval_filter(
+            &policy.retrieval_floor_for_actor(actor_key.as_ref()),
+            None,
+        )?;
+        drop(txn);
+        let scoped_read = actor_key.map(|key| self.vault.scoped_read(key));
+        // Retrieval ceilings do not replace the ordinary row-level scoped
+        // read predicate (relationship grants, worlds, facets, and privacy).
+        let readable = |store: &crate::store::Store,
+                        txn: &heed::RoTxn<'_>,
+                        id: &EntityId|
+         -> crate::Result<bool> {
+            if let Some(filter) = candidate_filter
+                && !filter(store, txn, id)?
+            {
+                return Ok(false);
+            }
+            match &scoped_read {
+                Some(scoped) => {
+                    let current = crate::gate::resolve_policy_manifest(store, txn)?;
+                    scoped.is_entity_readable_with_policy_in(txn, &current, id)
+                }
+                None => Ok(true),
+            }
+        };
+        let use_readable = scoped_read.is_some() || candidate_filter.is_some();
+
         let seeds = if effective != Effort::Light
             && !execution
                 .deadline
@@ -476,9 +537,10 @@ impl Memory<'_> {
                         .search_text(query, limit)
                         .facet(&facet_id, FacetMode::Strict)
                         .world(world_scope)
-                        .retrieval_effort(effective, &seeds);
-                    if let Some(filter) = candidate_filter {
-                        pipeline = pipeline.filter_candidates(filter);
+                        .retrieval_effort(effective, &seeds)
+                        .authority_filter(authority);
+                    if use_readable {
+                        pipeline = pipeline.filter_candidates(&readable);
                     }
                     if let Some(telemetry) = session_telemetry.as_ref() {
                         pipeline = pipeline.in_session(telemetry);
@@ -535,9 +597,10 @@ impl Memory<'_> {
                         .search_text(query, limit)
                         .limit(limit)
                         .world(world_scope)
-                        .retrieval_effort(effective, &seeds);
-                    if let Some(filter) = candidate_filter {
-                        builder = builder.filter_candidates(filter);
+                        .retrieval_effort(effective, &seeds)
+                        .authority_filter(authority);
+                    if use_readable {
+                        builder = builder.filter_candidates(&readable);
                     }
                     if let Some(telemetry) = session_telemetry.as_ref() {
                         builder = builder.in_session(telemetry);

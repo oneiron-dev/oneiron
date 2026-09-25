@@ -24,6 +24,19 @@ fn private_scope(scope: Option<&rmpv::Value>) -> bool {
 }
 
 impl ScopedRead<'_> {
+    /// Persist grant time before the read snapshot, never inside it.
+    pub(crate) fn persist_grant_clock(&self) -> Result<()> {
+        if self.actor_key.enforce_access_grants {
+            self.vault.store.authorization_now()?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn grant_read_txn(&self) -> Result<heed::RoTxn<'_>> {
+        self.persist_grant_clock()?;
+        Ok(self.vault.store.env.read_txn()?)
+    }
+
     pub(super) fn relationship_claim_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -33,7 +46,7 @@ impl ScopedRead<'_> {
             return Ok(true);
         }
         let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
-        Ok(context.allows(
+        Ok(context.allows_at_snapshot(
             ENTITY_TYPE_CLAIM,
             body.rel,
             private_scope(body.scope.as_ref()),
@@ -117,6 +130,6 @@ impl ScopedRead<'_> {
             }
         }
         let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
-        Ok(context.allows(kind, space, private))
+        Ok(context.allows_at_snapshot(kind, space, private))
     }
 }

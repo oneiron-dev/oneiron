@@ -38,6 +38,7 @@ impl Vault {
         actor_ref: &EntityId,
         candidate: &MailboxReadCandidate,
     ) -> Result<bool> {
+        let now = self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
         let Some(raw) = self
             .store
@@ -62,9 +63,8 @@ impl Vault {
         if identity_ref != candidate.identity_ref
             || grant.principal_ref != *actor_ref
             || !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read")
-            || grant.effective_status_at(self.store.clock.now_recorded_at())
-                != AccessGrantStatus::Active
-            || grant.created_at > self.store.clock.now_recorded_at()
+            || grant.effective_status_at(now) != AccessGrantStatus::Active
+            || grant.created_at > now
             || self.autonomy_identity_actor(&txn, identity_ref)? != *actor_ref
         {
             return Ok(false);
@@ -74,7 +74,7 @@ impl Vault {
             &key(PREDICATE_MAILBOX_READ_ENVELOPE, &envelope_ref.to_hex()),
         )?;
         let envelope = read_from(&value)?;
-        if at > self.store.clock.now_recorded_at()
+        if at > now
             || envelope.identity_ref != identity_ref
             || address(PREDICATE_MAILBOX_READ_ENVELOPE, &value)? != envelope_ref
         {
@@ -113,7 +113,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
     ) -> Result<ChannelIdentityAutonomyState> {
         self.autonomy_owner(owner)?;
-        let now = self.store.clock.now_recorded_at();
+        let now = self.store.authorization_now()?;
         let mut txn = self.store.env.write_txn()?;
         let identity = desired.read_envelope.identity_ref;
         if self.autonomy_identity_actor(&txn, identity)? != desired.actor_ref {
@@ -248,7 +248,7 @@ impl Vault {
         if !matches!(verb_class, "mail.draft" | "mail.send") {
             return Err(invalid_autonomy());
         }
-        let now = self.store.clock.now_recorded_at();
+        let now = self.store.authorization_now()?;
         let mut txn = self.store.env.write_txn()?;
         let (writer, at, _) = self.autonomy_row(
             &txn,
@@ -305,8 +305,9 @@ impl Vault {
         owner: &AuthenticatedOwner,
     ) -> Result<ChannelIdentityAutonomyState> {
         self.autonomy_owner(owner)?;
+        let now = self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
-        self.verify_autonomy_in_txn(&txn, desired, owner, self.store.clock.now_recorded_at())
+        self.verify_autonomy_in_txn(&txn, desired, owner, now)
     }
 
     fn verify_autonomy_in_txn(
@@ -326,7 +327,7 @@ impl Vault {
         if writer != owner.actor() || at > now {
             return Err(invalid_autonomy());
         }
-        let state = self.autonomy_state(txn, mode_from(&value)?, now)?;
+        let state = self.autonomy_state(txn, mode_from(&value)?, now, now)?;
         if state.mode.identity_ref != desired.read_envelope.identity_ref
             || state.mode.relationship_context != desired.relationship_context
             || state.mode.rung != desired.rung
@@ -347,11 +348,12 @@ impl Vault {
         learned_at: u64,
     ) -> Result<EntityId> {
         self.autonomy_owner(owner)?;
+        let now = self.store.authorization_now()?;
         let mut txn = self.store.env.write_txn()?;
-        if learned_at > self.store.clock.now_recorded_at() {
+        if learned_at > now {
             return Err(invalid_autonomy());
         }
-        self.autonomy_state(&txn, mode.clone(), self.store.clock.now_recorded_at())?;
+        self.autonomy_state(&txn, mode.clone(), now, now)?;
         let key = mode_key(mode.identity_ref, mode.relationship_context);
         let value = mode_value(&mode);
         if self.store.vault_meta.get(&txn, &key)?.is_some() {
@@ -375,13 +377,9 @@ impl Vault {
         context: &RelationshipContext,
         at: u64,
     ) -> Result<ChannelIdentityAutonomyMode> {
+        let now = self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
-        self.autonomy_mode_in_txn(
-            &txn,
-            *identity_ref,
-            *context,
-            at.min(self.store.clock.now_recorded_at()),
-        )
+        self.autonomy_mode_in_txn(&txn, *identity_ref, *context, at.min(now), now)
     }
 
     pub(crate) fn autonomy_mode_in_txn(
@@ -390,6 +388,7 @@ impl Vault {
         identity: EntityId,
         context: RelationshipContext,
         at: u64,
+        recorded_now: u64,
     ) -> Result<ChannelIdentityAutonomyMode> {
         let (_, learned_at, value) = self.autonomy_row(txn, &mode_key(identity, context))?;
         let mode = mode_from(&value)?;
@@ -397,7 +396,7 @@ impl Vault {
         {
             return Err(invalid_autonomy());
         }
-        Ok(self.autonomy_state(txn, mode, at)?.mode)
+        Ok(self.autonomy_state(txn, mode, at, recorded_now)?.mode)
     }
 
     pub(super) fn autonomy_state(
@@ -405,6 +404,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         mode: ChannelIdentityAutonomyMode,
         at: u64,
+        recorded_now: u64,
     ) -> Result<ChannelIdentityAutonomyState> {
         let actor = self.autonomy_identity_actor(txn, mode.identity_ref)?;
         let reference = mode.read_grant_ref.ok_or_else(invalid_autonomy)?;
@@ -429,8 +429,7 @@ impl Vault {
         if identity_ref != mode.identity_ref
             || grant.principal_ref != actor
             || !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read")
-            || grant.effective_status_at(self.store.clock.now_recorded_at())
-                != AccessGrantStatus::Active
+            || grant.effective_status_at(recorded_now) != AccessGrantStatus::Active
             || grant.created_at > at
         {
             return Err(invalid_autonomy());

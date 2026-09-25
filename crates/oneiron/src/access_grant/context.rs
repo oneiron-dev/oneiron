@@ -10,12 +10,24 @@ use crate::{EntityId, Vault};
 use std::collections::BTreeSet;
 
 /// Resolved authority, not caller-provided hints. Identity fields never imply membership.
-#[derive(Debug, Clone)]
-pub struct AccessContext {
+#[derive(Clone)]
+pub struct AccessContext<'v> {
     principal: Option<EntityId>,
     relationships: BTreeSet<EntityId>,
     grants: Vec<AccessGrant>,
-    clock: crate::ports::StoreClock,
+    vault: &'v Vault,
+    observed_at: u64,
+}
+
+impl std::fmt::Debug for AccessContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccessContext")
+            .field("principal", &self.principal)
+            .field("relationships", &self.relationships)
+            .field("grants", &self.grants)
+            .field("observed_at", &self.observed_at)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -33,19 +45,19 @@ pub struct GrantedData<T> {
     pub access_limited: Option<AccessLimited>,
 }
 
-impl AccessContext {
+impl<'v> AccessContext<'v> {
     pub(crate) fn load(
-        vault: &Vault,
+        vault: &'v Vault,
         txn: &heed::RoTxn<'_>,
         principal: Option<EntityId>,
     ) -> Result<Self> {
-        let clock = vault.store.clock.clone();
-        let now = clock.now_recorded_at();
+        let now = crate::ports::authorization_floor_in_txn(&vault.store, txn)?;
         let mut context = Self {
             principal,
             relationships: BTreeSet::new(),
             grants: Vec::new(),
-            clock,
+            vault,
+            observed_at: now,
         };
         if principal.is_none() {
             return Ok(context);
@@ -103,6 +115,24 @@ impl AccessContext {
 
     /// Applies the C1-C3 matrix. Private rows cannot be shared by an AccessGrant.
     pub fn allows(&self, entity_type: u8, space: Option<EntityId>, private: bool) -> bool {
+        // A retained context must still check live expiry, and must not expose
+        // an observation that failed to reach the durable floor.
+        self.vault
+            .store
+            .authorization_now()
+            .is_ok_and(|now| self.allows_at(entity_type, space, private, now))
+    }
+
+    pub(crate) fn allows_at_snapshot(
+        &self,
+        entity_type: u8,
+        space: Option<EntityId>,
+        private: bool,
+    ) -> bool {
+        self.allows_at(entity_type, space, private, self.observed_at)
+    }
+
+    fn allows_at(&self, entity_type: u8, space: Option<EntityId>, private: bool, now: u64) -> bool {
         if private {
             return false;
         }
@@ -118,7 +148,6 @@ impl AccessContext {
             ENTITY_TYPE_CLAIM => AccessGrantCapability::RelationshipClaimsRead,
             _ => return false,
         };
-        let now = self.clock.now_recorded_at();
         self.grants.iter().any(|grant| {
             grant.allows_relationship_read(
                 self.principal
@@ -132,7 +161,8 @@ impl AccessContext {
 }
 
 impl Vault {
-    pub fn access_context(&self, principal: EntityId) -> Result<AccessContext> {
+    pub fn access_context(&self, principal: EntityId) -> Result<AccessContext<'_>> {
+        self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
         AccessContext::load(self, &txn, Some(principal))
     }

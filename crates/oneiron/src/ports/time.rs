@@ -127,6 +127,36 @@ impl crate::Vault {
     }
 }
 
+/// Read the already committed floor within the authorization snapshot.
+/// Callers must commit `Store::authorization_now` before opening that snapshot.
+pub(crate) fn authorization_floor_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+) -> Result<u64> {
+    match store.vault_meta().get(txn, CLOCK_FLOOR)? {
+        Some(bytes) => {
+            Ok(u64::from_be_bytes(bytes.as_ref().try_into().map_err(
+                |_| Error::CorruptedIndex("recorded clock floor"),
+            )?))
+        }
+        None => Ok(0),
+    }
+}
+
+impl crate::store::Store {
+    /// Commit the authorization observation before any read decision may use it.
+    /// Call this before opening the decision's read transaction.
+    pub(crate) fn authorization_now(&self) -> Result<u64> {
+        // A preliminary read would consume one reader slot per concurrent
+        // caller before writers serialize, exhausting small reader budgets.
+        // The writer both observes the persisted floor and commits the new one.
+        let mut txn = self.env.write_txn()?;
+        let now = recorded_at_in_txn(self, &mut txn)?;
+        txn.commit()?;
+        Ok(now)
+    }
+}
+
 pub(crate) const ID_FLOOR: &[u8] = b"ports:id_floor:v1";
 pub(crate) const CLOCK_FLOOR: &[u8] = b"ports:clock_floor:v1";
 pub(crate) fn recorded_at_in_txn(

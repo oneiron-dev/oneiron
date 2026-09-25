@@ -65,7 +65,7 @@
      "path": "src/access_grant/context.rs",
      "purpose": "Relationship read authority built from live grants and stored membership evidence",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "struct": 3
      }
@@ -7468,7 +7468,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -11257,7 +11257,7 @@
      "path": "src/context_pack/builder/scoped.rs",
      "purpose": "Candidate narrowing passthrough to the existing retrieval pipeline",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -11672,7 +11672,7 @@
      "path": "src/conversation/body.rs",
      "purpose": "Forward-compatible room body codec and the all-writer membership guard",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -24503,7 +24503,7 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 6,
       "struct": 1,
       "trait": 2
@@ -29137,7 +29137,7 @@
      "path": "src/store/root_directory.rs",
      "purpose": "Descriptor-bound directory identity shared by store opens and writer leases",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
