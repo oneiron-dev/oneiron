@@ -37092,6 +37092,79 @@
    "source_files": 1,
    "test_files": 2
   },
+  "oneiron-mesh-transport": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IrohTransport"
+     ],
+     "path": "src/iroh_transport.rs",
+     "purpose": "Private iroh data plane",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AcceptPolicy",
+      "MachineAddress",
+      "MachineAddressEnvelope",
+      "MachineGrants",
+      "MachineRoster",
+      "MeshConnection",
+      "MeshError",
+      "MeshStream",
+      "MeshTransport",
+      "VaultMachineRoster"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Vault-scoped mesh transport",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 3,
+      "mod": 1,
+      "struct": 4,
+      "trait": 5,
+      "type": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/conformance.rs",
+     "purpose": "The same admission, stream and reconnect laws for the in-memory and iroh transports",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/roster.rs",
+     "purpose": "A vault MACHINE row is an address hint only when it carries the exact versioned envelope",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "iroh_transport": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Private iroh data plane"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Vault-scoped mesh transport",
+   "source_files": 2,
+   "test_files": 2
+  },
   "oneiron-napi": {
    "files": [
     {
