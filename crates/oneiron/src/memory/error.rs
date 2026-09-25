@@ -199,6 +199,19 @@ impl From<Error> for MemoryError {
                 )
             };
         }
+        if matches!(
+            err,
+            Error::Record(crate::error::RecordError::InvalidTaskBody(
+                "tasks.ask.option"
+            ))
+        ) {
+            return Self::bad_request_with(
+                message,
+                &[
+                    "Name one of the question's option ids (or omit the option if the question has none).",
+                ],
+            );
+        }
         match err.kind() {
             ErrorKind::KeyValueWriteRequiresOwnedDoor => Self::new(
                 MEMORY_CODE_INVALID_STATE,

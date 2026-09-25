@@ -845,6 +845,7 @@ mod cb_a {
                         &ConsultResultInput {
                             kind: ConsultResultKind::Answer {
                                 result_ref,
+                                option: None,
                                 evidence_refs: vec![ConsultPayloadRef::Turn(result_ref)],
                             },
                             completed_at: super::LEAD_NOW + 10,
@@ -901,6 +902,7 @@ mod cb_a {
                 &ConsultResultInput {
                     kind: ConsultResultKind::Answer {
                         result_ref: judge_result,
+                        option: None,
                         evidence_refs: member_results
                             .iter()
                             .map(|result| ConsultPayloadRef::Turn(*result))
@@ -927,6 +929,7 @@ mod cb_a {
                 &ConsultResultInput {
                     kind: ConsultResultKind::Answer {
                         result_ref: synthesis_result,
+                        option: None,
                         evidence_refs: member_results
                             .iter()
                             .chain(std::iter::once(&judge_result))

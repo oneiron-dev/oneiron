@@ -30691,7 +30691,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {

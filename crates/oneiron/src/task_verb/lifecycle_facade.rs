@@ -94,7 +94,13 @@ impl Memory<'_> {
             ladder: None,
             counter_task_ref: None,
         };
-        self.settle_task_terminal(task_ref, &landed, input.finished_at, standard_body_in_txn)
+        self.settle_task_terminal(
+            task_ref,
+            &landed,
+            input.finished_at,
+            standard_body_in_txn,
+            None,
+        )
     }
 
     /// Hands one peer-assigned TASK to its executor and returns the durable
@@ -151,7 +157,13 @@ impl Memory<'_> {
         // The consult keeps its own reader: a non-consult task is refused
         // before the shared terminal writer ever sees it, and the evidence /
         // abstention contract above is unchanged.
-        self.settle_task_terminal(task_ref, &landed, input.completed_at, consult_body_in_txn)
+        self.settle_task_terminal(
+            task_ref,
+            &landed,
+            input.completed_at,
+            consult_body_in_txn,
+            Some(&input.kind),
+        )
     }
 
     /// The one terminal-write path: assignee actor check, local compare-and-set
@@ -169,6 +181,7 @@ impl Memory<'_> {
         landed: &TaskTerminalRecord,
         at: u64,
         read_body: impl FnOnce(&Vault, &heed::RoTxn<'_>, EntityId) -> MemoryResult<TaskVerbBody>,
+        consult_kind: Option<&super::ConsultResultKind>,
     ) -> MemoryResult<TaskResultReceipt> {
         let (terminal, idempotent_replay) = self.with_verified_actor_write_txn(|wtxn| {
             let mut body = read_body(self.vault(), &*wtxn, task_ref)?;
@@ -178,6 +191,18 @@ impl Memory<'_> {
             // second result, so it reports the winner and mutates nothing.
             if let Some(existing) = body.terminal() {
                 if existing == landed {
+                    if let Some(super::ConsultResultKind::Answer { option, .. }) = consult_kind
+                        && !super::ask_record::replay_answer_option_matches(
+                            self.vault(), &*wtxn, task_ref, &body, self.actor(),
+                            existing, option.as_ref(),
+                        )?
+                    {
+                        return Err(consult_refusal(
+                            MEMORY_CODE_INVALID_STATE,
+                            "ask answer option differs from the settled word",
+                            "Read the settled ask evidence; a different option is not a replay.",
+                        ));
+                    }
                     return Ok((existing.clone(), true));
                 }
                 return Err(consult_refusal(
@@ -200,7 +225,11 @@ impl Memory<'_> {
                     "Read the settled ladder record; a settled ladder is immutable, and the follow-on task carries the case.",
                 ));
             }
-            let ask_group = super::ask_record::record_answer(self.vault(), wtxn, task_ref, &body, crate::WriteActor::new(self.actor(), self.actor_class()), landed, at)?;
+            let option = match consult_kind {
+                Some(super::ConsultResultKind::Answer { option, .. }) => option.as_ref(),
+                _ => None,
+            };
+            let ask_group = super::ask_record::record_answer(self.vault(), wtxn, task_ref, &body, crate::WriteActor::new(self.actor(), self.actor_class()), (landed, option), at)?;
             body.state = Some(TaskExecutionState::Terminal(landed.clone()));
             let encoded = encode_task_verb_body(body);
             self.put_task_body_in_txn(wtxn, task_ref, &encoded, at)?;

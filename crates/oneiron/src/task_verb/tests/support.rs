@@ -204,6 +204,7 @@ pub(super) fn answer_input(
     ConsultResultInput {
         kind: ConsultResultKind::Answer {
             result_ref,
+            option: None,
             evidence_refs: vec![evidence],
         },
         completed_at: CONSULT_NOW + 10,
