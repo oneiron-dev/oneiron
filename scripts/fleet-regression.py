@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 SCHEMA = "oneiron-fleet-v1"
 FLOOR_SCHEMA = "oneiron-fleet-floor-v1"
@@ -15,6 +16,8 @@ PLAN_KEYS = {"profile", "host_label", "storage_label", "scratch", "agents", "lis
              "ppr_nodes", "ppr_samples"}
 HOST_KEYS = {"os", "arch", "hostname", "kernel", "cpu", "logical_cpus", "compiled_profile",
              "compiled_opt_level", "debug_assertions", "fd_limit"}
+POINTER_DOC = Path(__file__).resolve().parents[1] / "docs" / "ops" / "fleet-benchmark.md"
+POINTER_HEADER = "| Floor | Archived receipt | Receipt BLAKE3 |"
 
 
 def require(condition, message):
@@ -40,8 +43,11 @@ def fingerprint(value):
 
 
 def read(path):
-    return json.loads(Path(path).read_text(),
-                      parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+    return parse(Path(path).read_bytes())
+
+
+def parse(data):
+    return json.loads(data, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
 
 
 def write_new(path, value):
@@ -171,6 +177,37 @@ def validate_floor(floor):
     return validate(floor["baseline_receipt"], samples_required=False)
 
 
+def pointer(floor_path, doc=POINTER_DOC):
+    lines = Path(doc).read_text().splitlines()
+    require(lines.count(POINTER_HEADER) == 1, "receipt pointer table missing")
+    rows = []
+    for line in lines[lines.index(POINTER_HEADER) + 2:]:
+        if not line.startswith("|"):
+            break
+        rows.append([cell.strip().strip("`") for cell in line.strip("|").split("|")])
+    matches = [row for row in rows if len(row) == 3 and Path(row[0]).name == Path(floor_path).name]
+    require(len(matches) == 1, f"no single receipt pointer for {Path(floor_path).name}")
+    _, receipt, digest = matches[0]
+    require(receipt and receipt == Path(receipt).name, "pointer receipt must be an archive file name")
+    require(len(digest) == 64 and all(c in "0123456789abcdef" for c in digest), "invalid pointer BLAKE3")
+    return receipt, digest
+
+
+def file_blake3(bench, path):
+    run = subprocess.run([bench, "fleet", "digest", "--file", str(path)],
+                         capture_output=True, text=True, check=False)
+    require(run.returncode == 0, f"digest failed with {run.returncode}: {run.stderr.strip()}")
+    return run.stdout.strip()
+
+
+def verify_floor(floor, receipt, receipt_blake3, pointer_blake3):
+    validate_floor(floor)
+    require(receipt_blake3 == pointer_blake3, "archived receipt BLAKE3 differs from its pointer")
+    require(fingerprint(receipt) == floor["baseline_sha256"], "baseline digest differs from the archived receipt")
+    require(make_floor(receipt, floor["throughput_loss"], floor["p99_increase"]) == floor,
+            "floor differs from the one its archived receipt makes")
+
+
 def compare(floor, candidate):
     baseline = validate_floor(floor)
     validate(candidate)
@@ -207,8 +244,23 @@ def main(argv=None):
         if verb == "ci":
             sub.add_argument("--bench", required=True)
             sub.add_argument("--plan", required=True)
+    verify = commands.add_parser("verify-floor", help="recompute a committed floor from its archived receipt")
+    verify.add_argument("--floor", required=True)
+    verify.add_argument("--archive", required=True, help="directory holding the archived full receipts")
+    verify.add_argument("--bench", required=True, help="oneiron-bench binary that hashes the receipt")
     args = parser.parse_args(argv)
     try:
+        if args.command == "verify-floor":
+            name, pointer_blake3 = pointer(args.floor)
+            receipt = Path(args.archive) / name
+            data = receipt.read_bytes()  # One read: the bytes hashed are the bytes parsed.
+            with tempfile.NamedTemporaryFile() as snapshot:
+                snapshot.write(data)
+                snapshot.flush()
+                receipt_blake3 = file_blake3(args.bench, snapshot.name)
+            verify_floor(read(args.floor), parse(data), receipt_blake3, pointer_blake3)
+            print(json.dumps({"status": "floor-verified", "floor": args.floor, "receipt": str(receipt)}))
+            return 0
         require(not Path(args.out).exists(), "output already exists")
         if args.command == "make-floor":
             result = make_floor(read(args.baseline), args.throughput_loss, args.p99_increase)

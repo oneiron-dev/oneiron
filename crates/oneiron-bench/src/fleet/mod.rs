@@ -20,7 +20,7 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 type Result<T> = std::result::Result<T, Error>;
 
 pub(crate) fn run(args: &[String]) -> ExitCode {
-    match dispatch(args) {
+    match dispatch(args, &mut std::io::stdout()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             let _ = writeln!(std::io::stderr().lock(), "fleet: {error}");
@@ -29,7 +29,14 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     }
 }
 
-fn dispatch(args: &[String]) -> Result<()> {
+fn dispatch(args: &[String], stdout: &mut dyn Write) -> Result<()> {
+    if let [cmd, flag, file] = args
+        && cmd == "digest"
+        && flag == "--file"
+    {
+        writeln!(stdout, "{}", file_hash(Path::new(file))?)?;
+        return Ok(());
+    }
     if let [cmd, flag, input, out_flag, output] = args
         && cmd == "ppr-scaling"
         && flag == "--plan"
@@ -44,9 +51,10 @@ fn dispatch(args: &[String]) -> Result<()> {
     let (plan, out) = match args {
         [help] if help == "--help" => {
             writeln!(
-                std::io::stdout().lock(),
+                stdout,
                 "fleet run --plan <JSON> --out <NEW_JSON>\n\
                 fleet smoke --scratch <ABS_DIR> --out <NEW_JSON>\n\
+                fleet digest --file <PATH>  (BLAKE3 hex of the file's bytes)\n\
                 Floors: python3 scripts/fleet-regression.py --help\n\
                 See docs/ops/fleet-benchmark.md. No default or zero CI floors."
             )?;

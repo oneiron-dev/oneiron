@@ -37,12 +37,21 @@ mean slowdown. It remains valid measured baseline data: the committed
 [floor](evidence/W7-C10/fleet-macbook-floor.json) permits at most 15% throughput
 loss and 20% p99 increase from each phase. The converter checks the recorded
 ratio and, on a fresh receipt, the samples. A committed floor carries no samples, so
-its summary numbers are checked for shape only. It does not confuse a valid baseline
-with a proven speedup.
+CI checks its summary numbers for shape only; `verify-floor` recomputes them from the
+archived receipt. It does not confuse a valid baseline with a proven speedup.
 The separate hot-path optimization acceptance is still open.
 
 Full fleet receipts with per-sample arrays are archived off-repo at
 `/Volumes/Cinema/archive/w7-evidence/W7-C10/` (checksums in `SHA256SUMS` there).
+Each committed floor points to the archived receipt it was made from, by that
+receipt's BLAKE3 over its file bytes. `verify-floor` (see *Explicit measured floors
+and CI*) reads this table by the floor's file name:
+
+| Floor | Archived receipt | Receipt BLAKE3 |
+|---|---|---|
+| `docs/ops/evidence/W7-C10/fleet-macbook-floor.json` | `fleet-macbook-before.json` | `a95a7e3dea6decf82e6b9022a47d978948d6e10c9a3ca5cefabd822bcfa15bec` |
+| `docs/ops/evidence/W7-C10/fleet-arch-floor.json` | `fleet-arch-before.json` | `c9dc7b24d27b272749beebea38fff3a75fe80d3db80d1cb9dbd4bc1f2c222037` |
+
 The [process receipt](evidence/W7-C10/fleet-macbook-before-process.json) is committed. The binary BLAKE3 is
 `a455c0908e1c91b6c1b3fb9fb1bcfe811a44f5ffbc2bd3d0de717ead3dcdabd7`.
 The mirror has no Git metadata; its null revision/dirty fields are retained, not
@@ -223,6 +232,24 @@ It uses the committed `docs/ops/evidence/W7-C10/fleet-<host>-floor.json`, never 
 floor regenerated from the candidate. The job prepares only the scratch path
 explicitly approved in that floor; workload/host mismatches fail closed.
 
+CI checks a committed floor's shape only: the full receipts are off-repo, so no CI
+step can recompute a floor. On a host that holds the archive, recompute it:
+
+```text
+python3 scripts/fleet-regression.py verify-floor --floor docs/ops/evidence/W7-C10/fleet-arch-floor.json --archive /Volumes/Cinema/archive/w7-evidence/W7-C10 --bench target/release/oneiron-bench
+```
+
+`verify-floor` reads the floor's row from the receipt pointer table by the floor's
+file name and hashes that archived receipt with `oneiron-bench fleet digest --file
+<PATH>`, which prints the BLAKE3 hex of the file's bytes. It requires the row's
+BLAKE3, `baseline_sha256` equal to the receipt's canonical-JSON SHA-256, and
+`make-floor` over the receipt with the floor's own tolerances to reproduce the
+floor exactly, so an edited summary number fails under a true digest. Exit codes:
+0 = the floor is its receipt's; 2 = refused. With `ONEIRON_FLEET_ARCHIVE` naming the
+archive and `ONEIRON_BENCH` a release `oneiron-bench`,
+`scripts/tests/test_fleet_regression.py` runs it on both committed floors; elsewhere
+that test skips.
+
 ## Residual miss scaling (separate receipt)
 
 `fleet ppr-scaling --plan fleet-plan.json --out scaling.json` measures the paired
@@ -311,7 +338,8 @@ are retained. This is a measured residual-resume gain, not proof of the later
 fresh-insert scan optimization.
 
 The full receipt with per-sample arrays is archived off-repo at
-`/Volumes/Cinema/archive/w7-evidence/W7-C10/` (checksums in `SHA256SUMS` there).
+`/Volumes/Cinema/archive/w7-evidence/W7-C10/` (checksums in `SHA256SUMS` there);
+its BLAKE3 is in the receipt pointer table under the first measured baseline.
 The [process outcome](evidence/W7-C10/fleet-arch-before-process.json) and
 [approved floor](evidence/W7-C10/fleet-arch-floor.json) are committed. The floor
 uses explicit 15% throughput-loss and 20% p99-growth regression budgets.
