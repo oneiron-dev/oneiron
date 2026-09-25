@@ -1,6 +1,85 @@
 use super::*;
 
 #[test]
+fn trusted_disjoint_generated_actor_bindings_preserve_each_permit() -> Result<()> {
+    let _dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::default())?;
+    let actor = test_id(0x86);
+    let default_actor = crate::commitment_schedule::commitment_projection_actor().entity_ref();
+    let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
+        unreachable!("source trust fixture is a map")
+    };
+    let Value::Map(ref mut row) = sources[0].1 else {
+        unreachable!("source trust row fixture is a map")
+    };
+    row.push((Value::from("actor_ref"), Value::from(actor.to_hex())));
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x87),
+        &encode_policy_manifest(vec![(key, Value::Map(sources))]),
+    )?;
+    let policy = resolve(&vault)?;
+    let body = source_trust_claim(ClaimSource::Generated);
+    for allowed in [default_actor, actor] {
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&allowed.to_hex()),
+            &policy,
+            None,
+        )?;
+    }
+    assert!(
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&test_id(0x88).to_hex()),
+            &policy,
+            None,
+        )
+        .is_err()
+    );
+    // A replicated row for a third actor cannot mint a permit on an absent slot.
+    let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
+        unreachable!("source trust fixture is a map")
+    };
+    let Value::Map(ref mut row) = sources[0].1 else {
+        unreachable!("source trust row fixture is a map")
+    };
+    row.push((
+        Value::from("actor_ref"),
+        Value::from(test_id(0x88).to_hex()),
+    ));
+    vault
+        .batch()
+        .put_replicated(
+            &test_id(0x89),
+            ENTITY_TYPE_POLICY_MANIFEST,
+            test_time(1),
+            1,
+            &encode_policy_manifest(vec![(key, Value::Map(sources))]),
+        )
+        .commit()?;
+    let policy = resolve(&vault)?;
+    assert!(
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&test_id(0x88).to_hex()),
+            &policy,
+            None,
+        )
+        .is_err()
+    );
+    for allowed in [default_actor, actor] {
+        crate::gate::resolution::check_claim_source_trust(
+            &body,
+            Some(&allowed.to_hex()),
+            &policy,
+            None,
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
 fn untrusted_source_rows_only_narrow_present_slots_independent_of_scan_order() -> Result<()> {
     for (trusted, peer) in [
         (test_id(0x70), test_id(0x80)),

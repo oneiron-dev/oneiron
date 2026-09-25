@@ -8,6 +8,60 @@ use proptest::prelude::*;
 use support::*;
 
 #[test]
+fn dag_test_policy_keeps_the_default_manifest() {
+    let (_dir, vault, _conv, actor) = fixture();
+    grant(&vault, actor, false);
+    let id = crate::gate::default_policy_manifest_id().unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let raw = vault
+        .store
+        .entities
+        .get(&txn, id.as_bytes())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        crate::gate::default_policy_manifest()
+    );
+}
+
+#[test]
+fn dag_test_policy_refuses_an_actor_the_vault_does_not_hold() {
+    let (_dir, vault, _conv, actor) = fixture();
+    let missing = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    assert!(
+        crate::conversation_dag::test_support::put_dag_test_policy(&vault, missing, true).is_err()
+    );
+    let mismatch = WriteActor::new(actor.entity_ref(), EdgeActorClass::System);
+    assert!(
+        crate::conversation_dag::test_support::put_dag_test_policy(&vault, mismatch, true).is_err()
+    );
+}
+
+#[test]
+fn dag_test_policy_refuses_a_manifest_id_owned_by_an_actor() {
+    let (_dir, vault, _conv, actor) = fixture();
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "test-id", "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {}, "rules": [], "actor_ceilings": []
+    });
+    assert!(
+        crate::conversation_dag::test_support::put_test_policy_manifest(
+            &vault,
+            actor,
+            actor.entity_ref(),
+            &policy,
+        )
+        .is_err()
+    );
+    assert_eq!(
+        vault.get_entity_type(&actor.entity_ref()).unwrap(),
+        Some(crate::registry::ENTITY_TYPE_PERSON)
+    );
+}
+
+#[test]
 fn forks_rewrite_canonical_and_preserve_old_branch_and_pages() {
     let (_dir, vault, conv, actor) = fixture();
     let root = vault
