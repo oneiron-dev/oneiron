@@ -1,13 +1,13 @@
 name: CI
 
-# Triggers (2026-09-11): every non-draft pull request, every push to main,
+# Triggers (2026-09-11): every non-draft internal pull request, every push to main,
 # and manual dispatch. There is no `paths` filter on purpose. The repository
 # ruleset on main requires the `Checks` and `Test` contexts, and a filtered
 # trigger starts no run at all, so a docs-only PR reported neither context and
 # could never merge (PR #921 had to be merged with --admin). The `changes` job
 # still detects a rust-relevant diff, but it now decides which STEPS run, not
-# whether the run happens. Both required contexts therefore always report, and
-# a docs-only run costs one checkout per job plus the cheap always-on steps
+# whether the run happens. Both required contexts therefore report for internal PRs, and
+# an internal docs-only PR costs one checkout per job plus the cheap always-on steps
 # (code-map pin, tooling tests, typos, and the cargo-deny policy).
 #
 # Wave affordance: setting the repository variable CI_PAUSED=true skips
@@ -65,8 +65,8 @@ concurrency:
 # Gate layout: `changes` detects rust-relevant diffs and gates STEPS, never
 # jobs. `checks` (code-map pin, fmt, clippy workspace + featureless + server,
 # strict rustdoc, tool tests, typos, cargo-deny policy) and `test-linux` (named `Test`, the
-# Linux reference recipe) both run on every non-draft PR, on every push to main and on
-# dispatch, so the two required contexts always report. Inside each, the cargo steps run only when the diff
+# Linux reference recipe) both run on every non-draft internal PR, on every push to main and on
+# dispatch, so the two required contexts report for internal PRs. Inside each, the cargo steps run only when the diff
 # is rust-relevant — always on dispatch and on tags, and fail-open if the
 # detector broke (deny is the dispatch-era gate, ONE-335). A docs-only run is
 # therefore a checkout, a toolchain print and the always-on policy steps, and
@@ -85,13 +85,17 @@ concurrency:
 #
 # Every job's `if:` starts with the pause/draft guard from the header,
 #   vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+#   && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
 # AND-ed with that job's own gate.
 jobs:
   changes:
     name: Detect changed paths
     runs-on: [self-hosted]
     timeout-minutes: 10
-    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    if: >-
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
     # paths-filter reads PR changed-files via the REST API — grant it
     # explicitly so a restricted default GITHUB_TOKEN can't strand PRs.
     permissions:
@@ -132,7 +136,7 @@ jobs:
     needs: changes
     # The former fmt / clippy / typos / cargo-deny jobs, folded into one so a
     # PR takes one runner slot and one checkout for all of them. Runs on every
-    # non-draft PR, on every push to main and on dispatch — unconditionally,
+    # non-draft internal PR, on every push to main and on dispatch — unconditionally,
     # because `Checks` is a required context and a job that never starts never
     # reports. The cargo steps below gate themselves on a
     # rust-relevant diff (always on dispatch: a manual run is the full gate;
@@ -140,9 +144,11 @@ jobs:
     # always run, so a docs-only PR reports checks it really ran. Inside
     # always(): dispatch is the deny gate's unconditional route (ONE-335), so a broken
     # `changes` job must not skip it; the pause/draft guard still applies.
+    # Fork PRs get no required contexts; maintainers test via an internal branch.
     if: >-
       always()
       && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
       && (github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     steps:
       - uses: actions/checkout@v4
@@ -248,9 +254,11 @@ jobs:
     # no sane diff base on a tag event); that clause is inert until a
     # tag-push trigger returns to `on:` (see `package`). The pause/draft
     # guard sits inside always() so a paused wave or a draft PR still skips.
+    # Fork PRs get no required contexts; maintainers test via an internal branch.
     if: >-
       always()
       && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
       && (
         github.event_name == 'workflow_dispatch'
         || (github.event_name == 'push' && (
@@ -348,15 +356,17 @@ jobs:
     # the record of truth for what the macOS job cannot run. oneiron-napi is
     # excluded here: on Linux its test binary needs symbols from a Node host.
     # The macOS recipe above retains it via that crate's dynamic-lookup link flags.
-    # Since 2026-09-25 this is also the required `Test` on every non-draft PR:
+    # Since 2026-09-25 this is also the required `Test` on every non-draft internal PR:
     # the Linux boxes (Arch, a rented wave box) carry the PR load, and the
     # macOS recipe runs on main pushes. Same push gate as before (rust diff,
     # fail-open, tags), same pause/draft guard inside always(); on a PR the
     # cargo steps gate themselves on a rust-relevant diff so a docs-only PR
     # still reports the context.
+    # Fork PRs get no required contexts; maintainers test via an internal branch.
     if: >-
       always()
       && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
       && (
         github.event_name == 'workflow_dispatch'
         || github.event_name == 'pull_request'
@@ -416,8 +426,10 @@ jobs:
     # in `on:`. Today `push` is `branches: [main]` only, so the gate below
     # is unreachable — unchanged behaviour, now stated. Re-add the tag
     # trigger to turn release validation back on.
+    # Fork PRs get no required contexts; maintainers test via an internal branch.
     if: >-
       vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
       && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
@@ -457,10 +469,12 @@ jobs:
     runs-on: [self-hosted]
     timeout-minutes: 180
     needs: changes
+    # Fork PRs get no required contexts; maintainers test via an internal branch.
     if: >-
       always()
       && vars.CI_PAUSED != 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
       && (needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success')
     steps:
       - uses: actions/checkout@v4

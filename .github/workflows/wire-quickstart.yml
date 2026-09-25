@@ -75,10 +75,13 @@ jobs:
     # from the host rustup, build cache from the runner's persistent target
     # dir (no rust-cache action). Bun, Node and Python stay version-pinned
     # through their setup actions, which populate the runner's own tool
-    # cache (_work/_tool) on first use. Same pause/draft guard as ci.yml.
+    # cache (_work/_tool) on first use. Same pause/draft/fork guard as ci.yml.
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 30
-    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    if: >-
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
     defaults:
       run:
         shell: bash

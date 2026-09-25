@@ -39,7 +39,10 @@ jobs:
     # rather than any macOS runner; both Macs carry it today.
     runs-on: [self-hosted, macos, arm64, xcode]
     timeout-minutes: 30
-    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    # Fork PRs get no required contexts; maintainers test via an internal branch.
+    if: >-
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'oneiron-dev/oneiron')
     steps:
       # fetch-depth 0 so the PR-only forbidden-path guard can always reach
       # the base SHA, with no implementer-chosen baseline.
