@@ -22,13 +22,50 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Named, SideKey, SideTable};
 
 pub const CRITIQUE_ARTIFACT_SCHEMA_VERSION: u64 = 1;
 pub const CRITIC_LENS_CATALOG_SCHEMA_VERSION: u64 = 1;
 pub const CRITIC_RELIABILITY_CLAIM_SCHEMA_VERSION: u64 = 1;
 pub const CRITIC_RELIABILITY_PREDICATE_PREFIX: &str = "critic_reliability";
 
-const CRITIQUE_PRIVATE_ARTIFACT_PREFIX: &[u8] = b"dreamer:critic:v1:";
+/// Private run-tree-scoped critique artifact for one branch attempt, written independently by
+/// both the generic critic reviewer and the Dreamer tournament with the identical prefix and key
+/// layout. Key: id16(branch attempt) + u16be(artifact id length) + string(artifact id).
+pub(crate) const CRITIQUE_ARTIFACT: SideTable<CritiqueArtifactKey, CritiqueArtifact, Named> =
+    SideTable::new(&side_table::CRITIC_ARTIFACT);
+
+/// [`CRITIQUE_ARTIFACT`]'s key: the byte layout above, spelled exactly (a plain
+/// `(AttemptId, String)` tuple would drop the artifact id's length prefix).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CritiqueArtifactKey {
+    pub(crate) branch_attempt: AttemptId,
+    pub(crate) artifact_id: String,
+}
+
+impl SideKey for CritiqueArtifactKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.branch_attempt.as_bytes());
+        out.extend_from_slice(&(self.artifact_id.len() as u16).to_be_bytes());
+        out.extend_from_slice(self.artifact_id.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (branch_bytes, rest) = bytes.split_at_checked(16)?;
+        let branch_attempt = AttemptId::from_bytes(branch_bytes).ok()?;
+        let (len_bytes, rest) = rest.split_at_checked(2)?;
+        let len = usize::from(u16::from_be_bytes(len_bytes.try_into().ok()?));
+        if rest.len() != len {
+            return None;
+        }
+        let artifact_id = String::from_utf8(rest.to_vec()).ok()?;
+        Some(Self {
+            branch_attempt,
+            artifact_id,
+        })
+    }
+}
+
 const MAX_CATALOG_LENSES: usize = 64;
 const MAX_ID_BYTES: usize = 64;
 const MAX_DOMAIN_BYTES: usize = 64;
@@ -514,11 +551,12 @@ impl<'a> CritiqueArtifactStore<'a> {
         if artifact.out_of_scope {
             return Ok(());
         }
-        let key = critique_artifact_key(artifact.branch_attempt, &artifact.artifact_id)?;
-        let encoded = rmp_serde::to_vec_named(artifact)
-            .map_err(|_| invalid_critic_config("critique artifact MessagePack encode failed"))?;
+        let key = CritiqueArtifactKey {
+            branch_attempt: artifact.branch_attempt,
+            artifact_id: artifact.artifact_id.clone(),
+        };
         let mut wtxn = self.vault.store.env.write_txn()?;
-        self.vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+        CRITIQUE_ARTIFACT.put(&self.vault.store, &mut wtxn, &key, artifact)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -529,21 +567,26 @@ impl<'a> CritiqueArtifactStore<'a> {
         artifact_id: &str,
     ) -> Result<Option<CritiqueArtifact>> {
         validate_identifier(artifact_id, MAX_ARTIFACT_ID_BYTES, "critique artifact id")?;
-        let key = critique_artifact_key(branch_attempt, artifact_id)?;
+        let key = CritiqueArtifactKey {
+            branch_attempt,
+            artifact_id: artifact_id.to_owned(),
+        };
         let rtxn = self.vault.store.env.read_txn()?;
-        let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
+        let Some(artifact) = CRITIQUE_ARTIFACT.get(&self.vault.store, &rtxn, &key)? else {
             return Ok(None);
         };
-        decode_stored_critique_artifact(&raw).map(Some)
+        validate_critique_artifact(&artifact)?;
+        Ok(Some(artifact))
     }
 
     pub fn list_branch(&self, branch_attempt: AttemptId) -> Result<Vec<CritiqueArtifact>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let prefix = critique_branch_prefix(branch_attempt);
         let mut artifacts = Vec::new();
-        for row in self.vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (_key, raw) = row?;
-            artifacts.push(decode_stored_critique_artifact(&raw)?);
+        for (_, artifact) in
+            CRITIQUE_ARTIFACT.scan_from(&self.vault.store, &rtxn, branch_attempt.as_bytes())?
+        {
+            validate_critique_artifact(&artifact)?;
+            artifacts.push(artifact);
         }
         artifacts.sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
         Ok(artifacts)
@@ -591,13 +634,6 @@ pub fn critic_reliability_claim_body(
     ))
 }
 
-fn decode_stored_critique_artifact(raw: &[u8]) -> Result<CritiqueArtifact> {
-    let artifact: CritiqueArtifact = rmp_serde::from_slice(raw)
-        .map_err(|_| Error::CorruptedIndex("critic critique artifact"))?;
-    validate_critique_artifact(&artifact)?;
-    Ok(artifact)
-}
-
 fn soft_verdict(scores: CritiqueTriageScores) -> CritiqueVerdict {
     if scores.discard > 0.0 && scores.discard >= scores.revise && scores.discard >= scores.accept {
         CritiqueVerdict::Discard
@@ -606,21 +642,6 @@ fn soft_verdict(scores: CritiqueTriageScores) -> CritiqueVerdict {
     } else {
         CritiqueVerdict::Accept
     }
-}
-
-fn critique_branch_prefix(branch_attempt: AttemptId) -> Vec<u8> {
-    let mut out = Vec::with_capacity(CRITIQUE_PRIVATE_ARTIFACT_PREFIX.len() + 16);
-    out.extend_from_slice(CRITIQUE_PRIVATE_ARTIFACT_PREFIX);
-    out.extend_from_slice(branch_attempt.as_bytes());
-    out
-}
-
-fn critique_artifact_key(branch_attempt: AttemptId, artifact_id: &str) -> Result<Vec<u8>> {
-    validate_identifier(artifact_id, MAX_ARTIFACT_ID_BYTES, "critique artifact id")?;
-    let mut out = critique_branch_prefix(branch_attempt);
-    out.extend_from_slice(&(artifact_id.len() as u16).to_be_bytes());
-    out.extend_from_slice(artifact_id.as_bytes());
-    Ok(out)
 }
 
 fn validate_catalog(catalog: &LensCatalog) -> Result<()> {

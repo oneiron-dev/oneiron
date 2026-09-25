@@ -9,6 +9,7 @@ mod forks;
 mod message_stream;
 mod pins;
 mod registry;
+mod side_keys;
 mod storage;
 pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,

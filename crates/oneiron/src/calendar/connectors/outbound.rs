@@ -22,17 +22,53 @@ use crate::calendar::passport::{
 use crate::calendar::safeguard::CalendarInboundBody;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
+use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::vault::Vault;
-
-/// `vault_meta` prefix for this module's private rows. Two kinds live under it
-/// ([`OUTBOX_ROW_TAG`], [`REMOTE_OBJECT_TAG`]): no second prefix, no entity byte.
-pub(super) const CALENDAR_WRITE_OUTBOX_PREFIX: &[u8] = b"calendar.connector-write.v1:";
 
 /// Sub-tag for durable write-outbox rows.
 pub(super) const OUTBOX_ROW_TAG: &[u8] = b"row:";
 
 /// Sub-tag for the node-local `(system, calendar_ref, uid)` href/ETag cursor.
 const REMOTE_OBJECT_TAG: &[u8] = b"obj:";
+
+/// Durable local write-outbox rows: `CALENDAR_CONNECTOR_WRITE`'s [`OUTBOX_ROW_TAG`]
+/// shape. Key: `row:` ‖ the 32-byte outbox id.
+pub(super) const OUTBOX: SideTable<OutboxKey, StoredOutboxRow, LegacyJson> =
+    SideTable::new(&side_table::CALENDAR_CONNECTOR_WRITE);
+
+/// Node-local remote-object cursors: `CALENDAR_CONNECTOR_WRITE`'s
+/// [`REMOTE_OBJECT_TAG`] shape, the same declaration as [`OUTBOX`] under its
+/// own tag and row type. Key: `obj:` ‖ `sha256(system, calendar_ref, uid)`.
+const REMOTE_OBJECT: SideTable<RemoteObjectKey, StoredRemoteObjectRow, LegacyJson> =
+    SideTable::new(&side_table::CALENDAR_CONNECTOR_WRITE);
+
+pub(super) struct OutboxKey(pub(super) [u8; 32]);
+
+impl SideKey for OutboxKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(OUTBOX_ROW_TAG);
+        out.extend_from_slice(&self.0);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(Self(bytes.strip_prefix(OUTBOX_ROW_TAG)?.try_into().ok()?))
+    }
+}
+
+struct RemoteObjectKey([u8; 32]);
+
+impl SideKey for RemoteObjectKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(REMOTE_OBJECT_TAG);
+        out.extend_from_slice(&self.0);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(Self(
+            bytes.strip_prefix(REMOTE_OBJECT_TAG)?.try_into().ok()?,
+        ))
+    }
+}
 
 /// Id-derivation domain for [`CalendarWriteOutboxRow::outbox_id`].
 const OUTBOX_ID_DOMAIN: &[u8] = b"oneiron:calendar-connector-write:v1:";
@@ -92,9 +128,9 @@ impl CalendarWriteOutboxState {
 
 /// One durable local write-outbox row.
 ///
-/// Staged under `CALENDAR_WRITE_OUTBOX_PREFIX` BEFORE the provider call, so a
-/// crash between the remote mutation and the local commit resumes from the row
-/// instead of repeating a blind write. Carries refs and hashes only — never a
+/// Staged under [`OUTBOX`] BEFORE the provider call, so a crash between the
+/// remote mutation and the local commit resumes from the row instead of
+/// repeating a blind write. Carries refs and hashes only — never a
 /// credential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CalendarWriteOutboxRow {
@@ -594,36 +630,23 @@ struct StoredRemoteObjectRow {
     last_seen_at: u64,
 }
 
-fn outbox_row_key(outbox_id: &[u8; 32]) -> Vec<u8> {
-    let mut key = CALENDAR_WRITE_OUTBOX_PREFIX.to_vec();
-    key.extend_from_slice(OUTBOX_ROW_TAG);
-    key.extend_from_slice(outbox_id);
-    key
-}
-
-fn remote_object_key(system: &str, calendar_ref: &str, uid: &str) -> Vec<u8> {
+fn remote_object_digest(system: &str, calendar_ref: &str, uid: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
     for part in [system, calendar_ref, uid] {
         hasher.update(part.len().to_le_bytes());
         hasher.update(part.as_bytes());
     }
-    let mut key = CALENDAR_WRITE_OUTBOX_PREFIX.to_vec();
-    key.extend_from_slice(REMOTE_OBJECT_TAG);
-    key.extend_from_slice(&hasher.finalize());
-    key
+    hasher.finalize().into()
 }
 
 pub(super) fn read_outbox_row(
     vault: &Vault,
     outbox_id: &[u8; 32],
 ) -> Result<Option<CalendarWriteOutboxRow>, CalendarConnectorError> {
-    let key = outbox_row_key(outbox_id);
     let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &key)? else {
+    let Some(stored) = OUTBOX.get(&vault.store, &rtxn, &OutboxKey(*outbox_id))? else {
         return Ok(None);
     };
-    let stored: StoredOutboxRow = serde_json::from_slice(raw.as_ref())
-        .map_err(|_| ingest_error("connector outbox row did not decode"))?;
     Ok(Some(stored.into_row()?))
 }
 
@@ -631,15 +654,9 @@ fn write_outbox_row(
     vault: &Vault,
     row: &CalendarWriteOutboxRow,
 ) -> Result<(), CalendarConnectorError> {
-    let encoded = serde_json::to_vec(&StoredOutboxRow::from_row(row)).map_err(|_| {
-        CalendarConnectorError::Outbox {
-            outbox_id: row.outbox_id,
-            detail: "outbox row did not encode".to_owned(),
-        }
-    })?;
-    let key = outbox_row_key(&row.outbox_id);
+    let stored = StoredOutboxRow::from_row(row);
     vault.try_with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        OUTBOX.put(&vault.store, wtxn, &OutboxKey(row.outbox_id), &stored)?;
         Ok::<_, crate::Error>(())
     })?;
     Ok(())
@@ -651,13 +668,11 @@ pub(super) fn read_remote_object(
     calendar_ref: &str,
     uid: &str,
 ) -> Result<Option<CalendarRemoteObjectRow>, CalendarConnectorError> {
-    let key = remote_object_key(system, calendar_ref, uid);
+    let digest = remote_object_digest(system, calendar_ref, uid);
     let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &key)? else {
+    let Some(stored) = REMOTE_OBJECT.get(&vault.store, &rtxn, &RemoteObjectKey(digest))? else {
         return Ok(None);
     };
-    let stored: StoredRemoteObjectRow = serde_json::from_slice(raw.as_ref())
-        .map_err(|_| ingest_error("connector remote-object row did not decode"))?;
     Ok(Some(CalendarRemoteObjectRow {
         system: stored.system,
         calendar_ref: stored.calendar_ref,
@@ -674,7 +689,7 @@ pub(super) fn write_remote_object(
     vault: &Vault,
     row: &CalendarRemoteObjectRow,
 ) -> Result<(), CalendarConnectorError> {
-    let encoded = serde_json::to_vec(&StoredRemoteObjectRow {
+    let stored = StoredRemoteObjectRow {
         system: row.system.clone(),
         calendar_ref: row.calendar_ref.clone(),
         uid: row.uid.clone(),
@@ -683,11 +698,10 @@ pub(super) fn write_remote_object(
         last_sequence: row.last_sequence,
         content_hash: row.content_hash,
         last_seen_at: row.last_seen_at,
-    })
-    .map_err(|_| ingest_error("connector remote-object row did not encode"))?;
-    let key = remote_object_key(&row.system, &row.calendar_ref, &row.uid);
+    };
+    let digest = remote_object_digest(&row.system, &row.calendar_ref, &row.uid);
     vault.try_with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        REMOTE_OBJECT.put(&vault.store, wtxn, &RemoteObjectKey(digest), &stored)?;
         Ok::<_, crate::Error>(())
     })?;
     Ok(())

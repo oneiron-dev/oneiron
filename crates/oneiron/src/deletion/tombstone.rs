@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entity_id::EntityId;
+use crate::side_table::{self, HexId, Raw, SideKey, SideTable};
 
 /// CROSS-ARCH-0002a / ARCH-0038 delete reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -297,6 +298,40 @@ pub(crate) fn pending_tombstone_key(window_label: &str, id: &EntityId) -> String
     format!("{PENDING_TOMBSTONE_PREFIX}{window_label}:{}", id.to_hex())
 }
 
+/// The typed pending-tombstone table `deletion/`'s own reads and writes go
+/// through; `pub(crate)` because `recovery/` also reads this deletion-owned
+/// marker while reconstructing a canonical snapshot. Other modules outside
+/// both slices keep using [`pending_tombstone_key`] plus their own raw
+/// `sync_state` access.
+pub(crate) const PENDING_TOMBSTONE: SideTable<PendingTombstoneKey, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_PENDING_TOMBSTONE);
+
+/// Key after the `pt:` prefix: the window label, `:`, then the entity's 32
+/// lower-case hex characters. The hex id is fixed width, so it decodes
+/// correctly from the tail even if a window label were to contain `:`.
+pub(crate) struct PendingTombstoneKey {
+    pub(crate) window: String,
+    pub(crate) id: EntityId,
+}
+
+impl SideKey for PendingTombstoneKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.window.as_bytes());
+        out.push(b':');
+        out.extend_from_slice(self.id.to_hex().as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let split = bytes.len().checked_sub(32)?;
+        let (head, hex) = bytes.split_at(split);
+        let window = head.strip_suffix(b":")?;
+        Some(Self {
+            window: String::from_utf8(window.to_vec()).ok()?,
+            id: EntityId::from_hex(std::str::from_utf8(hex).ok()?).ok()?,
+        })
+    }
+}
+
 // ─── Local hard-delete marker (`dt:`) — durable local delete truth ──────────
 //
 // PINNED FORMAT (M4 fix wave, shared with the origin-side write): key =
@@ -316,6 +351,14 @@ pub(crate) const LOCAL_HARD_DELETE_PREFIX: &str = "dt:";
 pub(crate) fn local_hard_delete_key(id: &EntityId) -> String {
     format!("{LOCAL_HARD_DELETE_PREFIX}{}", id.to_hex())
 }
+
+/// The typed local hard-delete marker table `deletion/`'s own reads and
+/// writes go through; `pub(crate)` because `recovery/` also reads this
+/// deletion-owned marker while reconstructing a canonical snapshot. Other
+/// modules keep using [`local_hard_delete_key`] plus their own raw
+/// `sync_state` access.
+pub(crate) const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 // ─── Cleanup-archive marker (`ac:`) — durable LOCAL archive truth ───────────
 //
@@ -343,6 +386,12 @@ pub(crate) const ARCHIVE_TOMBSTONE_PREFIX: &str = "ac:";
 pub(crate) fn archive_tombstone_key(id: &EntityId) -> String {
     format!("{ARCHIVE_TOMBSTONE_PREFIX}{}", id.to_hex())
 }
+
+/// The typed cleanup-archive marker table this module's own reads and writes
+/// (other modules keep using [`archive_tombstone_key`] plus their own raw
+/// `sync_state` access).
+pub(super) const ARCHIVE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_ARCHIVE_MARKER);
 
 /// Formats the ARCH-0023b `YYYY-MM` window label for a unix-seconds
 /// timestamp, clamping timestamps at or beyond year 10000 to the last

@@ -83,42 +83,18 @@ pub(super) fn companion_entry(
 // Keys, journal, codecs
 // ---------------------------------------------------------------------------
 
-pub(super) fn onboarding_key(onboarding_id: &str) -> Vec<u8> {
-    let mut key = WORKSPACE_ONBOARDING_KEY_PREFIX.to_vec();
-    key.extend_from_slice(onboarding_id.as_bytes());
-    key
-}
-
-pub(super) fn preset_key(workspace_ref: &str) -> Vec<u8> {
-    let mut key = WORKSPACE_ROSTER_PRESET_KEY_PREFIX.to_vec();
-    key.extend_from_slice(workspace_ref.as_bytes());
-    key
-}
-
-pub(super) fn roster_member_prefix(workspace_ref: &str) -> Vec<u8> {
-    let mut key = WORKSPACE_ROSTER_MEMBER_KEY_PREFIX.to_vec();
-    key.extend_from_slice(workspace_ref.as_bytes());
-    key
-}
-
-pub(super) fn roster_member_key(workspace_ref: &str, person_ref: &EntityId) -> Vec<u8> {
-    let mut key = roster_member_prefix(workspace_ref);
-    key.push(ROSTER_KEY_SEPARATOR);
-    key.extend_from_slice(person_ref.to_hex().as_bytes());
-    key
-}
-
-pub(super) fn read_journal(vault: &Vault, key: &[u8]) -> Result<Option<OnboardingJournal>> {
+pub(super) fn read_journal(
+    vault: &Vault,
+    onboarding_id: &str,
+) -> Result<Option<OnboardingJournal>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, key)? else {
-        return Ok(None);
-    };
-    decode_journal(&raw).map(Some)
+    Ok(ONBOARDING
+        .get(&vault.store, &rtxn, &onboarding_id.to_owned())?
+        .map(OnboardingJournalRow::into_journal))
 }
 
 pub(super) fn write_journal(
     vault: &Vault,
-    key: &[u8],
     intent: &MemberOnboardingIntent,
     record: &OnboardingJournal,
     writer: &WriteActor,
@@ -131,29 +107,16 @@ pub(super) fn write_journal(
         None
     };
     intent.required_companion()?;
-    let encoded = encode_value(&Value::Map(vec![
-        (
-            Value::from("schema_version"),
-            Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
-        ),
-        (
-            Value::from("onboarding_id"),
-            Value::from(intent.onboarding_id.as_str()),
-        ),
-        (
-            Value::from("intent_digest"),
-            Value::Binary(record.intent_digest.to_vec()),
-        ),
-        (Value::from("step"), Value::from(record.step.as_str())),
-        (
-            Value::from("completed_at"),
-            record.completed_at.map_or(Value::Nil, Value::from),
-        ),
-    ]))?;
+    let row = OnboardingJournalRow {
+        onboarding_id: intent.onboarding_id.clone(),
+        intent_digest: record.intent_digest,
+        step: record.step,
+        completed_at: record.completed_at,
+    };
+    ONBOARDING.encode_value(&row)?;
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
         require_mailbox_revision(vault, revision)?;
-        if let Some(raw) = vault.store.vault_meta.get(wtxn, key)? {
-            let prior = decode_journal(&raw)?;
+        if let Some(prior) = ONBOARDING.get(&vault.store, wtxn, &intent.onboarding_id)? {
             if prior.intent_digest != record.intent_digest {
                 return Err(invalid(
                     "onboarding_id was already used with different inputs",
@@ -166,10 +129,48 @@ pub(super) fn write_journal(
         if record.step == MemberOnboardingStep::Started {
             reserve_member_in_txn(vault, wtxn, intent, &record.intent_digest)?;
         }
-        vault.store.vault_meta.put(wtxn, key, &encoded)?;
+        ONBOARDING.put(&vault.store, wtxn, &intent.onboarding_id, &row)?;
         Ok(())
     })
 }
+
+/// `workspace_ref` then a NUL separator then the raw member-person id — the
+/// same shape [`super::records::RosterMemberKey`] uses, differing only in how
+/// the tail id is spelled (raw bytes here, hex there).
+struct MemberIntentKey {
+    workspace_ref: String,
+    person_ref: EntityId,
+}
+
+impl SideKey for MemberIntentKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.workspace_ref.as_bytes());
+        out.push(ROSTER_KEY_SEPARATOR);
+        out.extend_from_slice(self.person_ref.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let separator = bytes
+            .iter()
+            .position(|&byte| byte == ROSTER_KEY_SEPARATOR)?;
+        let workspace_ref = String::from_utf8(bytes[..separator].to_vec()).ok()?;
+        let person_ref = EntityId::decode_key(&bytes[separator + 1..])?;
+        Some(Self {
+            workspace_ref,
+            person_ref,
+        })
+    }
+}
+
+/// Guards one member's workspace-onboarding slot against a second onboarding
+/// with different inputs. Key: [`MemberIntentKey`].
+const MEMBER_INTENT: SideTable<MemberIntentKey, [u8; 32], Raw> =
+    SideTable::new(&side_table::WORKSPACE_ROSTER_MEMBER_INTENT);
+
+/// Guards a companion PERSON against being claimed by a second principal's
+/// onboarding. Key: id16 (companion person id).
+const COMPANION_PRINCIPAL: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::WORKSPACE_ROSTER_COMPANION_PRINCIPAL);
 
 /// An unfinished onboarding owns its member slot too. A second id must not
 /// create another companion while the first journal is waiting for custody.
@@ -179,68 +180,29 @@ fn reserve_member_in_txn(
     intent: &MemberOnboardingIntent,
     digest: &[u8; 32],
 ) -> Result<()> {
-    let mut key = b"workspace_roster:member_intent:v1:".to_vec();
-    key.extend_from_slice(intent.workspace.workspace_ref.as_bytes());
-    key.push(ROSTER_KEY_SEPARATOR);
-    key.extend_from_slice(intent.person_ref.as_bytes());
-    if let Some(prior) = vault.store.vault_meta.get(txn, &key)?
-        && prior.as_ref() != digest.as_slice()
+    let key = MemberIntentKey {
+        workspace_ref: intent.workspace.workspace_ref.clone(),
+        person_ref: intent.person_ref,
+    };
+    if let Some(prior) = MEMBER_INTENT.get(&vault.store, txn, &key)?
+        && prior != *digest
     {
         return Err(invalid(
             "member already has a different workspace onboarding",
         ));
     }
     if let Some(companion) = &intent.companion_birth {
-        let mut companion_key = b"workspace_roster:companion_principal:v1:".to_vec();
-        companion_key.extend_from_slice(companion.person_ref.as_bytes());
-        if let Some(prior) = vault.store.vault_meta.get(txn, &companion_key)?
-            && prior.as_ref() != intent.person_ref.as_bytes().as_slice()
+        if let Some(prior) = COMPANION_PRINCIPAL.get(&vault.store, txn, &companion.person_ref)?
+            && prior != intent.person_ref
         {
             return Err(invalid(
                 "companion person already belongs to a different principal",
             ));
         }
-        vault
-            .store
-            .vault_meta
-            .put(txn, &companion_key, intent.person_ref.as_bytes())?;
+        COMPANION_PRINCIPAL.put(&vault.store, txn, &companion.person_ref, &intent.person_ref)?;
     }
-    vault.store.vault_meta.put(txn, &key, digest)?;
+    MEMBER_INTENT.put(&vault.store, txn, &key, digest)?;
     Ok(())
-}
-
-pub(super) fn decode_journal(bytes: &[u8]) -> Result<OnboardingJournal> {
-    let entries = decode_map(bytes)?;
-    if required(&entries, "schema_version")?.as_u64() != Some(WORKSPACE_ROSTER_SCHEMA_VERSION) {
-        return Err(invalid("onboarding journal schema_version is unsupported"));
-    }
-    let digest_bytes = match required(&entries, "intent_digest")? {
-        Value::Binary(bytes) => bytes.clone(),
-        _ => return Err(invalid("onboarding journal intent_digest must be binary")),
-    };
-    let intent_digest: [u8; 32] = digest_bytes
-        .try_into()
-        .map_err(|_| invalid("onboarding journal intent_digest must be 32 bytes"))?;
-    let step = required(&entries, "step")?
-        .as_str()
-        .and_then(MemberOnboardingStep::parse)
-        .ok_or_else(|| invalid("onboarding journal step is unrecognized"))?;
-    let completed_at = match required(&entries, "completed_at")? {
-        Value::Nil => None,
-        value => Some(
-            value
-                .as_u64()
-                .ok_or_else(|| invalid("onboarding journal completed_at must be a u64"))?,
-        ),
-    };
-    if (step == MemberOnboardingStep::Complete) != completed_at.is_some() {
-        return Err(invalid("onboarding journal completion fields disagree"));
-    }
-    Ok(OnboardingJournal {
-        intent_digest,
-        step,
-        completed_at,
-    })
 }
 
 pub(super) fn preset_value(preset: &WorkspaceRosterPreset) -> Value {
@@ -284,16 +246,16 @@ pub(super) fn read_preset(
     vault: &Vault,
     workspace_ref: &str,
 ) -> Result<Option<WorkspaceRosterPreset>> {
-    let key = preset_key(workspace_ref);
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &key)? else {
-        return Ok(None);
-    };
-    let entries = decode_map(&raw)?;
+    PRESET.get(&vault.store, &rtxn, &workspace_ref.to_owned())
+}
+
+pub(super) fn decode_preset(bytes: &[u8]) -> Result<WorkspaceRosterPreset> {
+    let entries = decode_map(bytes)?;
     if required(&entries, "schema_version")?.as_u64() != Some(WORKSPACE_ROSTER_SCHEMA_VERSION) {
         return Err(invalid("workspace preset schema_version is unsupported"));
     }
-    Ok(Some(WorkspaceRosterPreset {
+    Ok(WorkspaceRosterPreset {
         workspace_ref: required_str(&entries, "workspace_ref")?,
         workspace_vault_id: required(&entries, "workspace_vault_id")?
             .as_u64()
@@ -303,7 +265,7 @@ pub(super) fn read_preset(
         house_display_name: optional_string(&entries, "house_display_name")?,
         house_actor_ref: required_ref(&entries, "house_actor_ref")?,
         house_identity_ref: optional_entity(&entries, "house_identity_ref")?,
-    }))
+    })
 }
 
 pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {

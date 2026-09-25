@@ -18,13 +18,71 @@ use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
     taint_state_for_refs_in_txn,
 };
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 
 pub const ARTIFACT_POINTER_CHANNELS: [&str; 2] = ["published", "preview"];
 pub const ARTIFACT_PUBLISH_VERB_FEATURE: &str = "artifact-publish-verb";
 
-const ARTIFACT_POINTER_KEY_PREFIX: &[u8] = b"artifact:pointer:v1:";
 const ARTIFACT_CHANNEL_PUBLISHED: u8 = 0;
 const ARTIFACT_CHANNEL_PREVIEW: u8 = 1;
+
+/// One channel pointer, keyed by `channel(1) ++ artifact_len(u16 be) ++ artifact`
+/// exactly as `artifact_pointer_key` used to spell it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ArtifactPointerRowKey {
+    channel: ArtifactPointerChannel,
+    artifact: String,
+}
+
+impl SideKey for ArtifactPointerRowKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(self.channel.key_byte());
+        out.extend_from_slice(&(self.artifact.len() as u16).to_be_bytes());
+        out.extend_from_slice(self.artifact.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (&channel_byte, rest) = bytes.split_first()?;
+        let channel = ArtifactPointerChannel::from_key_byte(channel_byte)?;
+        let (len_bytes, rest) = rest.split_at_checked(2)?;
+        let len = u16::from_be_bytes(len_bytes.try_into().ok()?) as usize;
+        if rest.len() != len {
+            return None;
+        }
+        Some(Self {
+            channel,
+            artifact: String::from_utf8(rest.to_vec()).ok()?,
+        })
+    }
+}
+
+/// One pointer row's value: a bare 32-byte fork hash (every pointer written
+/// before SECRET-04) or 33 bytes when the publish rode a stale-taint override.
+struct ArtifactPointerRow {
+    fork_hash: CodebaseForkHash,
+    stale_taint_override: bool,
+}
+
+impl RawValue for ArtifactPointerRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut value = self.fork_hash.to_vec();
+        if self.stale_taint_override {
+            value.push(ARTIFACT_POINTER_STALE_OVERRIDE_STAMP);
+        }
+        Ok(value)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let (fork_hash, stale_taint_override) = decode_artifact_pointer_row(bytes)?;
+        Ok(Self {
+            fork_hash,
+            stale_taint_override,
+        })
+    }
+}
+
+const ARTIFACT_POINTERS: SideTable<ArtifactPointerRowKey, ArtifactPointerRow, Raw> =
+    SideTable::new(&side_table::ARTIFACT_POINTER);
 
 /// The pointer row's value framing.
 ///
@@ -59,6 +117,15 @@ impl ArtifactPointerChannel {
         match self {
             Self::Published => ARTIFACT_CHANNEL_PUBLISHED,
             Self::Preview => ARTIFACT_CHANNEL_PREVIEW,
+        }
+    }
+
+    #[must_use]
+    const fn from_key_byte(byte: u8) -> Option<Self> {
+        match byte {
+            ARTIFACT_CHANNEL_PUBLISHED => Some(Self::Published),
+            ARTIFACT_CHANNEL_PREVIEW => Some(Self::Preview),
+            _ => None,
         }
     }
 
@@ -234,10 +301,11 @@ impl Vault {
     ) -> Result<bool> {
         validate_artifact_id(artifact)?;
         let mut wtxn = self.store.env.write_txn()?;
-        let removed = self
-            .store
-            .vault_meta
-            .delete(&mut wtxn, &artifact_pointer_key(artifact, channel)?)?;
+        let key = ArtifactPointerRowKey {
+            channel,
+            artifact: artifact.to_owned(),
+        };
+        let removed = ARTIFACT_POINTERS.delete(&self.store, &mut wtxn, &key)?;
         wtxn.commit()?;
         Ok(removed)
     }
@@ -248,17 +316,18 @@ impl Vault {
         channel: ArtifactPointerChannel,
     ) -> Result<Option<ArtifactPointer>> {
         validate_artifact_id(artifact)?;
-        let raw = {
+        let row = {
             let rtxn = self.store.env.read_txn()?;
-            self.store
-                .vault_meta
-                .get(&rtxn, &artifact_pointer_key(artifact, channel)?)?
-                .map(|value| value.to_vec())
+            let key = ArtifactPointerRowKey {
+                channel,
+                artifact: artifact.to_owned(),
+            };
+            ARTIFACT_POINTERS.get(&self.store, &rtxn, &key)?
         };
-        let Some(raw) = raw else {
+        let Some(row) = row else {
             return Ok(None);
         };
-        let (fork_hash, stale_taint_override) = decode_artifact_pointer_row(&raw)?;
+        let (fork_hash, stale_taint_override) = (row.fork_hash, row.stale_taint_override);
         let Some(snapshot_ref) = self.resolve_artifact_snapshot_by_fork(artifact, &fork_hash)?
         else {
             return Ok(None);
@@ -416,29 +485,16 @@ fn put_artifact_pointer_in_txn(
     stale_taint_override: bool,
 ) -> Result<()> {
     validate_artifact_id(artifact)?;
-    let key = artifact_pointer_key(artifact, channel)?;
-    if stale_taint_override {
-        let mut value = Vec::with_capacity(CODEBASE_FORK_HASH_LEN + 1);
-        value.extend_from_slice(fork_hash);
-        value.push(ARTIFACT_POINTER_STALE_OVERRIDE_STAMP);
-        store.vault_meta.put(wtxn, &key, &value)?;
-    } else {
-        // Byte-identical to every pointer row written before SECRET-04.
-        store.vault_meta.put(wtxn, &key, fork_hash)?;
-    }
+    let key = ArtifactPointerRowKey {
+        channel,
+        artifact: artifact.to_owned(),
+    };
+    let row = ArtifactPointerRow {
+        fork_hash: *fork_hash,
+        stale_taint_override,
+    };
+    ARTIFACT_POINTERS.put(store, wtxn, &key, &row)?;
     Ok(())
-}
-
-fn artifact_pointer_key(artifact: &str, channel: ArtifactPointerChannel) -> Result<Vec<u8>> {
-    validate_artifact_id(artifact)?;
-    let len = u16::try_from(artifact.len())
-        .map_err(|_| Error::ArithmeticOverflow("artifact id length overflow"))?;
-    let mut key = Vec::with_capacity(ARTIFACT_POINTER_KEY_PREFIX.len() + 1 + 2 + artifact.len());
-    key.extend_from_slice(ARTIFACT_POINTER_KEY_PREFIX);
-    key.push(channel.key_byte());
-    key.extend_from_slice(&len.to_be_bytes());
-    key.extend_from_slice(artifact.as_bytes());
-    Ok(key)
 }
 
 /// Reads one pointer row into its fork hash and its stale-taint override,

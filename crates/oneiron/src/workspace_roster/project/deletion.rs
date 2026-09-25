@@ -16,7 +16,7 @@ pub(crate) fn deindex_project_room(
     if !is_project_type(store, header.entity_type) {
         return Ok((false, false, Vec::new()));
     }
-    if store.vault_meta.get(txn, ROOT)?.as_deref() == Some(id.as_bytes()) {
+    if ROOT.get(store, txn, &())? == Some(*id) {
         return Err(
             crate::error::RecordError::InvalidProjectBody("cannot delete root project").into(),
         );
@@ -38,9 +38,8 @@ pub(crate) fn deindex_project_room(
     }
     let room_id = home_room_id(*id);
     super::super::rooms::delete_room_metadata(store, txn, room_id)?;
-    let room_key = [ROOM_PROJECT, room_id.as_bytes()].concat();
-    let owner = store.vault_meta.get(txn, &room_key)?;
-    if owner.as_deref().is_some_and(|owner| owner != id.as_bytes()) {
+    let owner = ROOM_PROJECT.get(store, txn, &room_id)?;
+    if owner.is_some_and(|owner| owner != *id) {
         return Err(Error::CorruptedIndex("project room owner"));
     }
     if let Some(room) = record::<ProjectRoom>(store, txn, room_id, ENTITY_TYPE_CONVERSATION)? {
@@ -48,9 +47,9 @@ pub(crate) fn deindex_project_room(
             return Err(Error::CorruptedIndex("project room collision"));
         }
         let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &room_id)?;
-        store.vault_meta.delete(txn, &room_key)?;
+        ROOM_PROJECT.delete(store, txn, &room_id)?;
         return Ok((vector, graph, neighbors));
     }
-    store.vault_meta.delete(txn, &room_key)?;
+    ROOM_PROJECT.delete(store, txn, &room_id)?;
     Ok((false, false, Vec::new()))
 }

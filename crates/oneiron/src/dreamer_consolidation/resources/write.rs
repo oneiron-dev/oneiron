@@ -109,16 +109,12 @@ impl ConsolidationFence {
         )
         .ok_or_else(|| invalid_consolidation("invalid pinned actor"))?;
         let read = vault.scoped_read(actor);
-        let rules: crate::dreamer_consolidation::routing::PredicateKeyRules = match vault
-            .store
-            .vault_meta
-            .get(txn, b"dreamer:consolidation:keys:v1")?
-        {
-            Some(raw) => serde_json::from_slice(&raw)
-                .map_err(|_| invalid_consolidation("invalid key rules"))?,
-            None => serde_json::from_str(include_str!("../key_defaults.json"))
-                .map_err(|_| invalid_consolidation("invalid default key rules"))?,
-        };
+        let rules: crate::dreamer_consolidation::routing::PredicateKeyRules =
+            match crate::dreamer_consolidation::routing::KEY_RULES.get(&vault.store, txn, &())? {
+                Some(rules) => rules,
+                None => serde_json::from_str(include_str!("../key_defaults.json"))
+                    .map_err(|_| invalid_consolidation("invalid default key rules"))?,
+            };
         if rules != self.rules {
             return Err(invalid_consolidation("consolidation key rules changed"));
         }

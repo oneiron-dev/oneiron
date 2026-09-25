@@ -10,6 +10,12 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 #[cfg(feature = "sync")]
 use crate::error::{Error, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation};
+use crate::side_table::{self, Raw, SideTable};
+#[cfg(feature = "sync")]
+use crate::sync::window_rows::{
+    WINDOW_FULL_RESYNC_MARKER, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
+    WINDOW_UPDATE,
+};
 
 /// Per-window outcome of [`compact_window`].
 #[cfg(feature = "sync")]
@@ -27,19 +33,30 @@ enum CompactOutcome {
     RacedDefer,
 }
 
+/// Window snapshot carriers (`d:w:{key}`). Key: string (the window label).
+///
+/// Bound here over the ungated declarations rather than read through the
+/// typed doors in `crate::sync`: [`persisted_window_labels`] and the finalize
+/// fence run in both the `#[cfg(feature = "sync")]` and
+/// `#[cfg(not(feature = "sync"))]` builds, and `crate::sync` does not exist
+/// without the feature.
+const SNAPSHOT_CARRIERS: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::WINDOW_SNAPSHOT);
+
+/// Window update carriers (`u:w:{key}:{seq:08x}`), bound for the same reason
+/// as [`SNAPSHOT_CARRIERS`]. Key: string (the text after the prefix, parsed by
+/// the reader so a malformed key is reported rather than refused).
+pub(super) const UPDATE_CARRIERS: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SYNC_U_W);
+
 /// Distinct window labels currently carrying persisted CRDT state —
 /// `d:w:{key}` snapshots and `u:w:{key}:{seq:08x}` update rows.
 fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
     let mut labels = BTreeSet::new();
     let mut malformed = false;
     let rtxn = vault.store.env.read_txn()?;
-    for row in vault.store.sync_state.prefix_iter(&rtxn, "d:w:")? {
-        let (key, _) = row?;
-        labels.insert(key["d:w:".len()..].to_owned());
-    }
-    for row in vault.store.sync_state.prefix_iter(&rtxn, "u:w:")? {
-        let (key, _) = row?;
-        let rest = &key["u:w:".len()..];
+    labels.extend(SNAPSHOT_CARRIERS.scan_keys(&vault.store, &rtxn, &[])?);
+    for rest in UPDATE_CARRIERS.scan_keys(&vault.store, &rtxn, &[])? {
         match rest.rsplit_once(':') {
             Some((label, _seq)) => {
                 labels.insert(label.to_owned());
@@ -47,7 +64,7 @@ fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
             None => {
                 // A u:w: row that does not address a window cannot be
                 // proven payload-free — fail closed, block completion.
-                tracing::error!(key = %key, "sweep: malformed u:w: row key");
+                tracing::error!(key = %format_args!("u:w:{rest}"), "sweep: malformed u:w: row key");
                 malformed = true;
             }
         }
@@ -191,13 +208,7 @@ pub(super) fn compact_all_windows(
     };
     let pending_citations = {
         let txn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .vault_meta
-            .prefix_iter(&txn, crate::note::PENDING_CITATION_ERASE.as_bytes())?
-            .next()
-            .transpose()?
-            .is_some()
+        crate::note::any_citation_erase_pending(&vault.store, &txn)?
     };
     if !labels.is_empty() || malformed || queue_rows_exist || pending_citations {
         tracing::error!(
@@ -230,20 +241,13 @@ fn compact_window(
     use crate::sync::schema::create_window_doc;
     use loro::ExportMode;
 
+    let window = key.to_string();
+
     // Read phase (one read txn, dropped before any Loro work).
     let (snapshot_bytes, update_rows) = {
         let rtxn = vault.store.env.read_txn()?;
-        let snapshot = vault
-            .store
-            .sync_state
-            .get(&rtxn, &format!("d:w:{key}"))?
-            .map(|value| value.to_vec());
-        let mut rows: Vec<(String, Vec<u8>)> = Vec::new();
-        let prefix = format!("u:w:{key}:");
-        for entry in vault.store.sync_state.prefix_iter(&rtxn, &prefix)? {
-            let (k, v) = entry?;
-            rows.push((k.to_string(), v.to_vec()));
-        }
+        let snapshot = WINDOW_SNAPSHOT.get(&vault.store, &rtxn, &window)?;
+        let rows = WINDOW_UPDATE.scan_from(&vault.store, &rtxn, window.as_bytes())?;
         (snapshot, rows)
     };
     if snapshot_bytes.is_none() && update_rows.is_empty() {
@@ -276,15 +280,19 @@ fn compact_window(
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportShallowSnapshot, e))?;
     let vv = doc_version_vector(&doc);
 
-    let merged_keys: BTreeSet<String> = update_rows.iter().map(|(k, _)| k.clone()).collect();
-    let prefix = format!("u:w:{key}:");
-    for k in &merged_keys {
-        if !k.starts_with(&prefix) {
-            // Surgical scope (fail closed): never touch another family.
+    let merged_keys: BTreeSet<Vec<u8>> = update_rows
+        .iter()
+        .map(|(k, _)| WINDOW_UPDATE.key_bytes(k))
+        .collect();
+    for (k, _) in &update_rows {
+        if k.window != window {
+            // Surgical scope (fail closed): never touch another family. The
+            // typed scan above already scopes to this window's prefix, so
+            // this is now a structural invariant rather than a live check.
             return Err(Error::sync_protocol(SyncProtocolValidation::ScopedPrune {
                 scope: SyncProtocolPruneScope::SweepUpdateRows,
-                prefix,
-                key: k.clone(),
+                prefix: format!("u:w:{window}:"),
+                key: String::from_utf8_lossy(&WINDOW_UPDATE.key_bytes(k)).into_owned(),
             }));
         }
     }
@@ -295,7 +303,6 @@ fn compact_window(
     #[cfg(test)]
     inject_race_before_compact_write(vault, key, &snapshot_bytes)?;
 
-    let dw_key = format!("d:w:{key}");
     // ABORT-ONLY raced-defer signal: the write closure returns `Err` (so
     // `with_write_txn` rolls the txn back, committing NOTHING) and sets this
     // flag, which the caller maps to `RacedDefer`. There is deliberately NO
@@ -309,11 +316,7 @@ fn compact_window(
         // both count as a race. A concurrent persist replaced the snapshot;
         // overwriting it with our stale-based shallow would clobber newer
         // state, so defer.
-        let current_snapshot = vault
-            .store
-            .sync_state
-            .get(&*wtxn, &dw_key)?
-            .map(|value| value.to_vec());
+        let current_snapshot = WINDOW_SNAPSHOT.get(&vault.store, wtxn, &window)?;
         if current_snapshot != snapshot_bytes {
             raced.set(true);
             return Err(Error::sync_protocol(
@@ -328,11 +331,11 @@ fn compact_window(
         // rather than drop a carrier or finalize a window we cannot prove
         // payload-free. (Carrier completeness stays local here, not reliant
         // on any sibling d:w: co-write.)
-        let mut current_keys: BTreeSet<String> = BTreeSet::new();
-        for entry in vault.store.sync_state.prefix_iter(&*wtxn, &prefix)? {
-            let (k, _) = entry?;
-            current_keys.insert(k.to_string());
-        }
+        let current_keys: BTreeSet<Vec<u8>> = WINDOW_UPDATE
+            .scan_keys(&vault.store, wtxn, window.as_bytes())?
+            .iter()
+            .map(|k| WINDOW_UPDATE.key_bytes(k))
+            .collect();
         if current_keys != merged_keys {
             raced.set(true);
             return Err(Error::sync_protocol(
@@ -342,28 +345,19 @@ fn compact_window(
 
         // Race-free: the shallow snapshot reflects the durable window.
         // Replace the persistence triple, prune the now-subsumed `u:w:`
-        // rows, and re-assert `fr:w:`. Every merged key is deleted and the
-        // set matched exactly, so zero `u:w:` rows remain on top of the
-        // snapshot — the freshness flag is honestly fresh.
-        vault.store.sync_state.put(wtxn, &dw_key, &shallow)?;
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &format!("sv:w:{key}"), &vv)?;
-        for k in &merged_keys {
-            vault.store.sync_state.delete(wtxn, k)?;
-        }
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &format!("svf:w:{key}"), &[1u8])?;
+        // rows, and re-assert `fr:w:`. The current set matched the merged
+        // set exactly, so pruning everything still under this window's
+        // prefix removes precisely the merged rows — zero `u:w:` rows
+        // remain on top of the snapshot, and the freshness flag is
+        // honestly fresh.
+        WINDOW_SNAPSHOT.put(&vault.store, wtxn, &window, &shallow)?;
+        WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &window, &vv)?;
+        WINDOW_UPDATE.delete_from(&vault.store, wtxn, window.as_bytes())?;
+        WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &window, &[1u8])?;
 
         // Wire/SLA pin: the swept window cannot serve pre-shallow deltas —
         // peers behind the shallow start must take a full window resync.
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &format!("fr:w:{key}"), &[1u8])?;
+        WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &window, &[1u8])?;
         Ok(())
     });
     match result {
@@ -406,10 +400,15 @@ fn inject_race_before_compact_write(
             racer.commit();
             let delta = export_updates_from(&racer, &base_vv)?;
             let mut wtxn = vault.store.env.write_txn()?;
-            vault
-                .store
-                .sync_state
-                .put(&mut wtxn, &format!("u:w:{key}:ffffffff"), &delta)?;
+            WINDOW_UPDATE.put(
+                &vault.store,
+                &mut wtxn,
+                &crate::sync::window_rows::WindowUpdateKey {
+                    window: key.to_string(),
+                    seq: 0xffff_ffff,
+                },
+                &delta,
+            )?;
             wtxn.commit()?;
         }
         RaceInjection::ReplaceSnapshot => {
@@ -423,10 +422,7 @@ fn inject_race_before_compact_write(
             benign.commit();
             let snap = export_snapshot(&benign)?;
             let mut wtxn = vault.store.env.write_txn()?;
-            vault
-                .store
-                .sync_state
-                .put(&mut wtxn, &format!("d:w:{key}"), &snap)?;
+            WINDOW_SNAPSHOT.put(&vault.store, &mut wtxn, &key.to_string(), &snap)?;
             wtxn.commit()?;
         }
     }

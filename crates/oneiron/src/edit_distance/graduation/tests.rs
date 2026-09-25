@@ -388,7 +388,7 @@ fn a_malformed_stored_row_is_a_typed_error_never_a_waived_threshold() {
     // A history, so the all-scopes reads below have a row whose policy they
     // must resolve before they can answer anything.
     record_history(&vault, &scope, 3, 0);
-    let key = pattern_key(WILDCARD_PATTERN);
+    let key = THRESHOLD.key_bytes(&pattern_key(WILDCARD_PATTERN));
     vault
         .with_write_txn(|wtxn| {
             vault.store.vault_meta.put(wtxn, &key, b"not a row")?;
@@ -849,7 +849,7 @@ fn a_malformed_answer_row_is_a_typed_error_never_a_silently_dropped_decline() {
     earn_an_offer(&vault, &scope);
     answer_graduation_offer(&vault, &scope, OfferAnswer::NotNow).expect("decline");
 
-    let key = answer_key(&scope, &EntityId::now());
+    let key = ANSWER.key_bytes(&(scope.key(), EntityId::now()));
     vault
         .with_write_txn(|wtxn| {
             vault.store.vault_meta.put(wtxn, &key, b"not a row")?;
@@ -898,10 +898,11 @@ fn a_capped_answer_scan_keeps_the_newest_transitions_not_the_oldest() {
     vault
         .with_write_txn(|wtxn| {
             for index in 0..=cap {
-                vault
-                    .store
-                    .vault_meta
-                    .put(wtxn, &answer_key(&scope, &answer_id(index)), &data)?;
+                vault.store.vault_meta.put(
+                    wtxn,
+                    &ANSWER.key_bytes(&(scope.key(), answer_id(index))),
+                    &data,
+                )?;
             }
             Ok(())
         })

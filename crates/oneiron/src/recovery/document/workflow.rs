@@ -1,20 +1,18 @@
 //! Durable NOTE workflow capture and reference validation without CRDT op IDs.
 
-use crate::recovery::canonical::{CanonicalSnapshot, invalid, pack};
+#[cfg(feature = "sync")]
+use crate::recovery::canonical::pack;
+use crate::recovery::canonical::{CanonicalSnapshot, invalid};
 use crate::{
     Vault,
     error::Result,
     note::{NoteFork, NoteReviewBundle, NoteVerdict},
 };
+#[cfg(feature = "sync")]
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) fn fork_key(fork: &NoteFork) -> Vec<u8> {
-    [b"note_fork:v1:".as_slice(), fork.fork.as_bytes()].concat()
-}
-pub(super) fn bundle_key(bundle: &NoteReviewBundle) -> Vec<u8> {
-    [b"note_proposal:v1:".as_slice(), bundle.id.as_bytes()].concat()
-}
+#[cfg(feature = "sync")]
 pub(super) fn decode<T: DeserializeOwned + Serialize>(raw: &[u8]) -> Result<T> {
     let value: T = rmp_serde::from_slice(raw).map_err(|_| invalid("NOTE workflow encoding"))?;
     if pack(&value)? != raw {
@@ -53,25 +51,17 @@ pub(super) fn capture(
     ids: &BTreeSet<[u8; 16]>,
 ) -> Result<()> {
     let mut originals = BTreeMap::new();
-    for row in vault.store.vault_meta.prefix_iter(txn, b"note_fork:v1:")? {
-        let (key, raw) = row?;
-        let fork: NoteFork = decode(&raw)?;
+    for (fork_id, fork) in super::NOTE_FORK.scan(&vault.store, txn)? {
         if !ids.contains(fork.note.as_bytes()) {
             continue;
         }
-        if key != fork_key(&fork) {
+        if fork_id != fork.fork {
             return Err(invalid("stored fork key"));
         }
         snapshot.note_forks.push(normalize(vault, txn, &fork)?);
         originals.insert(fork.fork, fork);
     }
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, b"note_proposal:v1:")?
-    {
-        let (key, raw) = row?;
-        let mut bundle: NoteReviewBundle = decode(&raw)?;
+    for (bundle_id, mut bundle) in super::NOTE_PROPOSAL_BUNDLE.scan(&vault.store, txn)? {
         let mut notes = bundle_notes(&bundle);
         for fork_id in bundle
             .waiting
@@ -89,7 +79,7 @@ pub(super) fn capture(
         if !notes.is_subset(ids) {
             return Err(invalid("proposal crosses recovery scope"));
         }
-        if key != bundle_key(&bundle) {
+        if bundle_id != bundle.id {
             return Err(invalid("stored proposal key"));
         }
         for fork in &mut bundle.waiting {

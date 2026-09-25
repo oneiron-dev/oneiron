@@ -14,6 +14,10 @@ use super::queue;
 use super::quota;
 use super::schema::{self, create_window_doc};
 use super::types::{self, WindowKey};
+use super::window_rows::{
+    HISTORY_FREE_WINDOW, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR, WINDOW_UPDATE,
+    WindowUpdateKey,
+};
 use crate::Vault;
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
 use loro::{LoroDoc, Subscription};
@@ -42,8 +46,6 @@ pub(crate) use self::tombstones::{DeleteBearingUpdate, export_tombstone_commit_d
 pub use self::tombstones::{
     apply_tombstone_to_window_doc, rebuild_window_from_updates, replay_pending_tombstones,
 };
-
-pub(super) const HISTORY_FREE_WINDOW_PREFIX: &str = "hfs:w:";
 
 /// Reserved prefix for Loro commit MESSAGES written by the edit-distance
 /// proposal-artifact substrate (ED-00, ONE-1756).
@@ -177,9 +179,10 @@ impl LoadedWindow {
         vault.with_write_txn(|wtxn| {
             persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)?;
             if history_free {
-                vault.store.sync_state.put(
+                HISTORY_FREE_WINDOW.put(
+                    &vault.store,
                     wtxn,
-                    &format!("{HISTORY_FREE_WINDOW_PREFIX}{}", self.key),
+                    &self.key.as_str().to_owned(),
                     &[1u8],
                 )?;
             }
@@ -217,11 +220,13 @@ pub(crate) fn persist_window_doc_in_txn(
     state: &[u8],
     vv: &[u8],
 ) -> Result<()> {
-    let doc_key = format!("d:w:{key}");
-    vault.store.sync_state.put(wtxn, &doc_key, state)?;
-
-    let sv_key = format!("sv:w:{key}");
-    vault.store.sync_state.put(wtxn, &sv_key, vv)?;
+    WINDOW_SNAPSHOT.put(
+        &vault.store,
+        wtxn,
+        &key.as_str().to_owned(),
+        &state.to_vec(),
+    )?;
+    WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &key.as_str().to_owned(), &vv.to_vec())?;
     Ok(())
 }
 
@@ -242,14 +247,13 @@ pub(crate) fn write_window_svf_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     key: &WindowKey,
 ) -> Result<()> {
-    let pending_prefix = format!("u:w:{key}:");
-    let has_pending = {
-        let mut iter = vault.store.sync_state.prefix_iter(wtxn, &pending_prefix)?;
-        iter.next().transpose()?.is_some()
-    };
+    let has_pending = WINDOW_UPDATE
+        .iter_from(&vault.store, wtxn, format!("{key}:").as_bytes())?
+        .next()
+        .transpose()?
+        .is_some();
     let svf = if has_pending { 0u8 } else { SVF_FRESH };
-    let svf_key = format!("svf:w:{key}");
-    vault.store.sync_state.put(wtxn, &svf_key, &[svf])?;
+    WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &key.as_str().to_owned(), &[svf])?;
     Ok(())
 }
 
@@ -290,7 +294,22 @@ fn prune_subsumed_window_updates_in_txn(
         }
     }
     for update_key in subsumed_update_keys {
-        vault.store.sync_state.delete(wtxn, update_key)?;
+        let seq_hex = &update_key[prefix.len()..];
+        let seq = u32::from_str_radix(seq_hex, 16).map_err(|_| {
+            Error::sync_protocol(SyncProtocolValidation::ScopedPrune {
+                scope: SyncProtocolPruneScope::WindowUpdateRows,
+                prefix: prefix.clone(),
+                key: update_key.clone(),
+            })
+        })?;
+        WINDOW_UPDATE.delete(
+            &vault.store,
+            wtxn,
+            &WindowUpdateKey {
+                window: key.as_str().to_owned(),
+                seq,
+            },
+        )?;
     }
     Ok(())
 }
@@ -316,15 +335,17 @@ pub(crate) fn merge_persisted_state_into_doc(
     let mut blobs: Vec<Vec<u8>> = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        let doc_key = format!("d:w:{key}");
-        if let Some(state) = vault.store.sync_state.get(&rtxn, &doc_key)? {
-            blobs.push(state.to_vec());
+        if let Some(state) = WINDOW_SNAPSHOT.get(&vault.store, &rtxn, &key.as_str().to_owned())? {
+            blobs.push(state);
         }
-        let prefix = format!("u:w:{key}:");
-        for entry in vault.store.sync_state.prefix_iter(&rtxn, &prefix)? {
-            let (k, v) = entry?;
-            update_keys.push(k.to_string());
-            blobs.push(v.to_vec());
+        for (update_key, blob) in
+            WINDOW_UPDATE.scan_from(&vault.store, &rtxn, format!("{key}:").as_bytes())?
+        {
+            update_keys.push(
+                String::from_utf8(WINDOW_UPDATE.key_bytes(&update_key))
+                    .expect("window update keys are ASCII"),
+            );
+            blobs.push(blob);
         }
     }
     for blob in &blobs {
@@ -337,11 +358,8 @@ pub(crate) fn merge_persisted_state_into_doc(
 pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) -> Result<LoroDoc> {
     let rtxn = vault.store.env.read_txn()?;
 
-    let doc_key = format!("d:w:{key}");
-    let state = vault
-        .store
-        .sync_state
-        .get(&rtxn, &doc_key)?
+    let state = WINDOW_SNAPSHOT
+        .get(&vault.store, &rtxn, &key.as_str().to_owned())?
         .ok_or_else(|| {
             Error::Sync(SyncError::WindowNotFound {
                 window_key: key.as_str().to_string(),
@@ -377,11 +395,9 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
 /// helpers are invisible to integration-test crates.
 pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
-    // Prefix iterator (B-tree range seek); `{seq:08x}` keys sort in order.
-    let prefix = format!("u:w:{key}:");
+    // Lazy prefix iterator (B-tree range seek); `{seq:08x}` keys sort in order.
     let mut applied = 0u32;
-    let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
-    for entry in iter {
+    for entry in WINDOW_UPDATE.iter_from(&vault.store, &rtxn, format!("{key}:").as_bytes())? {
         let (_, v) = entry?;
         import_doc(doc, &v)?;
         applied += 1;

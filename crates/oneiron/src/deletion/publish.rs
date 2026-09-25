@@ -23,7 +23,7 @@ use super::rendezvous::{DeleteRendezvous, signal_delete_rendezvous};
 use super::tombstone::TombstoneValueV2;
 // The `pt:` withdrawal helper is part of the sync persistence transaction.
 #[cfg(feature = "sync")]
-use super::tombstone::pending_tombstone_key;
+use super::tombstone::{PENDING_TOMBSTONE, PendingTombstoneKey};
 #[cfg(feature = "sync")]
 use crate::error::SyncError;
 
@@ -350,14 +350,15 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        let key = pending_tombstone_key(window_label, id);
-        let staged_by_this_delete = self
-            .store
-            .sync_state
-            .get(&*wtxn, &key)?
-            .is_some_and(|existing| *existing == value.encode());
+        let key = PendingTombstoneKey {
+            window: window_label.to_owned(),
+            id: *id,
+        };
+        let staged_by_this_delete = PENDING_TOMBSTONE
+            .get(&self.store, &*wtxn, &key)?
+            .is_some_and(|existing| existing == value.encode());
         if staged_by_this_delete {
-            self.store.sync_state.delete(wtxn, &key)?;
+            PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;
         }
         Ok(())
     }

@@ -18,12 +18,6 @@ pub const DREAMER_MILESTONE_PREDICATE: &str = "dreamer.job_milestone";
 pub const DREAMER_MILESTONE_VALUE_SCHEMA_VERSION: u64 = 1;
 /// Pinned on-disk MessagePack key set for Dreamer milestone claim values.
 pub const DREAMER_MILESTONE_VALUE_KEYS: [&str; 4] = ["schema_version", "job_id", "milestone", "at"];
-pub(super) const DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX: &[u8] = b"dreamer.milestone_index.v1.c:";
-pub(super) const DREAMER_MILESTONE_INDEX_CLAIM_PREFIX: &[u8] = b"dreamer.milestone_index.v1.i:";
-pub(super) const DREAMER_MILESTONE_INDEX_BACKFILLED_KEY: &[u8] =
-    b"dreamer.milestone_index.v1.backfilled";
-pub(super) const DREAMER_MILESTONE_INDEX_CANDIDATE_KEY_LEN: usize =
-    DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX.len() + 16 + 8 + 8 + 16;
 
 /// Default fan-out reservation for one Dreamer child, in token-like units.
 pub const DEFAULT_DREAMER_CHILD_RESERVE_UNITS: u64 = 8_000;
@@ -119,11 +113,6 @@ pub(super) const DREAMER_PARKED_KEYS: [&str; 5] = [
     KEY_PARK_OWNER,
     KEY_PARKED_AT,
 ];
-pub(super) const DREAMER_PRIVATE_BUDGET_PREFIX: &[u8] = b"dreamer:budget:";
-pub(super) const DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX: &[u8] = b"dreamer:budget_reservation:";
-pub(super) const DREAMER_PRIVATE_RUN_TREE_PREFIX: &[u8] = b"dreamer:run_tree:";
-pub(super) const DREAMER_PRIVATE_PARKED_PREFIX: &[u8] = b"dreamer:parked:";
-pub(super) const DREAMER_PRIVATE_HOME_NODE_KEY: &[u8] = b"dreamer:home_node_macro:v1";
 pub(super) const MAX_DREAMER_ATTEMPT_TYPE_LEN: usize = 128;
 pub(super) const MAX_DREAMER_BUDGET_ID_LEN: usize = 128;
 pub(super) const MAX_DREAMER_PARK_REASON_LEN: usize = 512;

@@ -4,6 +4,7 @@ use super::{
     RepairOperation, RepairProposal,
     repair::{RegisteredHealer, run_healer_proposals},
 };
+use crate::side_table::{self, Named, SideTable};
 use crate::{
     EntityId, Error, Result, Vault, consent::AuthenticatedOwner, write_envelope::WriteActor,
 };
@@ -81,14 +82,25 @@ impl Healer for Drafts {
         vec![self.0.clone()]
     }
 }
-fn key(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
-    [prefix, suffix].concat()
-}
-fn encode<T: Serialize>(v: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(v).map_err(|_| Error::InvariantViolation("healer receipt encode"))
-}
-fn decode<T: serde::de::DeserializeOwned>(raw: &[u8]) -> Result<T> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("healer receipt"))
+
+/// Per-actor healer-submission counter and burst-check flag. Key: id16 (actor).
+const COUNT: SideTable<EntityId, ActorCount, Named> =
+    SideTable::new(&side_table::SELF_HEAL_HEALER_COUNT);
+/// An external healer's repair proposal record and its review state. Key: id16.
+const PROPOSAL: SideTable<EntityId, HealerProposalRecord, Named> =
+    SideTable::new(&side_table::SELF_HEAL_HEALER_PROPOSAL);
+/// A human-ratified patch pull-request record for a released healer proposal. Key: id16.
+const RELEASE: SideTable<EntityId, PatchPullRequest, Named> =
+    SideTable::new(&side_table::SELF_HEAL_HEALER_RELEASE);
+/// Per-actor per-run healer receipt: submitted proposals and reversal state.
+/// Key: id16 (actor) + bytes32 (blake3 hash of the run name).
+const RUN: SideTable<(EntityId, [u8; 32]), HealerRunReceipt, Named> =
+    SideTable::new(&side_table::SELF_HEAL_HEALER_RUN);
+
+/// The digest half of a run receipt's key: a run name is unbounded text, so
+/// only its blake3 hash is stored.
+fn run_digest(run: &str) -> [u8; 32] {
+    *blake3::hash(run.as_bytes()).as_bytes()
 }
 impl Vault {
     pub fn register_dev_healer(
@@ -116,21 +128,11 @@ impl Vault {
     }
     pub fn healer_proposal(&self, id: &EntityId) -> Result<Option<HealerProposalRecord>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key(b"healer:proposal:", id.as_bytes()))?
-            .map(|b| decode(&b))
-            .transpose()
+        PROPOSAL.get(&self.store, &txn, id)
     }
     pub fn proposal_burst_check(&self, actor: &EntityId) -> Result<Option<ProposalBurstCheck>> {
         let txn = self.store.env.read_txn()?;
-        let row: Option<ActorCount> = self
-            .store
-            .vault_meta
-            .get(&txn, &key(b"healer:count:", actor.as_bytes()))?
-            .map(|b| decode(&b))
-            .transpose()?;
-        Ok(row.and_then(|r| r.check))
+        Ok(COUNT.get(&self.store, &txn, actor)?.and_then(|r| r.check))
     }
     pub fn healer_run_receipt(
         &self,
@@ -138,11 +140,7 @@ impl Vault {
         run: &str,
     ) -> Result<Option<HealerRunReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &run_key(actor, run))?
-            .map(|b| decode(&b))
-            .transpose()
+        RUN.get(&self.store, &txn, &(*actor, run_digest(run)))
     }
     /// Reversal changes the entire still-proposed run in one transaction. History stays.
     pub fn reverse_healer_run(
@@ -158,13 +156,9 @@ impl Vault {
             owner.decision_id(),
         )?;
         self.with_write_txn(|txn| {
-            let rk = run_key(actor, run);
-            let raw = self
-                .store
-                .vault_meta
-                .get(txn, &rk)?
+            let receipt = RUN
+                .get(&self.store, txn, &(*actor, run_digest(run)))?
                 .ok_or(Error::EntityNotFound)?;
-            let receipt: HealerRunReceipt = decode(&raw)?;
             if receipt.actor != *actor || receipt.run_ref != run {
                 return Err(Error::CorruptedIndex("healer run key mismatch"));
             }
@@ -186,28 +180,15 @@ impl Vault {
             owner.decision_id(),
         )?;
         self.with_write_txn(|txn| {
-            let count_key = key(b"healer:count:", check.actor.as_bytes());
-            let row = self
-                .store
-                .vault_meta
-                .get(txn, &count_key)?
+            let counter = COUNT
+                .get(&self.store, txn, &check.actor)?
                 .ok_or_else(|| Error::InvalidConfig("actor has no burst check".into()))?;
-            let counter: ActorCount = decode(&row)?;
             if counter.check.as_ref() != Some(check) {
                 return Err(Error::InvalidConfig("burst check is not current".into()));
             }
-            let prefix = key(b"healer:run:", check.actor.as_bytes());
-            let receipts: Vec<HealerRunReceipt> = self
-                .store
-                .vault_meta
-                .prefix_iter(txn, &prefix)?
-                .map(|row| {
-                    let (_, raw) = row?;
-                    decode(&raw)
-                })
-                .collect::<Result<_>>()?;
+            let receipts = RUN.scan_from(&self.store, txn, check.actor.as_bytes())?;
             let mut reversed = Vec::with_capacity(receipts.len());
-            for receipt in receipts {
+            for (_, receipt) in receipts {
                 if receipt.actor != check.actor {
                     return Err(Error::CorruptedIndex("healer burst actor mismatch"));
                 }
@@ -233,13 +214,9 @@ impl Vault {
             super::validate_ref(release)?;
         }
         self.with_write_txn(|txn| {
-            let pk = key(b"healer:proposal:", id.as_bytes());
-            let raw = self
-                .store
-                .vault_meta
-                .get(txn, &pk)?
+            let mut record = PROPOSAL
+                .get(&self.store, txn, id)?
                 .ok_or(Error::EntityNotFound)?;
-            let mut record: HealerProposalRecord = decode(&raw)?;
             if record.state != ProposalState::Proposed {
                 return Err(Error::InvalidConfig("patch review is terminal".into()));
             }
@@ -268,13 +245,9 @@ impl Vault {
                 },
                 None => ProposalState::Denied,
             };
-            self.store.vault_meta.put(txn, &pk, &encode(&record)?)?;
+            PROPOSAL.put(&self.store, txn, id, &record)?;
             if let Some(pr) = &pr {
-                self.store.vault_meta.put(
-                    txn,
-                    &key(b"healer:release:", id.as_bytes()),
-                    &encode(pr)?,
-                )?;
+                RELEASE.put(&self.store, txn, id, pr)?;
             }
             Ok(pr)
         })
@@ -286,30 +259,18 @@ fn reverse_receipt_in_txn(
     mut receipt: HealerRunReceipt,
 ) -> Result<HealerRunReceipt> {
     for id in &receipt.proposals {
-        let pk = key(b"healer:proposal:", id.as_bytes());
-        let raw = vault
-            .store
-            .vault_meta
-            .get(txn, &pk)?
+        let mut record = PROPOSAL
+            .get(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let mut record: HealerProposalRecord = decode(&raw)?;
         if record.state == ProposalState::Proposed {
             record.state = ProposalState::Reversed;
-            vault.store.vault_meta.put(txn, &pk, &encode(&record)?)?;
+            PROPOSAL.put(&vault.store, txn, id, &record)?;
         }
     }
     receipt.reversed = true;
-    vault.store.vault_meta.put(
-        txn,
-        &run_key(&receipt.actor, &receipt.run_ref),
-        &encode(&receipt)?,
-    )?;
+    let run_key = (receipt.actor, run_digest(&receipt.run_ref));
+    RUN.put(&vault.store, txn, &run_key, &receipt)?;
     Ok(receipt)
-}
-fn run_key(actor: &EntityId, run: &str) -> Vec<u8> {
-    let mut k = key(b"healer:run:", actor.as_bytes());
-    k.extend_from_slice(blake3::hash(run.as_bytes()).as_bytes());
-    k
 }
 impl HealerRegistration<'_> {
     /// Read-only diagnostic-band access for the external runner's identity.
@@ -362,37 +323,26 @@ impl HealerRegistration<'_> {
         proposal.source = reviewed.invocation().source();
         let threshold = PROPOSAL_BURST_THRESHOLD;
         self.vault.with_write_txn(|txn| {
-            let pk = key(b"healer:proposal:", proposal.proposal_id.as_bytes());
-            if self.vault.store.vault_meta.get(txn, &pk)?.is_some() {
+            let proposal_id = proposal.proposal_id;
+            if PROPOSAL.contains(&self.vault.store, txn, &proposal_id)? {
                 return Err(Error::InvalidConfig("proposal id already exists".into()));
             }
             let actor = self.actor.entity_ref();
-            let rk = run_key(&actor, run);
-            let ck = key(b"healer:count:", actor.as_bytes());
-            let mut receipt: HealerRunReceipt = self
-                .vault
-                .store
-                .vault_meta
-                .get(txn, &rk)?
-                .map(|b| decode(&b))
-                .transpose()?
-                .unwrap_or(HealerRunReceipt {
-                    run_ref: run.into(),
-                    actor,
-                    proposals: vec![],
-                    reversed: false,
-                });
+            let run_key = (actor, run_digest(run));
+            let mut receipt =
+                RUN.get(&self.vault.store, txn, &run_key)?
+                    .unwrap_or(HealerRunReceipt {
+                        run_ref: run.into(),
+                        actor,
+                        proposals: vec![],
+                        reversed: false,
+                    });
             if receipt.reversed {
                 return Err(Error::InvalidConfig("healer run was reversed".into()));
             }
-            receipt.proposals.push(proposal.proposal_id);
-            let mut counter: ActorCount = self
-                .vault
-                .store
-                .vault_meta
-                .get(txn, &ck)?
-                .map(|b| decode(&b))
-                .transpose()?
+            receipt.proposals.push(proposal_id);
+            let mut counter = COUNT
+                .get(&self.vault.store, txn, &actor)?
                 .unwrap_or_default();
             counter.count = counter.count.saturating_add(1);
             if counter.count > threshold && counter.check.is_none() {
@@ -402,23 +352,18 @@ impl HealerRegistration<'_> {
                     run_ref: run.into(),
                 });
             }
-            self.vault.store.vault_meta.put(
+            PROPOSAL.put(
+                &self.vault.store,
                 txn,
-                &pk,
-                &encode(&HealerProposalRecord {
+                &proposal_id,
+                &HealerProposalRecord {
                     proposal,
                     state: ProposalState::Proposed,
                     run_ref: run.into(),
-                })?,
+                },
             )?;
-            self.vault
-                .store
-                .vault_meta
-                .put(txn, &rk, &encode(&receipt)?)?;
-            self.vault
-                .store
-                .vault_meta
-                .put(txn, &ck, &encode(&counter)?)?;
+            RUN.put(&self.vault.store, txn, &run_key, &receipt)?;
+            COUNT.put(&self.vault.store, txn, &actor, &counter)?;
             Ok(())
         })?;
         Ok(bundle)

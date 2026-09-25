@@ -3,14 +3,131 @@
 use super::codec::{expect_key, expect_map, expect_u64, invalid_trap, pinned_key_index};
 use super::trap::{register_wait_in_txn, send_trap_signal, trap_head};
 use super::types::{
-    DREAMER_PEER_WAIT_KEYS, DREAMER_PEER_WAIT_SCHEMA_VERSION, DREAMER_PRIVATE_PEER_WAIT_PREFIX,
-    DREAMER_PRIVATE_PEER_WAIT_TRAP_PREFIX, DreamerTrapKind, DreamerTrapState, KEY_AT,
-    KEY_SCHEMA_VERSION, KEY_STEP_HASH, KEY_TRAP_CLAIM_ID, TrapRef,
+    DREAMER_PEER_WAIT_KEYS, DREAMER_PEER_WAIT_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
+    KEY_AT, KEY_SCHEMA_VERSION, KEY_STEP_HASH, KEY_TRAP_CLAIM_ID, TrapRef,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use rmpv::Value;
+
+/// One local delegation binding, keyed by (task ref, trap claim id). The value drops
+/// `task_ref` (the key's own leading component) and keeps everything else the pre-migration
+/// MessagePack row carried.
+struct PeerWaitBindingValue {
+    trap_claim_id: EntityId,
+    step_hash: [u8; 32],
+    created_at: u64,
+}
+
+const PEER_WAIT: SideTable<(EntityId, EntityId), PeerWaitBindingValue, Raw> =
+    SideTable::new(&side_table::DREAMER_PEER_WAIT);
+/// Reverse trap-claim -> task-ref pointer.
+const PEER_WAIT_TRAP: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::DREAMER_PEER_WAIT_TRAP);
+
+impl RawValue for PeerWaitBindingValue {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let entries = vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(DREAMER_PEER_WAIT_SCHEMA_VERSION),
+            ),
+            (
+                Value::from(KEY_TRAP_CLAIM_ID),
+                Value::Binary(self.trap_claim_id.as_bytes().to_vec()),
+            ),
+            (
+                Value::from(KEY_STEP_HASH),
+                Value::Binary(self.step_hash.to_vec()),
+            ),
+            (Value::from(KEY_AT), Value::from(self.created_at)),
+        ];
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &Value::Map(entries))
+            .map_err(|_| invalid_trap("peer-result wait binding MessagePack encode failed"))?;
+        Ok(encoded)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let value = rmpv::decode::read_value(&mut std::io::Cursor::new(bytes))
+            .map_err(|_| invalid_trap("peer-result wait binding MessagePack decode failed"))?;
+        let entries = expect_map(&value, "peer-result wait binding must be a MessagePack map")?;
+
+        let mut schema_version = None;
+        let mut trap_claim_id = None;
+        let mut step_hash = None;
+        let mut created_at = None;
+        let mut seen = [false; DREAMER_PEER_WAIT_KEYS.len()];
+
+        for (key, value) in entries {
+            let key = expect_key(key, "peer-result wait binding keys must be strings")?;
+            let index = pinned_key_index(key, &DREAMER_PEER_WAIT_KEYS)
+                .ok_or(invalid_trap("peer-result wait binding key is not pinned"))?;
+            if seen[index] {
+                return Err(invalid_trap("duplicate peer-result wait binding key").into());
+            }
+            seen[index] = true;
+
+            match DREAMER_PEER_WAIT_KEYS[index] {
+                KEY_SCHEMA_VERSION => {
+                    schema_version = Some(expect_u64(
+                        value,
+                        "peer-result wait binding schema_version must be an integer",
+                    )?);
+                }
+                KEY_TRAP_CLAIM_ID => {
+                    let Value::Binary(bytes) = value else {
+                        return Err(invalid_trap(
+                            "peer-result wait binding trap_claim_id must be binary",
+                        )
+                        .into());
+                    };
+                    let raw: [u8; 16] = bytes.as_slice().try_into().map_err(|_| {
+                        invalid_trap("peer-result wait binding trap_claim_id must be 16 bytes")
+                    })?;
+                    trap_claim_id = Some(EntityId::from_bytes(raw)?);
+                }
+                KEY_STEP_HASH => {
+                    let Value::Binary(bytes) = value else {
+                        return Err(invalid_trap(
+                            "peer-result wait binding step_hash must be binary",
+                        )
+                        .into());
+                    };
+                    let raw: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
+                        invalid_trap("peer-result wait binding step_hash must be 32 bytes")
+                    })?;
+                    step_hash = Some(raw);
+                }
+                KEY_AT => {
+                    created_at = Some(expect_u64(
+                        value,
+                        "peer-result wait binding at must be an integer",
+                    )?);
+                }
+                _ => unreachable!("index resolved from DREAMER_PEER_WAIT_KEYS"),
+            }
+        }
+
+        let schema_version = schema_version.ok_or(invalid_trap(
+            "missing peer-result wait binding schema_version",
+        ))?;
+        if schema_version != DREAMER_PEER_WAIT_SCHEMA_VERSION {
+            return Err(invalid_trap("unsupported peer-result wait binding schema_version").into());
+        }
+
+        Ok(PeerWaitBindingValue {
+            trap_claim_id: trap_claim_id.ok_or(invalid_trap(
+                "missing peer-result wait binding trap_claim_id",
+            ))?,
+            step_hash: step_hash
+                .ok_or(invalid_trap("missing peer-result wait binding step_hash"))?,
+            created_at: created_at.ok_or(invalid_trap("missing peer-result wait binding at"))?,
+        })
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Peer-result delegation (ONE-1700): local TASK→trap binding over the SAME
@@ -86,9 +203,7 @@ pub fn send_peer_result_signal(
         return Ok(None);
     }
     let mut first = None;
-    let mut prefix = DREAMER_PRIVATE_PEER_WAIT_PREFIX.to_vec();
-    prefix.extend_from_slice(task_ref.as_bytes());
-    for binding in peer_wait_bindings_at(vault, &prefix)? {
+    for binding in peer_wait_bindings_at(vault, task_ref.as_bytes())? {
         let (_, head) = trap_head(vault, &binding.trap_claim_id)?;
         if matches!(
             head.state,
@@ -137,177 +252,60 @@ pub fn reconcile_peer_result_signals(vault: &Vault, now: u64) -> Result<usize> {
 // task→trap so a landing result finds its trap, and trap→task so consume can
 // retire the binding without knowing which task opened it.
 // ---------------------------------------------------------------------------
-fn peer_wait_key(task_ref: &EntityId, trap_ref: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DREAMER_PRIVATE_PEER_WAIT_PREFIX.len() + 32);
-    key.extend_from_slice(DREAMER_PRIVATE_PEER_WAIT_PREFIX);
-    key.extend_from_slice(task_ref.as_bytes());
-    key.extend_from_slice(trap_ref.as_bytes());
-    key
-}
-
-fn peer_wait_trap_key(trap_claim_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DREAMER_PRIVATE_PEER_WAIT_TRAP_PREFIX.len() + 16);
-    key.extend_from_slice(DREAMER_PRIVATE_PEER_WAIT_TRAP_PREFIX);
-    key.extend_from_slice(trap_claim_id.as_bytes());
-    key
-}
-
 fn peer_wait_binding_put_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     binding: &PeerResultWaitBinding,
 ) -> Result<()> {
-    if let Some(existing) = vault
-        .store
-        .vault_meta
-        .get(&*wtxn, &peer_wait_trap_key(&binding.trap_claim_id))?
-        && existing.as_ref() != binding.task_ref.as_bytes()
+    if let Some(existing) = PEER_WAIT_TRAP.get(&vault.store, wtxn, &binding.trap_claim_id)?
+        && existing != binding.task_ref
     {
         return Err(invalid_trap("peer-result trap already binds another task"));
     }
-    if let Some(existing) = vault.store.vault_meta.get(
-        &*wtxn,
-        &peer_wait_key(&binding.task_ref, &binding.trap_claim_id),
-    )? {
-        let existing = decode_peer_wait_binding(binding.task_ref, existing.as_ref())?;
-        if existing.step_hash != binding.step_hash {
-            return Err(invalid_trap("peer-result wait binding hash mismatch"));
-        }
+    if let Some(existing) = PEER_WAIT.get(
+        &vault.store,
+        wtxn,
+        &(binding.task_ref, binding.trap_claim_id),
+    )? && existing.step_hash != binding.step_hash
+    {
+        return Err(invalid_trap("peer-result wait binding hash mismatch"));
     }
-    let entries = vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(DREAMER_PEER_WAIT_SCHEMA_VERSION),
-        ),
-        (
-            Value::from(KEY_TRAP_CLAIM_ID),
-            Value::Binary(binding.trap_claim_id.as_bytes().to_vec()),
-        ),
-        (
-            Value::from(KEY_STEP_HASH),
-            Value::Binary(binding.step_hash.to_vec()),
-        ),
-        (Value::from(KEY_AT), Value::from(binding.created_at)),
-    ];
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &Value::Map(entries))
-        .map_err(|_| invalid_trap("peer-result wait binding MessagePack encode failed"))?;
-    vault.store.vault_meta.put(
+    PEER_WAIT.put(
+        &vault.store,
         wtxn,
-        &peer_wait_key(&binding.task_ref, &binding.trap_claim_id),
-        &encoded,
+        &(binding.task_ref, binding.trap_claim_id),
+        &PeerWaitBindingValue {
+            trap_claim_id: binding.trap_claim_id,
+            step_hash: binding.step_hash,
+            created_at: binding.created_at,
+        },
     )?;
-    vault.store.vault_meta.put(
+    PEER_WAIT_TRAP.put(
+        &vault.store,
         wtxn,
-        &peer_wait_trap_key(&binding.trap_claim_id),
-        binding.task_ref.as_bytes(),
+        &binding.trap_claim_id,
+        &binding.task_ref,
     )?;
     Ok(())
 }
 
-fn decode_peer_wait_binding(task_ref: EntityId, raw: &[u8]) -> Result<PeerResultWaitBinding> {
-    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
-        .map_err(|_| invalid_trap("peer-result wait binding MessagePack decode failed"))?;
-    let entries = expect_map(&value, "peer-result wait binding must be a MessagePack map")?;
-
-    let mut schema_version = None;
-    let mut trap_claim_id = None;
-    let mut step_hash = None;
-    let mut created_at = None;
-    let mut seen = [false; DREAMER_PEER_WAIT_KEYS.len()];
-
-    for (key, value) in entries {
-        let key = expect_key(key, "peer-result wait binding keys must be strings")?;
-        let index = pinned_key_index(key, &DREAMER_PEER_WAIT_KEYS)
-            .ok_or(invalid_trap("peer-result wait binding key is not pinned"))?;
-        if seen[index] {
-            return Err(invalid_trap("duplicate peer-result wait binding key"));
-        }
-        seen[index] = true;
-
-        match DREAMER_PEER_WAIT_KEYS[index] {
-            KEY_SCHEMA_VERSION => {
-                schema_version = Some(expect_u64(
-                    value,
-                    "peer-result wait binding schema_version must be an integer",
-                )?);
-            }
-            KEY_TRAP_CLAIM_ID => {
-                let Value::Binary(bytes) = value else {
-                    return Err(invalid_trap(
-                        "peer-result wait binding trap_claim_id must be binary",
-                    ));
-                };
-                let raw: [u8; 16] = bytes.as_slice().try_into().map_err(|_| {
-                    invalid_trap("peer-result wait binding trap_claim_id must be 16 bytes")
-                })?;
-                trap_claim_id = Some(EntityId::from_bytes(raw)?);
-            }
-            KEY_STEP_HASH => {
-                let Value::Binary(bytes) = value else {
-                    return Err(invalid_trap(
-                        "peer-result wait binding step_hash must be binary",
-                    ));
-                };
-                let raw: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
-                    invalid_trap("peer-result wait binding step_hash must be 32 bytes")
-                })?;
-                step_hash = Some(raw);
-            }
-            KEY_AT => {
-                created_at = Some(expect_u64(
-                    value,
-                    "peer-result wait binding at must be an integer",
-                )?);
-            }
-            _ => unreachable!("index resolved from DREAMER_PEER_WAIT_KEYS"),
-        }
-    }
-
-    let schema_version = schema_version.ok_or(invalid_trap(
-        "missing peer-result wait binding schema_version",
-    ))?;
-    if schema_version != DREAMER_PEER_WAIT_SCHEMA_VERSION {
-        return Err(invalid_trap(
-            "unsupported peer-result wait binding schema_version",
-        ));
-    }
-
-    Ok(PeerResultWaitBinding {
-        task_ref,
-        trap_claim_id: trap_claim_id.ok_or(invalid_trap(
-            "missing peer-result wait binding trap_claim_id",
-        ))?,
-        step_hash: step_hash.ok_or(invalid_trap("missing peer-result wait binding step_hash"))?,
-        created_at: created_at.ok_or(invalid_trap("missing peer-result wait binding at"))?,
-    })
-}
-
 /// Every live delegation binding on this device, in key order.
 pub(super) fn peer_wait_bindings(vault: &Vault) -> Result<Vec<PeerResultWaitBinding>> {
-    peer_wait_bindings_at(vault, DREAMER_PRIVATE_PEER_WAIT_PREFIX)
+    peer_wait_bindings_at(vault, &[])
 }
 
-fn peer_wait_bindings_at(vault: &Vault, prefix: &[u8]) -> Result<Vec<PeerResultWaitBinding>> {
+fn peer_wait_bindings_at(vault: &Vault, key_prefix: &[u8]) -> Result<Vec<PeerResultWaitBinding>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut bindings = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(&rtxn, prefix)? {
-        let (key, raw) = row?;
-        let suffix = key
-            .get(DREAMER_PRIVATE_PEER_WAIT_PREFIX.len()..)
-            .ok_or(invalid_trap("peer-result wait binding key is truncated"))?;
-        if suffix.len() != 32 {
-            return Err(invalid_trap("peer-result wait key length"));
-        }
-        let task_bytes: [u8; 16] = suffix[..16]
-            .try_into()
-            .map_err(|_| invalid_trap("peer-result wait binding key is not a task ref"))?;
-        bindings.push(decode_peer_wait_binding(
-            EntityId::from_bytes(task_bytes)?,
-            &raw,
-        )?);
-    }
-    Ok(bindings)
+    Ok(PEER_WAIT
+        .scan_from(&vault.store, &rtxn, key_prefix)?
+        .into_iter()
+        .map(|((task_ref, _trap_ref), value)| PeerResultWaitBinding {
+            task_ref,
+            trap_claim_id: value.trap_claim_id,
+            step_hash: value.step_hash,
+            created_at: value.created_at,
+        })
+        .collect())
 }
 
 /// Reads the trap→task reverse pointer, if this trap came from a delegation.
@@ -316,18 +314,7 @@ pub(super) fn peer_wait_task_for_trap(
     trap_claim_id: &EntityId,
 ) -> Result<Option<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &peer_wait_trap_key(trap_claim_id))?
-    else {
-        return Ok(None);
-    };
-    let bytes: [u8; 16] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| invalid_trap("peer-result wait reverse pointer is not a task ref"))?;
-    Ok(Some(EntityId::from_bytes(bytes)?))
+    PEER_WAIT_TRAP.get(&vault.store, &rtxn, trap_claim_id)
 }
 
 pub(super) fn peer_wait_binding_delete_in_txn(
@@ -336,14 +323,8 @@ pub(super) fn peer_wait_binding_delete_in_txn(
     task_ref: &EntityId,
     trap_claim_id: &EntityId,
 ) -> Result<()> {
-    vault
-        .store
-        .vault_meta
-        .delete(wtxn, &peer_wait_key(task_ref, trap_claim_id))?;
-    vault
-        .store
-        .vault_meta
-        .delete(wtxn, &peer_wait_trap_key(trap_claim_id))?;
+    PEER_WAIT.delete(&vault.store, wtxn, &(*task_ref, *trap_claim_id))?;
+    PEER_WAIT_TRAP.delete(&vault.store, wtxn, trap_claim_id)?;
     Ok(())
 }
 

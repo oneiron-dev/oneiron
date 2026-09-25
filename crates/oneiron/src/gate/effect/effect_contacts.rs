@@ -2,10 +2,10 @@
 
 use crate::comm::SendOverrideMatch;
 use crate::counterparty_contact::{
-    CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_index_key,
+    CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_by_index_in_txn,
     counterparty_contact_matches_channel_class, counterparty_contacts_by_party_channel,
-    counterparty_contacts_by_party_full_scan, decode_counterparty_contact_index_value,
-    normalize_channel_class, read_counterparty_contact_in_txn,
+    counterparty_contacts_by_party_full_scan, normalize_channel_class,
+    read_counterparty_contact_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -186,11 +186,10 @@ fn counterparty_contact_by_identity_index(
     identity_ref: &EntityId,
     counterparty: &str,
 ) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
-    let key = counterparty_contact_index_key(identity_ref, counterparty)?;
-    let Some(raw_id) = store.vault_meta.get(txn, &key)? else {
+    let Some(id) = counterparty_contact_by_index_in_txn(store, txn, identity_ref, counterparty)?
+    else {
         return Ok(None);
     };
-    let id = decode_counterparty_contact_index_value(&raw_id)?;
     let Some(record) = read_counterparty_contact_in_txn(store, txn, &id)? else {
         return Err(Error::CorruptedIndex(
             "counterparty contact lookup index entity row",

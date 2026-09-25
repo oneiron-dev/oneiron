@@ -239,7 +239,8 @@ fn stored_snapshot_tampering_is_detected_by_full_regeneration() -> Result<()> {
     forged.get_text("body").insert(0, "tampered ").unwrap();
     forged.commit();
     let snapshot = forged.export(ExportMode::Snapshot).unwrap();
-    let key = super::codec::snapshot_key(&tested);
+    let key =
+        super::storage::CODE_DOCUMENT_FRONTIER.key_bytes(&(tested.document_id, tested.op_fold));
     let mut txn = vault.store.env.write_txn()?;
     let raw = vault.store.vault_meta.get(&txn, &key)?.unwrap();
     let Value::Map(mut row) = rmpv::decode::read_value(&mut raw.as_ref()).unwrap() else {

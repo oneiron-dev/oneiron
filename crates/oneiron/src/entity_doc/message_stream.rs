@@ -1,8 +1,10 @@
 //! MESSAGE terminal commits join the common EntityDoc storage transaction.
 //! Only the stream witness path calls this adapter, after the canonical ceiling.
+use super::storage::ENTITY_DOC_HEAD;
 use super::{EntityDoc, TextField, invalid, storage};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::side_table::HexId;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -14,12 +16,7 @@ pub(crate) fn birth_message_stream_in_txn(
     actor: WriteActor,
     at: u64,
 ) -> Result<()> {
-    if vault
-        .store
-        .vault_meta
-        .get(txn, storage::head_key(entity).as_bytes())?
-        .is_some()
-    {
+    if ENTITY_DOC_HEAD.contains(&vault.store, txn, &HexId(*entity))? {
         return Err(invalid("stream birth cannot replace an existing document"));
     }
     let raw = vault
@@ -94,12 +91,7 @@ pub(crate) fn append_message_stream_in_txn(
         return Ok(());
     }
     crate::batch::secret_scan::scan_metadata_field(delta)?;
-    if vault
-        .store
-        .vault_meta
-        .get(txn, storage::head_key(entity).as_bytes())?
-        .is_none()
-    {
+    if !ENTITY_DOC_HEAD.contains(&vault.store, txn, &HexId(*entity))? {
         // Atomic MESSAGEs move their original text into birth exactly once.
         let raw = vault
             .store

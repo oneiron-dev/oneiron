@@ -5,36 +5,66 @@ use std::path::PathBuf;
 use rmpv::Value;
 
 use super::types::{
-    LocalRegistration, SECRET_LEASE_KEY_PREFIX, SECRET_LOCAL_REGISTRATION_PREFIX,
-    SECRET_MATERIALIZATION_RECEIPT_KIND, SECRET_MATERIALIZATION_RECEIPT_PREFIX, SecretLease,
-    SecretLeaseStatus, SecretMaterializationReceipt, StoredLocalRegistration,
+    LocalRegistration, SECRET_MATERIALIZATION_RECEIPT_KIND, SecretLease, SecretLeaseStatus,
+    SecretMaterializationReceipt, StoredLocalRegistration,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::CustodyTier;
+use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 
 // ---------------------------------------------------------------------------
-// Row keys
+// Side tables
 // ---------------------------------------------------------------------------
+
+/// T1/T2 secret-materialization lease row. Key: hex32(lease id).
+pub(super) const SECRET_LEASE: SideTable<HexId, SecretLease, Raw> =
+    SideTable::new(&side_table::SECRET_LEASE);
+
+/// Durable receipt written before a secret value is returned from materialization. Key:
+/// hex32(receipt id).
+pub(super) const SECRET_MATERIALIZATION_RECEIPT: SideTable<
+    HexId,
+    SecretMaterializationReceipt,
+    Raw,
+> = SideTable::new(&side_table::SECRET_MATERIALIZATION_RECEIPT);
+
+/// T2 local-file registration for a materialized secret. Key: hex32(lease id).
+pub(super) const SECRET_LOCAL_REGISTRATION: SideTable<HexId, StoredLocalRegistration, Raw> =
+    SideTable::new(&side_table::SECRET_LOCAL_REGISTRATION);
+
+impl RawValue for SecretLease {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(encode_secret_lease_body(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        Ok(decode_secret_lease_body(bytes)?)
+    }
+}
+
+impl RawValue for SecretMaterializationReceipt {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(encode_materialization_receipt_body(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        Ok(decode_materialization_receipt_body(bytes)?)
+    }
+}
+
+impl RawValue for StoredLocalRegistration {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(encode_local_registration_body(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        Ok(decode_local_registration_body(bytes)?)
+    }
+}
 
 pub(super) fn invalid_body(reason: &'static str) -> Error {
     Error::Secret(SecretError::InvalidSecretLeaseBody(reason))
-}
-
-pub(super) fn lease_key(lease_id: &EntityId) -> Vec<u8> {
-    format!("{SECRET_LEASE_KEY_PREFIX}{}", lease_id.to_hex()).into_bytes()
-}
-
-pub(super) fn receipt_key(receipt_id: &EntityId) -> Vec<u8> {
-    format!(
-        "{SECRET_MATERIALIZATION_RECEIPT_PREFIX}{}",
-        receipt_id.to_hex()
-    )
-    .into_bytes()
-}
-
-pub(super) fn registration_key(lease_id: &EntityId) -> Vec<u8> {
-    format!("{SECRET_LOCAL_REGISTRATION_PREFIX}{}", lease_id.to_hex()).into_bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -265,10 +295,9 @@ pub(super) fn encode_materialization_receipt_body(
     ])
 }
 
-/// Decodes a materialization-receipt body. Test-only today: the row's
-/// consumer surface (CSTDY-02/SECRET-04) lands on later stack layers and
-/// can ungate this when it needs it.
-#[cfg(test)]
+/// Decodes a materialization-receipt body. The RECEIPT side table's
+/// `RawValue::from_raw` is the only non-test reader today: the row's
+/// consumer surface (CSTDY-02/SECRET-04) lands on later stack layers.
 pub(super) fn decode_materialization_receipt_body(
     bytes: &[u8],
 ) -> Result<SecretMaterializationReceipt> {

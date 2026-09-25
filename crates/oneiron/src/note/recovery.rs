@@ -1,5 +1,9 @@
 //! Host-local history-free recovery of uncited NOTE values.
 use super::document::{NoteDocument, invalid};
+#[cfg(feature = "sync")]
+use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_AD_E, SYNC_NC_E, SYNC_QD_E};
+use super::sync_rows::{SYNC_DS_E, SYNC_QN_E};
+use crate::side_table::HexId;
 use crate::{EntityId, Result, Vault};
 
 pub(crate) fn rebuild(
@@ -38,26 +42,17 @@ pub(crate) fn guard(vault: &Vault, txn: &heed::RoTxn<'_>, note: EntityId) -> Res
             "generic EntityDoc recovery needs its own value adapter",
         ));
     }
-    if vault
-        .store
-        .sync_state
-        .get(txn, &format!("ds:e:{}", note.to_hex()))?
-        .is_some()
-        || vault
-            .store
-            .sync_state
-            .prefix_iter(txn, &format!("qn:e:{}:", note.to_hex()))?
+    if SYNC_DS_E.contains(&vault.store, txn, &HexId(note))?
+        || SYNC_QN_E
+            .iter_from(&vault.store, txn, format!("{}:", note.to_hex()).as_bytes())?
             .next()
             .transpose()?
             .is_some()
-        || vault
-            .store
-            .vault_meta
-            .get(
-                txn,
-                format!("note.erase/authority-floor/{}", note.to_hex()).as_bytes(),
-            )?
-            .is_some()
+        || super::citation_erase::NOTE_ERASE_AUTHORITY_FLOOR.contains(
+            &vault.store,
+            txn,
+            &HexId(note),
+        )?
         || super::citation_delete_scope_exists(&vault.store, txn, &note)?
     {
         return Err(invalid(
@@ -136,14 +131,13 @@ pub(crate) fn restore(
         return Err(invalid("NOTE recovery would discard admitted provenance"));
     }
     let doc = NoteDocument::from_loro(note, rebuild(note, text, authorship)?)?;
-    for prefix in ["qd:e:", "ad:e:", "nr:e:", "nc:e:"] {
-        super::delete::delete_sync_prefix(
-            &vault.store,
-            txn,
-            &format!("{prefix}{}:", note.to_hex()),
-        )?;
-    }
+    let key_prefix = format!("{}:", note.to_hex()).into_bytes();
+    SYNC_QD_E.delete_from(&vault.store, txn, &key_prefix)?;
+    SYNC_AD_E.delete_from(&vault.store, txn, &key_prefix)?;
+    NOTE_RECEIPT_BY_REQUEST.delete_from(&vault.store, txn, &key_prefix)?;
+    SYNC_NC_E.delete_from(&vault.store, txn, &key_prefix)?;
     let slot = super::storage::slot(vault, txn, note)?;
+    // ARCH-0023b document families: not ours, left exactly as they were.
     for prefix in ["ssv:e:", "m:u_seq:e:"] {
         vault
             .store

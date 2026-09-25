@@ -7,25 +7,53 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
 use crate::serialize::ExportBody;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::skill::{SkillContentHash, decode_skill_record};
 use crate::store::Store;
 
 // Work bound for source composition reads; never silently truncate a hashed tree.
 const SOURCE_SCAN_LIMIT: usize = 100_000;
 
-fn key(id: &EntityId) -> Vec<u8> {
-    let mut key = b"agent_def/portable-birth/v1\0".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
+/// Frozen source-tree identity recorded at an agent's genuine local birth:
+/// which source it was captured from, and the skill content hash that source
+/// resolved to at capture time.
+struct PortableBirthBinding {
+    source: EntityId,
+    hash: SkillContentHash,
 }
+
+impl RawValue for PortableBirthBinding {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut bytes = self.source.as_bytes().to_vec();
+        bytes.extend_from_slice(self.hash.as_bytes());
+        Ok(bytes)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        if bytes.len() != 48 {
+            return Err(Error::CorruptedIndex("agent portable birth binding").into());
+        }
+        let source = crate::entity_id::parse_entity_id(&bytes[..16], "agent portable source")?;
+        let hash: [u8; 32] = bytes[16..]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("agent portable hash"))?;
+        Ok(Self {
+            source,
+            hash: SkillContentHash::from_bytes(hash),
+        })
+    }
+}
+
+const PORTABLE_BIRTH: SideTable<EntityId, PortableBirthBinding, Raw> =
+    SideTable::new(&side_table::AGENT_DEF_PORTABLE_BIRTH);
 
 pub(crate) fn agent_fork_hash_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SkillContentHash>> {
-    if let Some(raw) = store.vault_meta.get(txn, &key(id))? {
-        return decode_binding(&raw).map(|(_, hash)| Some(hash));
+    if let Some(binding) = PORTABLE_BIRTH.get(store, txn, id)? {
+        return Ok(Some(binding.hash));
     }
     super::read_birth_source(store, txn, id)?
         .map(|source| {
@@ -40,16 +68,6 @@ pub(crate) fn agent_fork_hash_in_txn(
         .transpose()
 }
 
-fn decode_binding(raw: &[u8]) -> Result<(EntityId, SkillContentHash)> {
-    if raw.len() != 48 {
-        return Err(Error::CorruptedIndex("agent portable birth binding"));
-    }
-    let source = crate::entity_id::parse_entity_id(&raw[..16], "agent portable source")?;
-    let hash: [u8; 32] = raw[16..]
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("agent portable hash"))?;
-    Ok((source, SkillContentHash::from_bytes(hash)))
-}
 fn put_binding(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -57,10 +75,15 @@ fn put_binding(
     source: &EntityId,
     hash: SkillContentHash,
 ) -> Result<()> {
-    let mut bytes = source.as_bytes().to_vec();
-    bytes.extend_from_slice(hash.as_bytes());
-    store.vault_meta.put(txn, &key(id), &bytes)?;
-    Ok(())
+    PORTABLE_BIRTH.put(
+        store,
+        txn,
+        id,
+        &PortableBirthBinding {
+            source: *source,
+            hash,
+        },
+    )
 }
 
 /// Called only in apply_put's genuine local AGENT_DEF create arm. If a native
@@ -75,9 +98,8 @@ pub(crate) fn bind_agent_birth_in_txn(
     if created.source == crate::claim::ClaimSource::Imported {
         return Ok(None);
     }
-    if let Some(raw) = store.vault_meta.get(txn, &key(id))? {
-        let (source, _) = decode_binding(&raw)?;
-        if source != created.forked_from.unwrap_or(*id) {
+    if let Some(binding) = PORTABLE_BIRTH.get(store, txn, id)? {
+        if binding.source != created.forked_from.unwrap_or(*id) {
             return Err(Error::InvalidConfig(
                 "agent fork origin cannot change after deletion".into(),
             ));
@@ -253,7 +275,7 @@ pub(crate) fn import_agent_fork_hash_in_txn(
             )?;
         }
         None => {
-            store.vault_meta.delete(txn, &key(id))?;
+            PORTABLE_BIRTH.delete(store, txn, id)?;
         }
     }
     Ok(())

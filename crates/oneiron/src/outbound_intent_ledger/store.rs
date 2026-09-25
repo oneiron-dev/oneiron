@@ -1,9 +1,6 @@
 //! Storage-transaction reads, inserts, transitions, and the admission-gate validator.
 
-use super::codec::{
-    INTENT_LEDGER_PRIVATE_PREFIX, decode_record, encode_record, id_from_ledger_key,
-    intent_ledger_key,
-};
+use super::codec::decode_record;
 use super::dispatch::derive_intent_id;
 use super::types::{
     IntentEscalationReason, IntentId, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult,
@@ -13,11 +10,73 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
+use crate::side_table::{self, Raw, SideKey, SideTable};
 
-// Unique logical call -> immutable intent id, committed with the Pending row.
-pub(super) const INTENT_ATTEMPT_PREFIX: &[u8] = b"outbound:intent_attempt:v1:"; // + attempt(16) + seq(8)
+/// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting.
+/// Key: hash32 (the intent id).
+const LEDGER: SideTable<[u8; 32], IntentLedgerRecord, Raw> =
+    SideTable::new(&side_table::OUTBOUND_INTENT_LEDGER_RECORD);
 
-pub(super) const INTENT_ATTEMPT_FORMAT_KEY: &[u8] = b"outbound:intent_attempt_format";
+/// Unique logical call -> immutable intent id, committed with the Pending row.
+/// Key: id16(attempt) + u64be(call seq).
+const INTENT_ATTEMPT_INDEX: SideTable<AttemptCallKey, [u8; 32], Raw> =
+    SideTable::new(&side_table::OUTBOUND_INTENT_ATTEMPT_INDEX);
+
+/// Format-version marker gating the attempt index; a non-empty unindexed ledger fails closed.
+/// Key: ().
+const INTENT_ATTEMPT_FORMAT: SideTable<(), [u8; 1], Raw> =
+    SideTable::new(&side_table::OUTBOUND_INTENT_ATTEMPT_FORMAT);
+
+/// One logical dispatch call's index key: `attempt_id.as_bytes()` (16) then `call_seq` big-endian
+/// (8) — spelled explicitly because [`AttemptId`] is a foreign type this module cannot implement
+/// [`SideKey`] on directly.
+#[derive(Debug, Clone, Copy)]
+struct AttemptCallKey {
+    attempt_id: AttemptId,
+    call_seq: u64,
+}
+
+impl SideKey for AttemptCallKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.attempt_id.as_bytes());
+        out.extend_from_slice(&self.call_seq.to_be_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (attempt, seq) = bytes.split_at_checked(16)?;
+        Some(Self {
+            attempt_id: AttemptId::from_bytes(attempt).ok()?,
+            call_seq: u64::from_be_bytes(seq.try_into().ok()?),
+        })
+    }
+}
+
+/// Reads and fully decodes one ledger row, checking that the row found under `id` actually
+/// carries that id (the typed table has no key to check against inside the value codec, so the
+/// check happens here). A decode failure surfaces as [`IntentLedgerError::InvalidRecord`], same
+/// as every other row-corruption path in this module.
+fn get_ledger_record(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &[u8; 32],
+) -> IntentLedgerResult<Option<IntentLedgerRecord>> {
+    let record = match LEDGER.get(&vault.store, txn, id) {
+        Ok(record) => record,
+        Err(Error::CorruptedIndex(_)) => {
+            return Err(IntentLedgerError::InvalidRecord(
+                "outbound intent ledger record failed to decode",
+            ));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    match record {
+        Some(record) if record.id == *id => Ok(Some(record)),
+        Some(_) => Err(IntentLedgerError::InvalidRecord(
+            "outbound intent key does not match id",
+        )),
+        None => Ok(None),
+    }
+}
 
 #[cfg(test)]
 pub(crate) fn read_intent_record(
@@ -33,13 +92,41 @@ pub(crate) fn read_intent_record_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &[u8; 32],
 ) -> IntentLedgerResult<Option<IntentLedgerRecord>> {
-    let key = intent_ledger_key(id);
-    let Some(raw) = vault.store.vault_meta.get(txn, &key)? else {
+    let Some(record) = get_ledger_record(vault, txn, id)? else {
         return Ok(None);
     };
-    decode_record_in_txn(vault, txn, &key, &raw).map(Some)
+    check_intent_attempt_format(vault, txn)?;
+    let indexed_id = INTENT_ATTEMPT_INDEX.get_bytes(
+        &vault.store,
+        txn,
+        &AttemptCallKey {
+            attempt_id: record.attempt_id,
+            call_seq: record.call_seq,
+        },
+    )?;
+    if indexed_id.as_deref() != Some(record.id.as_slice()) {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent is missing its unique attempt binding",
+        ));
+    }
+    Ok(Some(record))
 }
 
+/// Every ledger row undecoded, each with its FULL stored key, for the recovery/listing walks:
+/// damage there is tolerated per row rather than failing the whole walk, and a row whose key is
+/// malformed is still reported by its own key bytes.
+pub(super) fn ledger_rows<'txn>(
+    vault: &Vault,
+    txn: &'txn heed::RoTxn<'_>,
+) -> IntentLedgerResult<impl Iterator<Item = crate::Result<(Vec<u8>, Vec<u8>)>> + 'txn> {
+    let prefix = LEDGER.decl().prefix;
+    Ok(LEDGER
+        .iter_raw_from(&vault.store, txn, &[])?
+        .map(move |row| row.map(|(key, value)| ([prefix, key.as_slice()].concat(), value))))
+}
+
+/// Decodes one raw row already read by a full-table walk ([`ledger_rows`]). Shares the
+/// attempt-binding check with [`read_intent_record_in_txn`].
 pub(super) fn decode_record_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -48,8 +135,14 @@ pub(super) fn decode_record_in_txn(
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     let record = decode_record(key, raw)?;
     check_intent_attempt_format(vault, txn)?;
-    let attempt_key = intent_attempt_key(record.attempt_id, record.call_seq);
-    let indexed_id = vault.store.vault_meta.get(txn, &attempt_key)?;
+    let indexed_id = INTENT_ATTEMPT_INDEX.get_bytes(
+        &vault.store,
+        txn,
+        &AttemptCallKey {
+            attempt_id: record.attempt_id,
+            call_seq: record.call_seq,
+        },
+    )?;
     if indexed_id.as_deref() != Some(record.id.as_slice()) {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent is missing its unique attempt binding",
@@ -58,16 +151,19 @@ pub(super) fn decode_record_in_txn(
     Ok(record)
 }
 
+/// Reconstructs the full raw key an attempt-index row lives under, for tests that plant or
+/// inspect rows through the raw `vault_meta` door directly.
+#[cfg(test)]
 pub(super) fn intent_attempt_key(attempt_id: AttemptId, call_seq: u64) -> Vec<u8> {
-    let mut key = INTENT_ATTEMPT_PREFIX.to_vec();
-    key.extend_from_slice(attempt_id.as_bytes());
-    key.extend_from_slice(&call_seq.to_be_bytes());
-    key
+    INTENT_ATTEMPT_INDEX.key_bytes(&AttemptCallKey {
+        attempt_id,
+        call_seq,
+    })
 }
 
 fn check_intent_attempt_format(vault: &Vault, txn: &heed::RoTxn<'_>) -> IntentLedgerResult<()> {
-    match vault.store.vault_meta.get(txn, INTENT_ATTEMPT_FORMAT_KEY)? {
-        Some(version) if version.as_ref() == b"1" => return Ok(()),
+    match INTENT_ATTEMPT_FORMAT.get(&vault.store, txn, &())? {
+        Some([b'1']) => return Ok(()),
         Some(_) => {
             return Err(IntentLedgerError::InvalidRecord(
                 "invalid outbound attempt index format",
@@ -76,20 +172,15 @@ fn check_intent_attempt_format(vault: &Vault, txn: &heed::RoTxn<'_>) -> IntentLe
         None => {}
     }
     // No pre-release compatibility reader: an unindexed ledger is not empty.
-    // Probe only the first key; never decode unrelated rows on a dispatch path.
-    for prefix in [INTENT_LEDGER_PRIVATE_PREFIX, INTENT_ATTEMPT_PREFIX] {
-        if vault
-            .store
-            .vault_meta
-            .prefix_iter(txn, prefix)?
-            .next()
-            .transpose()?
-            .is_some()
-        {
-            return Err(IntentLedgerError::InvalidRecord(
-                "outbound attempt index is missing",
-            ));
-        }
+    // Probe only the keys; never decode a row's value on this cold path.
+    if !LEDGER.scan_keys(&vault.store, txn, &[])?.is_empty()
+        || !INTENT_ATTEMPT_INDEX
+            .scan_keys(&vault.store, txn, &[])?
+            .is_empty()
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound attempt index is missing",
+        ));
     }
     Ok(())
 }
@@ -103,12 +194,19 @@ pub(crate) fn read_intent_for_attempt_in_txn(
     call_seq: u64,
 ) -> IntentLedgerResult<Option<IntentLedgerRecord>> {
     check_intent_attempt_format(vault, txn)?;
-    let key = intent_attempt_key(attempt_id, call_seq);
-    let Some(raw) = vault.store.vault_meta.get(txn, &key)? else {
+    let Some(raw) = INTENT_ATTEMPT_INDEX.get_bytes(
+        &vault.store,
+        txn,
+        &AttemptCallKey {
+            attempt_id,
+            call_seq,
+        },
+    )?
+    else {
         return Ok(None);
     };
     let id: IntentId = raw
-        .as_ref()
+        .as_slice()
         .try_into()
         .map_err(|_| IntentLedgerError::InvalidRecord("invalid outbound attempt index target"))?;
     let record = read_intent_record_in_txn(vault, txn, &id)?.ok_or(
@@ -160,22 +258,21 @@ pub(crate) fn insert_pending_in_txn(
             "outbound attempt already has an admitted binding",
         ));
     }
-    let key = intent_ledger_key(&pending.id);
-    if vault.store.vault_meta.get(&*wtxn, &key)?.is_some() {
+    if LEDGER.contains(&vault.store, wtxn, &pending.id)? {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent insert target already exists",
         ));
     }
-    validate_record(&key, pending)?;
-    let encoded = encode_record(pending)?;
-    vault.store.vault_meta.put(wtxn, &key, &encoded)?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, INTENT_ATTEMPT_FORMAT_KEY, b"1")?;
-    vault.store.vault_meta.put(
+    validate_record(pending)?;
+    LEDGER.put(&vault.store, wtxn, &pending.id, pending)?;
+    INTENT_ATTEMPT_FORMAT.put(&vault.store, wtxn, &(), b"1")?;
+    INTENT_ATTEMPT_INDEX.put(
+        &vault.store,
         wtxn,
-        &intent_attempt_key(pending.attempt_id, pending.call_seq),
+        &AttemptCallKey {
+            attempt_id: pending.attempt_id,
+            call_seq: pending.call_seq,
+        },
         &pending.id,
     )?;
     Ok(())
@@ -270,16 +367,10 @@ fn update_pending_recorded_outcome(
     next: Option<RecordedOutboundOutcome>,
     now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
-    let key = intent_ledger_key(&id);
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&wtxn, &key)?
-        .ok_or(IntentLedgerError::InvalidRecord(
-            "pending outcome target is missing",
-        ))?;
-    let mut record = decode_record(&key, &raw)?;
+    let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
+        IntentLedgerError::InvalidRecord("pending outcome target is missing"),
+    )?;
     if record.state != IntentState::Pending || record.recorded_outcome != expected {
         return Err(IntentLedgerError::InvalidRecord(
             "pending outcome transition is invalid",
@@ -287,8 +378,7 @@ fn update_pending_recorded_outcome(
     }
     record.recorded_outcome = next;
     record.updated_ms = now_ms.max(record.created_ms);
-    let encoded = encode_record(&record)?;
-    vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+    LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
     Ok(record)
@@ -301,16 +391,10 @@ fn transition_record_with_outcome(
     outcome: RecordedOutboundOutcome,
     now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
-    let key = intent_ledger_key(&id);
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&wtxn, &key)?
-        .ok_or(IntentLedgerError::InvalidRecord(
-            "transition target is missing",
-        ))?;
-    let mut record = decode_record(&key, &raw)?;
+    let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
+        IntentLedgerError::InvalidRecord("transition target is missing"),
+    )?;
     if record.state == next {
         drop(wtxn);
         if record.recorded_outcome != Some(outcome) {
@@ -329,8 +413,7 @@ fn transition_record_with_outcome(
     record.state = next;
     record.recorded_outcome = Some(outcome);
     record.updated_ms = now_ms.max(record.created_ms);
-    let encoded = encode_record(&record)?;
-    vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+    LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
     Ok(record)
@@ -348,16 +431,14 @@ pub(crate) fn replace_intent_record_for_test(
     vault: &Vault,
     record: &IntentLedgerRecord,
 ) -> IntentLedgerResult<()> {
-    let key = intent_ledger_key(&record.id);
-    validate_record(&key, record)?;
-    let encoded = encode_record(record)?;
+    validate_record(record)?;
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
-    if vault.store.vault_meta.get(&wtxn, &key)?.is_none() {
+    if !LEDGER.contains(&vault.store, &wtxn, &record.id)? {
         return Err(IntentLedgerError::InvalidRecord(
             "test replacement target is missing",
         ));
     }
-    vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+    LEDGER.put(&vault.store, &mut wtxn, &record.id, record)?;
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)
 }
@@ -366,12 +447,7 @@ pub(crate) fn hash_frozen_payload(payload: &[u8]) -> [u8; 32] {
     *blake3::hash(payload).as_bytes()
 }
 
-pub(super) fn validate_record(key: &[u8], record: &IntentLedgerRecord) -> IntentLedgerResult<()> {
-    if id_from_ledger_key(key) != Some(record.id) {
-        return Err(IntentLedgerError::InvalidRecord(
-            "outbound intent key does not match id",
-        ));
-    }
+pub(super) fn validate_record(record: &IntentLedgerRecord) -> IntentLedgerResult<()> {
     if record.server.trim().is_empty() || record.tool.trim().is_empty() {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent endpoint is empty",

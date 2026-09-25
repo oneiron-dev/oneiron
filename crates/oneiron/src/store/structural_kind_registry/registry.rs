@@ -17,12 +17,18 @@ use crate::registry::{
     validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type, zone_of,
 };
-use crate::store::Store;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::{ManifestDbs, Store};
 
 /// `vault_meta` key prefix for vault-scoped dynamic StructuralKind
 /// registrations. The full key is `b"kind_reg:"` followed by the raw type
 /// byte; the value is a versioned record carrying `(type_byte,
 /// short_id_prefix, zone, pack)`.
+///
+/// Kept as a standalone constant (rather than only `REGISTRY.decl().prefix`)
+/// because `crate::tests::type_registry` and
+/// `crate::registry::pack_byte_map::tests` reach it directly and this crate's
+/// migration slice may not edit those test files.
 pub(crate) const STRUCTURAL_KIND_REGISTRY_KEY_PREFIX: &[u8] = b"kind_reg:";
 
 const STRUCTURAL_KIND_REGISTRY_KEY_LEN: usize = 10;
@@ -38,6 +44,24 @@ pub(crate) const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 3;
 
 const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
 
+/// Typed door for the `kind_reg:` family, keyed by the raw type byte.
+const REGISTRY: SideTable<[u8; 1], StructuralKindRegistration, Raw> =
+    SideTable::new(&side_table::STRUCTURAL_KIND_REGISTRY);
+
+impl RawValue for StructuralKindRegistration {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_structural_kind_registration(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_structural_kind_registration_value(bytes)?)
+    }
+}
+
+/// Production reads/writes go through [`REGISTRY`]'s typed door; this raw
+/// builder is reached only by `crate::tests::type_registry` and
+/// `crate::registry::pack_byte_map::tests` to plant or inspect rows directly.
+#[cfg(test)]
 pub(crate) fn structural_kind_registry_key(
     type_byte: u8,
 ) -> [u8; STRUCTURAL_KIND_REGISTRY_KEY_LEN] {
@@ -178,12 +202,12 @@ impl Store {
             byte
         } else {
             let mut occupied: Vec<u8> = registry.keys().copied().collect();
-            for row in self
-                .vault_meta
-                .prefix_iter(&wtxn, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?
-            {
-                let (key, raw) = row?;
-                occupied.push(decode_structural_kind_registration(&key, &raw)?.type_byte);
+            for row in REGISTRY.iter_from(self, &wtxn, &[])? {
+                let (key, registration) = row?;
+                if key[0] != registration.type_byte {
+                    return Err(Error::CorruptedIndex("structural kind registry"));
+                }
+                occupied.push(registration.type_byte);
             }
             allocate_type_byte(family.expect("allocator requires a family"), &occupied).ok_or(
                 Error::Registry(RegistryError::InvalidStructuralKindRegistration(
@@ -210,8 +234,7 @@ impl Store {
                 RegistryError::StructuralKindPrefixCollision(registration.short_id_prefix),
             ));
         }
-        let key = structural_kind_registry_key(type_byte);
-        if registry.contains_key(&type_byte) || self.vault_meta.get(&wtxn, &key)?.is_some() {
+        if registry.contains_key(&type_byte) || REGISTRY.contains(self, &wtxn, &[type_byte])? {
             return Err(Error::Registry(
                 RegistryError::StructuralKindTypeByteCollision(type_byte),
             ));
@@ -219,21 +242,13 @@ impl Store {
         if registry
             .values()
             .any(|entry| entry.short_id_prefix == registration.short_id_prefix)
-            || vault_meta_has_structural_kind_prefix(
-                &self.vault_meta,
-                &wtxn,
-                &registration.short_id_prefix,
-            )?
+            || vault_meta_has_structural_kind_prefix(self, &wtxn, &registration.short_id_prefix)?
         {
             return Err(Error::Registry(
                 RegistryError::StructuralKindPrefixCollision(registration.short_id_prefix),
             ));
         }
-        self.vault_meta.put(
-            &mut wtxn,
-            &key,
-            &encode_structural_kind_registration(&registration)?,
-        )?;
+        REGISTRY.put(self, &mut wtxn, &[type_byte], &registration)?;
         wtxn.commit()?;
         registry.insert(type_byte, registration.clone());
         Ok(registration)
@@ -245,17 +260,15 @@ pub(in crate::store) fn load_structural_kind_registry(
     vault_meta: &OverlayDb,
 ) -> Result<HashMap<u8, StructuralKindRegistration>> {
     let rtxn = env.read_txn()?;
-    let mut rows = Vec::new();
-    for row in vault_meta.prefix_iter(&rtxn, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)? {
-        let (key, value) = row?;
-        rows.push((key.to_vec(), value.to_vec()));
-    }
+    let rows = REGISTRY
+        .iter_raw_from(vault_meta, &rtxn, &[])?
+        .collect::<Result<Vec<_>>>()?;
     drop(rtxn);
     build_structural_kind_registry(&rows)
 }
 
-/// Turns persisted registry rows into the runtime registry, applying every
-/// load-time rule.
+/// Turns persisted registry rows (keys are the bytes after the declared
+/// prefix) into the runtime registry, applying every load-time rule.
 ///
 /// Split out from [`load_structural_kind_registry`] so the byte-space v3 re-key
 /// can run the SAME rules against the rows it is about to commit. The loader
@@ -329,13 +342,15 @@ fn is_compatible_legacy_companion_register_row(registration: &StructuralKindRegi
 }
 
 fn vault_meta_has_structural_kind_prefix(
-    vault_meta: &OverlayDb,
+    dbs: &impl ManifestDbs,
     txn: &RwTxn<'_>,
     short_id_prefix: &str,
 ) -> Result<bool> {
-    for row in vault_meta.prefix_iter(txn, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)? {
-        let (key, value) = row?;
-        let registration = decode_structural_kind_registration(&key, &value)?;
+    for row in REGISTRY.iter_from(dbs, txn, &[])? {
+        let (key, registration) = row?;
+        if key[0] != registration.type_byte {
+            return Err(Error::CorruptedIndex("structural kind registry"));
+        }
         if registration.short_id_prefix == short_id_prefix {
             return Ok(true);
         }
@@ -465,22 +480,35 @@ pub(super) fn encode_structural_kind_registration(
     Ok(encoded)
 }
 
-pub(in crate::store) fn decode_structural_kind_registration(
+/// Decodes one registry row; `key` is the bytes after the declared prefix
+/// (the raw type byte), which must name the record's own type byte.
+fn decode_structural_kind_registration(
     key: &[u8],
     raw: &[u8],
 ) -> Result<StructuralKindRegistration> {
-    if key.len() != STRUCTURAL_KIND_REGISTRY_KEY_LEN
-        || !key.starts_with(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)
-        || raw.len() < STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN
+    let [type_byte] = key else {
+        return Err(Error::CorruptedIndex("structural kind registry"));
+    };
+    let registration = decode_structural_kind_registration_value(raw)?;
+    if *type_byte != registration.type_byte {
+        return Err(Error::CorruptedIndex("structural kind registry"));
+    }
+    Ok(registration)
+}
+
+/// The value-only half of [`decode_structural_kind_registration`]: every
+/// check that reads `raw` alone, with no key to cross-check against. This is
+/// the [`RawValue`] decode for [`REGISTRY`]: the typed door decodes a key and
+/// a value independently, so the key/type-byte cross-check that used to live
+/// in one function now runs at each call site that has both in hand.
+fn decode_structural_kind_registration_value(raw: &[u8]) -> Result<StructuralKindRegistration> {
+    if raw.len() < STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN
         || raw.first() != Some(&STRUCTURAL_KIND_REGISTRY_RECORD_VERSION)
     {
         return Err(Error::CorruptedIndex("structural kind registry"));
     }
 
     let type_byte = raw[1];
-    if key[STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len()] != type_byte {
-        return Err(Error::CorruptedIndex("structural kind registry"));
-    }
     let zone = type_byte_zone_from_code(raw[2])
         .ok_or(Error::CorruptedIndex("structural kind registry"))?;
     let prefix_len = raw[3] as usize;

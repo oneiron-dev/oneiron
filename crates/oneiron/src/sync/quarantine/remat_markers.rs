@@ -6,6 +6,14 @@ use crate::Vault;
 use crate::error::{Error, Result, SyncError};
 use crate::sync::bridge::Materializer;
 use crate::sync::types::{WindowKey, parse_window_key_str};
+use crate::sync::window_rows::{REMAT_MARKER, REPLAY_REMAT_MARKER_PROVENANCE, WindowEntityHexKey};
+
+fn window_entity_key(window_key: &str, id: &crate::entity_id::EntityId) -> WindowEntityHexKey {
+    WindowEntityHexKey {
+        window: window_key.to_owned(),
+        id: *id,
+    }
+}
 
 /// Prefix for needs-rematerialization markers in `sync_state`. Full key
 /// grammar (ONE-1124 fix wave 2, entity-scoped):
@@ -16,6 +24,11 @@ const REMAT_MARKER_PREFIX: &str = "rm:w:";
 /// Sidecar provenance for `rm:w:` markers created by replay/quarantine
 /// surfaces, not by delete-safety purge failures. Absence means unknown and
 /// therefore fail-closed as delete-safety for terminal quarantine clearing.
+///
+/// Production reads/writes go through the typed
+/// [`REPLAY_REMAT_MARKER_PROVENANCE`] table; this raw prefix stays only for
+/// [`replay_remat_marker_provenance_key`]'s test-only raw-byte seam.
+#[cfg(test)]
 const REPLAY_REMAT_MARKER_PROVENANCE_PREFIX: &str = "rmp:w:";
 
 // ─── rm: needs-rematerialization markers ─────────────────────────────────────
@@ -24,11 +37,19 @@ const REPLAY_REMAT_MARKER_PROVENANCE_PREFIX: &str = "rmp:w:";
 /// `rm:w:{window}:{entity_hex}` (32-char lowercase hex). Entity-scoped so
 /// an unrelated entity's successful purge can never discharge another
 /// entity's GDPR purge retry.
+///
+/// Production reads and writes go through the typed [`REMAT_MARKER`] table;
+/// this raw string builder stays only for this module's own tests, which
+/// address the row directly through raw `sync_state` access.
+#[cfg(test)]
 #[must_use]
 pub(super) fn remat_marker_key(window_key: &str, id: &crate::entity_id::EntityId) -> String {
     format!("{REMAT_MARKER_PREFIX}{window_key}:{}", id.to_hex())
 }
 
+/// See [`remat_marker_key`]: production goes through
+/// [`REPLAY_REMAT_MARKER_PROVENANCE`], this stays for this module's tests.
+#[cfg(test)]
 pub(super) fn replay_remat_marker_provenance_key(
     window_key: &str,
     id: &crate::entity_id::EntityId,
@@ -50,10 +71,9 @@ pub(in crate::sync) fn set_remat_marker_in_txn(
     window_key: &str,
     id: &crate::entity_id::EntityId,
 ) -> Result<()> {
-    let marker_key = remat_marker_key(window_key, id);
-    let provenance_key = replay_remat_marker_provenance_key(window_key, id);
-    vault.store.sync_state.put(wtxn, &marker_key, &[1u8])?;
-    vault.store.sync_state.delete(wtxn, &provenance_key)?;
+    let key = window_entity_key(window_key, id);
+    REMAT_MARKER.put(&vault.store, wtxn, &key, &[1u8])?;
+    REPLAY_REMAT_MARKER_PROVENANCE.delete(&vault.store, wtxn, &key)?;
     Ok(())
 }
 
@@ -76,14 +96,14 @@ pub(in crate::sync) fn set_replay_remat_marker_in_txn(
     window_key: &str,
     id: &crate::entity_id::EntityId,
 ) -> Result<()> {
-    let marker_key = remat_marker_key(window_key, id);
-    let provenance_key = replay_remat_marker_provenance_key(window_key, id);
-    let marker_present = vault.store.sync_state.get(wtxn, &marker_key)?.is_some();
-    let replay_provenance_present = vault.store.sync_state.get(wtxn, &provenance_key)?.is_some();
+    let key = window_entity_key(window_key, id);
+    let marker_present = REMAT_MARKER.contains(&vault.store, wtxn, &key)?;
+    let replay_provenance_present =
+        REPLAY_REMAT_MARKER_PROVENANCE.contains(&vault.store, wtxn, &key)?;
 
-    vault.store.sync_state.put(wtxn, &marker_key, &[1u8])?;
+    REMAT_MARKER.put(&vault.store, wtxn, &key, &[1u8])?;
     if !marker_present || replay_provenance_present {
-        vault.store.sync_state.put(wtxn, &provenance_key, &[1u8])?;
+        REPLAY_REMAT_MARKER_PROVENANCE.put(&vault.store, wtxn, &key, &[1u8])?;
     }
     Ok(())
 }
@@ -108,10 +128,9 @@ pub(in crate::sync) fn clear_remat_marker_in_txn(
     window_key: &str,
     id: &crate::entity_id::EntityId,
 ) -> Result<()> {
-    let marker_key = remat_marker_key(window_key, id);
-    let provenance_key = replay_remat_marker_provenance_key(window_key, id);
-    vault.store.sync_state.delete(wtxn, &marker_key)?;
-    vault.store.sync_state.delete(wtxn, &provenance_key)?;
+    let key = window_entity_key(window_key, id);
+    REMAT_MARKER.delete(&vault.store, wtxn, &key)?;
+    REPLAY_REMAT_MARKER_PROVENANCE.delete(&vault.store, wtxn, &key)?;
     Ok(())
 }
 
@@ -124,10 +143,9 @@ pub(crate) fn unproven_remat_marker_exists_in_txn(
     window_key: &str,
     id: &crate::entity_id::EntityId,
 ) -> Result<bool> {
-    let marker_key = remat_marker_key(window_key, id);
-    let provenance_key = replay_remat_marker_provenance_key(window_key, id);
-    Ok(vault.store.sync_state.get(wtxn, &marker_key)?.is_some()
-        && vault.store.sync_state.get(wtxn, &provenance_key)?.is_none())
+    let key = window_entity_key(window_key, id);
+    Ok(REMAT_MARKER.contains(&vault.store, wtxn, &key)?
+        && !REPLAY_REMAT_MARKER_PROVENANCE.contains(&vault.store, wtxn, &key)?)
 }
 
 /// Clears a marker only when its sidecar proves replay/quarantine origin.
@@ -139,13 +157,12 @@ pub(in crate::sync) fn clear_replay_remat_marker_in_txn(
     window_key: &str,
     id: &crate::entity_id::EntityId,
 ) -> Result<bool> {
-    let provenance_key = replay_remat_marker_provenance_key(window_key, id);
-    if vault.store.sync_state.get(wtxn, &provenance_key)?.is_none() {
+    let key = window_entity_key(window_key, id);
+    if !REPLAY_REMAT_MARKER_PROVENANCE.contains(&vault.store, wtxn, &key)? {
         return Ok(false);
     }
-    let marker_key = remat_marker_key(window_key, id);
-    vault.store.sync_state.delete(wtxn, &marker_key)?;
-    vault.store.sync_state.delete(wtxn, &provenance_key)?;
+    REMAT_MARKER.delete(&vault.store, wtxn, &key)?;
+    REPLAY_REMAT_MARKER_PROVENANCE.delete(&vault.store, wtxn, &key)?;
     Ok(true)
 }
 
@@ -155,6 +172,12 @@ pub(in crate::sync) fn clear_replay_remat_marker_in_txn(
 /// otherwise does not parse) is still surfaced — its whole remainder is
 /// reported as the pending window. A needs-remat row is never dropped by a
 /// read.
+///
+/// Deliberately RAW `sync_state` access (not [`REMAT_MARKER`]): the typed
+/// door's key decode either succeeds or turns the whole scan into an `Err`,
+/// and this reader's contract is the opposite — a key that fails to parse is
+/// still surfaced (as its own best-effort "window"), never dropped and never
+/// aborting the read of every OTHER window's markers.
 pub fn pending_remat_windows(vault: &Vault) -> Result<Vec<String>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut windows = std::collections::BTreeSet::new();
@@ -178,6 +201,8 @@ pub fn pending_remat_windows(vault: &Vault) -> Result<Vec<String>> {
 /// window. Rows whose entity segment is malformed are returned verbatim
 /// (fail closed — never dropped); they can never be cleared by an
 /// entity-scoped purge success and stay doctor-visible.
+///
+/// Deliberately RAW `sync_state` access — see [`pending_remat_windows`].
 pub(crate) fn pending_remat_entities(vault: &Vault, window_key: &str) -> Result<Vec<String>> {
     let rtxn = vault.store.env.read_txn()?;
     let prefix = format!("{REMAT_MARKER_PREFIX}{window_key}:");

@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2061 | 703 | 9 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2074 | 704 | 9 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 95 | 18 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
@@ -117,7 +117,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `edit_settle` | dir | 8 | m | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `embed` | file+dir | 7 | m | yes | — |
 | `engine_executor` | dir | 10 | m | — | Engine-native JS code-mode executor |
-| `entity_doc` | dir | 9 | m | yes | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
+| `entity_doc` | dir | 10 | m | yes | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
 | `entity_id` | file+dir | 2 | m | — | `EntityId` + world-id newtypes + id parsing/hex |
 | `error` | dir | 13 | m | — | — |
 | `extraction_eval` | file+dir | 4 | m | — | — |
@@ -150,7 +150,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `maintain` | dir | 7 | m | — | — |
 | `memory` | dir | 74 | L | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `merge_queue` | dir | 8 | m | — | Durable batched speculation over real detached worktrees |
-| `note` | file+dir | 28 | m | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
+| `note` | file+dir | 30 | m | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `off_record` | dir | 11 | m | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `origin` | dir | 47 | m | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
 | `outbound` | dir | 32 | m | yes | Outbound action capability manifests and dispatch spine for OF-327 |
@@ -191,6 +191,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `session_overlay` | dir | 12 | m | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
 | `settings` | file+dir | 4 | m | yes | Persisted customization settings and client-visible change events |
 | `share` | file+dir | 3 | m | yes | Revocable brief read grants |
+| `side_table` | dir | 10 | m | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
 | `skill` | dir | 9 | m | yes | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
 | `skill_attribution` | dir | 9 | m | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `skill_convert` | dir | 7 | m | yes | Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry… |
@@ -204,7 +205,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `subject_model` | file+dir | 15 | m | yes | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
 | `surface_event` | dir | 6 | m | yes | Inbound SurfaceEvent adapter contract (OF-347 CID-6) |
 | `sweep` | dir | 5 | m | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
-| `sync` | dir | 100 | m | yes | CRDT sync layer for Oneiron |
+| `sync` | dir | 101 | m | yes | CRDT sync layer for Oneiron |
 | `task_authority` | file | 1 | m | yes | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
 | `task_verb` | dir | 56 | m | yes | Typed, actor-bound verbs over the Context Board TASKS section |
 | `temporal` | file | 1 | m | — | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |

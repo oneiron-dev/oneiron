@@ -1,7 +1,7 @@
 //! Atomic append, explicit HEAD moves and canonical-index repair.
 
 use super::graph::{
-    self, CANONICAL, HEAD, actor_in_txn, chain, edge_ids, invalid, key, read_id, require_member,
+    self, CANONICAL, HEAD, actor_in_txn, chain, edge_ids, invalid, read_id, require_member,
     require_type,
 };
 use super::migration::migrate_in_txn;
@@ -239,15 +239,9 @@ pub(crate) fn append_in_txn(
         input.session,
     )?;
     if input.advance {
-        vault
-            .store
-            .vault_meta
-            .put(txn, &key(HEAD, &input.conversation), id.as_bytes())?;
+        HEAD.put(&vault.store, txn, &input.conversation, &id)?;
         if let Some(parent) = input.parent {
-            vault
-                .store
-                .vault_meta
-                .put(txn, &key(CANONICAL, &parent), id.as_bytes())?;
+            CANONICAL.put(&vault.store, txn, &parent, &id)?;
         }
     }
     Ok(AppendedRecord {
@@ -274,23 +268,17 @@ pub(super) fn set_head_in_txn(
     }
     if let Some(old) = read_id(&vault.store, txn, HEAD, conversation)? {
         for id in chain(&vault.store, txn, conversation, old)? {
-            vault.store.vault_meta.delete(txn, &key(CANONICAL, &id))?;
+            CANONICAL.delete(&vault.store, txn, &id)?;
         }
     }
     // Also clear a stale terminal mark on the new HEAD.
     for id in &path {
-        vault.store.vault_meta.delete(txn, &key(CANONICAL, id))?;
+        CANONICAL.delete(&vault.store, txn, id)?;
     }
     for pair in path.windows(2) {
-        vault
-            .store
-            .vault_meta
-            .put(txn, &key(CANONICAL, &pair[0]), pair[1].as_bytes())?;
+        CANONICAL.put(&vault.store, txn, &pair[0], &pair[1])?;
     }
-    vault
-        .store
-        .vault_meta
-        .put(txn, &key(HEAD, conversation), record.as_bytes())?;
+    HEAD.put(&vault.store, txn, conversation, &record)?;
     Ok(())
 }
 
@@ -370,7 +358,7 @@ impl Vault {
                 crate::limits::MAX_ANCESTOR_DEPTH,
             )?;
             for id in records {
-                self.store.vault_meta.delete(txn, &key(CANONICAL, &id))?;
+                CANONICAL.delete(&self.store, txn, &id)?;
             }
             if let Some(head) = read_id(&self.store, txn, HEAD, conversation)? {
                 set_head_in_txn(self, txn, conversation, head)?;

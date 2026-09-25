@@ -2,7 +2,6 @@
 
 use std::collections::HashSet;
 
-use super::HISTORY_FREE_WINDOW_PREFIX;
 use super::bridge::{BRIDGE_ORIGIN, encode_edge_value_for_crdt, format_edge_key};
 use super::loro_support::{
     export_snapshot, map_contains_binary, map_delete, map_for_each_value_bytes, map_get_bytes,
@@ -16,6 +15,7 @@ use super::reverse::{
     reverse_remat_skip_redaction_receipt_mirror, skip_companion_register_sync_mirror,
 };
 use super::types::WindowKey;
+use crate::sync::window_rows::{HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, WindowEntityKey};
 
 use crate::Vault;
 use crate::edge::EdgeKind;
@@ -68,18 +68,14 @@ pub(super) fn window_packing_excludes_entity(
 /// The marker is durable because a scrubbed live doc still retains the old
 /// set operation in its ordinary Loro history until shallow-compacted.
 pub fn history_free_window_required(vault: &Vault, key: &WindowKey) -> Result<bool> {
-    Ok(vault
-        .sync_state_get(&format!("{HISTORY_FREE_WINDOW_PREFIX}{key}"))?
-        .is_some())
+    let rtxn = vault.store.env.read_txn()?;
+    HISTORY_FREE_WINDOW.contains(&vault.store, &rtxn, &key.as_str().to_owned())
 }
 
 /// Durably pins this window to history-free snapshot transport/persistence.
 pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()> {
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &format!("{HISTORY_FREE_WINDOW_PREFIX}{key}"), &[1u8])?;
+        HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])?;
         Ok(())
     })
 }
@@ -272,19 +268,18 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
 /// to sync through this same ordinary path later.
 pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
-    let prefix = format!("pm:{window_key}:");
 
-    let mut markers: Vec<(String, EntityId)> = Vec::new();
-
-    let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
-    for entry in iter {
-        let (k, _) = entry?;
-        let hex = &k[prefix.len()..];
-        let parsed_id = EntityId::from_hex(hex);
-        if let Ok(id) = parsed_id {
-            markers.push((k.to_string(), id));
-        }
-    }
+    // A key that does not decode to a hex entity id is silently skipped here
+    // (not a fail-closed refusal): best-effort crash-recovery replay, not a
+    // fail-closed read of engine-authored truth.
+    let markers: Vec<(WindowEntityKey, EntityId)> = OFF_RECORD_PROMOTE_PICKUP
+        .iter_from(&vault.store, &rtxn, format!("{window_key}:").as_bytes())?
+        .filter_map(Result::ok)
+        .map(|(key, _)| {
+            let entity = key.entity;
+            (key, entity)
+        })
+        .collect();
     drop(rtxn);
 
     scrub_local_claim_carriers(vault, window_key, doc)?;
@@ -307,7 +302,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             None => {
                 // Stale marker — clear it
                 vault.with_write_txn(|wtxn| {
-                    vault.store.sync_state.delete(wtxn, marker_key)?;
+                    OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                     Ok(())
                 })?;
                 continue;
@@ -331,7 +326,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             }
             vault.with_write_txn(|wtxn| {
-                vault.store.sync_state.delete(wtxn, marker_key)?;
+                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
             })?;
             continue;
@@ -345,7 +340,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             quarantine_outbound_protected_tombstones(vault, window_key, &tombstones_map, id, &raw)?;
         if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) {
             vault.with_write_txn(|wtxn| {
-                vault.store.sync_state.delete(wtxn, marker_key)?;
+                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
             })?;
             continue;
@@ -414,7 +409,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             }
 
             vault.with_write_txn(|wtxn| {
-                vault.store.sync_state.delete(wtxn, marker_key)?;
+                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
             })?;
             continue;
@@ -425,7 +420,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         // fail closed using the same gate as reverse remat.
         if reverse_remat_skip_redaction_receipt_mirror(&raw) {
             vault.with_write_txn(|wtxn| {
-                vault.store.sync_state.delete(wtxn, marker_key)?;
+                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
             })?;
             continue;
@@ -462,7 +457,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
 
         // Clear the marker
         vault.with_write_txn(|wtxn| {
-            vault.store.sync_state.delete(wtxn, marker_key)?;
+            OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
             Ok(())
         })?;
 

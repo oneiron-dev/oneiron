@@ -17,10 +17,11 @@ use super::super::rendezvous::{
     signal_delete_rendezvous,
 };
 use super::super::tombstone::{
-    DeleteReason, TombstoneValueV2, local_hard_delete_key, window_label_from_timestamp,
+    DeleteReason, HARD_DELETE_MARKER, TombstoneValueV2, window_label_from_timestamp,
 };
 use super::DeleteEntityOutcome;
 use crate::error::RegistryError;
+use crate::side_table::HexId;
 
 impl Vault {
     /// Deletes an entity blob by ID using the destructive user-hard-delete
@@ -368,7 +369,7 @@ impl Vault {
         // FORBIDDEN to the caller with the tombstone already on the wire and
         // peers tearing.
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
-        let marker_key = local_hard_delete_key(id);
+        let marker_key = HexId(*id);
         // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
         // erasing txn. LMDB's single writer makes this race-free — if the
         // probe sees state, this txn's purge erases it; if a concurrent
@@ -379,10 +380,13 @@ impl Vault {
         // CRDT tombstone above is already published, so the id IS
         // hard-deleted), guarded so an existing marker is never overwritten.
         if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
-            if self.store.sync_state.get(&wtxn, &marker_key)?.is_none() {
-                self.store
-                    .sync_state
-                    .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+            if !HARD_DELETE_MARKER.contains(&self.store, &wtxn, &marker_key)? {
+                HARD_DELETE_MARKER.put(
+                    &self.store,
+                    &mut wtxn,
+                    &marker_key,
+                    &tombstone.encode().to_vec(),
+                )?;
             }
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
@@ -407,9 +411,12 @@ impl Vault {
         // wire bytes) is informational. Un-cfg'd on every build: `sync_state`
         // is unconditional and the marker is local delete truth, not
         // sync-only state (ONE-1132 cfg-off durability).
-        self.store
-            .sync_state
-            .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+        HARD_DELETE_MARKER.put(
+            &self.store,
+            &mut wtxn,
+            &marker_key,
+            &tombstone.encode().to_vec(),
+        )?;
         // ARCH-0055 §9 (r6): HardErase walks redirects. BEFORE the purge —
         // it deletes the head's incident shell edges, which are the walk's
         // primary witness — and in this same transaction, so a head can

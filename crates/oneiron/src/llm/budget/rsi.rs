@@ -1,9 +1,11 @@
 //! Vault-local durable reserve/settle/refund ledger for research-loop spend.
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const LINE_KEY: &[u8] = b"budget.rsi.line.v1";
+/// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
+const RSI_LINE: SideTable<(), Line, LegacyJson> = SideTable::new(&side_table::BUDGET_RSI_LINE);
 
 /// Loop purpose, kept separate from ordinary interactive LLM budget rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,18 +118,12 @@ impl Line {
 }
 
 fn load(vault: &Vault, txn: &heed::RoTxn<'_>) -> RsiResult<Line> {
-    let raw = vault
-        .store
-        .vault_meta
-        .get(txn, LINE_KEY)?
-        .ok_or(RsiBudgetError::Unconfigured)?;
-    serde_json::from_slice(&raw)
-        .map_err(|_| crate::Error::CorruptedIndex("RSI budget ledger").into())
+    RSI_LINE
+        .get(&vault.store, txn, &())?
+        .ok_or(RsiBudgetError::Unconfigured)
 }
 fn save(vault: &Vault, txn: &mut heed::RwTxn<'_>, line: &Line) -> RsiResult<()> {
-    let raw = serde_json::to_vec(line)
-        .map_err(|_| crate::Error::InvariantViolation("RSI ledger encoding"))?;
-    vault.store.vault_meta.put(txn, LINE_KEY, &raw)?;
+    RSI_LINE.put(&vault.store, txn, &(), line)?;
     Ok(())
 }
 
@@ -143,7 +139,7 @@ impl Vault {
             return Err(RsiBudgetError::InvalidConfig);
         }
         let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
-        if self.store.vault_meta.get(&txn, LINE_KEY)?.is_some() {
+        if RSI_LINE.contains(&self.store, &txn, &())? {
             return Err(RsiBudgetError::InvalidConfig);
         }
         save(

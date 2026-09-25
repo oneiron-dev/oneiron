@@ -97,8 +97,7 @@ pub(super) use self::emergency::{
     admit_emergency_pick, commit_emergency_item, emergency_current_revision_in,
     pick_emergency_item, read_emergency_pick,
 };
-pub(crate) use self::storage::put_meta;
-pub(super) use self::storage::{booking_writer, read_meta_bytes};
+pub(super) use self::storage::booking_writer;
 pub(crate) use self::token::hex_lower;
 pub(super) use self::token::{digest_with, mint_raw_token};
 // The three ordinary transitions are reached from outside this module only by
@@ -110,6 +109,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::EntityId;
 use crate::booking::EventTypeKey;
+use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::temporal::TimeRange;
 
 // The flat lifecycle.rs module used to provide these names to its inline
@@ -261,6 +261,18 @@ struct LifecycleTokenRow {
     scope: LifecycleTokenScope,
 }
 
+/// The `booking.token.v1:` prefix carries several row shapes under one flat,
+/// domain-separated digest keyspace (bearer/revision tokens here, checkout
+/// leases as [`CHECKOUT_LEASE`], emergency picks as
+/// `emergency::EMERGENCY_PICK`) — two (here, three) typed tables, one
+/// declaration; the caller always knows which shape a given digest names.
+/// Key: hash32 (the token digest).
+const TOKEN: SideTable<
+    [u8; 32],
+    LifecycleTokenRow,
+    VersionedNamed<{ types::LIFECYCLE_ROW_VERSION }>,
+> = SideTable::new(&side_table::BOOKING_TOKEN);
+
 /// A server-issued checkout lease, bound to one session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -269,6 +281,14 @@ struct CheckoutLeaseRow {
     session_hash: [u8; 32],
     expires_at: u64,
 }
+
+/// Same declaration as [`TOKEN`]; see its doc comment. Key: hash32 (the lease
+/// digest).
+const CHECKOUT_LEASE: SideTable<
+    [u8; 32],
+    CheckoutLeaseRow,
+    VersionedNamed<{ types::LIFECYCLE_ROW_VERSION }>,
+> = SideTable::new(&side_table::BOOKING_TOKEN);
 
 /// The durable lifecycle receipt one transition recorded.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

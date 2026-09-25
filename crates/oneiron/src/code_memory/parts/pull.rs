@@ -437,8 +437,10 @@ pub fn register_always_on_contract(
     }
 
     let key = always_on_key(&contract.symbol_id, &contract.slot, contract.payload);
-    if store.vault_meta.get(txn, &key)?.is_none() {
-        let registered = count_prefix(store, txn, &always_on_symbol_prefix(&contract.symbol_id))?;
+    if !ALWAYS_ON.contains(store, txn, &key)? {
+        let registered = ALWAYS_ON
+            .scan_keys(store, txn, &always_on_symbol_prefix(&contract.symbol_id))?
+            .len();
         if registered >= CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS {
             return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
                 kind: "always-on contracts per symbol",

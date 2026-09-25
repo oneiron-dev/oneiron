@@ -3,9 +3,12 @@
 use super::distill::{
     SessionActorDistiller, pending_session_actor_distills, run_session_end_actor_distill,
 };
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
-const CURSOR_KEY: &[u8] = b"actor_claims:distill_runner_cursor:v1";
+/// The distill runner's durable rotation cursor: a singleton row.
+const CURSOR: SideTable<(), EntityId, Raw> =
+    SideTable::new(&side_table::ACTOR_CLAIMS_DISTILL_RUNNER_CURSOR);
 
 /// Successful landings and retryable per-sitting failures from one host pump.
 #[derive(Debug, Default)]
@@ -33,18 +36,7 @@ pub fn drain_pending_session_actor_distills(
     let pending = pending_session_actor_distills(vault)?;
     let cursor = {
         let txn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .vault_meta
-            .get(&txn, CURSOR_KEY)?
-            .map(|raw| {
-                let bytes = raw
-                    .as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("session distill cursor"))?;
-                EntityId::from_bytes(bytes)
-            })
-            .transpose()?
+        CURSOR.get(&vault.store, &txn, &())?
     };
     let after = pending.partition_point(|id| cursor.is_some_and(|held| *id <= held));
     let mut report = SessionDistillDrain::default();
@@ -57,10 +49,7 @@ pub fn drain_pending_session_actor_distills(
             Err(error) => report.failures.push((*session, error)),
         }
         vault.with_write_txn(|txn| {
-            vault
-                .store
-                .vault_meta
-                .put(txn, CURSOR_KEY, session.as_bytes())?;
+            CURSOR.put(&vault.store, txn, &(), session)?;
             Ok(())
         })?;
     }

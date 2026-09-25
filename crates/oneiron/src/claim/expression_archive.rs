@@ -5,9 +5,15 @@ use super::expression_preference::{ExpressionPreferenceWrite, ExpressionWriteOri
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+
+/// Binding proof tying a restored foreign expression-preference claim to the exact local row it
+/// reconstructed. Key: id16.
+const ARCHIVE_BINDING: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::EXPRESSION_ARCHIVE_BINDING);
 
 /// An untrusted archived row plus an explicitly mapped local subject.
 pub(crate) struct ArchivedExpressionPreference {
@@ -103,22 +109,11 @@ impl ExpressionPreferenceArchive {
                     return Err(invalid("ID collides with a deleted entity"));
                 }
                 let expected = binding(row, &raw)?;
-                if vault
-                    .store
-                    .vault_meta
-                    .get(txn, &binding_key(row.id))?
-                    .as_deref()
-                    != Some(expected.as_slice())
-                {
+                if ARCHIVE_BINDING.get(&vault.store, txn, &row.id)? != Some(expected) {
                     return Err(invalid("ID collision or locally changed restore result"));
                 }
                 existing_count += 1;
-            } else if vault
-                .store
-                .vault_meta
-                .get(txn, &binding_key(row.id))?
-                .is_some()
-            {
+            } else if ARCHIVE_BINDING.contains(&vault.store, txn, &row.id)? {
                 return Err(invalid("restore binding has no live result"));
             }
         }
@@ -174,10 +169,8 @@ impl ExpressionPreferenceArchive {
                 return Err(invalid("final lifecycle or body not reconstructed"));
             }
             if existing_count == 0 {
-                vault
-                    .store
-                    .vault_meta
-                    .put(txn, &binding_key(row.id), &binding(row, &raw)?)?;
+                let encoded = binding(row, &raw)?;
+                ARCHIVE_BINDING.put(&vault.store, txn, &row.id, &encoded)?;
             }
         }
         Ok((self.rows.len() - existing_count, existing_count))
@@ -232,12 +225,6 @@ fn write_spec(row: &ArchivedExpressionPreference) -> Result<ExpressionPreference
             .ok_or_else(|| invalid("missing validity start"))?,
         origin: ExpressionWriteOrigin::Imported,
     })
-}
-
-fn binding_key(id: EntityId) -> Vec<u8> {
-    let mut key = b"expression/archive-binding/v1\0".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
 }
 
 fn binding(row: &ArchivedExpressionPreference, actual: &[u8]) -> Result<Vec<u8>> {

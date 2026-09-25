@@ -10,6 +10,7 @@ pub(crate) mod storage;
 mod tests;
 
 use crate::error::{Error, Result, SyncEngineContext, SyncProtocolValidation};
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::sync::loro_support::doc_from_snapshot;
 use crate::sync::transport::{document_sub_tags, encode_document};
 use crate::{EntityId, Vault};
@@ -19,6 +20,19 @@ use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::broadcast;
 
 pub(crate) use storage::compact;
+
+/// Per-entity text-document subscription marker (`ds:e:`), replayed as a
+/// REQUEST frame on every reconnect. Key: [`HexId`]. Also bound (narrower,
+/// swept wholesale) by `note::sync_rows::SYNC_DS_E` — two typed tables, one
+/// declaration.
+pub(crate) const DS_E: SideTable<HexId, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_DS_E);
+/// Durable unacknowledged local text-document edit frame (`qd:e:{id}:{seq:08x}`).
+/// Key: raw bytes (never decoded back to id/seq by this door — see
+/// `note::sync_rows::SYNC_QD_E`, the same shape).
+pub(crate) const QD_E: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_QD_E);
+/// Per-admission disclosure floor (`ad:e:{id}[:{head}]:{hash}`). Key: raw
+/// bytes (the optional middle segment is never parsed by this door).
+pub(crate) const AD_E: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_AD_E);
 
 /// Maximum concurrent live-edit documents. Idle documents are evicted immediately.
 const MAX_RESIDENTS: usize = 256;
@@ -101,10 +115,7 @@ impl DocumentRegistry {
         let bytes = super::selector::encode_sync_selector(selector)?;
         self.vault.with_write_txn(|txn| {
             eligible(&self.vault, txn, id)?;
-            self.vault
-                .store
-                .sync_state
-                .put(txn, &format!("ds:e:{}", id.to_hex()), &bytes)?;
+            DS_E.put(&self.vault.store, txn, &HexId(id), &bytes)?;
             Ok(())
         })?;
         let frame = self.request_frame(id, selector)?;
@@ -117,10 +128,7 @@ impl DocumentRegistry {
     pub fn subscribe_owner(&self, id: EntityId) -> Result<()> {
         self.vault.with_write_txn(|txn| {
             owner_note_admission(&self.vault, txn, id)?;
-            self.vault
-                .store
-                .sync_state
-                .put(txn, &format!("ds:e:{}", id.to_hex()), &[])?;
+            DS_E.put(&self.vault.store, txn, &HexId(id), &Vec::new())?;
             Ok(())
         })?;
         let frame = self.owner_request_frame(id)?;
@@ -137,13 +145,13 @@ impl DocumentRegistry {
             .entities_by_type(crate::registry::ENTITY_TYPE_NOTE)?
         {
             let subscribed = self.vault.with_write_txn(|txn| {
-                let key = format!("ds:e:{}", id.to_hex());
-                if self.vault.store.sync_state.get(txn, &key)?.is_some()
+                let key = HexId(id);
+                if DS_E.contains(&self.vault.store, txn, &key)?
                     || owner_note_admission(&self.vault, txn, id).is_err()
                 {
                     return Ok(false);
                 }
-                self.vault.store.sync_state.put(txn, &key, &[])?;
+                DS_E.put(&self.vault.store, txn, &key, &Vec::new())?;
                 Ok(true)
             })?;
             if subscribed {
@@ -156,16 +164,10 @@ impl DocumentRegistry {
     pub fn request_frames(&self) -> Result<Vec<Vec<u8>>> {
         let rows: Vec<_> = {
             let txn = self.vault.store.env.read_txn()?;
-            self.vault
-                .store
-                .sync_state
-                .prefix_iter(&txn, "ds:e:")?
-                .map(|row| row.map(|(key, bytes)| (key.to_string(), bytes.to_vec())))
-                .collect::<std::result::Result<_, _>>()?
+            DS_E.scan(&self.vault.store, &txn)?
         };
         let mut out = Vec::new();
-        for (key, bytes) in rows {
-            let id = EntityId::from_hex(&key[5..])?;
+        for (HexId(id), bytes) in rows {
             // A deleted/unshared entity never gets resurrected by reconnect.
             if self.vault.get_raw(&id)?.is_none() {
                 continue;
@@ -291,9 +293,10 @@ impl EntityDocument {
         self.vault.with_write_txn(|txn| {
             eligible(&self.vault, txn, self.id)?;
             let seq = storage::append(&self.vault, txn, self.id, &bytes)?;
-            self.vault.store.sync_state.put(
+            QD_E.put(
+                &self.vault.store,
                 txn,
-                &format!("qd:e:{}:{seq:08x}", self.id.to_hex()),
+                &format!("{}:{seq:08x}", self.id.to_hex()).into_bytes(),
                 &frame,
             )?;
             Ok(())
@@ -438,18 +441,19 @@ impl EntityDocument {
             // peer as a state-only copy.
             let key = match note_head {
                 Some((head, _)) => format!(
-                    "ad:e:{}:{}:{}",
+                    "{}:{}:{}",
                     self.id.to_hex(),
                     head.to_hex(),
                     blake3::hash(admission_key).to_hex()
                 ),
                 None => format!(
-                    "ad:e:{}:{}",
+                    "{}:{}",
                     self.id.to_hex(),
                     blake3::hash(admission_key).to_hex()
                 ),
-            };
-            let admitted = self.vault.store.sync_state.get(txn, &key)?;
+            }
+            .into_bytes();
+            let admitted = AD_E.get(&self.vault.store, txn, &key)?;
             let mut state_copy = match admitted {
                 Some(bytes) => !covers(&peer, &storage::decode_vv(&bytes)?),
                 None => true,
@@ -466,10 +470,7 @@ impl EntityDocument {
             state_copy |= !covers(&peer, &doc.shallow_since_vv().to_vv());
             let (kind, bytes) = if state_copy {
                 // Each state copy resets the disclosure floor, including first admission.
-                self.vault
-                    .store
-                    .sync_state
-                    .put(txn, &key, &doc.oplog_vv().encode())?;
+                AD_E.put(&self.vault.store, txn, &key, &doc.oplog_vv().encode())?;
                 (document_sub_tags::STATE, storage::state_copy(doc)?)
             } else {
                 (
@@ -495,12 +496,15 @@ impl EntityDocument {
     /// month-key-only window queue and survives registry eviction and restart.
     pub fn pending_frames(&self) -> Result<Vec<Vec<u8>>> {
         let txn = self.vault.store.env.read_txn()?;
-        self.vault
-            .store
-            .sync_state
-            .prefix_iter(&txn, &format!("qd:e:{}:", self.id.to_hex()))?
-            .map(|row| row.map(|(_, bytes)| bytes.to_vec()))
-            .collect()
+        Ok(QD_E
+            .scan_from(
+                &self.vault.store,
+                &txn,
+                format!("{}:", self.id.to_hex()).as_bytes(),
+            )?
+            .into_iter()
+            .map(|(_, bytes)| bytes)
+            .collect())
     }
 
     /// Clear only after the remote VV proves it holds every local operation.
@@ -511,15 +515,13 @@ impl EntityDocument {
             return Ok(());
         }
         self.vault.with_write_txn(|txn| {
-            let keys: Vec<_> = self
-                .vault
-                .store
-                .sync_state
-                .prefix_iter(txn, &format!("qd:e:{}:", self.id.to_hex()))?
-                .map(|row| row.map(|(key, _)| key.to_string()))
-                .collect::<std::result::Result<_, _>>()?;
+            let keys: Vec<Vec<u8>> = QD_E.scan_keys(
+                &self.vault.store,
+                txn,
+                format!("{}:", self.id.to_hex()).as_bytes(),
+            )?;
             for key in keys {
-                self.vault.store.sync_state.delete(txn, &key)?;
+                QD_E.delete(&self.vault.store, txn, &key)?;
             }
             Ok(())
         })

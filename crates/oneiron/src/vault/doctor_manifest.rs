@@ -6,13 +6,27 @@ use crate::bm25;
 use crate::config::VaultConfig;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result, StoreError};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::{
-    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,
-    STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
-    TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
+    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, Store, TEXT_INDEX_SCHEMA_VERSION,
     lmdb_database_open_guard,
 };
 use serde::Serialize;
+
+/// Storage ABI stamp: two little-endian bytes. Key: `()`.
+const ABI_VERSION: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::STORAGE_ABI_VERSION);
+/// Storage schema version: two little-endian bytes. Key: `()`.
+const SCHEMA_VERSION: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::STORAGE_SCHEMA_VERSION);
+/// Text-index schema version: two little-endian bytes. Key: `()`.
+const TEXT_SCHEMA_VERSION: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::TEXT_INDEX_SCHEMA_VERSION);
+/// The pinned analyzer manifest (key `""`) and its SHA-256 (key `"_hash"`).
+const ANALYZER_MANIFEST: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::TEXT_ANALYZER_MANIFEST);
+/// BM25F field schema hash: 32 raw bytes. Key: `()`.
+const BM25_SCHEMA_HASH: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::TEXT_BM25_FIELD_SCHEMA_HASH);
 
 /// Snapshot of a vault's text-index state. Returned from
 /// [`Vault::text_index_status`].
@@ -127,13 +141,11 @@ fn doctor_optional_u16(
 }
 
 fn doctor_hash_hex(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    key: &[u8],
+    hash: Result<Option<[u8; 32]>>,
     field: &'static str,
     unreadable_fields: &mut Vec<String>,
 ) -> Result<Option<String>> {
-    match read_hash_32(store, rtxn, key) {
+    match hash {
         Ok(Some(hash)) => Ok(Some(bytes_to_hex_lower(&hash))),
         Ok(None) => Ok(None),
         Err(Error::CorruptedIndex(_) | Error::InvalidKey) => {
@@ -291,29 +303,44 @@ pub(super) fn bm25_field_schema_hash_for_records(records: &[Bm25FieldSchemaRecor
     h.finalize().into()
 }
 
+fn read_u16_row(
+    table: SideTable<(), Vec<u8>, Raw>,
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    context: &'static str,
+) -> Result<Option<u16>> {
+    let Some(raw) = table.get(store, rtxn, &())? else {
+        return Ok(None);
+    };
+    let bytes: [u8; 2] = raw
+        .as_slice()
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex(context))?;
+    Ok(Some(u16::from_le_bytes(bytes)))
+}
+
 pub(super) fn read_text_schema_version(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<Option<u16>> {
-    let Some(raw) = store.vault_meta.get(rtxn, TEXT_INDEX_SCHEMA_VERSION_KEY)? else {
-        return Ok(None);
-    };
-    let bytes: [u8; 2] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("text schema version"))?;
-    Ok(Some(u16::from_le_bytes(bytes)))
+    read_u16_row(TEXT_SCHEMA_VERSION, store, rtxn, "text schema version")
 }
 
-fn read_hash_32(store: &Store, rtxn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Option<[u8; 32]>> {
-    let Some(raw) = store.vault_meta.get(rtxn, key)? else {
-        return Ok(None);
-    };
-    let arr: [u8; 32] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("text index hash"))?;
-    Ok(Some(arr))
+fn read_hash32(raw: Option<Vec<u8>>) -> Result<Option<[u8; 32]>> {
+    raw.map(|raw| {
+        raw.as_slice()
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("text index hash"))
+    })
+    .transpose()
+}
+
+fn read_analyzer_manifest_hash(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Option<[u8; 32]>> {
+    read_hash32(ANALYZER_MANIFEST.get(store, rtxn, &"_hash".to_owned())?)
+}
+
+fn read_bm25_field_schema_hash(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Option<[u8; 32]>> {
+    read_hash32(BM25_SCHEMA_HASH.get(store, rtxn, &())?)
 }
 
 /// Returns `true` when none of the text-index DBs hold residual rows.
@@ -377,12 +404,9 @@ pub(crate) fn verify_text_index_manifest(
             "text index sentinel missing with residual rows",
         ));
     }
-    let stored_manifest_hash = read_hash_32(store, &rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
-    let stored_field_schema_hash = read_hash_32(store, &rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
-    let stored_manifest_bytes = store
-        .vault_meta
-        .get(&rtxn, TEXT_ANALYZER_MANIFEST_KEY)?
-        .map(|b| b.to_vec());
+    let stored_manifest_hash = read_analyzer_manifest_hash(store, &rtxn)?;
+    let stored_field_schema_hash = read_bm25_field_schema_hash(store, &rtxn)?;
+    let stored_manifest_bytes = ANALYZER_MANIFEST.get(store, &rtxn, &String::new())?;
     drop(rtxn);
 
     validate_stored_manifest_hashes(
@@ -438,12 +462,9 @@ pub(super) fn handshake_text_index_manifest(
         return Ok(());
     }
 
-    let stored_manifest_hash = read_hash_32(store, &rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
-    let stored_field_schema_hash = read_hash_32(store, &rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
-    let stored_manifest_bytes = store
-        .vault_meta
-        .get(&rtxn, TEXT_ANALYZER_MANIFEST_KEY)?
-        .map(|b| b.to_vec());
+    let stored_manifest_hash = read_analyzer_manifest_hash(store, &rtxn)?;
+    let stored_field_schema_hash = read_bm25_field_schema_hash(store, &rtxn)?;
+    let stored_manifest_bytes = ANALYZER_MANIFEST.get(store, &rtxn, &String::new())?;
     drop(rtxn);
 
     validate_stored_manifest_hashes(
@@ -561,12 +582,9 @@ pub(crate) fn ensure_text_index_manifest_matches_wtxn(
         .canonical_hash()
         .map_err(|e| Error::Store(StoreError::AnalyzerError(format!("manifest hash: {e}"))))?;
     let current_field_schema_hash = bm25_field_schema_hash();
-    let stored_manifest_hash = read_hash_32(store, &*wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
-    let stored_field_schema_hash = read_hash_32(store, &*wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
-    let stored_manifest_bytes = store
-        .vault_meta
-        .get(&*wtxn, TEXT_ANALYZER_MANIFEST_KEY)?
-        .map(|b| b.to_vec());
+    let stored_manifest_hash = read_analyzer_manifest_hash(store, &*wtxn)?;
+    let stored_field_schema_hash = read_bm25_field_schema_hash(store, &*wtxn)?;
+    let stored_manifest_bytes = ANALYZER_MANIFEST.get(store, &*wtxn, &String::new())?;
 
     validate_stored_manifest_hashes(
         stored_manifest_hash,
@@ -608,20 +626,15 @@ pub(crate) fn write_text_index_manifest(
         .map_err(|e| Error::Store(StoreError::AnalyzerError(format!("manifest hash: {e}"))))?;
     let field_schema_hash = bm25_field_schema_hash();
 
-    store.vault_meta.put(
+    TEXT_SCHEMA_VERSION.put(
+        store,
         wtxn,
-        TEXT_INDEX_SCHEMA_VERSION_KEY,
-        &TEXT_INDEX_SCHEMA_VERSION.to_le_bytes(),
+        &(),
+        &TEXT_INDEX_SCHEMA_VERSION.to_le_bytes().to_vec(),
     )?;
-    store
-        .vault_meta
-        .put(wtxn, TEXT_ANALYZER_MANIFEST_KEY, manifest_json.as_bytes())?;
-    store
-        .vault_meta
-        .put(wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &manifest_hash)?;
-    store
-        .vault_meta
-        .put(wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, &field_schema_hash)?;
+    ANALYZER_MANIFEST.put(store, wtxn, &String::new(), &manifest_json.into_bytes())?;
+    ANALYZER_MANIFEST.put(store, wtxn, &"_hash".to_owned(), &manifest_hash.to_vec())?;
+    BM25_SCHEMA_HASH.put(store, wtxn, &(), &field_schema_hash.to_vec())?;
     Ok(())
 }
 
@@ -659,22 +672,12 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let mut unreadable_fields = Vec::new();
         let storage_abi_version = doctor_optional_u16(
-            crate::store::read_vault_meta_u16(
-                &self.store.vault_meta,
-                &rtxn,
-                STORAGE_ABI_VERSION_KEY,
-                "storage ABI version",
-            ),
+            read_u16_row(ABI_VERSION, &self.store, &rtxn, "storage ABI version"),
             "vault_meta.storage_abi_version",
             &mut unreadable_fields,
         )?;
         let storage_schema_version = doctor_optional_u16(
-            crate::store::read_vault_meta_u16(
-                &self.store.vault_meta,
-                &rtxn,
-                STORAGE_SCHEMA_VERSION_KEY,
-                "storage schema version",
-            ),
+            read_u16_row(SCHEMA_VERSION, &self.store, &rtxn, "storage schema version"),
             "vault_meta.schema_version",
             &mut unreadable_fields,
         )?;
@@ -682,16 +685,12 @@ impl Vault {
             doctor_embedding_model_id(&self.store, &rtxn, &mut unreadable_fields)?;
         let hnsw = doctor_hnsw(&self.store, &rtxn, &mut unreadable_fields)?;
         let analyzer_manifest_hash = doctor_hash_hex(
-            &self.store,
-            &rtxn,
-            TEXT_ANALYZER_MANIFEST_HASH_KEY,
+            read_analyzer_manifest_hash(&self.store, &rtxn),
             "vault_meta.text_analyzer_manifest_hash",
             &mut unreadable_fields,
         )?;
         let bm25_field_schema_hash = doctor_hash_hex(
-            &self.store,
-            &rtxn,
-            TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
+            read_bm25_field_schema_hash(&self.store, &rtxn),
             "vault_meta.text_bm25_field_schema_hash",
             &mut unreadable_fields,
         )?;

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use super::compact::UPDATE_CARRIERS;
 #[cfg(all(feature = "sync", test))]
 use super::run::{INJECT_UW_ROW_BEFORE_FINALIZE, RACE_BENIGN_MARKER};
 use super::run::{RETRY_BACKOFF_BASE_SECS, RETRY_BACKOFF_CAP_SECS};
@@ -16,6 +17,8 @@ use crate::entity_id::EntityId;
 use crate::error::SyncEngineContext;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+#[cfg(all(feature = "sync", test))]
+use crate::sync::window_rows::WINDOW_UPDATE;
 
 /// Finalizes one job: set `sweep_complete_at` on every matching pending
 /// receipt and delete the `h:` row — in ONE transaction, row deletion last
@@ -58,10 +61,11 @@ pub(super) fn finalize_job(
         // FINAL CARRIER FENCE (in-txn, FIRST step, NO mutation before it):
         // any `u:w:` row present at AllCompacted-finalize is a post-
         // compaction arrival → abort with no mutation, signalling defer.
-        if vault
-            .store
-            .sync_state
-            .prefix_iter(&*wtxn, "u:w:")?
+        //
+        // Undecoded rows through the sweep's own binding (see
+        // [`UPDATE_CARRIERS`]): any row at all is an arrival.
+        if UPDATE_CARRIERS
+            .iter_raw_from(&vault.store, wtxn, &[])?
             .next()
             .transpose()?
             .is_some()
@@ -74,14 +78,7 @@ pub(super) fn finalize_job(
             return Ok(None);
         }
 
-        if vault
-            .store
-            .vault_meta
-            .prefix_iter(wtxn, crate::note::PENDING_CITATION_ERASE.as_bytes())?
-            .next()
-            .transpose()?
-            .is_some()
-        {
+        if crate::note::any_citation_erase_pending(&vault.store, wtxn)? {
             return Ok(None);
         }
         let mut finalized = 0u64;
@@ -211,10 +208,15 @@ fn inject_uw_row_before_finalize(vault: &Vault) -> Result<()> {
     racer.commit();
     let delta = export_updates_from(&racer, &base_vv)?;
     let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .sync_state
-        .put(&mut wtxn, &format!("u:w:{key}:ffffffff"), &delta)?;
+    WINDOW_UPDATE.put(
+        &vault.store,
+        &mut wtxn,
+        &crate::sync::window_rows::WindowUpdateKey {
+            window: key.to_string(),
+            seq: 0xffff_ffff,
+        },
+        &delta,
+    )?;
     wtxn.commit()?;
     Ok(())
 }

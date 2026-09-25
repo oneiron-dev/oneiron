@@ -3,14 +3,13 @@
 use super::{DocAuthorization, EntityDoc, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-
-const HEAD_PREFIX: &str = "entity_doc:v1:head:";
 
 /// Location of the original editable text. Other MessagePack fields stay intact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,9 +31,11 @@ pub(super) struct Head {
     pub pending: u64,
 }
 
-pub(super) fn head_key(entity: &EntityId) -> String {
-    format!("{HEAD_PREFIX}{}", entity.to_hex())
-}
+/// Pointer from an entity to its owning document, plus generation/pending
+/// counters.
+pub(super) const ENTITY_DOC_HEAD: SideTable<HexId, Head, Named> =
+    SideTable::new(&side_table::ENTITY_DOC_HEAD);
+
 pub(super) fn snapshot_key(doc: &str) -> String {
     format!("d:e:{doc}")
 }
@@ -42,9 +43,6 @@ fn update_prefix(doc: &str) -> String {
     format!("u:e:{doc}:")
 }
 
-pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value).map_err(|_| invalid("entity document row encoding"))
-}
 pub(super) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     let mut reader = std::io::Cursor::new(bytes);
     let value = T::deserialize(&mut rmp_serde::Deserializer::new(&mut reader))
@@ -68,12 +66,9 @@ pub(super) fn require_live(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) ->
 
 pub(super) fn head(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Head> {
     require_live(store, txn, entity)?;
-    let h: Head = decode(
-        &store
-            .vault_meta
-            .get(txn, head_key(entity).as_bytes())?
-            .ok_or(Error::EntityNotFound)?,
-    )?;
+    let h = ENTITY_DOC_HEAD
+        .get(store, txn, &HexId(*entity))?
+        .ok_or(Error::EntityNotFound)?;
     if h.entity != entity.to_hex() {
         return Err(Error::CorruptedIndex("document head entity mismatch"));
     }
@@ -170,9 +165,7 @@ pub(super) fn persist(
         &format!("sv:e:{}", h.document),
         &doc.doc.oplog_vv().encode(),
     )?;
-    store
-        .vault_meta
-        .put(txn, head_key(entity).as_bytes(), &encode(h)?)?;
+    ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
     Ok(())
 }
 
@@ -201,12 +194,7 @@ impl Vault {
             };
             super::forks::authorize(self, txn, authorization, entity, authorizer)?;
             require_live(&self.store, txn, entity)?;
-            if self
-                .store
-                .vault_meta
-                .get(txn, head_key(entity).as_bytes())?
-                .is_some()
-            {
+            if ENTITY_DOC_HEAD.contains(&self.store, txn, &HexId(*entity))? {
                 return Err(invalid("entity already owns a document"));
             }
             let raw = self
@@ -335,11 +323,7 @@ pub(crate) fn guard_record_put(
     entity: &EntityId,
     data: &[u8],
 ) -> Result<()> {
-    if store
-        .vault_meta
-        .get(txn, head_key(entity).as_bytes())?
-        .is_some()
-    {
+    if ENTITY_DOC_HEAD.contains(store, txn, &HexId(*entity))? {
         let old = store
             .entities
             .get(txn, entity.as_bytes())?
@@ -356,9 +340,7 @@ pub(crate) fn guard_record_put(
 /// Destructive deletion hook; archive never calls it. Removes every content
 /// carrier for the entity, including pending updates, retained forks and quotes.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
-    let key = head_key(entity);
-    if let Some(bytes) = store.vault_meta.get(txn, key.as_bytes())? {
-        let h: Head = decode(&bytes)?;
+    if let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? {
         for doc in [entity.to_hex(), h.document] {
             store.sync_state.delete(txn, &snapshot_key(&doc))?;
             store.sync_state.delete(txn, &format!("sv:e:{doc}"))?;
@@ -367,12 +349,12 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
         }
     }
     super::forks::erase_forks(store, txn, entity)?;
-    delete_prefix(
+    super::pins::ENTITY_DOC_PIN.delete_from(
         store,
         txn,
-        &format!("entity_doc:v1:pin:{}:", entity.to_hex()),
+        format!("{}:", entity.to_hex()).as_bytes(),
     )?;
-    store.vault_meta.delete(txn, key.as_bytes())?;
+    ENTITY_DOC_HEAD.delete(store, txn, &HexId(*entity))?;
     Ok(())
 }
 
@@ -415,10 +397,7 @@ pub(super) fn drop_document(store: &Store, txn: &mut RwTxn<'_>, document: &str) 
 /// A migrated record keeps the EntityDoc codec, even when it is a NOTE.
 /// Errors and malformed heads must not fall through to another document codec.
 pub(crate) fn has_record_head(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Result<bool> {
-    Ok(store
-        .vault_meta
-        .get(txn, head_key(entity).as_bytes())?
-        .is_some())
+    ENTITY_DOC_HEAD.contains(store, txn, &HexId(*entity))
 }
 
 /// Read-only view for existing typed record readers; the durable row retains
@@ -429,11 +408,10 @@ pub(crate) fn resolve_record_body(
     entity: &EntityId,
     body: &[u8],
 ) -> Result<Vec<u8>> {
-    let Some(bytes) = store.vault_meta.get(txn, head_key(entity).as_bytes())? else {
+    let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? else {
         return Ok(body.to_vec());
     };
     require_live(store, txn, entity)?;
-    let h: Head = decode(&bytes)?;
     let text = load(store, txn, &h)?.text();
     match h.field {
         TextField::Utf8Body => Ok(text.into_bytes()),

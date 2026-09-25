@@ -6,13 +6,6 @@ use crate::error::Error;
 // Dials + pinned strings
 // ---------------------------------------------------------------------------
 
-/// `vault_meta` key holding K, the distinct-receipt threshold.
-///
-/// The key lives HERE, not in `settings.rs`: that module is UI customization,
-/// and this is a per-feature engine dial over `vault_meta` — the
-/// `INBOX_REVIEW_DIAL_KEY` house pattern.
-pub const MINER_K_SETTINGS_KEY: &[u8] = b"settings:edit_distance:v1:miner_k";
-
 /// K when the dial has never been set.
 ///
 /// Three is the smallest count that distinguishes a habit from a coincidence:
@@ -49,15 +42,6 @@ pub(super) const MINER_CLUSTER_HASH_DOMAIN: &[u8] =
 /// a mint-mark key, or another unit's entity.
 pub(super) const MINER_EVIDENCE_RECORD_ID_DOMAIN: &[u8] =
     b"oneiron:edit-distance-mined-evidence:v1";
-
-/// `vault_meta` key of the GLOBAL work-gate watermark.
-pub(super) const MINER_WATERMARK_KEY: &[u8] = b"edit_distance/miner_watermark/v1";
-
-/// `vault_meta` prefix of the mint-marks, keyed by cluster handle.
-pub(super) const MINT_MARK_KEY_PREFIX: &[u8] = b"edit_distance/miner_mint_mark/v1\0";
-
-/// `vault_meta` prefix of the mined skill-edit proposals, keyed by proposal id.
-pub(super) const SKILL_EDIT_KEY_PREFIX: &[u8] = b"edit_distance/miner_skill_edit/v1\0";
 
 /// Only accepted schema version for any row this module stores.
 pub(super) const ROW_VERSION: u8 = 1;

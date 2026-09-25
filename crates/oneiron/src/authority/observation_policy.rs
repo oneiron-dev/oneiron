@@ -2,6 +2,7 @@
 
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 
 /// Named maximum age of an approval based on a subsequently revoked roster.
@@ -10,7 +11,10 @@ pub const DEFAULT_STALE_ROSTER_WINDOW_SECS: u64 = 24 * 60 * 60;
 pub const DEFAULT_AUTHORITY_INGEST_CHECK_THRESHOLD: u64 = 1_000_000;
 /// Width of the local monotonic ingest observation window.
 pub const DEFAULT_AUTHORITY_INGEST_WINDOW_SECS: u64 = 60 * 60;
-const POLICY_KEY: &str = "authlog:observation_policy:duration_v1";
+
+/// Device-local authority observation policy durations. Key: ().
+const POLICY: SideTable<(), AuthorityObservationPolicy, Raw> =
+    SideTable::new(&side_table::AUTHLOG_OBSERVATION_POLICY);
 
 /// Version-one local observation policy. Durations use elapsed monotonic time,
 /// never an entry timestamp. The ingest threshold raises a check, not a stop.
@@ -45,31 +49,46 @@ impl AuthorityObservationPolicy {
     }
 }
 
+impl RawValue for AuthorityObservationPolicy {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut raw = Vec::with_capacity(24);
+        for value in [
+            self.stale_roster_window_secs,
+            self.ingest_window_secs,
+            self.ingest_check_threshold,
+        ] {
+            raw.extend_from_slice(&value.to_be_bytes());
+        }
+        Ok(raw)
+    }
+
+    fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
+        if raw.len() != 24 {
+            return Err(Error::CorruptedIndex("authority observation policy").into());
+        }
+        let mut values = [0_u64; 3];
+        for (slot, bytes) in values.iter_mut().zip(raw.chunks_exact(8)) {
+            *slot = u64::from_be_bytes(
+                bytes
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("authority observation policy"))?,
+            );
+        }
+        let policy = Self {
+            stale_roster_window_secs: values[0],
+            ingest_window_secs: values[1],
+            ingest_check_threshold: values[2],
+        };
+        policy.validate()?;
+        Ok(policy)
+    }
+}
+
 pub(super) fn authority_observation_policy_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<AuthorityObservationPolicy> {
-    let Some(raw) = store.sync_state.get(txn, POLICY_KEY)? else {
-        return Ok(AuthorityObservationPolicy::default());
-    };
-    if raw.len() != 24 {
-        return Err(Error::CorruptedIndex("authority observation policy"));
-    }
-    let mut values = [0_u64; 3];
-    for (slot, bytes) in values.iter_mut().zip(raw.chunks_exact(8)) {
-        *slot = u64::from_be_bytes(
-            bytes
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("authority observation policy"))?,
-        );
-    }
-    let policy = AuthorityObservationPolicy {
-        stale_roster_window_secs: values[0],
-        ingest_window_secs: values[1],
-        ingest_check_threshold: values[2],
-    };
-    policy.validate()?;
-    Ok(policy)
+    Ok(POLICY.get(store, txn, &())?.unwrap_or_default())
 }
 
 impl Vault {
@@ -86,16 +105,8 @@ impl Vault {
         policy: AuthorityObservationPolicy,
     ) -> Result<()> {
         policy.validate()?;
-        let mut raw = Vec::with_capacity(24);
-        for value in [
-            policy.stale_roster_window_secs,
-            policy.ingest_window_secs,
-            policy.ingest_check_threshold,
-        ] {
-            raw.extend_from_slice(&value.to_be_bytes());
-        }
         self.with_write_txn(|txn| {
-            self.store.sync_state.put(txn, POLICY_KEY, &raw)?;
+            POLICY.put(&self.store, txn, &(), &policy)?;
             Ok(())
         })
     }

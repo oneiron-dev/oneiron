@@ -6,6 +6,7 @@ use super::{ENTITY_METADATA_HEADER_LEN, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::side_table::StagedRow;
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 
@@ -19,10 +20,10 @@ use crate::temporal::TimeRange;
 pub(super) fn stage_optimizer_birth_marker_row(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    optimizer_birth_marker: Option<(Vec<u8>, Vec<u8>)>,
+    optimizer_birth_marker: Option<StagedRow>,
 ) -> Result<()> {
-    if let Some((key, value)) = optimizer_birth_marker {
-        store.vault_meta.put(wtxn, &key, &value)?;
+    if let Some(row) = optimizer_birth_marker {
+        row.put(store, wtxn)?;
     }
     Ok(())
 }

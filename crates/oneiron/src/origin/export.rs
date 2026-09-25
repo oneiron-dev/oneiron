@@ -14,25 +14,55 @@ use crate::git_wire::{
     lock_repository,
 };
 use crate::repo_mutation::REPO_PROVENANCE_TRAILER_KEY;
+use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::temporal::TimeRange;
 use std::collections::BTreeMap;
 
-const PREFIX: &[u8] = b"origin:engine_export:v1:";
 #[derive(Debug, Clone)]
 pub struct EngineCommitExport {
     pub revision_id: EntityId,
     pub ref_name: GitRefName,
     pub expected_old_oid: Option<GitOid>,
 }
-fn export_key(repo: &GitWireRepo, revision: EntityId) -> Vec<u8> {
-    [
-        PREFIX,
-        repo.identity().as_hex().as_bytes(),
-        b":",
-        revision.as_bytes(),
-    ]
-    .concat()
+
+/// Stable Git commit projection (oid hex text) of one finalized engine CodeRevision. Key:
+/// string(repo identity hex) ":" id16(revision) — the ':' is a literal byte, not a NUL.
+const ENGINE_EXPORTS: SideTable<RepoRevisionKey, String, Raw> =
+    SideTable::new(&side_table::ORIGIN_ENGINE_EXPORT);
+
+struct RepoRevisionKey {
+    repo_hex: String,
+    revision: EntityId,
 }
+
+impl SideKey for RepoRevisionKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.repo_hex.as_bytes());
+        out.push(b':');
+        self.revision.encode_into(out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let id_start = bytes.len().checked_sub(16)?;
+        let (rest, id) = bytes.split_at(id_start);
+        let (&separator, repo_hex) = rest.split_last()?;
+        if separator != b':' {
+            return None;
+        }
+        Some(Self {
+            repo_hex: String::from_utf8(repo_hex.to_vec()).ok()?,
+            revision: EntityId::from_bytes(id.try_into().ok()?).ok()?,
+        })
+    }
+}
+
+fn export_key(repo: &GitWireRepo, revision: EntityId) -> RepoRevisionKey {
+    RepoRevisionKey {
+        repo_hex: repo.identity().as_hex(),
+        revision,
+    }
+}
+
 impl Vault {
     /// Reads the stable Git projection of a finalized engine revision.
     pub fn exported_engine_commit(
@@ -41,15 +71,9 @@ impl Vault {
         revision: EntityId,
     ) -> Result<Option<GitOid>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &export_key(repo, revision))?
-            .map(|raw| {
-                GitOid::parse_hex(
-                    std::str::from_utf8(&raw)
-                        .map_err(|_| Error::CorruptedIndex("engine export oid"))?,
-                )
-            })
+        ENGINE_EXPORTS
+            .get(&self.store, &txn, &export_key(repo, revision))?
+            .map(|oid| GitOid::parse_hex(&oid))
             .transpose()
     }
     /// No caller-supplied tree is accepted: bytes regenerate from authenticated
@@ -171,16 +195,14 @@ impl Vault {
         )?;
         self.with_write_txn(|txn| {
             let key = export_key(repo, revision.revision_id);
-            if let Some(old) = self.store.vault_meta.get(txn, &key)? {
-                if old.as_ref() != oid.as_str().as_bytes() {
+            if let Some(old) = ENGINE_EXPORTS.get(&self.store, txn, &key)? {
+                if old != oid.as_str() {
                     return Err(Error::InvariantViolation(
                         "finalized revision already has another Git projection",
                     ));
                 }
             } else {
-                self.store
-                    .vault_meta
-                    .put(txn, &key, oid.as_str().as_bytes())?;
+                ENGINE_EXPORTS.put(&self.store, txn, &key, &oid.as_str().to_owned())?;
             }
             Ok(())
         })?;

@@ -4,17 +4,17 @@ use super::document::{
     NoteDocument, NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution,
     frontier, invalid,
 };
+use super::pin_index::{NOTE_PIN_CITING, NOTE_PIN_CLAIM, NOTE_PIN_SOURCE};
+use super::side_keys::HexHexHash;
 use super::{NoteBody, NoteKind, encode_note_body};
 use crate::error::Result;
 use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
+use crate::side_table::HexId;
 use crate::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, WriteActor};
 
 pub(super) fn key(id: EntityId) -> String {
     format!("d:e:{}", id.to_hex())
-}
-fn pin_prefix(id: EntityId) -> String {
-    format!("note.pin/source/{}:", id.to_hex())
 }
 
 pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<NoteDocument> {
@@ -58,34 +58,15 @@ pub(super) fn persist(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocume
     // citation is in a different document. They are written with the body.
     super::pin_index::remove_citing(&vault.store, txn, doc.id)?;
     for pin in doc.pins()? {
-        let value = serde_json::to_vec(&pin).map_err(|_| invalid("NOTE pin encode"))?;
-        let index = format!(
-            "{}{}:{}",
-            pin_prefix(pin.document),
-            doc.id.to_hex(),
-            blake3::hash(&value).to_hex()
-        );
-        vault.store.vault_meta.put(txn, index.as_bytes(), &value)?;
-        let claim_index = format!(
-            "note.pin/claim/{}:{}:{}",
-            pin.claim.to_hex(),
-            doc.id.to_hex(),
-            blake3::hash(&value).to_hex()
-        );
-        vault
-            .store
-            .vault_meta
-            .put(txn, claim_index.as_bytes(), index.as_bytes())?;
-        let citing = format!(
-            "note.pin/citing/{}:{}:{}",
-            doc.id.to_hex(),
-            pin.document.to_hex(),
-            blake3::hash(&value).to_hex()
-        );
-        vault
-            .store
-            .vault_meta
-            .put(txn, citing.as_bytes(), index.as_bytes())?;
+        let value = NOTE_PIN_SOURCE.encode_value(&pin)?;
+        let hash = blake3::hash(&value).to_hex().to_string();
+        let index = HexHexHash(HexId(pin.document), HexId(doc.id), hash.clone());
+        let index_bytes = NOTE_PIN_SOURCE.key_bytes(&index);
+        NOTE_PIN_SOURCE.put(&vault.store, txn, &index, &pin)?;
+        let claim_index = HexHexHash(HexId(pin.claim), HexId(doc.id), hash.clone());
+        NOTE_PIN_CLAIM.put(&vault.store, txn, &claim_index, &index_bytes)?;
+        let citing = HexHexHash(HexId(doc.id), HexId(pin.document), hash);
+        NOTE_PIN_CITING.put(&vault.store, txn, &citing, &index_bytes)?;
     }
     Ok(())
 }
@@ -221,15 +202,8 @@ impl Memory<'_> {
             require_note_writer(self, txn, note)?;
             let doc = load(self.vault(), txn, note)?;
             let through = frontier(through)?;
-            for row in self
-                .vault()
-                .store
-                .vault_meta
-                .prefix_iter(txn, pin_prefix(note).as_bytes())?
-            {
-                let (_, bytes) = row?;
-                let pin: NotePin = serde_json::from_slice(&bytes)
-                    .map_err(|_| invalid("NOTE reverse pin corrupt"))?;
+            let key_prefix = format!("{}:", note.to_hex()).into_bytes();
+            for (_, pin) in NOTE_PIN_SOURCE.scan_from(&self.vault().store, txn, &key_prefix)? {
                 pin.validate()?;
                 match doc.doc.cmp_frontiers(&through, &frontier(&pin.frontier)?) {
                     Ok(Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)) => {}

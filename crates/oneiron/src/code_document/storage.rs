@@ -5,23 +5,40 @@ use loro::{CommitOptions, ExportMode, LoroDoc};
 use serde::{Deserialize, Serialize};
 
 use super::codec::{
-    decode, doc_from_snapshot, encode, frontier, hash, invalid, key, path_key, snapshot_key,
-    validate_path,
+    doc_from_snapshot, encode, frontier, hash, invalid, path_hash, path_key, validate_path,
 };
 use super::{CodeDocumentFrontier, CodeDocumentSession, CodeEditReceipt, CodeFileEdit};
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
 
-const HEAD: &[u8] = b"code_document:head:v1:";
+/// Immutable tested snapshot of a code document at one exact operation
+/// frontier: key is the document id then the op-fold hash, raw-concatenated.
+pub(super) const CODE_DOCUMENT_FRONTIER: SideTable<([u8; 32], [u8; 32]), SnapshotRow, Named> =
+    SideTable::new(&side_table::CODE_DOCUMENT_FRONTIER);
+/// Monotonic rename-generation counter for a (repo, path) pair.
+const CODE_DOCUMENT_GENERATION: SideTable<[u8; 32], u64, Raw> =
+    SideTable::new(&side_table::CODE_DOCUMENT_GENERATION);
+/// Current durable head snapshot plus full receipt history for one code document.
+const CODE_DOCUMENT_HEAD: SideTable<[u8; 32], HeadRow, Named> =
+    SideTable::new(&side_table::CODE_DOCUMENT_HEAD);
+/// Durable replay-guard receipt for one applied code-file-edit ingress operation.
+const CODE_DOCUMENT_INGRESS: SideTable<EntityId, ReceiptRow, Named> =
+    SideTable::new(&side_table::CODE_DOCUMENT_INGRESS);
+/// Maps a (repo, path) pair (sha256-hashed) to the code-document id currently
+/// living at that path.
+const CODE_DOCUMENT_PATH: SideTable<[u8; 32], [u8; 32], Raw> =
+    SideTable::new(&side_table::CODE_DOCUMENT_PATH);
+
 const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SnapshotRow {
+pub(super) struct SnapshotRow {
     frontier: CodeDocumentFrontier,
     snapshot: Vec<u8>,
 }
@@ -96,8 +113,7 @@ impl Vault {
         }
         let rtxn = self.store.env.read_txn()?;
         let lookup = path_key(repo, path);
-        if let Some(id) = self.store.vault_meta.get(&rtxn, &lookup)? {
-            let id: [u8; 32] = id.as_ref().try_into().map_err(|_| invalid())?;
+        if let Some(id) = CODE_DOCUMENT_PATH.get(&self.store, &rtxn, &path_hash(repo, path))? {
             let row = load_head(&self.store, &rtxn, &id)?.ok_or_else(invalid)?;
             if row.state.frontier.repo != repo || row.state.frontier.path != path {
                 return Err(invalid());
@@ -168,20 +184,9 @@ impl Vault {
     }
     pub fn code_file_edit_receipt(&self, operation: EntityId) -> Result<Option<CodeEditReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(
-                &txn,
-                &[
-                    b"code_document:ingress:v1:".as_slice(),
-                    operation.as_bytes(),
-                ]
-                .concat(),
-            )?
-            .map(|raw| {
-                let row: ReceiptRow = decode(&raw)?;
-                row.receipt()
-            })
+        CODE_DOCUMENT_INGRESS
+            .get(&self.store, &txn, &operation)?
+            .map(|row| row.receipt())
             .transpose()
     }
     /// A durable ingress identity prevents replay after a process death from
@@ -193,14 +198,8 @@ impl Vault {
         edit: &CodeFileEdit,
         actor: WriteActor,
     ) -> Result<CodeEditReceipt> {
-        let key = [
-            b"code_document:ingress:v1:".as_slice(),
-            operation.as_bytes(),
-        ]
-        .concat();
         let mut txn = self.store.env.write_txn()?;
-        if let Some(raw) = self.store.vault_meta.get(&txn, &key)? {
-            let row: ReceiptRow = decode(&raw)?;
+        if let Some(row) = CODE_DOCUMENT_INGRESS.get(&self.store, &txn, &operation)? {
             let receipt = row.receipt()?;
             if receipt.document_id != session.document_id
                 || receipt.session_id != session.session_id
@@ -228,7 +227,7 @@ impl Vault {
                 before: receipt.before.clone(),
                 after: receipt.after.clone(),
             };
-            self.store.vault_meta.put(&mut txn, &key, &encode(&row)?)?;
+            CODE_DOCUMENT_INGRESS.put(&self.store, &mut txn, &operation, &row)?;
             txn.commit()?;
             Ok(receipt)
         })();
@@ -267,13 +266,7 @@ impl Vault {
     ) -> Result<Vec<CodeEditReceipt>> {
         let mut receipts = Vec::with_capacity(items.len());
         for item in items.iter_mut() {
-            let key = [
-                b"code_document:ingress:v1:".as_slice(),
-                item.operation.as_bytes(),
-            ]
-            .concat();
-            if let Some(raw) = self.store.vault_meta.get(txn, &key)? {
-                let row: ReceiptRow = decode(&raw)?;
+            if let Some(row) = CODE_DOCUMENT_INGRESS.get(&self.store, txn, &item.operation)? {
                 let receipt = row.receipt()?;
                 if receipt.document_id != item.session.document_id
                     || receipt.session_id != item.session.session_id
@@ -320,7 +313,7 @@ impl Vault {
                 before: receipt.before.clone(),
                 after: receipt.after.clone(),
             };
-            self.store.vault_meta.put(txn, &key, &encode(&row)?)?;
+            CODE_DOCUMENT_INGRESS.put(&self.store, txn, &item.operation, &row)?;
             receipts.push(receipt);
         }
         Ok(receipts)
@@ -428,11 +421,11 @@ impl Vault {
             }
         } else {
             // A rename may have claimed this path since the session opened.
-            if let Some(id) = self
-                .store
-                .vault_meta
-                .get(&*wtxn, &path_key(&session.repo, &edit.path))?
-                && id.as_ref() != session.document_id
+            if let Some(id) = CODE_DOCUMENT_PATH.get(
+                &self.store,
+                &*wtxn,
+                &path_hash(&session.repo, &edit.path),
+            )? && id != session.document_id
             {
                 return Err(invalid());
             }
@@ -446,12 +439,7 @@ impl Vault {
             if after.path != *path {
                 return Err(invalid());
             }
-            if self
-                .store
-                .vault_meta
-                .get(&*wtxn, &path_key(&session.repo, path))?
-                .is_some()
-            {
+            if CODE_DOCUMENT_PATH.contains(&self.store, &*wtxn, &path_hash(&session.repo, path))? {
                 return Err(invalid());
             }
         }
@@ -484,25 +472,23 @@ impl Vault {
             },
             receipts,
         };
-        self.store
-            .vault_meta
-            .put(wtxn, &key(HEAD, &session.document_id), &encode(&row)?)?;
+        CODE_DOCUMENT_HEAD.put(&self.store, wtxn, &session.document_id, &row)?;
         if edit.new_path.is_some() {
-            self.store
-                .vault_meta
-                .delete(wtxn, &path_key(&session.repo, &edit.path))?;
+            CODE_DOCUMENT_PATH.delete(&self.store, wtxn, &path_hash(&session.repo, &edit.path))?;
             let generation = path_generation(&self.store, &*wtxn, &session.repo, &edit.path)?
                 .checked_add(1)
                 .ok_or_else(invalid)?;
-            self.store.vault_meta.put(
+            CODE_DOCUMENT_GENERATION.put(
+                &self.store,
                 wtxn,
                 &generation_key(&session.repo, &edit.path),
-                &generation.to_be_bytes(),
+                &generation,
             )?;
         }
-        self.store.vault_meta.put(
+        CODE_DOCUMENT_PATH.put(
+            &self.store,
             wtxn,
-            &path_key(&session.repo, &after.path),
+            &path_hash(&session.repo, &after.path),
             &session.document_id,
         )?;
         merged.set_peer_id(peer_id).map_err(|_| invalid())?;
@@ -532,10 +518,9 @@ impl Vault {
     ) -> Result<Option<CodeDocumentFrontier>> {
         validate_path(repo, path)?;
         let rtxn = self.store.env.read_txn()?;
-        let Some(id) = self.store.vault_meta.get(&rtxn, &path_key(repo, path))? else {
+        let Some(id) = CODE_DOCUMENT_PATH.get(&self.store, &rtxn, &path_hash(repo, path))? else {
             return Ok(None);
         };
-        let id = id.as_ref().try_into().map_err(|_| invalid())?;
         let row = load_head(&self.store, &rtxn, &id)?.ok_or_else(invalid)?;
         checked_snapshot(&row.state)?;
         if row.state.frontier.repo != repo || row.state.frontier.path != path {
@@ -589,10 +574,9 @@ impl Vault {
 }
 
 fn load_head(store: &Store, txn: &RoTxn<'_>, id: &[u8; 32]) -> Result<Option<HeadRow>> {
-    let Some(raw) = store.vault_meta.get(txn, &key(HEAD, id))? else {
+    let Some(row) = CODE_DOCUMENT_HEAD.get(store, txn, id)? else {
         return Ok(None);
     };
-    let row: HeadRow = decode(&raw)?;
     if row.state.frontier.document_id != *id {
         return Err(invalid());
     }
@@ -613,9 +597,8 @@ fn save_snapshot(
     state: &CodeDocumentFrontier,
     doc: &LoroDoc,
 ) -> Result<()> {
-    let key = snapshot_key(state);
-    if let Some(raw) = store.vault_meta.get(txn, &key)? {
-        let existing: SnapshotRow = decode(&raw)?;
+    let key = (state.document_id, state.op_fold);
+    if let Some(existing) = CODE_DOCUMENT_FRONTIER.get(store, txn, &key)? {
         checked_snapshot(&existing)?;
         if existing.frontier != *state {
             return Err(invalid());
@@ -626,16 +609,14 @@ fn save_snapshot(
         frontier: state.clone(),
         snapshot: doc.export(ExportMode::Snapshot).map_err(|_| invalid())?,
     };
-    store.vault_meta.put(txn, &key, &encode(&row)?)?;
+    CODE_DOCUMENT_FRONTIER.put(store, txn, &key, &row)?;
     Ok(())
 }
 
 fn load_frontier(store: &Store, txn: &RoTxn<'_>, tested: &CodeDocumentFrontier) -> Result<LoroDoc> {
-    let raw = store
-        .vault_meta
-        .get(txn, &snapshot_key(tested))?
+    let row = CODE_DOCUMENT_FRONTIER
+        .get(store, txn, &(tested.document_id, tested.op_fold))?
         .ok_or_else(invalid)?;
-    let row: SnapshotRow = decode(&raw)?;
     if row.frontier != *tested {
         return Err(invalid());
     }
@@ -651,17 +632,11 @@ pub(crate) fn verify_frontier_in_txn(
     Ok(())
 }
 
-fn generation_key(repo: &str, path: &str) -> Vec<u8> {
-    key(
-        b"code_document:generation:v1:",
-        &hash(&path_key(repo, path)),
-    )
+fn generation_key(repo: &str, path: &str) -> [u8; 32] {
+    hash(&path_key(repo, path))
 }
 fn path_generation(store: &Store, txn: &RoTxn<'_>, repo: &str, path: &str) -> Result<u64> {
-    match store.vault_meta.get(txn, &generation_key(repo, path))? {
-        None => Ok(0),
-        Some(raw) => Ok(u64::from_be_bytes(
-            raw.as_ref().try_into().map_err(|_| invalid())?,
-        )),
-    }
+    Ok(CODE_DOCUMENT_GENERATION
+        .get(store, txn, &generation_key(repo, path))?
+        .unwrap_or(0))
 }

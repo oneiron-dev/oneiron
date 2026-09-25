@@ -1380,13 +1380,14 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
         drifted.used, expected_used,
         "drifted-time retry settles nothing"
     );
-    let event_key = connector_key_settle_event_key(&id, "settle:first-touch-ancient");
     {
         let rtxn = vault.store.env.read_txn()?;
-        let stored = vault
-            .store
-            .vault_meta
-            .get(&rtxn, &event_key)?
+        let stored = SETTLE_EVENT
+            .get(
+                &vault.store,
+                &rtxn,
+                &(id, "settle:first-touch-ancient".to_owned()),
+            )?
             .expect("settlement event row");
         assert_eq!(
             &stored[stored.len() - 8..],
@@ -2727,24 +2728,16 @@ fn connector_key_op_reasons(vault: &Vault) -> Result<Vec<String>> {
         .collect())
 }
 
-fn catalog_name_index_row(vault: &Vault, name: &str) -> Result<Option<Vec<u8>>> {
+fn catalog_name_index_row(vault: &Vault, name: &str) -> Result<Option<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&rtxn, &connector_catalog_name_index_key(name))?
-        .map(|bytes| bytes.to_vec()))
+    CATALOG_NAME_INDEX.get(&vault.store, &rtxn, &name.to_owned())
 }
 
 fn send_admit_row_count(vault: &Vault, id: &EntityId) -> Result<usize> {
     let rtxn = vault.store.env.read_txn()?;
-    let prefix = connector_key_send_admit_key(id, "");
-    let mut count = 0;
-    for entry in vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-        entry?;
-        count += 1;
-    }
-    Ok(count)
+    Ok(SEND_ADMIT
+        .scan_keys(&vault.store, &rtxn, id.as_bytes())?
+        .len())
 }
 
 #[test]
@@ -2913,10 +2906,7 @@ fn register_connector_is_atomic() -> Result<()> {
     assert_eq!(entry.connector, "my_connector");
 
     // Permanent name index + generation-0 log row, both in the same commit.
-    assert_eq!(
-        catalog_name_index_row(&vault, "my_connector")?.as_deref(),
-        Some(id.as_bytes().as_slice()),
-    );
+    assert_eq!(catalog_name_index_row(&vault, "my_connector")?, Some(id),);
     let generation = vault
         .connector_key_generation(&id, 0)?
         .expect("generation 0");
@@ -3062,10 +3052,7 @@ fn rotate_connector_key_receipted_and_value_free() -> Result<()> {
     )?;
     {
         let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .vault_meta
-            .delete(&mut wtxn, &connector_key_generation_key(&legacy_id, 0))?;
+        GENERATION_LOG.delete(&vault.store, &mut wtxn, &(legacy_id, 0_u32.to_be_bytes()))?;
         wtxn.commit()?;
     }
     assert!(
@@ -3130,10 +3117,7 @@ fn remove_connector_key_is_revoke_plus_permanent_catalog_history() -> Result<()>
     );
 
     // The name-index row survives: the catalog keeps HISTORY.
-    assert_eq!(
-        catalog_name_index_row(&vault, "herald_slack")?.as_deref(),
-        Some(id.as_bytes().as_slice()),
-    );
+    assert_eq!(catalog_name_index_row(&vault, "herald_slack")?, Some(id),);
     assert!(
         vault.search_connector_catalog("herald")?.is_empty(),
         "the discovery lens is live-only"

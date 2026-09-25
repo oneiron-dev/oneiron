@@ -6,9 +6,51 @@ use super::scope::StandingOutboundGrantScope;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 /// One usage row per immutable envelope, shared by all grants naming it.
 pub const CHANNEL_IDENTITY_GRANT_USAGE_PREFIX: &[u8] = b"outbound_grant:channel_identity_usage:v1:";
+
+/// One envelope's usage window: the window start plus the spent
+/// `(effect_key, fingerprint)` pairs. Keyed by the envelope id.
+const USAGE: SideTable<EntityId, ChannelIdentityGrantUsage, Raw> =
+    SideTable::new(&side_table::OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE);
+
+struct ChannelIdentityGrantUsage {
+    started: u64,
+    effects: Vec<([u8; 32], [u8; 32])>,
+}
+
+impl RawValue for ChannelIdentityGrantUsage {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut bytes = self.started.to_be_bytes().to_vec();
+        bytes.extend_from_slice(&(self.effects.len() as u32).to_be_bytes());
+        for (effect, fingerprint) in &self.effects {
+            bytes.extend_from_slice(effect);
+            bytes.extend_from_slice(fingerprint);
+        }
+        Ok(bytes)
+    }
+
+    fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
+        if raw.len() < 12 || !(raw.len() - 12).is_multiple_of(64) {
+            return Err(invalid_grant().into());
+        }
+        let started = u64::from_be_bytes(raw[..8].try_into().map_err(|_| invalid_grant())?);
+        let used = u32::from_be_bytes(raw[8..12].try_into().map_err(|_| invalid_grant())?);
+        if used as usize != (raw.len() - 12) / 64 {
+            return Err(invalid_grant().into());
+        }
+        let mut effects = Vec::with_capacity(used as usize);
+        for pair in raw[12..].chunks_exact(64) {
+            effects.push((
+                pair[..32].try_into().map_err(|_| invalid_grant())?,
+                pair[32..].try_into().map_err(|_| invalid_grant())?,
+            ));
+        }
+        Ok(Self { started, effects })
+    }
+}
 
 impl Vault {
     /// Atomically authorizes and reserves an action using the engine clock.
@@ -80,30 +122,19 @@ impl Vault {
         {
             return Ok(false);
         }
-        let mut key = CHANNEL_IDENTITY_GRANT_USAGE_PREFIX.to_vec();
-        key.extend_from_slice(envelope_ref.as_bytes());
         let mut started = now;
         let mut effects = Vec::<([u8; 32], [u8; 32])>::new();
-        if let Some(raw) = self.store.vault_meta.get(&txn, &key)? {
-            if raw.len() < 12 || (raw.len() - 12) % 64 != 0 {
+        if let Some(usage) = USAGE.get(&self.store, &txn, envelope_ref)? {
+            if usage.effects.len() as u32 > envelope.max_actions {
                 return Err(invalid_grant());
             }
-            started = u64::from_be_bytes(raw[..8].try_into().map_err(|_| invalid_grant())?);
-            let used = u32::from_be_bytes(raw[8..12].try_into().map_err(|_| invalid_grant())?);
-            if used as usize != (raw.len() - 12) / 64 || used > envelope.max_actions {
-                return Err(invalid_grant());
-            }
+            started = usage.started;
             // Clock rollback cannot reset a window or spend a fresh slot.
             if now < started {
                 return Ok(false);
             }
             if now - started < envelope.window_secs {
-                for pair in raw[12..].chunks_exact(64) {
-                    effects.push((
-                        pair[..32].try_into().map_err(|_| invalid_grant())?,
-                        pair[32..].try_into().map_err(|_| invalid_grant())?,
-                    ));
-                }
+                effects = usage.effects;
             } else {
                 started = now;
             }
@@ -116,13 +147,12 @@ impl Vault {
             return Ok(false);
         }
         effects.push((candidate.effect_key, fingerprint));
-        let mut bytes = started.to_be_bytes().to_vec();
-        bytes.extend_from_slice(&(effects.len() as u32).to_be_bytes());
-        for (effect, fingerprint) in effects {
-            bytes.extend_from_slice(&effect);
-            bytes.extend_from_slice(&fingerprint);
-        }
-        self.store.vault_meta.put(&mut txn, &key, &bytes)?;
+        USAGE.put(
+            &self.store,
+            &mut txn,
+            envelope_ref,
+            &ChannelIdentityGrantUsage { started, effects },
+        )?;
         let touched = grant.touched(now)?;
         self.apply_standing_outbound_grant_body(
             &mut txn,

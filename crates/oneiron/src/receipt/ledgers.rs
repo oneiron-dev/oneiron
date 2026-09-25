@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
@@ -16,11 +17,14 @@ use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound::OutboundIntent;
+use crate::side_table::{self, Named, SideTable};
 use crate::store::{SEND_RECEIPT_RECORD_VERSION, Store};
 
 /// `vault_meta` keyspace of the attempt PACK RECEIPT ledger. The suffix is the
-/// receipt id itself, so a cited `receipt_ref` point-reads its row.
-const ATTEMPT_PACK_RECEIPT_KEY_PREFIX: &[u8] = b"attempt_receipt:v1:";
+/// receipt id itself, so a cited `receipt_ref` point-reads its row. Key: string
+/// (the receipt id).
+const PACK_RECEIPT: SideTable<String, ReceiptRecord, Named> =
+    SideTable::new(&side_table::ATTEMPT_PACK_RECEIPT);
 /// `receipt_id` namespace of the same ledger.
 const ATTEMPT_PACK_RECEIPT_ID_PREFIX: &str = "attempt:";
 
@@ -62,13 +66,6 @@ pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
     )
 }
 
-fn attempt_pack_receipt_key(receipt_id: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(ATTEMPT_PACK_RECEIPT_KEY_PREFIX.len() + receipt_id.len());
-    key.extend_from_slice(ATTEMPT_PACK_RECEIPT_KEY_PREFIX);
-    key.extend_from_slice(receipt_id.as_bytes());
-    key
-}
-
 /// Stamps the terminal pack receipt for an attempt that ran underneath a
 /// skill pack, inside the terminal transition's OWN write transaction.
 ///
@@ -108,13 +105,7 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         fields: BTreeMap::new(),
     };
     append_pack_manifest_fields(&mut receipt, record.manifest())?;
-    let encoded = rmp_serde::to_vec_named(&receipt)
-        .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
-    store.vault_meta.put(
-        wtxn,
-        &attempt_pack_receipt_key(&receipt.receipt_id),
-        &encoded,
-    )?;
+    PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
     Ok(())
 }
 
@@ -128,14 +119,7 @@ pub fn attempt_pack_receipt(vault: &Vault, receipt_id: &str) -> Result<Option<Re
         return Ok(None);
     }
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &attempt_pack_receipt_key(receipt_id))?
-    else {
-        return Ok(None);
-    };
-    decode_attempt_pack_receipt(&raw).map(Some)
+    PACK_RECEIPT.get(&vault.store, &rtxn, &receipt_id.to_owned())
 }
 
 /// Overwrites one row of the pack receipt ledger.
@@ -160,27 +144,8 @@ pub(crate) fn put_attempt_pack_receipt_for_test(
     wtxn: &mut heed::RwTxn<'_>,
     receipt: &ReceiptRecord,
 ) -> Result<()> {
-    let encoded = rmp_serde::to_vec_named(receipt)
-        .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
-    store.vault_meta.put(
-        wtxn,
-        &attempt_pack_receipt_key(&receipt.receipt_id),
-        &encoded,
-    )?;
+    PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, receipt)?;
     Ok(())
-}
-
-/// Names the first key past the attempt pack receipt family.
-///
-/// The reverse walk needs an explicit half-open range because `OverlayDb`
-/// exposes no reverse prefix iterator. The prefix is an ASCII literal, so its
-/// final byte is nowhere near `0xFF` and bumping it is the exclusive bound.
-fn attempt_pack_receipt_key_range_end() -> Vec<u8> {
-    let mut end = ATTEMPT_PACK_RECEIPT_KEY_PREFIX.to_vec();
-    if let Some(last) = end.last_mut() {
-        *last = last.saturating_add(1);
-    }
-    end
 }
 
 /// Collects the attempt pack receipt ledger under the family DoS guard.
@@ -200,32 +165,25 @@ pub(super) fn attempt_pack_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>>
 }
 
 /// Scans the same bounded prefix and reports a source continuation in production.
-/// The overflow probe is not decoded and does not increase the projection cap.
+/// The overflow probe is never projected and does not increase the projection cap.
 pub(super) fn scan_attempt_pack_receipts(vault: &Vault) -> Result<ReceiptScan> {
     let rtxn = vault.store.env.read_txn()?;
-    let end = attempt_pack_receipt_key_range_end();
-    let bounds = (
-        std::ops::Bound::Included(ATTEMPT_PACK_RECEIPT_KEY_PREFIX),
-        std::ops::Bound::Excluded(&end[..]),
-    );
     let mut scan = ReceiptScan::from_complete_records(Vec::new());
     let mut before = None;
-    // One row PAST the cap is read and never decoded: it is what separates a
+    // One row PAST the cap is read and never projected: it is what separates a
     // ledger holding exactly the cap from one the cap truncated.
-    for row in vault
-        .store
-        .vault_meta
-        .rev_range(&rtxn, &bounds)?
+    for row in PACK_RECEIPT
+        .iter_rev_from(&vault.store, &rtxn, &[])?
         .take(MAX_RECEIPT_QUERY_SCAN + 1)
     {
-        let (key, raw) = row?;
+        let (key, record) = row?;
         if scan.records.len() == MAX_RECEIPT_QUERY_SCAN {
             scan.mark_incomplete().attempt_pack_before = before;
             note_attempt_pack_scan_capped();
             break;
         }
-        scan.records.push(decode_attempt_pack_receipt(&raw)?);
-        before = Some(key.to_vec());
+        scan.records.push(record);
+        before = Some(PACK_RECEIPT.key_bytes(&key));
     }
     Ok(scan)
 }
@@ -245,23 +203,23 @@ pub(crate) fn attempt_pack_receipt_page(
     if after.is_some_and(|id| !id.starts_with(ATTEMPT_PACK_RECEIPT_ID_PREFIX)) {
         return Err(Error::CorruptedIndex("receipt sweep cursor"));
     }
-    let start = after.map(attempt_pack_receipt_key);
-    let end = attempt_pack_receipt_key_range_end();
-    let bounds = (
-        start.as_deref().map_or(
-            std::ops::Bound::Included(ATTEMPT_PACK_RECEIPT_KEY_PREFIX),
-            std::ops::Bound::Excluded,
-        ),
-        std::ops::Bound::Excluded(end.as_slice()),
-    );
+    let start = after.map(str::to_owned);
     let txn = vault.store.env.read_txn()?;
     let mut records = Vec::new();
-    for row in vault.store.vault_meta.range(&txn, &bounds)?.take(limit + 1) {
-        let (_, raw) = row?;
+    for row in PACK_RECEIPT
+        .iter_range(
+            &vault.store,
+            &txn,
+            start.as_ref().map_or(Bound::Unbounded, Bound::Excluded),
+            Bound::Unbounded,
+        )?
+        .take(limit + 1)
+    {
+        let (_, record) = row?;
         if records.len() == limit {
             return Ok((records, false));
         }
-        records.push(decode_attempt_pack_receipt(&raw)?);
+        records.push(record);
     }
     Ok((records, true))
 }
@@ -278,10 +236,6 @@ fn note_attempt_pack_scan_capped() {
     );
     #[cfg(test)]
     ATTEMPT_PACK_SCAN_CAPPED.with(|fired| fired.set(fired.get() + 1));
-}
-
-fn decode_attempt_pack_receipt(raw: &[u8]) -> Result<ReceiptRecord> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("attempt pack receipt row"))
 }
 
 /// Appends one outbound attempt's audit receipt and updates its TASK summary.
@@ -441,13 +395,9 @@ pub(crate) fn attempt_pack_receipt_in_txn(
     if id.to_hex() != suffix {
         return Ok(None);
     }
-    let Some(raw) = store
-        .vault_meta
-        .get(txn, &attempt_pack_receipt_key(receipt_id))?
-    else {
+    let Some(receipt) = PACK_RECEIPT.get(store, txn, &receipt_id.to_owned())? else {
         return Ok(None);
     };
-    let receipt = decode_attempt_pack_receipt(&raw)?;
     if receipt.receipt_id != receipt_id {
         return Err(Error::CorruptedIndex("attempt receipt key/body identity"));
     }

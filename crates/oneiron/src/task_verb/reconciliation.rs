@@ -9,12 +9,13 @@ use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::gate::PolicyApprovalCeiling;
 use crate::repo_mutation::RepoConflictClaim;
+use crate::side_table::{self, Raw, SideTable};
 use rmpv::Value;
 
-const PREFIX: &[u8] = b"repo_conflict:reconciliation:v1:";
-fn key(id: EntityId) -> Vec<u8> {
-    [PREFIX, id.as_bytes()].concat()
-}
+/// Repo-conflict claim to its reconciliation TASK. Key: id16 (claim id).
+const RECONCILIATION_TASKS: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::REPO_CONFLICT_RECONCILIATION_INDEX);
+
 fn map_error(error: crate::memory::MemoryError) -> Error {
     Error::Code(CodeError::RepoMutationFailed(error.to_string()))
 }
@@ -23,17 +24,7 @@ impl Vault {
     /// never a second task store.
     pub fn repo_reconciliation_task(&self, conflict: EntityId) -> Result<Option<EntityId>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key(conflict))?
-            .map(|raw| {
-                EntityId::from_bytes(
-                    raw.as_ref()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("repo reconciliation task index"))?,
-                )
-            })
-            .transpose()
+        RECONCILIATION_TASKS.get(&self.store, &txn, &conflict)
     }
     /// Called only after the conflict claim has been written in this transaction.
     /// The local owner is bootstrapped outside the transaction by the admin queue.
@@ -44,12 +35,8 @@ impl Vault {
         owner: EntityId,
         now: u64,
     ) -> Result<EntityId> {
-        if let Some(raw) = self.store.vault_meta.get(txn, &key(conflict.claim_id))? {
-            return EntityId::from_bytes(
-                raw.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("repo reconciliation task index"))?,
-            );
+        if let Some(task) = RECONCILIATION_TASKS.get(&self.store, txn, &conflict.claim_id)? {
+            return Ok(task);
         }
         if self
             .store
@@ -139,9 +126,7 @@ impl Vault {
         memory
             .route_created_task_in_txn(txn, task, &validated, now)
             .map_err(map_error)?;
-        self.store
-            .vault_meta
-            .put(txn, &key(conflict.claim_id), task.as_bytes())?;
+        RECONCILIATION_TASKS.put(&self.store, txn, &conflict.claim_id, &task)?;
         Ok(task)
     }
 }

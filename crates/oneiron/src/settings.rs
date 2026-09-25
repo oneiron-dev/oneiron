@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::overlay_db::OverlayDb;
+use crate::side_table::{self, HexId, Named, Raw, RawValue, SideTable};
+use crate::store::Store;
 
 pub mod model_versioning;
 
@@ -34,18 +35,50 @@ pub const CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND: &str = "settings.customizat
 /// without any seeding step. A default that had to be written at open time
 /// would make "fresh config" mean "config we already touched", and a
 /// migration that missed a vault would silently disable the feature.
-const PLUGIN_SUGGESTIONS_ENABLED_KEY: &[u8] = b"settings:dreamer:v1:plugin_suggestions_enabled";
+const PLUGIN_SUGGESTIONS_ENABLED: SideTable<(), PluginSuggestionsFlag, Raw> =
+    SideTable::new(&side_table::PLUGIN_SUGGESTIONS_ENABLED);
 
 /// Pinned on-disk encoding of the boolean knob above.
 const SETTINGS_BOOL_TRUE: [u8; 1] = [1];
 const SETTINGS_BOOL_FALSE: [u8; 1] = [0];
 
-const CUSTOMIZATION_SETTINGS_KEY: &[u8] = b"settings:customization:v1:profile";
-const CUSTOMIZATION_EVENT_SEQUENCE_KEY: &[u8] = b"settings:customization:v1:event_sequence";
-const CUSTOMIZATION_EVENT_KEY_PREFIX: &[u8] = b"settings:customization:v1:event:";
+/// The plugin-suggestions knob: one byte, `1` for on and `0` for off. Any
+/// other byte is a corrupted knob rather than a silently-defaulted one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PluginSuggestionsFlag(bool);
+
+impl RawValue for PluginSuggestionsFlag {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(if self.0 {
+            SETTINGS_BOOL_TRUE.to_vec()
+        } else {
+            SETTINGS_BOOL_FALSE.to_vec()
+        })
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        match bytes {
+            b if b == SETTINGS_BOOL_TRUE => Ok(Self(true)),
+            b if b == SETTINGS_BOOL_FALSE => Ok(Self(false)),
+            _ => Err(Error::CorruptedIndex("plugin suggestions knob").into()),
+        }
+    }
+}
+
+/// Persisted customization profile. Key: ().
+const CUSTOMIZATION_SETTINGS: SideTable<(), CustomizationSettings, Named> =
+    SideTable::new(&side_table::CUSTOMIZATION_SETTINGS);
+/// Monotonic sequence counter for customization change-notification events. Key: ().
+const CUSTOMIZATION_EVENT_SEQUENCE: SideTable<(), u64, Raw> =
+    SideTable::new(&side_table::CUSTOMIZATION_EVENT_SEQUENCE);
+/// One client-readable customization-settings change-notification event. Key: u64be (sequence).
+const CUSTOMIZATION_EVENT: SideTable<u64, CustomizationSettingsChangeEvent, Named> =
+    SideTable::new(&side_table::CUSTOMIZATION_EVENT);
 /// One row per world this device keeps to itself. Absence means the world
-/// syncs; the row never goes on the wire.
-const DEVICE_ONLY_WORLD_KEY_PREFIX: &str = "settings:sync:v1:device_only_world:";
+/// syncs; the row never goes on the wire. Key: hex32 (world id).
+const DEVICE_ONLY_WORLD: SideTable<HexId, [u8; 1], Raw> =
+    SideTable::new(&side_table::DEVICE_ONLY_WORLD);
+
 const TOKEN_MAX_BYTES: usize = 64;
 const WORLD_LABEL_MAX_BYTES: usize = 128;
 
@@ -379,18 +412,9 @@ impl Vault {
     /// not the pinned boolean encoding.
     pub fn plugin_suggestions_enabled(&self) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&rtxn, PLUGIN_SUGGESTIONS_ENABLED_KEY)?
-        else {
-            return Ok(true);
-        };
-        match raw.as_ref() {
-            b if b == SETTINGS_BOOL_TRUE => Ok(true),
-            b if b == SETTINGS_BOOL_FALSE => Ok(false),
-            _ => Err(Error::CorruptedIndex("plugin suggestions knob")),
-        }
+        Ok(PLUGIN_SUGGESTIONS_ENABLED
+            .get(&self.store, &rtxn, &())?
+            .is_none_or(|flag| flag.0))
     }
 
     /// Persists the Dreamer plugin-suggestion knob.
@@ -399,15 +423,13 @@ impl Vault {
     ///
     /// Storage errors.
     pub fn set_plugin_suggestions_enabled(&self, enabled: bool) -> Result<()> {
-        let encoded = if enabled {
-            SETTINGS_BOOL_TRUE
-        } else {
-            SETTINGS_BOOL_FALSE
-        };
         self.with_write_txn(|wtxn| {
-            self.store
-                .vault_meta
-                .put(wtxn, PLUGIN_SUGGESTIONS_ENABLED_KEY, &encoded)?;
+            PLUGIN_SUGGESTIONS_ENABLED.put(
+                &self.store,
+                wtxn,
+                &(),
+                &PluginSuggestionsFlag(enabled),
+            )?;
             Ok(())
         })
     }
@@ -429,13 +451,11 @@ impl Vault {
                     "a device-only world must be a stored WORLD row".to_owned(),
                 ));
             }
-            let key = device_only_world_key(world);
+            let key = HexId(world);
             if device_only {
-                self.store
-                    .vault_meta
-                    .put(wtxn, key.as_bytes(), &SETTINGS_BOOL_TRUE)?;
+                DEVICE_ONLY_WORLD.put(&self.store, wtxn, &key, &SETTINGS_BOOL_TRUE)?;
             } else {
-                self.store.vault_meta.delete(wtxn, key.as_bytes())?;
+                DEVICE_ONLY_WORLD.delete(&self.store, wtxn, &key)?;
             }
             Ok(())
         })
@@ -444,17 +464,13 @@ impl Vault {
     /// Whether `world` is flagged device-only on this device.
     pub fn world_is_device_only(&self, world: EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(self
-            .store
-            .vault_meta
-            .get(&rtxn, device_only_world_key(world).as_bytes())?
-            .is_some())
+        DEVICE_ONLY_WORLD.contains(&self.store, &rtxn, &HexId(world))
     }
 
     /// Reads the persisted customization settings, or the default four-layer model.
     pub fn customization_settings(&self) -> Result<CustomizationSettings> {
         let rtxn = self.store.env.read_txn()?;
-        customization_settings_in_read_txn(&self.store.vault_meta, &rtxn)
+        customization_settings_in_read_txn(&self.store, &rtxn)
     }
 
     /// Persists one customization layer and emits a client-readable event when it changed.
@@ -464,7 +480,7 @@ impl Vault {
     ) -> Result<CustomizationSettingsUpdate> {
         value.validate()?;
         self.with_write_txn(|wtxn| {
-            let mut settings = customization_settings_in_write_txn(&self.store.vault_meta, wtxn)?;
+            let mut settings = customization_settings_in_write_txn(&self.store, wtxn)?;
             let previous = settings.layer_value(value.layer());
             if previous == value {
                 return Ok(CustomizationSettingsUpdate {
@@ -474,21 +490,17 @@ impl Vault {
             }
 
             settings.apply_layer_value(value.clone());
-            let settings_raw = encode_customization_settings(&settings)?;
-            let sequence = next_customization_event_sequence(&self.store.vault_meta, wtxn)?;
+            settings.validate()?;
+            let sequence = next_customization_event_sequence(&self.store, wtxn)?;
             let event = CustomizationSettingsChangeEvent::new(
                 sequence,
                 self.store.clock.now_recorded_at(),
                 previous,
                 value,
             );
-            let event_raw = encode_customization_event(&event)?;
-            self.store
-                .vault_meta
-                .put(wtxn, CUSTOMIZATION_SETTINGS_KEY, &settings_raw)?;
-            self.store
-                .vault_meta
-                .put(wtxn, &customization_event_key(sequence), &event_raw)?;
+            event.validate()?;
+            CUSTOMIZATION_SETTINGS.put(&self.store, wtxn, &(), &settings)?;
+            CUSTOMIZATION_EVENT.put(&self.store, wtxn, &sequence, &event)?;
             Ok(CustomizationSettingsUpdate {
                 settings,
                 event: Some(event),
@@ -503,114 +515,65 @@ impl Vault {
         limit: usize,
     ) -> Result<Vec<CustomizationSettingsChangeEvent>> {
         let rtxn = self.store.env.read_txn()?;
-        customization_events_after_in_txn(&self.store.vault_meta, &rtxn, after_sequence, limit)
+        customization_events_after_in_txn(&self.store, &rtxn, after_sequence, limit)
     }
 }
 
 fn customization_settings_in_read_txn(
-    vault_meta: &OverlayDb,
+    store: &Store,
     rtxn: &RoTxn<'_>,
 ) -> Result<CustomizationSettings> {
-    let Some(raw) = vault_meta.get(rtxn, CUSTOMIZATION_SETTINGS_KEY)? else {
+    let Some(settings) = CUSTOMIZATION_SETTINGS.get(store, rtxn, &())? else {
         return Ok(CustomizationSettings::default());
     };
-    decode_customization_settings(&raw)
+    settings.validate()?;
+    Ok(settings)
 }
 
 fn customization_settings_in_write_txn(
-    vault_meta: &OverlayDb,
+    store: &Store,
     wtxn: &RwTxn<'_>,
 ) -> Result<CustomizationSettings> {
-    let Some(raw) = vault_meta.get(wtxn, CUSTOMIZATION_SETTINGS_KEY)? else {
+    let Some(settings) = CUSTOMIZATION_SETTINGS.get(store, wtxn, &())? else {
         return Ok(CustomizationSettings::default());
     };
-    decode_customization_settings(&raw)
+    settings.validate()?;
+    Ok(settings)
 }
 
-fn next_customization_event_sequence(vault_meta: &OverlayDb, wtxn: &mut RwTxn<'_>) -> Result<u64> {
-    let next = match vault_meta.get(&*wtxn, CUSTOMIZATION_EVENT_SEQUENCE_KEY)? {
-        Some(raw) => {
-            let current = decode_sequence(&raw)?;
-            current
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("customization event sequence"))?
-        }
+fn next_customization_event_sequence(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<u64> {
+    let next = match CUSTOMIZATION_EVENT_SEQUENCE.get(store, wtxn, &())? {
+        Some(current) => current
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("customization event sequence"))?,
         None => 1,
     };
-    vault_meta.put(wtxn, CUSTOMIZATION_EVENT_SEQUENCE_KEY, &next.to_be_bytes())?;
+    CUSTOMIZATION_EVENT_SEQUENCE.put(store, wtxn, &(), &next)?;
     Ok(next)
 }
 
 fn customization_events_after_in_txn(
-    vault_meta: &OverlayDb,
+    store: &Store,
     rtxn: &RoTxn<'_>,
     after_sequence: u64,
     limit: usize,
 ) -> Result<Vec<CustomizationSettingsChangeEvent>> {
     let mut events = Vec::new();
-    for row in vault_meta.prefix_iter(rtxn, CUSTOMIZATION_EVENT_KEY_PREFIX)? {
-        let (key, raw) = row?;
-        let sequence = customization_event_sequence_from_key(&key)?;
+    for row in CUSTOMIZATION_EVENT.iter_from(store, rtxn, &[])? {
+        let (sequence, event) = row?;
         if sequence <= after_sequence {
             continue;
         }
         if events.len() >= limit {
             break;
         }
-        let event = decode_customization_event(&raw)?;
+        event.validate()?;
         if event.sequence != sequence {
             return Err(Error::CorruptedIndex("customization settings event"));
         }
         events.push(event);
     }
     Ok(events)
-}
-
-fn customization_event_key(sequence: u64) -> [u8; CUSTOMIZATION_EVENT_KEY_PREFIX.len() + 8] {
-    let mut key = [0; CUSTOMIZATION_EVENT_KEY_PREFIX.len() + 8];
-    key[..CUSTOMIZATION_EVENT_KEY_PREFIX.len()].copy_from_slice(CUSTOMIZATION_EVENT_KEY_PREFIX);
-    key[CUSTOMIZATION_EVENT_KEY_PREFIX.len()..].copy_from_slice(&sequence.to_be_bytes());
-    key
-}
-
-fn customization_event_sequence_from_key(key: &[u8]) -> Result<u64> {
-    let suffix = key
-        .strip_prefix(CUSTOMIZATION_EVENT_KEY_PREFIX)
-        .ok_or(Error::CorruptedIndex("customization settings event"))?;
-    decode_sequence(suffix)
-}
-
-fn encode_customization_settings(settings: &CustomizationSettings) -> Result<Vec<u8>> {
-    settings.validate()?;
-    rmp_serde::to_vec_named(settings)
-        .map_err(|_| Error::InvariantViolation("customization settings encode failed"))
-}
-
-fn decode_customization_settings(raw: &[u8]) -> Result<CustomizationSettings> {
-    let settings: CustomizationSettings =
-        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("customization settings"))?;
-    settings.validate()?;
-    Ok(settings)
-}
-
-fn encode_customization_event(event: &CustomizationSettingsChangeEvent) -> Result<Vec<u8>> {
-    event.validate()?;
-    rmp_serde::to_vec_named(event)
-        .map_err(|_| Error::InvariantViolation("customization settings event encode failed"))
-}
-
-fn decode_customization_event(raw: &[u8]) -> Result<CustomizationSettingsChangeEvent> {
-    let event: CustomizationSettingsChangeEvent = rmp_serde::from_slice(raw)
-        .map_err(|_| Error::CorruptedIndex("customization settings event"))?;
-    event.validate()?;
-    Ok(event)
-}
-
-fn decode_sequence(raw: &[u8]) -> Result<u64> {
-    let bytes: [u8; 8] = raw
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("customization settings event"))?;
-    Ok(u64::from_be_bytes(bytes))
 }
 
 fn validate_token(field: &'static str, value: &str) -> Result<()> {
@@ -639,29 +602,17 @@ fn validate_label(field: &'static str, value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests;
 
-fn device_only_world_key(world: EntityId) -> String {
-    format!("{DEVICE_ONLY_WORLD_KEY_PREFIX}{}", world.to_hex())
-}
-
 /// Every world flagged device-only on this device.
 #[cfg(feature = "sync")]
 pub(crate) fn device_only_worlds_in(
-    store: &crate::store::Store,
+    store: &Store,
     txn: &RoTxn<'_>,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
-    let mut worlds = std::collections::BTreeSet::new();
-    for row in store
-        .vault_meta
-        .prefix_iter(txn, DEVICE_ONLY_WORLD_KEY_PREFIX.as_bytes())?
-    {
-        let (key, _) = row?;
-        let hex = key
-            .get(DEVICE_ONLY_WORLD_KEY_PREFIX.len()..)
-            .and_then(|hex| std::str::from_utf8(hex).ok())
-            .ok_or(Error::CorruptedIndex("device-only world key"))?;
-        worlds.insert(EntityId::from_hex(hex)?);
-    }
-    Ok(worlds)
+    Ok(DEVICE_ONLY_WORLD
+        .scan_keys(store, txn, &[])?
+        .into_iter()
+        .map(|HexId(world)| world)
+        .collect())
 }
 
 /// Whether a device-only world keeps `id` on this device: the flagged WORLD

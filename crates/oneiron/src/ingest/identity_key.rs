@@ -7,6 +7,7 @@ use super::resolution::{
 };
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::ManifestDbs;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::BTreeSet;
@@ -52,16 +53,22 @@ fn hints(kind: u8, bytes: &[u8]) -> BTreeSet<String> {
     hints
 }
 
-fn prefix(kind: u8, hint: &str) -> Vec<u8> {
-    let mut key = b"identity-hint:v1:".to_vec();
-    key.push(kind);
+/// Per-kind identity hint lookup index. Key: kind byte + `blake3(hint)` +
+/// entity id; value: an empty presence marker.
+const IDENTITY_HINT: SideTable<([u8; 1], [u8; 32], EntityId), (), Raw> =
+    SideTable::new(&side_table::INGEST_IDENTITY_HINT);
+
+fn hint_prefix(kind: u8, hint: &str) -> Vec<u8> {
+    let mut key = vec![kind];
     key.extend_from_slice(blake3::hash(hint.trim().to_lowercase().as_bytes()).as_bytes());
     key
 }
-fn index_key(kind: u8, hint: &str, id: &EntityId) -> Vec<u8> {
-    let mut key = prefix(kind, hint);
-    key.extend_from_slice(id.as_bytes());
-    key
+fn hint_key(kind: u8, hint: &str, id: &EntityId) -> ([u8; 1], [u8; 32], EntityId) {
+    (
+        [kind],
+        *blake3::hash(hint.trim().to_lowercase().as_bytes()).as_bytes(),
+        *id,
+    )
 }
 
 pub(crate) fn reindex_identity_hints(
@@ -77,16 +84,12 @@ pub(crate) fn reindex_identity_hints(
             header.entity_type,
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         ) {
-            store
-                .vault_meta()
-                .delete(txn, &index_key(header.entity_type, &hint, id))?;
+            IDENTITY_HINT.delete(store, txn, &hint_key(header.entity_type, &hint, id))?;
         }
     }
     if let Some((kind, body)) = replacement {
         for hint in hints(kind, body) {
-            store
-                .vault_meta()
-                .put(txn, &index_key(kind, &hint, id), &[])?;
+            IDENTITY_HINT.put(store, txn, &hint_key(kind, &hint, id), &())?;
         }
     }
     Ok(())
@@ -117,14 +120,9 @@ impl Vault {
         kind: u8,
         mention: &str,
     ) -> Result<Vec<EntityId>> {
-        let prefix = prefix(kind, mention);
+        let prefix = hint_prefix(kind, mention);
         let mut candidates = BTreeSet::new();
-        for entry in self.store.vault_meta.prefix_iter(txn, &prefix)? {
-            let (key, _) = entry?;
-            let bytes: [u8; 16] = key[prefix.len()..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("identity hint key"))?;
-            let id = EntityId::from_bytes(bytes)?;
+        for (_, _, id) in IDENTITY_HINT.scan_keys(&self.store, txn, &prefix)? {
             // Verify indexed evidence at read too; a stale/corrupt shortcut
             // can never create a candidate absent from the stored record.
             if let Some(raw) = self.store.entities.get(txn, id.as_bytes())?

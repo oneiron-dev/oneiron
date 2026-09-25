@@ -20,17 +20,36 @@ use super::support::{
     decode_value, encode_value, exact_map, map_value, required_value, validate_text,
 };
 use crate::error::ArtifactError;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 /// Claim predicate for mutable hub aliases attached to canonical skill identity.
 pub const PREDICATE_SKILL_HUB_PROVENANCE: &str = "skill.hub_provenance";
 
-const CAPABILITY_STATE_PREFIX: &[u8] = b"skill_hub/capability/v1\0";
-const CONTENT_HASH_INDEX_PREFIX: &[u8] = b"skill_hub/content_hash_index/v1\0";
-pub(super) const CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY: &[u8] =
-    b"skill_hub/content_hash_index_schema_version";
+/// Cached capability-surface projection for a hub-derived skill entity.
+const CAPABILITY: SideTable<EntityId, SkillCapabilitySurface, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_CAPABILITY);
+/// Empty-marker index from a skill content hash to every entity holding it.
+pub(super) const CONTENT_HASH_INDEX: SideTable<([u8; 32], EntityId), (), Raw> =
+    SideTable::new(&side_table::SKILL_HUB_CONTENT_HASH_INDEX);
+/// Schema-version byte gating the one-time content-hash-index backfill.
+pub(super) const SCHEMA_VERSION: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_CONTENT_HASH_INDEX_SCHEMA_VERSION);
 pub(super) const CONTENT_HASH_INDEX_SCHEMA_VERSION: u8 = 1;
 
 pub(super) const MAX_HUB_SKILL_SCAN_ENTRIES: usize = 100_000;
+
+impl RawValue for SkillCapabilitySurface {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_value(
+            &encode_capability_surface_value(self),
+            "capability surface MessagePack encode failed",
+        )?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_capability_surface(bytes)?)
+    }
+}
 
 impl Vault {
     /// The holder of these exact canonical bytes, whichever birth path put it
@@ -67,21 +86,15 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         content_hash: SkillContentHash,
     ) -> Result<Vec<(EntityId, SkillRecord)>> {
-        let prefix = content_hash_index_prefix(content_hash);
         let mut skills = Vec::new();
-        for (scanned, entry) in self
-            .store
-            .vault_meta
-            .prefix_iter(rtxn, &prefix)?
+        for (scanned, entry) in CONTENT_HASH_INDEX
+            .iter_from(&self.store, rtxn, content_hash.as_bytes())?
             .enumerate()
         {
             if scanned >= MAX_HUB_SKILL_SCAN_ENTRIES {
                 return Err(Error::IndexOverflow("skill_entity_for_content_hash"));
             }
-            let (key, _) = entry?;
-            let entity =
-                crate::entity_id::parse_entity_id(&key[prefix.len()..], "skill content hash index")
-                    .map_err(|_| Error::CorruptedIndex("skill content hash index"))?;
+            let ((_, entity), ()) = entry?;
             let Some(raw) = self
                 .store
                 .port_entity_record(rtxn, &entity)?
@@ -368,12 +381,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         entity: &EntityId,
     ) -> Result<Option<SkillCapabilitySurface>> {
-        let key = capability_state_key(entity);
-        self.store
-            .vault_meta
-            .get(rtxn, &key)?
-            .map(|bytes| decode_capability_surface(&bytes))
-            .transpose()
+        CAPABILITY.get(&self.store, rtxn, entity)
     }
 
     pub(super) fn write_admitted_capability_surface_in_txn(
@@ -383,34 +391,8 @@ impl Vault {
         surface: &SkillCapabilitySurface,
     ) -> Result<()> {
         surface.validate()?;
-        let value = encode_value(
-            &encode_capability_surface_value(surface),
-            "capability surface MessagePack encode failed",
-        )?;
-        let key = capability_state_key(entity);
-        self.store.vault_meta.put(wtxn, &key, &value)?;
-        Ok(())
+        CAPABILITY.put(&self.store, wtxn, entity, surface)
     }
-}
-
-fn capability_state_key(entity: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CAPABILITY_STATE_PREFIX.len() + 16);
-    key.extend_from_slice(CAPABILITY_STATE_PREFIX);
-    key.extend_from_slice(entity.as_bytes());
-    key
-}
-
-fn content_hash_index_prefix(content_hash: SkillContentHash) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CONTENT_HASH_INDEX_PREFIX.len() + 32);
-    key.extend_from_slice(CONTENT_HASH_INDEX_PREFIX);
-    key.extend_from_slice(content_hash.as_bytes());
-    key
-}
-
-pub(super) fn content_hash_index_key(content_hash: SkillContentHash, entity: &EntityId) -> Vec<u8> {
-    let mut key = content_hash_index_prefix(content_hash);
-    key.extend_from_slice(entity.as_bytes());
-    key
 }
 
 pub(crate) fn maintain_skill_content_hash_index_for_put(
@@ -423,14 +405,10 @@ pub(crate) fn maintain_skill_content_hash_index_for_put(
     if previous_hash != content_hash
         && let Some(previous_hash) = previous_hash
     {
-        store
-            .vault_meta
-            .delete(wtxn, &content_hash_index_key(previous_hash, entity))?;
+        CONTENT_HASH_INDEX.delete(store, wtxn, &(*previous_hash.as_bytes(), *entity))?;
     }
     if let Some(content_hash) = content_hash {
-        store
-            .vault_meta
-            .put(wtxn, &content_hash_index_key(content_hash, entity), &[])?;
+        CONTENT_HASH_INDEX.put(store, wtxn, &(*content_hash.as_bytes(), *entity), &())?;
     }
     Ok(())
 }
@@ -441,9 +419,7 @@ pub(crate) fn maintain_skill_content_hash_index_for_delete(
     entity: &EntityId,
     content_hash: SkillContentHash,
 ) -> Result<()> {
-    store
-        .vault_meta
-        .delete(wtxn, &content_hash_index_key(content_hash, entity))?;
+    CONTENT_HASH_INDEX.delete(store, wtxn, &(*content_hash.as_bytes(), *entity))?;
     Ok(())
 }
 
@@ -455,10 +431,7 @@ pub(crate) fn maintain_skill_content_hash_index_for_delete(
 pub(crate) fn backfill_content_hash_index_if_needed(vault: &Vault) -> Result<()> {
     let store = &vault.store;
     let rtxn = store.env.read_txn()?;
-    let stored_version = match store
-        .vault_meta
-        .get(&rtxn, CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY)?
-    {
+    let stored_version = match SCHEMA_VERSION.get(store, &rtxn, &())? {
         Some(raw) if raw.len() == 1 => raw[0],
         Some(_) => return Err(Error::InvalidKey),
         None => 0,
@@ -504,17 +477,14 @@ pub(crate) fn backfill_content_hash_index_if_needed(vault: &Vault) -> Result<()>
     }
 
     for (content_hash, entity) in &holders {
-        store.vault_meta.put(
-            &mut wtxn,
-            &content_hash_index_key(*content_hash, entity),
-            &[],
-        )?;
+        CONTENT_HASH_INDEX.put(store, &mut wtxn, &(*content_hash.as_bytes(), *entity), &())?;
     }
 
-    store.vault_meta.put(
+    SCHEMA_VERSION.put(
+        store,
         &mut wtxn,
-        CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY,
-        &[CONTENT_HASH_INDEX_SCHEMA_VERSION],
+        &(),
+        &vec![CONTENT_HASH_INDEX_SCHEMA_VERSION],
     )?;
     wtxn.commit()?;
     Ok(())

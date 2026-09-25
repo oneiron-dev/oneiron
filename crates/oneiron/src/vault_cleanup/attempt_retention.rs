@@ -1,19 +1,42 @@
 //! Reversible retention for private queue records; the serialized attempt is never changed.
+use super::scan::ScanCursorTag;
 use super::{CleanupCandidate, CleanupKind};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, decode_record};
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use std::ops::Bound;
 
-const PREFIX: &[u8] = b"vault_cleanup.attempt_archive.v1/";
-const TASK_PREFIX: &[u8] = b"vault_cleanup.task_attempt_archive.v1/";
-const CURSOR: &[u8] = b"vault_cleanup.scan.v1:attempt";
-fn key(id: AttemptId) -> Vec<u8> {
-    [PREFIX, id.as_bytes()].concat()
+const ARCHIVE: SideTable<[u8; 16], [u8; 32], Raw> =
+    SideTable::new(&side_table::VAULT_CLEANUP_ATTEMPT_ARCHIVE);
+const TASK_ARCHIVE: SideTable<TaskAttemptKey, (), Raw> =
+    SideTable::new(&side_table::VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE);
+
+/// Index key: an owner-facing task reference string, `/`, then the archived
+/// attempt's raw 16 bytes. The attempt is always the trailing 16 bytes, so a
+/// task reference containing `/` still decodes correctly.
+struct TaskAttemptKey {
+    task: String,
+    attempt: [u8; 16],
 }
-fn task_prefix(task: &str) -> Vec<u8> {
-    [TASK_PREFIX, task.as_bytes(), b"/"].concat()
+
+impl SideKey for TaskAttemptKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.task.as_bytes());
+        out.push(b'/');
+        out.extend_from_slice(&self.attempt);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let split = bytes.len().checked_sub(16)?;
+        let (head, attempt) = bytes.split_at(split);
+        let task = head.strip_suffix(b"/")?;
+        Some(Self {
+            task: String::from_utf8(task.to_vec()).ok()?,
+            attempt: attempt.try_into().ok()?,
+        })
+    }
 }
 
 pub(crate) fn attempt_is_archived(
@@ -22,10 +45,9 @@ pub(crate) fn attempt_is_archived(
     id: AttemptId,
     raw: &[u8],
 ) -> Result<bool> {
-    Ok(store
-        .vault_meta
-        .get(txn, &key(id))?
-        .is_some_and(|marker| marker.as_ref() == blake3::hash(raw).as_bytes()))
+    Ok(ARCHIVE
+        .get(store, txn, id.as_bytes())?
+        .is_some_and(|marker| marker == *blake3::hash(raw).as_bytes()))
 }
 
 fn eligible(
@@ -49,11 +71,12 @@ pub(super) fn scan(
     txn: &heed::RoTxn<'_>,
     limit: usize,
     candidates: &mut Vec<CleanupCandidate>,
-) -> Result<(Vec<u8>, Option<EntityId>)> {
-    let after = vault.store.vault_meta.get(txn, CURSOR)?;
-    let lower = after
+) -> Result<(ScanCursorTag, Option<EntityId>)> {
+    let after = super::scan::SCAN_CURSOR.get(&vault.store, txn, &ScanCursorTag::Attempt)?;
+    let after_bytes = after.map(|id| *id.as_bytes());
+    let lower = after_bytes
         .as_ref()
-        .map_or(Bound::Unbounded, |bytes| Bound::Excluded(bytes.as_ref()));
+        .map_or(Bound::Unbounded, |bytes| Bound::Excluded(bytes.as_slice()));
     let upper: Bound<&[u8]> = Bound::Unbounded;
     let mut last = None;
     let mut exhausted = true;
@@ -78,7 +101,7 @@ pub(super) fn scan(
             });
         }
     }
-    Ok((CURSOR.to_vec(), if exhausted { None } else { last }))
+    Ok((ScanCursorTag::Attempt, if exhausted { None } else { last }))
 }
 
 pub(super) fn archive(vault: &Vault, txn: &mut heed::RwTxn<'_>, entity: EntityId) -> Result<bool> {
@@ -89,18 +112,28 @@ pub(super) fn archive(vault: &Vault, txn: &mut heed::RwTxn<'_>, entity: EntityId
     let Some(record) = eligible(vault, txn, id, &raw)? else {
         return Ok(false);
     };
-    vault
-        .store
-        .vault_meta
-        .put(txn, &key(id), blake3::hash(&raw).as_bytes())?;
+    ARCHIVE.put(
+        &vault.store,
+        txn,
+        id.as_bytes(),
+        blake3::hash(&raw).as_bytes(),
+    )?;
     if let Some(task) = record.task_ref {
-        vault.store.vault_meta.put(
+        TASK_ARCHIVE.put(
+            &vault.store,
             txn,
-            &[task_prefix(&task).as_slice(), id.as_bytes()].concat(),
-            b"",
+            &TaskAttemptKey {
+                task,
+                attempt: *id.as_bytes(),
+            },
+            &(),
         )?;
     }
     Ok(true)
+}
+
+fn task_prefix_bytes(task: &str) -> Vec<u8> {
+    [task.as_bytes(), b"/"].concat()
 }
 
 pub(crate) fn restore_task_attempts(
@@ -108,18 +141,16 @@ pub(crate) fn restore_task_attempts(
     txn: &mut heed::RwTxn<'_>,
     task: EntityId,
 ) -> Result<()> {
-    let prefix = task_prefix(&task.to_hex());
-    let keys = vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, &prefix)?
-        .map(|row| row.map(|(key, _)| key.to_vec()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for index_key in keys {
-        let id = AttemptId::from_bytes(&index_key[prefix.len()..])?;
-        vault.store.vault_meta.delete(txn, &key(id))?;
-        vault.store.vault_meta.delete(txn, &index_key)?;
+    let prefix = task_prefix_bytes(&task.to_hex());
+    let attempts: Vec<[u8; 16]> = TASK_ARCHIVE
+        .scan_keys(&vault.store, txn, &prefix)?
+        .into_iter()
+        .map(|key| key.attempt)
+        .collect();
+    for attempt in &attempts {
+        ARCHIVE.delete(&vault.store, txn, attempt)?;
     }
+    TASK_ARCHIVE.delete_from(&vault.store, txn, &prefix)?;
     Ok(())
 }
 
@@ -137,11 +168,15 @@ impl Vault {
                 return Err(Error::InvalidConfig("attempt is not archived".into()));
             }
             let record = decode_record(&raw, id)?;
-            self.store.vault_meta.delete(txn, &key(id))?;
+            ARCHIVE.delete(&self.store, txn, id.as_bytes())?;
             if let Some(task) = record.task_ref {
-                self.store.vault_meta.delete(
+                TASK_ARCHIVE.delete(
+                    &self.store,
                     txn,
-                    &[task_prefix(&task).as_slice(), id.as_bytes()].concat(),
+                    &TaskAttemptKey {
+                        task,
+                        attempt: *id.as_bytes(),
+                    },
                 )?;
             }
             Ok(())

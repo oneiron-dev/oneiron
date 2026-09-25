@@ -165,7 +165,7 @@ impl Vault {
                             &recipient.id,
                             image_ref,
                         );
-                        if self.store.vault_meta.get(txn, &key)?.is_none() {
+                        if !super::signature_image::BINDINGS.contains(&self.store, txn, &key)? {
                             return Err(invalid("signature image is not owned by this recipient"));
                         }
                     }

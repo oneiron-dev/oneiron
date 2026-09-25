@@ -6,13 +6,16 @@ use super::{
     AuthenticatedOwner, ConsentDomain, ConsentReceipt, GrantBound, bound_catastrophe_class,
 };
 use crate::error::GateError;
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
-const PREFIX: &[u8] = b"consent.widen.v1:";
+/// Parked authority-widening request, keyed by its own hex64 reference.
+const WIDEN_PROPOSALS: SideTable<String, StoredProposal, LegacyJson> =
+    SideTable::new(&side_table::CONSENT_WIDEN_PROPOSAL);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -101,7 +104,7 @@ fn decode_delta(bytes: &[u8]) -> Result<GrantBound> {
 }
 fn proposal_ref(delta: &[u8], proposer: &str, owner: &str, created: u64, expires: u64) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(PREFIX);
+    hasher.update(WIDEN_PROPOSALS.decl().prefix);
     for field in [
         delta,
         proposer.as_bytes(),
@@ -114,7 +117,12 @@ fn proposal_ref(delta: &[u8], proposer: &str, owner: &str, created: u64, expires
     }
     hasher.finalize().to_hex().to_string()
 }
-fn key(reference: &str) -> Result<Vec<u8>> {
+/// The hex64 reference shape every widen row has always been keyed by. Kept
+/// as a gate ahead of storage rather than folded into the key type, so a
+/// caller-supplied `reference` that fails the shape check is refused the
+/// SAME [`GateError::InvalidConsentBound`]-flavored `invalid_row()` it always
+/// was, before the key ever reaches the table.
+fn validate_reference_shape(reference: &str) -> Result<()> {
     if reference.len() != 64
         || !reference
             .bytes()
@@ -122,10 +130,9 @@ fn key(reference: &str) -> Result<Vec<u8>> {
     {
         return Err(invalid_row());
     }
-    Ok([PREFIX, reference.as_bytes()].concat())
+    Ok(())
 }
-fn decode_row(bytes: &[u8], reference: &str) -> Result<StoredProposal> {
-    let row: StoredProposal = serde_json::from_slice(bytes).map_err(|_| invalid_row())?;
+fn validate_row(row: StoredProposal, reference: &str) -> Result<StoredProposal> {
     let p = &row.proposal;
     decode_delta(&p.canonical_delta)?;
     if row.version != 1
@@ -177,7 +184,7 @@ impl Vault {
         let canonical_delta = canonical_widen_delta(kind, &bound)?;
         let proposer = actor.entity_ref().to_hex();
         let reference = proposal_ref(&canonical_delta, &proposer, &owner_ref, now, expires_at);
-        let key = key(&reference)?;
+        validate_reference_shape(&reference)?;
         self.with_write_txn(|txn| {
             let raw = self
                 .store
@@ -187,8 +194,8 @@ impl Vault {
             let header = crate::batch::EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("entity header"))?;
             crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())?;
-            if let Some(raw) = self.store.vault_meta.get(&*txn, &key)? {
-                return Ok(decode_row(&raw, &reference)?.proposal);
+            if let Some(row) = WIDEN_PROPOSALS.get(&self.store, &*txn, &reference)? {
+                return Ok(validate_row(row, &reference)?.proposal);
             }
             let proposal = WidenProposal {
                 proposal_ref: reference,
@@ -223,11 +230,7 @@ impl Vault {
                 proposal: proposal.clone(),
                 resolved: false,
             };
-            self.store.vault_meta.put(
-                txn,
-                &key,
-                &serde_json::to_vec(&row).map_err(|_| invalid_row())?,
-            )?;
+            WIDEN_PROPOSALS.put(&self.store, txn, &row.proposal.proposal_ref, &row)?;
             Ok(proposal)
         })
     }
@@ -239,14 +242,13 @@ impl Vault {
         reference: &str,
         expected_delta: &[u8],
     ) -> Result<ConsentReceipt> {
-        let key = key(reference)?;
+        validate_reference_shape(reference)?;
+        let key = reference.to_owned();
         self.with_write_txn(|txn| {
-            let raw = self
-                .store
-                .vault_meta
-                .get(&*txn, &key)?
+            let row = WIDEN_PROPOSALS
+                .get(&self.store, &*txn, &key)?
                 .ok_or_else(invalid_row)?;
-            let mut row = decode_row(&raw, reference)?;
+            let mut row = validate_row(row, reference)?;
             let proposal = &row.proposal;
             if row.resolved
                 || proposal.expires_at <= self.store.clock.now_recorded_at()
@@ -260,21 +262,16 @@ impl Vault {
             let bound = decode_delta(&proposal.canonical_delta)?;
             let receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
             row.resolved = true;
-            self.store.vault_meta.put(
-                txn,
-                &key,
-                &serde_json::to_vec(&row).map_err(|_| invalid_row())?,
-            )?;
+            WIDEN_PROPOSALS.put(&self.store, txn, &key, &row)?;
             Ok(receipt)
         })
     }
     pub fn widen_proposal(&self, reference: &str) -> Result<Option<WidenProposal>> {
-        let key = key(reference)?;
+        validate_reference_shape(reference)?;
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key)?
-            .map(|raw| decode_row(&raw, reference).map(|row| row.proposal))
+        WIDEN_PROPOSALS
+            .get(&self.store, &txn, &reference.to_owned())?
+            .map(|row| validate_row(row, reference).map(|row| row.proposal))
             .transpose()
     }
 }

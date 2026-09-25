@@ -86,11 +86,10 @@ fn queue_identity_mismatch_is_refused_by_every_reader_and_mutator() -> Result<()
     let bytes = encode_feedback_bundle(&bundle).unwrap();
     let dial = FeedbackDedup::new(0.9)?;
     let item = vault.ingest_feedback(&bytes, &[1.0, 0.0], dial, 10)?;
-    let key = [QUEUE, item.id.as_bytes()].concat();
     let mut forged = item.clone();
     forged.id = EntityId::now();
     vault.with_write_txn(|txn| {
-        vault.store.vault_meta.put(txn, &key, &encode(&forged)?)?;
+        QUEUE_ITEMS.put(&vault.store, txn, &item.id, &forged)?;
         Ok(())
     })?;
     assert!(matches!(
@@ -112,7 +111,7 @@ fn queue_identity_mismatch_is_refused_by_every_reader_and_mutator() -> Result<()
         Err(Error::CorruptedIndex(_))
     ));
     vault.with_write_txn(|txn| {
-        vault.store.vault_meta.put(txn, &key, &encode(&item)?)?;
+        QUEUE_ITEMS.put(&vault.store, txn, &item.id, &item)?;
         Ok(())
     })?;
     assert_eq!(vault.feedback_digest()?, vec![item]);

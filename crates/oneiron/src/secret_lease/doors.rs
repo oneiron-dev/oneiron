@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use super::admission::admit_record_use;
-use super::codec::decode_secret_lease_body;
+use super::codec::SECRET_LEASE;
 use super::files::write_secret_file;
 use super::storage::{
     read_live_lease_in_txn, read_local_registration_in_txn, read_record_for_ref_in_txn,
@@ -11,9 +11,8 @@ use super::storage::{
     teardown_local_registration_in_txn, write_local_registration_in_txn, write_secret_lease_in_txn,
 };
 use super::types::{
-    DoorInjectionReceipt, LocalRegistration, SECRET_LEASE_KEY_PREFIX, SecretLease,
-    SecretLeaseMaterialization, SecretLeaseStatus, SecretTaintRef, StoredLocalRegistration,
-    VaultInstant,
+    DoorInjectionReceipt, LocalRegistration, SecretLease, SecretLeaseMaterialization,
+    SecretLeaseStatus, SecretTaintRef, StoredLocalRegistration, VaultInstant,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
@@ -282,13 +281,7 @@ impl Vault {
     pub fn expire_secret_leases(&self, now: u64) -> Result<usize> {
         let mut wtxn = self.store.env.write_txn()?;
         let mut due = Vec::new();
-        for entry in self
-            .store
-            .vault_meta
-            .prefix_iter(&wtxn, SECRET_LEASE_KEY_PREFIX.as_bytes())?
-        {
-            let (_, raw) = entry?;
-            let lease = decode_secret_lease_body(&raw)?;
+        for (_, lease) in SECRET_LEASE.scan(&self.store, &wtxn)? {
             if lease.status == SecretLeaseStatus::Active && now >= lease.expires_at {
                 due.push(lease);
             }

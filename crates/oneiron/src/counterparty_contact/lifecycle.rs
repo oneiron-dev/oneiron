@@ -5,7 +5,7 @@ use super::codec::{
     encode_counterparty_contact_body,
 };
 use super::storage::{
-    counterparty_contact_channel_class, counterparty_contact_index_key_for_record,
+    CONTACT_INDEX, counterparty_contact_channel_class, counterparty_contact_index_key_for_record,
     counterparty_contact_matches_channel_class, counterparty_contacts_by_party_full_scan,
     read_counterparty_contact_in_txn, remove_counterparty_contact_party_channel_index,
 };
@@ -365,7 +365,7 @@ pub fn drop_contact_cache_row(vault: &Vault, contact_id: &EntityId) -> Result<()
         return Ok(());
     };
     let index_key = counterparty_contact_index_key_for_record(&record)?;
-    vault.store.vault_meta.delete(&mut wtxn, &index_key)?;
+    CONTACT_INDEX.delete(&vault.store, &mut wtxn, &index_key)?;
     if let Some(channel_class) = counterparty_contact_channel_class(&vault.store, &wtxn, &record)? {
         remove_counterparty_contact_party_channel_index(
             &vault.store,

@@ -1,11 +1,21 @@
 //! Rebuild mechanical projections and reset leased attempt ownership.
 use super::codec_error;
+use crate::side_table::{self, Named, SideTable};
 use crate::{
     EntityId, Error, Result, Vault,
     attempt_queue::AttemptState,
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     temporal::TimeRange,
 };
+
+/// Canonical caller-supplied text fields backing one document's bm25 index.
+/// Key: id16.
+const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
+    SideTable::new(&side_table::INDEX_SOURCE_TEXT);
+/// Caller-supplied phonetic codes retained to recompute an entity's phonetic
+/// postings. Key: id16.
+const INDEX_SOURCE_PHONETIC: SideTable<EntityId, Vec<String>, Named> =
+    SideTable::new(&side_table::BATCH_PHONETIC_INDEX_SOURCE);
 pub(super) fn unlease_attempt(key: &[u8], bytes: &[u8]) -> Result<Vec<u8>> {
     let (&version, _) = bytes.split_first().ok_or_else(codec_error)?;
     let mut record = crate::attempt_queue::decode_record(
@@ -114,43 +124,20 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                 embeddings += 1;
             }
         }
-        let sources: Vec<_> = vault
-            .store
-            .vault_meta
-            .prefix_iter(txn, b"index_source:text:v1:")?
-            .map(|r| r.map(|(k, v)| (k.to_vec(), v.to_vec())))
-            .collect::<std::result::Result<_, _>>()?;
+        let sources = INDEX_SOURCE_TEXT.scan(&vault.store, txn)?;
         let mut texts = 0;
-        for (key, source) in sources {
-            let id = EntityId::from_bytes(
-                key[b"index_source:text:v1:".len()..]
-                    .try_into()
-                    .map_err(|_| codec_error())?,
-            )?;
+        for (id, fields) in sources {
             if vault.store.entities.get(txn, id.as_bytes())?.is_none() {
                 continue;
             }
-            let fields: Vec<(String, String)> =
-                rmp_serde::from_slice(&source).map_err(|_| codec_error())?;
             crate::bm25::index_text(&vault.store, txn, &vault.analyzer, &id, &fields)?;
             texts += 1;
         }
-        let phonetic: Vec<_> = vault
-            .store
-            .vault_meta
-            .prefix_iter(txn, b"index_source:phonetic:v1:")?
-            .map(|row| row.map(|(key, value)| (key.to_vec(), value.to_vec())))
-            .collect::<std::result::Result<_, _>>()?;
-        for (key, raw) in phonetic {
-            let id = EntityId::from_bytes(
-                key[b"index_source:phonetic:v1:".len()..]
-                    .try_into()
-                    .map_err(|_| codec_error())?,
-            )?;
+        let phonetic = INDEX_SOURCE_PHONETIC.scan(&vault.store, txn)?;
+        for (id, codes) in phonetic {
             if vault.store.entities.get(txn, id.as_bytes())?.is_none() {
                 continue;
             }
-            let codes: Vec<String> = rmp_serde::from_slice(&raw).map_err(|_| codec_error())?;
             crate::batch::apply_phonetic(&vault.store, txn, id, &codes)?;
         }
         let windows: Vec<_> = vault

@@ -1,9 +1,18 @@
 //! Append-only membership ledger. Body and ledger commit in the same transaction.
 use super::*;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
+use crate::side_table::{self, Named, Raw, SideTable};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-const PREFIX: &[u8] = b"conversation_membership:v1:";
+
+/// One membership ledger row, keyed by `(conversation, row_index)`.
+pub(super) const MEMBERSHIP_ROWS: SideTable<(EntityId, u64), MembershipRow, Named> =
+    SideTable::new(&side_table::CONVERSATION_MEMBERSHIP_ROW);
+
+/// The membership ledger's row-count revision, keyed by conversation.
+pub(super) const MEMBERSHIP_SEQ: SideTable<EntityId, u64, Raw> =
+    SideTable::new(&side_table::CONVERSATION_MEMBERSHIP_SEQ);
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryChoice {
@@ -45,21 +54,10 @@ pub(super) fn revision_in(
     txn: &heed::RoTxn<'_>,
     conversation: EntityId,
 ) -> Result<u64> {
-    let revision = store
-        .vault_meta
-        .get(txn, &key(b"conversation_membership:seq:v1:", conversation))?
-        .map(|bytes| {
-            bytes
-                .as_ref()
-                .try_into()
-                .map(u64::from_be_bytes)
-                .map_err(|_| Error::CorruptedIndex("membership revision"))
-        })
-        .transpose()?;
+    let revision = MEMBERSHIP_SEQ.get(store, txn, &conversation)?;
     if revision.unwrap_or(0) == 0
-        && store
-            .vault_meta
-            .prefix_iter(txn, &key(PREFIX, conversation))?
+        && MEMBERSHIP_ROWS
+            .iter_from(store, txn, conversation.as_bytes())?
             .next()
             .transpose()?
             .is_some()
@@ -74,14 +72,8 @@ pub(super) fn rows_in(
     txn: &heed::RoTxn<'_>,
     conversation: EntityId,
 ) -> Result<Vec<MembershipRow>> {
-    let prefix = key(PREFIX, conversation);
     let mut rows = Vec::new();
-    for row in store.vault_meta.prefix_iter(txn, &prefix)? {
-        let (k, v) = row?;
-        if k.len() != prefix.len() + 8 {
-            return Err(Error::CorruptedIndex("membership key"));
-        }
-        let row: MembershipRow = decode(&v)?;
+    for (_, row) in MEMBERSHIP_ROWS.scan_from(store, txn, conversation.as_bytes())? {
         if row.v != 1
             || rows
                 .last()
@@ -108,14 +100,9 @@ pub(super) fn append_row(
     if rows.last().is_some_and(|last| row.at < last.at) {
         return Err(state("membership time cannot rewind"));
     }
-    let mut k = key(PREFIX, conversation);
-    k.extend_from_slice(&(rows.len() as u64).to_be_bytes());
-    vault.store.vault_meta.put(txn, &k, &encode(row)?)?;
-    vault.store.vault_meta.put(
-        txn,
-        &key(b"conversation_membership:seq:v1:", conversation),
-        &((rows.len() + 1) as u64).to_be_bytes(),
-    )?;
+    let next_index = rows.len() as u64;
+    MEMBERSHIP_ROWS.put(&vault.store, txn, &(conversation, next_index), row)?;
+    MEMBERSHIP_SEQ.put(&vault.store, txn, &conversation, &(next_index + 1))?;
     Ok(())
 }
 pub(super) fn members_at_rows(rows: &[MembershipRow], at: u64) -> BTreeSet<EntityId> {

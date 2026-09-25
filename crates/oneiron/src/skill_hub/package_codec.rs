@@ -1,6 +1,7 @@
 //! Bounded, typed package persistence. This is storage, not an export door.
 use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use super::{HubFile, HubPackage, SkillCapabilitySurface, SkillPackageFormat};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::skill::{decode_skill_record, encode_skill_record};
 use crate::{
     Vault,
@@ -8,6 +9,21 @@ use crate::{
     error::{ArtifactError, Error, Result},
 };
 use std::io::{Cursor, Read};
+
+/// Persisted hub package sidecar (the MAGIC-framed envelope [`encode_hub_package`]
+/// / [`decode_hub_package`] already spell) for a skill entity.
+const PACKAGE: SideTable<EntityId, HubPackage, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_PACKAGE);
+
+impl RawValue for HubPackage {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_hub_package(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_hub_package(bytes)?)
+    }
+}
 
 pub(super) fn invalid(message: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidSkillBody(message))
@@ -194,26 +210,19 @@ pub(super) fn check_source_binding_update(
     if replaces_source {
         return Ok(());
     }
-    if let Some(raw) = store.vault_meta.get(txn, &package_key(id))? {
-        let source = decode_hub_package(&raw)?;
-        if record.content_hash == Some(source.content_hash()?)
-            && (record.skill_id != source.record.skill_id
-                || record.version != source.record.version
-                || record.desc != source.record.desc)
-        {
-            return Err(invalid(
-                "source-backed skill revision requires an owning source transaction",
-            ));
-        }
+    if let Some(source) = PACKAGE.get(store, txn, id)?
+        && record.content_hash == Some(source.content_hash()?)
+        && (record.skill_id != source.record.skill_id
+            || record.version != source.record.version
+            || record.desc != source.record.desc)
+    {
+        return Err(invalid(
+            "source-backed skill revision requires an owning source transaction",
+        ));
     }
     Ok(())
 }
 
-fn package_key(entity: &EntityId) -> Vec<u8> {
-    let mut key = b"skill_hub/package/v1\0".to_vec();
-    key.extend_from_slice(entity.as_bytes());
-    key
-}
 impl Vault {
     pub(crate) fn persist_hub_package_in_txn(
         &self,
@@ -230,7 +239,10 @@ impl Vault {
         {
             return Err(invalid("stored package differs from its native skill"));
         }
-        let encoded = encode_hub_package(package)?;
+        // Validated early (hash drift, native-source binding) so a later
+        // encode failure can never happen after the carrier maintenance
+        // below has already run; `PACKAGE.put` re-derives the same bytes.
+        encode_hub_package(package)?;
         // Same-transaction ordinary ASSET carrier: the replicated custody row
         // for this exact tree hash. The stamps are the skill's own header so
         // the carrier reads as contemporaneous evidence, not new activity.
@@ -266,10 +278,7 @@ impl Vault {
                 )
                 .apply(txn)?;
         }
-        self.store
-            .vault_meta
-            .put(txn, &package_key(entity), &encoded)?;
-        Ok(())
+        PACKAGE.put(&self.store, txn, entity, package)
     }
     /// Recovers the exact package from its replicated carrier when the local
     /// sidecar is absent after sync. Exact tree hash plus skill id, version
@@ -307,8 +316,8 @@ impl Vault {
         entity: &EntityId,
         record: &crate::skill::SkillRecord,
     ) -> Result<Option<HubPackage>> {
-        let package = match self.store.vault_meta.get(txn, &package_key(entity))? {
-            Some(raw) => decode_hub_package(&raw)?,
+        let package = match PACKAGE.get(&self.store, txn, entity)? {
+            Some(package) => package,
             None => return self.hub_package_from_carrier_in_txn(txn, entity, record),
         };
         super::source_custody::check_source_custody(
@@ -398,7 +407,7 @@ pub(super) fn remove_package_sidecar_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    store.vault_meta.delete(txn, &package_key(id))?;
+    PACKAGE.delete(store, txn, id)?;
     Ok(())
 }
 
@@ -408,9 +417,8 @@ pub(super) fn remove_matching_package_sidecar_in_txn(
     id: &EntityId,
     hash: &crate::skill::SkillContentHash,
 ) -> Result<()> {
-    if let Some(bytes) = store.vault_meta.get(txn, &package_key(id))?
-        && decode_hub_package(&bytes)
-            .map_err(|_| Error::CorruptedIndex("stored source sidecar"))?
+    if let Some(package) = PACKAGE.get(store, txn, id)?
+        && package
             .content_hash()
             .map_err(|_| Error::CorruptedIndex("stored source sidecar hash"))?
             == *hash

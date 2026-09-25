@@ -598,7 +598,7 @@ fn symbol_blame_lookup_propagates_corrupt_manifest_sidecar() -> Result<()> {
         vault
             .store
             .vault_meta
-            .put(wtxn, &code_symbol_manifest_key(&id), b"\xc1")?;
+            .put(wtxn, &MANIFEST.key_bytes(&id), b"\xc1")?;
         Ok(())
     })?;
 
@@ -618,7 +618,7 @@ fn corrupt_manifest_fallback_deletes_only_well_shaped_index_rows_for_id() -> Res
     let fingerprint = manifest.symbols[0].fingerprint;
     let well_shaped_key =
         code_symbol_revision_index_key(&repo_ref, "src/lib.rs", "answer", &fingerprint, &id);
-    let mut malformed_key = CODE_SYMBOL_REVISION_INDEX_KEY_PREFIX.to_vec();
+    let mut malformed_key = REVISION_INDEX.decl().prefix.to_vec();
     malformed_key.extend_from_slice(b"malformed");
     malformed_key.extend_from_slice(id.as_bytes());
 
@@ -633,7 +633,7 @@ fn corrupt_manifest_fallback_deletes_only_well_shaped_index_rows_for_id() -> Res
         vault
             .store
             .vault_meta
-            .put(wtxn, &code_symbol_manifest_key(&id), b"\xc1")?;
+            .put(wtxn, &MANIFEST.key_bytes(&id), b"\xc1")?;
         vault.store.vault_meta.put(wtxn, &malformed_key, &[])?;
         assert!(delete_code_symbol_manifest_in_txn(&vault.store, wtxn, &id)?);
         Ok(())
@@ -644,16 +644,10 @@ fn corrupt_manifest_fallback_deletes_only_well_shaped_index_rows_for_id() -> Res
         vault
             .store
             .vault_meta
-            .get(&rtxn, &code_symbol_manifest_key(&id))?
+            .get(&rtxn, &MANIFEST.key_bytes(&id))?
             .is_none()
     );
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &well_shaped_key)?
-            .is_none()
-    );
+    assert!(!REVISION_INDEX.contains(&vault.store, &rtxn, &well_shaped_key)?);
     assert!(vault.store.vault_meta.get(&rtxn, &malformed_key)?.is_some());
     Ok(())
 }

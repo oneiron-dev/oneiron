@@ -5,11 +5,7 @@ use std::fs;
 use zeroize::Zeroizing;
 
 use super::admission::admit_record_use;
-use super::codec::{
-    decode_local_registration_body, decode_secret_lease_body, encode_local_registration_body,
-    encode_materialization_receipt_body, encode_secret_lease_body, lease_key, receipt_key,
-    registration_key,
-};
+use super::codec::{SECRET_LEASE, SECRET_LOCAL_REGISTRATION, SECRET_MATERIALIZATION_RECEIPT};
 use super::types::{
     SecretLease, SecretLeaseMaterialization, SecretLeaseStatus, SecretMaterializationReceipt,
     StoredLocalRegistration, VaultInstant,
@@ -20,6 +16,7 @@ use crate::secret_custody::{
     CustodyTier, SecretCustodyAdmission, SecretCustodyFloor, read_secret_custody_admission_in_txn,
     resolve_secret_ref_in_txn,
 };
+use crate::side_table::HexId;
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -32,10 +29,7 @@ pub(super) fn read_secret_lease_in_txn(
     txn: &heed::RoTxn<'_>,
     lease_id: &EntityId,
 ) -> Result<Option<SecretLease>> {
-    let Some(raw) = store.vault_meta.get(txn, &lease_key(lease_id))? else {
-        return Ok(None);
-    };
-    decode_secret_lease_body(&raw).map(Some)
+    SECRET_LEASE.get(store, txn, &HexId(*lease_id))
 }
 
 pub(crate) fn write_secret_lease_in_txn(
@@ -43,11 +37,7 @@ pub(crate) fn write_secret_lease_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     lease: &SecretLease,
 ) -> Result<()> {
-    let body = encode_secret_lease_body(lease)?;
-    store
-        .vault_meta
-        .put(wtxn, &lease_key(&lease.lease_id), &body)?;
-    Ok(())
+    SECRET_LEASE.put(store, wtxn, &HexId(lease.lease_id), lease)
 }
 
 /// Writes the materialization receipt row. S3: this lands durable BEFORE
@@ -65,11 +55,7 @@ pub(super) fn write_materialization_receipt_in_txn(
             "injected receipt-write failure",
         )));
     }
-    let body = encode_materialization_receipt_body(receipt)?;
-    store
-        .vault_meta
-        .put(wtxn, &receipt_key(&receipt.receipt_id), &body)?;
-    Ok(())
+    SECRET_MATERIALIZATION_RECEIPT.put(store, wtxn, &HexId(receipt.receipt_id), receipt)
 }
 
 #[cfg(test)]
@@ -103,10 +89,7 @@ pub(super) fn read_local_registration_in_txn(
     txn: &heed::RoTxn<'_>,
     lease_id: &EntityId,
 ) -> Result<Option<StoredLocalRegistration>> {
-    let Some(raw) = store.vault_meta.get(txn, &registration_key(lease_id))? else {
-        return Ok(None);
-    };
-    decode_local_registration_body(&raw).map(Some)
+    SECRET_LOCAL_REGISTRATION.get(store, txn, &HexId(*lease_id))
 }
 
 /// Writes the local-registration row. The `#[cfg(test)]` fault hook fails
@@ -121,13 +104,7 @@ pub(super) fn write_local_registration_in_txn(
     if registration_fault_hook::take_registration_write_failure() {
         return Err(std::io::Error::other("injected registration-write failure").into());
     }
-    let body = encode_local_registration_body(stored)?;
-    store.vault_meta.put(
-        wtxn,
-        &registration_key(&stored.registration.lease_id),
-        &body,
-    )?;
-    Ok(())
+    SECRET_LOCAL_REGISTRATION.put(store, wtxn, &HexId(stored.registration.lease_id), stored)
 }
 
 #[cfg(test)]
@@ -190,7 +167,7 @@ pub(crate) fn teardown_local_registration_in_txn(
         }
     };
     if file_gone {
-        store.vault_meta.delete(wtxn, &registration_key(lease_id))?;
+        SECRET_LOCAL_REGISTRATION.delete(store, wtxn, &HexId(*lease_id))?;
     }
     Ok(())
 }

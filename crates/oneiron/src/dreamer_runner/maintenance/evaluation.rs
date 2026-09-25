@@ -1,11 +1,18 @@
 //! Eval-schedule observations over actual immutable config artifact versions.
 use super::super::{DreamerAdmittedAttempt, DreamerRunnerStore, EnqueueDreamerAttemptOutcome};
 use super::{HARNESS_FACET, invalid, load_row, proposals};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-const THRESHOLDS_KEY: &[u8] = b"settings:dreamer:harness:thresholds:v1";
-const BASELINE_PREFIX: &[u8] = b"dreamer:harness:eval-baseline:v1:";
+
+/// Owner-set retune-decision thresholds dial.
+const THRESHOLDS: SideTable<(), RetuneThresholds, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_HARNESS_THRESHOLDS);
+/// Prior tuning-harness evaluation baseline for a config artifact.
+const BASELINE: SideTable<EntityId, Baseline, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_HARNESS_EVAL_BASELINE);
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DreamerTuningConfig {
@@ -75,10 +82,9 @@ impl Vault {
         thresholds: &RetuneThresholds,
     ) -> Result<()> {
         thresholds.validate()?;
-        let bytes = serde_json::to_vec(thresholds).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            self.store.vault_meta.put(txn, THRESHOLDS_KEY, &bytes)?;
+            THRESHOLDS.put(&self.store, txn, &(), thresholds)?;
             Ok(())
         })
     }
@@ -108,16 +114,13 @@ pub(super) fn run(
             .map_err(|_| invalid())?;
     let current = config(vault, &evaluation)?;
     let thresholds: RetuneThresholds =
-        load_row(vault, THRESHOLDS_KEY, include_str!("retune_defaults.json"))?;
+        load_row(vault, THRESHOLDS, include_str!("retune_defaults.json"))?;
     thresholds.validate()?;
-    let key = [BASELINE_PREFIX, evaluation.artifact.as_bytes()].concat();
     // Resolve the bound envelope before taking the writer. Baseline comparison,
     // proposal, receipt and new baseline then commit as one serializable decision.
     let envelope = vault.dreamer_proposal_envelope(HARNESS_FACET, attempt.status.attempt.id)?;
     vault.with_write_txn(|txn| {
-        let prior: Option<Baseline> = vault.store.vault_meta.get(&*txn, &key)?
-            .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| invalid()))
-            .transpose()?;
+        let prior = BASELINE.get(&vault.store, &*txn, &evaluation.artifact)?;
         if prior.as_ref().is_some_and(|p| p.version > evaluation.version || p.observed_at > now) {
             return Ok(None);
         }
@@ -132,7 +135,7 @@ pub(super) fn run(
         } else { None };
         let baseline = Baseline { version: evaluation.version, score: evaluation.score,
             backbone: current.backbone, observed_at: now };
-        vault.store.vault_meta.put(txn, &key, &serde_json::to_vec(&baseline).map_err(|_| invalid())?)?;
+        BASELINE.put(&vault.store, txn, &evaluation.artifact, &baseline)?;
         Ok(proposal)
     })
 }

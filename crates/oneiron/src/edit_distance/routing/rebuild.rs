@@ -2,15 +2,12 @@
 
 use std::collections::BTreeMap;
 
-use super::keys::{
-    AGGREGATE_KEY_PREFIX, AGGREGATE_ROW_LABEL, MEMBER_KEY_PREFIX, MEMBER_ROW_LABEL, ROW_VERSION,
-    StoredAggregate, StoredModelVersion, aggregate_key, decode_row, encode_row, key_tail,
-};
+use super::keys::{AGGREGATE, AggregateKey, MEMBER, StoredAggregate, aggregate_key};
 use super::scope::RoutingScopeKey;
 use super::write::{apply_fold, fold_of};
 use crate::Vault;
 use crate::edit_distance::attribution::{AmendmentJudgment, amendment_judgments};
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 // ---------------------------------------------------------------------------
 // The rebuild door (CID-7)
@@ -35,49 +32,38 @@ pub fn rebuild_routing_projection(vault: &Vault) -> Result<()> {
         .map(|judgment| (judgment.receipt_id.clone(), judgment))
         .collect();
 
-    let mut rebuilt: BTreeMap<Vec<u8>, StoredAggregate> = BTreeMap::new();
+    let mut rebuilt: BTreeMap<AggregateKey, StoredAggregate> = BTreeMap::new();
     let mut stale_members = Vec::new();
     let mut stale_aggregates = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        for entry in vault
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, MEMBER_KEY_PREFIX)?
-        {
-            let (key, raw) = entry?;
-            let receipt_id = key_tail(&key, MEMBER_KEY_PREFIX, MEMBER_ROW_LABEL)?;
+        for entry in MEMBER.iter_from(&vault.store, &rtxn, &[])? {
+            let (receipt_id, row) = entry?;
             let Some(judgment) = judged.get(&receipt_id) else {
-                stale_members.push(key.to_vec());
+                stale_members.push(receipt_id);
                 continue;
             };
-            let row: StoredModelVersion = decode_row(&raw, MEMBER_ROW_LABEL)?;
-            if row.v != ROW_VERSION {
-                return Err(Error::CorruptedIndex(MEMBER_ROW_LABEL));
-            }
             let scope = RoutingScopeKey::new(row.model_version, judgment.scope.clone());
             let fold = fold_of(judgment)?;
             apply_fold(rebuilt.entry(aggregate_key(&scope)?).or_default(), fold)?;
         }
-        for entry in vault
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, AGGREGATE_KEY_PREFIX)?
-        {
+        for entry in AGGREGATE.iter_from(&vault.store, &rtxn, &[])? {
             let (key, _) = entry?;
-            if !rebuilt.contains_key(key.as_ref()) {
-                stale_aggregates.push(key.into_owned());
+            if !rebuilt.contains_key(&key) {
+                stale_aggregates.push(key);
             }
         }
     }
 
     vault.with_write_txn(|wtxn| {
-        for key in stale_members.iter().chain(&stale_aggregates) {
-            vault.store.vault_meta.delete(wtxn, key)?;
+        for key in &stale_members {
+            MEMBER.delete(&vault.store, wtxn, key)?;
+        }
+        for key in &stale_aggregates {
+            AGGREGATE.delete(&vault.store, wtxn, key)?;
         }
         for (key, aggregate) in &rebuilt {
-            let encoded = encode_row(aggregate, AGGREGATE_ROW_LABEL)?;
-            vault.store.vault_meta.put(wtxn, key, &encoded)?;
+            AGGREGATE.put(&vault.store, wtxn, key, aggregate)?;
         }
         Ok(())
     })

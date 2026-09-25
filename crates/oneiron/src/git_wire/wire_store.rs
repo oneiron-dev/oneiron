@@ -1,12 +1,28 @@
 //! Vault record IO: load, scan, put, drop, and the terminal-state transition.
 
 use super::failure::invalid;
-use super::record::{
-    StoredGitWireRecord, decode_record, encode_record, receipt_from_stored, record_row_key,
-    record_row_prefix,
+use super::record::{StoredGitWireRecord, hex_lower, receipt_from_stored};
+use super::{
+    GitWire, GitWireReceipt, GitWireRecordState, GitWireRepo, GitWireRepoIdentity, GitWireResult,
 };
-use super::{GitWire, GitWireReceipt, GitWireRecordState, GitWireRepo, GitWireResult};
 use crate::error::Result;
+use crate::side_table::{self, Named, SideTable};
+
+/// One journaled effect row, keyed by `{repo_hex}:{record_key_hex}` exactly as
+/// `record_row_key` used to spell it — a plain `String` key, since no reader
+/// ever decodes the stored key back into its parts.
+const RECORDS: SideTable<String, StoredGitWireRecord, Named> =
+    SideTable::new(&side_table::GIT_WIRE_RECORD);
+
+/// The key suffix (after the table's declared prefix) for one record.
+fn record_row_suffix(identity: GitWireRepoIdentity, record_key: &[u8; 32]) -> String {
+    format!("{}:{}", identity.as_hex(), hex_lower(record_key))
+}
+
+/// The key-prefix bytes selecting every record of one repo.
+fn record_row_prefix_suffix(identity: GitWireRepoIdentity) -> Vec<u8> {
+    format!("{}:", identity.as_hex()).into_bytes()
+}
 
 impl GitWire<'_> {
     /// The durable record for a key, whatever its state.
@@ -27,20 +43,15 @@ impl GitWire<'_> {
         key: &[u8; 32],
     ) -> Result<Option<StoredGitWireRecord>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let row = record_row_key(repo.identity(), key);
-        let Some(bytes) = self.vault.store.vault_meta.get(&rtxn, &row)? else {
-            return Ok(None);
-        };
-        Ok(Some(decode_record(&bytes)?))
+        let row = record_row_suffix(repo.identity(), key);
+        RECORDS.get(&self.vault.store, &rtxn, &row)
     }
 
     pub(super) fn prepared_records(&self, repo: &GitWireRepo) -> Result<Vec<StoredGitWireRecord>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let prefix = record_row_prefix(repo.identity());
+        let prefix = record_row_prefix_suffix(repo.identity());
         let mut rows = Vec::new();
-        for row in self.vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (_, bytes) = row?;
-            let stored = decode_record(&bytes)?;
+        for (_, stored) in RECORDS.scan_from(&self.vault.store, &rtxn, &prefix)? {
             if stored.state == GitWireRecordState::Prepared.as_str() {
                 rows.push(stored);
             }
@@ -53,18 +64,17 @@ impl GitWire<'_> {
         repo: &GitWireRepo,
         record: &StoredGitWireRecord,
     ) -> Result<()> {
-        let encoded = encode_record(record)?;
-        let row = record_row_key(repo.identity(), &record.record_key);
+        let row = record_row_suffix(repo.identity(), &record.record_key);
         self.vault.with_write_txn(|txn| {
-            self.vault.store.vault_meta.put(txn, &row, &encoded)?;
+            RECORDS.put(&self.vault.store, txn, &row, record)?;
             Ok(())
         })
     }
 
     pub(super) fn drop_record(&self, repo: &GitWireRepo, key: &[u8; 32]) -> Result<()> {
-        let row = record_row_key(repo.identity(), key);
+        let row = record_row_suffix(repo.identity(), key);
         self.vault.with_write_txn(|txn| {
-            self.vault.store.vault_meta.delete(txn, &row)?;
+            RECORDS.delete(&self.vault.store, txn, &row)?;
             Ok(())
         })
     }
@@ -79,11 +89,10 @@ impl GitWire<'_> {
         repo: &GitWireRepo,
         next: StoredGitWireRecord,
     ) -> Result<StoredGitWireRecord> {
-        let row = record_row_key(repo.identity(), &next.record_key);
-        let encoded = encode_record(&next)?;
+        let row = record_row_suffix(repo.identity(), &next.record_key);
         self.vault.with_write_txn(move |txn| {
-            let current = match self.vault.store.vault_meta.get(txn, &row)? {
-                Some(bytes) => decode_record(&bytes)?,
+            let current = match RECORDS.get(&self.vault.store, txn, &row)? {
+                Some(current) => current,
                 None => {
                     return Err(invalid("git wire record disappeared before its transition"));
                 }
@@ -91,7 +100,7 @@ impl GitWire<'_> {
             if GitWireRecordState::parse(&current.state)?.is_terminal() {
                 return Ok(current);
             }
-            self.vault.store.vault_meta.put(txn, &row, &encoded)?;
+            RECORDS.put(&self.vault.store, txn, &row, &next)?;
             Ok(next)
         })
     }

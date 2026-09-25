@@ -6,26 +6,79 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SKILL};
+use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
 use crate::skill::{SkillContentHash, SkillRecord};
 use crate::store::Store;
 
-const INDEX: &[u8] = b"skill_hub/source-custody/v1\0";
-const RETIRED: &[u8] = b"skill_hub/source-retired/v1\0";
-const LIVE: &[u8] = &[0];
-const DEAD: &[u8] = &[1];
-const UNSEEN: &[u8] = &[2];
-const BINDING: &[u8] = b"skill_hub/source-binding/v1\0";
+/// Source-custody state for one (holder, content hash) pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyState {
+    Live,
+    Dead,
+    Unseen,
+}
 
-fn owner_key(prefix: &[u8], owner: &EntityId) -> Vec<u8> {
-    let mut key = prefix.to_vec();
-    key.extend_from_slice(owner.as_bytes());
-    key
+impl RawValue for CustodyState {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(vec![match self {
+            Self::Live => 0,
+            Self::Dead => 1,
+            Self::Unseen => 2,
+        }])
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        match bytes {
+            [0] => Ok(Self::Live),
+            [1] => Ok(Self::Dead),
+            [2] => Ok(Self::Unseen),
+            _ => Err(Error::CorruptedIndex("source custody index value").into()),
+        }
+    }
 }
-fn source_key(owner: &EntityId, hash: &SkillContentHash) -> Vec<u8> {
-    let mut key = owner_key(INDEX, owner);
-    key.extend_from_slice(hash.as_bytes());
-    key
+
+/// Source-custody state (live/dead/unseen byte) for one (holder, content
+/// hash) pair.
+const INDEX: SideTable<(EntityId, [u8; 32]), CustodyState, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_SOURCE_CUSTODY);
+/// Empty-marker that a source holder's custody has been permanently retired.
+const RETIRED: SideTable<EntityId, (), Raw> = SideTable::new(&side_table::SKILL_HUB_SOURCE_RETIRED);
+/// The ARCH-0023b global local hard-delete marker (owned by
+/// `crate::deletion::tombstone`); read-only here for the retired/deleted check.
+const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
+
+/// Fixed 48-byte carrier/hash binding recorded for a pending or materialized
+/// source holder.
+struct SourceBinding {
+    holder: EntityId,
+    hash: SkillContentHash,
 }
+
+impl RawValue for SourceBinding {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut out = self.holder.as_bytes().to_vec();
+        out.extend_from_slice(self.hash.as_bytes());
+        Ok(out)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        if bytes.len() != 48 {
+            return Err(Error::CorruptedIndex("source binding").into());
+        }
+        let holder = crate::entity_id::parse_entity_id(&bytes[..16], "source binding holder")?;
+        let hash: [u8; 32] = bytes[16..]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("source binding hash"))?;
+        Ok(Self {
+            holder,
+            hash: SkillContentHash::from_bytes(hash),
+        })
+    }
+}
+
+const BINDING: SideTable<EntityId, SourceBinding, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_SOURCE_BINDING);
 
 /// Pure preflight: a retired holder/revision cannot regain its byte custody.
 /// An absent holder is allowed so clean sync orders remain symmetric.
@@ -43,10 +96,9 @@ pub(super) fn check_source_custody(
         ));
     }
     check_source_target(store, txn, holder)?;
-    if store
-        .vault_meta
-        .get(txn, &source_key(holder, hash))?
-        .is_some_and(|value| value.as_ref() != LIVE)
+    if INDEX
+        .get(store, txn, &(*holder, *hash.as_bytes()))?
+        .is_some_and(|state| state != CustodyState::Live)
     {
         return Err(invalid("source custody has been retired"));
     }
@@ -67,15 +119,7 @@ pub(super) fn check_source_target(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if store
-        .vault_meta
-        .get(txn, &owner_key(RETIRED, id))?
-        .is_some()
-        || store
-            .sync_state
-            .get(txn, &format!("dt:{}", id.to_hex()))?
-            .is_some()
-    {
+    if RETIRED.contains(store, txn, id)? || HARD_DELETE_MARKER.contains(store, txn, &HexId(*id))? {
         return Err(invalid("source custody target has been retired"));
     }
     Ok(())
@@ -90,19 +134,16 @@ pub(super) fn validate_registered_source_target(
     entity_type: u8,
     bytes: &[u8],
 ) -> Result<()> {
-    let Some(binding) = store.vault_meta.get(txn, &owner_key(BINDING, id))? else {
+    let Some(binding) = BINDING.get(store, txn, id)? else {
         return Ok(());
     };
-    if binding.len() != 48 {
-        return Err(Error::CorruptedIndex("source binding"));
-    }
     if entity_type != ENTITY_TYPE_ASSET {
         return Err(invalid("source ID cannot change type"));
     }
     let Some((holder, package)) = decode_source_carrier(bytes)? else {
         return Err(invalid("source ID cannot become an unrelated asset"));
     };
-    if &binding[..16] != holder.as_bytes() || &binding[16..] != package.content_hash()?.as_bytes() {
+    if binding.holder != holder || binding.hash != package.content_hash()? {
         return Err(invalid("source ID binding changed"));
     }
     Ok(())
@@ -112,22 +153,12 @@ fn source_rows(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     holder: &EntityId,
-) -> Result<Vec<(SkillContentHash, u8)>> {
-    let prefix = owner_key(INDEX, holder);
-    let mut rows = Vec::new();
-    for entry in store.vault_meta.prefix_iter(txn, &prefix)? {
-        let (key, value) = entry?;
-        let hash = SkillContentHash::from_bytes(
-            key[prefix.len()..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("source custody index key"))?,
-        );
-        if value.as_ref() != LIVE && value.as_ref() != DEAD && value.as_ref() != UNSEEN {
-            return Err(Error::CorruptedIndex("source custody index value"));
-        }
-        rows.push((hash, value[0]));
-    }
-    Ok(rows)
+) -> Result<Vec<(SkillContentHash, CustodyState)>> {
+    Ok(INDEX
+        .scan_from(store, txn, holder.as_bytes())?
+        .into_iter()
+        .map(|((_, hash), state)| (SkillContentHash::from_bytes(hash), state))
+        .collect())
 }
 
 pub(crate) fn source_custody_exists_in_txn(
@@ -137,7 +168,7 @@ pub(crate) fn source_custody_exists_in_txn(
 ) -> Result<bool> {
     Ok(source_rows(store, txn, holder)?
         .iter()
-        .any(|(_, state)| *state == 0))
+        .any(|(_, state)| *state == CustodyState::Live))
 }
 
 /// Only IDs remain after deletion, so the existing hard-history sweep can
@@ -149,7 +180,7 @@ pub(crate) fn source_carriers_for_holder_in_txn(
 ) -> Result<Vec<EntityId>> {
     source_rows(store, txn, holder)?
         .iter()
-        .filter(|(_, state)| *state != 2)
+        .filter(|(_, state)| *state != CustodyState::Unseen)
         .map(|(hash, _)| source_carrier_id(holder, hash))
         .collect()
 }
@@ -169,21 +200,15 @@ pub(crate) fn stage_source_custody_put(
         && let Some((holder, package)) = decode_source_carrier(bytes)?
     {
         let hash = package.content_hash()?;
-        let mut binding = holder.as_bytes().to_vec();
-        binding.extend_from_slice(hash.as_bytes());
-        store
-            .vault_meta
-            .put(txn, &owner_key(BINDING, id), &binding)?;
-        store
-            .vault_meta
-            .put(txn, &source_key(&holder, &hash), LIVE)?;
+        BINDING.put(store, txn, id, &SourceBinding { holder, hash })?;
+        INDEX.put(store, txn, &(holder, *hash.as_bytes()), &CustodyState::Live)?;
     }
     // A pending source cannot reserve another entity's kind. If the actual
     // holder is born as a non-SKILL, discard those invalid pending carriers
     // without refusing that unrelated entity or minting deletion authority.
     if entity_type != ENTITY_TYPE_SKILL {
         for (hash, state) in source_rows(store, txn, id)? {
-            if state == 0 {
+            if state == CustodyState::Live {
                 retire_revision(store, txn, id, &hash)?;
             }
         }
@@ -206,10 +231,7 @@ fn retire_revision(
     hash: &SkillContentHash,
 ) -> Result<()> {
     let carrier = source_carrier_id(holder, hash)?;
-    let seen = store
-        .vault_meta
-        .get(txn, &owner_key(BINDING, &carrier))?
-        .is_some();
+    let seen = BINDING.contains(store, txn, &carrier)?;
     // Do not remove an unrelated row that merely occupies a derived ID.
     if seen && let Some(raw) = store.entities.get(txn, carrier.as_bytes())? {
         let header = EntityMetadataHeader::parse(&raw)
@@ -237,10 +259,15 @@ fn retire_revision(
             crate::hnsw::increment_vector_version(store, txn)?;
         }
     }
-    store.vault_meta.put(
+    INDEX.put(
+        store,
         txn,
-        &source_key(holder, hash),
-        if seen { DEAD } else { UNSEEN },
+        &(*holder, *hash.as_bytes()),
+        &if seen {
+            CustodyState::Dead
+        } else {
+            CustodyState::Unseen
+        },
     )?;
     Ok(())
 }
@@ -252,12 +279,10 @@ pub(crate) fn retire_source_holder_in_txn(
     txn: &mut heed::RwTxn<'_>,
     holder: &EntityId,
 ) -> Result<()> {
-    store
-        .vault_meta
-        .put(txn, &owner_key(RETIRED, holder), &[])?;
+    RETIRED.put(store, txn, holder, &())?;
     super::package_codec::remove_package_sidecar_in_txn(store, txn, holder)?;
     for (hash, state) in source_rows(store, txn, holder)? {
-        if state == 0 {
+        if state == CustodyState::Live {
             retire_revision(store, txn, holder, &hash)?;
         }
     }
@@ -284,9 +309,7 @@ pub(crate) fn remove_source_custody_in_txn(
             if source_carrier_id(&holder, &hash)? != *id {
                 return Err(Error::CorruptedIndex("source delete identity"));
             }
-            store
-                .vault_meta
-                .put(txn, &source_key(&holder, &hash), DEAD)?;
+            INDEX.put(store, txn, &(holder, *hash.as_bytes()), &CustodyState::Dead)?;
             super::package_codec::remove_matching_package_sidecar_in_txn(
                 store, txn, &holder, &hash,
             )?;

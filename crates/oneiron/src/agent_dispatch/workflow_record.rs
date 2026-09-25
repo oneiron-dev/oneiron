@@ -1,12 +1,22 @@
 //! Durable, inert workflow admission and result provenance.
 
-use super::widen_record::{decode, invalid, json};
+use super::widen_record::{invalid, json};
 use crate::agent_def::workflow::WorkflowDefinition;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::context_projection::ContextSpec;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::error::Result;
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use serde::{Deserialize, Serialize};
+
+/// Durable saved-composition record for one inert multi-step workflow wrapper
+/// attempt. Key: the root attempt id.
+pub(super) const RECORD: SideTable<AttemptId, WorkflowRecord, LegacyJson> =
+    SideTable::new(&side_table::AGENT_WORKFLOW_RECORD);
+/// Dedupe index from a caller-supplied dedupe key to the workflow root
+/// attempt id. Key: `blake3(dedupe key)`.
+pub(super) const DEDUPE: SideTable<[u8; 32], AttemptId, Raw> =
+    SideTable::new(&side_table::AGENT_WORKFLOW_DEDUPE);
 
 pub(super) const WORKFLOW_ATTEMPT_TYPE: &str = "agent.workflow";
 
@@ -64,15 +74,8 @@ pub(super) struct WorkflowRecord {
     pub results: Vec<WorkflowStepResult>,
 }
 
-pub(super) fn record_key(id: AttemptId) -> Vec<u8> {
-    let mut key = b"agent.workflow.record.v1\0".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-pub(super) fn dedupe_key(key: &str) -> Vec<u8> {
-    let mut result = b"agent.workflow.dedupe.v1\0".to_vec();
-    result.extend_from_slice(blake3::hash(key.as_bytes()).as_bytes());
-    result
+pub(super) fn dedupe_key_hash(key: &str) -> [u8; 32] {
+    *blake3::hash(key.as_bytes()).as_bytes()
 }
 pub(super) fn is_wrapper(row: &AttemptRecord) -> bool {
     if row.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
@@ -94,13 +97,9 @@ impl super::AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         row: &AttemptRecord,
     ) -> Result<WorkflowRecord> {
-        let bytes = self
-            .vault
-            .store
-            .vault_meta
-            .get(txn, &record_key(row.id))?
+        let record = RECORD
+            .get(&self.vault.store, txn, &row.id)?
             .ok_or_else(|| invalid("workflow wrapper has no registered admission"))?;
-        let record: WorkflowRecord = decode(&bytes)?;
         let payload = decode_dreamer_attempt_payload(&row.payload)?;
         if record.version != 1
             || record.root != row.id

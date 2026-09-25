@@ -75,8 +75,9 @@ pub use epoch::{
 };
 
 use crate::entity_id::EntityId;
-use crate::error::{CompactionPacketError, Error, Result};
+use crate::error::{CompactionPacketError, Result};
 use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -410,27 +411,14 @@ fn entity_type_in_txn(store: &Store, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> R
     Ok(Some(raw.entity_type))
 }
 
-/// `vault_meta` key prefix for TURN → SESSION membership rows (DREAM-008,
-/// ONE-1250): suffix = 16-byte TURN id, value = 16-byte SESSION id. Its own
+/// TURN → SESSION membership row (DREAM-008, ONE-1250): value = SESSION id16. Its own
 /// keyspace, so no existing record shape or version changes.
-const SESSION_TURN_MEMBERSHIP_KEY_PREFIX: &[u8] = b"session_lifecycle:v0:turn_session:";
+const TURN_MEMBERSHIP: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::SESSION_TURN_MEMBERSHIP);
 
-/// `vault_meta` key of one TURN's session-membership row (DREAM-008).
-fn turn_session_membership_key(turn: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(SESSION_TURN_MEMBERSHIP_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(SESSION_TURN_MEMBERSHIP_KEY_PREFIX);
-    key.extend_from_slice(turn.as_bytes());
-    key
-}
-
-/// Decodes a membership row value (a bare 16-byte SESSION id).
-fn decode_turn_session_membership(bytes: &[u8]) -> Result<EntityId> {
-    let raw: [u8; 16] = bytes
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("session lifecycle turn membership"))?;
-    EntityId::from_bytes(raw)
-        .map_err(|_| Error::CorruptedIndex("session lifecycle turn membership"))
-}
+/// SESSION → TURN membership index, single marker byte value. Key: id16(session) + id16(turn).
+const SESSION_TURNS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
+    SideTable::new(&side_table::SESSION_TURNS);
 
 /// Reads the SESSION a TURN was witnessed into, or `None` when no
 /// membership fact was recorded for it (DREAM-008, ONE-1250).
@@ -445,13 +433,7 @@ pub(crate) fn turn_session_membership_in_txn(
     rtxn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<EntityId>> {
-    let Some(raw) = store
-        .vault_meta
-        .get(rtxn, &turn_session_membership_key(turn))?
-    else {
-        return Ok(None);
-    };
-    decode_turn_session_membership(&raw).map(Some)
+    TURN_MEMBERSHIP.get(store, rtxn, turn)
 }
 
 /// Records the TURN → SESSION membership fact inside the caller's write
@@ -489,25 +471,11 @@ pub(crate) fn record_turn_session_membership_in_txn(
         return Ok(None);
     };
     if let Some(existing) = turn_session_membership_in_txn(store, &*wtxn, turn)? {
-        let reverse = [
-            b"session_turns:v1:".as_slice(),
-            existing.as_bytes(),
-            turn.as_bytes(),
-        ]
-        .concat();
-        store.vault_meta.put(wtxn, &reverse, &[1])?;
+        SESSION_TURNS.put(store, wtxn, &(existing, *turn), &[1])?;
         return Ok(Some(existing));
     }
-    store
-        .vault_meta
-        .put(wtxn, &turn_session_membership_key(turn), session.as_bytes())?;
-    let reverse = [
-        b"session_turns:v1:".as_slice(),
-        session.as_bytes(),
-        turn.as_bytes(),
-    ]
-    .concat();
-    store.vault_meta.put(wtxn, &reverse, &[1])?;
+    TURN_MEMBERSHIP.put(store, wtxn, turn, &session)?;
+    SESSION_TURNS.put(store, wtxn, &(session, *turn), &[1])?;
     Ok(Some(session))
 }
 

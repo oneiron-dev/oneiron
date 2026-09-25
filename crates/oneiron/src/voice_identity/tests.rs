@@ -2,6 +2,7 @@ use super::*;
 
 use crate::counterparty_contact::CounterpartyContactRecord;
 use crate::error::{ErrorKind, RegistryError};
+use crate::side_table::SideKey;
 use crate::temporal::TimeRange;
 use crate::test_util::entity as test_id;
 
@@ -198,15 +199,16 @@ fn stored_sample(
 
 fn print_family_rows(vault: &Vault, subject: EntityId) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
     let rtxn = vault.store.env.read_txn()?;
-    collect_prefix_rows(&vault.store, &rtxn, &voice_subject_prefix(&subject))
+    super::storage_admission::print_family_rows(&vault.store, &rtxn, subject.as_bytes())
 }
 
 fn raw_roster_bytes(vault: &Vault, voice_session_ref: &str) -> Result<Vec<u8>> {
     let rtxn = vault.store.env.read_txn()?;
+    let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
     let bytes = vault
         .store
         .vault_meta
-        .get(&rtxn, &voice_roster_key(voice_session_ref))?
+        .get(&rtxn, &ROSTER.key_bytes(&digest))?
         .expect("stored roster row");
     Ok(bytes.into_owned())
 }
@@ -807,9 +809,10 @@ fn model_revision_or_preprocessing_change_creates_a_new_space() -> Result<()> {
     let active = stored_print(&vault, subject)?.expect("re-enrolled print");
     assert_eq!(active.space.space_id, revised.space_id);
     assert!(
-        !print_family_rows(&vault, subject)?
-            .iter()
-            .any(|(key, _)| key == &voice_print_key(&subject, &old_space_id)),
+        !print_family_rows(&vault, subject)?.iter().any(|(key, _)| {
+            let digest = digest16(b"voice_identity.space", old_space_id.as_bytes());
+            <(EntityId, [u8; 16]) as SideKey>::decode_key(key) == Some((subject, digest))
+        }),
         "the obsolete centroid must be deleted, not merely deactivated"
     );
 

@@ -3,10 +3,25 @@
 use crate::config::VaultConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::vault::Vault;
 
 use super::session::{SeamError, SeamResult, SessionVault};
 use crate::error::{OffRecordError, StoreError};
+
+/// Bound independently of `code_run`'s own private table, exactly as
+/// `CODE_RUN_REPLAY_KEYS` in `session.rs`: this race fixture deletes the
+/// row a bound run believes it is updating, keyed exactly as `code_run.rs`
+/// keys it.
+const CODE_RUN_REPLAY_ROW: SideTable<EntityId, (), Raw> =
+    SideTable::new(&side_table::CODE_RUN_REPLAY);
+
+/// Bound independently of `off_record::promote`'s own private table: a
+/// post-crash pickup-marker census only needs the row count, keyed under
+/// the declared `pm:` prefix.
+#[cfg(feature = "sync")]
+const PROMOTE_PICKUP_MARKER_KEYS: SideTable<String, (), Raw> =
+    SideTable::new(&side_table::OFF_RECORD_PROMOTE_PICKUP_MARKER);
 
 pub(super) fn map_overlay_error(error: Error) -> SeamError {
     match error {
@@ -268,11 +283,9 @@ pub(in crate::branch_store_oracle) fn promote_then_crash_post_commit(
 
     let reopened = Vault::open(dir, VaultConfig::default()).expect("reopen crash-matrix vault");
     let rtxn = reopened.store.env.read_txn()?;
-    let mut pm_markers = 0_usize;
-    for row in reopened.store.sync_state.prefix_iter(&rtxn, "pm:")? {
-        row?;
-        pm_markers += 1;
-    }
+    let pm_markers = PROMOTE_PICKUP_MARKER_KEYS
+        .scan_keys(&reopened.store, &rtxn, &[])?
+        .len();
     drop(rtxn);
     Ok((reopened, closure, pm_markers))
 }
@@ -564,10 +577,6 @@ pub(in crate::branch_store_oracle) fn replay_put_racing_a_committed_change(
         CodeRunDeterminism::new(1_719_000_007_000, [0xA1; 32]),
     );
     let generation = storage.put_code_run_replay_record_if_generation(&record, None)?;
-    // Keyed exactly as `code_run.rs` keys it; the competitor removes the
-    // row the run believes it is updating.
-    let mut key = b"code_run:replay:v1:".to_vec();
-    key.extend_from_slice(run_id.as_bytes());
 
     let writer_held = std::sync::Barrier::new(2);
     std::thread::scope(|scope| -> Result<Option<crate::error::ErrorKind>> {
@@ -582,7 +591,7 @@ pub(in crate::branch_store_oracle) fn replay_put_racing_a_committed_change(
             // closure holds, and only a compare INSIDE that transaction can
             // still see the deletion below.
             std::thread::sleep(std::time::Duration::from_millis(150));
-            vault.store.vault_meta.delete(wtxn, &key)?;
+            CODE_RUN_REPLAY_ROW.delete(&vault.store, wtxn, &run_id)?;
             Ok(())
         })?;
         Ok(run

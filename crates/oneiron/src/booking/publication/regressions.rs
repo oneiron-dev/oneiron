@@ -513,16 +513,7 @@ fn assert_publication_slot_rejects_raw_overwrites(
         assert_eq!(vault.get_raw(&claim)?, before);
     }
     let txn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(
-                &txn,
-                &crate::memory::booking_publication::publication_write_key(claim),
-            )?
-            .is_none()
-    );
+    assert!(!crate::memory::booking_publication::STAGE.contains(&vault.store, &txn, &claim)?);
     Ok(())
 }
 

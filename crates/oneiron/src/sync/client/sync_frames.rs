@@ -9,6 +9,7 @@ use crate::sync::loro_support::doc_version_vector;
 use crate::sync::transport;
 use crate::sync::transport::{TAG_VERSION_VECTOR, TransportError, window_sub_tags};
 use crate::sync::types::WindowKey;
+use crate::sync::window_rows::{WINDOW_SHALLOW_FENCE, WINDOW_STATE_VECTOR};
 
 impl SyncClient {
     /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b
@@ -186,27 +187,27 @@ impl SyncClient {
 
         {
             let rtxn = self.vault.store.env.read_txn()?;
-            let svf_key = format!("svf:w:{key}");
+            let window_key = key.as_str().to_owned();
             let fresh = matches!(
-                self.vault.store.sync_state.get(&rtxn, &svf_key)?,
-                Some(raw) if *raw == [SVF_FRESH]
+                WINDOW_SHALLOW_FENCE.get(&self.vault.store, &rtxn, &window_key)?,
+                Some(raw) if raw == [SVF_FRESH]
             );
-            if fresh {
-                let sv_key = format!("sv:w:{key}");
-                if let Some(sv_raw) = self.vault.store.sync_state.get(&rtxn, &sv_key)? {
-                    // Persisted StateVector V1 — decode validates structure
-                    // before anything reaches the wire (fail-closed: a
-                    // corrupt row falls through to a full doc load instead
-                    // of shipping garbage).
-                    match VersionVector::decode(&sv_raw) {
-                        Ok(vv) => return Ok(vv.encode()),
-                        Err(e) => {
-                            tracing::warn!(
-                                window = %key,
-                                error = %e,
-                                "initial-sync: corrupt persisted state vector — falling back to doc load"
-                            );
-                        }
+            if fresh
+                && let Some(sv_raw) =
+                    WINDOW_STATE_VECTOR.get(&self.vault.store, &rtxn, &window_key)?
+            {
+                // Persisted StateVector V1 — decode validates structure
+                // before anything reaches the wire (fail-closed: a
+                // corrupt row falls through to a full doc load instead
+                // of shipping garbage).
+                match VersionVector::decode(&sv_raw) {
+                    Ok(vv) => return Ok(vv.encode()),
+                    Err(e) => {
+                        tracing::warn!(
+                            window = %key,
+                            error = %e,
+                            "initial-sync: corrupt persisted state vector — falling back to doc load"
+                        );
                     }
                 }
             }

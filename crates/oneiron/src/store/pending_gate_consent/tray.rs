@@ -1,25 +1,36 @@
 //! Pending gate-consent tray lifecycle: put/get/delete, resolution into the decision ledger, and ordered reads.
 
+use std::ops::Bound;
+
 use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::Store;
-use super::keys::{
-    PENDING_GATE_CONSENT_KEY_PREFIX, PENDING_GATE_CONSENT_SEQUENCE_INDEX_PREFIX,
-    pending_gate_consent_claim_id_from_key, pending_gate_consent_key,
-    pending_gate_consent_sequence_from_index_key, pending_gate_consent_sequence_index_key,
-    pending_gate_consent_sequence_index_upper_bound, pending_gate_consent_upper_bound,
-};
 use super::records::{
     PendingGateConsentGroup, PendingGateConsentRecord, decode_pending_gate_consent,
     encode_pending_gate_consent, vet_pending_gate_consent_record,
 };
-use super::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT,
-    decode_gate_decision, gate_decision_key,
-};
+use super::sequence_sweep::SEQUENCE_INDEX;
+use super::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT};
+
+/// Pending gate-consent tray row, keyed by claim id. Codec fixed `Raw` (see
+/// the decls.rs note): [`RawValue`] delegates to
+/// [`encode_pending_gate_consent`]/[`decode_pending_gate_consent`].
+pub(super) const TRAY: SideTable<[u8; 16], PendingGateConsentRecord, Raw> =
+    SideTable::new(&side_table::PENDING_GATE_CONSENT);
+
+impl RawValue for PendingGateConsentRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_pending_gate_consent(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_pending_gate_consent(bytes)?)
+    }
+}
 
 impl Store {
     pub(crate) fn put_pending_gate_consent_in_txn(
@@ -28,9 +39,7 @@ impl Store {
         record: &PendingGateConsentRecord,
     ) -> Result<()> {
         vet_pending_gate_consent_record(record)?;
-        let key = pending_gate_consent_key(&record.claim_id);
-        if let Some(existing) = self.vault_meta.get(&*wtxn, &key)? {
-            let existing = decode_pending_gate_consent(&existing)?;
+        if let Some(existing) = TRAY.get(self, &*wtxn, &record.claim_id)? {
             if existing.claim_id != record.claim_id {
                 return Err(Error::CorruptedIndex("pending gate consent"));
             }
@@ -39,8 +48,7 @@ impl Store {
             // A replacement keeps its insertion order, but an explicit delete
             // removes it; do not allocate a caller-controlled ordering key.
         }
-        let value = encode_pending_gate_consent(record)?;
-        self.vault_meta.put(wtxn, &key, &value)?;
+        TRAY.put(self, wtxn, &record.claim_id, record)?;
         self.put_pending_gate_consent_indexes_in_txn(wtxn, record)?;
         self.put_pending_gate_consent_critical_confirm_index_in_txn(wtxn, record)?;
         self.ensure_pending_gate_consent_sequence_in_txn(wtxn, &record.claim_id)?;
@@ -52,13 +60,9 @@ impl Store {
         txn: &RoTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<Option<PendingGateConsentRecord>> {
-        let Some(value) = self
-            .vault_meta
-            .get(txn, &pending_gate_consent_key(claim_id.as_bytes()))?
-        else {
+        let Some(record) = TRAY.get(self, txn, claim_id.as_bytes())? else {
             return Ok(None);
         };
-        let record = decode_pending_gate_consent(&value)?;
         if record.claim_id != *claim_id.as_bytes() {
             return Err(Error::CorruptedIndex("pending gate consent"));
         }
@@ -70,9 +74,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<()> {
-        let key = pending_gate_consent_key(claim_id.as_bytes());
-        if let Some(value) = self.vault_meta.get(&*wtxn, &key)? {
-            let record = decode_pending_gate_consent(&value)?;
+        if let Some(record) = TRAY.get(self, &*wtxn, claim_id.as_bytes())? {
             if record.claim_id != *claim_id.as_bytes() {
                 return Err(Error::CorruptedIndex("pending gate consent"));
             }
@@ -80,7 +82,7 @@ impl Store {
             self.delete_pending_gate_consent_critical_confirm_index_in_txn(wtxn, &record)?;
             self.delete_pending_gate_consent_sequence_in_txn(wtxn, &record.claim_id)?;
         }
-        self.vault_meta.delete(wtxn, &key)?;
+        TRAY.delete(self, wtxn, claim_id.as_bytes())?;
         Ok(())
     }
 
@@ -117,13 +119,9 @@ impl Store {
         let Some(pending) = self.pending_gate_consent_in_txn(wtxn, claim_id)? else {
             return Ok(None);
         };
-        let Some(value) = self
-            .vault_meta
-            .get(wtxn, &gate_decision_key(pending.decision_id))?
-        else {
+        let Some(original) = self.gate_decision_in_txn(wtxn, pending.decision_id)? else {
             return Err(Error::CorruptedIndex("pending gate consent"));
         };
-        let original = decode_gate_decision(&value)?;
         if original.decision_id != pending.decision_id {
             return Err(Error::CorruptedIndex("pending gate consent"));
         }
@@ -169,31 +167,11 @@ impl Store {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let lower = cursor.map(pending_gate_consent_sequence_index_key);
-        let lower: std::ops::Bound<&[u8]> = match lower.as_deref() {
-            Some(key) => std::ops::Bound::Excluded(key),
-            None => std::ops::Bound::Included(PENDING_GATE_CONSENT_SEQUENCE_INDEX_PREFIX),
-        };
-        let upper = fence.map_or_else(
-            pending_gate_consent_sequence_index_upper_bound,
-            pending_gate_consent_sequence_index_key,
-        );
-        let upper = if fence.is_some() {
-            std::ops::Bound::Included(upper.as_slice())
-        } else {
-            std::ops::Bound::Excluded(upper.as_slice())
-        };
+        let lower = cursor.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
+        let upper = fence.as_ref().map_or(Bound::Unbounded, Bound::Included);
         let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
-        for row in self.vault_meta.range(txn, &(lower, upper))? {
-            let (key, value) = row?;
-            let sequence = pending_gate_consent_sequence_from_index_key(&key)?;
-            let claim_id = EntityId::from_bytes(
-                value
-                    .as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("pending gate consent sequence index"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("pending gate consent sequence index"))?;
+        for row in SEQUENCE_INDEX.iter_range(self, txn, lower, upper)? {
+            let (sequence, claim_id) = row?;
             let Some(record) = self.pending_gate_consent_in_txn(txn, &claim_id)? else {
                 return Err(Error::CorruptedIndex("pending gate consent sequence index"));
             };
@@ -214,21 +192,8 @@ impl Store {
             return Ok(Vec::new());
         }
 
-        let upper = pending_gate_consent_upper_bound();
         let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
-        for row in self.vault_meta.range(
-            txn,
-            &(
-                std::ops::Bound::Included(PENDING_GATE_CONSENT_KEY_PREFIX),
-                std::ops::Bound::Excluded(upper.as_slice()),
-            ),
-        )? {
-            let (key, value) = row?;
-            if !key.starts_with(PENDING_GATE_CONSENT_KEY_PREFIX) {
-                return Err(Error::CorruptedIndex("pending gate consent"));
-            }
-            let claim_id = pending_gate_consent_claim_id_from_key(&key)?;
-            let record = decode_pending_gate_consent(&value)?;
+        for (claim_id, record) in TRAY.scan(self, txn)? {
             if record.claim_id != claim_id {
                 return Err(Error::CorruptedIndex("pending gate consent"));
             }

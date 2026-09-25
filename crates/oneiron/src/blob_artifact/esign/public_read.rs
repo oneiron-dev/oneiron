@@ -63,16 +63,9 @@ impl Vault {
             DocumentStatus::Completed | DocumentStatus::Rejected
         ) {
             // Read the canonical swap in THIS snapshot, then the immutable version.
-            let bytes = self
-                .store
-                .vault_meta
-                .get(
-                    &txn,
-                    &[b"esign.sealed.v1/".as_slice(), id.as_bytes()].concat(),
-                )?
+            let manifest = super::seal::CANONICAL
+                .get(&self.store, &txn, &id)?
                 .ok_or_else(|| invalid("sealed manifest missing"))?;
-            let manifest: super::SealedDocument =
-                serde_json::from_slice(&bytes).map_err(|_| invalid("sealed manifest"))?;
             let item = manifest
                 .items
                 .get(item)

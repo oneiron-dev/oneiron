@@ -370,7 +370,7 @@ pub(in crate::batch) fn apply_put(
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = authority_entry_hash_pin
         .as_ref()
-        .map(crate::authority::authority_first_seen_sync_key);
+        .map(crate::authority::authority_first_seen_sidecar_key);
     // Maintenance-classified kinds (REDACTION_AUDIT) carry no short ID (static
     // registry `short_id_prefix: None`), matching the engine's direct receipt writer.
     // Only the internal sync path reaches here with such a kind (public puts are
@@ -602,8 +602,8 @@ pub(in crate::batch) fn apply_put(
     )?;
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, &id)?;
     stage_claim_projection(store, wtxn, id, decoded_claim_body.as_ref())?;
-    if let Some((key, value)) = hub_origin_marker {
-        store.vault_meta.put(wtxn, &key, &value)?;
+    if let Some(row) = hub_origin_marker {
+        row.put(store, wtxn)?;
     }
     crate::skill_hub::stage_source_custody_put(
         store,
@@ -826,9 +826,9 @@ fn observe_authority_put(
     mutation_recorded_at: u64,
 ) -> Result<()> {
     let observed_secs = authority_observation_secs_for_write(store, wtxn, mutation_recorded_at)?;
-    if store.sync_state.get(wtxn, key)?.is_none() {
-        let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
-        store.sync_state.put(wtxn, key, &first_seen)?;
+    let sidecar_key = key.to_owned();
+    if !crate::authority::AUTHORITY_FIRST_SEEN.contains(store, wtxn, &sidecar_key)? {
+        crate::authority::AUTHORITY_FIRST_SEEN.put(store, wtxn, &sidecar_key, &observed_secs)?;
     }
     if let (Some(entry), Some(hash)) = (entry, hash) {
         let first_observation = crate::authority::record_authority_sequence_observation_in_txn(

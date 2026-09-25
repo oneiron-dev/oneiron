@@ -3,15 +3,22 @@
 use super::{ReadMode, RevisionRef};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::ManifestDbs;
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 
-pub(super) const STATE: &[u8] = b"entity_revision:state:";
-const DOC: &[u8] = b"entity_revision:doc:";
-const FRONTIER: &[u8] = b"entity_revision:frontier:";
+pub(super) const STATE: SideTable<EntityId, RevisionState, Named> =
+    SideTable::new(&side_table::ENTITY_REVISION_STATE);
+const DOC: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::ENTITY_REVISION_DOC);
+const FRONTIER: SideTable<(EntityId, [u8; 16]), Vec<u8>, Raw> =
+    SideTable::new(&side_table::ENTITY_REVISION_FRONTIER);
+/// Reverse index from a retained frontier back to its owning entity. Key: the
+/// frontier's 16 bytes.
+pub(super) const IDENTITY: SideTable<[u8; 16], EntityId, Raw> =
+    SideTable::new(&side_table::ENTITY_REVISION_IDENTITY);
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct RevisionState {
@@ -21,22 +28,12 @@ pub(super) struct RevisionState {
     pub has_doc: bool,
 }
 
-pub(super) fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
-}
-
 pub(super) fn state(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<RevisionState>> {
-    store
-        .vault_meta()
-        .get(txn, &key(STATE, id))?
-        .map(|raw| {
-            rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("entity revision state"))
-        })
-        .transpose()
+    STATE.get(store, txn, id)
 }
 
 pub(super) fn put_state(
@@ -45,10 +42,7 @@ pub(super) fn put_state(
     id: &EntityId,
     value: &RevisionState,
 ) -> Result<()> {
-    let raw = rmp_serde::to_vec_named(value)
-        .map_err(|_| Error::InvariantViolation("entity revision encode"))?;
-    store.vault_meta().put(txn, &key(STATE, id), &raw)?;
-    Ok(())
+    STATE.put(store, txn, id, value)
 }
 
 pub(super) fn reference(id: &EntityId, raw: &[u8]) -> RevisionRef {
@@ -118,10 +112,6 @@ pub(super) fn write_doc_row(doc: &LoroDoc, raw: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn frontier_key(id: &EntityId, revision: RevisionRef) -> Vec<u8> {
-    [key(FRONTIER, id), revision.0.to_vec()].concat()
-}
-
 pub(super) fn retain_frontier(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
@@ -129,16 +119,13 @@ pub(super) fn retain_frontier(
     revision: RevisionRef,
     doc: &LoroDoc,
 ) -> Result<()> {
-    store.vault_meta().put(
+    FRONTIER.put(
+        store,
         txn,
-        &frontier_key(id, revision),
+        &(*id, revision.0),
         &doc.oplog_frontiers().encode(),
     )?;
-    store.vault_meta().put(
-        txn,
-        &[b"entity_revision:identity:".as_slice(), &revision.0].concat(),
-        id.as_bytes(),
-    )?;
+    IDENTITY.put(store, txn, &revision.0, id)?;
     Ok(())
 }
 
@@ -151,7 +138,7 @@ pub(super) fn save_doc(
     let bytes = doc
         .export(ExportMode::Snapshot)
         .map_err(|_| Error::InvariantViolation("entity document export"))?;
-    store.vault_meta().put(txn, &key(DOC, id), &bytes)?;
+    DOC.put(store, txn, id, &bytes)?;
     Ok(())
 }
 
@@ -160,9 +147,8 @@ pub(super) fn load_doc(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<LoroDoc> {
-    let bytes = store
-        .vault_meta()
-        .get(txn, &key(DOC, id))?
+    let bytes = DOC
+        .get(store, txn, id)?
         .ok_or(Error::CorruptedIndex("entity document missing"))?;
     LoroDoc::from_snapshot(&bytes).map_err(|_| Error::CorruptedIndex("entity document"))
 }
@@ -173,9 +159,8 @@ pub(super) fn fork_revision(
     id: &EntityId,
     revision: RevisionRef,
 ) -> Result<LoroDoc> {
-    let raw = store
-        .vault_meta()
-        .get(txn, &frontier_key(id, revision))?
+    let raw = FRONTIER
+        .get(store, txn, &(*id, revision.0))?
         .ok_or(Error::EntityNotFound)?;
     let frontier = Frontiers::decode(&raw).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
     let doc = load_doc(store, txn, id)?
@@ -242,11 +227,7 @@ pub(crate) fn capture_entity_revision(
                 current.indexed = current.live;
             }
         }
-        store.vault_meta().put(
-            txn,
-            &[b"entity_revision:identity:".as_slice(), &current.live.0].concat(),
-            id.as_bytes(),
-        )?;
+        IDENTITY.put(store, txn, &current.live.0, id)?;
         return put_state(store, txn, id, &current);
     };
     if prior.as_deref() == Some(new_raw) {
@@ -336,11 +317,7 @@ pub(crate) fn entity_owns_revision_in_txn(
     let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
         return Ok(false);
     };
-    Ok(reference(id, &raw) == revision
-        || store
-            .vault_meta()
-            .get(txn, &frontier_key(id, revision))?
-            .is_some())
+    Ok(reference(id, &raw) == revision || FRONTIER.contains(store, txn, &(*id, revision.0))?)
 }
 
 pub(crate) fn read_entity_revision_in_txn(
@@ -426,30 +403,22 @@ pub(crate) fn remove_entity_revisions(
 ) -> Result<()> {
     if let Some(current) = state(store, txn, id)? {
         for revision in [current.live, current.indexed] {
-            store.vault_meta().delete(
-                txn,
-                &[b"entity_revision:identity:".as_slice(), &revision.0].concat(),
-            )?;
+            IDENTITY.delete(store, txn, &revision.0)?;
         }
     }
     super::phonetic::clear_phonetic(store, txn, id)?;
     super::pending_index::clear(store, txn, id)?;
-    store.vault_meta().delete(txn, &key(STATE, id))?;
-    store.vault_meta().delete(txn, &key(DOC, id))?;
-    let prefix = key(FRONTIER, id);
-    let keys = store
-        .vault_meta()
-        .prefix_iter(txn, &prefix)?
-        .map(|row| row.map(|(key, _)| key.to_vec()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for key in keys {
-        let revision = &key[key.len() - 16..];
-        store.vault_meta().delete(
-            txn,
-            &[b"entity_revision:identity:".as_slice(), revision].concat(),
-        )?;
-        store.vault_meta().delete(txn, &key)?;
+    STATE.delete(store, txn, id)?;
+    DOC.delete(store, txn, id)?;
+    let revisions: Vec<[u8; 16]> = FRONTIER
+        .scan_keys(store, txn, id.as_bytes())?
+        .into_iter()
+        .map(|(_, revision)| revision)
+        .collect();
+    for revision in &revisions {
+        IDENTITY.delete(store, txn, revision)?;
     }
+    FRONTIER.delete_from(store, txn, id.as_bytes())?;
     Ok(())
 }
 

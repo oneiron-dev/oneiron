@@ -3,6 +3,7 @@
 use rmpv::Value;
 
 use crate::error::Result;
+use crate::side_table::{CodecError, RawValue};
 
 use super::codec_core::{
     KEY_KIND, KEY_SCHEMA_VERSION, decode_entity_ref, decode_f32, decode_optional_entity_ref,
@@ -74,6 +75,31 @@ const EVIDENCE_KIND_ENROLLED: &str = "enrolled_print";
 const EVIDENCE_KIND_INVITE: &str = "invite_elimination";
 
 const EVIDENCE_KIND_RESIDUAL: &str = "residual_cluster";
+
+/// The [`side_table::Raw`](crate::side_table::Raw) codec for
+/// [`super::storage_admission::PRINT_RECORD`]: this hand-rolled `rmpv` layout
+/// IS the codec, so encode/decode just call it.
+impl RawValue for VoicePrintRecordV1 {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_print_record(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_print_record(bytes)?)
+    }
+}
+
+/// The [`side_table::Raw`](crate::side_table::Raw) codec for
+/// [`super::storage_admission::ROSTER`].
+impl RawValue for VoiceSessionRosterV1 {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_roster(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_roster(bytes)?)
+    }
+}
 
 pub(super) fn encode_print_record(record: &VoicePrintRecordV1) -> Result<Vec<u8>> {
     let value = Value::Map(vec![

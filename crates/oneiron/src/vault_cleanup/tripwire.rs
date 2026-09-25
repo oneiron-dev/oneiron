@@ -5,8 +5,7 @@ use super::rollout;
 use super::scan;
 use super::{
     CleanupCandidate, CleanupDecision, CleanupDigest, CleanupKind, CleanupPosture, CleanupProposal,
-    CleanupRunReport, MAX_CLEANUP_SCAN_ROWS, VAULT_CLEANUP_POSTURE_KEY, fresh_row_id,
-    put_digest_in_txn, put_proposal_in_txn,
+    CleanupRunReport, MAX_CLEANUP_SCAN_ROWS, fresh_row_id, put_digest_in_txn, put_proposal_in_txn,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -18,7 +17,12 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK};
+use crate::side_table::{self, Raw, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+
+/// Owner-set cleanup posture: propose-first (default) vs auto-with-digest.
+/// Key: `()`.
+const POSTURE: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::VAULT_CLEANUP_POSTURE);
 
 // ---------------------------------------------------------------------------
 // The tripwire
@@ -243,11 +247,7 @@ pub(super) fn cleanup_posture_in_txn(
     if !rollout::auto_enabled(vault, rtxn)? {
         return Ok(CleanupPosture::ProposeFirst);
     }
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(rtxn, VAULT_CLEANUP_POSTURE_KEY)?
-    else {
+    let Some(raw) = POSTURE.get(&vault.store, rtxn, &())? else {
         return Ok(CleanupPosture::ProposeFirst);
     };
     Ok(std::str::from_utf8(&raw)
@@ -269,10 +269,12 @@ pub fn set_cleanup_posture(vault: &Vault, posture: CleanupPosture) -> Result<()>
                 "automatic cleanup rollout blockers are open",
             ));
         }
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, VAULT_CLEANUP_POSTURE_KEY, posture.as_str().as_bytes())?;
+        POSTURE.put(
+            &vault.store,
+            wtxn,
+            &(),
+            &posture.as_str().as_bytes().to_vec(),
+        )?;
         Ok(())
     })
 }

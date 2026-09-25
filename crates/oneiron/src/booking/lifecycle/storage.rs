@@ -5,14 +5,25 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::LifecycleReceiptRow;
-use super::token::{HOLD_KEY_DOMAIN, SessionKey, digest_with};
-use super::types::{
-    BOOKING_HOLD_META_PREFIX, BOOKING_RECEIPT_META_PREFIX, LIFECYCLE_ROW_VERSION,
-    LifecycleTokenScope,
-};
+use super::types::{LIFECYCLE_ROW_VERSION, LifecycleTokenScope, SoftHoldRow};
 use crate::booking::BookingError;
+use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
+
+/// One session's active soft hold. Key: hash32 (session-key digest).
+pub(in crate::booking) const HOLD: SideTable<
+    [u8; 32],
+    SoftHoldRow,
+    VersionedNamed<LIFECYCLE_ROW_VERSION>,
+> = SideTable::new(&side_table::BOOKING_HOLD);
+
+/// One durable lifecycle receipt. Key: hash32 (the receipt key).
+pub(in crate::booking) const RECEIPT: SideTable<
+    [u8; 32],
+    LifecycleReceiptRow,
+    VersionedNamed<LIFECYCLE_ROW_VERSION>,
+> = SideTable::new(&side_table::BOOKING_LIFECYCLE_RECEIPT);
 
 /// Acquires the home-node single writer.
 ///
@@ -63,20 +74,6 @@ pub(super) fn claims_for_subject(
     vault
         .claims_for_subject_in_txn(rtxn, subject)
         .map_err(|error| engine_failure("claim subject scan", error))
-}
-
-pub(super) fn meta_key(prefix: &[u8], digest: &[u8; 32]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + digest.len());
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(digest);
-    key
-}
-
-pub(super) fn hold_key(session_key: &SessionKey) -> Vec<u8> {
-    meta_key(
-        BOOKING_HOLD_META_PREFIX,
-        &digest_with(HOLD_KEY_DOMAIN, &session_key.0),
-    )
 }
 
 /// Receipt identity for a confirm: the hold token's digest, so the retry key is
@@ -144,63 +141,14 @@ pub(super) fn decode_row<T: DeserializeOwned>(raw: &[u8]) -> Result<T, BookingEr
         .map_err(|error| refused(format!("lifecycle row does not decode: {error}")))
 }
 
-pub(super) fn read_meta<T: DeserializeOwned>(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    prefix: &[u8],
-    digest: &[u8; 32],
-) -> Result<Option<T>, BookingError> {
-    let Some(raw) = read_meta_bytes(vault, rtxn, &meta_key(prefix, digest))? else {
-        return Ok(None);
-    };
-    decode_row(&raw).map(Some)
-}
-
-pub(in crate::booking) fn read_meta_bytes(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    key: &[u8],
-) -> Result<Option<Vec<u8>>, BookingError> {
-    Ok(vault
-        .store
-        .vault_meta
-        .get(rtxn, key)
-        .map_err(|error| engine_failure("meta read", error))?
-        .map(std::borrow::Cow::into_owned))
-}
-
-pub(crate) fn put_meta(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8],
-    value: &[u8],
-) -> Result<(), BookingError> {
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, key, value)
-        .map_err(|error| engine_failure("meta write", error))
-}
-
-pub(super) fn delete_meta(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8],
-) -> Result<(), BookingError> {
-    vault
-        .store
-        .vault_meta
-        .delete(wtxn, key)
-        .map(|_| ())
-        .map_err(|error| engine_failure("meta delete", error))
-}
-
 pub(super) fn read_receipt(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     receipt_key: &[u8; 32],
 ) -> Result<Option<LifecycleReceiptRow>, BookingError> {
-    read_meta(vault, rtxn, BOOKING_RECEIPT_META_PREFIX, receipt_key)
+    RECEIPT
+        .get(&vault.store, rtxn, receipt_key)
+        .map_err(|error| engine_failure("meta read", error))
 }
 
 pub(super) fn write_receipt(
@@ -209,13 +157,9 @@ pub(super) fn write_receipt(
     receipt_key: &[u8; 32],
     row: &LifecycleReceiptRow,
 ) -> Result<(), BookingError> {
-    let encoded = encode_row(row)?;
-    put_meta(
-        vault,
-        wtxn,
-        &meta_key(BOOKING_RECEIPT_META_PREFIX, receipt_key),
-        &encoded,
-    )
+    RECEIPT
+        .put(&vault.store, wtxn, receipt_key, row)
+        .map_err(|error| engine_failure("meta write", error))
 }
 
 // -------------------------------------------------------------------------

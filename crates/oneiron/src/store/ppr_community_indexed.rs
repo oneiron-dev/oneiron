@@ -12,11 +12,13 @@ use crate::error::{Error, Result};
 use crate::ppr::read_graph_version;
 use crate::ppr_community::{
     CommunityCacheMeta, CommunityId, CommunityMembership, CommunityQueryView,
-    PPR_COMMUNITY_CACHE_PREFIX, decode_community_members,
+    decode_community_members,
 };
 
 use super::Store;
-use super::ppr_community::{COMMUNITY_META_KEY, MAX_COMMUNITY_CACHE_BYTES, MAX_COMMUNITY_NODES};
+use super::ppr_community::{
+    CACHE, COMMUNITY_META_SUFFIX, MAX_COMMUNITY_CACHE_BYTES, MAX_COMMUNITY_NODES,
+};
 
 #[cfg(test)]
 thread_local! {
@@ -44,9 +46,9 @@ struct IndexedRows<'a, 'txn> {
 }
 
 impl IndexedRows<'_, '_> {
-    fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let value = self.store.vault_meta.get(self.txn, key)?;
-        let bytes = key.len() + value.as_ref().map_or(0, |v| v.len());
+    fn get(&mut self, suffix: &str) -> Result<Option<Vec<u8>>> {
+        let value = CACHE.get(self.store, self.txn, &suffix.to_owned())?;
+        let bytes = CACHE.decl().prefix.len() + suffix.len() + value.as_ref().map_or(0, Vec::len);
         record_query_read(bytes);
         self.bytes = self.bytes.checked_add(bytes).ok_or_else(corrupt)?;
         if self.bytes > MAX_COMMUNITY_CACHE_BYTES
@@ -56,18 +58,18 @@ impl IndexedRows<'_, '_> {
         {
             return Err(corrupt());
         }
-        Ok(value.map(|v| v.to_vec()))
+        Ok(value)
     }
 
     fn node(&mut self, id: EntityId) -> Result<Option<CommunityMembership>> {
-        self.get(format!("{PPR_COMMUNITY_CACHE_PREFIX}node:{}", id.to_hex()).as_bytes())?
+        self.get(&format!("node:{}", id.to_hex()))?
             .map(|raw| CommunityMembership::decode_row(&raw).map_err(|_| corrupt()))
             .transpose()
     }
 
     fn members(&mut self, id: CommunityId, count: usize) -> Result<Vec<EntityId>> {
         let raw = self
-            .get(format!("{PPR_COMMUNITY_CACHE_PREFIX}members:{}", id.to_hex()).as_bytes())?
+            .get(&format!("members:{}", id.to_hex()))?
             .ok_or_else(corrupt)?;
         decode_community_members(id, &raw, count).map_err(|_| corrupt())
     }
@@ -85,8 +87,12 @@ impl Store {
         &self,
         txn: &RoTxn<'_>,
     ) -> Result<Option<(CommunityCacheMeta, usize)>> {
-        let raw = self.vault_meta.get(txn, COMMUNITY_META_KEY)?;
-        record_query_read(COMMUNITY_META_KEY.len() + raw.as_ref().map_or(0, |v| v.len()));
+        let raw = CACHE.get(self, txn, &COMMUNITY_META_SUFFIX.to_owned())?;
+        record_query_read(
+            CACHE.decl().prefix.len()
+                + COMMUNITY_META_SUFFIX.len()
+                + raw.as_ref().map_or(0, Vec::len),
+        );
         raw.map(|v| CommunityCacheMeta::decode_row(&v, MAX_COMMUNITY_NODES).map_err(|_| corrupt()))
             .transpose()
     }

@@ -13,25 +13,27 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::llm::ModelTierRef;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::side_table::{self, Raw, SideTable};
 use crate::skill::SkillDependency;
 use crate::temporal::TimeRange;
 use rmpv::Value;
 use std::collections::HashSet;
 
-/// Legacy per-vault system-agent toggle key prefix in `vault_meta` (full key =
-/// prefix + logical-id bytes). Pre-ONE-1890 state, consumed ONCE into the
-/// seeded row's `enabled` field and deleted in the same transaction; the
-/// literal survives only here, in the seeder's legacy-consumption path.
-const LEGACY_SYSTEM_AGENT_TOGGLE_KEY_PREFIX: &[u8] = b"agent_def:system_toggle:v1:";
+/// Legacy per-vault system-agent toggle in `vault_meta` (key = logical id).
+/// Pre-ONE-1890 state, consumed ONCE into the seeded row's `enabled` field and
+/// deleted in the same transaction; the table survives only here, in the
+/// seeder's legacy-consumption path.
+const SYSTEM_TOGGLE_LEGACY: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::AGENT_DEF_SYSTEM_TOGGLE_LEGACY);
 
 /// The two pre-1890 reserved-actor census rows in `vault_meta`, deleted with
 /// the census they served — both readers died with the compiled roster. Like
-/// the toggle prefix above, these literals survive only here, in the seeder's
+/// the toggle table above, these tables survive only here, in the seeder's
 /// legacy-consumption path.
-const PRE_1890_ACTOR_CENSUS_KEYS: [&[u8]; 2] = [
-    b"agent_def:reserved_actor_census:v2",
-    b"agent_def:default_reserved_actor_census:v1",
-];
+const RESERVED_ACTOR_CENSUS_V2: SideTable<(), (), Raw> =
+    SideTable::new(&side_table::AGENT_DEF_RESERVED_ACTOR_CENSUS_V2);
+const DEFAULT_RESERVED_ACTOR_CENSUS_V1: SideTable<(), (), Raw> =
+    SideTable::new(&side_table::AGENT_DEF_DEFAULT_RESERVED_ACTOR_CENSUS_V1);
 
 /// `occurred`/`learned_at` for every seeded row, pinned so the six baseline
 /// rows are byte-identical across vaults (idiom: `DEFAULT_POLICY_MANIFEST_TIMESTAMP`).
@@ -403,9 +405,8 @@ pub(super) fn reconcile_system_agent_definitions_in(
             }
         }
     }
-    for key in PRE_1890_ACTOR_CENSUS_KEYS {
-        store.vault_meta.delete(wtxn, key)?;
-    }
+    RESERVED_ACTOR_CENSUS_V2.delete(store, wtxn, &())?;
+    DEFAULT_RESERVED_ACTOR_CENSUS_V1.delete(store, wtxn, &())?;
     Ok(())
 }
 
@@ -417,14 +418,13 @@ fn take_legacy_system_agent_toggle(
     wtxn: &mut heed::RwTxn<'_>,
     logical_id: &str,
 ) -> Result<Option<bool>> {
-    let mut key = LEGACY_SYSTEM_AGENT_TOGGLE_KEY_PREFIX.to_vec();
-    key.extend_from_slice(logical_id.as_bytes());
-    let stored = match store.vault_meta.get(wtxn, key.as_slice())? {
-        Some(raw) if *raw == [0x01] => Some(true),
-        Some(raw) if *raw == [0x00] => Some(false),
+    let key = logical_id.to_owned();
+    let stored = match SYSTEM_TOGGLE_LEGACY.get(store, wtxn, &key)? {
+        Some(raw) if raw == [0x01] => Some(true),
+        Some(raw) if raw == [0x00] => Some(false),
         Some(_) | None => None,
     };
-    store.vault_meta.delete(wtxn, key.as_slice())?;
+    SYSTEM_TOGGLE_LEGACY.delete(store, wtxn, &key)?;
     Ok(stored)
 }
 

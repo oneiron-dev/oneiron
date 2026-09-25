@@ -19,52 +19,35 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
 
 use super::disclosure_tier;
-use super::scope_codec::{
-    DisclosureScope, DisclosureScopeStatus, decode_disclosure_scope_body,
-    disclosure_scope_body_value, encode_disclosure_scope_body,
-};
+use super::scope_codec::{DisclosureScope, DisclosureScopeStatus, disclosure_scope_body_value};
 use super::tier_classification::{
     DISCLOSURE_TIER_VALUE_TIER_A, DisclosureMode, DisclosureTier, PREDICATE_DISCLOSURE_SCOPE,
     PREDICATE_DISCLOSURE_TIER, is_disclosure_claim_predicate, read_stored_claim_body,
     validate_disclosure_claim_structure,
 };
 
-/// `vault_meta` row key prefix for per-contact scope rows (enforcement truth;
-/// one O(1) read per non-owner interlocutor, the off-record-fence shape).
-const DISCLOSURE_SCOPE_KEY_PREFIX: &[u8] = b"disclosure.scope.v1:";
+/// Enforcement-truth per-counterparty-contact disclosure scope row; one O(1)
+/// read per non-owner interlocutor, the off-record-fence shape.
+pub(super) const DISCLOSURE_SCOPES: SideTable<EntityId, DisclosureScope, Raw> =
+    SideTable::new(&side_table::DISCLOSURE_SCOPE);
 
-/// `vault_meta` row key prefix for owner Tier-A mark rows.
-const DISCLOSURE_TIER_A_KEY_PREFIX: &[u8] = b"disclosure.tier_a.v1:";
-
-pub(super) fn disclosure_scope_meta_key(contact_id: &EntityId) -> Vec<u8> {
-    let mut key =
-        Vec::with_capacity(DISCLOSURE_SCOPE_KEY_PREFIX.len() + contact_id.as_bytes().len());
-    key.extend_from_slice(DISCLOSURE_SCOPE_KEY_PREFIX);
-    key.extend_from_slice(contact_id.as_bytes());
-    key
-}
-
-pub(super) fn disclosure_tier_a_meta_key(id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DISCLOSURE_TIER_A_KEY_PREFIX.len() + id.as_bytes().len());
-    key.extend_from_slice(DISCLOSURE_TIER_A_KEY_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
+/// Owner Tier-A mark rows: a presence marker whose value (the mark
+/// timestamp, little-endian) is never read back.
+const DISCLOSURE_TIER_A_MARKS: SideTable<EntityId, [u8; 8], Raw> =
+    SideTable::new(&side_table::DISCLOSURE_TIER_A);
 
 pub(super) fn disclosure_tier_a_marked_in(
     store: &Store,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    Ok(store
-        .vault_meta
-        .get(rtxn, &disclosure_tier_a_meta_key(id))?
-        .is_some())
+    DISCLOSURE_TIER_A_MARKS.contains(store, rtxn, id)
 }
 
 /// Deterministic claim-mirror id for a subject's disclosure claim: the CID-7
@@ -101,7 +84,6 @@ impl Vault {
         scope: &DisclosureScope,
     ) -> Result<()> {
         scope.validate()?;
-        let data = encode_disclosure_scope_body(scope)?;
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
@@ -113,9 +95,7 @@ impl Vault {
         if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
-        self.store
-            .vault_meta
-            .put(&mut wtxn, &disclosure_scope_meta_key(contact_id), &data)?;
+        DISCLOSURE_SCOPES.put(&self.store, &mut wtxn, contact_id, scope)?;
         let claim_id = disclosure_scope_claim_id(contact_id)?;
         let claim = ClaimBody::new(
             PREDICATE_DISCLOSURE_SCOPE,
@@ -138,14 +118,7 @@ impl Vault {
         contact_id: &EntityId,
     ) -> Result<Option<DisclosureScope>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(bytes) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &disclosure_scope_meta_key(contact_id))?
-        else {
-            return Ok(None);
-        };
-        decode_disclosure_scope_body(&bytes).map(Some)
+        DISCLOSURE_SCOPES.get(&self.store, &rtxn, contact_id)
     }
 
     /// Owner-marks an entity Tier A (design §7 rule 5): meta row plus the
@@ -155,11 +128,7 @@ impl Vault {
         if self.store.port_entity_record(&wtxn, id)?.is_none() {
             return Err(Error::EntityNotFound);
         }
-        self.store.vault_meta.put(
-            &mut wtxn,
-            &disclosure_tier_a_meta_key(id),
-            &marked_at.to_le_bytes(),
-        )?;
+        DISCLOSURE_TIER_A_MARKS.put(&self.store, &mut wtxn, id, &marked_at.to_le_bytes())?;
         let claim_id = disclosure_tier_claim_id(id)?;
         let claim = ClaimBody::new(
             PREDICATE_DISCLOSURE_TIER,
@@ -188,9 +157,7 @@ impl Vault {
         if self.store.port_entity_record(&wtxn, id)?.is_none() {
             return Err(Error::EntityNotFound);
         }
-        self.store
-            .vault_meta
-            .delete(&mut wtxn, &disclosure_tier_a_meta_key(id))?;
+        DISCLOSURE_TIER_A_MARKS.delete(&self.store, &mut wtxn, id)?;
         let claim_id = disclosure_tier_claim_id(id)?;
         if let Some(raw) = self
             .store

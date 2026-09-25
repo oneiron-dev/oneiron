@@ -6,13 +6,8 @@ use rmpv::Value;
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-
-const BLOB_ARTIFACT_VERSION_KEY_PREFIX: &[u8] = b"blob_artifact:version:v1:";
-
-const BLOB_ARTIFACT_HEAD_KEY_PREFIX: &[u8] = b"blob_artifact:head:v1:";
-
-const BLOB_ARTIFACT_ASSET_REF_KEY_PREFIX: &[u8] = b"blob_artifact:asset_ref:v1:";
 
 pub(super) const BLOB_ARTIFACT_ASSET_ID_DOMAIN: &[u8] = b"oneiron:blob-artifact-asset:v1";
 
@@ -20,33 +15,23 @@ pub const BLOB_ARTIFACT_CONTENT_HASH_LEN: usize = 32;
 
 pub const BLOB_ARTIFACT_RUN_REF_MAX_BYTES: usize = 1024;
 
-pub(super) fn blob_artifact_head_key(artifact_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(BLOB_ARTIFACT_HEAD_KEY_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(BLOB_ARTIFACT_HEAD_KEY_PREFIX);
-    key.extend_from_slice(artifact_id.as_bytes());
-    key
-}
+/// Asset refcount marker. Key: bytes32 (content hash) + id16 (artifact id).
+///
+/// The key-byte builders below stay `Vec<u8>`-returning (rather than folding into this table's
+/// key type) because `ports::lmdb_aux` also builds these exact keys for its own raw
+/// `vault_meta` puts/deletes — a door this module does not own and cannot change.
+pub(super) const ASSET_REF: SideTable<([u8; BLOB_ARTIFACT_CONTENT_HASH_LEN], EntityId), (), Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_ASSET_REF);
 
-pub(super) fn blob_artifact_version_prefix(artifact_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(BLOB_ARTIFACT_VERSION_KEY_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(BLOB_ARTIFACT_VERSION_KEY_PREFIX);
-    key.extend_from_slice(artifact_id.as_bytes());
-    key
-}
-
-pub(super) fn blob_artifact_version_key(artifact_id: &EntityId, version: u64) -> Vec<u8> {
-    let mut key = blob_artifact_version_prefix(artifact_id);
-    key.extend_from_slice(&version.to_be_bytes());
-    key
-}
-
+/// Shared with `ports::lmdb_aux`'s raw asset-refcount puts/deletes — this module does not own
+/// that door, so this stays a `Vec<u8>` builder off [`side_table::BLOB_ARTIFACT_ASSET_REF`]'s own
+/// declared prefix rather than folding into [`ASSET_REF`]'s key type.
 pub(crate) fn blob_artifact_asset_ref_prefix(
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 ) -> Vec<u8> {
-    let mut key = Vec::with_capacity(
-        BLOB_ARTIFACT_ASSET_REF_KEY_PREFIX.len() + BLOB_ARTIFACT_CONTENT_HASH_LEN + ENTITY_ID_LEN,
-    );
-    key.extend_from_slice(BLOB_ARTIFACT_ASSET_REF_KEY_PREFIX);
+    let prefix = side_table::BLOB_ARTIFACT_ASSET_REF.prefix;
+    let mut key = Vec::with_capacity(prefix.len() + BLOB_ARTIFACT_CONTENT_HASH_LEN + ENTITY_ID_LEN);
+    key.extend_from_slice(prefix);
     key.extend_from_slice(content_hash);
     key
 }

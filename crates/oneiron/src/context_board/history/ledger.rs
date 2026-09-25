@@ -8,6 +8,7 @@ use crate::claim::{
     decode_claim_body,
 };
 use crate::error::Error;
+use crate::side_table::{self, LegacyCompact, Named, Raw, SideTable};
 use crate::temporal::TimeRange;
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Vault};
@@ -16,15 +17,25 @@ use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer};
 use std::collections::BTreeMap;
 
 type Result<T> = std::result::Result<T, BoardHistoryError>;
-const DOC: &[u8] = b"board_history:doc:";
-const TURN: &[u8] = b"board_history:turn:";
-const LAST: &[u8] = b"board_history:last:";
-const CLAIM_FRONTIER: &[u8] = b"board_history:claim_frontier:";
-const HORIZON: &[u8] = b"board_history:horizon:";
 
-fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
-}
+/// Loro CRDT snapshot backing one owner's board-selection/document history.
+/// Key: the owner id.
+const DOC: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::BOARD_HISTORY_DOC);
+/// Turn anchor recording the board-history CRDT frontier and selection
+/// snapshot a TURN committed. Key: the turn id.
+const TURN: SideTable<EntityId, TurnAnchor, Named> =
+    SideTable::new(&side_table::BOARD_HISTORY_TURN);
+/// Last committed `(at, learned_at)` monotonic stamp per board-history owner.
+/// Key: the owner id.
+const LAST: SideTable<EntityId, (u64, u64), LegacyCompact> =
+    SideTable::new(&side_table::BOARD_HISTORY_LAST);
+/// Revision-ref frontier a board-selection CLAIM was written under,
+/// authenticated on every read. Key: the claim id.
+const CLAIM_FRONTIER: SideTable<EntityId, [u8; 16], Raw> =
+    SideTable::new(&side_table::BOARD_HISTORY_CLAIM_FRONTIER);
+/// Monotonic compaction horizon (earliest retained turn time) per
+/// board-history owner. Key: the owner id.
+const HORIZON: SideTable<EntityId, u64, Raw> = SideTable::new(&side_table::BOARD_HISTORY_HORIZON);
 
 fn map_bytes(doc: &LoroDoc, map: &str, name: &str) -> Result<Option<Vec<u8>>> {
     match doc.get_map(map).get(name) {
@@ -51,10 +62,8 @@ fn reference(owner: &EntityId, frontier: &[u8]) -> RevisionRef {
 }
 
 fn load_doc(vault: &Vault, txn: &RoTxn<'_>, owner: &EntityId) -> Result<LoroDoc> {
-    let raw = vault
-        .store
-        .vault_meta
-        .get(txn, &key(DOC, owner))?
+    let raw = DOC
+        .get(&vault.store, txn, owner)?
         .ok_or(BoardHistoryError::MissingFrontier)?;
     LoroDoc::from_snapshot(&raw).map_err(|_| BoardHistoryError::MissingFrontier)
 }
@@ -78,13 +87,7 @@ fn claim(
     let (_, writing_frontier) = decode_value(&body.value)?;
     // Unchanged families reuse earlier claims. Authenticate each claim's
     // writing frontier at every read/write door, not the requesting turn.
-    if vault
-        .store
-        .vault_meta
-        .get(txn, &key(CLAIM_FRONTIER, id))?
-        .as_deref()
-        != Some(writing_frontier.0.as_slice())
-    {
+    if CLAIM_FRONTIER.get(&vault.store, txn, id)? != Some(writing_frontier.0) {
         return Err(BoardHistoryError::MissingFrontier);
     }
     Ok((body, header))
@@ -158,31 +161,19 @@ impl Vault {
                 "anchor must name a TURN",
             ));
         }
-        if self
-            .store
-            .vault_meta
-            .get(&txn, &key(TURN, &input.turn))?
-            .is_some()
-        {
+        if TURN.contains(&self.store, &txn, &input.turn)? {
             return Err(BoardHistoryError::InvalidSelection(
                 "turn is already anchored",
             ));
         }
-        if let Some(last) = self.store.vault_meta.get(&txn, &key(LAST, &input.owner))? {
-            let last: (u64, u64) =
-                rmp_serde::from_slice(&last).map_err(|_| BoardHistoryError::MissingFrontier)?;
-            if input.at <= last.0 || learned_at < last.1 {
-                return Err(BoardHistoryError::InvalidSelection(
-                    "turn and learned time must advance monotonically",
-                ));
-            }
-        }
-        let doc = if self
-            .store
-            .vault_meta
-            .get(&txn, &key(DOC, &input.owner))?
-            .is_some()
+        if let Some(last) = LAST.get(&self.store, &txn, &input.owner)?
+            && (input.at <= last.0 || learned_at < last.1)
         {
+            return Err(BoardHistoryError::InvalidSelection(
+                "turn and learned time must advance monotonically",
+            ));
+        }
+        let doc = if DOC.contains(&self.store, &txn, &input.owner)? {
             load_doc(self, &txn, &input.owner)?
         } else {
             LoroDoc::new()
@@ -271,9 +262,7 @@ impl Vault {
                 },
                 learned_at,
             )?;
-            self.store
-                .vault_meta
-                .put(&mut txn, &key(CLAIM_FRONTIER, &id), &anchor_ref.0)?;
+            CLAIM_FRONTIER.put(&self.store, &mut txn, &id, &anchor_ref.0)?;
             changed_claims.push(id);
         }
         let anchor = TurnAnchor {
@@ -287,14 +276,8 @@ impl Vault {
         let snapshot = doc
             .export(ExportMode::Snapshot)
             .map_err(|_| BoardHistoryError::MissingFrontier)?;
-        self.store
-            .vault_meta
-            .put(&mut txn, &key(DOC, &input.owner), &snapshot)?;
-        let last = rmp_serde::to_vec(&(input.at, learned_at))
-            .map_err(|_| BoardHistoryError::MissingFrontier)?;
-        self.store
-            .vault_meta
-            .put(&mut txn, &key(LAST, &input.owner), &last)?;
+        DOC.put(&self.store, &mut txn, &input.owner, &snapshot)?;
+        LAST.put(&self.store, &mut txn, &input.owner, &(input.at, learned_at))?;
         txn.commit()?;
         Ok(BoardTurnReceipt {
             turn: input.turn,
@@ -319,29 +302,16 @@ impl Vault {
         if turn_header.entity_type != crate::registry::ENTITY_TYPE_TURN {
             return Err(BoardHistoryError::UnknownTurn(*turn));
         }
-        let bytes = self
-            .store
-            .vault_meta
-            .get(&txn, &key(TURN, turn))?
+        let anchor = TURN
+            .get(&self.store, &txn, turn)?
             .ok_or(BoardHistoryError::UnknownTurn(*turn))?;
-        let anchor: TurnAnchor =
-            rmp_serde::from_slice(&bytes).map_err(|_| BoardHistoryError::MissingFrontier)?;
-        if let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&txn, &key(HORIZON, &anchor.owner))?
+        if let Some(retained_from) = HORIZON.get(&self.store, &txn, &anchor.owner)?
+            && anchor.at < retained_from
         {
-            let retained_from = u64::from_be_bytes(
-                raw.as_ref()
-                    .try_into()
-                    .map_err(|_| BoardHistoryError::MissingFrontier)?,
-            );
-            if anchor.at < retained_from {
-                return Err(BoardHistoryError::BeyondCompactionHorizon {
-                    turn: *turn,
-                    retained_from,
-                });
-            }
+            return Err(BoardHistoryError::BeyondCompactionHorizon {
+                turn: *turn,
+                retained_from,
+            });
         }
         if reference(&anchor.owner, &anchor.frontier) != anchor.source_revision_ref {
             return Err(BoardHistoryError::MissingFrontier);
@@ -447,21 +417,14 @@ impl Vault {
         retained_from: u64,
     ) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
-        if let Some(raw) = self.store.vault_meta.get(&txn, &key(HORIZON, owner))? {
-            let current = u64::from_be_bytes(
-                raw.as_ref()
-                    .try_into()
-                    .map_err(|_| BoardHistoryError::MissingFrontier)?,
-            );
-            if retained_from < current {
-                return Err(BoardHistoryError::InvalidSelection(
-                    "compaction horizon cannot move backward",
-                ));
-            }
+        if let Some(current) = HORIZON.get(&self.store, &txn, owner)?
+            && retained_from < current
+        {
+            return Err(BoardHistoryError::InvalidSelection(
+                "compaction horizon cannot move backward",
+            ));
         }
-        self.store
-            .vault_meta
-            .put(&mut txn, &key(HORIZON, owner), &retained_from.to_be_bytes())?;
+        HORIZON.put(&self.store, &mut txn, owner, &retained_from)?;
         txn.commit()?;
         Ok(())
     }
@@ -473,7 +436,6 @@ fn write_anchor(
     turn: &EntityId,
     anchor: &TurnAnchor,
 ) -> Result<()> {
-    let raw = rmp_serde::to_vec_named(anchor).map_err(|_| BoardHistoryError::MissingFrontier)?;
-    vault.store.vault_meta.put(txn, &key(TURN, turn), &raw)?;
+    TURN.put(&vault.store, txn, turn, anchor)?;
     Ok(())
 }

@@ -1,12 +1,13 @@
 use crate::Vault;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 
 use super::meter::{
     CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,
-    ConnectorKeyUsage, EffectorBudgetCharge, EffectorBudgetChargeOutcome, EffectorBudgetRead,
-    EffectorBudgetRowRead, budget_exhausted_reason, budget_read_from_states, budget_row_read,
-    charge_effector_budgets, connector_key_usage_row_key, load_budget_row_states,
+    EffectorBudgetCharge, EffectorBudgetChargeOutcome, EffectorBudgetRead, EffectorBudgetRowRead,
+    budget_exhausted_reason, budget_read_from_states, budget_row_read, charge_effector_budgets,
+    load_budget_row_states,
 };
 use super::record::{
     ConnectorKeyStatus, EffectorBudgetDimension, EffectorBudgetOnExhaust, invalid_body,
@@ -20,22 +21,21 @@ use super::txn::{
 /// Upper bound on one admit batch — keeps a single LMDB write txn bounded.
 pub const CONNECTOR_KEY_MAX_DISPATCH_BATCH: u64 = 4096;
 
-/// vault_meta spend-settlement idempotency rows: prefix ++ key id (16 bytes)
-/// ++ event_ref bytes -> row_index u16 BE ++ minor_units u64 BE ++
-/// cost_occurred_at u64 BE. One row per settlement event id. Replay
-/// IDENTITY is the (row_index, minor_units) prefix — the settlement's
-/// actual content; the trailing declared cost time is first-writer-wins
-/// recorded data. A matching replay settles nothing (even with a drifted
-/// declared time between honest retries); a same-id replay with different
-/// content fails closed (a pre-claimed event_ref cannot force a silent
-/// no-op for a different settlement).
-const CONNECTOR_KEY_SETTLE_EVENT_PREFIX: &[u8] = b"connector_key/settle_event/v1\0";
+/// vault_meta spend-settlement idempotency rows: key id ++ event_ref bytes ->
+/// row_index u16 BE ++ minor_units u64 BE ++ cost_occurred_at u64 BE. One row
+/// per settlement event id. Replay IDENTITY is the (row_index, minor_units)
+/// prefix — the settlement's actual content; the trailing declared cost time
+/// is first-writer-wins recorded data. A matching replay settles nothing
+/// (even with a drifted declared time between honest retries); a same-id
+/// replay with different content fails closed (a pre-claimed event_ref
+/// cannot force a silent no-op for a different settlement).
+pub(super) const SETTLE_EVENT: SideTable<(EntityId, String), Vec<u8>, Raw> =
+    SideTable::new(&side_table::CONNECTOR_KEY_SETTLE_EVENT);
 
 const CONNECTOR_KEY_SETTLE_EVENT_REF_MAX_LEN: usize = 128;
 
-/// vault_meta logical-send admission rows: prefix ++ key id (16 bytes) ++
-/// `logical_send_ref` bytes -> admitted_at u64 BE ++ sends_debit u64 BE ++
-/// normalized effect channel.
+/// vault_meta logical-send admission rows: key id ++ `logical_send_ref` bytes
+/// -> admitted_at u64 BE ++ sends_debit u64 BE ++ normalized effect channel.
 ///
 /// The row is the proof that ONE LOGICAL SEND already debited this key. The
 /// admission ref is the owning TASK/intent reference and NEVER an
@@ -45,7 +45,8 @@ const CONNECTOR_KEY_SETTLE_EVENT_REF_MAX_LEN: usize = 128;
 /// `Sends` debit exactly-once across whatever retry shape the attempt layer
 /// takes. The stored value is first-writer-wins EVIDENCE, not replay
 /// identity — replay is `(key, logical_send_ref)`.
-pub const CONNECTOR_KEY_SEND_ADMIT_PREFIX: &[u8] = b"connector_key/send_admit/v1\0";
+pub(super) const SEND_ADMIT: SideTable<(EntityId, String), Vec<u8>, Raw> =
+    SideTable::new(&side_table::CONNECTOR_KEY_SEND_ADMIT);
 
 const CONNECTOR_KEY_LOGICAL_SEND_REF_MAX_LEN: usize = 128;
 
@@ -76,16 +77,6 @@ pub enum ConnectorKeySendAdmission {
     },
 }
 
-pub(super) fn connector_key_send_admit_key(id: &EntityId, logical_send_ref: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(
-        CONNECTOR_KEY_SEND_ADMIT_PREFIX.len() + ENTITY_ID_LEN + logical_send_ref.len(),
-    );
-    key.extend_from_slice(CONNECTOR_KEY_SEND_ADMIT_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key.extend_from_slice(logical_send_ref.as_bytes());
-    key
-}
-
 fn send_admit_value(admitted_at: u64, sends_debit: u64, effect_channel: &str) -> Vec<u8> {
     let mut value = Vec::with_capacity(2 * size_of::<u64>() + effect_channel.len());
     value.extend_from_slice(&admitted_at.to_be_bytes());
@@ -110,16 +101,6 @@ fn settle_event_value(row_index: u16, minor_units: u64, cost_occurred_at: u64) -
     value.extend_from_slice(&minor_units.to_be_bytes());
     value.extend_from_slice(&cost_occurred_at.to_be_bytes());
     value
-}
-
-pub(super) fn connector_key_settle_event_key(id: &EntityId, event_ref: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(
-        CONNECTOR_KEY_SETTLE_EVENT_PREFIX.len() + ENTITY_ID_LEN + event_ref.len(),
-    );
-    key.extend_from_slice(CONNECTOR_KEY_SETTLE_EVENT_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key.extend_from_slice(event_ref.as_bytes());
-    key
 }
 
 impl Vault {
@@ -289,7 +270,7 @@ impl Vault {
     /// makes.
     ///
     /// `logical_send_ref` names the owning TASK/intent, never an `AttemptId`
-    /// (see [`CONNECTOR_KEY_SEND_ADMIT_PREFIX`]), and is validated like
+    /// (see [`SEND_ADMIT`]), and is validated like
     /// `settle_connector_spend`'s `event_ref`: nonblank, ≤128 bytes, no NUL —
     /// checked BEFORE any charge or dedupe write.
     ///
@@ -359,12 +340,12 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let mut record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
-        let admit_key = connector_key_send_admit_key(id, logical_send_ref);
+        let admit_key = (*id, logical_send_ref.to_owned());
 
         // Replay: this logical send already debited the key. Echo the meter
         // read-only (no matched rows ⇒ no amounts ⇒ nothing written) and let
         // the transaction abort, so a retried send cannot debit twice.
-        if self.store.vault_meta.get(&wtxn, &admit_key)?.is_some() {
+        if SEND_ADMIT.contains(&self.store, &wtxn, &admit_key)? {
             let states = load_budget_row_states(
                 &self.store,
                 &wtxn,
@@ -404,7 +385,8 @@ impl Vault {
         )? {
             EffectorBudgetChargeOutcome::NoRows(charge)
             | EffectorBudgetChargeOutcome::Charged(charge) => {
-                self.store.vault_meta.put(
+                SEND_ADMIT.put(
+                    &self.store,
                     &mut wtxn,
                     &admit_key,
                     &send_admit_value(accounting_now, charge.sends_debit, &effect_channel),
@@ -511,11 +493,10 @@ impl Vault {
             return Err(invalid_body("spend settle on non-spend row"));
         }
 
-        let usage_key = connector_key_usage_row_key(id, row_index);
-        let mut usage = match self.store.vault_meta.get(&wtxn, &usage_key)? {
-            Some(bytes) => ConnectorKeyUsage::decode(&bytes)?,
-            None => ConnectorKeyUsage::default(),
-        };
+        let usage_row_key = (*id, row_index.to_be_bytes());
+        let mut usage = super::meter::USAGE
+            .get(&self.store, &wtxn, &usage_row_key)?
+            .unwrap_or_default();
 
         // Idempotency keyed on the settlement's CONTENT (row, amount): a
         // replayed event id with the same content settles nothing — even
@@ -523,9 +504,9 @@ impl Vault {
         // (the first write's recorded time stands) — while the same event id
         // with a DIFFERENT (row, amount) fails closed, so a pre-claimed
         // event_ref cannot force a silent no-op for a different settlement.
-        let event_key = connector_key_settle_event_key(id, event_ref);
+        let event_key = (*id, event_ref.to_owned());
         let event_value = settle_event_value(row_index, minor_units, cost_occurred_at);
-        if let Some(stored) = self.store.vault_meta.get(&wtxn, &event_key)? {
+        if let Some(stored) = SETTLE_EVENT.get(&self.store, &wtxn, &event_key)? {
             if stored.len() < SETTLE_EVENT_IDENTITY_LEN
                 || stored[..SETTLE_EVENT_IDENTITY_LEN] != event_value[..SETTLE_EVENT_IDENTITY_LEN]
             {
@@ -540,12 +521,8 @@ impl Vault {
 
         usage.touch(&budget.window, budget.limit, settled_at);
         usage.entries.push((settled_at, minor_units));
-        self.store
-            .vault_meta
-            .put(&mut wtxn, &event_key, &event_value)?;
-        self.store
-            .vault_meta
-            .put(&mut wtxn, &usage_key, &usage.encode()?)?;
+        SETTLE_EVENT.put(&self.store, &mut wtxn, &event_key, &event_value)?;
+        super::meter::USAGE.put(&self.store, &mut wtxn, &usage_row_key, &usage)?;
 
         let mut settled_record = record;
         if usage.used() >= budget.limit

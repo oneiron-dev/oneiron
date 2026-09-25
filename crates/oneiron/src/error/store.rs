@@ -205,6 +205,46 @@ pub enum StoreError {
     /// transitive Sudachi/jieba/lindera error types into the public surface.
     #[error("analyzer error: {0}")]
     AnalyzerError(String),
+    /// A side-table row does not have its declared shape: its key, its
+    /// version byte or its body is not what the declared table encodes.
+    #[error("side table {table}: {problem}")]
+    SideTableRow {
+        table: &'static str,
+        problem: SideTableRowProblem,
+    },
+}
+
+/// What was wrong with one side-table row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SideTableRowProblem {
+    /// The value's leading version byte is not the table's version.
+    UnknownVersion { found: u8, expected: u8 },
+    /// The value is not a well-formed body of the declared codec.
+    Undecodable,
+    /// Bytes remain after the value's body.
+    TrailingBytes,
+    /// The value could not be encoded with the declared codec.
+    Unencodable,
+    /// The key bytes after the prefix are not the table's key shape.
+    KeyShape,
+    /// A `sync_state` key is not UTF-8.
+    KeyNotUtf8,
+}
+
+impl fmt::Display for SideTableRowProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownVersion { found, expected } => {
+                write!(f, "unknown version byte {found}, expected {expected}")
+            }
+            Self::Undecodable => f.write_str("undecodable value"),
+            Self::TrailingBytes => f.write_str("trailing bytes after the value"),
+            Self::Unencodable => f.write_str("unencodable value"),
+            Self::KeyShape => f.write_str("key does not match the table's key shape"),
+            Self::KeyNotUtf8 => f.write_str("key is not UTF-8"),
+        }
+    }
 }
 
 impl StoreError {
@@ -224,6 +264,7 @@ impl StoreError {
             Self::InvalidRankProfile { .. } => ErrorKind::InvalidRankProfile,
             Self::AnalyzerAssetMissing(_) => ErrorKind::AnalyzerAssetMissing,
             Self::AnalyzerError(_) => ErrorKind::AnalyzerError,
+            Self::SideTableRow { .. } => ErrorKind::SideTableRow,
         }
     }
 }

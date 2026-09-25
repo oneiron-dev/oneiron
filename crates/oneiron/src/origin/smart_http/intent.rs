@@ -18,11 +18,38 @@ use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, lock_repository};
 use crate::origin::lfs::{LfsOid, LfsPushedPointer};
 use crate::origin::residence::OriginAuthorityStamp;
+use crate::side_table::{self, Named, SideKey, SideTable};
 use serde::{Deserialize, Serialize};
 
 // A local operation journal, not an exported claim or caller-supplied authority.
 // Its initial row is committed while pre-receive still blocks every ref effect.
-const RECEIVE_PACK_INTENT_PREFIX: &[u8] = b"origin:receive_pack_intent:v1:";
+/// Crash-durable per-push intent journal recording every proposed ref move before any effect
+/// lands, keyed by repo identity then operation id. Key: string(repo identity hex) + id16
+/// (operation id), with NO separator — the repo identity hex is always the fixed-length hash
+/// spelling, so the trailing 16 raw bytes are unambiguous.
+const INTENTS: SideTable<ReceivePackIntentKey, ReceivePackIntent, Named> =
+    SideTable::new(&side_table::ORIGIN_RECEIVE_PACK_INTENT);
+
+pub(super) struct ReceivePackIntentKey {
+    repo_identity_hex: String,
+    operation_id: EntityId,
+}
+
+impl SideKey for ReceivePackIntentKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.repo_identity_hex.as_bytes());
+        self.operation_id.encode_into(out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let id_start = bytes.len().checked_sub(16)?;
+        let (text_bytes, id_bytes) = bytes.split_at(id_start);
+        Some(Self {
+            repo_identity_hex: String::from_utf8(text_bytes.to_vec()).ok()?,
+            operation_id: EntityId::from_bytes(id_bytes.try_into().ok()?).ok()?,
+        })
+    }
+}
 
 /// Per-ref completion, independent of the backend's transport success.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,13 +107,12 @@ pub(super) struct ReceivePackIntent {
     pointers: Vec<(String, String, u64)>,
 }
 
-fn receive_pack_intent_prefix(vault: &Vault, repo_root: &Path) -> Result<Vec<u8>> {
-    let mut key = RECEIVE_PACK_INTENT_PREFIX.to_vec();
+fn receive_pack_repo_identity_hex(vault: &Vault, repo_root: &Path) -> Result<String> {
     // Authority and the coordinator name the object store, not a worktree.
     // A cutover from any linked root must drain every accepted operation.
-    let identity = GitWire::new(vault)?.repository_identity(repo_root)?;
-    key.extend_from_slice(identity.as_hex().as_bytes());
-    Ok(key)
+    Ok(GitWire::new(vault)?
+        .repository_identity(repo_root)?
+        .as_hex())
 }
 
 impl Vault {
@@ -158,28 +184,27 @@ impl Vault {
                 })
                 .collect(),
         };
-        let mut key = receive_pack_intent_prefix(self, &root)?;
-        key.extend_from_slice(stamp.operation_id.as_bytes());
-        let encoded = rmp_serde::to_vec_named(&intent)
-            .map_err(|_| receive_pack_provenance_refused("intent does not encode"))?;
+        let key = ReceivePackIntentKey {
+            repo_identity_hex: receive_pack_repo_identity_hex(self, &root)?,
+            operation_id: stamp.operation_id,
+        };
+        INTENTS.encode_value(&intent)?;
         self.with_write_txn(|wtxn| {
-            if self.store.vault_meta.get(wtxn, &key)?.is_some() {
+            if INTENTS.contains(&self.store, wtxn, &key)? {
                 return Err(receive_pack_provenance_refused("intent already exists"));
             }
-            self.store.vault_meta.put(wtxn, &key, &encoded)?;
+            INTENTS.put(&self.store, wtxn, &key, &intent)?;
             Ok(())
         })
     }
 
     pub(super) fn save_receive_pack_intent(
         &self,
-        key: &[u8],
+        key: &ReceivePackIntentKey,
         intent: &ReceivePackIntent,
     ) -> Result<()> {
-        let encoded = rmp_serde::to_vec_named(intent)
-            .map_err(|_| receive_pack_provenance_refused("intent does not encode"))?;
         self.with_write_txn(|wtxn| {
-            self.store.vault_meta.put(wtxn, key, &encoded)?;
+            INTENTS.put(&self.store, wtxn, key, intent)?;
             Ok(())
         })
     }
@@ -214,30 +239,25 @@ impl Vault {
     pub(super) fn receive_pack_intents(
         &self,
         repo_root: &Path,
-    ) -> Result<Vec<(Vec<u8>, ReceivePackIntent)>> {
-        let prefix = receive_pack_intent_prefix(self, repo_root)?;
+    ) -> Result<Vec<(ReceivePackIntentKey, ReceivePackIntent)>> {
+        let repo_identity_hex = receive_pack_repo_identity_hex(self, repo_root)?;
         let rtxn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
-        for (index, row) in self
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, &prefix)?
+        for (index, row) in INTENTS
+            .iter_from(&self.store, &rtxn, repo_identity_hex.as_bytes())?
             .enumerate()
         {
             if index >= super::publication::ORIGIN_PUBLICATION_MAX_ROWS {
                 return Err(Error::IndexOverflow("receive-pack intents"));
             }
-            let (key, value) = row?;
-            let intent = rmp_serde::from_slice(&value)
-                .map_err(|_| Error::CorruptedIndex("receive-pack intent"))?;
-            rows.push((key.to_vec(), intent));
+            rows.push(row?);
         }
         Ok(rows)
     }
 
     pub(super) fn resume_receive_pack_intent(
         &self,
-        key: &[u8],
+        key: &ReceivePackIntentKey,
         intent: &mut ReceivePackIntent,
     ) -> Result<(Option<ReceivePackOutcome>, Option<ReceivePackLanding>)> {
         if !intent

@@ -51,6 +51,7 @@ pub mod server_state;
 pub mod transport;
 pub mod types;
 pub mod window;
+pub(crate) mod window_rows;
 
 pub use client::{EphemeralChangeOrigin, SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
 pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};

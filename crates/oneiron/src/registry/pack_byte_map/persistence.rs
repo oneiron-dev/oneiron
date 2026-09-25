@@ -7,26 +7,42 @@ use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
 
-/// Local command state only. Never import or sync this key as authority.
-pub(super) const HEAD_KEY: &[u8] = b"pack_byte_map:local_head:v1";
 const CARRIER_DOMAIN: &[u8] = b"oneiron:pack-byte-map-carrier:v1";
+
+/// Local install-authority head pin: a singleton row. Local command state
+/// only — never import or sync this key as authority.
+pub(super) const HEAD_PIN: SideTable<(), HeadPin, Raw> =
+    SideTable::new(&side_table::PACK_BYTE_MAP_LOCAL_HEAD);
+
+pub(super) struct HeadPin(pub(super) [u8; 32]);
+
+impl RawValue for HeadPin {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let hash: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| invalid("invalid local pack map head pin"))?;
+        Ok(Self(hash))
+    }
+}
 
 pub(super) fn carrier_id(hash: &[u8; 32]) -> Result<EntityId> {
     entity_id_from_hash_material(CARRIER_DOMAIN, &[hash])
 }
 
 pub(super) fn read(store: &Store, txn: &RoTxn<'_>) -> Result<Option<PackByteMapSnapshot>> {
-    let Some(pin) = store.vault_meta.get(txn, HEAD_KEY)? else {
+    let Some(pin) = HEAD_PIN.get(store, txn, &())? else {
         return Ok(None);
     };
-    let hash: [u8; 32] = pin
-        .as_ref()
-        .try_into()
-        .map_err(|_| invalid("invalid local pack map head pin"))?;
+    let hash = pin.0;
     let id = carrier_id(&hash)?;
     let raw = store
         .entities
@@ -89,6 +105,6 @@ pub(super) fn persist(
     }
     // Pin publication and the ordinary ASSET write commit atomically. The
     // carrier alone can sync; the local install-authority pin never does.
-    vault.store.vault_meta.put(txn, HEAD_KEY, &hash)?;
+    HEAD_PIN.put(&vault.store, txn, &(), &HeadPin(hash))?;
     Ok(())
 }

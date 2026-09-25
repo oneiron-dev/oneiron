@@ -1,9 +1,9 @@
 //! Gate-family receipt projection, discriminators, and receipt record builders.
 
 use super::storage::{
-    RAMP_DEMOTION_KEY_PREFIX, RAMP_DEMOTION_OUTCOME, RAMP_DEMOTION_RECEIPT_PREFIX,
-    RAMP_DEMOTION_ROW_LABEL, RAMP_OUTCOME_KEY_PREFIX, RAMP_OUTCOME_RECEIPT_PREFIX,
-    RAMP_OUTCOME_ROW_LABEL, StoredDemotion, StoredRampOutcome, decode_ramp_row, ramp_row_key_id,
+    RAMP_DEMOTION, RAMP_DEMOTION_OUTCOME, RAMP_DEMOTION_RECEIPT_PREFIX, RAMP_DEMOTION_ROW_LABEL,
+    RAMP_OUTCOME, RAMP_OUTCOME_RECEIPT_PREFIX, RAMP_OUTCOME_ROW_LABEL, StoredDemotion,
+    StoredRampOutcome, validated_ramp_row,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -34,29 +34,23 @@ fn is_ramp_receipt(record: &ReceiptRecord, prefix: &str) -> bool {
 pub(crate) fn ramp_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, RAMP_OUTCOME_KEY_PREFIX)?
+    for entry in RAMP_OUTCOME
+        .iter_from(&vault.store, &rtxn, &[])?
         .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN)
     {
-        let (key, raw) = entry?;
-        let row: StoredRampOutcome = decode_ramp_row(&raw, RAMP_OUTCOME_ROW_LABEL)?;
-        let id = ramp_row_key_id(RAMP_OUTCOME_KEY_PREFIX, &key, RAMP_OUTCOME_ROW_LABEL)?;
+        let ((_, id), row) = entry?;
+        let row = validated_ramp_row(row, RAMP_OUTCOME_ROW_LABEL)?;
         let receipt = door_outcome_receipt_record(&id, &row);
         if query.matches(&receipt) {
             out.push(receipt);
         }
     }
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, RAMP_DEMOTION_KEY_PREFIX)?
+    for entry in RAMP_DEMOTION
+        .iter_from(&vault.store, &rtxn, &[])?
         .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN)
     {
-        let (key, raw) = entry?;
-        let row: StoredDemotion = decode_ramp_row(&raw, RAMP_DEMOTION_ROW_LABEL)?;
-        let id = ramp_row_key_id(RAMP_DEMOTION_KEY_PREFIX, &key, RAMP_DEMOTION_ROW_LABEL)?;
+        let ((_, id), row) = entry?;
+        let row = validated_ramp_row(row, RAMP_DEMOTION_ROW_LABEL)?;
         let receipt = demotion_receipt_record(&id, &row);
         if query.matches(&receipt) {
             out.push(receipt);

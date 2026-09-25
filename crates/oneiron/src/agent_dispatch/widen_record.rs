@@ -10,12 +10,23 @@ use crate::consent::{
 use crate::context_projection::{ChatProjection, ContextSpec, MemoryProjection};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 
 use super::{AgentDispatchTarget, AgentSpawnContext, DispatchAgent};
 
-pub(super) const WIDEN_PREFIX: &[u8] = b"agent.dispatch.widen.v1\0";
-pub(super) const PROPOSAL_PREFIX: &[u8] = b"agent.dispatch.widen_id.v1\0";
-pub(super) const SLICE_PREFIX: &[u8] = b"agent.dispatch.slice.v1\0";
+/// Pending context-widen proposal record. Key: `blake3` hash of the dedupe
+/// key or full intent.
+pub(super) const WIDEN: SideTable<[u8; 32], WidenRecord, LegacyJson> =
+    SideTable::new(&side_table::AGENT_DISPATCH_WIDEN_INTENT);
+/// Index from a widen proposal's public content-hash id to its intent row's
+/// full stored key (this module's pre-existing byte layout — see
+/// [`super::widen::AgentDispatcher::stored_widen_proposal`]). Key: hex64.
+pub(super) const PROPOSAL_INDEX: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::AGENT_DISPATCH_WIDEN_PROPOSAL_INDEX);
+/// Approved board-widened context slice override recorded for one parent
+/// attempt. Key: the parent attempt id.
+pub(super) const SLICE: SideTable<AttemptId, SliceOverride, LegacyJson> =
+    SideTable::new(&side_table::AGENT_DISPATCH_WIDEN_SLICE);
 
 /// A parked dispatch. This is a proposal, never a read or dispatch grant.
 #[derive(Debug, Clone, PartialEq)]
@@ -113,14 +124,12 @@ impl WidenIntent {
         ))
     }
 
-    pub(super) fn key(&self) -> Result<Vec<u8>> {
+    pub(super) fn key_hash(&self) -> Result<[u8; 32]> {
         let identity = match &self.dedupe_key {
             Some(key) => json(&("dedupe", key))?,
             None => json(self)?,
         };
-        let mut key = WIDEN_PREFIX.to_vec();
-        key.extend_from_slice(blake3::hash(&identity).as_bytes());
-        Ok(key)
+        Ok(*blake3::hash(&identity).as_bytes())
     }
 }
 
@@ -189,7 +198,7 @@ pub(super) struct SliceOverride {
     pub spec: ContextSpec,
 }
 
-pub(super) fn proposal_key(id: &str) -> Result<Vec<u8>> {
+pub(super) fn validate_proposal_id(id: &str) -> Result<()> {
     if id.len() != 64
         || !id
             .bytes()
@@ -197,23 +206,11 @@ pub(super) fn proposal_key(id: &str) -> Result<Vec<u8>> {
     {
         return Err(invalid("widen proposal id is not a canonical digest"));
     }
-    let mut key = PROPOSAL_PREFIX.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    Ok(key)
-}
-
-pub(super) fn slice_key(attempt: AttemptId) -> Vec<u8> {
-    let mut key = SLICE_PREFIX.to_vec();
-    key.extend_from_slice(attempt.as_bytes());
-    key
+    Ok(())
 }
 
 pub(super) fn json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(|_| invalid("widen record does not encode"))
-}
-
-pub(super) fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    serde_json::from_slice(bytes).map_err(|_| invalid("widen record does not decode"))
 }
 
 pub(super) fn invalid(message: &'static str) -> Error {

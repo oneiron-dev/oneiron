@@ -9,6 +9,7 @@ use crate::authority::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, RecordError, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::vault::Vault;
 
 // ---------------------------------------------------------------------------
@@ -31,18 +32,30 @@ pub const PEER_AUTHORITY_KEY_PREFIX: &str = "peerauth:";
 /// idempotent at any size, including at the ceiling.
 pub const MAX_PEER_AUTHORITY_ENTRIES_PER_PEER: usize = 4096;
 
+/// Admitted peer AUTHORITY_LOG entry bytes. Key: `{peer_vault_id_hex}:{entry_hash_hex}`
+/// (after the `peerauth:` table prefix).
+const PEER_AUTHORITY: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::PEER_AUTHORITY_ENTRY);
+
 /// `peerauth:{peer_vault_id_hex}:{entry_hash_hex}`.
 #[must_use]
 pub fn peer_authority_entry_key(peer_vault_id: &[u8; 32], entry_hash: &[u8; 32]) -> String {
-    let mut key = peer_authority_prefix(peer_vault_id);
+    let mut key = String::from(PEER_AUTHORITY_KEY_PREFIX);
+    key.push_str(&peer_authority_row_key(peer_vault_id, entry_hash));
+    key
+}
+
+/// `{peer_vault_id_hex}:{entry_hash_hex}` — [`PEER_AUTHORITY`]'s key for one entry, the bytes
+/// after the shared `peerauth:` table prefix.
+fn peer_authority_row_key(peer_vault_id: &AuthorityVaultId, entry_hash: &[u8; 32]) -> String {
+    let mut key = peer_authority_row_prefix(peer_vault_id);
     key.push_str(&bytes_to_hex_lower(entry_hash));
     key
 }
 
-/// `peerauth:{peer_vault_id_hex}:` — the scan prefix for ONE peer.
-fn peer_authority_prefix(peer_vault_id: &AuthorityVaultId) -> String {
-    let mut prefix = String::with_capacity(PEER_AUTHORITY_KEY_PREFIX.len() + 66);
-    prefix.push_str(PEER_AUTHORITY_KEY_PREFIX);
+/// `{peer_vault_id_hex}:` — [`PEER_AUTHORITY`]'s scan prefix for ONE peer.
+fn peer_authority_row_prefix(peer_vault_id: &AuthorityVaultId) -> String {
+    let mut prefix = String::with_capacity(66);
     prefix.push_str(&bytes_to_hex_lower(peer_vault_id));
     prefix.push(':');
     prefix
@@ -76,23 +89,21 @@ pub fn admit_peer_authority_log_entry(
     if entry_vault_id != *peer_vault_id {
         return Err(peer_authority_vault_mismatch());
     }
-    let key = peer_authority_entry_key(peer_vault_id, &authority_entry_hash(&entry)?);
-    let prefix = peer_authority_prefix(peer_vault_id);
+    let key = peer_authority_row_key(peer_vault_id, &authority_entry_hash(&entry)?);
+    let prefix = peer_authority_row_prefix(peer_vault_id);
     vault.with_write_txn(|wtxn| {
-        if vault.store.sync_state.get(wtxn, &key)?.is_some() {
+        if PEER_AUTHORITY.contains(&vault.store, wtxn, &key)? {
             return Ok(());
         }
-        let mut distinct = 0usize;
-        for row in vault.store.sync_state.prefix_iter(wtxn, &prefix)? {
-            row?;
-            distinct += 1;
-        }
+        let distinct = PEER_AUTHORITY
+            .scan_keys(&vault.store, wtxn, prefix.as_bytes())?
+            .len();
         if distinct >= MAX_PEER_AUTHORITY_ENTRIES_PER_PEER {
             return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
                 "peer authority log flood",
             )));
         }
-        vault.store.sync_state.put(wtxn, &key, bytes)?;
+        PEER_AUTHORITY.put(&vault.store, wtxn, &key, &bytes.to_vec())?;
         Ok(())
     })
 }
@@ -106,11 +117,8 @@ pub fn peer_authority_roster(
     peer_vault_id: &AuthorityVaultId,
 ) -> Result<AuthorityFold> {
     let rtxn = vault.store.env.read_txn()?;
-    let fold = fold_peer_authority_log(&peer_authority_entries_in_txn(
-        vault,
-        &rtxn,
-        &peer_authority_prefix(peer_vault_id),
-    )?);
+    let fold =
+        fold_peer_authority_log(&peer_authority_entries_in_txn(vault, &rtxn, peer_vault_id)?);
     if fold.vault_id != Some(*peer_vault_id) {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
             "peer authority fold root mismatch",
@@ -150,13 +158,9 @@ pub(crate) fn admitted_peer_consent_roots_for_store_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>> {
     let mut by_peer: BTreeMap<String, Vec<AuthorityLogEntry>> = BTreeMap::new();
-    for row in store
-        .sync_state
-        .prefix_iter(txn, PEER_AUTHORITY_KEY_PREFIX)?
-    {
-        let (key, raw) = row?;
+    for (key, raw) in PEER_AUTHORITY.scan(store, txn)? {
         by_peer
-            .entry(peer_authority_row_prefix(&key)?)
+            .entry(peer_authority_row_key_group(&key)?)
             .or_default()
             .push(decode_peer_authority_row(&raw)?);
     }
@@ -164,7 +168,7 @@ pub(crate) fn admitted_peer_consent_roots_for_store_in_txn(
     for (prefix, entries) in by_peer {
         let fold = fold_peer_authority_log(&entries);
         if let Some(vault_id) = fold.vault_id
-            && peer_authority_prefix(&vault_id) == prefix
+            && peer_authority_row_prefix(&vault_id) == prefix
         {
             roots.insert(vault_id, peer_consent_roots(&fold));
         }
@@ -175,14 +179,17 @@ pub(crate) fn admitted_peer_consent_roots_for_store_in_txn(
 fn peer_authority_entries_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    prefix: &str,
+    peer_vault_id: &AuthorityVaultId,
 ) -> Result<Vec<AuthorityLogEntry>> {
-    let mut entries = Vec::new();
-    for row in vault.store.sync_state.prefix_iter(txn, prefix)? {
-        let (_key, raw) = row?;
-        entries.push(decode_peer_authority_row(&raw)?);
-    }
-    Ok(entries)
+    PEER_AUTHORITY
+        .scan_from(
+            &vault.store,
+            txn,
+            peer_authority_row_prefix(peer_vault_id).as_bytes(),
+        )?
+        .into_iter()
+        .map(|(_, raw)| decode_peer_authority_row(&raw))
+        .collect()
 }
 
 /// Decodes one STORED peer row.
@@ -196,16 +203,15 @@ fn decode_peer_authority_row(raw: &[u8]) -> Result<AuthorityLogEntry> {
         .map_err(|_| Error::CorruptedIndex("peer authority log row"))
 }
 
-/// `peerauth:{peer}:` — the grouping prefix of one stored row's key.
+/// `{peer}:` — the grouping prefix of one stored row's key (after the table prefix).
 ///
 /// Derived by position rather than by parsing hex: the id itself comes back
 /// from the fold, and re-deriving the prefix from THAT is what proves the rows
 /// were filed under the vault they actually root at.
-fn peer_authority_row_prefix(key: &str) -> Result<String> {
+fn peer_authority_row_key_group(key: &str) -> Result<String> {
     let end = key
-        .match_indices(':')
-        .nth(1)
-        .map(|(index, _)| index + 1)
+        .find(':')
+        .map(|index| index + 1)
         .ok_or(Error::CorruptedIndex("peer authority log row key"))?;
     Ok(key[..end].to_owned())
 }

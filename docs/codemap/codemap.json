@@ -280,7 +280,7 @@
      "path": "src/affect/annotation.rs",
      "purpose": "Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -734,7 +734,7 @@
      "path": "src/agent_dispatch/widen_record.rs",
      "purpose": "Exact, durable widen intents",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 18,
       "struct": 1
      }
     },
@@ -779,7 +779,7 @@
      "path": "src/agent_dispatch/workflow_record.rs",
      "purpose": "Durable, inert workflow admission and result provenance",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 1,
       "struct": 2
@@ -1751,7 +1751,7 @@
      "path": "src/authority/first_seen_clock.rs",
      "purpose": "First-seen sidecar keys and the per-vault logical observation clock",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 17
      }
     },
     {
@@ -2297,7 +2297,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/vault_api.rs",
@@ -2882,7 +2882,7 @@
      "purpose": "Sync-gated import receipt codec, key consts, and status types",
      "surface": {
       "const": 4,
-      "crate-vis": 7,
+      "crate-vis": 10,
       "enum": 3,
       "fn": 3,
       "struct": 3
@@ -3311,7 +3311,7 @@
      "path": "src/batch/types.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -3655,6 +3655,7 @@
      "path": "src/blob_artifact/esign/seal.rs",
      "purpose": "Lease-fenced native seal job",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -3675,7 +3676,7 @@
      "path": "src/blob_artifact/esign/signature_image.rs",
      "purpose": "Capability-bound, decoded and re-encoded signature images",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -3778,7 +3779,7 @@
      "purpose": "Blob vault_meta key builders and shared MessagePack scalar helpers",
      "surface": {
       "const": 2,
-      "crate-vis": 12
+      "crate-vis": 10
      }
     },
     {
@@ -3799,7 +3800,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 7,
       "struct": 1
      }
@@ -4079,7 +4080,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 30
+      "crate-vis": 35
      }
     },
     {
@@ -4160,7 +4161,7 @@
      "path": "src/booking/companion_preset/storage.rs",
      "purpose": "Companion proposal row storage, token hashing, and error constructors",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 5
      }
     },
     {
@@ -4307,7 +4308,7 @@
      "path": "src/booking/emergency_reschedule/lookup.rs",
      "purpose": "Disposable lookup rows derived from the existing plans and checkpoints",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -4337,7 +4338,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 11,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -4580,7 +4581,7 @@
      "path": "src/booking/lifecycle/mod.rs",
      "purpose": "ONE-1813 [BK-02] booking lifecycle verbs",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 14,
       "re-export": 5
      }
     },
@@ -4621,7 +4622,7 @@
      "path": "src/booking/lifecycle/storage.rs",
      "purpose": "The single-writer lease and the vault_meta/receipt key-value primitives, the versioned row codec, the…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 17
      }
     },
     {
@@ -4644,7 +4645,7 @@
      "path": "src/booking/lifecycle/token.rs",
      "purpose": "Opaque bearer credentials and session keys: minting, domain-separated digests, and the token/hold row reads…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -5170,7 +5171,7 @@
      "path": "src/calendar/connectors/outbound.rs",
      "purpose": "Conditional writes plus durable outbox and remote-object cursor store",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 2,
       "fn": 3,
       "struct": 2
@@ -5593,7 +5594,6 @@
      "path": "src/calendar/passport.rs",
      "purpose": "UID-first passport index and feed diff (CAL-02, ONE-1784)",
      "surface": {
-      "const": 1,
       "crate-vis": 5,
       "enum": 1,
       "fn": 7
@@ -5993,7 +5993,7 @@
      "path": "src/campaign/compliance/pack_store.rs",
      "purpose": "Seed loading, pack validation/coverage, and vault persistence plus msgpack encode/decode",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -6013,8 +6013,8 @@
      "path": "src/campaign/compliance/rules.rs",
      "purpose": "Pack identity consts, predicates, rule-row types, and the CompliancePack container",
      "surface": {
-      "const": 7,
-      "crate-vis": 11,
+      "const": 6,
+      "crate-vis": 9,
       "enum": 4,
       "struct": 4
      }
@@ -6120,10 +6120,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/campaign/enrollment/storage.rs",
-     "purpose": "Shared campaign-enrollment storage primitives: schema version, key prefixes, JSON-row codecs, and vault_meta…",
+     "purpose": "Shared campaign-enrollment storage primitives: schema version and hex/JSON row helpers",
      "surface": {
       "const": 2,
-      "crate-vis": 15
+      "crate-vis": 7
      }
     },
     {
@@ -6659,7 +6659,7 @@
      "path": "src/channel_identity_autonomy/codec.rs",
      "purpose": "The typed error, MessagePack value helpers, vault-meta key/address derivation, envelope/mode value codecs…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 26
      }
     },
     {
@@ -7150,7 +7150,7 @@
      "path": "src/checkout/lease/codec.rs",
      "purpose": "Lease storage codec: vault_meta key builders, txn load/store, and MessagePack codecs",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 17,
       "fn": 1
      }
     },
@@ -7174,7 +7174,7 @@
      "path": "src/checkout/lease/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "re-export": 3
      }
     },
@@ -7696,7 +7696,7 @@
      "path": "src/code_document/codec.rs",
      "purpose": "Strict durable document rows and canonical operation folds",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -7730,7 +7730,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 9
      }
     },
@@ -7933,9 +7933,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_revision/keys.rs",
-     "purpose": "Vault-meta key builders for the code-revision row families",
+     "purpose": "Typed side tables for the code-revision row families: finalized records, forks, per-revision integrity…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 7
      }
     },
     {
@@ -8927,7 +8927,7 @@
      "path": "src/code_symbol/keys.rs",
      "purpose": "Manifest and revision-index key families and the deterministic symbol entity id",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 10,
       "fn": 2
      }
     },
@@ -9209,7 +9209,7 @@
      "path": "src/comm/parties.rs",
      "purpose": "Node-local party shortcut vs synced PERSON truth plus twin reconciliation",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -9241,7 +9241,7 @@
      "path": "src/comm/records.rs",
      "purpose": "COMM_RECORD event/gate/receipt storage, MessagePack codec and shared value helpers",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 23
      }
     },
     {
@@ -9886,7 +9886,7 @@
      "path": "src/connector_key/accounting.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 2,
       "enum": 1,
       "fn": 6
@@ -10024,7 +10024,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "struct": 5
      }
     },
@@ -10141,8 +10141,7 @@
      "path": "src/connector_key/txn.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
-      "crate-vis": 16,
+      "crate-vis": 14,
       "struct": 1
      }
     },
@@ -10201,7 +10200,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 2
      }
     },
@@ -10304,7 +10303,7 @@
      "path": "src/consent/support.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 17
      }
     },
     {
@@ -10417,9 +10416,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/consent_graduation/storage.rs",
-     "purpose": "vault_meta keyspace builders, msgpack codec, stored-row converters and version guard",
+     "purpose": "Typed side-table bindings, stored-row converters and version guard",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 19
      }
     },
     {
@@ -11690,7 +11689,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -11776,7 +11775,7 @@
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
      }
     },
     {
@@ -11979,7 +11978,6 @@
      "path": "src/counterparty_contact/storage.rs",
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
-      "const": 1,
       "crate-vis": 12,
       "fn": 2
      }
@@ -12139,6 +12137,7 @@
      "purpose": "Multi-critic review node primitives",
      "surface": {
       "const": 5,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 22,
       "mod": 1,
@@ -12311,7 +12310,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 5
      }
     },
@@ -12399,7 +12398,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 17,
+      "crate-vis": 21,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -12576,7 +12575,7 @@
      "path": "src/disclosure/vault_context.rs",
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 11,
       "struct": 2
      }
@@ -12992,6 +12991,7 @@
      "path": "src/dreamer_consolidation/routing.rs",
      "purpose": "Three consolidation lanes: free keyed equality, scoped conflicts, cosine nominations",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
       "struct": 2,
       "type": 1
@@ -13040,7 +13040,7 @@
      "purpose": "—",
      "surface": {
       "const": 10,
-      "crate-vis": 32
+      "crate-vis": 29
      }
     },
     {
@@ -13189,7 +13189,7 @@
      "purpose": "Skip and round receipt rows: keys, codec, atomic write, and the Extraction projector",
      "surface": {
       "const": 4,
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -13292,7 +13292,7 @@
      "path": "src/dreamer_runner/admission.rs",
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 6,
       "fn": 13
      }
     },
@@ -13360,7 +13360,7 @@
      "path": "src/dreamer_runner/codec.rs",
      "purpose": "MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 30,
       "fn": 2
      }
     },
@@ -13387,7 +13387,7 @@
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
       "const": 16,
-      "crate-vis": 43
+      "crate-vis": 34
      }
     },
     {
@@ -13559,7 +13559,7 @@
      "path": "src/dreamer_runner/milestone.rs",
      "purpose": "Durable Dreamer milestone claims: the index doors, the F4 binding check, and the pinned claim-value shape",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -13603,7 +13603,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 13,
       "struct": 1
      }
@@ -13954,7 +13954,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/attribution/evidence_judge.rs",
@@ -13990,9 +13990,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/attribution/stored.rs",
-     "purpose": "Stored rows: key prefixes, row shapes, and the row codec",
+     "purpose": "Stored rows: key shapes, row shapes, and the row codec",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 26
      }
     },
     {
@@ -14100,7 +14100,7 @@
      "path": "src/edit_distance/escalation/ledger.rs",
      "purpose": "Escalation write doors, N dial, per-scope stats",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 3,
       "fn": 4
      }
@@ -14145,7 +14145,7 @@
      "path": "src/edit_distance/escalation/storage.rs",
      "purpose": "Stored rows, msgpack codec, key builders, token parsers",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 24
      }
     },
     {
@@ -14171,7 +14171,7 @@
      "purpose": "Public domain types: triggers, rulings, policy rows, stats",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 6,
       "struct": 3
@@ -14188,7 +14188,7 @@
      "path": "src/edit_distance/graduation/answers.rs",
      "purpose": "Offer answers and the snooze-state machine",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 5
      }
@@ -14280,8 +14280,8 @@
      "path": "src/edit_distance/miner/config.rs",
      "purpose": "ED-04 miner dials, pinned keys, labels and the tone lexicon",
      "surface": {
-      "const": 4,
-      "crate-vis": 31
+      "const": 3,
+      "crate-vis": 28
      }
     },
     {
@@ -14481,7 +14481,7 @@
      "path": "src/edit_distance/publisher/dial.rs",
      "purpose": "Publisher share dial: explicit, install-profile, and compiled-default resolution",
      "surface": {
-      "const": 3,
+      "const": 1,
       "fn": 3
      }
     },
@@ -14537,7 +14537,7 @@
      "path": "src/edit_distance/publisher/signature_store.rs",
      "purpose": "Stored signature rows: codec and vault_meta keys",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -14612,7 +14612,7 @@
      "path": "src/edit_distance/routing/keys.rs",
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 21
      }
     },
     {
@@ -14873,7 +14873,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 32
+      "crate-vis": 31
      }
     },
     {
@@ -15181,7 +15181,7 @@
      "path": "src/entity_doc/forks.rs",
      "purpose": "Durable divergences, entity-bound grant admission and atomic fork-set settlement",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 12,
       "enum": 3,
       "fn": 7,
       "struct": 4
@@ -15219,6 +15219,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -15239,6 +15240,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/side_keys.rs",
+     "purpose": "Colon-joined composite key shapes shared by several entity-document side-table rows",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -15247,7 +15258,7 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage and row-pointer migration",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 1
      }
@@ -15464,6 +15475,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SideTableRowProblem",
       "StoreError",
       "VaultRootEntry",
       "VaultRootProblem"
@@ -15472,7 +15484,7 @@
      "purpose": "Store-domain errors: the vault-root preflight and the index/analyzer compatibility refusals a store open or…",
      "surface": {
       "crate-vis": 2,
-      "enum": 3
+      "enum": 4
      }
     },
     {
@@ -17248,7 +17260,7 @@
      "path": "src/git_wire/record.rs",
      "purpose": "Durable journal row: record state machine, key builders, MessagePack codec, stored conversions",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 18,
       "enum": 3,
       "fn": 7,
       "struct": 2
@@ -17644,7 +17656,7 @@
      "path": "src/human_task/storage.rs",
      "purpose": "vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 9
      }
     },
     {
@@ -17665,7 +17677,7 @@
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -17780,7 +17792,7 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 10
      }
     },
@@ -17855,20 +17867,20 @@
      "path": "src/identity_topology/reassignment_map.rs",
      "purpose": "The ONE-1745 reassignment projection end to end: the typed map model, its canonical wire codec, and the…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 2,
       "struct": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/identity_topology/replicated_event_validation.rs",
      "purpose": "Sync-path ingest for the type-76 family: event reads, participant and actor validation shared with the local…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -17950,7 +17962,7 @@
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
       "const": 2,
-      "crate-vis": 47
+      "crate-vis": 46
      }
     },
     {
@@ -17965,7 +17977,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "InboxAmendedApproval",
@@ -17985,7 +17997,7 @@
      "purpose": "Public inbox DTOs, surfacing-dial/exception-class/bulk-verb enums, and inbox constants",
      "surface": {
       "const": 4,
-      "crate-vis": 13,
+      "crate-vis": 12,
       "enum": 3,
       "fn": 5,
       "struct": 9
@@ -19106,7 +19118,7 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 167,
       "re-export": 71
      }
@@ -19128,8 +19140,8 @@
      "path": "src/linear_sync/codec.rs",
      "purpose": "Stable link keys, operation/event digests, field hashes",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -19153,6 +19165,7 @@
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
+      "crate-vis": 1,
       "re-export": 4
      }
     },
@@ -19180,7 +19193,7 @@
      "path": "src/linear_sync/model.rs",
      "purpose": "Link/issue/mirror domain types, port traits, result aliases, conflict and receipt types",
      "surface": {
-      "const": 12,
+      "const": 11,
       "crate-vis": 7,
       "enum": 3,
       "fn": 5,
@@ -19260,7 +19273,7 @@
      "path": "src/linkedin_connector/normalize_keys.rs",
      "purpose": "Key builders, thread/message id normalization, and bounded validators",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 17
      }
     },
     {
@@ -19726,9 +19739,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/questions/store.rs",
-     "purpose": "Immutable question versions and a CAS-updated scheduling head in vault_meta",
+     "purpose": "Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 12,
       "fn": 4
      }
     },
@@ -20077,7 +20090,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -20103,7 +20116,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/step_state.rs",
-     "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in vault_meta",
+     "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in the typed `DREAMER_STEP_STATE` side…",
      "surface": {
       "crate-vis": 5
      }
@@ -20153,7 +20166,7 @@
      "purpose": "Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome",
      "surface": {
       "const": 8,
-      "crate-vis": 42,
+      "crate-vis": 36,
       "enum": 5,
       "fn": 3,
       "struct": 2,
@@ -21162,7 +21175,7 @@
      "path": "src/memory/witness/stream/storage.rs",
      "purpose": "Fixed per-handle recovery metadata and terminal audit",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -21393,7 +21406,7 @@
      "path": "src/note/citation_erase.rs",
      "purpose": "Hard-erase dependency fences",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -21403,7 +21416,7 @@
      "path": "src/note/citation_scrub.rs",
      "purpose": "Pin-only live-state rebuild",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -21436,7 +21449,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/note/document_store.rs",
@@ -21467,7 +21480,7 @@
      "path": "src/note/documents.rs",
      "purpose": "Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -21580,7 +21593,7 @@
      "path": "src/note/pin_index.rs",
      "purpose": "Exact citation dependency indexes shared by sync and featureless erasure",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 13
      }
     },
     {
@@ -21603,7 +21616,7 @@
      "path": "src/note/proposals.rs",
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -21633,8 +21646,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/note/side_keys.rs",
+     "purpose": "Colon-joined composite key shapes shared by several NOTE side-table rows",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/note/storage.rs",
      "purpose": "Canonical entity-document carriers shared by local NOTE edits and sync",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/sync_rows.rs",
+     "purpose": "The NOTE-adjacent per-entity `sync_state` workflow rows swept alongside the canonical entity-document family",
      "surface": {
       "crate-vis": 7
      }
@@ -21745,7 +21778,7 @@
      "path": "src/off_record/lifecycle/types.rs",
      "purpose": "Public records, enums, constants and the executor-utterance label shared by all off-record children",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 2,
       "struct": 2
@@ -21783,7 +21816,7 @@
      "path": "src/off_record/promote.rs",
      "purpose": "Explicit promotion from an off-record session into the durable vault",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "fn": 1,
       "struct": 2
      }
@@ -21873,13 +21906,13 @@
      "purpose": "Canonical BLAKE3 chunk manifests and vault-private FastCDC parameters",
      "surface": {
       "const": 3,
-      "crate-vis": 12,
+      "crate-vis": 9,
       "fn": 7,
       "struct": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/origin/lfs/lifecycle.rs",
@@ -21966,8 +21999,8 @@
      "path": "src/origin/lfs/store.rs",
      "purpose": "Object plane: Vault adapter methods, shared expectation gate, key builders, record codec",
      "surface": {
-      "const": 7,
-      "crate-vis": 4,
+      "const": 5,
+      "crate-vis": 7,
       "fn": 12,
       "struct": 2
      }
@@ -22019,7 +22052,7 @@
      "path": "src/origin/publication/publication_codec.rs",
      "purpose": "Key builders, journal row codec, bounded-failure helper, and deterministic ids and claim builders",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 16,
       "fn": 5
      }
     },
@@ -22086,8 +22119,7 @@
      "path": "src/origin/publication/publication_types.rs",
      "purpose": "Pinned constants, protocol enums with string tables, and request/record/receipt/report types",
      "surface": {
-      "const": 15,
-      "crate-vis": 1,
+      "const": 11,
       "enum": 3,
       "fn": 9,
       "struct": 4
@@ -22235,7 +22267,7 @@
      "path": "src/origin/smart_http/intent.rs",
      "purpose": "The crash-durable per-ref intent journal and its reconcile/resume path",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -22987,7 +23019,7 @@
      "path": "src/outbound_grant/index.rs",
      "purpose": "Principal index maintenance and lookup",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -23085,7 +23117,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 17
      }
     },
     {
@@ -24911,7 +24943,7 @@
      "path": "src/provider_confidence/indexes.rs",
      "purpose": "Disposable provider actor and prior-head indexes over stored graph truth",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -25368,7 +25400,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CanonicalDocument",
@@ -25378,7 +25410,7 @@
      "path": "src/recovery/document.rs",
      "purpose": "Canonical entity-local documents and their bound workflows",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "fn": 1,
       "struct": 3
      }
@@ -25400,7 +25432,7 @@
      "path": "src/recovery/document/workflow.rs",
      "purpose": "Durable NOTE workflow capture and reference validation without CRDT op IDs",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 5
      }
     },
     {
@@ -25541,7 +25573,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/registry/pack_byte_map/doors.rs",
@@ -25578,7 +25610,7 @@
      "path": "src/registry/pack_byte_map/persistence.rs",
      "purpose": "Content-addressed ASSET custody plus a vault-local install-authority head pin",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -25760,7 +25792,7 @@
      "path": "src/repo_mutation/proposal.rs",
      "purpose": "Durable per-operation code proposals",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 6,
       "struct": 1
@@ -25794,7 +25826,7 @@
      "path": "src/repo_mutation/snapshot.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -26314,7 +26346,7 @@
      "path": "src/saved_query/storage.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 24
      }
     },
     {
@@ -26488,7 +26520,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/secret_lease/doors.rs",
@@ -26619,8 +26651,7 @@
      "path": "src/secret_snapshot.rs",
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)",
      "surface": {
-      "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 3
      }
@@ -27423,6 +27454,94 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/codec.rs",
+     "purpose": "The value codecs a side table may declare",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/mod.rs",
+     "purpose": "The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`, one entry each",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/sync_state.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/vault_meta_a_c.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/vault_meta_d_l.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/vault_meta_m_r.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/vault_meta_s_z.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/key.rs",
+     "purpose": "Key types: what a table's key contributes after its declared prefix",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/mod.rs",
+     "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
+     "surface": {
+      "crate-vis": 33
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/side_table/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -27552,7 +27671,7 @@
      "path": "src/skill_attribution/codec.rs",
      "purpose": "Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 9
      }
     },
     {
@@ -27698,7 +27817,7 @@
      "purpose": "The stale fold: the reverse source index, the staleness note, and the deletion-time sweep that stales every…",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 1
      }
@@ -28189,7 +28308,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "SharedSkillMergeAsk",
@@ -28345,7 +28464,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 5,
+      "crate-vis": 7,
       "re-export": 5
      }
     },
@@ -28495,7 +28614,7 @@
      "path": "src/skill_reliability/codec.rs",
      "purpose": "The msgpack map accessors and value encode/decode this module’s rows are read through",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 10
      }
     },
     {
@@ -28518,7 +28637,7 @@
      "purpose": "The durable per-(skill, receipt) outcome ledger: the contributing-win door and the tallies read off it",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -28600,7 +28719,7 @@
      "path": "src/skill_scan.rs",
      "purpose": "Deterministic static skill scanning and the activation risk consult",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 2,
       "enum": 1,
       "fn": 5
@@ -28716,7 +28835,7 @@
      "path": "src/store/gate_decision/keys.rs",
      "purpose": "Gate-decision ledger key prefixes, key constructors, and the id successor",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 15
      }
     },
     {
@@ -28726,7 +28845,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -28747,7 +28866,7 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "re-export": 1
      }
     },
@@ -28800,7 +28919,7 @@
      "path": "src/store/handle.rs",
      "purpose": "The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 10,
       "struct": 4
      }
     },
@@ -28864,7 +28983,7 @@
      "path": "src/store/open_gates/mod.rs",
      "purpose": "`Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "re-export": 1
      }
     },
@@ -28923,7 +29042,7 @@
      "path": "src/store/outbound_send_receipt.rs",
      "purpose": "Outbound gate bindings, durable send receipts, and the delivered-send idempotency index",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -28963,7 +29082,7 @@
      "path": "src/store/pending_gate_consent/keys.rs",
      "purpose": "Vault-meta key prefixes, key builders, upper bounds, and key-parsing helpers for pending gate-consent rows",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 15
      }
     },
     {
@@ -28987,7 +29106,7 @@
      "path": "src/store/pending_gate_consent/records.rs",
      "purpose": "Pending gate-consent record and index-state types, ABI-pinned versions, msgpack codecs, and validation",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 13,
       "struct": 2
      }
     },
@@ -28998,7 +29117,7 @@
      "path": "src/store/pending_gate_consent/sequence_sweep.rs",
      "purpose": "Monotonic sequence allocator, high-water read, and sweep-state cursors for expiry/list sweeps",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -29008,7 +29127,7 @@
      "path": "src/store/pending_gate_consent/tray.rs",
      "purpose": "Pending gate-consent tray lifecycle: put/get/delete, resolution into the decision ledger, and ordered reads",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -29019,7 +29138,7 @@
      "path": "src/store/ppr_community.rs",
      "purpose": "Bounded, local community snapshots in the existing `vault_meta` database",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -29159,7 +29278,7 @@
      "path": "src/store/short_id_alias.rs",
      "purpose": "Legacy short-id alias rows: resolve/insert/retarget, the short-id counter key, and the short-id prefix…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 14,
       "enum": 1
      }
     },
@@ -29180,7 +29299,7 @@
      "path": "src/store/structural_kind_registry/registry.rs",
      "purpose": "Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 14
      }
     },
     {
@@ -29471,7 +29590,7 @@
      "path": "src/sweep/compact.rs",
      "purpose": "Window shallow-snapshot compaction and erased-id scrub",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -29792,7 +29911,7 @@
      "path": "src/sync/client/types.rs",
      "purpose": "Sync client configuration, events, and sync_state key constants",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 1,
       "struct": 2
@@ -29841,7 +29960,7 @@
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 13
      }
     },
     {
@@ -29880,7 +29999,7 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "fn": 13,
       "struct": 2
      }
@@ -29990,7 +30109,7 @@
      "purpose": "Device-lease registry for the REDACTION_AUDIT stream (ONE-1140)",
      "surface": {
       "const": 7,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 16,
       "mod": 1,
@@ -30074,7 +30193,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 18,
       "re-export": 14
      }
@@ -30184,7 +30303,7 @@
      "path": "src/sync/quarantine/reassert_drain.rs",
      "purpose": "ra: tombstone reassert markers, enqueue/pending/drain",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -30599,7 +30718,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "fn": 6,
       "mod": 1,
       "re-export": 5,
@@ -30645,6 +30764,16 @@
      "surface": {
       "crate-vis": 4,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window_rows.rs",
+     "purpose": "Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state…",
+     "surface": {
+      "crate-vis": 25
      }
     },
     {
@@ -30764,7 +30893,7 @@
      "purpose": "Module-level constants shared across the task-verb files",
      "surface": {
       "const": 1,
-      "crate-vis": 14
+      "crate-vis": 11
      }
     },
     {
@@ -30805,7 +30934,7 @@
      "path": "src/task_verb/consult_fanout_store.rs",
      "purpose": "Node-local frozen fan-out plans and transaction-owned surface sink",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
      }
     },
     {
@@ -30944,7 +31073,7 @@
      "path": "src/task_verb/follow_up.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -30959,7 +31088,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "VaultLinearTaskStore"
@@ -31039,7 +31168,7 @@
      "path": "src/task_verb/rate_limit.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -31305,7 +31434,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VaultWaveTaskPort"
@@ -31919,7 +32048,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ArchivedEntity",
@@ -31937,7 +32066,7 @@
      "purpose": "Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs",
      "surface": {
       "const": 13,
-      "crate-vis": 19,
+      "crate-vis": 17,
       "enum": 3,
       "fn": 7,
       "struct": 7
@@ -31982,7 +32111,7 @@
      "path": "src/vault_cleanup/person_provenance.rs",
      "purpose": "Mint-time evidence for the extraction-only PERSON cleanup arm",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -32059,7 +32188,7 @@
      "path": "src/vault_cleanup/scan.rs",
      "purpose": "Bounded rotating scans",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -32411,9 +32540,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/voice_identity/math_keys.rs",
-     "purpose": "Vector-math door (normalize/cosine/same-space check) and vault_meta key builders with the pointer==prefix…",
+     "purpose": "Vector-math door (normalize/cosine/same-space check) and the digest helper the typed side tables' keys are…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 9
      }
     },
     {
@@ -32453,7 +32582,7 @@
      "path": "src/voice_identity/storage_admission.rs",
      "purpose": "Sidecar row access, the one deletion routine, enrollment laws, and match/clustering/invite-elimination…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 28
      }
     },
     {
@@ -32492,7 +32621,7 @@
      "purpose": "Public domain types, request/receipt structs, thresholds, key prefixes, and validators",
      "surface": {
       "const": 3,
-      "crate-vis": 7,
+      "crate-vis": 3,
       "enum": 7,
       "fn": 17,
       "struct": 12
@@ -32627,7 +32756,7 @@
      "path": "src/workspace_roster/codec.rs",
      "purpose": "Roster reads, journal records, and canonical onboarding encodings",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 32
      }
     },
     {
@@ -32704,7 +32833,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MemberOnboardingOutcome",
@@ -32715,8 +32844,8 @@
      "path": "src/workspace_roster/records.rs",
      "purpose": "Pinned vault-meta prefixes, the step ladder, and stored roster/journal records",
      "surface": {
-      "const": 4,
-      "crate-vis": 5,
+      "const": 1,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 4,
       "struct": 2
@@ -34126,7 +34255,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34357,7 +34486,7 @@
      "purpose": "Durable batched speculation over real detached worktrees"
     },
     "note": {
-     "files": 28,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -34643,6 +34772,13 @@
      "layout": "file+dir",
      "purpose": "Revocable brief read grants"
     },
+    "side_table": {
+     "files": 10,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
+    },
     "skill": {
      "files": 9,
      "impl_vault": true,
@@ -34735,7 +34871,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34870,8 +35006,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2061,
-   "test_files": 703
+   "source_files": 2074,
+   "test_files": 704
   },
   "oneiron-android": {
    "files": [

@@ -17,15 +17,7 @@ pub(crate) fn admit_witness(
     input: &WitnessTurn,
     messages: &[EntityId],
 ) -> Result<()> {
-    if vault
-        .store
-        .vault_meta
-        .get(
-            txn,
-            &[super::super::project::ROOM_PROJECT, room.as_bytes()].concat(),
-        )?
-        .is_none()
-    {
+    if !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? {
         return Ok(());
     }
     let current_room = require_member(vault, txn, room, actor)?;
@@ -57,13 +49,12 @@ pub(crate) fn admit_witness(
             }
             for handle in handles {
                 let handle = handle.as_str().ok_or_else(invalid)?;
-                let key = [HANDLES, room.as_bytes(), handle.as_bytes()].concat();
                 // Unknown mentions fail closed rather than opening the turn
                 // to every companion in the room.
-                let bytes = vault.store.vault_meta.get(txn, &key)?.ok_or_else(invalid)?;
-                let addressed =
-                    EntityId::from_bytes(bytes.as_ref().try_into().map_err(|_| invalid())?)?
-                        .to_hex();
+                let addressed = HANDLES
+                    .get(&vault.store, txn, &(room, handle.to_owned()))?
+                    .ok_or_else(invalid)?
+                    .to_hex();
                 if !current_room.member_ids.contains(&addressed) {
                     return Err(invalid());
                 }
@@ -80,22 +71,18 @@ pub(crate) fn admit_witness(
             .any(|m| m.author == WitnessAuthor::Companion);
     if is_response {
         let parent = reply_to.ok_or_else(invalid)?;
-        let key = key(CLAIMS, parent);
-        let bytes = vault.store.vault_meta.get(txn, &key)?.ok_or_else(invalid)?;
-        let claim: RoomClaimReceipt = decode(&bytes)?;
+        let claim = CLAIMS
+            .get(&vault.store, txn, &parent)?
+            .ok_or_else(invalid)?;
         if claim.actor != actor.to_hex() || claim.room_id != room.to_hex() {
             return Err(invalid());
         }
-        let response_key = [b"rooms.response.v1/", parent.as_bytes().as_slice()].concat();
-        if let Some(prior) = vault.store.vault_meta.get(txn, &response_key)?
-            && prior.as_ref() != turn_id.as_bytes()
+        if let Some(prior) = RESPONSE.get(&vault.store, txn, &parent)?
+            && prior != turn_id
         {
             return Err(invalid());
         }
-        vault
-            .store
-            .vault_meta
-            .put(txn, &response_key, turn_id.as_bytes())?;
+        RESPONSE.put(&vault.store, txn, &parent, &turn_id)?;
     }
     let mut turn = RoomTurn {
         turn_id: turn_id.to_hex(),
@@ -107,8 +94,7 @@ pub(crate) fn admit_witness(
         thread_of: thread_of.map(|id| id.to_hex()),
         at: input.occurred_at,
     };
-    if let Some(bytes) = vault.store.vault_meta.get(txn, &key(TURNS, turn_id))? {
-        let old: RoomTurn = decode(&bytes)?;
+    if let Some(old) = TURNS.get(&vault.store, txn, &turn_id)? {
         if old.actor != turn.actor
             || old.room_id != turn.room_id
             || old.addressed_agents != turn.addressed_agents
@@ -126,10 +112,7 @@ pub(crate) fn admit_witness(
         }
         turn.message_ids = all;
     }
-    vault
-        .store
-        .vault_meta
-        .put(txn, &key(TURNS, turn_id), &encode(&turn)?)?;
+    TURNS.put(&vault.store, txn, &turn_id, &turn)?;
     super::history::index_turn(&vault.store, txn, &turn)?;
     Ok(())
 }

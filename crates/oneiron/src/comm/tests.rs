@@ -1309,10 +1309,11 @@ fn stale_non_person_cached_party_is_reminted_before_reuse() -> CommResult<()> {
     )?;
     {
         let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.vault_meta.put(
+        PARTY_INDEX.put(
+            &vault.store,
             &mut wtxn,
-            &party_index_key("party-reuse"),
-            stale_id.as_bytes(),
+            &party_index_digest("party-reuse"),
+            &stale_id,
         )?;
         wtxn.commit()?;
     }
@@ -1916,20 +1917,14 @@ fn comm_event_is_projected(vault: &Vault, event_id: EntityId) -> CommResult<bool
 
 fn clear_party_index(vault: &Vault, party: &str) -> CommResult<()> {
     let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .vault_meta
-        .delete(&mut wtxn, &party_index_key(party))?;
+    PARTY_INDEX.delete(&vault.store, &mut wtxn, &party_index_digest(party))?;
     wtxn.commit()?;
     Ok(())
 }
 
 fn point_party_index(vault: &Vault, party: &str, id: EntityId) -> CommResult<()> {
     let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .vault_meta
-        .put(&mut wtxn, &party_index_key(party), id.as_bytes())?;
+    PARTY_INDEX.put(&vault.store, &mut wtxn, &party_index_digest(party), &id)?;
     wtxn.commit()?;
     Ok(())
 }

@@ -19,13 +19,10 @@ use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
-use super::codec::{
-    decode_code_symbol_manifest, encode_code_symbol_entity_body, encode_code_symbol_manifest,
-};
+use super::codec::encode_code_symbol_entity_body;
 use super::keys::{
-    CODE_SYMBOL_REVISION_INDEX_KEY_PREFIX, code_symbol_entity_id, code_symbol_manifest_key,
-    code_symbol_revision_index_key, code_symbol_revision_index_prefix, delete_index_rows_for_id,
-    id_from_index_key,
+    MANIFEST, REVISION_INDEX, code_symbol_entity_id, code_symbol_revision_index_key,
+    code_symbol_revision_index_prefix, delete_index_rows_for_id, id_from_index_key,
 };
 use super::text_diff::symbol_line_range;
 use super::types::{
@@ -46,28 +43,21 @@ impl Vault {
     ) -> Result<()> {
         validate_code_symbol_manifest(manifest)?;
         scan_code_symbol_manifest_metadata(manifest)?;
-        let encoded = encode_code_symbol_manifest(manifest)?;
+        MANIFEST.encode_value(manifest)?;
         let mut wtxn = self.store.env.write_txn()?;
         validate_code_artifact_target(&self.store, &wtxn, code_artifact_id, &manifest.repo_ref)?;
 
         delete_code_symbol_manifest_in_txn(&self.store, &mut wtxn, code_artifact_id)?;
-        self.store.vault_meta.put(
-            &mut wtxn,
-            &code_symbol_manifest_key(code_artifact_id),
-            &encoded,
-        )?;
+        MANIFEST.put(&self.store, &mut wtxn, code_artifact_id, manifest)?;
         for symbol in &manifest.symbols {
-            self.store.vault_meta.put(
-                &mut wtxn,
-                &code_symbol_revision_index_key(
-                    &manifest.repo_ref,
-                    &symbol.path,
-                    &symbol.name,
-                    &symbol.fingerprint,
-                    code_artifact_id,
-                ),
-                &[],
-            )?;
+            let key = code_symbol_revision_index_key(
+                &manifest.repo_ref,
+                &symbol.path,
+                &symbol.name,
+                &symbol.fingerprint,
+                code_artifact_id,
+            );
+            REVISION_INDEX.put(&self.store, &mut wtxn, &key, &())?;
         }
         wtxn.commit()?;
         Ok(())
@@ -140,14 +130,9 @@ impl Vault {
         code_artifact_id: &EntityId,
     ) -> Result<Option<CodeSymbolManifest>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &code_symbol_manifest_key(code_artifact_id))?
-        else {
+        let Some(manifest) = MANIFEST.get(&self.store, &rtxn, code_artifact_id)? else {
             return Ok(None);
         };
-        let manifest = decode_code_symbol_manifest(&raw)?;
         validate_code_artifact_target(&self.store, &rtxn, code_artifact_id, &manifest.repo_ref)?;
         Ok(Some(manifest))
     }
@@ -190,20 +175,14 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let prefix = code_symbol_revision_index_prefix(repo_ref, path, name, fingerprint);
         let mut result = None;
-        for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (key, _) = entry?;
+        for key in REVISION_INDEX.scan_keys(&self.store, &rtxn, &prefix)? {
             let id = id_from_index_key(&key, prefix.len(), "code symbol revision index key")?;
             match validate_code_artifact_entity_exists(&self.store, &rtxn, &id) {
                 Ok(()) => {}
                 Err(Error::EntityNotFound) => continue,
                 Err(err) => return Err(err),
             }
-            if let Some(raw) = self
-                .store
-                .vault_meta
-                .get(&rtxn, &code_symbol_manifest_key(&id))?
-            {
-                let manifest = decode_code_symbol_manifest(&raw)?;
+            if let Some(manifest) = MANIFEST.get(&self.store, &rtxn, &id)? {
                 if manifest.repo_ref != *repo_ref {
                     return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
                         "symbol revision index repo_ref does not match manifest",
@@ -379,33 +358,34 @@ pub(super) fn delete_code_symbol_manifest_in_txn(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let key = code_symbol_manifest_key(id);
-    let Some(raw) = store
-        .vault_meta
-        .get(wtxn, &key)?
-        .map(|value| value.to_vec())
-    else {
-        return Ok(false);
+    // A corrupt manifest body (`Err` other than "row absent") cannot name its
+    // own symbols, so the index cleanup below falls back to a full scan for
+    // this id rather than propagating the decode error: `decode_code_symbol_manifest`
+    // reports every malformed shape as `InvalidCodeSymbolManifestBody`, so that is the
+    // one variant this door treats as "corrupt, fall back" rather than a hard failure.
+    let manifest = match MANIFEST.get(store, &*wtxn, id) {
+        Ok(None) => return Ok(false),
+        Ok(Some(manifest)) => Some(manifest),
+        Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(_))) => None,
+        Err(other) => return Err(other),
     };
 
-    store.vault_meta.delete(wtxn, &key)?;
-    match decode_code_symbol_manifest(&raw) {
-        Ok(manifest) => {
+    MANIFEST.delete(store, wtxn, id)?;
+    match manifest {
+        Some(manifest) => {
             for symbol in &manifest.symbols {
-                store.vault_meta.delete(
-                    wtxn,
-                    &code_symbol_revision_index_key(
-                        &manifest.repo_ref,
-                        &symbol.path,
-                        &symbol.name,
-                        &symbol.fingerprint,
-                        id,
-                    ),
-                )?;
+                let key = code_symbol_revision_index_key(
+                    &manifest.repo_ref,
+                    &symbol.path,
+                    &symbol.name,
+                    &symbol.fingerprint,
+                    id,
+                );
+                REVISION_INDEX.delete(store, wtxn, &key)?;
             }
         }
-        Err(_) => {
-            delete_index_rows_for_id(store, wtxn, CODE_SYMBOL_REVISION_INDEX_KEY_PREFIX, id)?;
+        None => {
+            delete_index_rows_for_id(store, wtxn, id)?;
         }
     }
     Ok(true)

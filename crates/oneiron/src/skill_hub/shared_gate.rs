@@ -1,5 +1,6 @@
 //! Useful-upstream and held-out merge gate for submitted shared-skill deltas.
 use super::{HubPackage, SharedSkillDelta, package_codec::invalid};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
     consent::{
@@ -11,6 +12,13 @@ use crate::{
     skill_optimize::{HeldOutReplayCase, HeldOutReplayScorer},
     temporal::TimeRange,
 };
+
+/// Append-only history of shared-skill merge receipts, keyed by receipt id.
+const MERGE_HISTORY: SideTable<String, SharedSkillMergeReceipt, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_SHARED_MERGE_HISTORY);
+/// Latest shared-skill merge receipt for one candidate entity.
+const MERGE_RECEIPT: SideTable<EntityId, SharedSkillMergeReceipt, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_SHARED_MERGE_RECEIPT);
 
 /// The typed question precedes replay. A host judges only the offered package
 /// against this receiving base; this interface has no personal-vault read handle.
@@ -158,19 +166,8 @@ impl Vault {
             if !accepted {
                 crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             }
-            let encoded_receipt =
-                serde_json::to_vec(&receipt).map_err(|_| invalid("merge receipt encode failed"))?;
-            let mut history_key = b"skill_hub/shared-merge-history/v1\0".to_vec();
-            history_key.extend_from_slice(receipt.receipt_id.as_bytes());
-            self.store
-                .vault_meta
-                .put(txn, &history_key, &encoded_receipt)?;
-            self.store.vault_meta.put(
-                txn,
-                &merge_receipt_key(&ask.candidate),
-                &serde_json::to_vec(&receipt)
-                    .map_err(|_| invalid("merge receipt encode failed"))?,
-            )?;
+            MERGE_HISTORY.put(&self.store, txn, &receipt.receipt_id, &receipt)?;
+            MERGE_RECEIPT.put(&self.store, txn, &ask.candidate, &receipt)?;
             Ok(SharedSkillMergeDisposition::Ruled(Box::new(receipt)))
         })
     }
@@ -179,11 +176,7 @@ impl Vault {
         candidate: &EntityId,
     ) -> Result<Option<SharedSkillMergeReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &merge_receipt_key(candidate))?
-            .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("invalid merge receipt")))
-            .transpose()
+        MERGE_RECEIPT.get(&self.store, &txn, candidate)
     }
     fn check_merge_ask(
         &self,
@@ -298,9 +291,4 @@ fn replay(
         Some(evaluate(&snapshot.base.version, &snapshot.baseline)?),
         Some(evaluate(&snapshot.record.version, instructions)?),
     ))
-}
-fn merge_receipt_key(id: &EntityId) -> Vec<u8> {
-    let mut key = b"skill_hub/shared-merge-receipt/v1\0".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
 }

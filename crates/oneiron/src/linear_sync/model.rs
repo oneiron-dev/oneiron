@@ -18,11 +18,6 @@ use super::codec::{field_hash, linear_event_digest};
 /// moves with the version and the version stays hashed into every operation id.
 pub const LINEAR_SYNC_SCHEMA_VERSION: u8 = 3;
 
-/// Durable key prefix of the TASK ↔ issue link row. Versioned with
-/// [`LINEAR_SYNC_SCHEMA_VERSION`], so a row written under the older shape can
-/// never be read back as the newer one.
-pub const LINEAR_SYNC_LINK_KEY_PREFIX: &[u8] = b"linear_sync:link:v3:";
-
 /// Domain separator for [`linear_operation_id`](crate::linear_operation_id); pinned, because operation ids
 /// are compared across processes and replicas to suppress duplicate writes.
 pub const LINEAR_SYNC_OPERATION_DOMAIN: &[u8] = b"oneiron:linear-sync-op:v1";

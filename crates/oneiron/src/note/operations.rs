@@ -2,8 +2,12 @@
 
 use super::document::{NoteDocument, invalid};
 use super::document_store::{load, persist, require_note_writer, validate_pin_source};
+use super::pin_index::NOTE_PIN_SOURCE;
+use super::side_keys::HexPair;
+use super::sync_rows::{EntityIdWire, NOTE_RECEIPT_BY_REQUEST, SYNC_DS_E};
 use super::{NoteEdit, NoteEditOutcome, NotePin};
 use crate::memory::{CommitReceipt, Memory, MemoryResult};
+use crate::side_table::HexId;
 use crate::{EdgeActorClass, EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
 
@@ -110,12 +114,10 @@ impl crate::Vault {
     ) -> crate::Result<bool> {
         let txn = self.store.env.read_txn()?;
         super::citation_erase::ensure_citations_ready(&self.store, &txn, note)?;
-        let key = format!("nr:e:{}:{}", note.to_hex(), receipt.request_id.to_hex());
-        let Some(bytes) = self.store.sync_state.get(&txn, &key)? else {
+        let key = HexPair(HexId(note), HexId(receipt.request_id));
+        let Some(saved) = NOTE_RECEIPT_BY_REQUEST.get(&self.store, &txn, &key)? else {
             return Ok(false);
         };
-        let saved: (EntityIdWire, NoteOperationReceipt) =
-            serde_json::from_slice(&bytes).map_err(|_| invalid("NOTE receipt corrupt"))?;
         Ok(saved.1 == *receipt)
     }
 }
@@ -137,13 +139,7 @@ impl Memory<'_> {
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
         let receipt = self.with_verified_actor_write_txn(|txn| {
-            if self
-                .vault()
-                .store
-                .sync_state
-                .get(txn, &format!("ds:e:{}", note.to_hex()))?
-                .is_some()
-            {
+            if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
                 return Err(invalid("replica NOTE cannot act as an admission authority").into());
             }
             if !session_is_live(txn) {
@@ -185,13 +181,7 @@ impl Memory<'_> {
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
         let receipt = self.with_verified_actor_write_txn(|txn| {
-            if self
-                .vault()
-                .store
-                .sync_state
-                .get(txn, &format!("ds:e:{}", note.to_hex()))?
-                .is_some()
-            {
+            if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
                 return Err(invalid("replica NOTE cannot act as an admission authority").into());
             }
             if !session_is_live(txn) {
@@ -211,13 +201,7 @@ impl Memory<'_> {
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
         let receipt = self.with_verified_actor_write_txn(|txn| {
-            if self
-                .vault()
-                .store
-                .sync_state
-                .get(txn, &format!("ds:e:{}", note.to_hex()))?
-                .is_some()
-            {
+            if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
                 return Err(invalid(
                     "replica NOTE edits must be submitted to its authenticated authority",
                 )
@@ -237,22 +221,14 @@ impl Memory<'_> {
         operation: &NoteOperation,
         grant: Option<EntityId>,
     ) -> MemoryResult<NoteOperationReceipt> {
-        if self
-            .vault()
-            .store
-            .sync_state
-            .get(txn, &format!("ds:e:{}", note.to_hex()))?
-            .is_some()
-        {
+        if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
             return Err(invalid("replica NOTE edits require authenticated authority").into());
         }
         require_note_writer(self, txn, note)?;
         let doc = load(self.vault(), txn, note)?;
         let hash = operation.hash()?;
-        let receipt_key = format!("nr:e:{}:{}", note.to_hex(), operation.request_id.to_hex());
-        if let Some(bytes) = self.vault().store.sync_state.get(txn, &receipt_key)? {
-            let saved: (EntityIdWire, NoteOperationReceipt) =
-                serde_json::from_slice(&bytes).map_err(|_| invalid("NOTE receipt corrupt"))?;
+        let receipt_key = HexPair(HexId(note), HexId(operation.request_id));
+        if let Some(saved) = NOTE_RECEIPT_BY_REQUEST.get(&self.vault().store, txn, &receipt_key)? {
             if saved.0.0 != self.actor() || saved.1.command_hash != hash {
                 return Err(invalid("NOTE request identity reused").into());
             }
@@ -316,18 +292,15 @@ impl Memory<'_> {
         if payload.len() > MAX_RECEIPT_PAYLOAD - 18 {
             return Err(invalid("NOTE receipt exceeds wire bound").into());
         }
-        let bytes = serde_json::to_vec(&(EntityIdWire(self.actor()), &receipt))
-            .map_err(|_| invalid("NOTE receipt encode"))?;
-        self.vault()
-            .store
-            .sync_state
-            .put(txn, &receipt_key, &bytes)?;
+        NOTE_RECEIPT_BY_REQUEST.put(
+            &self.vault().store,
+            txn,
+            &receipt_key,
+            &(EntityIdWire(self.actor()), receipt.clone()),
+        )?;
         Ok(receipt)
     }
 }
-
-#[derive(Serialize, Deserialize)]
-struct EntityIdWire(#[serde(with = "super::id_codec")] EntityId);
 
 pub(super) fn cited_by(
     vault: &crate::Vault,
@@ -336,17 +309,16 @@ pub(super) fn cited_by(
 ) -> crate::Result<Vec<NotePin>> {
     let mut pins = Vec::new();
     let mut budget = 0usize;
-    for row in vault.store.vault_meta.prefix_iter(
-        txn,
-        format!("note.pin/source/{}:", note.to_hex()).as_bytes(),
-    )? {
+    let prefix = format!("{}:", note.to_hex());
+    for row in NOTE_PIN_SOURCE.iter_raw_from(&vault.store, txn, prefix.as_bytes())? {
         let (_, bytes) = row?;
         budget = budget.saturating_add(bytes.len());
         if budget > 4 * 1024 * 1024 {
             return Err(invalid("NOTE citation guard budget exceeded"));
         }
-        let pin: NotePin =
-            serde_json::from_slice(&bytes).map_err(|_| invalid("NOTE reverse pin corrupt"))?;
+        // Undecoded rows, deliberately: decoding through the typed table would
+        // parse each row before this budget guard could refuse it.
+        let pin: NotePin = NOTE_PIN_SOURCE.decode_value(&bytes)?;
         pin.validate()?;
         if pin.document != note {
             return Err(invalid("NOTE reverse pin source mismatch"));

@@ -949,15 +949,10 @@ fn the_source_index_rebuilds_to_identity_and_the_delete_path_survives_it() -> Re
         .collect::<Result<_>>()?;
 
     let mut wtxn = vault.store.env.write_txn()?;
-    let rows: Vec<Vec<u8>> = vault
-        .store
-        .vault_meta
-        .prefix_iter(&wtxn, SOURCE_INDEX_PREFIX)?
-        .map(|entry| entry.map(|(key, _)| key.to_vec()))
-        .collect::<std::result::Result<_, _>>()?;
+    let rows: Vec<(EntityId, EntityId)> = SOURCE_INDEX.scan_keys(&vault.store, &wtxn, &[])?;
     assert!(!rows.is_empty(), "the conversion indexed its citations");
     for key in &rows {
-        vault.store.vault_meta.delete(&mut wtxn, key)?;
+        SOURCE_INDEX.delete(&vault.store, &mut wtxn, key)?;
     }
     wtxn.commit()?;
     assert!(skills_dependent_on_message(&vault, &sources[0])?.is_empty());

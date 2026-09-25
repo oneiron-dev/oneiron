@@ -7,7 +7,12 @@ use super::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Vault};
+
+/// One access request, keyed by its own id (also the eventual grant id).
+const REQUESTS: SideTable<EntityId, RequestRow, LegacyJson> =
+    SideTable::new(&side_table::ACCESS_REQUEST);
 
 /// Terminal responses cannot be changed by a second responder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -37,25 +42,17 @@ struct RequestRow {
     decided_at: Option<u64>,
 }
 
-fn key(id: &EntityId) -> Vec<u8> {
-    let mut key = b"access-request:v1:".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
 impl AccessRequest {
-    fn encode(&self) -> Result<Vec<u8>> {
-        serde_json::to_vec(&RequestRow {
+    fn to_row(&self) -> Result<RequestRow> {
+        Ok(RequestRow {
             grant: encode_access_grant_body(&self.grant)?,
             status: self.status,
             decided_by: self.decided_by.map(|id| id.to_hex()),
             decided_at: self.decided_at,
         })
-        .map_err(|_| invalid_grant())
     }
 
-    fn decode(id: EntityId, bytes: &[u8]) -> Result<Self> {
-        let row: RequestRow = serde_json::from_slice(bytes).map_err(|_| invalid_grant())?;
+    fn from_row(id: EntityId, row: RequestRow) -> Result<Self> {
         let grant = decode_access_grant_body(&row.grant)?;
         let decided_by = row
             .decided_by
@@ -102,24 +99,21 @@ impl Vault {
             decided_at: None,
         };
         let mut txn = self.store.env.write_txn()?;
-        if self.store.vault_meta.get(&txn, &key(&id))?.is_some() {
+        if REQUESTS.contains(&self.store, &txn, &id)? {
             return Err(Error::Record(
                 crate::error::RecordError::AccessGrantAlreadyExists,
             ));
         }
-        self.store
-            .vault_meta
-            .put(&mut txn, &key(&id), &request.encode()?)?;
+        REQUESTS.put(&self.store, &mut txn, &id, &request.to_row()?)?;
         txn.commit()?;
         Ok(request)
     }
 
     pub fn get_access_request(&self, id: EntityId) -> Result<Option<AccessRequest>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key(&id))?
-            .map(|bytes| AccessRequest::decode(id, &bytes))
+        REQUESTS
+            .get(&self.store, &txn, &id)?
+            .map(|row| AccessRequest::from_row(id, row))
             .transpose()
     }
 
@@ -134,12 +128,10 @@ impl Vault {
     ) -> Result<AccessRequest> {
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        let raw = self
-            .store
-            .vault_meta
-            .get(&txn, &key(&id))?
+        let row = REQUESTS
+            .get(&self.store, &txn, &id)?
             .ok_or(Error::EntityNotFound)?;
-        let mut request = AccessRequest::decode(id, &raw)?;
+        let mut request = AccessRequest::from_row(id, row)?;
         if request.status != AccessRequestStatus::Pending || now < request.grant.created_at {
             return Err(invalid_grant());
         }
@@ -161,9 +153,7 @@ impl Vault {
                 encode_access_grant_body(&request.grant)?,
             )?;
         }
-        self.store
-            .vault_meta
-            .put(&mut txn, &key(&id), &request.encode()?)?;
+        REQUESTS.put(&self.store, &mut txn, &id, &request.to_row()?)?;
         txn.commit()?;
         Ok(request)
     }

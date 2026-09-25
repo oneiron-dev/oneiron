@@ -21,8 +21,17 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, RecordError, Result};
 use crate::gate::{GateOutcome, resolve_policy_manifest, scoped_read_claim_allowed};
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::{GateDecisionId, Store};
 use crate::write_envelope::WriteActor;
+
+/// One share's admission row, keyed by the share id. Bound to raw bytes
+/// rather than the decoded [`ShareAdmission`]: a row that fails to decode
+/// proves no admitted share (soft `None`, not a storage error) at every
+/// reader, so `ShareAdmission::decode` stays a manual `Option`-returning
+/// call rather than the door's error-propagating `RawValue`.
+const ADMISSIONS: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SHARE_BRIEF_ADMISSION);
 
 /// A typed AccessGrant. Only the opaque brief handle and redaction maximum are stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,10 +224,6 @@ fn decode_refs(value: &Value) -> Result<BTreeSet<EntityId>> {
 // Local, engine-written provenance. Generic grant writes cannot touch a reserved id,
 // even after deletion or a foreign overwrite. A replayed row with no local admission
 // never becomes a usable share. No rendered bytes or claim values live here.
-fn admission_key(id: &EntityId) -> Vec<u8> {
-    [b"share:brief:admission:v1:".as_slice(), id.as_bytes()].concat()
-}
-
 pub(crate) fn check_generic_grant_write(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -226,11 +231,7 @@ pub(crate) fn check_generic_grant_write(
     grant: &AccessGrant,
 ) -> Result<()> {
     if matches!(grant.scope, AccessGrantScope::SharedBrief { .. })
-        || vault
-            .store
-            .vault_meta
-            .get(txn, &admission_key(id))?
-            .is_some()
+        || ADMISSIONS.contains(&vault.store, txn, id)?
     {
         return Err(Error::Record(RecordError::InvalidAccessGrantBody(
             "shared briefs require the share door",
@@ -353,7 +354,7 @@ fn read_admitted_share_in_txn(
     let Some(share) = Share::from_grant(&grant) else {
         return Ok(None);
     };
-    let Some(bytes) = store.vault_meta.get(txn, &admission_key(id))? else {
+    let Some(bytes) = ADMISSIONS.get(store, txn, id)? else {
         return Ok(None);
     };
     let Some(admission) = ShareAdmission::decode(&bytes) else {
@@ -470,11 +471,7 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         if self.store.port_entity_record(&txn, share_id)?.is_some()
-            || self
-                .store
-                .vault_meta
-                .get(&txn, &admission_key(share_id))?
-                .is_some()
+            || ADMISSIONS.contains(&self.store, &txn, share_id)?
         {
             return Err(Error::Record(RecordError::AccessGrantAlreadyExists));
         }
@@ -502,9 +499,7 @@ impl Vault {
             revoker: None,
         };
         self.apply_access_grant_body(&mut txn, share_id, share.created_at, data)?;
-        self.store
-            .vault_meta
-            .put(&mut txn, &admission_key(share_id), &admission.encode())?;
+        ADMISSIONS.put(&self.store, &mut txn, share_id, &admission.encode())?;
         txn.commit()?;
         Ok(())
     }
@@ -544,9 +539,7 @@ impl Vault {
         )?;
         admission.revoked_at = Some(revoked_at);
         admission.revoker = Some(*actor);
-        self.store
-            .vault_meta
-            .put(&mut txn, &admission_key(share_id), &admission.encode())?;
+        ADMISSIONS.put(&self.store, &mut txn, share_id, &admission.encode())?;
         txn.commit()?;
         share.status = AccessGrantStatus::Revoked;
         share.revoked_at = Some(revoked_at);

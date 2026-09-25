@@ -934,15 +934,14 @@ fn the_dedup_check_sees_the_mark_written_in_its_own_transaction() -> Result<()> 
             cluster_is_eligible(&vault, wtxn, &handle, 0)?,
             "an unmarked cluster may propose"
         );
-        vault.store.vault_meta.put(
-            wtxn,
-            &meta_key(SKILL_EDIT_KEY_PREFIX, proposal_id.as_bytes()),
-            &row,
-        )?;
         vault
             .store
             .vault_meta
-            .put(wtxn, &mint_mark_key(&handle), &mark)?;
+            .put(wtxn, &SKILL_EDIT.key_bytes(&proposal_id), &row)?;
+        vault
+            .store
+            .vault_meta
+            .put(wtxn, &MINT_MARK.key_bytes(&handle), &mark)?;
         assert!(
             !cluster_is_eligible(&vault, wtxn, &handle, 0)?,
             "and the uncommitted mark is what stops the second proposal"

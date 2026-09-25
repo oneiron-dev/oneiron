@@ -4,7 +4,27 @@ use std::sync::Arc;
 
 use crate::Vault;
 use crate::error::{Error, Result, SyncError};
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::sync::types::{WindowKey, parse_window_key_str};
+use crate::sync::window_rows::{REASSERT_MARKER, WindowEntityHexKey};
+
+/// The permanent local hard-delete marker (`dt:{entity_hex}`), value = the
+/// exact tombstone bytes. Owned by `deletion::tombstone` (see its
+/// `HARD_DELETE_MARKER` doc comment); this binds the SAME declaration
+/// independently for this module's one read (two typed tables, one
+/// declaration).
+const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
+
+fn reassert_window_entity_key(
+    window_key: &str,
+    id: &crate::entity_id::EntityId,
+) -> WindowEntityHexKey {
+    WindowEntityHexKey {
+        window: window_key.to_owned(),
+        id: *id,
+    }
+}
 
 // ─── ra: tombstone re-assertion markers (ONE-1156c) ──────────────────────────
 
@@ -31,12 +51,6 @@ use crate::sync::types::{WindowKey, parse_window_key_str};
 /// quarantine-only (pinned residual R4).
 const REASSERT_MARKER_PREFIX: &str = "ra:w:";
 
-/// Formats the `ra:w:{window}:{entity_hex}` re-assertion marker key.
-#[must_use]
-pub(super) fn reassert_marker_key(window_key: &str, id: &crate::entity_id::EntityId) -> String {
-    format!("{REASSERT_MARKER_PREFIX}{window_key}:{}", id.to_hex())
-}
-
 /// Enqueues the tombstone re-assertion marker for `id` IF the permanent
 /// `dt:{entity_hex}` local hard-delete marker exists: reads the `dt:` row
 /// and writes `ra:w:{window}:{entity_hex}` with the row's EXACT bytes — the
@@ -54,15 +68,15 @@ pub(in crate::sync) fn enqueue_tombstone_reassert_marker_in_txn(
     window_key: &str,
     id: &crate::entity_id::EntityId,
 ) -> Result<bool> {
-    let dt_key = crate::deletion::local_hard_delete_key(id);
-    let Some(dt_value) = vault.store.sync_state.get(wtxn, &dt_key)? else {
+    let Some(dt_value) = HARD_DELETE_MARKER.get(&vault.store, wtxn, &HexId(*id))? else {
         return Ok(false);
     };
-    let dt_value = dt_value.to_vec();
-    vault
-        .store
-        .sync_state
-        .put(wtxn, &reassert_marker_key(window_key, id), &dt_value)?;
+    REASSERT_MARKER.put(
+        &vault.store,
+        wtxn,
+        &reassert_window_entity_key(window_key, id),
+        &dt_value,
+    )?;
     Ok(true)
 }
 
@@ -87,6 +101,11 @@ pub(in crate::sync) fn enqueue_tombstone_reassert_marker(
 /// the entity segment (or otherwise unparsable) is still surfaced — its
 /// whole remainder is reported as the pending window. A re-assertion intent
 /// is never dropped by a read.
+///
+/// Deliberately RAW `sync_state` access (not [`REASSERT_MARKER`]) for the
+/// same reason as `pending_remat_windows`: the typed door's key decode
+/// either succeeds or fails the whole scan, and this reader's contract
+/// surfaces even an unparsable key rather than dropping it or aborting.
 pub fn pending_reassert_windows(vault: &Vault) -> Result<Vec<String>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut windows = std::collections::BTreeSet::new();
@@ -106,31 +125,29 @@ pub fn pending_reassert_windows(vault: &Vault) -> Result<Vec<String>> {
     Ok(windows.into_iter().collect())
 }
 
-/// One parsed `ra:` marker: (full `sync_state` key, entity id, value bytes).
-type ReassertMarker = (String, crate::entity_id::EntityId, Vec<u8>);
+/// One parsed `ra:` marker: (typed key, value bytes).
+type ReassertMarker = (WindowEntityHexKey, Vec<u8>);
 
-/// The `ra:` markers for one window: `(marker_key, parsed_id, value)` for
-/// every row whose entity segment parses, plus the count of malformed rows.
-/// Malformed rows are NEVER returned for application and never deleted —
-/// they keep the window `still_pending` (fail closed) and stay
-/// doctor-visible via [`pending_reassert_windows`].
+/// The `ra:` markers for one window: `(key, value)` for every row whose
+/// entity segment parses, plus the count of malformed rows. Malformed rows
+/// are NEVER returned for application and never deleted — they keep the
+/// window `still_pending` (fail closed) and stay doctor-visible via
+/// [`pending_reassert_windows`].
 fn pending_reassert_markers(
     vault: &Vault,
     window_key: &str,
 ) -> Result<(Vec<ReassertMarker>, usize)> {
     let rtxn = vault.store.env.read_txn()?;
-    let prefix = format!("{REASSERT_MARKER_PREFIX}{window_key}:");
     let mut markers = Vec::new();
     let mut malformed = 0usize;
-    let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
-    for entry in iter {
-        let (key, value) = entry?;
-        let hex = &key[prefix.len()..];
-        match crate::entity_id::EntityId::from_hex(hex) {
-            Ok(id) => markers.push((key.to_string(), id, value.to_vec())),
-            Err(_) => {
+    for entry in
+        REASSERT_MARKER.iter_from(&vault.store, &rtxn, format!("{window_key}:").as_bytes())?
+    {
+        match entry {
+            Ok((key, value)) => markers.push((key, value)),
+            Err(error) => {
                 tracing::error!(
-                    marker = %key,
+                    %error,
                     "ra drain: malformed re-assertion marker entity segment — marker kept (fail closed)"
                 );
                 malformed += 1;
@@ -245,8 +262,8 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             merge_persisted_state_into_doc(vault, &window.doc, window_key)?;
             let _guard = manager.materializer().lock();
             let vv_before = window.doc.oplog_vv();
-            for (_, id, value) in &markers {
-                apply_tombstone_to_window_doc(&window.doc, id, value)?;
+            for (key, value) in &markers {
+                apply_tombstone_to_window_doc(&window.doc, &key.id, value)?;
             }
             // BRIDGE_ORIGIN: Observer B must skip this commit — LMDB
             // already holds the delete truth (`dt:` + the origin purge
@@ -275,8 +292,8 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
                 Err(err) => return Err(err),
             };
             let vv_before = doc.oplog_vv();
-            for (_, id, value) in &markers {
-                apply_tombstone_to_window_doc(&doc, id, value)?;
+            for (key, value) in &markers {
+                apply_tombstone_to_window_doc(&doc, &key.id, value)?;
             }
             doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
@@ -301,8 +318,8 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
                 update,
             )?;
         }
-        for (marker_key, _, _) in &markers {
-            vault.store.sync_state.delete(wtxn, marker_key)?;
+        for (key, _) in &markers {
+            REASSERT_MARKER.delete(&vault.store, wtxn, key)?;
         }
         Ok(())
     })?;

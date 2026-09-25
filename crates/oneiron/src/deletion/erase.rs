@@ -35,8 +35,9 @@ use crate::store::{GateDecisionId, Store};
 
 use super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::sweep_queue::HardEraseSweepExtras;
-use super::tombstone::{ReplayedTombstoneOutcome, decode_tombstone_value, local_hard_delete_key};
+use super::tombstone::{HARD_DELETE_MARKER, ReplayedTombstoneOutcome, decode_tombstone_value};
 use crate::error::{ClaimError, RegistryError};
+use crate::side_table::HexId;
 
 /// ARCH-0038 delete-interplay refs captured from an `edge.provenance` Claim
 /// BEFORE its body is purged or SoftErased: the subject EdgeRef whose cached
@@ -629,8 +630,8 @@ impl Vault {
             });
         }
 
-        let marker_key = local_hard_delete_key(id);
-        let marker_value = decoded.local_hard_delete_marker_value();
+        let marker_key = HexId(*id);
+        let marker_value = decoded.local_hard_delete_marker_value().to_vec();
         // Probe the FULL delete scope (entity row, vectors, text, phonetic,
         // short-ids, edges): orphan residue without an entities row still
         // counts as local state to erase, mirroring the local
@@ -644,10 +645,8 @@ impl Vault {
             // still gates a future re-put after hostile tombstone-map
             // manipulation. The guarded write keeps every-boot replay a
             // read-only no-op once the marker exists.
-            if self.store.sync_state.get(&*wtxn, &marker_key)?.is_none() {
-                self.store
-                    .sync_state
-                    .put(wtxn, &marker_key, &marker_value)?;
+            if !HARD_DELETE_MARKER.contains(&self.store, &*wtxn, &marker_key)? {
+                HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value)?;
             }
             if let Some((request_id, tombstone_reason)) =
                 decoded.request_id.zip(raw_value.first().copied())
@@ -681,9 +680,7 @@ impl Vault {
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
-        self.store
-            .sync_state
-            .put(wtxn, &marker_key, &marker_value)?;
+        HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value)?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = &captured {
@@ -775,11 +772,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
-        Ok(self
-            .store
-            .sync_state
-            .get(txn, &local_hard_delete_key(id))?
-            .is_some())
+        HARD_DELETE_MARKER.contains(&self.store, txn, &HexId(*id))
     }
 
     /// Removes a headerless tombstone replay's stale `dt:` poison once a
@@ -798,9 +791,7 @@ impl Vault {
                 "dt: poison neutralization requires a delete-protected engine record",
             ));
         }
-        self.store
-            .sync_state
-            .delete(wtxn, &local_hard_delete_key(id))
+        HARD_DELETE_MARKER.delete(&self.store, wtxn, &HexId(*id))
     }
 
     pub(super) fn active_delete_scope_exists_in_txn(

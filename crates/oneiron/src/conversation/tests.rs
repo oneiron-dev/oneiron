@@ -581,14 +581,10 @@ fn membership_rows_without_their_revision_never_grant_audience_reads() {
     for revision in [None, Some(0_u64), Some(2_u64)] {
         vault
             .with_write_txn(|txn| {
-                let k = key(b"conversation_membership:seq:v1:", room);
                 if let Some(revision) = revision {
-                    vault
-                        .store
-                        .vault_meta
-                        .put(txn, &k, &revision.to_be_bytes())?;
+                    membership::MEMBERSHIP_SEQ.put(&vault.store, txn, &room, &revision)?;
                 } else {
-                    vault.store.vault_meta.delete(txn, &k)?;
+                    membership::MEMBERSHIP_SEQ.delete(&vault.store, txn, &room)?;
                 }
                 Ok(())
             })

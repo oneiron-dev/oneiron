@@ -2,11 +2,12 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::{
     BudgetLadderEvent, BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold,
 };
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 
 use super::record::{
@@ -18,9 +19,10 @@ use super::record::{
 /// rows live at `0..=15`.
 pub const CONNECTOR_KEY_CHARTER_ROW_BASE: u16 = 0x8000;
 
-/// vault_meta usage rows: prefix ++ key id (16 bytes) ++ row_index u16 BE ->
-/// canonical msgpack `{window_start, entries, fired}`.
-const CONNECTOR_KEY_USAGE_PREFIX: &[u8] = b"connector_key/usage/v1\0";
+/// vault_meta usage rows: key id (16 bytes) ++ row_index u16 BE -> canonical
+/// msgpack `{window_start, entries, fired}`.
+pub(super) const USAGE: SideTable<(EntityId, [u8; 2]), ConnectorKeyUsage, Raw> =
+    SideTable::new(&side_table::CONNECTOR_KEY_USAGE);
 
 pub(super) const SECONDS_PER_DAY: u64 = 86_400;
 
@@ -268,6 +270,16 @@ impl ConnectorKeyUsage {
     }
 }
 
+impl RawValue for ConnectorKeyUsage {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.encode()?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(Self::decode(bytes)?)
+    }
+}
+
 /// Deletes every compiled-cap usage row (`0x8000 | *`) for one key. Called
 /// by charter approve so a re-stamped charter never inherits positional
 /// usage from the previous charter's caps.
@@ -276,33 +288,27 @@ pub(super) fn delete_charter_usage_rows_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let mut prefix = Vec::with_capacity(CONNECTOR_KEY_USAGE_PREFIX.len() + ENTITY_ID_LEN);
-    prefix.extend_from_slice(CONNECTOR_KEY_USAGE_PREFIX);
-    prefix.extend_from_slice(id.as_bytes());
-    let mut doomed = Vec::new();
-    for entry in store.vault_meta.prefix_iter(wtxn, &prefix)? {
-        let (key, _) = entry?;
-        if key.len() != prefix.len() + size_of::<u16>() {
-            return Err(Error::CorruptedIndex("connector key usage row key"));
-        }
-        let row_index = u16::from_be_bytes([key[prefix.len()], key[prefix.len() + 1]]);
-        if row_index & CONNECTOR_KEY_CHARTER_ROW_BASE != 0 {
-            doomed.push(key.to_vec());
-        }
-    }
-    for key in doomed {
-        store.vault_meta.delete(wtxn, &key)?;
+    let doomed = USAGE
+        .scan_keys(store, wtxn, id.as_bytes())?
+        .into_iter()
+        .filter(|(_, row_index)| {
+            u16::from_be_bytes(*row_index) & CONNECTOR_KEY_CHARTER_ROW_BASE != 0
+        })
+        .collect::<Vec<_>>();
+    for key in &doomed {
+        USAGE.delete(store, wtxn, key)?;
     }
     Ok(())
 }
 
+/// The full stored key of one usage row. Kept for test callers outside this
+/// module ([`crate::gate`]'s and [`crate::outbound`]'s budget tests) that
+/// still address the row by raw bytes; it now just spells [`USAGE`]'s own
+/// key encoding rather than a second copy of it. `cfg(test)` because those
+/// are its only remaining callers — production code goes through `USAGE`.
+#[cfg(test)]
 pub(crate) fn connector_key_usage_row_key(id: &EntityId, row_index: u16) -> Vec<u8> {
-    let mut key =
-        Vec::with_capacity(CONNECTOR_KEY_USAGE_PREFIX.len() + ENTITY_ID_LEN + size_of::<u16>());
-    key.extend_from_slice(CONNECTOR_KEY_USAGE_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key.extend_from_slice(&row_index.to_be_bytes());
-    key
+    USAGE.key_bytes(&(*id, row_index.to_be_bytes()))
 }
 
 // --- Reads and charges --------------------------------------------------------
@@ -526,11 +532,9 @@ pub(super) fn load_budget_row_states<'a>(
 ) -> Result<Vec<BudgetRowState<'a>>> {
     let mut states = Vec::new();
     for (row_index, budget) in record_budget_rows(record)? {
-        let usage_key = connector_key_usage_row_key(key_id, row_index);
-        let mut usage = match store.vault_meta.get(txn, &usage_key)? {
-            Some(bytes) => ConnectorKeyUsage::decode(&bytes)?,
-            None => ConnectorKeyUsage::default(),
-        };
+        let mut usage = USAGE
+            .get(store, txn, &(*key_id, row_index.to_be_bytes()))?
+            .unwrap_or_default();
         usage.touch(&budget.window, budget.limit, now);
         let matched = effect_channel.is_some_and(|channel| {
             budget
@@ -679,10 +683,12 @@ pub(crate) fn charge_effector_budgets(
                 }
             }
         }
-        let usage_key = connector_key_usage_row_key(key_id, state.row_index);
-        store
-            .vault_meta
-            .put(wtxn, &usage_key, &state.usage.encode()?)?;
+        USAGE.put(
+            store,
+            wtxn,
+            &(*key_id, state.row_index.to_be_bytes()),
+            &state.usage,
+        )?;
     }
 
     let read = budget_read_from_states(key_id, key, &states);

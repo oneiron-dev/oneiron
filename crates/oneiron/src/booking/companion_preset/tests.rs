@@ -180,10 +180,10 @@ fn all_meta_bytes(vault: &Vault) -> Vec<u8> {
 /// The persisted row, read back through the production decode path.
 fn stored_row(vault: &Vault, proposal_id: ProposalId) -> CompanionProposalRow {
     let rtxn = vault.store.env.read_txn().expect("read txn");
-    let raw = read_meta_bytes(vault, &rtxn, &proposal_meta_key(proposal_id))
-        .expect("meta read")
-        .expect("the proposal row is persisted");
-    decode_row(&raw).expect("the proposal row decodes")
+    storage::PROPOSAL
+        .get(&vault.store, &rtxn, &proposal_id.0)
+        .expect("the proposal row decodes")
+        .expect("the proposal row is persisted")
 }
 
 fn entity_count(vault: &Vault) -> u64 {

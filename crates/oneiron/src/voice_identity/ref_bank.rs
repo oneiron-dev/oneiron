@@ -1,11 +1,22 @@
 //! Private per-vault owner reference bank. Providers receive clones, never own identity.
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
 };
 use serde::{Deserialize, Serialize};
-const OWNER_PREFIX: &[u8] = b"voice:owner_ref_owner:v1:";
-const PREFIX: &[u8] = b"voice:owner_ref:v1:";
+
+/// Owner voice reference pack. Key: string (the pack id).
+const OWNER_REF: SideTable<String, OwnerVoiceRefPack, Named> =
+    SideTable::new(&side_table::VOICE_OWNER_REF);
+
+/// Per-owner index over [`OWNER_REF`] rows. Key: id16 (owner) + string (pack
+/// id). Value: the indexed row's full primary key bytes (prefix + pack id),
+/// exactly as `OWNER_REF.key_bytes` produces them — kept raw because that is
+/// what was already on disk before the typed door existed.
+const OWNER_INDEX: SideTable<(EntityId, String), Vec<u8>, Raw> =
+    SideTable::new(&side_table::VOICE_OWNER_REF_OWNER_INDEX);
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VoiceRefOrigin {
@@ -40,15 +51,15 @@ pub struct VoiceTargetClone {
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
 }
-fn key(id: &str) -> Result<Vec<u8>> {
+fn validate_id(id: &str) -> Result<()> {
     if id.trim().is_empty() || id.len() > 128 || id.contains('\0') {
         return Err(invalid("invalid voice reference id"));
     }
-    Ok([PREFIX, id.as_bytes()].concat())
+    Ok(())
 }
 impl OwnerVoiceRefPack {
     pub fn validate(&self) -> Result<()> {
-        key(&self.id)?;
+        validate_id(&self.id)?;
         if self.version != 1 || self.origin != VoiceRefOrigin::OwnerCapture {
             return Err(invalid(
                 "voice identity must originate in the owner ref bank",
@@ -80,18 +91,13 @@ pub(super) fn delete_owner_refs(
     txn: &mut heed::RwTxn<'_>,
     owner: &EntityId,
 ) -> Result<usize> {
-    let prefix = [OWNER_PREFIX, owner.as_bytes()].concat();
-    let rows = store
-        .vault_meta
-        .prefix_iter(txn, &prefix)?
-        .map(|row| row.map(|(key, value)| (key.to_vec(), value.to_vec())))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let rows = OWNER_INDEX.scan_from(store, txn, owner.as_bytes())?;
     let mut deleted = 0;
-    for (index, key) in rows {
-        if store.vault_meta.delete(txn, &key)? {
+    for ((row_owner, id), _primary_key) in rows {
+        if OWNER_REF.delete(store, txn, &id)? {
             deleted += 1;
         }
-        store.vault_meta.delete(txn, &index)?;
+        OWNER_INDEX.delete(store, txn, &(row_owner, id))?;
     }
     Ok(deleted)
 }
@@ -100,30 +106,30 @@ impl Vault {
     /// The caller is the authenticated owner capture path. Vendor identities are refused.
     pub fn store_owner_voice_refs(&self, pack: &OwnerVoiceRefPack) -> Result<()> {
         pack.validate()?;
-        let key = key(&pack.id)?;
-        let bytes =
-            rmp_serde::to_vec_named(pack).map_err(|e| Error::InvalidConfig(e.to_string()))?;
         let mut txn = self.store.env.write_txn()?;
-        if let Some(existing) = self.store.vault_meta.get(&txn, &key)? {
-            if existing != bytes {
+        if let Some(existing) = OWNER_REF.get(&self.store, &txn, &pack.id)? {
+            if existing != *pack {
                 return Err(invalid("voice reference id already exists"));
             }
         } else {
-            self.store.vault_meta.put(&mut txn, &key, &bytes)?;
-            let index = [OWNER_PREFIX, pack.owner.as_bytes(), pack.id.as_bytes()].concat();
-            self.store.vault_meta.put(&mut txn, &index, &key)?;
+            OWNER_REF.put(&self.store, &mut txn, &pack.id, pack)?;
+            let primary_key = OWNER_REF.key_bytes(&pack.id);
+            OWNER_INDEX.put(
+                &self.store,
+                &mut txn,
+                &(pack.owner, pack.id.clone()),
+                &primary_key,
+            )?;
         }
         txn.commit()?;
         Ok(())
     }
     pub fn owner_voice_refs(&self, id: &str) -> Result<Option<OwnerVoiceRefPack>> {
-        let key = key(id)?;
+        validate_id(id)?;
         let txn = self.store.env.read_txn()?;
-        let Some(bytes) = self.store.vault_meta.get(&txn, &key)? else {
+        let Some(pack) = OWNER_REF.get(&self.store, &txn, &id.to_owned())? else {
             return Ok(None);
         };
-        let pack: OwnerVoiceRefPack =
-            rmp_serde::from_slice(&bytes).map_err(|_| invalid("corrupt voice reference pack"))?;
         pack.validate()?;
         if pack.id != id {
             return Err(invalid("voice reference key mismatch"));

@@ -1,9 +1,11 @@
 //! Owner-adjustable completed-TASK retention. Never erases task bytes.
 
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
-const RETENTION_KEY: &[u8] = b"vault_cleanup.task_retention_days.v1";
+const RETENTION: SideTable<(), u64, Raw> =
+    SideTable::new(&side_table::VAULT_CLEANUP_TASK_RETENTION_DAYS);
 const DEFAULT_DAYS: u64 = 90;
 
 impl Vault {
@@ -11,11 +13,7 @@ impl Vault {
     /// Like the cleanup posture setter, this is a trusted owner configuration door.
     pub fn set_task_retention_days(&self, days: Option<u32>) -> Result<()> {
         self.with_write_txn(|txn| {
-            self.store.vault_meta.put(
-                txn,
-                RETENTION_KEY,
-                &u64::from(days.unwrap_or(0)).to_be_bytes(),
-            )?;
+            RETENTION.put(&self.store, txn, &(), &u64::from(days.unwrap_or(0)))?;
             Ok(())
         })
     }
@@ -28,17 +26,9 @@ impl Vault {
 }
 
 pub(super) fn retention_days_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u64> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, RETENTION_KEY)?
-        .map_or(Ok(DEFAULT_DAYS), |raw| {
-            let bytes = raw
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("task retention days"))?;
-            Ok(u64::from_be_bytes(bytes))
-        })
+    Ok(RETENTION
+        .get(&vault.store, txn, &())?
+        .unwrap_or(DEFAULT_DAYS))
 }
 
 pub(super) fn task_is_past_retention(

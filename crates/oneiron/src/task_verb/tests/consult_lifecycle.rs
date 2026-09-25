@@ -535,12 +535,14 @@ fn expiry_digest_is_once_per_task_and_recovers_from_the_crash_window() {
     // the follow-up marker landed.
     {
         let mut wtxn = vault.store.env.write_txn().expect("write txn");
-        vault
-            .store
-            .vault_meta
+        TASK_FOLLOW_UP_MARKERS
             .delete(
+                &vault.store,
                 &mut wtxn,
-                task_follow_up_key(task_ref, TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED).as_slice(),
+                &TaskFollowUpKey {
+                    task_ref,
+                    stage: TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED.to_owned(),
+                },
             )
             .expect("clear the follow-up marker");
         wtxn.commit().expect("commit");

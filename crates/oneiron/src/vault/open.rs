@@ -531,10 +531,12 @@ impl Vault {
         // row while leaving document history, forks and citation quotes behind.
         #[cfg(not(feature = "sync"))]
         {
+            use crate::side_table::{self, HexId, Named, SideTable};
+            const HEADS: SideTable<HexId, rmpv::Value, Named> =
+                SideTable::new(&side_table::ENTITY_DOC_HEAD);
             let txn = store.env.read_txn()?;
-            if store
-                .vault_meta
-                .prefix_iter(&txn, b"entity_doc:v1:head:")?
+            if HEADS
+                .iter_raw_from(&store, &txn, &[])?
                 .next()
                 .transpose()?
                 .is_some()

@@ -2,14 +2,14 @@
 //! owner restriction: only an authenticated owner can set override columns.
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-const PREFIX: &[u8] = b"connector.grant_slate.v1/";
-fn key(id: EntityId) -> Vec<u8> {
-    [PREFIX, id.as_bytes()].concat()
-}
+const GRANT_SLATE: SideTable<EntityId, ConnectorGrantSlate, LegacyJson> =
+    SideTable::new(&side_table::CONNECTOR_GRANT_SLATE);
+
 fn invalid() -> Error {
     Error::InvalidConfig("invalid typed connector grant slate".to_owned())
 }
@@ -199,21 +199,13 @@ impl Vault {
         };
         let id = EntityId::now();
         self.with_write_txn(|txn| {
-            self.store.vault_meta.put(
-                txn,
-                &key(id),
-                &serde_json::to_vec(&slate).map_err(|_| invalid())?,
-            )?;
+            GRANT_SLATE.put(&self.store, txn, &id, &slate)?;
             Ok(id)
         })
     }
     pub fn connector_slate(&self, id: EntityId) -> Result<Option<ConnectorGrantSlate>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key(id))?
-            .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid()))
-            .transpose()
+        GRANT_SLATE.get(&self.store, &txn, &id)
     }
     /// One authenticated stamp for the entire typed slate. This neither
     /// qualifies a connector nor activates its key: probes own that transition.
@@ -232,13 +224,9 @@ impl Vault {
                 crate::edge::EdgeActorClass::Human,
             )
             .map_err(|_| Error::InvalidConfig("grant slate owner binding required".to_owned()))?;
-            let raw = self
-                .store
-                .vault_meta
-                .get(txn, &key(id))?
+            let mut slate = GRANT_SLATE
+                .get(&self.store, txn, &id)?
                 .ok_or(Error::EntityNotFound)?;
-            let mut slate: ConnectorGrantSlate =
-                serde_json::from_slice(&raw).map_err(|_| invalid())?;
             if slate.revision != expected_revision {
                 return Err(Error::ConcurrentWrite("connector slate revision"));
             }
@@ -259,11 +247,7 @@ impl Vault {
                 .ok_or(Error::ArithmeticOverflow("slate revision"))?;
             slate.owner_actor = Some(owner.actor().to_hex());
             slate.owner_authentication = Some(owner.decision_id().to_hex());
-            self.store.vault_meta.put(
-                txn,
-                &key(id),
-                &serde_json::to_vec(&slate).map_err(|_| invalid())?,
-            )?;
+            GRANT_SLATE.put(&self.store, txn, &id, &slate)?;
             Ok(slate)
         })
     }

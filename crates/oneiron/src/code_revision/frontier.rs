@@ -7,6 +7,7 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{CodecError, RawValue};
 use crate::store::Store;
 
 use super::codec::{
@@ -18,15 +19,24 @@ use super::integrity::{
     load_optional_code_revision_integrity_record,
     verify_or_build_code_revision_integrity_record_in_txn,
 };
-use super::keys::{
-    CODE_REVISION_FRONTIER_KEY_PREFIX, code_revision_frontier_key,
-    code_revision_session_index_prefix, id_from_index_key,
-};
+use super::keys::FRONTIER;
 use super::storage::{
     collect_code_revision_records_by_index_prefix, read_code_revision_record_in_txn,
 };
 use super::types::{CodeRevision, CodeRevisionFrontierRecord, CodeRevisionIntegrityRecord};
 use crate::error::ArtifactError;
+
+/// The side table's declared codec is `Raw`: [`encode_code_revision_frontier_record`]/
+/// [`decode_code_revision_frontier_record`] already spell this row's on-disk shape.
+impl RawValue for CodeRevisionFrontierRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_code_revision_frontier_record(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_code_revision_frontier_record(bytes)?)
+    }
+}
 
 const CODE_REVISION_FRONTIER_KEYS: [&str; 4] =
     ["session_id", "revision_id", "revision_fold", "finalized_at"];
@@ -139,12 +149,9 @@ pub(super) fn rebuild_code_revision_frontier_in_txn(
     wtxn: &mut RwTxn<'_>,
     session_id: &EntityId,
 ) -> Result<()> {
-    let prefix = code_revision_session_index_prefix(session_id);
-    let revisions = collect_code_revision_records_by_index_prefix(store, wtxn, &prefix)?;
+    let revisions = collect_code_revision_records_by_index_prefix(store, wtxn, session_id)?;
     if revisions.is_empty() {
-        store
-            .vault_meta
-            .delete(wtxn, &code_revision_frontier_key(session_id))?;
+        FRONTIER.delete(store, wtxn, session_id)?;
         return Ok(());
     }
 
@@ -175,12 +182,7 @@ pub(super) fn rebuild_code_revision_frontier_in_txn(
     let frontier = frontier.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
         "code revision frontier record missing",
     )))?;
-    let encoded = encode_code_revision_frontier_record(&frontier)?;
-    store.vault_meta.put(
-        wtxn,
-        &code_revision_frontier_key(session_id),
-        encoded.as_slice(),
-    )?;
+    FRONTIER.put(store, wtxn, session_id, &frontier)?;
     Ok(())
 }
 
@@ -363,15 +365,18 @@ pub(super) fn get_code_revision_frontier_in_txn(
     rtxn: &RoTxn<'_>,
     session_id: &EntityId,
 ) -> Result<Option<CodeRevisionFrontierRecord>> {
-    let Some(raw) = store
-        .vault_meta
-        .get(rtxn, &code_revision_frontier_key(session_id))?
-    else {
-        return Ok(None);
-    };
-    decode_code_revision_frontier_record(&raw).map(Some)
+    FRONTIER.get(store, rtxn, session_id)
 }
 
+/// Sweeps every frontier row for the session(s) that pointed at `revision_id`, then rebuilds
+/// each affected session's frontier from its remaining revisions.
+///
+/// A row that fails to decode is treated the same way a decodable-but-matching row is: deleted by
+/// its OWN key (the session id it is actually stored under), and its session queued for rebuild —
+/// but the rebuild target for a decodable match is the DECODED `frontier.session_id` field, not
+/// necessarily the row's own key. Preserved exactly from the pre-side-table code: a corrupted row
+/// whose value's `session_id` disagrees with its own storage key rebuilds the decoded session, not
+/// the key's session (see the migration report).
 pub(super) fn delete_code_revision_frontier_for_revision_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -379,30 +384,24 @@ pub(super) fn delete_code_revision_frontier_for_revision_in_txn(
 ) -> Result<()> {
     let mut keys = Vec::new();
     let mut sessions = Vec::new();
-    for entry in store
-        .vault_meta
-        .prefix_iter(wtxn, CODE_REVISION_FRONTIER_KEY_PREFIX)?
-    {
-        let (key, value) = entry?;
-        match decode_code_revision_frontier_record(&value) {
-            Ok(frontier) if frontier.revision_id == *revision_id => {
-                keys.push(key.to_vec());
-                sessions.push(frontier.session_id);
+    for key_session_id in FRONTIER.scan_keys(store, wtxn, &[])? {
+        match FRONTIER.get(store, wtxn, &key_session_id) {
+            Ok(Some(frontier)) => {
+                if frontier.revision_id == *revision_id {
+                    keys.push(key_session_id);
+                    sessions.push(frontier.session_id);
+                }
             }
-            Ok(_) => {}
-            Err(_) => {
-                let session_id = id_from_index_key(
-                    &key,
-                    CODE_REVISION_FRONTIER_KEY_PREFIX.len(),
-                    "code revision frontier key",
-                )?;
-                keys.push(key.to_vec());
-                sessions.push(session_id);
+            Ok(None) => {}
+            Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_))) => {
+                keys.push(key_session_id);
+                sessions.push(key_session_id);
             }
+            Err(other) => return Err(other),
         }
     }
-    for key in keys {
-        store.vault_meta.delete(wtxn, &key)?;
+    for key_session_id in &keys {
+        FRONTIER.delete(store, wtxn, key_session_id)?;
     }
     sessions.sort_unstable();
     sessions.dedup();

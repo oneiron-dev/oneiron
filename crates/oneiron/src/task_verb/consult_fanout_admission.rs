@@ -1,7 +1,7 @@
 //! Meter and admit consult fan-outs before any TASK exists.
 
 use super::consult_fanout_store::{
-    FrozenInput, POLICY_KEY, StoredFanout, TxnSurface, encode, policy_in, runs_in, save_run,
+    FANOUT_POLICY, FrozenInput, StoredFanout, TxnSurface, policy_in, runs_in, save_run,
 };
 use super::create_validation::{ValidatedTaskCreate, consult_refusal, validate_task_create};
 use super::rate_limit::{consume_create_rate_slot, task_actor_ceiling};
@@ -192,10 +192,7 @@ impl Memory<'_> {
             .memory(owner.actor(), crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
                 self.reauthenticate_fanout_owner(owner)?;
-                self.vault()
-                    .store
-                    .vault_meta
-                    .put(txn, POLICY_KEY, &encode(policy)?)?;
+                FANOUT_POLICY.put(&self.vault().store, txn, &(), policy)?;
                 Ok(())
             })
     }

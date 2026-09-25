@@ -1277,7 +1277,7 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
 /// live under a `vault_meta` prefix owned by this module.
 #[test]
 fn consent_allocates_no_entity_type_or_type_byte() {
-    assert_eq!(CONSENT_GRANT_KEY_PREFIX, b"consent.grant.v1:");
+    assert_eq!(GRANTS.decl().prefix, b"consent.grant.v1:");
     let (_dir, vault, owner) = owner_vault();
     let bound = action_bound("agent-a", "send", &["channel:email"]);
     vault

@@ -21,25 +21,6 @@ pub const ORIGIN_PUBLICATION_PREDICATE: &str = "repo.publication";
 /// Explicit, target-bound source for callers outside the receive-pack observer.
 pub const ORIGIN_PUBLICATION_INTENT_PREDICATE: &str = "repo.publication_intent";
 
-/// Publication journal family: `prefix ++ 16B publication_id`.
-///
-/// The prefix ends in the version separator `v1:` so a future `v10:` can never
-/// be a prefix-scan of `v1` (`store::short_id_alias` prefix law).
-pub const ORIGIN_PUBLICATION_RECORD_KEY_PREFIX: &[u8] = b"origin:publication:v1:";
-
-/// One in-flight owner of `(repo, ref, expected, new)`, independent of provenance.
-pub const ORIGIN_CAS_INTENT_KEY_PREFIX: &[u8] = b"origin:cas_intent:v1:";
-
-/// Advertisement family: `prefix ++ 16B repo_id ++ 0x00 ++ ref_name`.
-///
-/// Repo-scoped because two served repositories both carry `refs/heads/main`
-/// and their advertisements are different facts.
-pub const ORIGIN_VISIBLE_REF_KEY_PREFIX: &[u8] = b"origin:visible_ref:v1:";
-
-/// Logical keep-owner family:
-/// `prefix ++ 16B repo_id ++ 0x00 ++ oid ++ 0x00 ++ kind ++ 0x00 ++ owner_key`.
-pub const ORIGIN_KEEP_OWNER_KEY_PREFIX: &[u8] = b"origin:keep_owner:v1:";
-
 /// The pinned key vocabulary of the `repo.publication` claim value.
 pub const ORIGIN_PUBLICATION_VALUE_KEYS: [&str; 10] = [
     "schema_version",
@@ -71,10 +52,6 @@ pub const ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS: usize = 4096;
 
 /// Largest number of journal rows a single scan will walk before refusing.
 pub const ORIGIN_PUBLICATION_MAX_ROWS: usize = 100_000;
-
-/// Field separator inside a composite key. Neither a ref name nor a lower-hex
-/// object id can carry a NUL, so every field stays unambiguously framed.
-pub(super) const ORIGIN_KEY_SEPARATOR: u8 = 0;
 
 // ---------------------------------------------------------------------------
 // Protocol types
