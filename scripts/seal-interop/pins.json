@@ -1,0 +1,17 @@
+{
+  "os_proxy": "linux-x86_64",
+  "install_root_default": "/mnt/wd16/w8-build/seal-interop",
+  "poppler": {
+    "22.02.0": {"source": "https://poppler.freedesktop.org/poppler-22.02.0.tar.xz", "sha256": "e390c8b806f6c9f0e35c8462033e0a738bb2460ebd660bdb8b6dca01556193e1", "build": "local-cmake"},
+    "24.02.0": {"package": "poppler=24.02.0", "fallback": "conda-forge; this run reuses exact preinstalled Linux binary"},
+    "25.02.0": {"channel": "conda-forge", "package": "poppler=25.02.0"},
+    "26.05.0": {"channel": "conda-forge", "package": "poppler=26.05.0", "note": "this run uses the task-root conda build; an exact host binary can be reused"}
+  },
+  "dss": {"version": "6.5", "utils_provider": "dss-utils-apache-commons", "policy_provider": "dss-policy-jaxb", "pdf_provider": "dss-pades-pdfbox", "cms_provider": "dss-cms-object"},
+  "pdfbox": "3.0.6",
+  "bouncycastle": {"pdfbox": "1.80", "dss": "1.85 (aligned to DSS 6.5)"},
+  "pyhanko": "0.35.2",
+  "pypdfium2": "4.30.0",
+  "pdfjs-dist": "5.4.394",
+  "qpdf": "12.3.2"
+}
