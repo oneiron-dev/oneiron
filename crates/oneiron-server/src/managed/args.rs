@@ -486,6 +486,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
     (
+        "max-lfs-object-bytes",
+        |args| args.max_lfs_object_bytes.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
         "max-bulk-decompressed",
         |args| args.max_bulk_decompressed.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
