@@ -1,8 +1,8 @@
 //! Builder flags, run() dispatch, and the aggregate maintenance report.
 
-use crate::Vault;
 use crate::error::Result;
 use crate::hnsw::COUNT_KEY;
+use crate::{EntityId, Vault};
 
 use super::attempt_lease;
 use super::hnsw_rebuild::{decode_u64_opt, rebuild_hnsw};
@@ -29,7 +29,7 @@ pub struct MaintenanceBuilder<'a> {
 }
 
 /// Aggregate counters for maintenance operations.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MaintenanceReport {
     /// Nodes omitted from the rebuilt HNSW graph versus the previously committed count.
     ///
@@ -117,7 +117,7 @@ pub struct MaintenanceReport {
     /// Conversations whose legacy chain was migrated in this run.
     pub conversation_dags_migrated: u64,
     /// Conversations skipped because their received DAG topology is invalid.
-    pub conversation_dags_skipped_invalid: u64,
+    pub conversation_dags_skipped_invalid: Vec<EntityId>,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
