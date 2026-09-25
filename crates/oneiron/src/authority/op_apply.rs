@@ -178,7 +178,7 @@ pub(super) fn apply_actor_binding(
     // Closes the bind-an-agent-key-as-human hole: human class is the owner
     // class, so the bound key must itself be able to give owner consent.
     // Agent/system bindings may target ROLE_AGENT keys (the 1634 seam).
-    if actor_class == "human" && !consent_arm(device) {
+    if actor_class == ACTOR_CLASS_HUMAN && !consent_arm(device) {
         return Err(ActorBindingRejection::OwnerCapabilityRequired);
     }
 

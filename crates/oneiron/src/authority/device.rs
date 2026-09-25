@@ -1,6 +1,7 @@
 //! Device authority material and the folded-device consent predicates.
 
 use crate::error::Result;
+use std::collections::BTreeMap;
 
 use super::*;
 
@@ -36,6 +37,15 @@ impl DeviceAuthority {
     pub(super) fn can_authority_consent(&self) -> bool {
         (self.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
     }
+}
+
+pub(super) fn roster_has_live_owner(
+    roster: &BTreeMap<AuthorityKey, FoldedDevice>,
+    key: &AuthorityKey,
+) -> bool {
+    roster
+        .get(key)
+        .is_some_and(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
 }
 
 pub(super) fn folded_device_can_authority_consent(device: &FoldedDevice) -> bool {
