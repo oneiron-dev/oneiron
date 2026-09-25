@@ -43,11 +43,9 @@ impl<'a> PipelineBuilder<'a> {
             }
         }
         if effort != Effort::Light {
-            self = self
-                .search_ppr(seeds, 1)
-                .boost_salience()
-                .boost_confidence();
+            self = self.search_ppr(seeds, 1);
         }
+        self = self.boost_salience().boost_confidence();
         if effort.requires_rerank() {
             self = self.expand_ppr(seeds, effort.graph_depth());
         }

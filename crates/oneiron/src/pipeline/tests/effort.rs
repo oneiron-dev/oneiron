@@ -40,11 +40,9 @@ fn five_effort_stage_sets_match_explicit_plans() -> Result<()> {
             base().search_temporal(now, now, 10)
         };
         if depth > 0 {
-            explicit = explicit
-                .search_ppr(&[seed], 1)
-                .boost_salience()
-                .boost_confidence();
+            explicit = explicit.search_ppr(&[seed], 1);
         }
+        explicit = explicit.boost_salience().boost_confidence();
         if depth > 1 {
             explicit = explicit.expand_ppr(&[seed], depth);
         }

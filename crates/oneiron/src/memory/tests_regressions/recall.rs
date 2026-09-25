@@ -1,6 +1,7 @@
 //! BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits.
 
 use super::*;
+use crate::memory::tests::short_id_part;
 
 // ═══ BRIDGE-02 (ONE-1455): query surface ═══════════════════════════════
 
@@ -826,6 +827,100 @@ fn recall_default_effort_ranks_the_newer_identical_message_first() {
         panic!("both messages recalled: {refs:?}");
     };
     assert!(newer_at < older_at, "newer message first: {refs:?}");
+}
+
+#[test]
+fn recall_light_effort_ranks_the_newer_identical_message_first() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x61);
+    let facade = facade_for(&vault, actor);
+    let now = crate::unix_seconds_now();
+    let text = "I prefer a window seat when I fly.";
+    let mut witnessed = Vec::new();
+    for (seed, days_ago) in [(0x62, 56), (0x63, 28)] {
+        let receipt = facade
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::from_bytes([seed; 16]).unwrap().to_hex(),
+                turn_ref: None,
+                messages: vec![witness_message(0, WitnessAuthor::User, text)],
+                occurred_at: now - days_ago * 86_400,
+            })
+            .expect("witness");
+        witnessed.push(receipt.message_short_ids[0].clone());
+    }
+    let [older, newer] = <[String; 2]>::try_from(witnessed).expect("two messages");
+
+    let pack = facade
+        .recall(
+            "window seat",
+            Effort::Light,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("recall");
+    let refs: Vec<&str> = pack
+        .items
+        .iter()
+        .map(|item| item.short_id.split('@').next().unwrap_or_default())
+        .collect();
+    let position = |id: &str| refs.iter().position(|item| *item == id);
+    let (Some(newer_at), Some(older_at)) = (position(&newer), position(&older)) else {
+        panic!("both messages recalled: {refs:?}");
+    };
+    assert!(newer_at < older_at, "newer message first: {refs:?}");
+}
+
+#[test]
+fn recall_light_effort_ranks_a_salient_claim_above_an_identical_plain_one() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x67);
+    let facade = facade_for(&vault, actor);
+    let mut ids = Vec::new();
+    // Distinct subjects avoid claim supersession; their indexed claim text,
+    // confidence and timestamps match. Write the plain claim first.
+    for (seed, salience) in [(0x68, None), (0x69, Some(0.9))] {
+        let subject = put_person(&vault, seed);
+        let mut input = claim_input(
+            "preference.lighting",
+            &subject,
+            "user_stated",
+            serde_json::json!("amber lantern"),
+        );
+        input.id = Some(EntityId::from_bytes([seed + 2; 16]).unwrap().to_hex());
+        input.salience = salience;
+        let receipt = facade.claim_upsert(&input).expect("claim");
+        assert_eq!(receipt.approval, "auto");
+        let claim_id = EntityId::from_hex(input.id.as_deref().unwrap()).unwrap();
+        vault
+            .batch()
+            .text(&claim_id, &[("body", "amber lantern")])
+            .commit()
+            .expect("index claim text");
+        ids.push(short_id_part(&receipt.claim_short_id).to_owned());
+    }
+    let [plain, salient] = <[String; 2]>::try_from(ids).expect("two claims");
+    let pack = facade
+        .recall(
+            "amber lantern",
+            Effort::Light,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("recall");
+    let refs: Vec<&str> = pack
+        .items
+        .iter()
+        .map(|item| short_id_part(item.short_id.split('@').next().unwrap_or_default()))
+        .collect();
+    let position = |id: &str| refs.iter().position(|item| *item == id);
+    let (Some(salient_at), Some(plain_at)) = (position(&salient), position(&plain)) else {
+        panic!("both claims recalled: {refs:?}");
+    };
+    assert!(salient_at < plain_at, "salient claim first: {refs:?}");
 }
 
 /// ARCH-0002: AUTHORITY_LOG is a maintenance record with no short-id prefix,
