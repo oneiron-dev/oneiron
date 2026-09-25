@@ -1294,7 +1294,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/fusion/tests.rs` | test | m | — | — | — |
 | `src/gate/auto_signals.rs` | src | s | 1 crate-vis | — | Receipt-derived rate and failure streak supplied to the existing auto checker |
 | `src/gate/bundle.rs` | src | m | 4 fn · 5 const | — | — |
-| `src/gate/ceiling.rs` | src | m | 36 crate-vis | — | — |
+| `src/gate/ceiling.rs` | src | m | 37 crate-vis | — | — |
 | `src/gate/confirm.rs` | src | m | 1 struct · 1 enum · 2 fn · 4 const · 10 crate-vis | CriticalWriteConfirmBinding, CriticalWriteConfirmResolution | — |
 | `src/gate/constants.rs` | src | s | 77 crate-vis | — | — |
 | `src/gate/decision.rs` | src | m | 28 crate-vis | — | — |
@@ -1322,7 +1322,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/foreign_agent.rs` | src | m | 3 fn · 1 crate-vis | — | Owner-bound foreign introductions |
 | `src/gate/grants.rs` | src | m | 8 crate-vis | — | — |
 | `src/gate/input.rs` | src | m | 15 crate-vis | — | — |
-| `src/gate/manifest_authenticity.rs` | src | s | 1 struct · 3 fn · 5 crate-vis | ManifestContribution | Local write-door authentication for manifest contributions |
+| `src/gate/manifest_authenticity.rs` | src | s | 1 struct · 3 fn · 6 crate-vis | ManifestContribution | Local write-door authentication for manifest contributions |
 | `src/gate/mod.rs` | src | s | 3 re-export · 25 crate-vis | — | DEC-0005 Gate policy manifest resolver |
 | `src/gate/repair.rs` | src | s | 3 crate-vis | — | Pure, per-proposal consent recomputation |
 | `src/gate/repair_tests.rs` | test | m | — | — | ONE-1395 repair-only tests, kept separate from the existing Gate write-door tests |
@@ -1353,7 +1353,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/tests/external_effect_grants.rs` | test | m | — | — | External-effect grants: scoped, standing, and outbound MCP grants plus counterparty contacts |
 | `src/gate/tests/gate_door.rs` | test | L | — | — | Write-door chokepoint: consent lifecycle, session bundles, batch atomicity, and edge provenance |
 | `src/gate/tests/isolation_persona.rs` | test | m | — | — | Persona-core isolation: isolated classes, session floor, and replay and source rules |
-| `src/gate/tests/manifest_authenticity.rs` | test | s | — | — | — |
+| `src/gate/tests/manifest_authenticity.rs` | test | m | — | — | — |
 | `src/gate/tests/manifest_auto.rs` | test | m | — | — | Manifest-granted auto write: first-party, dreamer, and foreign tool output |
 | `src/gate/tests/mod.rs` | test | s | — | — | — |
 | `src/gate/tests/pending_lookup.rs` | test | s | — | — | — |
