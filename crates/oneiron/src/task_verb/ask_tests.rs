@@ -611,6 +611,16 @@ impl RuledAskFixture {
     }
 
     fn word(&self, handle: TaskAskHandle, seat: usize, option: &str) -> Result<TaskAskAnswer> {
+        self.word_with_sources(handle, seat, option, Default::default())
+    }
+
+    fn word_with_sources(
+        &self,
+        handle: TaskAskHandle,
+        seat: usize,
+        option: &str,
+        provenance_refs: std::collections::BTreeSet<ConsultPayloadRef>,
+    ) -> Result<TaskAskAnswer> {
         Ok(self
             .vault
             .memory(self.people[seat], EdgeActorClass::Human)
@@ -620,9 +630,39 @@ impl RuledAskFixture {
                     result_ref: self.people[seat],
                     option: Some(TaskAskOptionId::new(option)?),
                     inform_for: None,
-                    provenance_refs: Default::default(),
+                    provenance_refs,
                 },
             )?)
+    }
+
+    fn ask_with_uncounted_word(&self, bind: bool) -> Result<TaskAskResult> {
+        let mut spec = self.spec();
+        let mut class = self.policy(false);
+        class.required_sources = [self.question].into();
+        spec.class = Some(class);
+        spec.decide = Some(TaskAskDecide::AtLeast {
+            count: 2,
+            of: TaskAskElectorate::Any,
+            answer: TaskAskOptionId::new("yes")?,
+        });
+        if bind {
+            super::tests::support::permit_outcome_fixture_predicates(&self.vault, self.owner)?;
+            spec.what.outcome_binding = Some(crate::llm::decision::questions::OutcomeBinding {
+                source: crate::llm::decision::questions::OutcomeSource::Claim {
+                    predicate: "outcome.earned".into(),
+                },
+                horizon: 60,
+                mapping: [("yes".into(), true), ("no".into(), false)].into(),
+                noise_weight: 1.0,
+                linked_by: None,
+            });
+        }
+        let handle = self.ask(&spec)?;
+        self.word_with_sources(handle, 0, "yes", [self.question].into())?;
+        self.word_with_sources(handle, 1, "yes", [self.question].into())?;
+        self.word(handle, 2, "no")?;
+        self.clock.set(1_101);
+        self.result(handle)
     }
 
     fn result(&self, handle: TaskAskHandle) -> Result<TaskAskResult> {
@@ -635,6 +675,38 @@ impl RuledAskFixture {
         };
         Ok(*result)
     }
+}
+
+#[test]
+fn ask_word_missing_a_required_source_does_not_veto_the_counted_words() -> Result<()> {
+    let fixture = RuledAskFixture::new(3)?;
+    let result = fixture.ask_with_uncounted_word(false)?;
+    assert_eq!(
+        result.decision,
+        TaskAskDecision::Answer(TaskAskOptionId::new("yes")?)
+    );
+    assert_eq!(result.settlement.unmet_sources, [fixture.question].into());
+    assert_eq!(
+        result
+            .evidence
+            .iter()
+            .filter(|entry| entry.reason == TaskAskEvidenceReason::MissingSource)
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn ask_decided_despite_an_uncounted_word_binds_its_outcome() -> Result<()> {
+    let fixture = RuledAskFixture::new(3)?;
+    let result = fixture.ask_with_uncounted_word(true)?;
+    assert_eq!(
+        result.decision,
+        TaskAskDecision::Answer(TaskAskOptionId::new("yes")?)
+    );
+    assert!(result.settlement.outcome_answer_ref.is_some());
+    Ok(())
 }
 
 #[test]
